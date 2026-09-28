@@ -7,6 +7,7 @@
 @import "@fontsource-variable/fira-code";
 @import "@fontsource-variable/source-code-pro";
 @import "@fontsource-variable/space-grotesk";
+@import "@fontsource-variable/source-serif-4";
 @import "@fontsource/ibm-plex-sans/400.css";
 @import "@fontsource/ibm-plex-sans/500.css";
 @import "@fontsource/ibm-plex-sans/600.css";
@@ -443,8 +444,12 @@ html[data-os="linux"]   { --window-radius: 8px; }
   --color-table-grid: var(--table-grid);
   --color-link: var(--link);
   --color-link-hover: var(--link-hover);
-  --font-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "Geist Mono Variable", ui-monospace, monospace;
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
+  /* Dialog titles and headings. `--heading-font` is set by the font preset
+     (the Claude preset pairs Inter with a serif); this block is inlined, so the
+     utility has to point at a variable the preset can override. */
+  --font-heading: var(--heading-font, var(--font-sans));
 }
 
 @layer base {
