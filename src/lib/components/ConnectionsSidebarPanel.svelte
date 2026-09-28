@@ -9,6 +9,7 @@
   import { Popover, PopoverTrigger, PopoverContent } from "$lib/components/ui/popover/index.js";
   import { Input } from "$lib/components/ui/input/index.js";
   import { setConnectionGroup } from "$lib/stores/connections.js";
+  import ConfirmDialog from "./ConfirmDialog.svelte";
 
   let {
     /** @type {import('$lib/stores/connections.js').SavedConnection[]} */
@@ -24,6 +25,11 @@
     /** Fired after a connection's group changes so the shell can refresh its list. @type {(id: string, group: string | null) => void} */
     onsetgroup = (id, group) => {},
   } = $props();
+
+  // Removing deletes the connection's history and saved work too, so it asks first.
+  /** @type {import('$lib/stores/connections.js').SavedConnection | null} */
+  let pendingRemove = $state(null);
+  let confirmRemoveOpen = $state(false);
 
   // Optimistic overlay of pending group edits (id -> group|null). Keeps the list
   // updating instantly even before the parent refreshes the `connections` prop.
@@ -231,7 +237,8 @@
           aria-label="Remove connection"
           onclick={(e) => {
             e.stopPropagation();
-            onremove(c.id);
+            pendingRemove = c;
+            confirmRemoveOpen = true;
           }}
           class="hidden size-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground group-hover/conn:flex"
         >
@@ -311,3 +318,19 @@
     {/if}
   </div>
 </div>
+
+<ConfirmDialog
+  bind:open={confirmRemoveOpen}
+  icon="trash-2"
+  title="Delete connection?"
+  description={`"${pendingRemove?.name || pendingRemove?.database || pendingRemove?.host || pendingRemove?.filePath || 'this connection'}" will be removed from your saved connections.`}
+  note="Its query history, saved queries, charts and AI chats are deleted with it. This can't be undone."
+  confirmLabel="Delete"
+  confirmIcon="trash-2"
+  variant="destructive"
+  onconfirm={() => {
+    if (pendingRemove) onremove(pendingRemove.id);
+    pendingRemove = null;
+  }}
+  oncancel={() => (pendingRemove = null)}
+/>

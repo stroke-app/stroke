@@ -54,6 +54,7 @@
   import { toast } from "$lib/components/ui/sonner/toast.svelte.js";
   import { parseConnectionUri, detectConnectionUri } from "$lib/connection-uri.js";
   import { PROVIDERS, providerBuildConnection } from "$lib/providers.js";
+  import ConfirmDialog from "./ConfirmDialog.svelte";
 
   let {
     open = $bindable(false),
@@ -67,6 +68,8 @@
     /** Name of the live session, '' when nothing is connected. Drives Disconnect. */
     activeConnectionName = "",
     ondisconnect = () => {},
+    /** A saved connection was deleted here; the shell ends its session if open. */
+    onremoved = (/** @type {string} */ id) => {},
   } = $props();
 
   const CATEGORIES = [
@@ -1468,13 +1471,38 @@
     });
   });
 
-  function handleDelete(id) {
+  // Deleting also clears the connection's history, saved queries, charts and
+  // chats (purgeConnectionData), so it is asked first rather than done on click.
+  /** @type {{ id: string, name: string, fromKeyboard: boolean } | null} */
+  let pendingDelete = $state(null);
+  let confirmDeleteOpen = $state(false);
+
+  /** @param {string} id @param {boolean} [fromKeyboard] */
+  function handleDelete(id, fromKeyboard = false) {
+    const conn = saved.find((c) => c.id === id);
+    pendingDelete = { id, name: conn?.name || conn?.database || conn?.host || conn?.filePath || "this connection", fromKeyboard };
+    confirmDeleteOpen = true;
+  }
+
+  function confirmDelete() {
+    if (!pendingDelete) return;
+    const { id, fromKeyboard } = pendingDelete;
+    pendingDelete = null;
     saved = removeConnection(id).sort(byLastConnected);
     if (id === lastId) {
       lastId = null;
       setLastConnectionId(null);
     }
     if (editingId === id) resetForm(null);
+    onremoved(id);
+    // The row that had focus no longer exists - hand it to whatever took its
+    // place rather than letting it fall back to the document.
+    if (fromKeyboard) {
+      void tick().then(() => {
+        if (savedMatches.length) focusFirstSavedRow();
+        else savedSearchEl?.focus();
+      });
+    }
   }
 
   /** Open `conn` with the driver its `type` calls for. */
@@ -2894,14 +2922,7 @@
                           }
                           if (e.key === "Delete" || e.key === "Backspace") {
                             e.preventDefault();
-                            handleDelete(conn.id);
-                            // The element that had focus no longer exists - hand it
-                            // to whatever took its place rather than letting it fall
-                            // back to the document.
-                            void tick().then(() => {
-                              if (savedMatches.length) focusFirstSavedRow();
-                              else savedSearchEl?.focus();
-                            });
+                            handleDelete(conn.id, true);
                             return;
                           }
                           // Shift+Tab is the way back to the filter, the mirror of
@@ -4468,6 +4489,19 @@
     </DialogPrimitive.Content>
   </DialogPrimitive.Portal>
 </DialogPrimitive.Root>
+
+<ConfirmDialog
+  bind:open={confirmDeleteOpen}
+  icon="trash-2"
+  title="Delete connection?"
+  description={`"${pendingDelete?.name ?? ''}" will be removed from your saved connections.`}
+  note="Its query history, saved queries, charts and AI chats are deleted with it. This can't be undone."
+  confirmLabel="Delete"
+  confirmIcon="trash-2"
+  variant="destructive"
+  onconfirm={confirmDelete}
+  oncancel={() => (pendingDelete = null)}
+/>
 
 <style>
   /* The modal is portalled to <body>, outside #app, so it never inherits the

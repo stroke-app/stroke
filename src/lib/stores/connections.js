@@ -1,6 +1,17 @@
+import { invoke } from '@tauri-apps/api/core'
 import { saveSqlDraft } from '$lib/stores/sql-draft.js'
 
 const STORAGE_KEY = 'stroke:connections'
+/**
+ * Ids of deleted connections. A delete used to be undone by the next write that
+ * carried the old connection - the shell re-saves the active connection on
+ * every connect, reconnect and database switch, and `upsertConnection` inserts
+ * whatever it is handed - so deleting the connection you were on brought it
+ * back. An id listed here is never re-added unless the caller says so.
+ */
+const DELETED_KEY = 'stroke:connections:deleted'
+/** Deleted ids are UUIDs and never reused; the cap only bounds the list. */
+const MAX_DELETED_IDS = 500
 const LAST_ID_KEY  = 'stroke:last-connection-id'
 const DISCONNECTED_KEY = 'stroke:disconnected'
 
@@ -112,6 +123,7 @@ export function loadSavedConnections() {
 export function saveConnections(connections) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(connections))
+    mirrorToDisk()
     return true
   } catch (err) {
     // Quota/serialization failure must not throw into connect/disconnect flows.
@@ -130,8 +142,87 @@ export function lastPersistFailed() {
   return _persistFailed
 }
 
-/** @param {SavedConnection} conn */
-export function upsertConnection(conn) {
+/** @returns {Set<string>} */
+function loadDeletedIds() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(DELETED_KEY) ?? '[]')
+    return new Set(Array.isArray(parsed) ? parsed.filter((id) => typeof id === 'string') : [])
+  } catch {
+    return new Set()
+  }
+}
+
+/** @param {Set<string>} ids */
+function saveDeletedIds(ids) {
+  try {
+    localStorage.setItem(DELETED_KEY, JSON.stringify([...ids].slice(-MAX_DELETED_IDS)))
+  } catch { /* the delete itself already landed; this only guards against revival */ }
+}
+
+// ── Durable copy on disk ─────────────────────────────────────────────────────
+// localStorage reaches disk whenever the webview gets round to it, and WebView2
+// can lose the last writes when the app closes right after them - a deleted
+// connection was back on the next launch. Every change is also written to
+// `connections.json` in the app data folder (fsynced by the backend), and that
+// file is loaded into localStorage before anything reads the list.
+
+let _mirrorChain = Promise.resolve()
+
+/** Queue a write of the current list and deleted ids. Writes run one at a time,
+ *  so an older payload can never land after a newer one. */
+function mirrorToDisk() {
+  let json
+  try {
+    json = JSON.stringify({
+      version: 1,
+      connections: JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '[]'),
+      deleted: [...loadDeletedIds()],
+    })
+  } catch {
+    return
+  }
+  _mirrorChain = _mirrorChain
+    .then(() => invoke('connections_store_write', { json }))
+    .catch((err) => console.error('Failed to save connections to disk:', err))
+}
+
+/**
+ * Load the on-disk copy into localStorage. Call once at startup, before the app
+ * reads any connection. Without a file yet (first launch after this change) the
+ * current localStorage list seeds it. Outside Tauri (browser dev) or with an
+ * unreadable file, localStorage stays the source.
+ */
+export async function hydrateConnectionsFromDisk() {
+  try {
+    const json = /** @type {string | null} */ (await invoke('connections_store_read'))
+    if (json == null) {
+      mirrorToDisk()
+      return
+    }
+    const data = JSON.parse(json)
+    if (Array.isArray(data?.connections)) localStorage.setItem(STORAGE_KEY, JSON.stringify(data.connections))
+    if (Array.isArray(data?.deleted)) localStorage.setItem(DELETED_KEY, JSON.stringify(data.deleted))
+  } catch (err) {
+    console.warn('Saved connections: using browser storage only.', err)
+  }
+}
+
+/**
+ * @param {SavedConnection} conn
+ * @param {{ revive?: boolean }} [opts] `revive` lets an explicit re-add (the
+ *   Sample Database button) bring back an id that was deleted. Everything else
+ *   that writes an existing connection back is a no-op for a deleted one.
+ */
+export function upsertConnection(conn, { revive = false } = {}) {
+  const deleted = loadDeletedIds()
+  if (deleted.has(conn.id)) {
+    if (!revive) {
+      _persistFailed = false
+      return loadSavedConnections()
+    }
+    deleted.delete(conn.id)
+    saveDeletedIds(deleted)
+  }
   const list = loadSavedConnections()
   const idx  = list.findIndex((c) => c.id === conn.id)
   if (idx >= 0) list[idx] = conn
@@ -142,8 +233,13 @@ export function upsertConnection(conn) {
 
 /** @param {string} id */
 export function removeConnection(id) {
+  const deleted = loadDeletedIds()
+  deleted.add(id)
+  // Before saveConnections, so the disk copy it writes carries the id too.
+  saveDeletedIds(deleted)
   const list = loadSavedConnections().filter((c) => c.id !== id)
   saveConnections(list)
+  if (getLastConnectionId() === id) setLastConnectionId(null)
   purgeConnectionData(id)
   return list
 }

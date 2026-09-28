@@ -3,6 +3,7 @@ import './app.css'
 import App from './App.svelte'
 import { applySettings, installZoomShortcuts, loadSettings, resetWebviewZoom } from '$lib/stores/settings.js'
 import { armRevealFailsafe } from '$lib/app-reveal.js'
+import { hydrateConnectionsFromDisk } from '$lib/stores/connections.js'
 
 // Clear all local storage when VITE_FRESH_START=1 (used by `npm run tauri:fresh`)
 if (import.meta.env.VITE_FRESH_START === '1') {
@@ -89,6 +90,11 @@ document.addEventListener('click', async (e) => {
     // ignore in dev/browser environments without Tauri
   }
 }, { capture: true })
+
+// Saved connections are loaded from their on-disk copy before the app reads
+// them (see hydrateConnectionsFromDisk). A fresh-start run skips it, or the
+// file would put back everything it just cleared.
+if (import.meta.env.VITE_FRESH_START !== '1') await hydrateConnectionsFromDisk()
 
 const app = mount(App, {
   target: document.getElementById('app'),
