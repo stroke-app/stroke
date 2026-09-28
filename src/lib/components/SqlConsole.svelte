@@ -431,6 +431,21 @@
     onfixwithai?.({ error, sql: sql.trim() })
   }
 
+  // Stop is fire-and-forget on the backend; `stopping` only keeps a second
+  // click from queuing another cancel while the first one lands.
+  let stopping = $state(false)
+  $effect(() => { if (!loading) stopping = false })
+  function stopRun() {
+    if (!loading || stopping) return
+    stopping = true
+    void cancelQuery(runningQueryId ?? undefined)
+  }
+  // The backend reports a stopped run as an error string. It is the user's own
+  // action, not a failure, so it gets its own quiet view instead of the red one.
+  const stopped = $derived(/Query cancelled/i.test(error))
+  // Tauri errors arrive as `Error: <message>`; the prefix repeats the header.
+  const errorText = $derived(error.replace(/^Error:\s*/, ''))
+
   let errorCopied = $state(false)
   /** @type {ReturnType<typeof setTimeout> | null} */
   let errorCopyTimer = null
@@ -513,17 +528,22 @@
     data-studio-chrome
   >
     {#if loading}
-      <Button
+      <!-- Same footprint as Run + its menu (h-7, ~76px), so the toolbar doesn't
+           shift when a run starts. The spinner says "running", the square
+           inside it says what a click does. -->
+      <button
         type="button"
-        variant="destructive"
-        size="sm"
-        class="h-7 shrink-0 gap-2 pl-2.5 pr-2 font-medium shadow-sm"
-        onclick={() => void cancelQuery(runningQueryId ?? undefined)}
+        class="group inline-flex h-7 min-w-[4.75rem] shrink-0 select-none items-center gap-2 rounded-md border border-border bg-muted/40 pl-2 pr-2.5 text-ui-2xs font-medium text-foreground transition-[background-color,border-color,scale] duration-150 hover:border-destructive/40 hover:bg-destructive/10 active:scale-[0.96] disabled:pointer-events-none disabled:opacity-60"
+        disabled={stopping}
+        onclick={stopRun}
         title={tipText('Stop', 'Cancel the running query.')}
       >
-        <Square class="size-3 shrink-0 fill-current" data-icon="inline-start" />
-        Stop
-      </Button>
+        <span class="relative grid size-3.5 shrink-0 place-items-center">
+          <Loader2 class="size-3.5 animate-spin text-muted-foreground" />
+          <Square class="absolute size-1.5 fill-current text-destructive" />
+        </span>
+        {stopping ? 'Stopping' : 'Stop'}
+      </button>
     {:else}
       {#if txStatus?.open}
         <!-- An open transaction changes what Run means, so it is said next to
@@ -888,11 +908,11 @@
           { id: 'chart',   label: 'Chart',   Icon: BarChart2,  pro: true },
           { id: 'json',    label: 'JSON',    Icon: Braces,     pro: true },
           { id: 'explain', label: 'Explain', Icon: ScanSearch, pro: true },
-          ...(error ? [{ id: 'error', label: 'Error', Icon: CircleAlert, pro: false }] : []),
+          ...(error ? [{ id: 'error', label: stopped ? 'Stopped' : 'Error', Icon: stopped ? Square : CircleAlert, pro: false }] : []),
         ] as tab (tab.id)}
           {@const locked = tab.pro && !$hasPro}
           {@const tabActive = !locked && outputVisible && outputView === tab.id}
-          {@const isError = tab.id === 'error'}
+          {@const isError = tab.id === 'error' && !stopped}
           {@const Icon = tab.Icon}
           <button
             type="button"
@@ -975,7 +995,21 @@
       <div class="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-panel">
         {#key `${outputView}:${Math.min(activeResultIdx, Math.max(resultSets.length - 1, 0))}`}
           {#if outputView === 'error'}
-            {#if isNetworkError(error)}
+            {#if stopped}
+              <div class="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
+                <span class="grid size-8 place-items-center rounded-full bg-muted/60">
+                  <Square class="size-3 fill-current text-muted-foreground" />
+                </span>
+                <div class="flex flex-col gap-1">
+                  <p class="text-ui-sm font-medium text-foreground">Query stopped</p>
+                  <p class="text-ui-xs text-muted-foreground">It was cancelled before the results came back.</p>
+                </div>
+                <Button type="button" variant="outline" size="sm" disabled={!sql.trim()} onclick={() => handleRun(undefined)}>
+                  <Play class="size-3.5 shrink-0" data-icon="inline-start" />
+                  Run again
+                </Button>
+              </div>
+            {:else if isNetworkError(error)}
               <div class="flex h-full flex-col items-center justify-center gap-2.5 px-6 text-center">
                 <WifiOff class="size-6 text-muted-foreground" />
                 <p class="font-mono text-ui-sm text-muted-foreground">Cannot reach database, check your connection and try again.</p>
@@ -988,31 +1022,29 @@
                    data-studio-selectable re-enables selection here). -->
               <div data-studio-selectable="text" class="flex h-full min-h-0 flex-col font-mono">
                 <!-- Console toolbar, neutral chrome, ghost actions -->
-                <div class="flex shrink-0 items-center gap-2 border-b border-border/60 px-3 py-1.5 select-none">
-                  <span class="size-1.5 shrink-0 rounded-full bg-destructive"></span>
-                  <span class="text-ui-2xs font-semibold uppercase tracking-[0.08em] text-destructive">Error</span>
+                <div class="flex h-10 shrink-0 items-center gap-2 border-b border-border/60 pl-3 pr-1.5 font-sans select-none">
+                  <CircleAlert class="size-3.5 shrink-0 text-destructive" />
+                  <span class="text-ui-xs font-medium text-foreground">Query failed</span>
                   {#if currentDisplay.queryMs > 0}
-                    <span class="text-ui-2xs tabular-nums text-muted-foreground">· {currentDisplay.queryMs}ms</span>
+                    <span class="text-ui-2xs tabular-nums text-muted-foreground">after {currentDisplay.queryMs}ms</span>
                   {/if}
                   <div class="ml-auto flex shrink-0 items-center gap-1">
-                    <button
+                    <Button
                       type="button"
+                      variant="ghost"
+                      size="icon-sm"
                       onclick={copyError}
                       title="Copy error"
                       aria-label="Copy error"
-                      class="inline-flex size-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+                      class="text-muted-foreground hover:text-foreground"
                     >
-                      {#if errorCopied}<Check class="size-3 shrink-0" />{:else}<Copy class="size-3 shrink-0" />{/if}
-                    </button>
+                      {#if errorCopied}<Check class="size-3.5 shrink-0" />{:else}<Copy class="size-3.5 shrink-0" />{/if}
+                    </Button>
                     {#if onfixwithai}
-                      <button
-                        type="button"
-                        onclick={fixWithAi}
-                        class="inline-flex shrink-0 items-center gap-1 rounded border border-border/70 px-2 py-1 text-ui-2xs font-medium text-muted-foreground transition-[background-color,border-color,color,transform] duration-150 hover:border-border hover:bg-muted/60 hover:text-foreground active:scale-[0.97]"
-                      >
-                        <Wand2 class="size-3 shrink-0" />
+                      <Button type="button" variant="outline" size="sm" onclick={fixWithAi}>
+                        <Wand2 class="size-3.5 shrink-0" data-icon="inline-start" />
                         Fix with AI
-                      </button>
+                      </Button>
                     {/if}
                   </div>
                 </div>
@@ -1022,7 +1054,7 @@
                      which chopped ordinary words mid-character). -->
                 <div class="min-h-0 flex-1 overflow-auto px-3 py-3">
                   <div class="border-l-2 border-destructive/40 pl-3">
-                    <pre class="select-text whitespace-pre-wrap [overflow-wrap:anywhere] text-ui-xs leading-relaxed text-foreground/85">{error}</pre>
+                    <pre class="select-text whitespace-pre-wrap [overflow-wrap:anywhere] text-ui-xs leading-relaxed text-foreground/85">{errorText}</pre>
                     {#if /statement timeout|canceling statement due to/i.test(error)}
                       <p class="mt-3 text-ui-2xs leading-relaxed text-muted-foreground">
                         The query timed out. If this table has large JSON/text columns, select just the
