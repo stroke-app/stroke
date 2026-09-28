@@ -33,6 +33,10 @@ async fn get(token: &str, path: &str) -> Result<Value, String> {
         .await
         .map_err(|e| format!("PlanetScale request failed: {e}"))?;
     let status = resp.status().as_u16();
+    // Before reading the body: a 401 may not be JSON, and the caller refreshes on it.
+    if status == 401 {
+        return Err(super::UNAUTHORIZED.into());
+    }
     let body: Value = resp
         .json()
         .await
@@ -84,6 +88,10 @@ pub async fn build_connection(token: &str, db_ref: &str) -> Result<ProviderConne
         .await
         .map_err(|e| format!("PlanetScale password create failed: {e}"))?;
     let status = resp.status().as_u16();
+    // Before reading the body: a 401 may not be JSON, and the caller refreshes on it.
+    if status == 401 {
+        return Err(super::UNAUTHORIZED.into());
+    }
     let body: Value = resp
         .json()
         .await

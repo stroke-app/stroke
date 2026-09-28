@@ -126,30 +126,31 @@ where
         .map_err(|e| e.to_string())
 }
 
-fn read_config(app: &tauri::AppHandle) -> LockConfig {
-    crate::secrets::read_all(app)
-        .get(VAULT_KEY)
+fn config_from(map: &std::collections::HashMap<String, String>) -> LockConfig {
+    map.get(VAULT_KEY)
         .and_then(|json| serde_json::from_str::<LockConfig>(json).ok())
         .unwrap_or_default()
 }
 
-fn write_config(app: &tauri::AppHandle, cfg: &LockConfig) -> Result<(), String> {
-    let mut map = crate::secrets::read_all(app);
-    let json = serde_json::to_string(cfg).map_err(|e| e.to_string())?;
-    map.insert(VAULT_KEY.to_string(), json);
-    crate::secrets::write_all(app, &map)
+fn read_config(app: &tauri::AppHandle) -> LockConfig {
+    config_from(&crate::secrets::read_all(app))
 }
 
-/// Read, mutate, write in a single hop so the pair shares one keychain unlock.
+/// Read, mutate, write as one locked vault update, so the pair shares one
+/// keychain unlock and a concurrent secret write can't be lost. A rejected
+/// change (`f` errs) leaves the stored config as it was.
 async fn edit<F>(app: tauri::AppHandle, f: F) -> Result<LockStatus, String>
 where
     F: FnOnce(&mut LockConfig) -> Result<(), String> + Send + 'static,
 {
     off_thread(move || {
-        let mut cfg = read_config(&app);
-        f(&mut cfg)?;
-        write_config(&app, &cfg)?;
-        Ok(LockStatus::from(&cfg))
+        crate::secrets::update(&app, move |map| {
+            let mut cfg = config_from(map);
+            f(&mut cfg)?;
+            let json = serde_json::to_string(&cfg).map_err(|e| e.to_string())?;
+            map.insert(VAULT_KEY.to_string(), json);
+            Ok(LockStatus::from(&cfg))
+        })?
     })
     .await?
 }

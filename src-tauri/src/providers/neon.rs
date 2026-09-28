@@ -40,6 +40,10 @@ async fn get(token: &str, path: &str) -> Result<Value, String> {
         .await
         .map_err(|e| format!("Neon request failed: {e}"))?;
     let status = resp.status().as_u16();
+    // Before reading the body: a 401 may not be JSON, and the caller refreshes on it.
+    if status == 401 {
+        return Err(super::UNAUTHORIZED.into());
+    }
     let text = resp
         .text()
         .await

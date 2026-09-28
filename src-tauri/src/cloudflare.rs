@@ -347,33 +347,37 @@ async fn store_tokens(
     expires_in: Option<u64>,
     email: Option<&str>,
 ) -> Result<(), String> {
-    let mut map = crate::secrets::read_all_async(app).await;
-    map.insert(KEY_ACCESS.to_string(), access.to_string());
-    if let Some(r) = refresh {
-        map.insert(KEY_REFRESH.to_string(), r.to_string());
-    }
-    if let Some(exp) = expires_in {
-        let expires_at = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs()
-            + exp
-            - 30; // 30s buffer
-        map.insert(KEY_EXPIRES.to_string(), expires_at.to_string());
-    }
-    if let Some(e) = email {
-        map.insert(KEY_EMAIL.to_string(), e.to_string());
-    }
-    crate::secrets::write_all_async(app, map).await
+    let access = access.to_string();
+    let refresh = refresh.map(str::to_string);
+    let email = email.map(str::to_string);
+    crate::secrets::update_async(app, move |map| {
+        map.insert(KEY_ACCESS.to_string(), access);
+        if let Some(r) = refresh {
+            map.insert(KEY_REFRESH.to_string(), r);
+        }
+        if let Some(exp) = expires_in {
+            let expires_at = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs()
+                + exp.saturating_sub(30); // 30s buffer
+            map.insert(KEY_EXPIRES.to_string(), expires_at.to_string());
+        }
+        if let Some(e) = email {
+            map.insert(KEY_EMAIL.to_string(), e);
+        }
+    })
+    .await
 }
 
 async fn clear_tokens(app: &tauri::AppHandle) -> Result<(), String> {
-    let mut map = crate::secrets::read_all_async(app).await;
-    map.remove(KEY_ACCESS);
-    map.remove(KEY_REFRESH);
-    map.remove(KEY_EXPIRES);
-    map.remove(KEY_EMAIL);
-    crate::secrets::write_all_async(app, map).await
+    crate::secrets::update_async(app, |map| {
+        map.remove(KEY_ACCESS);
+        map.remove(KEY_REFRESH);
+        map.remove(KEY_EXPIRES);
+        map.remove(KEY_EMAIL);
+    })
+    .await
 }
 
 fn now_secs() -> u64 {
@@ -471,12 +475,24 @@ pub fn set_app_handle(app: tauri::AppHandle) {
 /// Returns None rather than an error because the caller's job is to report the
 /// *original* failure when no refresh is possible - "session expired" would be
 /// a misleading thing to show someone using a manual API token.
+// One refresh at a time. Cloudflare rotates refresh tokens, so two concurrent
+// refreshes (the D1 driver's 401 recovery and a panel's token check) with the
+// same one left the loser rejected and the session looking signed out.
+static REFRESH_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 pub async fn refreshed_token() -> Option<String> {
     let app = APP.get()?.clone();
+    let before = crate::secrets::read_all_async(&app).await.get(KEY_REFRESH).cloned();
+    let _guard = REFRESH_LOCK.lock().await;
     let map = crate::secrets::read_all_async(&app).await;
     let refresh = map.get(KEY_REFRESH).cloned().unwrap_or_default();
     if refresh.is_empty() {
         return None;
+    }
+    // Refreshed by someone else while we waited: that token is the fresh one,
+    // and reusing the rotated-out refresh token would be rejected.
+    if before.as_deref() != Some(refresh.as_str()) {
+        return map.get(KEY_ACCESS).cloned();
     }
     let new_token = refresh_access_token(&refresh).await.ok()?;
     let email = map.get(KEY_EMAIL).cloned();
@@ -509,6 +525,19 @@ pub async fn cloudflare_get_valid_token(app: tauri::AppHandle) -> Result<String,
 
     if now_secs() < expires_at {
         return Ok(access);
+    }
+
+    let _guard = REFRESH_LOCK.lock().await;
+    // Whoever held the lock may already have refreshed.
+    let map = crate::secrets::read_all_async(&app).await;
+    let expires_at = map
+        .get(KEY_EXPIRES)
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(u64::MAX);
+    if let Some(access) = map.get(KEY_ACCESS).filter(|a| !a.is_empty()) {
+        if now_secs() < expires_at {
+            return Ok(access.clone());
+        }
     }
 
     let refresh = map.get(KEY_REFRESH).cloned().unwrap_or_default();

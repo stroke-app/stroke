@@ -32,6 +32,10 @@ async fn get(token: &str, path: &str) -> Result<Value, String> {
         .await
         .map_err(|e| format!("Prisma request failed: {e}"))?;
     let status = resp.status().as_u16();
+    // Before reading the body: a 401 may not be JSON, and the caller refreshes on it.
+    if status == 401 {
+        return Err(super::UNAUTHORIZED.into());
+    }
     let body: Value = resp
         .json()
         .await
@@ -42,18 +46,13 @@ async fn get(token: &str, path: &str) -> Result<Value, String> {
     Ok(body)
 }
 
-/// Format a Management-API error. A 401 almost always means the stored token
-/// expired - tell the user to reconnect rather than showing "request failed".
+/// Format a Management-API error. A 401 never gets here: `get`/`post` return
+/// `UNAUTHORIZED` for it so the command layer can refresh and retry.
 fn api_error(status: u16, body: &Value) -> String {
     let msg = body["message"]
         .as_str()
         .or_else(|| body["error"].as_str())
         .unwrap_or("request failed");
-    if status == 401 {
-        return "Your Prisma session has expired. Click \"Sign out\" and sign in \
-                again to reconnect."
-            .to_string();
-    }
     format!("Prisma API error ({status}): {msg}")
 }
 
@@ -66,6 +65,10 @@ async fn post(token: &str, path: &str, body: serde_json::Value) -> Result<Value,
         .await
         .map_err(|e| format!("Prisma request failed: {e}"))?;
     let status = resp.status().as_u16();
+    // Before reading the body: a 401 may not be JSON, and the caller refreshes on it.
+    if status == 401 {
+        return Err(super::UNAUTHORIZED.into());
+    }
     let body: Value = resp
         .json()
         .await

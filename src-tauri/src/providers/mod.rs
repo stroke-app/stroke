@@ -351,21 +351,48 @@ struct TokenResponse {
     expires_in: Option<u64>,
 }
 
+/// Why a token request failed. Only `Rejected` - the provider answered
+/// `invalid_grant`, RFC 6749's "this refresh token is expired, revoked or
+/// already used" - ends a session. Anything else (network, proxy down, a
+/// misconfigured client) is not the user's sign-in going bad and must not
+/// sign them out.
+enum TokenError {
+    Rejected(String),
+    Other(String),
+}
+
+impl From<TokenError> for String {
+    fn from(e: TokenError) -> String {
+        match e {
+            TokenError::Rejected(m) | TokenError::Other(m) => m,
+        }
+    }
+}
+
+/// Canonical error an adapter returns for an HTTP 401 from the provider API.
+/// The command layer matches it to refresh once and retry.
+pub(crate) const UNAUTHORIZED: &str = "provider API returned 401 Unauthorized";
+
+/// Shown when the session can't be renewed. Starts with "Not signed in" so the
+/// UI recognises it and offers "Sign in again".
+const SESSION_EXPIRED: &str =
+    "Not signed in to this provider: the session expired or was revoked. Sign in again to continue.";
+
 /// POST a token request to `url` - either the real provider token endpoint
 /// (public clients) or the stroke.click proxy (confidential clients, where the
 /// proxy injects the secret and `params` includes `provider`).
-async fn post_token(url: &str, params: &[(&str, &str)]) -> Result<TokenResponse, String> {
+async fn post_token(url: &str, params: &[(&str, &str)]) -> Result<TokenResponse, TokenError> {
     let resp = http()
         .post(url)
         .form(params)
         .send()
         .await
-        .map_err(|e| format!("Token request failed: {e}"))?;
+        .map_err(|e| TokenError::Other(format!("Token request failed: {e}")))?;
     let status = resp.status().as_u16();
     let text = resp
         .text()
         .await
-        .map_err(|e| format!("Token request failed: {e}"))?;
+        .map_err(|e| TokenError::Other(format!("Token request failed: {e}")))?;
     // A non-JSON body from the proxy usually means it isn't deployed (the request
     // hit the marketing site's HTML). Surface that clearly.
     let body: serde_json::Value = serde_json::from_str(&text).map_err(|_| {
@@ -375,19 +402,26 @@ async fn post_token(url: &str, params: &[(&str, &str)]) -> Result<TokenResponse,
         } else {
             ""
         };
-        format!("Token exchange returned a non-JSON response (HTTP {status}){hint}: {snippet}")
+        TokenError::Other(format!(
+            "Token exchange returned a non-JSON response (HTTP {status}){hint}: {snippet}"
+        ))
     })?;
     if status != 200 {
         let msg = body["error_description"]
             .as_str()
             .or_else(|| body["error"].as_str())
             .unwrap_or("Token request failed");
-        return Err(format!("OAuth token error ({status}): {msg}"));
+        let text = format!("OAuth token error ({status}): {msg}");
+        return Err(if body["error"].as_str() == Some("invalid_grant") {
+            TokenError::Rejected(text)
+        } else {
+            TokenError::Other(text)
+        });
     }
     Ok(TokenResponse {
         access_token: body["access_token"]
             .as_str()
-            .ok_or("Missing access_token")?
+            .ok_or_else(|| TokenError::Other("Missing access_token".into()))?
             .to_string(),
         refresh_token: body["refresh_token"].as_str().map(String::from),
         expires_in: body["expires_in"].as_u64(),
@@ -401,7 +435,7 @@ async fn exchange_code(
     code: &str,
     verifier: Option<&str>,
     redirect_uri: &str,
-) -> Result<TokenResponse, String> {
+) -> Result<TokenResponse, TokenError> {
     let mut params = vec![
         ("grant_type", "authorization_code"),
         ("code", code),
@@ -426,7 +460,7 @@ async fn refresh_token(
     provider_key: &str,
     is_public: bool,
     refresh: &str,
-) -> Result<TokenResponse, String> {
+) -> Result<TokenResponse, TokenError> {
     let mut params = vec![
         ("grant_type", "refresh_token"),
         ("refresh_token", refresh),
@@ -453,65 +487,99 @@ async fn store_tokens(
     email: Option<&str>,
 ) -> Result<(), String> {
     let k = p.key();
-    let mut map = crate::secrets::read_all_async(app).await;
-    map.insert(format!("__{k}_access__"), access.to_string());
-    if let Some(r) = refresh {
-        map.insert(format!("__{k}_refresh__"), r.to_string());
-    }
-    if let Some(exp) = expires_in {
-        map.insert(format!("__{k}_expires__"), (now_secs() + exp - 30).to_string());
-    }
-    if let Some(e) = email {
-        map.insert(format!("__{k}_email__"), e.to_string());
-    }
-    crate::secrets::write_all_async(app, map).await
+    let access = access.to_string();
+    let refresh = refresh.map(str::to_string);
+    let email = email.map(str::to_string);
+    crate::secrets::update_async(app, move |map| {
+        map.insert(format!("__{k}_access__"), access);
+        if let Some(r) = refresh {
+            map.insert(format!("__{k}_refresh__"), r);
+        }
+        match expires_in {
+            // saturating: a provider answering expires_in < 30 used to underflow.
+            Some(exp) => {
+                map.insert(format!("__{k}_expires__"), (now_secs() + exp.saturating_sub(30)).to_string());
+            }
+            // A new token without an expiry must not inherit the old one's.
+            None => {
+                map.remove(&format!("__{k}_expires__"));
+            }
+        }
+        if let Some(e) = email {
+            map.insert(format!("__{k}_email__"), e);
+        }
+    })
+    .await
 }
 
 async fn clear_tokens(app: &tauri::AppHandle, p: Provider) -> Result<(), String> {
     let k = p.key();
-    let mut map = crate::secrets::read_all_async(app).await;
-    for suffix in ["access", "refresh", "expires", "email"] {
-        map.remove(&format!("__{k}_{suffix}__"));
-    }
-    crate::secrets::write_all_async(app, map).await
+    crate::secrets::update_async(app, move |map| {
+        for suffix in ["access", "refresh", "expires", "email"] {
+            map.remove(&format!("__{k}_{suffix}__"));
+        }
+    })
+    .await
 }
+
+// One refresh at a time. Prisma and Supabase rotate refresh tokens: the first
+// refresh consumes the stored one, so a second concurrent refresh with the same
+// token is rejected. Opening the panel fires the status check and the database
+// list together, which is exactly that race.
+static REFRESH_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 /// A valid access token, refreshing transparently if the stored one expired.
 /// For token-based providers, the "access token" is the pasted API key.
-async fn valid_token(app: &tauri::AppHandle, p: Provider) -> Result<String, String> {
+///
+/// `rejected` is an access token the provider API just answered 401 for: it is
+/// refreshed even if its stored expiry says it is still good.
+async fn valid_token(
+    app: &tauri::AppHandle,
+    p: Provider,
+    rejected: Option<&str>,
+) -> Result<String, String> {
     let k = p.key();
+    let fresh = |map: &std::collections::HashMap<String, String>| -> Option<String> {
+        let access = map.get(&format!("__{k}_access__"))?;
+        // Missing expiry => assume the token is long-lived and valid, mirroring
+        // the Cloudflare flow. A `0` default treated every such token as already
+        // expired and forced a needless re-login on every call.
+        let expires = map
+            .get(&format!("__{k}_expires__"))
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(u64::MAX);
+        let usable = now_secs() < expires && rejected != Some(access.as_str());
+        usable.then(|| access.clone())
+    };
+
     let map = crate::secrets::read_all_async(app).await;
-    let access = map
-        .get(&format!("__{k}_access__"))
-        .cloned()
-        .ok_or("Not signed in to this provider")?;
-
+    if !map.contains_key(&format!("__{k}_access__")) {
+        return Err(SESSION_EXPIRED.into());
+    }
     if p.is_token_based() {
-        return Ok(access);
+        return Ok(map[&format!("__{k}_access__")].clone());
+    }
+    if let Some(t) = fresh(&map) {
+        return Ok(t);
     }
 
-    // Missing expiry => assume the token is long-lived and valid, mirroring the
-    // Cloudflare flow (`unwrap_or(u64::MAX)`). A `0` default treated every such
-    // token as already expired and forced a needless re-login on every call -
-    // the main cause of "it asks me to sign in again each day".
-    let expires = map
-        .get(&format!("__{k}_expires__"))
-        .and_then(|s| s.parse::<u64>().ok())
-        .unwrap_or(u64::MAX);
-    if now_secs() < expires {
-        return Ok(access);
+    let _guard = REFRESH_LOCK.lock().await;
+    // Whoever held the lock may already have refreshed.
+    let map = crate::secrets::read_all_async(app).await;
+    let Some(access) = map.get(&format!("__{k}_access__")).cloned() else {
+        return Err(SESSION_EXPIRED.into());
+    };
+    if let Some(t) = fresh(&map) {
+        return Ok(t);
     }
-
-    // Past the stored expiry: try to renew silently with the refresh token. If we
-    // can't - no refresh token, or the refresh call fails (e.g. a transient proxy
-    // hiccup) - fall back to the existing access token instead of forcing a
-    // re-login. The downstream API call is the real arbiter: a genuinely dead
-    // token surfaces a clear auth error there (and the UI offers reconnect), while
-    // a still-valid or barely-past-buffer token keeps working. This favours long
-    // session persistence over eager sign-out.
-    let refresh = match map.get(&format!("__{k}_refresh__")).cloned() {
-        Some(r) => r,
-        None => return Ok(access),
+    let Some(refresh) = map.get(&format!("__{k}_refresh__")).cloned() else {
+        // Nothing to renew with. An expired-by-the-clock token may still work
+        // (the API is the real arbiter); one the API already refused won't.
+        if rejected.is_some() {
+            clear_tokens(app, p).await?;
+            return Err(SESSION_EXPIRED.into());
+        }
+        return Ok(access);
     };
     let cfg = p.oauth();
     match refresh_token(&cfg, p.key(), p.is_public_client(), &refresh).await {
@@ -527,7 +595,44 @@ async fn valid_token(app: &tauri::AppHandle, p: Provider) -> Result<String, Stri
             .await?;
             Ok(t.access_token)
         }
-        Err(_) => Ok(access),
+        // The provider says this sign-in is over: clear it so the UI shows
+        // "Sign in again" instead of failing on every call.
+        Err(TokenError::Rejected(_)) => {
+            clear_tokens(app, p).await?;
+            Err(SESSION_EXPIRED.into())
+        }
+        // Network or proxy trouble. Keep the session: hand back the current
+        // token unless the API already refused it, in which case say why.
+        Err(TokenError::Other(e)) => {
+            if rejected.is_some() {
+                Err(format!("Could not renew the sign-in: {e}"))
+            } else {
+                Ok(access)
+            }
+        }
+    }
+}
+
+/// Run a provider API call with a valid token. On a 401 the token is refreshed
+/// once and the call retried; a second 401 ends the session.
+async fn with_token<T, F, Fut>(app: &tauri::AppHandle, p: Provider, call: F) -> Result<T, String>
+where
+    F: Fn(String) -> Fut,
+    Fut: std::future::Future<Output = Result<T, String>>,
+{
+    let token = valid_token(app, p, None).await?;
+    match call(token.clone()).await {
+        Err(e) if e == UNAUTHORIZED => {
+            let renewed = valid_token(app, p, Some(&token)).await?;
+            match call(renewed).await {
+                Err(e) if e == UNAUTHORIZED => {
+                    clear_tokens(app, p).await?;
+                    Err(SESSION_EXPIRED.into())
+                }
+                r => r,
+            }
+        }
+        r => r,
     }
 }
 
@@ -598,7 +703,9 @@ pub async fn provider_start_oauth(
     };
 
     let verifier_opt = if p.uses_pkce() { Some(verifier.as_str()) } else { None };
-    let t = exchange_code(&cfg, p.key(), p.is_public_client(), &code, verifier_opt, &redirect_uri).await?;
+    let t = exchange_code(&cfg, p.key(), p.is_public_client(), &code, verifier_opt, &redirect_uri)
+        .await
+        .map_err(String::from)?;
     store_tokens(
         &app,
         p,
@@ -660,8 +767,7 @@ pub async fn provider_list_databases(
     provider: String,
 ) -> Result<Vec<ProviderDatabase>, String> {
     let p = Provider::parse(&provider)?;
-    let token = valid_token(&app, p).await?;
-    p.list_databases(&token).await
+    with_token(&app, p, |token| async move { p.list_databases(&token).await }).await
 }
 
 #[tauri::command]
@@ -671,6 +777,9 @@ pub async fn provider_build_connection(
     db_ref: String,
 ) -> Result<ProviderConnection, String> {
     let p = Provider::parse(&provider)?;
-    let token = valid_token(&app, p).await?;
-    p.build_connection(&token, &db_ref).await
+    with_token(&app, p, |token| {
+        let db_ref = db_ref.clone();
+        async move { p.build_connection(&token, &db_ref).await }
+    })
+    .await
 }

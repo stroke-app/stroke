@@ -108,6 +108,9 @@
     return { title: 'Something went wrong', detail: m || 'Please try again.' }
   }
   const shownError = $derived(friendlyError(errorMsg))
+  // The backend already cleared an expired or revoked sign-in; retrying the
+  // list can only fail again, so the way forward is signing in.
+  const sessionExpired = $derived(/not signed in/i.test(errorMsg))
 
   onMount(async () => {
     try {
@@ -356,10 +359,14 @@
       {#snippet mark()}<AlertTriangle class="size-4 shrink-0 text-destructive" />{/snippet}
       {#snippet action()}
         <div class="flex shrink-0 items-center gap-2">
-          <Button variant="outline" class="group" onclick={() => loadDatabases()}>
-            <RefreshCw class="size-3.5 transition-transform duration-500 ease-[var(--ease-out)] group-hover:rotate-180" />
-            Try again
-          </Button>
+          {#if sessionExpired}
+            <Button onclick={startAuth}>Sign in again</Button>
+          {:else}
+            <Button variant="outline" class="group" onclick={() => loadDatabases()}>
+              <RefreshCw class="size-3.5 transition-transform duration-500 ease-[var(--ease-out)] group-hover:rotate-180" />
+              Try again
+            </Button>
+          {/if}
           <Button variant="ghost" class="text-muted-foreground" onclick={() => (phase = 'idle')}>
             Start over
           </Button>
