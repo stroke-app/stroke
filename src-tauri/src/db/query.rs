@@ -2158,7 +2158,9 @@ pub async fn count_table_rows(
         .execute(&mut *tx)
         .await;
     let count = count_query.fetch_one(&mut *tx).await;
-    let _ = tx.rollback().await;
+    // COMMIT resets SET LOCAL exactly like ROLLBACK does, and unlike ROLLBACK it
+    // is accepted by Nile's proxy (see execute_sql_pg).
+    let _ = tx.commit().await;
     match count {
         Ok(n) => Ok(n),
         // 57014 = query_canceled (statement timeout). A count that can't finish
@@ -3013,7 +3015,12 @@ async fn run_sql_pg(
                 let Some(msg) = failure else { break };
                 // The transaction is poisoned by the failed statement either way.
                 let _ = tx.rollback().await;
-                if rewritten || !is_missing_binary_output(&msg) {
+                // The retry below re-runs only this last statement in a fresh
+                // transaction, so it is only sound when there is nothing before
+                // it: with `UPDATE …; SELECT …` the rollback above has already
+                // undone the UPDATE, and retrying just the SELECT would report
+                // success over a write that never happened.
+                if rewritten || last_idx != 0 || !is_missing_binary_output(&msg) {
                     return Err(format!("Query failed: {msg}"));
                 }
                 let Some(wrapped) = text_safe_wrap(pool, stmt).await else {
@@ -3034,7 +3041,15 @@ async fn run_sql_pg(
                 .execute(&mut *tx)
                 .await;
             }
-            let _ = tx.rollback().await;
+            // COMMIT, not ROLLBACK. "Ends in a SELECT" does not mean "read-only":
+            // `UPDATE …; SELECT …`, a data-modifying CTE (`WITH d AS (DELETE …
+            // RETURNING *) SELECT …`) and `SELECT nextval(…)` all write, and a
+            // rollback here threw those writes away after showing their result.
+            // On a transaction that really was read-only, COMMIT costs the same.
+            // It also matters for Nile, whose proxy rejects this ROLLBACK and
+            // leaves the connection marked in-transaction, so sqlx closed it and
+            // the next query paid a fresh handshake.
+            let _ = tx.commit().await;
 
             let row_count = data.len() as i64;
             return Ok(SqlResult {

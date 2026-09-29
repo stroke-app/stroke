@@ -167,9 +167,11 @@ async fn exact_row_count(pool: &PgPool, schema: &str, table: &str) -> Result<i64
         .await
         .map_err(|e| format!("Failed to count rows for {table}: {e}"))?;
     let count: Result<i64, _> = sqlx::query_scalar(&sql).fetch_one(&mut *tx).await;
-    // Read-only, so rollback is the cheap way back; failure to roll back doesn't
-    // change the answer.
-    let _ = tx.rollback().await;
+    // Read-only, so COMMIT is as cheap as ROLLBACK and resets SET LOCAL the same
+    // way. Not ROLLBACK: Nile's proxy rejects it here, the connection comes back
+    // marked in-transaction, sqlx closes it, and every row count on a Nile table
+    // cost a fresh ~4s handshake.
+    let _ = tx.commit().await;
     count.map_err(|e| format!("Failed to count rows for {table}: {e}"))
 }
 
