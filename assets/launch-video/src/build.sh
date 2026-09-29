@@ -23,4 +23,8 @@ ffmpeg -loglevel error -y -i stills/t_43.2.png -q:v 2 ../stroke-launch.jpg
 ffmpeg -loglevel error -y -i video.mp4 -loop 1 -i ../stroke-launch.jpg -i music_master.wav \
   -filter_complex "[0:v][1:v]overlay=enable='eq(n\,0)':shortest=1,format=yuv420p[v]" \
   -map "[v]" -map 2:a -c:v libx264 -preset slow -crf 17 -c:a aac -b:a 192k -shortest -movflags +faststart ../stroke-launch.mp4
-echo "wrote assets/launch-video/stroke-launch.mp4"
+# silent looping preview for the README (GitHub will not play repo videos inline)
+ffmpeg -loglevel error -y -i ../stroke-launch.mp4 -vf "fps=12,scale=800:-2:flags=lanczos,palettegen=max_colors=96:stats_mode=diff" stills/palette.png
+ffmpeg -loglevel error -y -i ../stroke-launch.mp4 -i stills/palette.png \
+  -lavfi "fps=12,scale=800:-2:flags=lanczos[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=4:diff_mode=rectangle" ../stroke-launch.gif
+echo "wrote assets/launch-video/stroke-launch.mp4 and stroke-launch.gif"

@@ -1,8 +1,8 @@
 # Launch video
 
-[![Stroke launch video](stroke-launch.jpg)](stroke-launch.mp4)
+[![Stroke launch video](stroke-launch.gif)](stroke-launch.mp4)
 
-`stroke-launch.mp4` is 44 seconds, 1920×1080 at 30fps with stereo AAC. `stroke-launch.jpg` is its poster (the final frame, also baked into frame 0 so thumbnails show it).
+`stroke-launch.mp4` is 44 seconds, 1920×1080 at 30fps with stereo AAC. `stroke-launch.jpg` is its poster (the final frame, also baked into frame 0 so thumbnails show it). `stroke-launch.gif` is a silent 800px loop of the whole video for the README, because GitHub only plays videos uploaded as attachments, never ones stored in the repo.
 
 ## What it shows
 
@@ -38,7 +38,7 @@ cd assets/launch-video/src
 bash build.sh
 ```
 
-A full render takes about five minutes and writes `stroke-launch.mp4` and `stroke-launch.jpg` one level up.
+A full render takes about five minutes and writes `stroke-launch.mp4`, `stroke-launch.jpg` and `stroke-launch.gif` one level up.
 
 To change it:
 
