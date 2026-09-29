@@ -338,7 +338,7 @@ pub async fn get_table_rows(
 /// Build a `WHERE` clause from the global search box + structured filters.
 /// Values are escaped into single-quoted literals (ClickHouse HTTP has no bound
 /// params here); identifiers are validated against the known column list.
-fn build_where(cols: &[ColumnStructureRow], search: Option<&str>, filters: Option<&[RowFilter]>) -> String {
+pub(crate) fn build_where(cols: &[ColumnStructureRow], search: Option<&str>, filters: Option<&[RowFilter]>) -> String {
     let known: std::collections::HashSet<&str> = cols.iter().map(|c| c.name.as_str()).collect();
     let mut clauses: Vec<String> = Vec::new();
 

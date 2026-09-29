@@ -15,6 +15,7 @@
 
 mod neon;
 mod planetscale;
+mod posthog;
 mod prisma;
 mod supabase;
 mod nile;
@@ -66,6 +67,7 @@ pub enum Provider {
     Railway,
     Nile,
     Upstash,
+    PostHog,
 }
 
 /// How a provider signs the user in.
@@ -93,6 +95,7 @@ impl Provider {
             "railway" => Ok(Self::Railway),
             "nile" => Ok(Self::Nile),
             "upstash" => Ok(Self::Upstash),
+            "posthog" => Ok(Self::PostHog),
             other => Err(format!("Unknown provider: {other}")),
         }
     }
@@ -109,6 +112,7 @@ impl Provider {
             Self::Railway => "railway",
             Self::Nile => "nile",
             Self::Upstash => "upstash",
+            Self::PostHog => "posthog",
         }
     }
 
@@ -124,6 +128,7 @@ impl Provider {
             Self::Railway => "Railway",
             Self::Nile => "Nile",
             Self::Upstash => "Upstash",
+            Self::PostHog => "PostHog",
         }
     }
 
@@ -146,13 +151,14 @@ impl Provider {
             Self::Railway => railway::OAUTH,
             Self::Nile => nile::OAUTH,
             Self::Upstash => upstash::OAUTH,
+            Self::PostHog => posthog::OAUTH,
         }
     }
 
     /// Whether a provider uses a pasted API credential instead of the browser
     /// OAuth dance: Upstash, which offers no OAuth to third-party apps.
     fn is_token_based(&self) -> bool {
-        matches!(self, Self::Upstash)
+        matches!(self, Self::Upstash | Self::PostHog)
     }
 
     /// Localhost callback ports to try, in order. PlanetScale accepts only ONE
@@ -210,6 +216,7 @@ impl Provider {
             Self::Railway => railway::list_databases(token).await,
             Self::Nile => nile::list_databases(token).await,
             Self::Upstash => upstash::list_databases(token).await,
+            Self::PostHog => posthog::list_databases(token).await,
         }
     }
 
@@ -228,6 +235,7 @@ impl Provider {
             Self::Railway => railway::build_connection(token, db_ref).await,
             Self::Nile => nile::build_connection(token, db_ref).await,
             Self::Upstash => upstash::build_connection(token, db_ref).await,
+            Self::PostHog => posthog::build_connection(token, db_ref).await,
         }
     }
 }

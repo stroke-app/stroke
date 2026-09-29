@@ -76,7 +76,7 @@
    * `value = ''`) and the whole panel crashed on open.
    */
   const emptyTokenValues = () =>
-    Object.fromEntries((meta?.token?.fields ?? []).map((/** @type {{ key: string }} */ f) => [f.key, '']))
+    Object.fromEntries((meta?.token?.fields ?? []).map((/** @type {{ key: string, default?: string }} */ f) => [f.key, f.default ?? '']))
   /** Values of a token provider's own fields (Upstash: email + API key). @type {Record<string, string>} */
   let tokenValues = $state(emptyTokenValues())
   /** Every field filled, or the single legacy field when a provider declares none. */

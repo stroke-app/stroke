@@ -197,6 +197,33 @@ impl ClickhouseConfig {
     }
 }
 
+// ── PostHog ───────────────────────────────────────────────────────────────────
+
+/// A PostHog project, queried with HogQL over PostHog's query API. PostHog keeps
+/// its data in ClickHouse, but Cloud offers no direct ClickHouse access; the API
+/// is the way in, with a personal API key that has the Query Read scope.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PosthogConfig {
+    pub name: String,
+    /// Base URL: `https://us.posthog.com`, `https://eu.posthog.com`, or a
+    /// self-hosted instance.
+    pub host: String,
+    pub project_id: String,
+    pub api_key: String,
+}
+
+impl PosthogConfig {
+    pub fn base_url(&self) -> String {
+        let h = self.host.trim().trim_end_matches('/');
+        if h.starts_with("http://") || h.starts_with("https://") {
+            h.to_string()
+        } else {
+            format!("https://{h}")
+        }
+    }
+}
+
 // ── Redis ─────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -277,6 +304,8 @@ pub enum AnyConnectionConfig {
     Duckdb(DuckdbConfig),
     #[serde(rename = "mssql")]
     Mssql(MssqlConfig),
+    #[serde(rename = "posthog")]
+    Posthog(PosthogConfig),
 }
 
 // ── Active connection ─────────────────────────────────────────────────────────
@@ -292,6 +321,7 @@ pub enum ActiveConnection {
     Redis(RedisConfig),
     Duckdb(DuckdbHandle),
     Mssql(MssqlHandle),
+    Posthog(PosthogConfig),
 }
 
 impl ActiveConnection {
@@ -306,6 +336,7 @@ impl ActiveConnection {
             Self::Redis(_) => "redis",
             Self::Duckdb(_) => "duckdb",
             Self::Mssql(_) => "mssql",
+            Self::Posthog(_) => "posthog",
         }
     }
 }
@@ -1208,6 +1239,18 @@ pub async fn connect_clickhouse(state: State<'_, DbState>, config: ClickhouseCon
     test_clickhouse_connection(config.clone()).await?;
     close_existing(&state).await;
     set_conn(&state, Some(ActiveConnection::Clickhouse(config)))
+}
+
+// ── PostHog connect / test ────────────────────────────────────────────────────
+
+pub async fn test_posthog_connection(config: PosthogConfig) -> Result<(), String> {
+    crate::db::posthog::query(&config, "SELECT 1").await.map(|_| ())
+}
+
+pub async fn connect_posthog(state: State<'_, DbState>, config: PosthogConfig) -> Result<(), String> {
+    test_posthog_connection(config.clone()).await?;
+    close_existing(&state).await;
+    set_conn(&state, Some(ActiveConnection::Posthog(config)))
 }
 
 // ── Redis connect / test ──────────────────────────────────────────────────────

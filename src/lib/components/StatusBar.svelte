@@ -272,6 +272,7 @@
       : connection?.type === 'mariadb' ? 'MariaDB'
       : connection?.type === 'cockroachdb' ? 'CockroachDB'
       : connection?.type === 'clickhouse' ? 'ClickHouse'
+      : connection?.type === 'posthog' ? 'PostHog'
       : connection?.type === 'duckdb' ? 'DuckDB'
       : connection?.type === 'mssql' ? 'SQL Server'
       : connection?.type === 'd1' ? 'D1'

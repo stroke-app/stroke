@@ -277,6 +277,7 @@
     connectLibSql,
     connectMysql,
     connectClickhouse,
+    connectPosthog,
     connectDuckdb,
     connectMssql,
     connectRedis,
@@ -6194,6 +6195,7 @@ let rowSearch = $state('')
       else if (last.type === 'libsql') await withTimeout(connectLibSql(last))
       else if (last.type === 'mysql' || last.type === 'mariadb') await withTimeout(connectMysql(last))
       else if (last.type === 'clickhouse') await withTimeout(connectClickhouse(last))
+      else if (last.type === 'posthog') await withTimeout(connectPosthog(last))
       else if (last.type === 'duckdb') await withTimeout(connectDuckdb(last))
       else if (last.type === 'mssql') await withTimeout(connectMssql(last))
       else if (last.type === 'redis') await withTimeout(connectRedis(last))
@@ -6566,6 +6568,7 @@ let rowSearch = $state('')
     else if (conn.type === 'libsql') await connectLibSql(conn)
     else if (conn.type === 'mysql' || conn.type === 'mariadb') await connectMysql(conn)
     else if (conn.type === 'clickhouse') await connectClickhouse(conn)
+    else if (conn.type === 'posthog') await connectPosthog(conn)
     else if (conn.type === 'duckdb') await connectDuckdb(conn)
     else if (conn.type === 'mssql') await connectMssql(conn)
     else if (conn.type === 'redis') await connectRedis(conn)

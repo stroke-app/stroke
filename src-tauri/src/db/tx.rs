@@ -150,6 +150,7 @@ pub async fn tx_begin(
         ActiveConnection::Clickhouse(_) => {
             return Err("ClickHouse does not support transactions".into())
         }
+        ActiveConnection::Posthog(_) => return Err("PostHog does not support transactions".into()),
         ActiveConnection::Redis(_) => return Err("Redis does not support SQL transactions".into()),
     };
 

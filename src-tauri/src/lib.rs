@@ -506,6 +506,8 @@ pub fn run() {
             commands::connect_libsql_db,
             commands::test_clickhouse,
             commands::connect_clickhouse_db,
+            commands::test_posthog,
+            commands::connect_posthog_db,
             commands::test_redis,
             commands::connect_redis_db,
             commands::redis_scan,

@@ -361,6 +361,31 @@ export async function connectLibSql(config) {
   return connectInv('connect_libsql_db', { config })
 }
 
+// ── PostHog ───────────────────────────────────────────────────────────────────
+
+/**
+ * A PostHog project, queried with HogQL over PostHog's query API.
+ * @param {{ name?: string, host: string, projectId: string|number, apiKey: string }} config
+ */
+function normalizePosthog(config) {
+  return {
+    name: String(config.name || 'PostHog'),
+    host: String(config.host || 'https://us.posthog.com'),
+    projectId: String(config.projectId ?? ''),
+    apiKey: String(config.apiKey || ''),
+  }
+}
+
+/** @param {{ name?: string, host: string, projectId: string|number, apiKey: string }} config */
+export async function testPosthogConnection(config) {
+  return inv('test_posthog', { config: normalizePosthog(config) })
+}
+
+/** @param {{ name?: string, host: string, projectId: string|number, apiKey: string }} config */
+export async function connectPosthog(config) {
+  return connectInv('connect_posthog_db', { config: normalizePosthog(config) })
+}
+
 // ── ClickHouse ────────────────────────────────────────────────────────────────
 
 /** @param {{ name: string, host: string, port: number|string, database: string, user: string, password: string, secure?: boolean }} config */

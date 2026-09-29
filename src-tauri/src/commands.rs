@@ -433,6 +433,21 @@ pub async fn connect_libsql_db(state: State<'_, DbState>, config: LibSqlConfig) 
     connect_libsql(state, config).await
 }
 
+// ── PostHog ───────────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn test_posthog(config: crate::db::connection::PosthogConfig) -> Result<(), String> {
+    crate::db::connection::test_posthog_connection(config).await
+}
+
+#[tauri::command]
+pub async fn connect_posthog_db(
+    state: State<'_, DbState>,
+    config: crate::db::connection::PosthogConfig,
+) -> Result<(), String> {
+    crate::db::connection::connect_posthog(state, config).await
+}
+
 // ── ClickHouse ────────────────────────────────────────────────────────────────
 
 #[tauri::command]

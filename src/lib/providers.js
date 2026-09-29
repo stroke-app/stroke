@@ -1,6 +1,6 @@
 /**
  * Frontend bridge for database provider adapters (Neon, Supabase, PlanetScale,
- * Prisma Postgres, TiDB Cloud, Turso, Railway, Nile, Upstash). Mirrors `cloudflare.js`: thin invoke wrappers plus a
+ * Prisma Postgres, TiDB Cloud, Turso, Railway, Nile, Upstash, PostHog). Mirrors `cloudflare.js`: thin invoke wrappers plus a
  * metadata registry the UI renders from. The heavy lifting (OAuth, listing,
  * building a connectable spec) lives in Rust (`src-tauri/src/providers`).
  */
@@ -37,6 +37,19 @@ export const PROVIDERS = [
         { key: 'apiKey', label: 'API key', type: 'password', autocomplete: 'off', placeholder: 'Developer API key', mono: true },
       ],
       join: (/** @type {Record<string, string>} */ v) => `${v.email.trim()}:${v.apiKey.trim()}`,
+    },
+  },
+  {
+    id: 'posthog', name: 'PostHog', mode: 'token', engine: 'posthog',
+    blurb: 'Product analytics, queried with HogQL. Read-only',
+    token: {
+      help: 'Create a personal API key with the Project Read and Query Read scopes. For EU Cloud use https://eu.posthog.com, or your own URL if self-hosted.',
+      helpUrl: 'https://us.posthog.com/settings/user-api-keys',
+      fields: [
+        { key: 'host', label: 'PostHog URL', type: 'url', autocomplete: 'url', placeholder: 'https://us.posthog.com', default: 'https://us.posthog.com', mono: true },
+        { key: 'apiKey', label: 'Personal API key', type: 'password', autocomplete: 'off', placeholder: 'phx_…', mono: true },
+      ],
+      join: (/** @type {Record<string, string>} */ v) => `${v.host.trim()}|${v.apiKey.trim()}`,
     },
   },
 ]

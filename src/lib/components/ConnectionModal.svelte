@@ -17,6 +17,7 @@
     connectLibSql,
     testClickhouseConnection,
     connectClickhouse,
+    connectPosthog,
     testDuckdbConnection,
     connectDuckdb,
     testMssqlConnection,
@@ -188,6 +189,11 @@
           label: "Upstash",
           desc: "Serverless Redis, connect with an API key",
         },
+        {
+          id: "posthog",
+          label: "PostHog",
+          desc: "Product analytics in HogQL, read-only",
+        },
       ],
     },
   ];
@@ -220,6 +226,7 @@
     "railway",
     "nile",
     "upstash",
+    "posthog",
     "d1",
     "redis",
   ];
@@ -236,7 +243,7 @@
 
   // Provider (sign-in) ids are surfaced as cards on their own tab, so keep them
   // out of the manual Type dropdown.
-  const PROVIDER_IDS = ["neon", "supabase", "planetscale", "prisma", "tidb", "turso", "railway", "nile", "upstash"];
+  const PROVIDER_IDS = ["neon", "supabase", "planetscale", "prisma", "tidb", "turso", "railway", "nile", "upstash", "posthog"];
   // Providers temporarily turned off (shown as a disabled tab, not connectable).
   /** @type {Set<string>} */
   const DISABLED_TABS = new Set();
@@ -265,6 +272,7 @@
     railway: "text-foreground/80",
     nile: "text-violet-500/80",
     upstash: "text-emerald-500/80",
+    posthog: "text-amber-500/80",
     drizzle: "text-lime-500/80",
     redis: "text-red-500/80",
   };
@@ -506,7 +514,7 @@
 
 
   /** Providers with an account flow, in the order they are offered. */
-  const PROVIDER_CARDS = ["neon", "supabase", "prisma", "planetscale", "tidb", "turso", "railway", "nile", "upstash", "d1"];
+  const PROVIDER_CARDS = ["neon", "supabase", "prisma", "planetscale", "tidb", "turso", "railway", "nile", "upstash", "posthog", "d1"];
 
   /** Names for providers a URI can identify but the catalog has no card for. */
   const PROVIDER_LABELS = { "prisma-postgres": "Prisma Postgres" };
@@ -1102,6 +1110,27 @@
       }, opts);
       return;
     }
+    // PostHog: the adapter hands over the base URL in `host`, the project id in
+    // `database` and the API key in `password`. Always read-only: PostHog's
+    // query API runs SELECTs, so the app's read-only mode hides every write
+    // action instead of each one failing when tried.
+    if (conn.db_type === "posthog") {
+      const existing = saved.find(
+        (s) => s.type === "posthog" && s.host === conn.host && String(s.projectId) === String(conn.database),
+      );
+      await connectWith({
+        id: existing?.id ?? newConnectionId(),
+        type: "posthog",
+        name: conn.name,
+        host: conn.host,
+        projectId: conn.database,
+        apiKey: conn.password,
+        provider: providerId,
+        providerRef: conn.providerRef,
+        readOnly: true,
+      }, opts);
+      return;
+    }
     // Redis (Upstash, Railway): the saved shape has `db` and `tls`, not a
     // database name and `ssl`.
     if (conn.db_type === "redis") {
@@ -1519,6 +1548,7 @@
       catch { return conn.url || "—"; }
     }
     if (conn.type === "d1") return conn.database || conn.name || "—";
+    if (conn.type === "posthog") return conn.projectId ? `project ${conn.projectId}` : "—";
     // Redis has no database name worth showing; where it lives is the useful bit.
     if (conn.type === "redis") return conn.host ? `${conn.host}${conn.port ? `:${conn.port}` : ""}` : "—";
     return conn.database || "—";
@@ -1603,6 +1633,7 @@
     if (conn.type === "mysql" || conn.type === "mariadb")
       return connectMysql(conn);
     if (conn.type === "clickhouse") return connectClickhouse(conn);
+    if (conn.type === "posthog") return connectPosthog(conn);
     if (conn.type === "duckdb") return connectDuckdb(conn);
     if (conn.type === "mssql") return connectMssql(conn);
     if (conn.type === "redis") return connectRedis(conn);
@@ -4189,7 +4220,7 @@
                             saved.find(
                               (s) =>
                                 s.provider === dbType &&
-                                (s.password || s.authToken) &&
+                                (s.password || s.authToken || s.apiKey) &&
                                 (s.providerRef
                                   ? s.providerRef === ref
                                   : !!dbName && s.database === dbName),
