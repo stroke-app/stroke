@@ -1805,6 +1805,12 @@ let rowSearch = $state('')
   const windowTitle = $derived.by(() => {
     const c = connection
     if (!c) return 'Stroke'
+    // A provider connection is named after where it lives ("Railway ·
+    // luminous-flexibility / MySQL"). Its database name is usually the
+    // template's generic one - Railway's `railway`, Supabase's `postgres`,
+    // Neon's `neondb` - so titling by database showed "railway" for every
+    // Railway service. Title by the name, minus the provider prefix.
+    if (c.provider && c.name) return c.name.replace(/^[^·]+·\s*/, '') || c.name
     if (c.database) return c.database
     if (c.name) return c.name
     if (c.filePath) return c.filePath.split(/[\\/]/).pop() || c.filePath
@@ -4934,6 +4940,20 @@ let rowSearch = $state('')
         editingCell: null,
       }
 
+      // An empty table must still show its columns, or the grid reads "No
+      // columns visible" and there is nothing to add a row into. Every engine
+      // returns columns from its catalog when there are no rows, but a catalog
+      // decode that fails (MySQL 8+ typing information_schema text VARBINARY
+      // did exactly this) yields none. Fall back to the table's structure.
+      if (!result.columns?.length) {
+        try {
+          const structure = await getTableColumnStructure(s.schema, s.table)
+          if (structure?.length) {
+            result.columns = structure.map((c) => ({ name: c.name, dataType: c.dataType, nullable: c.isNullable }))
+          }
+        } catch { /* keep the empty result; the grid shows its empty state */ }
+      }
+
       // Persist result to tab - one tabs write
       patchTab(result)
 
@@ -6854,8 +6874,23 @@ let rowSearch = $state('')
 
       const hasActiveFilters =
         rowSearch.trim() !== '' || activeFilters(rowFilters).length > 0
+      // Only splice the row in when the result is trustworthy. Two cases made a
+      // successful insert look like nothing happened until a manual refresh:
+      // - "All" (windowed) mode: the grid draws `_windowCount` rows from a
+      //   sparse array, so prepending grew the total but not what was drawn.
+      // - An incomplete row back from the driver (MySQL can't RETURNING; when it
+      //   can't re-read the row the id comes back NULL), which is not the row
+      //   the table holds.
+      // A sort that isn't the default can also place the row elsewhere. In each
+      // of these the page is reloaded instead: one query, always correct.
+      const pkIdx = (primaryKey ?? []).map((k) => columns.findIndex((c) => c.name === k))
+      const rowComplete =
+        Array.isArray(row) &&
+        row.length === columns.length &&
+        pkIdx.every((i) => i >= 0 && row[i] !== null && row[i] !== undefined)
+      const canSplice = !windowed && rowComplete && !rowSort
 
-      if (!hasActiveFilters && page === 1) {
+      if (!hasActiveFilters && page === 1 && canSplice) {
         rows = [row, ...rows]
         if (rows.length > effectivePageSize) {
           rows = rows.slice(0, effectivePageSize)

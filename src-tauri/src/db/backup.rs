@@ -1069,7 +1069,7 @@ async fn export_mysql(
                     let create_row = sqlx::query(&format!("SHOW CREATE TABLE `{schema}`.`{table}`"))
                         .fetch_one(pool).await
                         .map_err(|e| format!("SHOW CREATE TABLE `{table}` failed: {e}"))?;
-                    let create_sql: String = create_row.try_get(1).unwrap_or_default();
+                    let create_sql = super::mysql::my_text(&create_row, 1).unwrap_or_default();
                     out.push_str(&create_sql.replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS "));
                     out.push_str(";\n\n");
 
@@ -1110,7 +1110,7 @@ async fn export_mysql(
                 out.push_str(&format!("-- Views - {schema}\n"));
                 for view in &view_names {
                     if let Ok(row) = sqlx::query(&format!("SHOW CREATE VIEW `{schema}`.`{view}`")).fetch_one(pool).await {
-                        let create: String = row.try_get(1).unwrap_or_default();
+                        let create = super::mysql::my_text(&row, 1).unwrap_or_default();
                         out.push_str(&create.replace("CREATE ", "CREATE OR REPLACE "));
                         out.push_str(";\n");
                     }
@@ -1135,7 +1135,7 @@ async fn export_mysql(
                     let keyword = if rtype == "FUNCTION" { "FUNCTION" } else { "PROCEDURE" };
                     if let Ok(row) = sqlx::query(&format!("SHOW CREATE {keyword} `{schema}`.`{name}`")).fetch_one(pool).await {
                         let col_idx: usize = if rtype == "FUNCTION" { 2 } else { 2 };
-                        let create: String = row.try_get(col_idx).unwrap_or_default();
+                        let create = super::mysql::my_text(&row, col_idx).unwrap_or_default();
                         out.push_str(&create);
                         out.push_str("//\n\n");
                     }
@@ -1157,7 +1157,7 @@ async fn export_mysql(
                 out.push_str(&format!("-- Triggers - {schema}\nDELIMITER //\n"));
                 for trig in &trigger_names {
                     if let Ok(row) = sqlx::query(&format!("SHOW CREATE TRIGGER `{schema}`.`{trig}`")).fetch_one(pool).await {
-                        let create: String = row.try_get(2).unwrap_or_default();
+                        let create = super::mysql::my_text(&row, 2).unwrap_or_default();
                         out.push_str(&create);
                         out.push_str("//\n\n");
                     }
