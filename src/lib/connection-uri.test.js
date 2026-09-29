@@ -173,3 +173,21 @@ describe('parseConnectionUri dispatch', () => {
     expect(parseConnectionUri('libsql', 'libsql://h?authToken=t')).toMatchObject({ authToken: 't' })
   })
 })
+
+describe('passwords with URL-special characters', () => {
+  it('decodes escapes in a correctly encoded URL', async () => {
+    const { parsePostgresUri } = await import('./connection-uri.js')
+    const r = parsePostgresUri('postgres://lms-usr:Lm$$pR0D54%25@172.31.33.32:5432/lms-prod')
+    expect(r).toMatchObject({ user: 'lms-usr', password: 'Lm$$pR0D54%', host: '172.31.33.32', database: 'lms-prod' })
+  })
+
+  it('keeps a raw, unencoded password whole', async () => {
+    const { parsePostgresUri, parseMysqlUri, parseRedisUri } = await import('./connection-uri.js')
+    expect(parsePostgresUri('postgres://u:p%ss@h:5432/d')).toMatchObject({ password: 'p%ss', host: 'h', database: 'd' })
+    expect(parsePostgresUri('postgres://u:p#w?x@h/d')).toMatchObject({ password: 'p#w?x', host: 'h', database: 'd' })
+    expect(parsePostgresUri('postgres://u:pa@ss@h/d')).toMatchObject({ password: 'pa@ss', host: 'h' })
+    expect(parsePostgresUri('postgres://u:a/b@h:5432/d')).toMatchObject({ password: 'a/b', host: 'h', port: '5432' })
+    expect(parseMysqlUri('mysql://u:x%y#z@h:3306/d')).toMatchObject({ password: 'x%y#z', host: 'h', database: 'd' })
+    expect(parseRedisUri('rediss://default:p%q@h:6380')).toMatchObject({ password: 'p%q', host: 'h', port: '6380', tls: true })
+  })
+})
