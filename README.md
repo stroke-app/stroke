@@ -24,8 +24,9 @@ Stroke is a Rust + Svelte app for browsing, editing and querying databases. It s
 | Cloudflare D1 | SQLite |
 | Upstash | Redis |
 | Railway | Postgres, MySQL, Redis |
+| PostHog | HogQL, read-only |
 
-Stroke also finds databases already running on your machine (Docker containers, local Postgres and MySQL, the SQLite file your ORM points at), so a local connection is usually one click. Anything can go through an SSH tunnel.
+Stroke also finds databases already running on your machine (Docker containers, local Postgres and MySQL, the SQLite file your ORM points at), so a local connection is usually one click, and a right-click restarts or stops a container. Anything can go through an SSH tunnel.
 
 ## What's inside
 
