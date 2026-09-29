@@ -8,7 +8,7 @@
  * no triggers." These flags let the UI say *why* a section is empty ("Triggers
  * require PostgreSQL") and let callers skip pointless round-trips entirely.
  *
- * @typedef {'postgres'|'mysql'|'sqlite'|'d1'|'libsql'|'clickhouse'|'duckdb'|'mssql'|'redis'} Engine
+ * @typedef {'postgres'|'mysql'|'sqlite'|'d1'|'libsql'|'clickhouse'|'duckdb'|'mssql'|'redis'|'posthog'} Engine
  */
 
 /**
@@ -20,7 +20,7 @@ const SUPPORT = {
   // Index introspection has a backend branch for every engine.
   indexes:   new Set(['postgres', 'mysql', 'sqlite', 'd1', 'libsql', 'clickhouse', 'duckdb', 'mssql']),
   // Views are derived from table `kind`, available wherever tables are listed.
-  views:     new Set(['postgres', 'mysql', 'sqlite', 'd1', 'libsql', 'clickhouse', 'duckdb', 'mssql']),
+  views:     new Set(['postgres', 'mysql', 'sqlite', 'd1', 'libsql', 'clickhouse', 'duckdb', 'mssql', 'posthog']),
   // PostgreSQL-only introspection (pg_catalog / pg_proc / pg_policy …).
   triggers:  new Set(['postgres']),
   sequences: new Set(['postgres']),
@@ -77,6 +77,7 @@ const ENGINE_LABEL = /** @type {Record<string, string>} */ ({
   d1: 'Cloudflare D1',
   libsql: 'libSQL',
   clickhouse: 'ClickHouse',
+  posthog: 'PostHog',
   duckdb: 'DuckDB',
   mssql: 'SQL Server',
   mariadb: 'MariaDB',

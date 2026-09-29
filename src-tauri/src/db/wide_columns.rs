@@ -113,6 +113,16 @@ static WIDE_CACHE: OnceLock<std::sync::Mutex<HashMap<String, CacheEntry>>> = Onc
 /// trip per table per minute and removes the question.
 const WIDE_CACHE_TTL: Duration = Duration::from_secs(60);
 
+/// How long "nothing wide here" survives. That answer means a plain `SELECT *`,
+/// which holds no column list and so can never drop a new column: the only thing
+/// it can miss is a column that has grown past 32KB on average since, which
+/// takes far longer than this.
+const CLEAN_CACHE_TTL: Duration = Duration::from_secs(600);
+
+fn fresh(at: &Instant, cols: &[WideColumn]) -> bool {
+    at.elapsed() < if cols.is_empty() { CLEAN_CACHE_TTL } else { WIDE_CACHE_TTL }
+}
+
 fn cache_key(pool: &sqlx::PgPool, schema: &str, table: &str) -> String {
     let opts = pool.connect_options();
     format!(
@@ -136,7 +146,7 @@ pub async fn wide_columns(
     {
         if let Ok(map) = cache.lock() {
             if let Some((at, cols, _)) = map.get(&key) {
-                if at.elapsed() < WIDE_CACHE_TTL {
+                if fresh(at, cols) {
                     return cols.clone();
                 }
             }
@@ -231,7 +241,7 @@ pub async fn wide_columns(
     }
 
     if let Ok(mut map) = cache.lock() {
-        if map.len() > 256 {
+        if map.len() > 4096 {
             map.clear();
         }
         map.insert(key, (Instant::now(), cols.clone(), None));
@@ -256,7 +266,7 @@ pub async fn page_projection(
                 if let Some((at, cols, sql)) = map.get(&key) {
                     // A cached entry with no SQL yet still has to build one; a
                     // cached entry with no WIDE COLUMNS is already the answer.
-                    if at.elapsed() < WIDE_CACHE_TTL && (sql.is_some() || cols.is_empty()) {
+                    if fresh(at, cols) && (sql.is_some() || cols.is_empty()) {
                         return (sql.clone(), cols.clone());
                     }
                 }
@@ -278,6 +288,79 @@ pub async fn page_projection(
         }
     }
     (sql, cols)
+}
+
+/// Decide "nothing wide" for a whole schema in one catalog query, ahead of the
+/// first open of any of its tables.
+///
+/// The first page of a table otherwise waits on `wide_columns` before its rows
+/// query can even be sent: two round trips in a row, which to a far host
+/// (Neon, Supabase, Nile at 265-535ms each) is the slow first open. Run in the
+/// background when the table list loads. A table with no candidate columns, or
+/// whose candidates are all narrow with no TOAST to sample, gets the same empty
+/// answer `wide_columns` would give; anything else is left for the per-table
+/// path, which samples it properly.
+pub async fn prefetch_schema(pool: &sqlx::PgPool, schema: &str, tables: &[String]) {
+    use sqlx::Row;
+    let Ok(rows) = sqlx::query(
+        r#"
+        SELECT c.relname::text,
+               MAX(COALESCE(s.avg_width, 0))::bigint,
+               MAX(COALESCE(pg_total_relation_size(c.reltoastrelid), 0))::bigint
+        FROM pg_catalog.pg_attribute a
+        JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        JOIN pg_catalog.pg_type t ON t.oid = a.atttypid
+        LEFT JOIN pg_catalog.pg_stats s
+               ON s.schemaname = n.nspname AND s.tablename = c.relname AND s.attname = a.attname
+        WHERE n.nspname = $1
+          AND a.attnum > 0 AND NOT a.attisdropped
+          AND t.typname = ANY($2)
+        GROUP BY c.relname
+        "#,
+    )
+    .bind(schema)
+    .bind(WIDE_TYPES)
+    .fetch_all(pool)
+    .await
+    else {
+        return;
+    };
+    let mut needs_look: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for r in &rows {
+        let (Ok(name), Ok(avg), Ok(toast)) =
+            (r.try_get::<String, _>(0), r.try_get::<i64, _>(1), r.try_get::<i64, _>(2))
+        else {
+            continue;
+        };
+        if avg > WIDE_COLUMN_AVG_BYTES || toast > TOAST_SAMPLE_FLOOR {
+            needs_look.insert(name);
+        }
+    }
+    let cache = WIDE_CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
+    let Ok(mut map) = cache.lock() else { return };
+    if map.len() + tables.len() > 4096 {
+        map.clear();
+    }
+    let now = Instant::now();
+    for table in tables.iter().filter(|t| !needs_look.contains(*t)) {
+        map.entry(cache_key(pool, schema, table)).or_insert_with(|| (now, Vec::new(), None));
+    }
+}
+
+/// First open of a table: drop a cached PROJECTION, which names columns and can
+/// go stale when one is added, but keep a cached "nothing wide", which means
+/// `SELECT *` and cannot. Keeping it is what lets `prefetch_schema` save the
+/// first open its extra round trip.
+pub fn invalidate_projection(pool: &sqlx::PgPool, schema: &str, table: &str) {
+    if let Some(cache) = WIDE_CACHE.get() {
+        if let Ok(mut map) = cache.lock() {
+            let key = cache_key(pool, schema, table);
+            if map.get(&key).is_some_and(|(_, cols, _)| !cols.is_empty()) {
+                map.remove(&key);
+            }
+        }
+    }
 }
 
 /// Forget the cached stats for a table - after an ANALYZE, or a schema change

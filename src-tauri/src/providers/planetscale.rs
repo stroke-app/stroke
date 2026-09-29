@@ -63,28 +63,85 @@ async fn get(token: &str, path: &str) -> Result<Value, String> {
     Ok(body)
 }
 
-/// db_ref encodes "{org}/{database}" so build_connection can act without a
-/// second lookup.
-pub async fn list_databases(token: &str) -> Result<Vec<ProviderDatabase>, String> {
+/// Organizations the last listing saw, per token, so the next listing can ask
+/// for every org's databases at the same moment it re-checks the org list:
+/// one round trip in the common case instead of two in a row (3.1s measured).
+static ORGS: std::sync::Mutex<Option<(String, Vec<String>)>> = std::sync::Mutex::new(None);
+
+/// Default branch per "{org}/{database}", from the listing, so connecting
+/// skips the database lookup and goes straight to minting the password.
+static BRANCHES: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, String>>> =
+    std::sync::OnceLock::new();
+
+fn branches() -> &'static std::sync::Mutex<std::collections::HashMap<String, String>> {
+    BRANCHES.get_or_init(Default::default)
+}
+
+async fn org_names(token: &str) -> Result<Vec<String>, String> {
     let orgs = get(token, "/organizations").await?;
-    // Every org's database list in flight at once rather than one after another.
-    let org_names: Vec<&str> = orgs["data"]
+    Ok(orgs["data"]
         .as_array()
         .into_iter()
         .flatten()
-        .filter_map(|org| org["name"].as_str())
-        .collect();
-    let pages = futures::future::join_all(org_names.iter().map(|org_name| {
+        .filter_map(|org| org["name"].as_str().map(String::from))
+        .collect())
+}
+
+/// Every org's database list in flight at once rather than one after another.
+async fn org_pages(token: &str, orgs: &[String]) -> Vec<Result<Value, String>> {
+    futures::future::join_all(orgs.iter().map(|org_name| {
         let path = format!("/organizations/{org_name}/databases");
         async move { get(token, &path).await }
     }))
-    .await;
+    .await
+}
+
+/// db_ref encodes "{org}/{database}" so build_connection can act without a
+/// second lookup.
+pub async fn list_databases(token: &str) -> Result<Vec<ProviderDatabase>, String> {
+    let known = ORGS
+        .lock()
+        .ok()
+        .and_then(|g| g.as_ref().filter(|(t, _)| t == token).map(|(_, o)| o.clone()));
+    let (org_list, mut pages) = match known {
+        // Re-check the org list and fetch the known orgs' databases together.
+        Some(known) => {
+            let (fresh, pages) = tokio::join!(org_names(token), org_pages(token, &known));
+            let fresh = fresh?;
+            let mut by_org: std::collections::HashMap<String, Result<Value, String>> =
+                known.into_iter().zip(pages).collect();
+            // An org that appeared since: fetch it now (rare).
+            let added: Vec<String> = fresh.iter().filter(|o| !by_org.contains_key(*o)).cloned().collect();
+            for (org, page) in added.iter().cloned().zip(org_pages(token, &added).await) {
+                by_org.insert(org, page);
+            }
+            let pages = fresh.iter().map(|o| by_org.remove(o).unwrap_or_else(|| Err("missing".into()))).collect();
+            (fresh, pages)
+        }
+        None => {
+            let orgs = org_names(token).await?;
+            let pages = org_pages(token, &orgs).await;
+            (orgs, pages)
+        }
+    };
+    if let Ok(mut g) = ORGS.lock() {
+        *g = Some((token.to_string(), org_list.clone()));
+    }
     // `/organizations` lists every org the user belongs to, but the token only
     // covers the ones picked on the consent screen: the rest answer 403.
     let pages = super::merge_partial(
-        org_names.iter().zip(pages).map(|(org, r)| r.map(|b| (*org, b))).collect(),
+        org_list.iter().map(String::as_str).zip(pages.drain(..)).map(|(org, r)| r.map(|b| (org, b))).collect(),
         "Stroke may not have been granted this organization: sign out, sign in again, and select it on PlanetScale's consent screen.",
     )?;
+    if let Ok(mut map) = branches().lock() {
+        for (org, dbs) in &pages {
+            for db in dbs["data"].as_array().into_iter().flatten() {
+                if let (Some(name), Some(branch)) = (db["name"].as_str(), db["default_branch"].as_str()) {
+                    map.insert(format!("{org}/{name}"), branch.to_string());
+                }
+            }
+        }
+    }
     Ok(parse_databases(&pages))
 }
 
@@ -112,9 +169,16 @@ pub async fn build_connection(token: &str, db_ref: &str) -> Result<ProviderConne
         .split_once('/')
         .ok_or("Invalid PlanetScale database reference")?;
 
-    // Default branch, then mint a password on it.
-    let db = get(token, &format!("/organizations/{org}/databases/{database}")).await?;
-    let branch = db["default_branch"].as_str().unwrap_or("main");
+    // Default branch (known from the listing, else looked up), then mint a
+    // password on it.
+    let cached = branches().lock().ok().and_then(|m| m.get(db_ref).cloned());
+    let branch = match cached {
+        Some(b) => b,
+        None => {
+            let db = get(token, &format!("/organizations/{org}/databases/{database}")).await?;
+            db["default_branch"].as_str().unwrap_or("main").to_string()
+        }
+    };
 
     let resp = http()
         .post(format!(

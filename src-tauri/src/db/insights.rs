@@ -468,9 +468,8 @@ async fn mysql_activity(pool: &MySqlPool) -> InstanceActivity {
         .fetch_one(pool)
         .await
     {
-        Ok(r) => r
-            .try_get::<String, _>(1)
-            .ok()
+        // my_text: SHOW STATUS values can arrive VARBINARY on MySQL 8+.
+        Ok(r) => super::mysql::my_text(&r, 1)
             .and_then(|s| s.trim().parse::<i64>().ok())
             .unwrap_or(0),
         Err(_) => 0,
@@ -544,10 +543,8 @@ async fn mysql_status_map(pool: &MySqlPool, names: &[&str]) -> HashMap<String, i
     let mut map = HashMap::new();
     if let Ok(rows) = sqlx::query(&sql).fetch_all(pool).await {
         for r in &rows {
-            let name = r.try_get::<String, _>(0).unwrap_or_default();
-            let value = r
-                .try_get::<String, _>(1)
-                .ok()
+            let name = super::mysql::my_text(r, 0).unwrap_or_default();
+            let value = super::mysql::my_text(r, 1)
                 .and_then(|s| s.trim().parse::<i64>().ok())
                 .unwrap_or(0);
             if !name.is_empty() {

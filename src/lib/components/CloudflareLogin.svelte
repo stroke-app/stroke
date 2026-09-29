@@ -154,9 +154,39 @@
     } catch { /* stay idle */ }
   })
 
+  /** The sign-in page, pushed by the backend so the panel can offer it again. */
+  let authUrl = $state('')
+  let linkCopied = $state(false)
+
+  async function reopenAuthPage() {
+    if (!authUrl) return
+    try {
+      const { openUrl } = await import('@tauri-apps/plugin-opener')
+      await openUrl(authUrl)
+    } catch { /* the link can still be copied */ }
+  }
+
+  async function copyAuthLink() {
+    if (!authUrl) return
+    try {
+      await navigator.clipboard.writeText(authUrl)
+      linkCopied = true
+      setTimeout(() => (linkCopied = false), 1500)
+    } catch { /* clipboard blocked */ }
+  }
+
   async function startAuth() {
     phase = 'authorizing'
     errorMsg = ''
+    authUrl = ''
+    /** @type {(() => void) | undefined} */
+    let unlisten
+    try {
+      const { listen } = await import('@tauri-apps/api/event')
+      unlisten = await listen('provider-auth-url', (ev) => {
+        authUrl = /** @type {{ url: string }} */ (ev.payload)?.url ?? ''
+      })
+    } catch { /* not in Tauri */ }
     try {
       const result = await cfStartOAuth()
       email = result.email ?? ''
@@ -165,6 +195,9 @@
     } catch (e) {
       phase = 'error'
       errorMsg = String(e)
+    } finally {
+      unlisten?.()
+      authUrl = ''
     }
   }
 
@@ -308,6 +341,17 @@
     >
       {#snippet mark()}<DbIcon id="d1" class="size-4 shrink-0" />{/snippet}
     </ProviderAuthPanel>
+    {#if authUrl}
+      <!-- Same recovery row as the other providers' waiting panel. -->
+      <div class="flex flex-wrap items-center gap-x-1 gap-y-1 ps-11 text-ui-2xs text-muted-foreground">
+        <span class="me-1">Browser didn't open?</span>
+        <Button variant="ghost" size="xs" onclick={reopenAuthPage}>Open again</Button>
+        <Button variant="ghost" size="xs" onclick={copyAuthLink}>
+          {#if linkCopied}<Check class="size-3 shrink-0 text-success" aria-hidden="true" /> Copied{:else}Copy link{/if}
+        </Button>
+        <span class="sr-only" role="status">{linkCopied ? 'Link copied' : ''}</span>
+      </div>
+    {/if}
 
   {:else if phase === 'fetching'}
     <ProviderAuthPanel

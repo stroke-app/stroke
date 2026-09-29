@@ -5,6 +5,7 @@
   import { setReadOnly } from '$lib/stores/read-only.js'
   import { isWriteSql } from '$lib/sql-write.js'
   import Logo from './Logo.svelte'
+  import ConnectOverlay from './ConnectOverlay.svelte'
   import Database from '@lucide/svelte/icons/database'
   import Boxes from '@lucide/svelte/icons/boxes'
   import FileCode2 from '@lucide/svelte/icons/file-code-2'
@@ -277,6 +278,7 @@
     connectLibSql,
     connectMysql,
     connectClickhouse,
+    connectPosthog,
     connectDuckdb,
     connectMssql,
     connectRedis,
@@ -1805,6 +1807,12 @@ let rowSearch = $state('')
   const windowTitle = $derived.by(() => {
     const c = connection
     if (!c) return 'Stroke'
+    // A provider connection is named after where it lives ("Railway ·
+    // luminous-flexibility / MySQL"). Its database name is usually the
+    // template's generic one - Railway's `railway`, Supabase's `postgres`,
+    // Neon's `neondb` - so titling by database showed "railway" for every
+    // Railway service. Title by the name, minus the provider prefix.
+    if (c.provider && c.name) return c.name.replace(/^[^·]+·\s*/, '') || c.name
     if (c.database) return c.database
     if (c.name) return c.name
     if (c.filePath) return c.filePath.split(/[\\/]/).pop() || c.filePath
@@ -4934,6 +4942,20 @@ let rowSearch = $state('')
         editingCell: null,
       }
 
+      // An empty table must still show its columns, or the grid reads "No
+      // columns visible" and there is nothing to add a row into. Every engine
+      // returns columns from its catalog when there are no rows, but a catalog
+      // decode that fails (MySQL 8+ typing information_schema text VARBINARY
+      // did exactly this) yields none. Fall back to the table's structure.
+      if (!result.columns?.length) {
+        try {
+          const structure = await getTableColumnStructure(s.schema, s.table)
+          if (structure?.length) {
+            result.columns = structure.map((c) => ({ name: c.name, dataType: c.dataType, nullable: c.isNullable }))
+          }
+        } catch { /* keep the empty result; the grid shows its empty state */ }
+      }
+
       // Persist result to tab - one tabs write
       patchTab(result)
 
@@ -6099,7 +6121,9 @@ let rowSearch = $state('')
     // lands on the ~260ms path instead of the ~6.9s one. Fire and forget.
     const warmHosts = () => {
       try {
-        const hosts = [...new Set(loadSavedConnections().map((c) => c.host).filter(Boolean))]
+        // A PostHog host is a base URL, not a hostname: resolve the name inside it.
+        const hostname = (/** @type {string} */ h) => { try { return h.includes('://') ? new URL(h).hostname : h } catch { return '' } }
+        const hosts = [...new Set(loadSavedConnections().map((c) => hostname(c.host ?? '')).filter(Boolean))]
         if (hosts.length) void prewarmDns(hosts)
       } catch { /* best effort */ }
     }
@@ -6174,6 +6198,7 @@ let rowSearch = $state('')
       else if (last.type === 'libsql') await withTimeout(connectLibSql(last))
       else if (last.type === 'mysql' || last.type === 'mariadb') await withTimeout(connectMysql(last))
       else if (last.type === 'clickhouse') await withTimeout(connectClickhouse(last))
+      else if (last.type === 'posthog') await withTimeout(connectPosthog(last))
       else if (last.type === 'duckdb') await withTimeout(connectDuckdb(last))
       else if (last.type === 'mssql') await withTimeout(connectMssql(last))
       else if (last.type === 'redis') await withTimeout(connectRedis(last))
@@ -6546,6 +6571,7 @@ let rowSearch = $state('')
     else if (conn.type === 'libsql') await connectLibSql(conn)
     else if (conn.type === 'mysql' || conn.type === 'mariadb') await connectMysql(conn)
     else if (conn.type === 'clickhouse') await connectClickhouse(conn)
+    else if (conn.type === 'posthog') await connectPosthog(conn)
     else if (conn.type === 'duckdb') await connectDuckdb(conn)
     else if (conn.type === 'mssql') await connectMssql(conn)
     else if (conn.type === 'redis') await connectRedis(conn)
@@ -6854,8 +6880,23 @@ let rowSearch = $state('')
 
       const hasActiveFilters =
         rowSearch.trim() !== '' || activeFilters(rowFilters).length > 0
+      // Only splice the row in when the result is trustworthy. Two cases made a
+      // successful insert look like nothing happened until a manual refresh:
+      // - "All" (windowed) mode: the grid draws `_windowCount` rows from a
+      //   sparse array, so prepending grew the total but not what was drawn.
+      // - An incomplete row back from the driver (MySQL can't RETURNING; when it
+      //   can't re-read the row the id comes back NULL), which is not the row
+      //   the table holds.
+      // A sort that isn't the default can also place the row elsewhere. In each
+      // of these the page is reloaded instead: one query, always correct.
+      const pkIdx = (primaryKey ?? []).map((k) => columns.findIndex((c) => c.name === k))
+      const rowComplete =
+        Array.isArray(row) &&
+        row.length === columns.length &&
+        pkIdx.every((i) => i >= 0 && row[i] !== null && row[i] !== undefined)
+      const canSplice = !windowed && rowComplete && !rowSort
 
-      if (!hasActiveFilters && page === 1) {
+      if (!hasActiveFilters && page === 1 && canSplice) {
         rows = [row, ...rows]
         if (rows.length > effectivePageSize) {
           rows = rows.slice(0, effectivePageSize)
@@ -7292,35 +7333,14 @@ let rowSearch = $state('')
     class="fixed inset-0 z-50 flex flex-col items-center justify-center gap-7 bg-background"
     out:fade={{ duration: isRevealed() ? 120 : 0 }}
   >
-    <!-- The ring and the label wait before they appear. A warm reconnect lands
-         in a few hundred ms, and showing them at once flashed "Reconnecting"
-         for a moment, then faded it out over the shell - on a cold start that
-         read as the window flickering. The plain surface covers the wait. -->
-    <!-- Spinning ring + logo -->
-    <div class="relative flex size-[88px] items-center justify-center" in:fade={{ delay: 350, duration: 150 }}>
-      <svg class="absolute inset-0 size-full animate-spin" viewBox="0 0 88 88" fill="none" aria-hidden="true">
-        <circle cx="44" cy="44" r="42" stroke="currentColor" stroke-width="1.5"
-          stroke-dasharray="44 220" stroke-linecap="round"
-          class="text-foreground/20" />
-      </svg>
-      <div class="flex size-[72px] items-center justify-center rounded-full border border-border/60 bg-card ring-1 ring-inset ring-white/[0.04] shadow-[0_10px_30px_-14px_rgba(0,0,0,0.7)]">
-        <Logo class="size-9" />
-      </div>
-    </div>
-
-    <!-- Text -->
-    <div class="flex max-w-sm flex-col items-center gap-1.5 text-center" in:fade={{ delay: 350, duration: 150 }}>
-      <p class="max-w-full truncate text-ui-sm font-medium text-foreground/70">
-        {autoConnectVerb}{autoConnectName ? ` to ${shortConnLabel(autoConnectName)}` : ''}
-      </p>
-      <button
-        type="button"
-        class="mt-3 text-ui-2xs text-muted-foreground underline underline-offset-4 transition-colors hover:text-foreground"
-        onclick={() => void cancelAutoConnect()}
-      >
-        Cancel
-      </button>
-    </div>
+    <!-- The ring and the label wait before they appear (ConnectOverlay's
+         `delay`). A warm reconnect lands in a few hundred ms, and showing them
+         at once flashed "Reconnecting" over the shell on a cold start. -->
+    <ConnectOverlay
+      verb={autoConnectVerb}
+      name={autoConnectName ? shortConnLabel(autoConnectName) : ''}
+      oncancel={() => void cancelAutoConnect()}
+    />
   </div>
 {/if}
 
@@ -8479,6 +8499,7 @@ let rowSearch = $state('')
                 {rows}
                 {primaryKey}
                 target={inspectorTarget}
+                {dataVersion}
                 onclose={closeInspector}
                 onsave={handleSaveCell}
               />

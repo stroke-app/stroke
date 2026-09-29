@@ -53,6 +53,8 @@
     target = null,
     onclose = () => {},
     onsave = null,
+    /** Bumped by the parent when a row changes in place (`rows` is $state.raw). */
+    dataVersion = 0,
   } = $props()
 
   const initialLayout = loadLayout()
@@ -72,6 +74,7 @@
   const debounceTimers = new Map()
 
   const meta = $derived.by(() => {
+    void dataVersion
     if (!target || columns.length === 0) return null
 
     if (target.kind === 'cell') {
@@ -115,6 +118,7 @@
   const shikiLang = $derived(viewMode === 'json' ? 'json' : 'plaintext')
 
   const cellPreviewHref = $derived.by(() => {
+    void dataVersion
     if (!target || target.kind !== 'cell') return null
     const value = rows[target.rowIdx]?.[target.colIdx]
     if (typeof value !== 'string') return null
@@ -127,6 +131,7 @@
   const pkSet = $derived(new Set(primaryKey))
 
   const fields = $derived.by(() => {
+    void dataVersion
     if (!target || target.kind !== 'row' || columns.length === 0) return []
     const row = rows[target.rowIdx] ?? []
     const canEdit = !!onsave && primaryKey.length > 0

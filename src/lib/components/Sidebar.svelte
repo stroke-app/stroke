@@ -1525,7 +1525,10 @@
             data-sidebar-filter
           />
           </div>
-          {#if renderedRowCount === 1}
+          <!-- Only while a search has narrowed the list to one row. A schema
+               that simply has one table showed it with an empty box, where it
+               read as a stray key rather than "open your match". -->
+          {#if renderedRowCount === 1 && debouncedFilter.trim()}
             <!-- A real target, not a legend. When the filter has left one row,
                  the fastest thing to do with it is open it, and a hint that only
                  tells you which key to press makes the pointer take the long way

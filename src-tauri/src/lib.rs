@@ -330,6 +330,9 @@ pub fn run() {
             // paths that need them without a State/AppHandle argument: the D1
             // driver refreshing an expired Cloudflare token mid-session.
             cloudflare::set_app_handle(app.handle().clone());
+            if let Ok(dir) = app.path().app_data_dir() {
+                db::connection::set_data_dir(dir);
+            }
             db::connection::register_active_conn(std::sync::Arc::clone(&db_conn_for_setup));
 
             let mut window_builder = tauri::WebviewWindowBuilder::new(
@@ -506,6 +509,8 @@ pub fn run() {
             commands::connect_libsql_db,
             commands::test_clickhouse,
             commands::connect_clickhouse_db,
+            commands::test_posthog,
+            commands::connect_posthog_db,
             commands::test_redis,
             commands::connect_redis_db,
             commands::redis_scan,
@@ -566,6 +571,7 @@ pub fn run() {
             docker::docker_check,
             docker::docker_run_db,
             docker::scan_docker_databases,
+            docker::docker_container_action,
             db::local_scan::scan_local_studios,
             db::local_scan::scan_machine_databases,
             app_lock::app_lock_status,
@@ -591,6 +597,7 @@ pub fn run() {
             providers::provider_store_token,
             providers::provider_oauth_status,
             providers::provider_logout,
+            providers::provider_warm,
             providers::provider_list_databases,
             providers::provider_build_connection,
             db::backup::backup_export,

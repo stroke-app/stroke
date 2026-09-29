@@ -232,7 +232,7 @@ pub async fn fetch_primary_key(pool: &MySqlPool, schema: &str, table: &str) -> R
     .fetch_all(pool)
     .await
     .map_err(|e| format!("Failed to load primary key: {e}"))?;
-    Ok(rows.iter().filter_map(|r| r.try_get::<String, _>(0).ok()).collect())
+    Ok(rows.iter().filter_map(|r| my_text(r, 0)).collect())
 }
 
 fn escape_like(input: &str) -> String {
@@ -385,67 +385,93 @@ pub async fn get_table_rows(
     // name/type/nullability projection upfront and reuse it below for the
     // nullable map and the empty-table column fallback (instead of a second
     // information_schema.COLUMNS query inside the join).
-    let meta_rows = sqlx::query(
+    // Every catalog and data query of a table open, in as few round trips as
+    // the dependencies allow. Against a remote MySQL each sequential query costs
+    // a full round trip (~300ms to a US region from South Asia), and this used to
+    // run four in a row: columns, then count + rows, then primary key, then
+    // foreign keys. PK and FK depend on nothing, so they always join the page
+    // fetch; and a plain open (no search, filter or sort) doesn't need the column
+    // list to build its query, so the column metadata joins it too: one stage.
+    let meta_q = sqlx::query(
         "SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, EXTRA, COLUMN_DEFAULT \
          FROM information_schema.COLUMNS \
          WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION",
     )
     .bind(schema)
-    .bind(table)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| format!("Failed to load columns: {e}"))?;
-    let table_columns: Vec<String> = meta_rows
-        .iter()
-        .filter_map(|r| r.try_get::<String, _>(0).ok())
-        .collect();
-    let filters = filters.unwrap_or_default();
-    let where_clause = build_where(&table_columns, search.as_deref(), search_is_regex, search_case_sensitive, &filters)?;
-
-    let order_by = if let Some(col) = sort_column.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        // Validate the sort column against the fetched columns so an unknown name
-        // never reaches the query (mirrors the Postgres ensure_column check).
-        if !table_columns.iter().any(|c| c == col) {
-            return Err(format!("Unknown column: {col}"));
+    .bind(table);
+    let pk_fk = async {
+        if include_meta {
+            let (pk, fks) = tokio::join!(fetch_primary_key(pool, schema, table), fetch_foreign_keys(pool, schema, table));
+            (pk.unwrap_or_default(), fks.unwrap_or_default())
+        } else {
+            // The frontend keeps the values it already loaded for this table.
+            (Vec::new(), Vec::new())
         }
-        let dir = match sort_direction.as_deref().unwrap_or("asc") {
-            "desc" => "DESC",
-            _ => "ASC",
-        };
-        // Emulate NULLS FIRST/LAST - real MySQL (unlike MariaDB) rejects the
-        // `NULLS FIRST/LAST` syntax. `ISNULL(col)` yields 0 for non-NULLs and 1
-        // for NULLs: ordering it ASC keeps NULLs last, DESC puts NULLs first.
-        let qc = bt(col);
-        match nulls_order.as_deref() {
-            Some("first") => format!(" ORDER BY ISNULL({qc}) DESC, {qc} {dir}"),
-            _ => format!(" ORDER BY ISNULL({qc}), {qc} {dir}"),
-        }
-    } else {
-        String::new()
     };
+    let filters = filters.unwrap_or_default();
+    let sort_col = sort_column.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+    let needs_columns_first =
+        sort_col.is_some() || !filters.is_empty() || search.as_deref().is_some_and(|q| !q.trim().is_empty());
 
     let table_ref = format!("{}.{}", bt(schema), bt(table));
     // MySQL types COUNT(*) as BIGINT UNSIGNED, but MariaDB types it as signed
     // BIGINT - decoding the wrong signedness is a hard type-mismatch in sqlx.
     // CAST(... AS SIGNED) normalizes both to i64, which comfortably holds any
     // real row count.
-    let count_sql = format!("SELECT CAST(COUNT(*) AS SIGNED) FROM {table_ref}{}", where_clause.sql);
-    let mut count_q = sqlx::query_scalar::<_, i64>(&count_sql);
-    for b in &where_clause.binds {
-        count_q = count_q.bind(b.as_str());
-    }
+    let build = |table_columns: &[String]| -> Result<(String, String, Vec<String>), String> {
+        let where_clause = build_where(table_columns, search.as_deref(), search_is_regex, search_case_sensitive, &filters)?;
+        let order_by = if let Some(col) = sort_col.as_deref() {
+            // Validate the sort column against the fetched columns so an unknown
+            // name never reaches the query (mirrors the Postgres ensure_column check).
+            if !table_columns.iter().any(|c| c == col) {
+                return Err(format!("Unknown column: {col}"));
+            }
+            let dir = match sort_direction.as_deref().unwrap_or("asc") {
+                "desc" => "DESC",
+                _ => "ASC",
+            };
+            // Emulate NULLS FIRST/LAST - real MySQL (unlike MariaDB) rejects the
+            // `NULLS FIRST/LAST` syntax. `ISNULL(col)` yields 0 for non-NULLs and
+            // 1 for NULLs: ordering it ASC keeps NULLs last, DESC puts NULLs first.
+            let qc = bt(col);
+            match nulls_order.as_deref() {
+                Some("first") => format!(" ORDER BY ISNULL({qc}) DESC, {qc} {dir}"),
+                _ => format!(" ORDER BY ISNULL({qc}), {qc} {dir}"),
+            }
+        } else {
+            String::new()
+        };
+        Ok((
+            format!("SELECT CAST(COUNT(*) AS SIGNED) FROM {table_ref}{}", where_clause.sql),
+            format!("SELECT * FROM {table_ref}{}{} LIMIT ? OFFSET ?", where_clause.sql, order_by),
+            where_clause.binds,
+        ))
+    };
+    let run_page = |count_sql: String, data_sql: String, binds: Vec<String>| async move {
+        let mut count_q = sqlx::query_scalar::<_, i64>(&count_sql);
+        let mut data_q = sqlx::query(&data_sql);
+        for b in &binds {
+            count_q = count_q.bind(b.clone());
+            data_q = data_q.bind(b.clone());
+        }
+        data_q = data_q.bind(limit).bind(offset);
+        let (t, r) = tokio::join!(count_q.fetch_one(pool), data_q.fetch_all(pool));
+        (t, r, count_sql, data_sql)
+    };
 
-    let data_sql = format!("SELECT * FROM {table_ref}{}{} LIMIT ? OFFSET ?", where_clause.sql, order_by);
-    let mut data_q = sqlx::query(&data_sql);
-    for b in &where_clause.binds {
-        data_q = data_q.bind(b.as_str());
-    }
-    data_q = data_q.bind(limit).bind(offset);
-
-    let (total_res, rows_res) = tokio::join!(
-        count_q.fetch_one(pool),
-        data_q.fetch_all(pool),
-    );
+    let (meta_rows, (total_res, rows_res, count_sql, data_sql), (pk, fks)) = if needs_columns_first {
+        // The WHERE and ORDER BY are built from, and validated against, the
+        // column list, so it has to land first.
+        let meta_rows = meta_q.fetch_all(pool).await.map_err(|e| format!("Failed to load columns: {e}"))?;
+        let names: Vec<String> = meta_rows.iter().filter_map(|r| my_text(r, 0)).collect();
+        let (count_sql, data_sql, binds) = build(&names)?;
+        let (page, meta) = tokio::join!(run_page(count_sql, data_sql, binds), pk_fk);
+        (meta_rows, page, meta)
+    } else {
+        let (count_sql, data_sql, binds) = build(&[])?;
+        let (meta_rows, page, meta) = tokio::join!(meta_q.fetch_all(pool), run_page(count_sql, data_sql, binds), pk_fk);
+        (meta_rows.map_err(|e| format!("Failed to load columns: {e}"))?, page, meta)
+    };
     let total: i64 = total_res.map_err(|e| format!("Failed to count rows: {e}"))?;
     let rows = rows_res.map_err(|e| format!("Failed to fetch rows: {e}"))?;
 
@@ -455,10 +481,10 @@ pub async fn get_table_rows(
     let flags_map: HashMap<String, super::query::ColumnFlags> = meta_rows
         .iter()
         .filter_map(|r| {
-            let name = r.try_get::<String, _>(0).ok()?;
-            let nullable = r.try_get::<String, _>(2).ok()?;
-            let extra = r.try_get::<String, _>(3).unwrap_or_default().to_ascii_lowercase();
-            let default = r.try_get::<Option<String>, _>(4).ok().flatten();
+            let name = my_text(r, 0)?;
+            let nullable = my_text(r, 2)?;
+            let extra = my_text(r, 3).unwrap_or_default().to_ascii_lowercase();
+            let default = my_text(r, 4);
             let auto_generated = extra.contains("auto_increment") || extra.contains("generated");
             Some((
                 name,
@@ -482,10 +508,7 @@ pub async fn get_table_rows(
         meta_rows
             .iter()
             .filter_map(|r| {
-                Some(ColumnInfo::new(
-                    r.try_get::<String, _>(0).ok()?,
-                    r.try_get::<String, _>(1).ok()?.to_lowercase(),
-                ))
+                Some(ColumnInfo::new(my_text(r, 0)?, my_text(r, 1)?.to_lowercase()))
             })
             .collect()
     };
@@ -502,17 +525,6 @@ pub async fn get_table_rows(
         .iter()
         .map(|row| (0..row.len()).map(|i| cell_to_json(row, i)).collect())
         .collect();
-
-    // Skip the PK/FK catalog round-trips on metadata-skipping fetches; the
-    // frontend keeps the values it already loaded for this table.
-    let (pk, fks) = if include_meta {
-        (
-            fetch_primary_key(pool, schema, table).await.unwrap_or_default(),
-            fetch_foreign_keys(pool, schema, table).await.unwrap_or_default(),
-        )
-    } else {
-        (Vec::new(), Vec::new())
-    };
 
     Ok(TableRows {
         // Preview fetching is a Postgres path (pg_stats + pg_column_size).
@@ -548,11 +560,13 @@ async fn fetch_foreign_keys(pool: &MySqlPool, schema: &str, table: &str) -> Resu
     let mut out: Vec<ForeignKeyInfo> = Vec::new();
     let mut current: Option<String> = None;
     for row in &rows {
-        let constraint: String = row.try_get(0).unwrap_or_default();
-        let column: String = row.try_get(1).unwrap_or_default();
-        let ref_schema: String = row.try_get(2).unwrap_or_default();
-        let ref_table: String = row.try_get(3).unwrap_or_default();
-        let ref_col: String = row.try_get(4).unwrap_or_default();
+        // my_text: a refused VARBINARY decode here blanked every foreign key on
+        // MySQL 8+, so FK jumps and relation chips silently disappeared.
+        let constraint = my_text(row, 0).unwrap_or_default();
+        let column = my_text(row, 1).unwrap_or_default();
+        let ref_schema = my_text(row, 2).unwrap_or_default();
+        let ref_table = my_text(row, 3).unwrap_or_default();
+        let ref_col = my_text(row, 4).unwrap_or_default();
         if current.as_deref() == Some(&constraint) {
             if let Some(fk) = out.last_mut() {
                 fk.columns.push(column);
@@ -722,10 +736,13 @@ pub async fn insert_table_row(
     let mut auto_increment_col: Option<String> = None;
 
     for row in &meta_rows {
-        let name: String = row.try_get(0).map_err(|e| format!("Invalid column name: {e}"))?;
-        let is_nullable: String = row.try_get(1).unwrap_or_else(|_| "NO".to_string());
-        let default_val: Option<String> = row.try_get::<Option<String>, _>(2).ok().flatten();
-        let extra: String = row.try_get::<Option<String>, _>(3).ok().flatten().unwrap_or_default();
+        // my_text throughout: on MySQL 8+ these can arrive VARBINARY. A refused
+        // decode of EXTRA silently lost AUTO_INCREMENT, so the new id was never
+        // read back and the inserted row came back with a NULL key.
+        let name = my_text(row, 0).ok_or("Invalid column name in information_schema")?;
+        let is_nullable = my_text(row, 1).unwrap_or_else(|| "NO".to_string());
+        let default_val = my_text(row, 2);
+        let extra = my_text(row, 3).unwrap_or_default();
         let is_auto = extra.to_lowercase().contains("auto_increment");
         let opt = is_auto || default_val.is_some() || is_nullable.eq_ignore_ascii_case("YES");
         if is_auto {
@@ -904,5 +921,61 @@ mod tests {
     fn empty_is_not_text() {
         // An empty BLOB is not a name; let it report its length instead.
         assert!(!is_plain_text(""));
+    }
+}
+
+/// Against the dialect-matrix container (`docker compose -f docker/dialects.yml
+/// up -d mysql`), like `dialect_matrix`: `cargo test --lib mysql_live -- --ignored`.
+#[cfg(test)]
+mod mysql_live {
+    use super::*;
+
+    async fn pool() -> MySqlPool {
+        MySqlPool::connect("mysql://root:stroke@127.0.0.1:53306/shop").await.expect("stroke-test-mysql is running")
+    }
+
+    /// A plain open fetches everything in one stage; a sorted one fetches the
+    /// columns first. Both must return the same rows, columns, key and count.
+    #[tokio::test]
+    #[ignore]
+    async fn plain_and_sorted_opens_agree() {
+        let pool = pool().await;
+        let plain = get_table_rows(&pool, "shop", "customers", 50, 0, None, false, false, None, None, None, true, None)
+            .await
+            .unwrap();
+        assert!(!plain.columns.is_empty() && !plain.rows.is_empty());
+        assert_eq!(plain.total, plain.rows.len() as i64);
+        assert!(!plain.primary_key.is_empty(), "primary key read back");
+        let first = plain.columns[0].name.clone();
+        let sorted = get_table_rows(&pool, "shop", "customers", 50, 0, None, false, false, Some(first), Some("desc".into()), None, true, None)
+            .await
+            .unwrap();
+        assert_eq!(sorted.columns.len(), plain.columns.len());
+        assert_eq!(sorted.total, plain.total);
+        assert_eq!(sorted.primary_key, plain.primary_key);
+        assert!(get_table_rows(&pool, "shop", "customers", 50, 0, None, false, false, Some("nope".into()), None, None, true, None)
+            .await
+            .unwrap_err()
+            .contains("Unknown column"));
+    }
+
+    /// The bug behind "No columns visible": an empty table must still come back
+    /// with its columns, from the catalog.
+    #[tokio::test]
+    #[ignore]
+    async fn an_empty_table_still_has_columns() {
+        let pool = pool().await;
+        sqlx::query("CREATE TABLE IF NOT EXISTS stroke_empty_probe (id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY, name TEXT)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let r = get_table_rows(&pool, "shop", "stroke_empty_probe", 50, 0, None, false, false, None, None, None, true, None)
+            .await
+            .unwrap();
+        let names: Vec<&str> = r.columns.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["id", "name"]);
+        assert_eq!((r.total, r.rows.len()), (0, 0));
+        assert_eq!(r.primary_key, ["id"]);
+        sqlx::query("DROP TABLE stroke_empty_probe").execute(&pool).await.unwrap();
     }
 }

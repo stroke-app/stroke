@@ -1797,6 +1797,12 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   const editKey = (/** @type {number} */ rowIdx, /** @type {number} */ colIdx) => `${rowIdx}:${colIdx}`;
 
   /** The value a cell currently shows: the staged edit if any, else the DB value. */
+  /** An expanded row's JSON, staged edits included. `_version` is only there so
+   *  the template re-reads it when a row is swapped in place. */
+  function expandedRecord(/** @type {number} */ rowIdx, /** @type {number} */ _version) {
+    return rowToRecord(columns, columns.map((_, i) => effectiveCellValue(rowIdx, i)), hiddenColumns);
+  }
+
   function effectiveCellValue(/** @type {number} */ rowIdx, /** @type {number} */ colIdx) {
     const staged = pendingEdits.get(editKey(rowIdx, colIdx));
     return staged ? staged.value : rows[rowIdx]?.[colIdx];
@@ -8210,8 +8216,11 @@ import FilterX from "@lucide/svelte/icons/filter-x";
                    horizontal scroll instead of a reactive transform:translateX() that
                    lags a frame behind the native scroll (the "vibration"). -->
               {#snippet expandBody(/** @type {number} */ exIdx)}
+                <!-- `rows` is $state.raw and a saved edit swaps one row in place, so
+                     the record reads `dataVersion` to rebuild; staged edits come
+                     through effectiveCellValue, the same values the grid paints. -->
                 <RowExpandViewer
-                  record={rowToRecord(columns, rows[exIdx], hiddenColumns)}
+                  record={expandedRecord(exIdx, dataVersion)}
                   rowLabel={"row " + (exIdx + 1)}
                   indent={gutterWidth}
                   onclose={() => toggleRowExpand(exIdx)}

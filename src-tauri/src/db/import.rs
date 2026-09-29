@@ -174,6 +174,7 @@ pub async fn import_rows(
         ActiveConnection::Clickhouse(_) => {
             Err("Importing rows is not supported for ClickHouse. Use INSERT INTO … in the SQL console.".into())
         }
+        ActiveConnection::Posthog(_) => Err("PostHog is read-only: its data comes from HogQL queries.".into()),
         ActiveConnection::Redis(_) => Err("Importing rows is not supported on Redis".into()),
     }?;
 

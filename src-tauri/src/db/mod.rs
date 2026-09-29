@@ -1,5 +1,6 @@
 pub mod backup;
 pub mod clickhouse;
+pub mod posthog;
 pub mod connection;
 pub mod d1;
 pub mod duckdb;

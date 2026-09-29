@@ -4,6 +4,8 @@
   import CloudflareLogin from "./CloudflareLogin.svelte";
   import ProviderConnect from "./ProviderConnect.svelte";
   import DbIcon from "./DbIcon.svelte";
+  import ConnectOverlay from "./ConnectOverlay.svelte";
+  import { fade } from "svelte/transition";
   import {
     testPostgresConnection,
     connectPostgres,
@@ -17,6 +19,7 @@
     connectLibSql,
     testClickhouseConnection,
     connectClickhouse,
+    connectPosthog,
     testDuckdbConnection,
     connectDuckdb,
     testMssqlConnection,
@@ -25,6 +28,7 @@
     connectRedis,
     scanLocalStudios,
     scanDockerDatabases,
+    dockerContainerAction,
     scanMachineDatabases,
   } from "$lib/api.js";
   import {
@@ -53,8 +57,9 @@
   import { IS_MAC } from '$lib/shortcuts.js';
   import { focusTrap } from '$lib/actions/focus-trap.js';
   import { toast } from "$lib/components/ui/sonner/toast.svelte.js";
+  import * as ContextMenu from "$lib/components/ui/context-menu/index.js";
   import { parseConnectionUri, detectConnectionUri } from "$lib/connection-uri.js";
-  import { PROVIDERS, providerBuildConnection } from "$lib/providers.js";
+  import { PROVIDERS, providerBuildConnection, providerWarm } from "$lib/providers.js";
   import { providerOf, engineLabel } from "$lib/connection-provider.js";
   import ConfirmDialog from "./ConfirmDialog.svelte";
 
@@ -188,6 +193,11 @@
           label: "Upstash",
           desc: "Serverless Redis, connect with an API key",
         },
+        {
+          id: "posthog",
+          label: "PostHog",
+          desc: "Product analytics in HogQL, read-only",
+        },
       ],
     },
   ];
@@ -220,6 +230,7 @@
     "railway",
     "nile",
     "upstash",
+    "posthog",
     "d1",
     "redis",
   ];
@@ -236,12 +247,10 @@
 
   // Provider (sign-in) ids are surfaced as cards on their own tab, so keep them
   // out of the manual Type dropdown.
-  const PROVIDER_IDS = ["neon", "supabase", "planetscale", "prisma", "tidb", "turso", "railway", "nile", "upstash"];
+  const PROVIDER_IDS = ["neon", "supabase", "planetscale", "prisma", "tidb", "turso", "railway", "nile", "upstash", "posthog"];
   // Providers temporarily turned off (shown as a disabled tab, not connectable).
-  // Railway: the adapter is done, but its OAuth app isn't registered yet, so
-  // there is no client id to sign in with.
   /** @type {Set<string>} */
-  const DISABLED_TABS = new Set(["railway"]);
+  const DISABLED_TABS = new Set();
 
   // Subtle per-engine icon tint (color-500/600), theme-aware via Tailwind tokens.
   const ENGINE_TINT = {
@@ -267,6 +276,7 @@
     railway: "text-foreground/80",
     nile: "text-violet-500/80",
     upstash: "text-emerald-500/80",
+    posthog: "text-amber-500/80",
     drizzle: "text-lime-500/80",
     redis: "text-red-500/80",
   };
@@ -331,6 +341,11 @@
   let lastId = $state(getLastConnectionId());
   let editingId = $state(/** @type {string|null} */ (null));
   let connecting = $state(/** @type {string|null} */ (null));
+  /** The connection `connecting` is dialling, for the overlay: its name, icon
+   *  and host, which are often not the form's (a provider pick, a saved row).
+   *  `via` says which control started it, so only that one shows progress.
+   *  @type {{ conn: any, via: string } | null} */
+  let dialing = $state(null);
   let testing = $state(false);
   let error = $state("");
   let testOk = $state(false);
@@ -341,6 +356,7 @@
   function stopOp() {
     opId += 1;
     connecting = null;
+    dialing = null;
     testing = false;
     error = "";
     testOk = false;
@@ -508,7 +524,7 @@
 
 
   /** Providers with an account flow, in the order they are offered. */
-  const PROVIDER_CARDS = ["neon", "supabase", "prisma", "planetscale", "tidb", "turso", "railway", "nile", "upstash", "d1"];
+  const PROVIDER_CARDS = ["neon", "supabase", "prisma", "planetscale", "tidb", "turso", "railway", "nile", "upstash", "posthog", "d1"];
 
   /** Names for providers a URI can identify but the catalog has no card for. */
   const PROVIDER_LABELS = { "prisma-postgres": "Prisma Postgres" };
@@ -1104,6 +1120,27 @@
       }, opts);
       return;
     }
+    // PostHog: the adapter hands over the base URL in `host`, the project id in
+    // `database` and the API key in `password`. Always read-only: PostHog's
+    // query API runs SELECTs, so the app's read-only mode hides every write
+    // action instead of each one failing when tried.
+    if (conn.db_type === "posthog") {
+      const existing = saved.find(
+        (s) => s.type === "posthog" && s.host === conn.host && String(s.projectId) === String(conn.database),
+      );
+      await connectWith({
+        id: existing?.id ?? newConnectionId(),
+        type: "posthog",
+        name: conn.name,
+        host: conn.host,
+        projectId: conn.database,
+        apiKey: conn.password,
+        provider: providerId,
+        providerRef: conn.providerRef,
+        readOnly: true,
+      }, opts);
+      return;
+    }
     // Redis (Upstash, Railway): the saved shape has `db` and `tls`, not a
     // database name and `ssl`.
     if (conn.db_type === "redis") {
@@ -1521,6 +1558,7 @@
       catch { return conn.url || "—"; }
     }
     if (conn.type === "d1") return conn.database || conn.name || "—";
+    if (conn.type === "posthog") return conn.projectId ? `project ${conn.projectId}` : "—";
     // Redis has no database name worth showing; where it lives is the useful bit.
     if (conn.type === "redis") return conn.host ? `${conn.host}${conn.port ? `:${conn.port}` : ""}` : "—";
     return conn.database || "—";
@@ -1538,6 +1576,9 @@
   $effect(() => {
     if (!open) return;
     untrack(() => {
+      // The first provider call pays DNS + TCP + TLS; start those now, while
+      // the dialog is still being read, so a listing or connect doesn't.
+      void providerWarm();
       saved = loadSavedConnections().sort(byLastConnected);
       lastId = getLastConnectionId();
       resetForm(null);
@@ -1605,6 +1646,7 @@
     if (conn.type === "mysql" || conn.type === "mariadb")
       return connectMysql(conn);
     if (conn.type === "clickhouse") return connectClickhouse(conn);
+    if (conn.type === "posthog") return connectPosthog(conn);
     if (conn.type === "duckdb") return connectDuckdb(conn);
     if (conn.type === "mssql") return connectMssql(conn);
     if (conn.type === "redis") return connectRedis(conn);
@@ -1627,6 +1669,7 @@
   async function connectWith(conn, opts = {}) {
     const myOp = ++opId;
     connecting = conn.id;
+    dialing = { conn, via: opts.via ?? "" };
     error = "";
     // Provider and saved connections dial an address that isn't in the form.
     failTarget = conn.provider && conn.host ? { host: conn.host, port: conn.port } : null;
@@ -1646,7 +1689,10 @@
       }
       failWith(friendlyError(e));
     } finally {
-      if (myOp === opId) connecting = null;
+      if (myOp === opId) {
+        connecting = null;
+        dialing = null;
+      }
     }
   }
 
@@ -1793,11 +1839,62 @@
     localPhase = "done";
   }
 
+  /** The container a Docker card action is running on, so its menu can't fire twice. */
+  let dockerBusy = $state("");
+
+  /**
+   * Start, stop or restart a Docker card's container, then rescan so the list
+   * shows what is actually running. Stopping drops the card (the scan lists
+   * running containers only), so its toast offers the way back.
+   * @param {LocalTarget} t @param {'start' | 'stop' | 'restart'} action
+   */
+  async function dockerAct(t, action) {
+    const name = t.container;
+    if (!name || dockerBusy) return;
+    dockerBusy = name;
+    const verb = { start: "Started", stop: "Stopped", restart: "Restarted" }[action];
+    try {
+      await dockerContainerAction(name, action);
+      toast.success(`${verb} ${name}`, action === "stop"
+        ? { action: { label: "Start again", onClick: () => void dockerAct({ ...t }, "start") } }
+        : {});
+      await refreshLocal();
+    } catch (e) {
+      toast.error(`Couldn't ${action} ${name}`, { description: String(e).replace(/^Error:\s*/, "") });
+    } finally {
+      dockerBusy = "";
+    }
+  }
+
+  /** A local target's connection as a URL, credentials included (it's on loopback). @param {LocalTarget} t */
+  function localUrl(t) {
+    const c = t.conn;
+    if (!c) return "";
+    const scheme = { postgres: "postgresql", mysql: "mysql", mariadb: "mysql", redis: "redis", clickhouse: "clickhouse", mssql: "sqlserver" }[c.type] ?? c.type;
+    const auth = c.user || c.password
+      ? `${encodeURIComponent(c.user ?? "")}${c.password ? `:${encodeURIComponent(c.password)}` : ""}@`
+      : "";
+    const db = c.type === "redis" ? `/${c.db ?? 0}` : c.database ? `/${encodeURIComponent(c.database)}` : "";
+    return `${scheme}://${auth}${c.host}:${c.port}${db}`;
+  }
+
+  /** @param {string} text @param {string} done */
+  async function copyText(text, done) {
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success(done);
+    } catch {
+      toast.error("Couldn't copy to the clipboard");
+    }
+  }
+
   /**
    * One row in "Running on this machine", from either source.
    * @typedef {{
    *   id: string, mark: string, trailingMark: string | null, title: string,
    *   badge: string, subtitle: string, hint: string, conn: any | null,
+   *   container?: string,
    * }} LocalTarget
    */
 
@@ -1838,6 +1935,7 @@
             : { ssl: false };
     return /** @type {LocalTarget} */ ({
       id: `docker:${d.name}`,
+      container: d.name,
       mark: d.engine,
       trailingMark: null,
       title: d.name,
@@ -2109,6 +2207,7 @@
     if (save && !editingId && blockedAsDuplicate(payload, () => void handleConnect({ save }))) return;
     const myOp = ++opId;
     connecting = editingId ?? "__new__";
+    dialing = { conn: { ...payload, name: payload.name || name || statusTarget }, via: "form" };
     error = "";
     try {
       const existing = editingId ? saved.find((s) => s.id === editingId) : null;
@@ -2144,7 +2243,10 @@
     } catch (e) {
       if (myOp === opId) failWith(friendlyError(e));
     } finally {
-      if (myOp === opId) connecting = null;
+      if (myOp === opId) {
+        connecting = null;
+        dialing = null;
+      }
     }
   }
 
@@ -2226,6 +2328,26 @@
     if (dbType === "d1") return databaseId ? `${databaseId.slice(0, 8)}…` : "—";
     return `${host || "—"}:${port || "—"}/${database || ""}`;
   });
+
+  /** Where a connection is going, for the overlay and footer. @param {any} c */
+  function dialTarget(c) {
+    if (!c) return "";
+    if (c.url) {
+      try {
+        const u = new URL(c.url);
+        return u.host || c.url;
+      } catch {
+        return String(c.url);
+      }
+    }
+    if (c.filePath || c.path) return String(c.filePath ?? c.path);
+    if (c.host) {
+      // PostHog keeps a base URL in `host`.
+      const h = String(c.host).replace(/^https?:\/\//, "");
+      return c.port && !String(c.host).includes("://") ? `${h}:${c.port}` : h;
+    }
+    return c.database ?? "";
+  }
 
   /** Attempt to close the dialog - guard against discarding unsaved edits. */
   function requestClose() {
@@ -3207,6 +3329,24 @@
 
         <!-- ── Form panel ──────────────────────────────────────────── -->
         <div class="relative flex min-h-0 min-w-0 flex-col">
+          <!-- Connecting: the panel gives way to what is being dialled, the same
+               look as the launch reconnect. The saved list on the left stays
+               visible; the footer's Stop and this Cancel both end the attempt. -->
+          {#if dialing}
+            <div
+              class="absolute inset-0 z-20 flex items-center justify-center bg-background/95 backdrop-blur-[2px]"
+              in:fade={{ duration: 120, delay: 150 }}
+              out:fade={{ duration: 100 }}
+            >
+              <ConnectOverlay
+                icon={providerOf(dialing.conn) ?? dialing.conn.type ?? ""}
+                name={dialing.conn.name ?? ""}
+                detail={dialTarget(dialing.conn)}
+                delay={150}
+                oncancel={stopOp}
+              />
+            </div>
+          {/if}
           <!-- ── Header ──────────────────────────────────────────────────────
              One question per screen. Step 1 asks only what you're connecting to;
              the title becomes that choice in step 2, with the back arrow as the
@@ -3525,9 +3665,10 @@
                          height as the whole rest of the page; they are the same
                          shape and the same size as each other, so they tile. -->
                     <div class="mt-2 grid grid-cols-1 gap-1.5 @xl:grid-cols-2 @4xl:grid-cols-4">
-                      {#each targets as t, i (t.id)}
+                {#snippet localCard(/** @type {LocalTarget} */ t, /** @type {number} */ i, /** @type {Record<string, any>} */ cardProps = {})}
                         {@const busy = connecting === t.id}
                         <button
+                          {...cardProps}
                           type="button"
                           disabled={!t.conn || !!connecting}
                           title={t.hint}
@@ -3587,6 +3728,41 @@
                             </span>
                           {/if}
                         </button>
+                {/snippet}
+                      {#each targets as t, i (t.id)}
+                        {#if t.container}
+                          <!-- Docker cards: right-click for the container's own
+                               controls. Reversible actions only; deleting a
+                               container or its volume stays in Docker. -->
+                          <ContextMenu.Root>
+                            <ContextMenu.Trigger>
+                              {#snippet child({ props })}
+                                {@render localCard(t, i, props)}
+                              {/snippet}
+                            </ContextMenu.Trigger>
+                            <ContextMenu.Content class="min-w-52">
+                              <ContextMenu.Item disabled={!t.conn || !!connecting} onSelect={() => void connectLocal(t)}>
+                                <Icon name="plug" /> Connect
+                              </ContextMenu.Item>
+                              <ContextMenu.Separator />
+                              <ContextMenu.Item disabled={dockerBusy === t.container} onSelect={() => void dockerAct(t, "restart")}>
+                                <Icon name="refresh-cw" /> Restart container
+                              </ContextMenu.Item>
+                              <ContextMenu.Item disabled={dockerBusy === t.container} onSelect={() => void dockerAct(t, "stop")}>
+                                <Icon name="square" /> Stop container
+                              </ContextMenu.Item>
+                              <ContextMenu.Separator />
+                              <ContextMenu.Item disabled={!t.conn} onSelect={() => void copyText(localUrl(t), "Connection URL copied")}>
+                                <Icon name="link-2" /> Copy connection URL
+                              </ContextMenu.Item>
+                              <ContextMenu.Item onSelect={() => void copyText(t.container ?? "", "Container name copied")}>
+                                <Icon name="copy" /> Copy container name
+                              </ContextMenu.Item>
+                            </ContextMenu.Content>
+                          </ContextMenu.Root>
+                        {:else}
+                          {@render localCard(t, i)}
+                        {/if}
                       {/each}
                     </div>
                   </div>
@@ -4191,7 +4367,7 @@
                             saved.find(
                               (s) =>
                                 s.provider === dbType &&
-                                (s.password || s.authToken) &&
+                                (s.password || s.authToken || s.apiKey) &&
                                 (s.providerRef
                                   ? s.providerRef === ref
                                   : !!dbName && s.database === dbName),
@@ -4415,9 +4591,10 @@
                     >
                   {/if}
                   {#if step !== "pick" && !error}
+                    {@const target = dialing ? dialTarget(dialing.conn) : statusTarget}
                     <span
                       class="min-w-0 truncate font-mono text-ui-2xs text-muted-foreground"
-                      title={statusTarget}>{statusTarget}</span
+                      title={target}>{target}</span
                     >
                   {/if}
                 </div>
@@ -4457,9 +4634,9 @@
                       disabled={isBusy}
                       title="Resume {lastConn.name} ({IS_MAC ? '⌘⇧' : 'Ctrl+Shift+'}Enter)"
                       aria-keyshortcuts="Control+Shift+Enter Meta+Shift+Enter"
-                      onclick={() => connectWith(lastConn)}
+                      onclick={() => connectWith(lastConn, { via: "resume" })}
                     >
-                      {#if connecting === lastConn.id}
+                      {#if connecting === lastConn.id && dialing?.via === "resume"}
                         <Icon
                           name="loader-2"
                           class="size-3.5 animate-spin"

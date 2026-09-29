@@ -76,7 +76,7 @@
    * `value = ''`) and the whole panel crashed on open.
    */
   const emptyTokenValues = () =>
-    Object.fromEntries((meta?.token?.fields ?? []).map((/** @type {{ key: string }} */ f) => [f.key, '']))
+    Object.fromEntries((meta?.token?.fields ?? []).map((/** @type {{ key: string, default?: string }} */ f) => [f.key, f.default ?? '']))
   /** Values of a token provider's own fields (Upstash: email + API key). @type {Record<string, string>} */
   let tokenValues = $state(emptyTokenValues())
   /** Every field filled, or the single legacy field when a provider declares none. */
@@ -175,6 +175,26 @@
    */
   let deviceCode = $state(null)
   let codeCopied = $state(false)
+  /** The browser sign-in page, pushed by the backend before it tries to open it. */
+  let authUrl = $state('')
+  let linkCopied = $state(false)
+
+  async function reopenAuthPage() {
+    if (!authUrl) return
+    try {
+      const { openUrl } = await import('@tauri-apps/plugin-opener')
+      await openUrl(authUrl)
+    } catch { /* the link can still be copied */ }
+  }
+
+  async function copyAuthLink() {
+    if (!authUrl) return
+    try {
+      await navigator.clipboard.writeText(authUrl)
+      linkCopied = true
+      setTimeout(() => (linkCopied = false), 1500)
+    } catch { /* clipboard blocked */ }
+  }
 
   async function copyDeviceCode() {
     if (!deviceCode) return
@@ -197,13 +217,17 @@
     phase = 'authorizing'
     errorMsg = ''
     deviceCode = null
-    /** @type {(() => void) | undefined} */
-    let unlisten
+    authUrl = ''
+    /** @type {Array<() => void>} */
+    const unlisten = []
     try {
       const { listen } = await import('@tauri-apps/api/event')
-      unlisten = await listen('provider-device-code', (ev) => {
+      unlisten.push(await listen('provider-device-code', (ev) => {
         deviceCode = /** @type {any} */ (ev.payload)
-      })
+      }))
+      unlisten.push(await listen('provider-auth-url', (ev) => {
+        authUrl = /** @type {{ url: string }} */ (ev.payload)?.url ?? ''
+      }))
     } catch { /* not in Tauri: the flow still works, just without the code */ }
     try {
       await providerStartOAuth(provider)
@@ -219,8 +243,9 @@
         errorMsg = String(e)
       }
     } finally {
-      unlisten?.()
+      for (const off of unlisten) off()
       deviceCode = null
+      authUrl = ''
     }
   }
 
@@ -312,6 +337,8 @@
   function pickFailureTitle(msg, dbName) {
     const db = dbName || 'This database'
     if (/is paused/i.test(msg)) return `${db} is paused`
+    if (/no public access/i.test(msg)) return `${db} has no public access`
+    if (/still being set up/i.test(msg)) return `${db} isn't ready yet`
     if (/starting up|restoring|restarting|resizing|upgrading|coming.up/i.test(msg)) return `${db} is still starting`
     if (/failed to start/i.test(msg)) return `${db} failed to start`
     if (/timed out|request failed|network|unavailable|dns|connect/i.test(msg))
@@ -319,6 +346,46 @@
     return `Couldn't connect to ${db}`
   }
 
+
+  // Providers whose build_connection only reads (no password minted, no user or
+  // token created), so it is safe to start on hover and throw away unused. Neon
+  // needs three API calls in a row to build one, so a row the pointer rests on
+  // is usually ready before the click lands.
+  const PREFETCH = new Set(['neon', 'supabase', 'railway', 'upstash'])
+  /** Built connections by db_ref, kept briefly so a stale password never lingers.
+   *  @type {Map<string, { at: number, work: Promise<import('$lib/providers.js').ProviderConnection> }>} */
+  const prefetched = new Map()
+  const PREFETCH_TTL_MS = 60_000
+  /** @type {ReturnType<typeof setTimeout> | undefined} */
+  let hoverTimer
+
+  /** @param {string} ref */
+  function prefetchBuild(ref) {
+    if (!PREFETCH.has(provider) || phase !== 'selecting') return
+    const hit = prefetched.get(ref)
+    if (hit && Date.now() - hit.at < PREFETCH_TTL_MS) return
+    const dbName = databases.find((d) => d.db_ref === ref)?.name ?? ''
+    if (resolveSavedConnection(ref, dbName)) return // connects with no API call anyway
+    const work = providerBuildConnection(provider, ref)
+    work.catch(() => prefetched.delete(ref)) // pick() retries a failed one
+    prefetched.set(ref, { at: Date.now(), work })
+  }
+
+  /** Rest ~120ms before prefetching, so sweeping the pointer down the list costs nothing. @param {string} ref */
+  function hoverRow(ref) {
+    clearTimeout(hoverTimer)
+    hoverTimer = setTimeout(() => prefetchBuild(ref), 120)
+  }
+
+  /** @param {string} ref */
+  function buildFor(ref) {
+    const hit = prefetched.get(ref)
+    prefetched.delete(ref)
+    if (hit && Date.now() - hit.at < PREFETCH_TTL_MS) {
+      return hit.work.catch(() => providerBuildConnection(provider, ref))
+    }
+    return providerBuildConnection(provider, ref)
+  }
 
   async function pick(ref) {
     selectedRef = ref
@@ -336,7 +403,7 @@
         onselect({ reuse: known, providerRef: ref })
         return
       }
-      const conn = { ...(await providerBuildConnection(provider, ref)), providerRef: ref }
+      const conn = { ...(await buildFor(ref)), providerRef: ref }
       if (conn.needs_password) {
         // Reuse a previously-saved password for this exact database (host + user)
         // so we don't ask again. Otherwise ask inline, then connect.
@@ -368,7 +435,31 @@
       phase = 'selecting'
       selectedRef = ''
       const dbName = databases.find((d) => d.db_ref === ref)?.name ?? ''
-      toast.error(pickFailureTitle(msg, dbName), { description: msg, duration: 9000 })
+      // An adapter can end its message with the console page that fixes the
+      // problem (Railway: the service's Networking settings). Offer it as a
+      // button rather than a raw URL in the text.
+      const link = /(https:\/\/\S+)\s*$/.exec(msg)?.[1]
+      const title = pickFailureTitle(msg, dbName)
+      // The title already names the problem; don't repeat it as the first line.
+      const description = (link ? msg.slice(0, msg.length - link.length).trim() : msg)
+        .replace(/^.*?has no public access\.\s*/i, '')
+      toast.error(title, {
+        description,
+        duration: 12000,
+        ...(link
+          ? {
+              action: {
+                label: `Open in ${meta?.name ?? 'the console'}`,
+                onClick: async () => {
+                  try {
+                    const { openUrl } = await import('@tauri-apps/plugin-opener')
+                    await openUrl(link)
+                  } catch { /* the settings page is named in the message */ }
+                },
+              },
+            }
+          : {}),
+      })
     }
   }
 
@@ -384,6 +475,7 @@
   async function handleLogout() {
     await providerLogout(provider)
     clearProviderLists(cacheKey)
+    prefetched.clear()
     phase = 'idle'
     databases = []
     selectedRef = ''
@@ -521,6 +613,18 @@
         </Button>
         <span class="sr-only" role="status">{codeCopied ? 'Code copied' : ''}</span>
       </div>
+    {:else if authUrl}
+      <!-- The way back when the browser didn't open (no default browser set)
+           or the tab was closed: open it again, or copy the link into any
+           browser. Same text edge as the panel above. -->
+      <div class="flex flex-wrap items-center gap-x-1 gap-y-1 ps-11 text-ui-2xs text-muted-foreground">
+        <span class="me-1">Browser didn't open?</span>
+        <Button variant="ghost" size="xs" onclick={reopenAuthPage}>Open again</Button>
+        <Button variant="ghost" size="xs" onclick={copyAuthLink}>
+          {#if linkCopied}<Check class="size-3 shrink-0 text-success" aria-hidden="true" /> Copied{:else}Copy link{/if}
+        </Button>
+        <span class="sr-only" role="status">{linkCopied ? 'Link copied' : ''}</span>
+      </div>
     {/if}
 
   {:else if phase === 'fetching'}
@@ -648,7 +752,8 @@
           empty="No matching database"
           contentClass="w-[var(--bits-popover-anchor-width)] min-w-[280px]"
           align="start"
-          onselect={(it) => pick(it.value)}
+          onselect={(it) => { clearTimeout(hoverTimer); pick(it.value) }}
+          onhover={(it) => hoverRow(it.value)}
         >
           {#snippet trigger(props)}
             <button

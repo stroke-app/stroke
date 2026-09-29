@@ -1677,6 +1677,9 @@ pub async fn get_table_rows(
                 &cfg, &schema, &table, limit, offset, search, sort_column, sort_direction, filters, include_meta,
             ).await;
         }
+        ActiveConnection::Posthog(cfg) => {
+            return super::posthog::get_table_rows(&cfg, &table, limit, offset, search, sort_column, sort_direction, filters).await;
+        }
         ActiveConnection::Redis(cfg) => {
             return super::redis::get_table_rows(
                 &cfg, &table, limit, offset, search, sort_column, sort_direction, filters, include_meta,
@@ -1799,7 +1802,7 @@ pub async fn get_table_rows(
     // drop a new column, which looks exactly like stale data to whoever is
     // looking at it.
     if include_meta {
-        super::wide_columns::invalidate(&pool, &schema, &table);
+        super::wide_columns::invalidate_projection(&pool, &schema, &table);
     }
     let (mut wide_projection, wide) = if preview_wide {
         super::wide_columns::page_projection(&pool, &schema, &table).await
@@ -2103,6 +2106,9 @@ pub async fn count_table_rows(
 ) -> Result<i64, String> {
     match require_conn(&state)? {
         ActiveConnection::Postgres(_) => {}
+        // The grid's "All" mode takes its total from here, so PostHog needs its
+        // own count or the pager showed no total at all.
+        ActiveConnection::Posthog(cfg) => return super::posthog::count_rows(&cfg, &table, search, filters).await,
         _ => return Ok(-1),
     }
     let pool = require_pool(&state)?;
@@ -2194,6 +2200,7 @@ pub async fn update_table_cell(
         ActiveConnection::Clickhouse(_) => {
             return Err("Inline row editing is not supported for ClickHouse (OLAP). Use ALTER TABLE … UPDATE in the SQL console.".into());
         }
+        ActiveConnection::Posthog(_) => return Err("PostHog is read-only: its data comes from HogQL queries.".into()),
         ActiveConnection::Redis(_) => {
             return Err("Editing is not supported on Redis".into());
         }
@@ -2412,6 +2419,7 @@ pub async fn insert_table_row(
         ActiveConnection::Clickhouse(_) => {
             return Err("Row insertion via the grid is not supported for ClickHouse. Use INSERT INTO … in the SQL console.".into());
         }
+        ActiveConnection::Posthog(_) => return Err("PostHog is read-only: its data comes from HogQL queries.".into()),
         ActiveConnection::Redis(_) => {
             return Err("Editing is not supported on Redis".into());
         }
@@ -2535,6 +2543,7 @@ pub async fn delete_table_rows(
         ActiveConnection::Clickhouse(_) => {
             return Err("Row deletion via the grid is not supported for ClickHouse. Use ALTER TABLE … DELETE in the SQL console.".into());
         }
+        ActiveConnection::Posthog(_) => return Err("PostHog is read-only: its data comes from HogQL queries.".into()),
         ActiveConnection::Redis(_) => {
             return Err("Editing is not supported on Redis".into());
         }
@@ -2804,6 +2813,7 @@ pub async fn execute_sql(
                     ActiveConnection::D1(cfg) => super::d1::query(&cfg, &sql_str, vec![]).await,
                     ActiveConnection::LibSql(cfg) => super::libsql::query(&cfg, &sql_str, vec![]).await,
                     ActiveConnection::Clickhouse(cfg) => super::clickhouse::query(&cfg, &sql_str).await,
+                    ActiveConnection::Posthog(cfg) => super::posthog::query(&cfg, &sql_str).await,
                     ActiveConnection::Redis(cfg) => super::redis::query(&cfg, &sql_str).await,
                     ActiveConnection::Duckdb(h) => super::duckdb::execute_sql(&h, &sql_str).await,
                     ActiveConnection::Mssql(h) => super::mssql::execute_sql(&h, &sql_str).await,
@@ -2854,6 +2864,7 @@ pub async fn execute_sql_on_conn(
         }
         AnyConnectionConfig::Libsql(c) => super::libsql::query(&c, sql, vec![]).await,
         AnyConnectionConfig::Clickhouse(c) => super::clickhouse::query(&c, sql).await,
+        AnyConnectionConfig::Posthog(c) => super::posthog::query(&c, sql).await,
         AnyConnectionConfig::Redis(c) => super::redis::query(&c, sql).await,
         AnyConnectionConfig::Duckdb(c) => {
             let h = super::connection::open_duckdb(&c).await?;
@@ -3355,6 +3366,7 @@ pub async fn execute_sql_multi(
                     ActiveConnection::LibSql(cfg) => super::libsql::query(cfg, stmt, vec![]).await,
                     ActiveConnection::Mysql(pool) => super::mysql::execute_sql(pool, stmt, None).await,
                     ActiveConnection::Clickhouse(cfg) => super::clickhouse::query(cfg, stmt).await,
+                    ActiveConnection::Posthog(cfg) => super::posthog::query(cfg, stmt).await,
                     ActiveConnection::Redis(cfg) => super::redis::query(cfg, stmt).await,
                     ActiveConnection::Duckdb(h) => super::duckdb::execute_sql(h, stmt).await,
                     ActiveConnection::Mssql(h) => super::mssql::execute_sql(h, stmt).await,
@@ -4083,6 +4095,7 @@ async fn dispatch_stats_sql(conn: &ActiveConnection, sql: &str) -> Result<SqlRes
         ActiveConnection::D1(cfg) => super::d1::query(cfg, sql, vec![]).await,
         ActiveConnection::LibSql(cfg) => super::libsql::query(cfg, sql, vec![]).await,
         ActiveConnection::Clickhouse(cfg) => super::clickhouse::query(cfg, sql).await,
+        ActiveConnection::Posthog(cfg) => super::posthog::query(cfg, sql).await,
         ActiveConnection::Redis(_) => Err("Column statistics are not supported on Redis".into()),
         ActiveConnection::Duckdb(h) => super::duckdb::execute_sql(h, sql).await,
         ActiveConnection::Mssql(h) => super::mssql::execute_sql(h, sql).await,
@@ -4106,7 +4119,7 @@ pub async fn ping_connection(state: State<'_, DbState>) -> Result<(), String> {
             sqlx::query("SELECT 1").execute(&pool).await.map(|_| ()).map_err(|e| e.to_string())
         }
         // HTTP-based: stateless, no persistent TCP connection to validate
-        ActiveConnection::D1(_) | ActiveConnection::LibSql(_) | ActiveConnection::Clickhouse(_) | ActiveConnection::Redis(_) => Ok(()),
+        ActiveConnection::D1(_) | ActiveConnection::LibSql(_) | ActiveConnection::Clickhouse(_) | ActiveConnection::Redis(_) | ActiveConnection::Posthog(_) => Ok(()),
         ActiveConnection::Duckdb(h) => super::duckdb::execute_sql(&h, "SELECT 1").await.map(|_| ()),
         ActiveConnection::Mssql(h) => super::mssql::execute_sql(&h, "SELECT 1").await.map(|_| ()),
     }

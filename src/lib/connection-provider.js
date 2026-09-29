@@ -40,6 +40,7 @@ export function providerOf(conn) {
   if (!conn) return null
   if (conn.provider) return ALIASES[/** @type {keyof ALIASES} */ (conn.provider)] ?? conn.provider
   if (conn.type === 'd1') return 'd1'
+  if (conn.type === 'posthog') return 'posthog'
   const host = conn.host || hostOfUrl(conn.url)
   if (!host) return null
   for (const [re, id] of HOSTS) if (re.test(host)) return id
@@ -61,6 +62,7 @@ const ENGINE_SHORT = {
   clickhouse: 'ClickHouse',
   redis: 'Redis',
   d1: 'D1',
+  posthog: 'HogQL',
 }
 
 /** Short engine name for the list chip ("Postgres", "Redis"). @param {string | undefined} type */

@@ -17,8 +17,6 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::OnceLock;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
 
 // ── Cloudflare OAuth constants ────────────────────────────────────────────────
 
@@ -107,111 +105,7 @@ fn pkce_pair() -> (String, String) {
 
 // ── Local callback server ─────────────────────────────────────────────────────
 
-/// Try to bind to one of the pre-registered Cloudflare callback ports.
-/// Returns (listener, redirect_uri) on success.
-async fn bind_callback_listener() -> Result<(TcpListener, String), String> {
-    for &port in CF_CALLBACK_PORTS {
-        if let Ok(listener) = TcpListener::bind(format!("127.0.0.1:{port}")).await {
-            let redirect_uri = format!("http://localhost:{port}/oauth/callback");
-            return Ok((listener, redirect_uri));
-        }
-    }
-    Err(format!(
-        "Could not bind to any of the pre-registered callback ports ({}-{}). \
-         Close other Wrangler or Stroke processes and try again.",
-        CF_CALLBACK_PORTS[0],
-        CF_CALLBACK_PORTS[CF_CALLBACK_PORTS.len() - 1]
-    ))
-}
 
-/// Wait for one OAuth callback on the listener and return the authorization code.
-async fn await_oauth_callback(
-    listener: TcpListener,
-    expected_state: &str,
-) -> Result<String, String> {
-    let success_html = crate::oauth_page::page(true, "Cloudflare");
-    let error_html = crate::oauth_page::page(false, "Cloudflare");
-
-    let send_html = |html: &str| -> String {
-        format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-            html.len(),
-            html
-        )
-    };
-
-    let (mut stream, _) = listener
-        .accept()
-        .await
-        .map_err(|e| format!("Callback accept failed: {e}"))?;
-
-    let mut buf = vec![0u8; 8192];
-    let n = stream
-        .read(&mut buf)
-        .await
-        .map_err(|e| format!("Callback read failed: {e}"))?;
-    let req = String::from_utf8_lossy(&buf[..n]);
-
-    // Parse the first line: GET /oauth/callback?code=...&state=... HTTP/1.1
-    let first_line = req.lines().next().unwrap_or("");
-    let path = first_line.split_whitespace().nth(1).unwrap_or("");
-    let query = path.split('?').nth(1).unwrap_or("");
-
-    let mut code = None;
-    let mut state = None;
-    let mut error: Option<String> = None;
-
-    for pair in query.split('&') {
-        let mut kv = pair.splitn(2, '=');
-        let key = kv.next().unwrap_or("");
-        let val = kv
-            .next()
-            .map(|v| urlencoding::decode(v).unwrap_or_default().into_owned())
-            .unwrap_or_default();
-        match key {
-            "code" => code = Some(val),
-            "state" => state = Some(val),
-            "error" => error = Some(val),
-            "error_description" => {
-                if error.is_none() {
-                    error = Some(val)
-                }
-            }
-            _ => {}
-        }
-    }
-
-    if let Some(err) = &error {
-        let _ = stream
-            .write_all(send_html(&error_html).as_bytes())
-            .await;
-        return Err(format!("Cloudflare denied authorization: {err}"));
-    }
-
-    let code = match code {
-        Some(c) if !c.is_empty() => c,
-        _ => {
-            let _ = stream
-                .write_all(send_html(&error_html).as_bytes())
-                .await;
-            return Err("No authorization code in callback".to_string());
-        }
-    };
-
-    if state.as_deref() != Some(expected_state) {
-        let _ = stream
-            .write_all(send_html(&error_html).as_bytes())
-            .await;
-        return Err("OAuth state mismatch - possible CSRF".to_string());
-    }
-
-    let _ = stream
-        .write_all(send_html(&success_html).as_bytes())
-        .await;
-    let _ = stream.flush().await;
-
-    Ok(code)
-}
 
 // ── Token exchange ────────────────────────────────────────────────────────────
 
@@ -381,7 +275,21 @@ pub async fn cloudflare_start_oauth(app: tauri::AppHandle) -> Result<CfOAuthStat
     let (verifier, challenge) = pkce_pair();
     let state = random_base64url(16);
 
-    let (listener, redirect_uri) = bind_callback_listener().await?;
+    // The shared callback in providers/mod.rs: both loopback addresses, stray
+    // requests ignored, and the branded page. Cloudflare's own copy took one
+    // connection on IPv4 only, so a favicon fetch or an IPv6-first `localhost`
+    // could break the sign-in.
+    let (listener, port) = crate::providers::bind_callback_listener(CF_CALLBACK_PORTS)
+        .await
+        .map_err(|_| {
+            format!(
+                "Could not bind to any of the pre-registered callback ports ({}-{}). \
+                 Close other Wrangler or Stroke processes and try again.",
+                CF_CALLBACK_PORTS[0],
+                CF_CALLBACK_PORTS[CF_CALLBACK_PORTS.len() - 1]
+            )
+        })?;
+    let redirect_uri = format!("http://localhost:{port}/oauth/callback");
 
     let auth_url = format!(
         "{CF_AUTH_URL}?response_type=code&client_id={CF_CLIENT_ID}&redirect_uri={}&scope={}&state={}&code_challenge={}&code_challenge_method=S256",
@@ -391,12 +299,11 @@ pub async fn cloudflare_start_oauth(app: tauri::AppHandle) -> Result<CfOAuthStat
         challenge,
     );
 
-    tauri_plugin_opener::open_url(&auth_url, None::<&str>)
-        .map_err(|e| format!("Failed to open browser: {e}"))?;
+    crate::providers::open_sign_in_page(&app, &auth_url);
 
     let code = tokio::time::timeout(
         std::time::Duration::from_secs(AUTH_TIMEOUT_SECS),
-        await_oauth_callback(listener, &state),
+        crate::providers::await_oauth_callback(listener, &state, "code", "Cloudflare"),
     )
     .await
     .map_err(|_| "Authorization timed out - please try again.".to_string())??;

@@ -15,10 +15,11 @@ use super::{http, OAuthConfig, ProviderConnection, ProviderDatabase};
 use serde_json::{json, Value};
 
 pub const OAUTH: OAuthConfig = OAuthConfig {
-    // The native OAuth app registered in Railway (workspace Developer settings),
-    // redirect URI http://localhost:8989/oauth/callback. Empty until it exists:
-    // sign-in then says so instead of opening a page Railway would reject.
-    client_id: "",
+    // The native (public) OAuth app registered in Railway's workspace Developer
+    // settings, redirect URI http://127.0.0.1:8989/oauth/callback. Public means
+    // no secret: Railway rejects a token request that sends one (checked: the
+    // same code with a secret gets `invalid_client`, without one `invalid_grant`).
+    client_id: "rlwy_oaci_D7dCmSYWNMbBl3ZDVZc6nd7A",
     auth_url: "https://backboard.railway.com/oauth/auth",
     token_url: "https://backboard.railway.com/oauth/token",
     // workspace:viewer lists workspaces; project:member is what lets the token
@@ -149,49 +150,128 @@ pub async fn build_connection(token: &str, db_ref: &str) -> Result<ProviderConne
     let r: Value = serde_json::from_str(db_ref).map_err(|_| "Invalid Railway service reference")?;
     let field = |k: &str| r[k].as_str().unwrap_or_default().to_string();
     let (engine, name) = (field("k"), field("n"));
-    let vars = gql(
+    // Variables and TCP proxies in one request: the proxy is the fallback when
+    // the template didn't write a *_PUBLIC_URL variable.
+    let data = gql(
         token,
-        "query StrokeVars($p: String!, $e: String!, $s: String!) { variables(projectId: $p, environmentId: $e, serviceId: $s) }",
+        "query StrokeVars($p: String!, $e: String!, $s: String!) { \
+           variables(projectId: $p, environmentId: $e, serviceId: $s) \
+           tcpProxies(environmentId: $e, serviceId: $s) { domain proxyPort applicationPort } }",
         json!({ "p": field("p"), "e": field("e"), "s": field("s") }),
     )
     .await?;
-    connection_from_vars(&engine, &name, &vars["variables"])
+    // Diagnostics without secrets: which variables exist (names only) and what
+    // proxies Railway reports, so a "no public access" can be traced.
+    let var_names: Vec<&str> = data["variables"].as_object().map(|m| m.keys().map(String::as_str).collect()).unwrap_or_default();
+    log::info!(
+        "railway connect {name}: env={} service={} variables={var_names:?} tcpProxies={}",
+        field("e"),
+        field("s"),
+        data["tcpProxies"]
+    );
+    connection_from_vars(&engine, &name, &data["variables"], &data["tcpProxies"]).map_err(|e| {
+        // Point at the one screen that fixes it. Railway's public API has no
+        // mutation to create a TCP proxy, so this can't be done from here.
+        if e.contains("no public access") {
+            format!(
+                "{e} https://railway.com/project/{}/service/{}/settings?environmentId={}",
+                field("p"),
+                field("s"),
+                field("e")
+            )
+        } else {
+            e
+        }
+    })
 }
 
-/// A service's variables → a connection, through its PUBLIC url: the plain one
-/// points at `*.railway.internal`, which only resolves inside Railway's network.
-fn connection_from_vars(engine: &str, name: &str, vars: &Value) -> Result<ProviderConnection, String> {
-    let keys: &[&str] = match engine {
+/// A service's variables → a connection, through its PUBLIC address: the plain
+/// URL points at `*.railway.internal`, which only resolves inside Railway's
+/// network.
+///
+/// Preferably the template's `*_PUBLIC_URL`. When a service has a TCP proxy but
+/// no such variable (custom images, older templates), the proxy's domain and
+/// port are combined with the credentials the image reads from its variables.
+fn connection_from_vars(engine: &str, name: &str, vars: &Value, proxies: &Value) -> Result<ProviderConnection, String> {
+    let default_port = match engine { "postgres" => 5432, "mysql" => 3306, _ => 6379 };
+    let named = |parts: (String, u16, String, String, String)| {
+        let (host, port, username, password, database) = parts;
+        ProviderConnection {
+            db_type: engine.to_string(),
+            host,
+            port,
+            username,
+            password,
+            database,
+            // Railway's TCP proxy is plain TCP; the Postgres template serves TLS
+            // itself (postgres-ssl) but does not require it, and MySQL/Redis there
+            // are not TLS.
+            ssl: false,
+            needs_password: false,
+            name: format!("Railway · {name}"),
+        }
+    };
+
+    let url_keys: &[&str] = match engine {
         "postgres" => &["DATABASE_PUBLIC_URL"],
         "mysql" => &["MYSQL_PUBLIC_URL", "DATABASE_PUBLIC_URL"],
         _ => &["REDIS_PUBLIC_URL"],
     };
-    let raw = keys
+    // Right after public access is added, the template's URL can still be
+    // half-rendered (`mysql://root:…@:/railway`): the proxy domain it references
+    // only fills in on the next deploy. A URL without a host isn't an error to
+    // report; fall through to the proxy itself.
+    let public_url = url_keys
         .iter()
-        .find_map(|k| vars[*k].as_str().filter(|v| !v.is_empty()))
-        .ok_or_else(|| {
-            format!(
-                "{name} has no public URL. Turn on its TCP proxy in the service's Railway settings (Networking), then try again."
-            )
-        })?;
-    let url = reqwest::Url::parse(raw).map_err(|e| format!("Railway returned an unreadable URL for {name}: {e}"))?;
-    let decode = |s: &str| urlencoding::decode(s).map(|c| c.into_owned()).unwrap_or_else(|_| s.to_string());
+        .filter_map(|k| vars[*k].as_str().filter(|v| !v.is_empty()))
+        .find_map(|raw| reqwest::Url::parse(raw).ok().filter(|u| u.host_str().is_some_and(|h| !h.is_empty())));
+    if let Some(url) = public_url {
+        let decode = |s: &str| urlencoding::decode(s).map(|c| c.into_owned()).unwrap_or_else(|_| s.to_string());
+        return Ok(named((
+            url.host_str().unwrap_or_default().to_string(),
+            url.port().unwrap_or(default_port),
+            decode(url.username()),
+            decode(url.password().unwrap_or_default()),
+            decode(url.path().trim_start_matches('/')),
+        )));
+    }
 
-    let default_port = match engine { "postgres" => 5432, "mysql" => 3306, _ => 6379 };
-    Ok(ProviderConnection {
-        db_type: engine.to_string(),
-        host: url.host_str().ok_or_else(|| format!("No host in {name}'s URL"))?.to_string(),
-        port: url.port().unwrap_or(default_port),
-        username: decode(url.username()),
-        password: decode(url.password().unwrap_or_default()),
-        database: decode(url.path().trim_start_matches('/')),
-        // Railway's TCP proxy is plain TCP; the Postgres template serves TLS
-        // itself (postgres-ssl) but does not require it, and MySQL/Redis there
-        // are not TLS.
-        ssl: false,
-        needs_password: false,
-        name: format!("Railway · {name}"),
-    })
+    let proxy = proxies.as_array().and_then(|list| {
+        list.iter()
+            .find(|p| p["applicationPort"].as_u64() == Some(u64::from(default_port)))
+            .or_else(|| list.first())
+    });
+    if let Some(p) = proxy {
+        let host = p["domain"].as_str().filter(|d| !d.is_empty());
+        let port = p["proxyPort"].as_u64().and_then(|n| u16::try_from(n).ok());
+        if let (Some(host), Some(port)) = (host, port) {
+            let var = |keys: &[&str]| keys.iter().find_map(|k| vars[*k].as_str().filter(|v| !v.is_empty())).unwrap_or("").to_string();
+            let (user, pass, db) = match engine {
+                "postgres" => (
+                    var(&["PGUSER", "POSTGRES_USER"]),
+                    var(&["PGPASSWORD", "POSTGRES_PASSWORD"]),
+                    var(&["PGDATABASE", "POSTGRES_DB"]),
+                ),
+                "mysql" => (
+                    var(&["MYSQLUSER", "MYSQL_USER"]),
+                    var(&["MYSQLPASSWORD", "MYSQL_ROOT_PASSWORD", "MYSQL_PASSWORD"]),
+                    var(&["MYSQLDATABASE", "MYSQL_DATABASE"]),
+                ),
+                _ => (var(&["REDISUSER"]), var(&["REDISPASSWORD", "REDIS_PASSWORD"]), String::new()),
+            };
+            let user = if !user.is_empty() { user } else { match engine { "postgres" => "postgres", "mysql" => "root", _ => "default" }.into() };
+            let db = if !db.is_empty() || engine == "redis" { db } else { match engine { "postgres" => "postgres", _ => "railway" }.into() };
+            return Ok(named((host.to_string(), port, user, pass, db)));
+        }
+        // The proxy exists but Railway hasn't given it a public domain yet.
+        return Err(format!(
+            "{name}'s public access is still being set up: Railway hasn't assigned it an address yet. Give it a minute, then try again."
+        ));
+    }
+
+    Err(format!(
+        "{name} has no public access. Choose Add Public Access under Settings → Networking in Railway, or keep it private with `railway connect --tunnel-only`."
+    ))
 }
 
 #[cfg(test)]
@@ -225,13 +305,31 @@ mod tests {
             "DATABASE_URL": "postgresql://postgres:x@postgres.railway.internal:5432/railway",
             "DATABASE_PUBLIC_URL": "postgresql://postgres:p%40ss@shortline.proxy.rlwy.net:41234/railway"
         });
-        let c = connection_from_vars("postgres", "shop / Postgres", &vars).unwrap();
+        let c = connection_from_vars("postgres", "shop / Postgres", &vars, &json!([])).unwrap();
         assert_eq!((c.host.as_str(), c.port), ("shortline.proxy.rlwy.net", 41234));
         assert_eq!((c.username.as_str(), c.password.as_str(), c.database.as_str()), ("postgres", "p@ss", "railway"));
         let redis = json!({ "REDIS_PUBLIC_URL": "redis://default:pw@x.proxy.rlwy.net:6380" });
-        assert_eq!(connection_from_vars("redis", "cache", &redis).unwrap().port, 6380);
+        assert_eq!(connection_from_vars("redis", "cache", &redis, &json!([])).unwrap().port, 6380);
         let private_only = json!({ "DATABASE_URL": "postgresql://u:p@postgres.railway.internal:5432/db" });
-        assert!(connection_from_vars("postgres", "x", &private_only).unwrap_err().contains("TCP proxy"));
+        assert!(connection_from_vars("postgres", "x", &private_only, &json!([])).unwrap_err().contains("no public access"));
+    }
+
+    #[test]
+    fn a_half_rendered_url_or_a_proxy_without_a_domain_says_not_ready() {
+        let vars = json!({ "MYSQL_PUBLIC_URL": "mysql://root:pw@:/railway", "MYSQL_ROOT_PASSWORD": "pw" });
+        let pending = json!([{ "domain": "", "proxyPort": 0, "applicationPort": 3306 }]);
+        assert!(connection_from_vars("mysql", "m", &vars, &pending).unwrap_err().contains("still being set up"));
+        let ready = json!([{ "domain": "x.proxy.rlwy.net", "proxyPort": 4444, "applicationPort": 3306 }]);
+        assert_eq!(connection_from_vars("mysql", "m", &vars, &ready).unwrap().port, 4444);
+    }
+
+    #[test]
+    fn a_tcp_proxy_without_a_public_url_variable_still_connects() {
+        let vars = json!({ "MYSQLUSER": "root", "MYSQL_ROOT_PASSWORD": "pw", "MYSQL_DATABASE": "railway" });
+        let proxies = json!([{ "domain": "nozomi.proxy.rlwy.net", "proxyPort": 21337, "applicationPort": 3306 }]);
+        let c = connection_from_vars("mysql", "luminous-flexibility / MySQL", &vars, &proxies).unwrap();
+        assert_eq!((c.host.as_str(), c.port), ("nozomi.proxy.rlwy.net", 21337));
+        assert_eq!((c.username.as_str(), c.password.as_str(), c.database.as_str()), ("root", "pw", "railway"));
     }
 
     #[test]

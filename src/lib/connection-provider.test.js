@@ -15,6 +15,11 @@ describe('providerOf', () => {
     expect(providerOf({ type: 'postgres', host: 'shortline.proxy.rlwy.net' })).toBe('railway')
   })
 
+  it('knows PostHog by type, with HogQL as its engine chip', () => {
+    expect(providerOf({ type: 'posthog', host: 'https://eu.posthog.com' })).toBe('posthog')
+    expect(engineLabel('posthog')).toBe('HogQL')
+  })
+
   it('knows Cloudflare D1 by type and leaves self-hosted alone', () => {
     expect(providerOf({ type: 'd1' })).toBe('d1')
     expect(providerOf({ type: 'postgres', host: '13.205.111.67' })).toBeNull()
