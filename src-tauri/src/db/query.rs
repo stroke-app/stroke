@@ -1802,7 +1802,7 @@ pub async fn get_table_rows(
     // drop a new column, which looks exactly like stale data to whoever is
     // looking at it.
     if include_meta {
-        super::wide_columns::invalidate(&pool, &schema, &table);
+        super::wide_columns::invalidate_projection(&pool, &schema, &table);
     }
     let (mut wide_projection, wide) = if preview_wide {
         super::wide_columns::page_projection(&pool, &schema, &table).await

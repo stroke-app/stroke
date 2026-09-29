@@ -163,3 +163,10 @@ opt-level = 3
 opt-level = 3
 [profile.dev.package.base64]
 opt-level = 3
+
+# sqlx 0.8.6 drivers with one change each: the pool's on-release ping is skipped
+# for a connection with nothing pending (see the "Stroke patch" comments). That
+# ping cost a round trip after every query to a far host and broke Nile.
+[patch.crates-io]
+sqlx-postgres = { path = "vendor/sqlx-postgres" }
+sqlx-mysql = { path = "vendor/sqlx-mysql" }

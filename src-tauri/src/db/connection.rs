@@ -759,6 +759,100 @@ macro_rules! ping_if_stale {
     }};
 }
 
+/// Measured handshake cost per `host:port`, in ms, remembered across restarts.
+///
+/// Measured with psql from here: Neon, Supabase, Nile and Prisma Postgres all
+/// take 1.8-3.4s to open a connection (TCP + TLS + startup + SCRAM, six or seven
+/// round trips to a far region) but only 265-535ms to answer a query on an open
+/// one. sqlx opens a NEW connection for every query that finds no idle one, so
+/// the six queries of a table open each paid a full handshake instead of
+/// waiting half a second for a busy connection to come back. A host known to be
+/// that far gets a small fixed pool instead (`pg_pool_for`).
+static HANDSHAKES: std::sync::OnceLock<Mutex<std::collections::HashMap<String, u64>>> = std::sync::OnceLock::new();
+static DATA_DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+const HANDSHAKE_FILE: &str = "handshake-costs.json";
+
+/// Called once from setup, so the handshake memory survives a restart: the
+/// reconnect on launch is exactly the connect that needs it.
+pub fn set_data_dir(dir: std::path::PathBuf) {
+    let _ = DATA_DIR.set(dir);
+}
+
+fn handshakes() -> &'static Mutex<std::collections::HashMap<String, u64>> {
+    HANDSHAKES.get_or_init(|| {
+        let map = DATA_DIR
+            .get()
+            .and_then(|d| std::fs::read_to_string(d.join(HANDSHAKE_FILE)).ok())
+            .and_then(|t| serde_json::from_str(&t).ok())
+            .unwrap_or_default();
+        Mutex::new(map)
+    })
+}
+
+fn known_handshake_ms(host: &str, port: u16) -> Option<u64> {
+    handshakes().lock().unwrap_or_else(|e| e.into_inner()).get(&format!("{host}:{port}")).copied()
+}
+
+fn record_handshake(host: &str, port: u16, ms: u64) {
+    let snapshot = {
+        let mut map = handshakes().lock().unwrap_or_else(|e| e.into_inner());
+        let key = format!("{host}:{port}");
+        // Half old, half new: one unlucky connect doesn't flip the pool shape.
+        let v = map.get(&key).map_or(ms, |old| old / 2 + ms / 2);
+        if map.get(&key) == Some(&v) {
+            return;
+        }
+        map.insert(key, v);
+        serde_json::to_string(&*map).ok()
+    };
+    if let (Some(dir), Some(text)) = (DATA_DIR.get(), snapshot) {
+        let _ = std::fs::write(dir.join(HANDSHAKE_FILE), text);
+    }
+}
+
+/// A handshake slower than this means queueing behind an open connection beats
+/// opening another. Nearby hosts measured 320-690ms, far providers 1.8-3.4s.
+const FAR_HANDSHAKE_MS: u64 = 1200;
+
+/// Connections a far host keeps open: one per query of a table open (rows,
+/// count and four catalog lookups), so browsing once connected runs every query
+/// at once, exactly as on a nearby host.
+const FAR_POOL: u32 = 6;
+
+/// Pool shape for this host. A far host's pool is exactly `FAR_POOL` wide and
+/// never shrinks: `warm_in_parallel` opens all of it right after connect, and a
+/// query that arrives before those land waits ~300-500ms for a free connection
+/// instead of opening one more at 2-3s. Unknown and nearby hosts keep the wide
+/// pool, where a handshake is cheap.
+fn pg_pool_for(host: &str, port: u16) -> PgPoolOptions {
+    match known_handshake_ms(host, port) {
+        Some(ms) if ms >= FAR_HANDSHAKE_MS => {
+            log::info!("{host}:{port} handshake ~{ms}ms: {FAR_POOL}-connection pool, warmed in parallel");
+            pg_pool_builder().min_connections(FAR_POOL).max_connections(FAR_POOL)
+        }
+        _ => pg_pool_builder(),
+    }
+}
+
+/// Open the rest of a far host's pool at once, one handshake's wait in total.
+///
+/// sqlx's own min-connections fill opens them one after another (six in a row
+/// at 3s is 18s of a pool that isn't ready). These are spawned while the
+/// caller still holds the first connection, so none of them can grab it and
+/// every one opens a fresh connection; each is handed back the moment it
+/// lands, so none is held away from a query that needs it.
+fn warm_in_parallel<DB: sqlx::Database>(pool: &sqlx::Pool<DB>, total: u32) {
+    let extra = total.saturating_sub(pool.size());
+    for _ in 0..extra {
+        let pool = pool.clone();
+        tokio::spawn(async move {
+            if let Ok(conn) = pool.acquire().await {
+                drop(conn);
+            }
+        });
+    }
+}
+
 fn pg_pool_builder() -> PgPoolOptions {
     let health = std::sync::Arc::new(PathHealth::default());
     PgPoolOptions::new()
@@ -940,6 +1034,33 @@ where
     attempt().await
 }
 
+/// Open a pool and return once ONE connection works; the rest fill in behind it.
+///
+/// sqlx's `connect_with` does not do that. It opens every `min_connections`
+/// connection one after another before returning (sqlx-core 0.8.6,
+/// `PoolOptions::connect_with` → `try_min_connections`), so `min_connections(2)`
+/// made every connect pay two full handshakes in a row. Against Prisma Postgres,
+/// where psql measures a handshake at 3.3-3.5s and a query at ~500ms, that was
+/// the 6.2s connect in the log. A lazy pool starts the same min-connections fill
+/// as a background task, and the acquire below races it, so the connect costs
+/// one handshake and the second connection is ready moments later.
+async fn connect_pg_pool(builder: PgPoolOptions, opts: PgConnectOptions) -> Result<PgPool, sqlx::Error> {
+    let (host, port) = (opts.get_host().to_string(), opts.get_port());
+    let t0 = std::time::Instant::now();
+    let pool = builder.connect_lazy_with(opts);
+    // Proves the address, TLS and credentials, with the same errors
+    // `connect_with` gave; the connection goes back to the pool for the first query.
+    let first = pool.acquire().await?;
+    let ms = t0.elapsed().as_millis() as u64;
+    record_handshake(&host, port, ms);
+    // Far host, first time or not: warm the rest now, before `first` is released.
+    if ms >= FAR_HANDSHAKE_MS {
+        warm_in_parallel(&pool, FAR_POOL);
+    }
+    drop(first);
+    Ok(pool)
+}
+
 pub(crate) async fn open_pg(config: &PgConfig) -> Result<PgPool, String> {
     let opts: PgConnectOptions = config
         .connection_url()
@@ -983,13 +1104,14 @@ pub(crate) async fn open_pg(config: &PgConfig) -> Result<PgPool, String> {
     // succeeds, so the retry ladder stops restarting a handshake that is fine.
     let tcp_ok = std::sync::atomic::AtomicBool::new(false);
     let connect = async {
-        match retry_fast(&tcp_ok, || pg_pool_builder().connect_with(fast_opts.clone())).await {
+        match retry_fast(&tcp_ok, || connect_pg_pool(pg_pool_for(&config.host, config.port), fast_opts.clone())).await {
             Ok(pool) => Ok(pool),
             // Some poolers (PgBouncer without `ignore_startup_parameters=options`)
             // reject the `options` startup parameter outright. Fall back to the
             // slower after_connect SET so those hosts still connect.
             Err(e) if e.to_string().contains("unsupported startup parameter") => {
-                pg_pool_builder()
+connect_pg_pool(
+                                pg_pool_for(&config.host, config.port)
                     .after_connect(move |conn, _meta| {
                         let tz_set = tz_set.clone();
                         Box::pin(async move {
@@ -1001,8 +1123,9 @@ pub(crate) async fn open_pg(config: &PgConfig) -> Result<PgPool, String> {
                             }
                             Ok(())
                         })
-                    })
-                    .connect_with(opts)
+                    }),
+                    opts,
+                )
                     .await
                     .map_err(|e| format!("Connection failed: {e}"))
             }
@@ -1035,8 +1158,8 @@ pub async fn connect(
     close_existing(&state).await;
     set_conn(&state, Some(ActiveConnection::Postgres(pool)))?;
     // Nothing else to do here: `min_connections` fills the pool from the pool's
-    // own maintenance task, off the critical path, and the connect returns as
-    // soon as the first connection is usable.
+    // own maintenance task, off the critical path (see `connect_pg_pool`), and the
+    // connect returns as soon as the first connection is usable.
     tunnel_state.set(tunnel);
     Ok(())
 }
@@ -1115,9 +1238,18 @@ pub(crate) async fn open_mysql(config: &MysqlConfig) -> Result<MySqlPool, String
         .map(|t| format!("SET time_zone = '{}'", t.replace('\'', "''")));
 
     let health = std::sync::Arc::new(PathHealth::default());
-    let connect = MySqlPoolOptions::new()
+    // A far host (TiDB in Tokyo, Railway, PlanetScale) keeps its whole pool
+    // open and warms it in parallel behind the first connection: see
+    // `pg_pool_for` and `warm_in_parallel`.
+    let far = known_handshake_ms(&config.host, config.port).is_some_and(|ms| ms >= FAR_HANDSHAKE_MS);
+    if far {
+        log::info!("{}:{} is a far host: 4-connection pool, warmed in parallel", config.host, config.port);
+    }
+    let (host, port) = (config.host.clone(), config.port);
+    let builder = MySqlPoolOptions::new()
         // Same rationale as PG: 4 is the real-world ceiling for a desktop app.
         .max_connections(4)
+        .min_connections(if far { 4 } else { 0 })
         // See pg_pool_builder: must clear a cold-pool handshake on a slow link.
         .acquire_timeout(Duration::from_secs(10))
         // Keep connections warm for the session (see open_pg for the full rationale)
@@ -1145,8 +1277,21 @@ pub(crate) async fn open_mysql(config: &MysqlConfig) -> Result<MySqlPool, String
                 }
                 Ok(())
             })
-        })
-        .connect_with(opts);
+        });
+    // Lazy plus one acquire, not `connect_with`, for the reason in `connect_pg_pool`:
+    // the min-connections fill runs in the background instead of in a row.
+    let connect = async move {
+        let t0 = std::time::Instant::now();
+        let pool = builder.connect_lazy_with(opts);
+        let first = pool.acquire().await?;
+        let ms = t0.elapsed().as_millis() as u64;
+        record_handshake(&host, port, ms);
+        if ms >= FAR_HANDSHAKE_MS {
+            warm_in_parallel(&pool, 4);
+        }
+        drop(first);
+        Ok::<_, sqlx::Error>(pool)
+    };
 
     connect_racing_probe(
         &config.host,
@@ -1704,5 +1849,61 @@ pub async fn prewarm_dns(hosts: Vec<String>) {
                 _ => log::info!("prewarm dns {host} did not resolve in {}ms", t.elapsed().as_millis()),
             }
         });
+    }
+}
+
+/// Live checks for the release-ping patch in `vendor/sqlx-postgres`. Run with
+/// `STROKE_PG_URL=postgres://… cargo test --lib pg_release_live -- --ignored --nocapture`.
+#[cfg(test)]
+mod pg_release_live {
+    use futures::TryStreamExt;
+    use sqlx::postgres::PgPoolOptions;
+    use sqlx::{Connection, Row};
+
+    async fn pool() -> sqlx::PgPool {
+        let url = std::env::var("STROKE_PG_URL").expect("STROKE_PG_URL");
+        // One connection, so every step below reuses the same one.
+        PgPoolOptions::new().max_connections(1).test_before_acquire(false).connect(&url).await.unwrap()
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn a_dropped_transaction_still_rolls_back() {
+        let pool = pool().await;
+        {
+            let mut tx = pool.begin().await.unwrap();
+            // Transaction-local: gone once the transaction ends, still set if it didn't.
+            sqlx::query("SELECT set_config('stroke.probe', 'in_tx', true)").execute(&mut *tx).await.unwrap();
+            // Dropped without commit: sqlx queues a ROLLBACK.
+        }
+        let mut conn = pool.acquire().await.unwrap();
+        let probe: Option<String> = sqlx::query("SELECT current_setting('stroke.probe', true)").fetch_one(&mut *conn).await.unwrap().get(0);
+        assert_ne!(probe.as_deref(), Some("in_tx"), "the connection came back still inside the transaction");
+        conn.ping().await.unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn a_half_read_stream_is_cleaned_up() {
+        let pool = pool().await;
+        {
+            let mut conn = pool.acquire().await.unwrap();
+            let mut rows = sqlx::query("SELECT g FROM generate_series(1, 100000) g").fetch(&mut *conn);
+            let _first = rows.try_next().await.unwrap();
+            // Dropped mid result set.
+        }
+        let n: i64 = sqlx::query("SELECT 41::bigint + 1").fetch_one(&pool).await.unwrap().get(0);
+        assert_eq!(n, 42);
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn sequential_queries_reuse_one_connection() {
+        let pool = pool().await;
+        let t = std::time::Instant::now();
+        for _ in 0..5 {
+            sqlx::query("SELECT 1").execute(&pool).await.unwrap();
+        }
+        println!("5 sequential queries on one pooled connection: {}ms", t.elapsed().as_millis());
     }
 }

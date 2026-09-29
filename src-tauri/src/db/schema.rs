@@ -1022,7 +1022,13 @@ pub async fn list_tables(state: State<'_, DbState>, schema: String) -> Result<Ve
     match require_conn(&state)? {
         ActiveConnection::Postgres(pool) => {
             validate_ident(&schema)?;
-            list_tables_pg(&pool, &schema).await
+            let tables = list_tables_pg(&pool, &schema).await?;
+            // Answer the wide-column question for the whole schema now, off the
+            // critical path, so a table's first open is one round trip, not two.
+            let names: Vec<String> = tables.iter().map(|t| t.name.clone()).collect();
+            let (pool, schema) = (pool.clone(), schema.clone());
+            tokio::spawn(async move { super::wide_columns::prefetch_schema(&pool, &schema, &names).await });
+            Ok(tables)
         }
         ActiveConnection::Mysql(pool) => list_tables_mysql(&pool, &schema).await,
         ActiveConnection::Sqlite(pool) => list_tables_sqlite(&pool).await,

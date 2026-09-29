@@ -330,6 +330,9 @@ pub fn run() {
             // paths that need them without a State/AppHandle argument: the D1
             // driver refreshing an expired Cloudflare token mid-session.
             cloudflare::set_app_handle(app.handle().clone());
+            if let Ok(dir) = app.path().app_data_dir() {
+                db::connection::set_data_dir(dir);
+            }
             db::connection::register_active_conn(std::sync::Arc::clone(&db_conn_for_setup));
 
             let mut window_builder = tauri::WebviewWindowBuilder::new(
