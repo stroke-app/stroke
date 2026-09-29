@@ -30,20 +30,26 @@
     actions[name]?.();
   }
 
+  // h-6 on the control scale, not an off-scale 22px; normal weight so the five
+  // words read as a quiet menu row, not five buttons competing with the tabs.
   const triggerCls =
-    "inline-flex h-[22px] shrink-0 items-center rounded-md px-2 text-ui-2xs font-medium text-muted-foreground outline-none transition-colors " +
+    "inline-flex h-6 shrink-0 items-center rounded-md px-2.5 text-ui-2xs text-muted-foreground outline-none transition-colors " +
     "hover:bg-foreground/[0.06] hover:text-foreground focus-visible:bg-foreground/[0.06] focus-visible:text-foreground " +
     "data-[state=open]:bg-foreground/[0.08] data-[state=open]:text-foreground";
 
   const contentCls =
     "data-open:animate-in data-closed:animate-out data-closed:fade-out-0 data-open:fade-in-0 duration-75 " +
-    "border border-border/60 bg-popover text-popover-foreground min-w-56 max-w-(--menu-max-w) rounded-[10px] p-1 elevate-2-rim z-[60] outline-none";
+    "border border-border/60 bg-popover text-popover-foreground min-w-60 max-w-(--menu-max-w) rounded-[10px] p-1 elevate-2-rim z-[60] outline-none";
 
+  // A fixed h-7 row (the compact control height) instead of py-1: padding-based
+  // rows grew with the font and zoom, and every menu came out a different
+  // rhythm. rounded-md inside the 10px menu with 4px padding keeps the corners
+  // concentric.
   const itemCls =
-    "focus:bg-accent focus:text-foreground gap-2 rounded-md px-2 py-1 text-ui-xs relative flex min-w-0 cursor-default items-center outline-hidden select-none " +
+    "focus:bg-accent focus:text-foreground h-7 gap-2.5 rounded-md px-2 text-ui-xs relative flex min-w-0 cursor-default items-center outline-hidden select-none " +
     "data-disabled:pointer-events-none data-disabled:opacity-40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-3.5";
 
-  const sepCls = "-mx-1 my-1 h-px bg-border/60";
+  const sepCls = "-mx-1 my-1 h-px bg-border/50";
 </script>
 
 <!-- `combo` is a chord in the grammar `createHotkey` parses (`Mod+Shift+T`),
@@ -54,18 +60,12 @@
   <Menubar.Item class={itemCls} {disabled} onSelect={() => run(action)}>
     <Icon name={icon} class="size-3.5 text-muted-foreground" />
     <span data-slot="menu-label" class="min-w-0 truncate">{label}</span>
-    {#if combo}<Kbd {combo} class="ml-auto pl-4" />{/if}
+    {#if combo}<Kbd {combo} class="ml-auto shrink-0 ps-6 text-muted-foreground/80" />{/if}
   </Menubar.Item>
 {/snippet}
 
-<!-- A hairline between each menu. `gap-0` because the rule now does the
-     separating, and the triggers keep their own `px-2`, so the spacing either
-     side of a divider is the padding rather than a gap plus padding. -->
-{#snippet divider()}
-  <span class="h-3 w-px shrink-0 bg-border/40" aria-hidden="true"></span>
-{/snippet}
 
-<Menubar.Root class="flex shrink-0 items-center" aria-label="Main menu">
+<Menubar.Root class="flex shrink-0 items-center gap-0.5" aria-label="Main menu">
   <!-- File -->
   <Menubar.Menu>
     <Menubar.Trigger class={triggerCls}>File</Menubar.Trigger>
@@ -85,7 +85,6 @@
     </Menubar.Portal>
   </Menubar.Menu>
 
-  {@render divider()}
 
   <!-- Edit -->
   <Menubar.Menu>
@@ -103,7 +102,6 @@
     </Menubar.Portal>
   </Menubar.Menu>
 
-  {@render divider()}
 
   <!-- View -->
   <Menubar.Menu>
@@ -123,7 +121,6 @@
     </Menubar.Portal>
   </Menubar.Menu>
 
-  {@render divider()}
 
   <!-- Tools -->
   <Menubar.Menu>
@@ -144,7 +141,6 @@
     </Menubar.Portal>
   </Menubar.Menu>
 
-  {@render divider()}
 
   <!-- Help -->
   <Menubar.Menu>
