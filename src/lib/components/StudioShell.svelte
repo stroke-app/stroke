@@ -8517,6 +8517,7 @@ let rowSearch = $state('')
                 {rows}
                 {primaryKey}
                 target={inspectorTarget}
+                {dataVersion}
                 onclose={closeInspector}
                 onsave={handleSaveCell}
               />
