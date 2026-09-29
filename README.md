@@ -6,7 +6,7 @@
 
 [![Stroke launch video](assets/launch-video/stroke-launch.jpg)](assets/launch-video/stroke-launch.mp4)
 
-<sub>Watch the 44-second launch video · [how it's made](assets/launch-video)</sub>
+<sub>Watch the 44-second launch video</sub>
 
 [Download](#install) · [What's inside](#whats-inside) · [Build from source](#build-from-source) · [stroke.click](https://stroke.click)
 
