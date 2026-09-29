@@ -32,6 +32,10 @@ async fn get(token: &str, path: &str) -> Result<Value, String> {
         .await
         .map_err(|e| format!("Prisma request failed: {e}"))?;
     let status = resp.status().as_u16();
+    // Before reading the body: a 401 may not be JSON, and the caller refreshes on it.
+    if status == 401 {
+        return Err(super::UNAUTHORIZED.into());
+    }
     let body: Value = resp
         .json()
         .await
@@ -42,18 +46,13 @@ async fn get(token: &str, path: &str) -> Result<Value, String> {
     Ok(body)
 }
 
-/// Format a Management-API error. A 401 almost always means the stored token
-/// expired - tell the user to reconnect rather than showing "request failed".
+/// Format a Management-API error. A 401 never gets here: `get`/`post` return
+/// `UNAUTHORIZED` for it so the command layer can refresh and retry.
 fn api_error(status: u16, body: &Value) -> String {
     let msg = body["message"]
         .as_str()
         .or_else(|| body["error"].as_str())
         .unwrap_or("request failed");
-    if status == 401 {
-        return "Your Prisma session has expired. Click \"Sign out\" and sign in \
-                again to reconnect."
-            .to_string();
-    }
     format!("Prisma API error ({status}): {msg}")
 }
 
@@ -66,6 +65,10 @@ async fn post(token: &str, path: &str, body: serde_json::Value) -> Result<Value,
         .await
         .map_err(|e| format!("Prisma request failed: {e}"))?;
     let status = resp.status().as_u16();
+    // Before reading the body: a 401 may not be JSON, and the caller refreshes on it.
+    if status == 401 {
+        return Err(super::UNAUTHORIZED.into());
+    }
     let body: Value = resp
         .json()
         .await
@@ -163,7 +166,11 @@ fn find_pg_uri(v: &Value) -> Option<String> {
 }
 
 pub async fn build_connection(token: &str, project_id: &str) -> Result<ProviderConnection, String> {
-    let proj = get(token, &format!("/projects/{project_id}")).await?;
+    // The project (for its name) and its databases are independent reads: both
+    // at once, so a connect is two round trips to Prisma's API instead of three.
+    let (proj_path, dbs_path) = (format!("/projects/{project_id}"), format!("/projects/{project_id}/databases"));
+    let (proj, dbs) = tokio::join!(get(token, &proj_path), get(token, &dbs_path));
+    let (proj, dbs) = (proj?, dbs?);
     let name = proj["data"]["name"]
         .as_str()
         .or_else(|| proj["name"].as_str())
@@ -173,7 +180,6 @@ pub async fn build_connection(token: &str, project_id: &str) -> Result<ProviderC
     // A project's databases live at a separate endpoint; the read responses never
     // include the password (it's a secret shown once). Grab the database id, then
     // CREATE a fresh connection - that call returns usable direct credentials.
-    let dbs = get(token, &format!("/projects/{project_id}/databases")).await?;
     let list = as_list(&dbs);
     let db = list.first().ok_or(
         "This Prisma project has no Postgres database yet. Create one in the Prisma \
@@ -188,38 +194,58 @@ pub async fn build_connection(token: &str, project_id: &str) -> Result<ProviderC
     )
     .await?;
 
-    if let Some((host, user, pass, dbn)) = find_direct(&created) {
-        return Ok(ProviderConnection {
-            db_type: "postgres".into(),
-            host,
-            port: 5432,
-            username: user,
-            password: pass,
-            database: if dbn.is_empty() { "postgres".into() } else { dbn },
-            ssl: true,
-            needs_password: false,
-            name: format!("Prisma · {name}"),
-        });
-    }
+    connection_from_created(&created, &name)
+}
 
-    if let Some(uri) = find_pg_uri(&created) {
+/// The create-connection response → a connection. Prisma nests the direct
+/// credentials at different depths depending on the API version, so look for a
+/// credentials object first and a `postgres://` URI anywhere second.
+fn connection_from_created(created: &Value, name: &str) -> Result<ProviderConnection, String> {
+    let conn = |host, port, username, password, database: String| ProviderConnection {
+        db_type: "postgres".into(),
+        host,
+        port,
+        username,
+        password,
+        database: if database.is_empty() { "postgres".into() } else { database },
+        ssl: true,
+        needs_password: false,
+        name: format!("Prisma · {name}"),
+    };
+    if let Some((host, user, pass, dbn)) = find_direct(created) {
+        return Ok(conn(host, 5432, user, pass, dbn));
+    }
+    if let Some(uri) = find_pg_uri(created) {
         let (host, port, username, password, database) = super::neon::parse_pg_uri(&uri)?;
-        return Ok(ProviderConnection {
-            db_type: "postgres".into(),
-            host,
-            port,
-            username,
-            password,
-            database: if database.is_empty() { "postgres".into() } else { database },
-            ssl: true,
-            needs_password: false,
-            name: format!("Prisma · {name}"),
-        });
+        return Ok(conn(host, port, username, password, database));
     }
-
-    let shape: String = serde_json::to_string(&created).unwrap_or_default().chars().take(1600).collect();
+    let shape: String = serde_json::to_string(created).unwrap_or_default().chars().take(1600).collect();
     Err(format!(
         "Prisma created a connection but returned no direct credentials we could parse. \
          Shape: {shape}"
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn credentials_object_is_read_wherever_prisma_nests_it() {
+        let created = json!({ "data": { "endpoints": { "direct": {
+            "ppgDirectConnection": { "host": "db.prisma.io", "user": "u1", "pass": "p1" }
+        } } } });
+        let c = connection_from_created(&created, "pulse").unwrap();
+        assert_eq!((c.host.as_str(), c.username.as_str(), c.password.as_str()), ("db.prisma.io", "u1", "p1"));
+        assert_eq!(c.name, "Prisma · pulse");
+    }
+
+    #[test]
+    fn falls_back_to_a_postgres_uri_anywhere_in_the_response() {
+        let created = json!({ "data": { "connectionString": "postgres://u2:p%212@db.prisma.io:5432/postgres?sslmode=require" } });
+        let c = connection_from_created(&created, "x").unwrap();
+        assert_eq!((c.username.as_str(), c.password.as_str()), ("u2", "p!2"));
+        assert!(connection_from_created(&json!({ "data": {} }), "x").unwrap_err().contains("no direct credentials"));
+    }
 }

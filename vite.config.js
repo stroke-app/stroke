@@ -77,6 +77,24 @@ export default defineConfig({
     // allow-list so those assets (fonts, etc.) serve instead of being blocked.
     // Dev-only — has no effect on `tauri build` / production.
     fs: { strict: false },
+    // Watch the frontend, not the repo. With no ignore list the watcher crawled
+    // src-tauri/target (Rust build output, 100+ GB here) and website/, holding
+    // ~3 GB and a steady share of a core just to track them, then processing
+    // thousands of change events on every cargo rebuild - the lag spikes while
+    // the app recompiled. Tauri's own template ignores src-tauri for this reason;
+    // `tauri dev` watches the Rust side itself.
+    watch: {
+      ignored: [
+        '**/src-tauri/**',
+        '**/website/**',
+        '**/dist/**',
+        '**/bucket/**',
+        '**/docker/**',
+        '**/docs/**',
+        '**/examples/**',
+        '**/packaging/**',
+      ],
+    },
   },
   build: {
     chunkSizeWarningLimit: 1500,

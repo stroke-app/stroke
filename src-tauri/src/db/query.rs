@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::{Column, Decode, Postgres, Row, TypeInfo, ValueRef};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tauri::State;
 use uuid::Uuid;
 
@@ -2156,7 +2158,9 @@ pub async fn count_table_rows(
         .execute(&mut *tx)
         .await;
     let count = count_query.fetch_one(&mut *tx).await;
-    let _ = tx.rollback().await;
+    // COMMIT resets SET LOCAL exactly like ROLLBACK does, and unlike ROLLBACK it
+    // is accepted by Nile's proxy (see execute_sql_pg).
+    let _ = tx.commit().await;
     match count {
         Ok(n) => Ok(n),
         // 57014 = query_canceled (statement timeout). A count that can't finish
@@ -2806,7 +2810,7 @@ pub async fn execute_sql(
                     ActiveConnection::Postgres(_) | ActiveConnection::Mysql(_) => unreachable!(),
                 }
             } => r,
-            _ = async { let _ = cancel_rx.await; } => Err("Query cancelled".to_string()),
+            _ = async { let _ = cancel_rx.await; } => Err(QUERY_CANCELLED.to_string()),
         },
     };
     super::connection::unregister_cancel(&state, &cancel_key);
@@ -2875,14 +2879,63 @@ const EXECUTE_SQL_MAX_ROWS: usize = 1_000_000_000;
 /// heavier scans (e.g. tables with large TOASTed JSON columns) to finish.
 pub(crate) const EXECUTE_SQL_TIMEOUT_MS: i64 = 60_000;
 
+/// What a stopped run reports. The editor matches on this text to show the run
+/// as stopped rather than failed.
+pub(crate) const QUERY_CANCELLED: &str = "Query cancelled";
+
+/// Arm Stop for a Postgres run on `tx`'s connection. When `rx` fires, `cancelled`
+/// is raised first so a row loop draining already-buffered rows bails on its next
+/// row, then `pg_cancel_backend` stops the statement on the server. If the run
+/// finishes first the sender is dropped, `rx.await` errors and the watcher exits.
+async fn arm_pg_cancel(
+    tx: &mut sqlx::Transaction<'_, Postgres>,
+    pool: &sqlx::PgPool,
+    rx: Option<tokio::sync::oneshot::Receiver<()>>,
+    cancelled: Arc<AtomicBool>,
+) {
+    let Some(rx) = rx else { return };
+    let pid = sqlx::query_scalar::<_, i32>("SELECT pg_backend_pid()")
+        .fetch_one(&mut **tx)
+        .await
+        .ok();
+    let cancel_pool = pool.clone();
+    tokio::spawn(async move {
+        if rx.await.is_ok() {
+            cancelled.store(true, Ordering::Relaxed);
+            if let Some(pid) = pid {
+                let _ = sqlx::query("SELECT pg_cancel_backend($1)")
+                    .bind(pid)
+                    .execute(&cancel_pool)
+                    .await;
+            }
+        }
+    });
+}
+
 async fn execute_sql_pg(
     pool: &sqlx::PgPool,
     sql: &str,
     // When `Some`, real cancellation is armed: if the receiver fires we ask the
     // server to cancel this query's backend (so the statement actually stops)
     // rather than merely abandoning the future while the server keeps working.
-    // Callers that can't be cancelled (diff/multi paths) pass `None`.
+    // Callers that can't be cancelled (diff paths) pass `None`.
     cancel_rx: Option<tokio::sync::oneshot::Receiver<()>>,
+) -> Result<SqlResult, String> {
+    // Whatever error the cancelled statement surfaced ("canceling statement due
+    // to user request", a dropped stream), a stopped run reads as stopped.
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let result = run_sql_pg(pool, sql, cancel_rx, cancelled.clone()).await;
+    if cancelled.load(Ordering::Relaxed) {
+        return Err(QUERY_CANCELLED.into());
+    }
+    result
+}
+
+async fn run_sql_pg(
+    pool: &sqlx::PgPool,
+    sql: &str,
+    cancel_rx: Option<tokio::sync::oneshot::Receiver<()>>,
+    cancelled: Arc<AtomicBool>,
 ) -> Result<SqlResult, String> {
     let started = std::time::Instant::now();
     let query_ms = || started.elapsed().as_millis() as u64;
@@ -2910,27 +2963,7 @@ async fn execute_sql_pg(
         .execute(&mut *tx)
         .await;
 
-    // Arm server-side cancellation. Capture the backend PID for THIS connection,
-    // then watch the cancel channel on a background task; on cancel we run
-    // pg_cancel_backend on a *separate* pooled connection, which makes the
-    // in-flight statement error out. If the query finishes first the sender is
-    // dropped and `rx.await` errors, so the watcher is a no-op.
-    if let Some(rx) = cancel_rx {
-        if let Ok(pid) = sqlx::query_scalar::<_, i32>("SELECT pg_backend_pid()")
-            .fetch_one(&mut *tx)
-            .await
-        {
-            let cancel_pool = pool.clone();
-            tokio::spawn(async move {
-                if rx.await.is_ok() {
-                    let _ = sqlx::query("SELECT pg_cancel_backend($1)")
-                        .bind(pid)
-                        .execute(&cancel_pool)
-                        .await;
-                }
-            });
-        }
-    }
+    arm_pg_cancel(&mut tx, pool, cancel_rx, cancelled.clone()).await;
 
     let last_idx = stmts.len() - 1;
 
@@ -2954,6 +2987,9 @@ async fn execute_sql_pg(
                 loop {
                     match stream.try_next().await {
                         Ok(Some(row)) => {
+                            if cancelled.load(Ordering::Relaxed) {
+                                return Err(QUERY_CANCELLED.into());
+                            }
                             if data.is_empty() {
                                 columns = row
                                     .columns()
@@ -2979,7 +3015,12 @@ async fn execute_sql_pg(
                 let Some(msg) = failure else { break };
                 // The transaction is poisoned by the failed statement either way.
                 let _ = tx.rollback().await;
-                if rewritten || !is_missing_binary_output(&msg) {
+                // The retry below re-runs only this last statement in a fresh
+                // transaction, so it is only sound when there is nothing before
+                // it: with `UPDATE …; SELECT …` the rollback above has already
+                // undone the UPDATE, and retrying just the SELECT would report
+                // success over a write that never happened.
+                if rewritten || last_idx != 0 || !is_missing_binary_output(&msg) {
                     return Err(format!("Query failed: {msg}"));
                 }
                 let Some(wrapped) = text_safe_wrap(pool, stmt).await else {
@@ -3000,7 +3041,15 @@ async fn execute_sql_pg(
                 .execute(&mut *tx)
                 .await;
             }
-            let _ = tx.rollback().await;
+            // COMMIT, not ROLLBACK. "Ends in a SELECT" does not mean "read-only":
+            // `UPDATE …; SELECT …`, a data-modifying CTE (`WITH d AS (DELETE …
+            // RETURNING *) SELECT …`) and `SELECT nextval(…)` all write, and a
+            // rollback here threw those writes away after showing their result.
+            // On a transaction that really was read-only, COMMIT costs the same.
+            // It also matters for Nile, whose proxy rejects this ROLLBACK and
+            // leaves the connection marked in-transaction, so sqlx closed it and
+            // the next query paid a fresh handshake.
+            let _ = tx.commit().await;
 
             let row_count = data.len() as i64;
             return Ok(SqlResult {
@@ -3148,12 +3197,29 @@ pub(crate) fn split_sql_statements(sql: &str) -> Vec<String> {
     out
 }
 
-async fn execute_sql_multi_pg(pool: &sqlx::PgPool, stmts: &[String]) -> Result<Vec<SqlResult>, String> {
+async fn execute_sql_multi_pg(
+    pool: &sqlx::PgPool,
+    stmts: &[String],
+    cancel_rx: Option<tokio::sync::oneshot::Receiver<()>>,
+) -> Result<Vec<SqlResult>, String> {
     // Single statement - delegate to existing path (avoids code duplication)
     if stmts.len() == 1 {
-        return execute_sql_pg(pool, &stmts[0], None).await.map(|r| vec![r]);
+        return execute_sql_pg(pool, &stmts[0], cancel_rx).await.map(|r| vec![r]);
     }
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let result = run_sql_multi_pg(pool, stmts, cancel_rx, cancelled.clone()).await;
+    if cancelled.load(Ordering::Relaxed) {
+        return Err(QUERY_CANCELLED.into());
+    }
+    result
+}
 
+async fn run_sql_multi_pg(
+    pool: &sqlx::PgPool,
+    stmts: &[String],
+    cancel_rx: Option<tokio::sync::oneshot::Receiver<()>>,
+    cancelled: Arc<AtomicBool>,
+) -> Result<Vec<SqlResult>, String> {
     let mut tx = pool
         .begin()
         .await
@@ -3162,6 +3228,8 @@ async fn execute_sql_multi_pg(pool: &sqlx::PgPool, stmts: &[String]) -> Result<V
     let _ = sqlx::query(&format!("SET LOCAL statement_timeout = {EXECUTE_SQL_TIMEOUT_MS}"))
         .execute(&mut *tx)
         .await;
+
+    arm_pg_cancel(&mut tx, pool, cancel_rx, cancelled.clone()).await;
 
     let mut results: Vec<SqlResult> = Vec::new();
 
@@ -3180,6 +3248,9 @@ async fn execute_sql_multi_pg(pool: &sqlx::PgPool, stmts: &[String]) -> Result<V
             loop {
                 match stream.try_next().await {
                     Ok(Some(row)) => {
+                        if cancelled.load(Ordering::Relaxed) {
+                            return Err(QUERY_CANCELLED.into());
+                        }
                         if data.is_empty() {
                             columns = row
                                 .columns()
@@ -3259,12 +3330,17 @@ pub async fn execute_sql_multi(
         super::connection::unregister_cancel(&state, &cancel_key);
         return Err("Query is empty".into());
     }
+    // Postgres runs multi-statement scripts inside a single transaction and
+    // cancels them server-side, so Stop both frees the UI and ends the statement.
+    // Abandoning the future alone left the server scanning and the connection
+    // busy until the statement timeout.
+    if let ActiveConnection::Postgres(pool) = &conn {
+        let result = execute_sql_multi_pg(pool, &stmts, Some(cancel_rx)).await;
+        super::connection::unregister_cancel(&state, &cancel_key);
+        return result;
+    }
     let result = tokio::select! {
         r = async move {
-            // Postgres runs multi-statement scripts inside a single transaction
-            if let ActiveConnection::Postgres(pool) = &conn {
-                return execute_sql_multi_pg(pool, &stmts).await;
-            }
             // Other engines: execute sequentially, one result set per statement.
             // Cancellation happens at the outer select! (the future is dropped),
             // so per-statement executors get no cancel receiver - same as the
@@ -3291,7 +3367,7 @@ pub async fn execute_sql_multi(
             }
             Ok(results)
         } => r,
-        _ = async { let _ = cancel_rx.await; } => Err("Query cancelled".to_string()),
+        _ = async { let _ = cancel_rx.await; } => Err(QUERY_CANCELLED.to_string()),
     };
     super::connection::unregister_cancel(&state, &cancel_key);
     result

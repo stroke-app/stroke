@@ -25,6 +25,7 @@ import Plus from '@lucide/svelte/icons/plus'
 import Minus from '@lucide/svelte/icons/minus'
 import Search from '@lucide/svelte/icons/search'
 import Trash2 from '@lucide/svelte/icons/trash-2'
+import LogOut from '@lucide/svelte/icons/log-out'
 import Table2 from '@lucide/svelte/icons/table-2'
 import RefreshCw from '@lucide/svelte/icons/refresh-cw'
 import Copy from '@lucide/svelte/icons/copy'
@@ -140,7 +141,7 @@ import ArrowUpAZ from '@lucide/svelte/icons/arrow-up-a-z'
 import {
   Cancel01Icon, Tick01Icon, CheckmarkCircle02Icon, ArrowDown01Icon, ArrowUp01Icon,
   ArrowRight01Icon, ArrowLeft01Icon, Add01Icon, MinusSignIcon, Search01Icon,
-  Delete02Icon, Table01Icon, GridTableIcon, RefreshIcon, Copy01Icon, Loading03Icon, Key01Icon,
+  Delete02Icon, Logout01Icon, Table01Icon, GridTableIcon, RefreshIcon, Copy01Icon, Loading03Icon, Key01Icon,
   LinkSquare01Icon, Database01Icon, SourceCodeIcon, TerminalIcon, ChartLineData02Icon,
   SparklesIcon, GitBranchIcon, Download04Icon, PlayIcon, EyeIcon, EyeOffIcon,
   AiBrain01Icon, Alert02Icon, AlertCircleIcon, Shield01Icon, PencilEdit01Icon,
@@ -175,6 +176,7 @@ export const ICON_MAP = {
   'minus':          { lucide: Minus,         huge: MinusSignIcon },
   'search':         { lucide: Search,        huge: Search01Icon },
   'trash-2':        { lucide: Trash2,        huge: Delete02Icon },
+  'log-out':        { lucide: LogOut,        huge: Logout01Icon },
   'table-2':        { lucide: Table2,        huge: GridTableIcon },
   // A view is an eye everywhere in the app - TabBar picks 'eye' for view tabs,
   // so the sidebar has to agree. Plain table glyphs made views indistinguishable
@@ -306,6 +308,7 @@ import PhPlus from 'phosphor-svelte/lib/Plus'
 import PhMinus from 'phosphor-svelte/lib/Minus'
 import PhMagnifyingGlass from 'phosphor-svelte/lib/MagnifyingGlass'
 import PhTrash from 'phosphor-svelte/lib/Trash'
+import PhSignOut from 'phosphor-svelte/lib/SignOut'
 import PhTable from 'phosphor-svelte/lib/Table'
 import PhArrowsClockwise from 'phosphor-svelte/lib/ArrowsClockwise'
 import PhCopy from 'phosphor-svelte/lib/Copy'
@@ -392,6 +395,7 @@ export const PHOSPHOR_MAP = {
   'minus': PhMinus,
   'search': PhMagnifyingGlass,
   'trash-2': PhTrash,
+  'log-out': PhSignOut,
   'table-2': PhTable,
   'table-view': PhEye,
   'refresh-cw': PhArrowsClockwise,

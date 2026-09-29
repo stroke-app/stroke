@@ -73,7 +73,9 @@ impl PgConfig {
             urlencoding::encode(&self.password),
             self.host,
             self.port,
-            self.database,
+            // Encoded like the credentials: sqlx percent-decodes the path, so a
+            // database named `sales%2024` or `a#b` was read as something else.
+            urlencoding::encode(&self.database),
             ssl
         )
     }
@@ -142,7 +144,7 @@ impl MysqlConfig {
             urlencoding::encode(&self.password),
             self.host,
             self.port,
-            self.database,
+            urlencoding::encode(&self.database),
             params.join("&")
         )
     }
@@ -889,8 +891,17 @@ where
             // TCP demonstrably works. Stop bounding the handshake and let it land.
             break;
         }
-        match tokio::time::timeout(Duration::from_millis(*ms), attempt()).await {
+        let fut = attempt();
+        tokio::pin!(fut);
+        match tokio::time::timeout(Duration::from_millis(*ms), &mut fut).await {
             Ok(res) => return res,
+            // The probe proved TCP WHILE this attempt was running. Checking only
+            // before an attempt missed that case, which is the common one against
+            // a distant host: a Sydney pooler probed reachable at 376ms, then
+            // attempt 1 was binned at 800ms and the connect landed at 4560ms,
+            // having paid TCP + TLS + auth twice. The stall is slowness, so keep
+            // the handshake that already has a head start.
+            Err(_) if tcp_ok.load(std::sync::atomic::Ordering::Relaxed) => return fut.await,
             Err(_) => log::info!("connect attempt {} exceeded {ms}ms, retrying with a fresh SYN", i + 1),
         }
     }
@@ -1302,6 +1313,19 @@ mod tests {
         }
     }
 
+    /// A password ending in `%` and a database name with `%`/`#` must reach
+    /// sqlx intact: it percent-decodes the whole URL, so anything left raw was
+    /// cut or misread.
+    #[test]
+    fn pg_url_round_trips_special_characters_through_sqlx() {
+        let mut c = pg(false, None, None);
+        c.password = "Lm$$pR0D54%".into();
+        c.database = "sales%2024#a".into();
+        let opts: PgConnectOptions = c.connection_url().parse().expect("url parses");
+        assert_eq!(opts.get_database(), Some("sales%2024#a"));
+        assert_eq!(opts.get_username(), "ada");
+    }
+
     #[test]
     fn pg_url_omits_tls_params_when_tls_is_off() {
         let url = pg(false, None, None).connection_url();
@@ -1452,6 +1476,27 @@ mod tests {
         .await;
         assert_eq!(got.unwrap(), 7);
         assert_eq!(tries.load(Ordering::Relaxed), 1, "a slow but healthy handshake was restarted");
+    }
+
+    /// The probe usually lands WHILE the first attempt is running. That attempt
+    /// already has TCP and TLS behind it and must be kept, not restarted.
+    #[tokio::test(start_paused = true)]
+    async fn tcp_proven_mid_attempt_keeps_that_attempt() {
+        let tries = AtomicUsize::new(0);
+        let tcp_ok = std::sync::Arc::new(AtomicBool::new(false));
+        let flag = tcp_ok.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(376)).await;
+            flag.store(true, Ordering::Relaxed);
+        });
+        let got = retry_fast(&tcp_ok, || async {
+            tries.fetch_add(1, Ordering::Relaxed);
+            tokio::time::sleep(Duration::from_secs(4)).await;
+            Ok::<u8, sqlx::Error>(7)
+        })
+        .await;
+        assert_eq!(got.unwrap(), 7);
+        assert_eq!(tries.load(Ordering::Relaxed), 1, "a handshake past a proven TCP path was restarted");
     }
 
     /// While TCP is still unproven a stall really might be a lost SYN, and a fresh

@@ -36,11 +36,14 @@ mismatched control heights, or one-off selected states.
 ### Fonts (`src/app.css`)
 | Role | Variable | Stack |
 |---|---|---|
-| UI / sans | `--font-sans` | Geist Variable → system-ui |
-| Data / mono | `--font-mono` | Geist Mono Variable → ui-monospace |
+| UI / sans | `--font-sans` | Geist Variable (default) → system-ui |
+| Headings | `--heading-font` (utility `font-heading`) | Source Serif 4 Variable (Claude preset), else follows `--font-sans` |
+| Data / mono | `--font-mono` | Geist Mono Variable (default) → ui-monospace |
 | Code editor | `--editor-font-family` | JetBrains Mono → Geist Mono |
 
 - **Sans** for all chrome, labels, prose, buttons.
+- **Heading** (`font-heading`) for dialog titles, via `Dialog.Title`. Nothing
+  smaller than a title uses it.
 - **Mono** (`font-mono`) for data: identifiers, values, counts, IDs, SQL,
   hostnames, table/column names, timings. Numbers in stat cards use
   `font-mono tabular-nums`.

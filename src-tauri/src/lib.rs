@@ -12,11 +12,13 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 mod app_lock;
 mod cloudflare;
 mod commands;
+mod connection_store;
 mod copilot;
 mod db;
 mod docker;
 mod license;
 mod mcp;
+mod oauth_page;
 mod omniroute;
 mod plugins;
 mod metrics;
@@ -606,6 +608,8 @@ pub fn run() {
             commands::deactivate_license,
             commands::run_license_check,
             commands::init_sample_db,
+            commands::connections_store_read,
+            commands::connections_store_write,
             metrics::get_app_metrics,
             metrics::set_process_title,
             commands::enable_autostart,

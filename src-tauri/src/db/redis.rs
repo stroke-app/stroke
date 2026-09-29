@@ -12,32 +12,90 @@ use std::time::Instant;
 
 // ── Connection ────────────────────────────────────────────────────────────────
 
-/// Open a multiplexed async connection from a Redis config. Builds a
-/// `redis://[:password@]host:port/db` URL (`rediss://` when TLS is enabled) and
-/// hands back a pooled multiplexed connection.
-async fn open(cfg: &RedisConfig) -> Result<::redis::aio::MultiplexedConnection, String> {
+/// Connections kept for reuse, keyed by URL (host, port, db, TLS and password).
+///
+/// Every command used to open its own connection. Against a hosted Redis
+/// (Upstash, Railway) that is DNS + TCP + TLS + AUTH per key browsed, three or
+/// more round trips before the command itself. A multiplexed connection is
+/// cheap to clone and safe to share, so one per config serves every command.
+struct Cached {
+    conn: ::redis::aio::MultiplexedConnection,
+    last_used: Instant,
+}
+static POOL: std::sync::LazyLock<tokio::sync::Mutex<std::collections::HashMap<String, Cached>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// Past this much idle time a cached connection is PINGed before reuse: hosted
+/// Redis closes idle clients, and one round trip to find out beats a failed
+/// command.
+const IDLE_CHECK: std::time::Duration = std::time::Duration::from_secs(30);
+
+fn url_for(cfg: &RedisConfig) -> String {
     let scheme = if cfg.tls { "rediss" } else { "redis" };
     let auth = match cfg.password.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
         Some(pw) => format!(":{}@", urlencoding::encode(pw)),
         None => String::new(),
     };
-    let url = format!("{scheme}://{auth}{}:{}/{}", cfg.host, cfg.port, cfg.db);
+    format!("{scheme}://{auth}{}:{}/{}", cfg.host, cfg.port, cfg.db)
+}
 
+async fn dial(url: &str) -> Result<::redis::aio::MultiplexedConnection, String> {
     let client = ::redis::Client::open(url).map_err(|e| format!("Redis connection failed: {e}"))?;
+    // Bounded: with no timeout an unreachable host (or a TLS port spoken to in
+    // plain TCP) left the connect awaiting until the OS gave up.
+    let config = ::redis::AsyncConnectionConfig::new()
+        .set_connection_timeout(Some(std::time::Duration::from_secs(10)))
+        .set_response_timeout(Some(std::time::Duration::from_secs(30)));
     client
-        .get_multiplexed_async_connection()
+        .get_multiplexed_async_connection_with_config(&config)
         .await
         .map_err(|e| format!("Redis connection failed: {e}"))
+}
+
+/// A multiplexed connection for this config: the cached one when it is still
+/// alive, otherwise a new one (which then becomes the cached one).
+async fn open(cfg: &RedisConfig) -> Result<::redis::aio::MultiplexedConnection, String> {
+    let url = url_for(cfg);
+    let mut pool = POOL.lock().await;
+    if let Some(entry) = pool.get_mut(&url) {
+        let fresh = entry.last_used.elapsed() < IDLE_CHECK;
+        let alive = fresh
+            || ::redis::cmd("PING")
+                .query_async::<::redis::Value>(&mut entry.conn)
+                .await
+                .is_ok();
+        if alive {
+            entry.last_used = Instant::now();
+            return Ok(entry.conn.clone());
+        }
+        pool.remove(&url);
+    }
+    // Dial without holding the lock for the whole handshake would let two
+    // commands race to open two connections; holding it is the simpler bound,
+    // and it only ever waits on the first connect for a given host.
+    let conn = dial(&url).await?;
+    pool.insert(url, Cached { conn: conn.clone(), last_used: Instant::now() });
+    Ok(conn)
+}
+
+/// Drop the cached connection for a config (disconnect, or a failed PING in
+/// `ping`), so the next command dials fresh.
+pub async fn forget(cfg: &RedisConfig) {
+    POOL.lock().await.remove(&url_for(cfg));
 }
 
 /// Connectivity/credential check - issues a `PING`.
 pub async fn ping(cfg: &RedisConfig) -> Result<(), String> {
     let mut conn = open(cfg).await?;
-    ::redis::cmd("PING")
+    let r = ::redis::cmd("PING")
         .query_async::<::redis::Value>(&mut conn)
         .await
         .map(|_| ())
-        .map_err(|e| format!("Redis PING failed: {e}"))
+        .map_err(|e| format!("Redis PING failed: {e}"));
+    if r.is_err() {
+        forget(cfg).await;
+    }
+    r
 }
 
 // ── Raw command execution ─────────────────────────────────────────────────────

@@ -52,6 +52,10 @@ fn http() -> &'static reqwest::Client {
             .user_agent("stroke/1.0")
             .tcp_keepalive(std::time::Duration::from_secs(60))
             .pool_max_idle_per_host(4)
+            // Idle sockets go before an upstream load balancer's 60s cutoff, so a
+            // request after a pause doesn't go out on a connection already closed
+            // (same fix as the provider client in providers/mod.rs).
+            .pool_idle_timeout(std::time::Duration::from_secs(20))
             // Bounded on purpose. `reqwest` has no default timeout, so a request
             // that never answers - captive portal, dropped route, a stalled edge -
             // leaves the command awaiting forever and the UI on its spinner with no
@@ -125,27 +129,8 @@ async fn await_oauth_callback(
     listener: TcpListener,
     expected_state: &str,
 ) -> Result<String, String> {
-    let success_html = r#"<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="UTF-8"><title>Stroke - authorized</title>
-<style>body{font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#0d0d0d;color:#eee}
-.card{text-align:center;padding:48px;border-radius:16px;border:1px solid #333;background:#111}
-h2{color:#22c55e;margin-bottom:12px}p{color:#888;margin:0}</style></head>
-<body><div class="card">
-<h2>Authorization successful</h2>
-<p>You can close this tab and return to Stroke.</p>
-</div></body></html>"#;
-
-    let error_html = r#"<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="UTF-8"><title>Stroke - error</title>
-<style>body{font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#0d0d0d;color:#eee}
-.card{text-align:center;padding:48px;border-radius:16px;border:1px solid #4b1c1c;background:#1a0f0f}
-h2{color:#ef4444;margin-bottom:12px}p{color:#888;margin:0}</style></head>
-<body><div class="card">
-<h2>Authorization failed</h2>
-<p>You can close this tab and try again in Stroke.</p>
-</div></body></html>"#;
+    let success_html = crate::oauth_page::page(true, "Cloudflare");
+    let error_html = crate::oauth_page::page(false, "Cloudflare");
 
     let send_html = |html: &str| -> String {
         format!(
@@ -198,7 +183,7 @@ h2{color:#ef4444;margin-bottom:12px}p{color:#888;margin:0}</style></head>
 
     if let Some(err) = &error {
         let _ = stream
-            .write_all(send_html(error_html).as_bytes())
+            .write_all(send_html(&error_html).as_bytes())
             .await;
         return Err(format!("Cloudflare denied authorization: {err}"));
     }
@@ -207,7 +192,7 @@ h2{color:#ef4444;margin-bottom:12px}p{color:#888;margin:0}</style></head>
         Some(c) if !c.is_empty() => c,
         _ => {
             let _ = stream
-                .write_all(send_html(error_html).as_bytes())
+                .write_all(send_html(&error_html).as_bytes())
                 .await;
             return Err("No authorization code in callback".to_string());
         }
@@ -215,13 +200,13 @@ h2{color:#ef4444;margin-bottom:12px}p{color:#888;margin:0}</style></head>
 
     if state.as_deref() != Some(expected_state) {
         let _ = stream
-            .write_all(send_html(error_html).as_bytes())
+            .write_all(send_html(&error_html).as_bytes())
             .await;
         return Err("OAuth state mismatch - possible CSRF".to_string());
     }
 
     let _ = stream
-        .write_all(send_html(success_html).as_bytes())
+        .write_all(send_html(&success_html).as_bytes())
         .await;
     let _ = stream.flush().await;
 
@@ -347,33 +332,37 @@ async fn store_tokens(
     expires_in: Option<u64>,
     email: Option<&str>,
 ) -> Result<(), String> {
-    let mut map = crate::secrets::read_all_async(app).await;
-    map.insert(KEY_ACCESS.to_string(), access.to_string());
-    if let Some(r) = refresh {
-        map.insert(KEY_REFRESH.to_string(), r.to_string());
-    }
-    if let Some(exp) = expires_in {
-        let expires_at = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs()
-            + exp
-            - 30; // 30s buffer
-        map.insert(KEY_EXPIRES.to_string(), expires_at.to_string());
-    }
-    if let Some(e) = email {
-        map.insert(KEY_EMAIL.to_string(), e.to_string());
-    }
-    crate::secrets::write_all_async(app, map).await
+    let access = access.to_string();
+    let refresh = refresh.map(str::to_string);
+    let email = email.map(str::to_string);
+    crate::secrets::update_async(app, move |map| {
+        map.insert(KEY_ACCESS.to_string(), access);
+        if let Some(r) = refresh {
+            map.insert(KEY_REFRESH.to_string(), r);
+        }
+        if let Some(exp) = expires_in {
+            let expires_at = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs()
+                + exp.saturating_sub(30); // 30s buffer
+            map.insert(KEY_EXPIRES.to_string(), expires_at.to_string());
+        }
+        if let Some(e) = email {
+            map.insert(KEY_EMAIL.to_string(), e);
+        }
+    })
+    .await
 }
 
 async fn clear_tokens(app: &tauri::AppHandle) -> Result<(), String> {
-    let mut map = crate::secrets::read_all_async(app).await;
-    map.remove(KEY_ACCESS);
-    map.remove(KEY_REFRESH);
-    map.remove(KEY_EXPIRES);
-    map.remove(KEY_EMAIL);
-    crate::secrets::write_all_async(app, map).await
+    crate::secrets::update_async(app, |map| {
+        map.remove(KEY_ACCESS);
+        map.remove(KEY_REFRESH);
+        map.remove(KEY_EXPIRES);
+        map.remove(KEY_EMAIL);
+    })
+    .await
 }
 
 fn now_secs() -> u64 {
@@ -471,12 +460,24 @@ pub fn set_app_handle(app: tauri::AppHandle) {
 /// Returns None rather than an error because the caller's job is to report the
 /// *original* failure when no refresh is possible - "session expired" would be
 /// a misleading thing to show someone using a manual API token.
+// One refresh at a time. Cloudflare rotates refresh tokens, so two concurrent
+// refreshes (the D1 driver's 401 recovery and a panel's token check) with the
+// same one left the loser rejected and the session looking signed out.
+static REFRESH_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 pub async fn refreshed_token() -> Option<String> {
     let app = APP.get()?.clone();
+    let before = crate::secrets::read_all_async(&app).await.get(KEY_REFRESH).cloned();
+    let _guard = REFRESH_LOCK.lock().await;
     let map = crate::secrets::read_all_async(&app).await;
     let refresh = map.get(KEY_REFRESH).cloned().unwrap_or_default();
     if refresh.is_empty() {
         return None;
+    }
+    // Refreshed by someone else while we waited: that token is the fresh one,
+    // and reusing the rotated-out refresh token would be rejected.
+    if before.as_deref() != Some(refresh.as_str()) {
+        return map.get(KEY_ACCESS).cloned();
     }
     let new_token = refresh_access_token(&refresh).await.ok()?;
     let email = map.get(KEY_EMAIL).cloned();
@@ -509,6 +510,19 @@ pub async fn cloudflare_get_valid_token(app: tauri::AppHandle) -> Result<String,
 
     if now_secs() < expires_at {
         return Ok(access);
+    }
+
+    let _guard = REFRESH_LOCK.lock().await;
+    // Whoever held the lock may already have refreshed.
+    let map = crate::secrets::read_all_async(&app).await;
+    let expires_at = map
+        .get(KEY_EXPIRES)
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(u64::MAX);
+    if let Some(access) = map.get(KEY_ACCESS).filter(|a| !a.is_empty()) {
+        if now_secs() < expires_at {
+            return Ok(access.clone());
+        }
     }
 
     let refresh = map.get(KEY_REFRESH).cloned().unwrap_or_default();

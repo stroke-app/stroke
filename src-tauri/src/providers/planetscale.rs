@@ -14,13 +14,18 @@ pub const OAUTH: OAuthConfig = OAuthConfig {
     auth_url: "https://auth.planetscale.com/oauth/authorize",
     // token_url is used by the proxy, not the app (the app posts to TOKEN_PROXY).
     token_url: "https://auth.planetscale.com/oauth/token",
-    // Exact scope set PlanetScale's own CLI uses (proven valid). NOTE the real
-    // scope strings differ from the dashboard checkbox labels: it's
-    // `read_organization` (singular), and password creation is covered by
-    // `write_databases` (there is no `manage_passwords` OAuth scope). Sent
-    // space-separated, WITHOUT PKCE (see Provider::uses_pkce). Each must be
-    // enabled on the OAuth app.
-    scopes: "read_databases write_databases read_user read_organization",
+    // Two organization scopes, and they are different permissions:
+    // `read_organizations` (user access) lists the orgs a user belongs to, which
+    // is the first call the picker makes - without it `/organizations` answers
+    // 403 "User does not have permission". `read_organization` (org access)
+    // reads a single org. Connecting creates a branch password,
+    // and PlanetScale's API reference requires `manage_passwords` for that, plus
+    // `manage_production_branch_passwords` when the branch is production (the
+    // default branch usually is). `write_databases` alone signs in and lists
+    // fine, then fails on the first connect. Sent space-separated, WITHOUT PKCE
+    // (see Provider::uses_pkce). Every scope here must also be ticked on the
+    // OAuth app, or the authorize page rejects the request.
+    scopes: "read_user read_organizations read_organization read_databases write_databases manage_passwords manage_production_branch_passwords",
 };
 
 const API: &str = "https://api.planetscale.com/v1";
@@ -33,12 +38,27 @@ async fn get(token: &str, path: &str) -> Result<Value, String> {
         .await
         .map_err(|e| format!("PlanetScale request failed: {e}"))?;
     let status = resp.status().as_u16();
-    let body: Value = resp
-        .json()
+    // Before reading the body: a 401 may not be JSON, and the caller refreshes on it.
+    if status == 401 {
+        return Err(super::UNAUTHORIZED.into());
+    }
+    let text = resp
+        .text()
         .await
-        .map_err(|e| format!("PlanetScale: bad JSON: {e}"))?;
+        .map_err(|e| format!("PlanetScale read failed: {e}"))?;
+    let body: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
     if status != 200 {
-        return Err(format!("PlanetScale API error ({status})"));
+        // Say which call and what PlanetScale said. "PlanetScale API error (403)"
+        // alone gave no way to tell a missing scope from an org that was never
+        // granted to this app.
+        let msg = body["message"]
+            .as_str()
+            .map(String::from)
+            .unwrap_or_else(|| text.chars().take(160).collect());
+        return Err(format!("PlanetScale API error ({status}) on {path}: {msg}"));
+    }
+    if body.is_null() {
+        return Err(format!("PlanetScale returned a non-JSON response for {path}"));
     }
     Ok(body)
 }
@@ -47,10 +67,32 @@ async fn get(token: &str, path: &str) -> Result<Value, String> {
 /// second lookup.
 pub async fn list_databases(token: &str) -> Result<Vec<ProviderDatabase>, String> {
     let orgs = get(token, "/organizations").await?;
+    // Every org's database list in flight at once rather than one after another.
+    let org_names: Vec<&str> = orgs["data"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|org| org["name"].as_str())
+        .collect();
+    let pages = futures::future::join_all(org_names.iter().map(|org_name| {
+        let path = format!("/organizations/{org_name}/databases");
+        async move { get(token, &path).await }
+    }))
+    .await;
+    // `/organizations` lists every org the user belongs to, but the token only
+    // covers the ones picked on the consent screen: the rest answer 403.
+    let pages = super::merge_partial(
+        org_names.iter().zip(pages).map(|(org, r)| r.map(|b| (*org, b))).collect(),
+        "Stroke may not have been granted this organization: sign out, sign in again, and select it on PlanetScale's consent screen.",
+    )?;
+    Ok(parse_databases(&pages))
+}
+
+/// `/organizations/{org}/databases` pages → picker rows. `db_ref` is
+/// "{org}/{database}" so build_connection can act without a second lookup.
+fn parse_databases(pages: &[(&str, Value)]) -> Vec<ProviderDatabase> {
     let mut out = Vec::new();
-    for org in orgs["data"].as_array().into_iter().flatten() {
-        let Some(org_name) = org["name"].as_str() else { continue };
-        let dbs = get(token, &format!("/organizations/{org_name}/databases")).await?;
+    for (org_name, dbs) in pages {
         for db in dbs["data"].as_array().into_iter().flatten() {
             let Some(name) = db["name"].as_str() else { continue };
             out.push(ProviderDatabase {
@@ -62,7 +104,7 @@ pub async fn list_databases(token: &str) -> Result<Vec<ProviderDatabase>, String
             });
         }
     }
-    Ok(out)
+    out
 }
 
 pub async fn build_connection(token: &str, db_ref: &str) -> Result<ProviderConnection, String> {
@@ -84,6 +126,10 @@ pub async fn build_connection(token: &str, db_ref: &str) -> Result<ProviderConne
         .await
         .map_err(|e| format!("PlanetScale password create failed: {e}"))?;
     let status = resp.status().as_u16();
+    // Before reading the body: a 401 may not be JSON, and the caller refreshes on it.
+    if status == 401 {
+        return Err(super::UNAUTHORIZED.into());
+    }
     let body: Value = resp
         .json()
         .await
@@ -92,6 +138,13 @@ pub async fn build_connection(token: &str, db_ref: &str) -> Result<ProviderConne
         return Err(format!("PlanetScale could not create credentials ({status})"));
     }
 
+    minted_connection(&body, database)
+}
+
+/// The password-create response → a connection. PlanetScale returns the
+/// plaintext password exactly once, here, and the host either at the top level
+/// or under `database_branch` depending on the API version.
+fn minted_connection(body: &Value, database: &str) -> Result<ProviderConnection, String> {
     let username = body["username"].as_str().ok_or("PlanetScale: missing username")?;
     let password = body["plain_text"].as_str().ok_or("PlanetScale: missing password")?;
     let host = body["access_host_url"]
@@ -110,4 +163,33 @@ pub async fn build_connection(token: &str, db_ref: &str) -> Result<ProviderConne
         needs_password: false,
         name: format!("PlanetScale · {database}"),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn databases_carry_their_org_in_the_ref() {
+        let page = json!({ "data": [
+            { "name": "app", "region": { "slug": "aws-ap-south-1" } },
+            { "name": "logs" },
+            { "region": { "slug": "no-name-is-skipped" } }
+        ]});
+        let rows = parse_databases(&[("acme", page)]);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].db_ref, "acme/app");
+        assert_eq!(rows[0].region.as_deref(), Some("aws-ap-south-1"));
+        assert_eq!(rows[1].region, None);
+    }
+
+    #[test]
+    fn minted_password_reads_either_host_location() {
+        let top = json!({ "username": "u", "plain_text": "p", "access_host_url": "aws.connect.psdb.cloud" });
+        let nested = json!({ "username": "u", "plain_text": "p", "database_branch": { "access_host_url": "h2" } });
+        assert_eq!(minted_connection(&top, "app").unwrap().host, "aws.connect.psdb.cloud");
+        assert_eq!(minted_connection(&nested, "app").unwrap().host, "h2");
+        assert!(minted_connection(&json!({ "username": "u" }), "app").is_err());
+    }
 }

@@ -104,18 +104,29 @@
   // Aggregating charts (bar/pie/line) still represent the whole set closely; the
   // toolbar flags when data was sampled.
   const MAX_CHART_ROWS = 50_000
-  const sampled = $derived(rows.length > MAX_CHART_ROWS)
+  // A windowed table browse hands over a sparse array as long as the whole
+  // table, with holes where pages aren't loaded yet. Indexing into it sampled
+  // holes (`undefined`) and the coercion pass threw on `row.map`. Chart the rows
+  // that exist: forEach skips holes, and a dense array passes through as is.
+  const loadedRows = $derived.by(() => {
+    /** @type {any[]} */
+    const out = []
+    rows.forEach((r) => { if (r) out.push(r) })
+    return out.length === rows.length ? rows : out
+  })
+  const partial = $derived(loadedRows.length < rows.length)
+  const sampled = $derived(loadedRows.length > MAX_CHART_ROWS)
   const chartRows = $derived.by(() => {
-    if (rows.length <= MAX_CHART_ROWS) return rows
-    const step = rows.length / MAX_CHART_ROWS
+    if (loadedRows.length <= MAX_CHART_ROWS) return loadedRows
+    const step = loadedRows.length / MAX_CHART_ROWS
     const out = new Array(MAX_CHART_ROWS)
-    for (let i = 0; i < MAX_CHART_ROWS; i++) out[i] = rows[Math.floor(i * step)]
+    for (let i = 0; i < MAX_CHART_ROWS; i++) out[i] = loadedRows[Math.floor(i * step)]
     return out
   })
 
   // Sniff row data to detect numeric columns that the DB reported with no/wrong type
   const effectiveColumns = $derived.by(() => {
-    if (!rows.length) return columns
+    if (!loadedRows.length) return columns
     return columns.map((col, i) => {
       if (colType(col) === 'number') return col
       const samples = chartRows.slice(0, 20).map(r => /** @type {any} */ (r)[i]).filter(v => v != null && v !== '')
@@ -129,7 +140,7 @@
 
   // Coerce string-encoded numerics to actual numbers in rows
   const effectiveRows = $derived.by(() => {
-    if (!rows.length) return rows
+    if (!loadedRows.length) return loadedRows
     return chartRows.map(row =>
       /** @type {any[]} */ (row).map((v, i) => {
         if (effectiveColumns[i] && colType(effectiveColumns[i]) === 'number' && typeof v === 'string') {
@@ -478,7 +489,7 @@
 
       <!-- Right actions -->
       <div class="ml-auto flex items-center gap-0.5">
-        <span class="mr-1.5 tabular-nums font-mono text-ui-2xs text-muted-foreground">{rows.length.toLocaleString()} rows</span>
+        <span class="mr-1.5 tabular-nums font-mono text-ui-2xs text-muted-foreground">{loadedRows.length.toLocaleString()}{partial ? ` of ${rows.length.toLocaleString()} loaded` : ' rows'}</span>
         <button type="button" class={iconBtn} title="Save chart" onclick={openSavePanel}>
           <Bookmark class="size-3.5" />
         </button>
@@ -552,7 +563,7 @@
       <!-- Contain any render/ECharts throw to this panel so a bad chart shows an
            inline message instead of taking down the tab / app. -->
       <svelte:boundary>
-        {#if rows.length === 0}
+        {#if loadedRows.length === 0}
           <div class="absolute inset-0 flex items-center justify-center">
             <p class="text-ui-sm text-muted-foreground">No data to display</p>
           </div>
@@ -563,7 +574,7 @@
         {/if}
         {#if sampled}
           <div class="pointer-events-none absolute bottom-1 right-2 rounded bg-background/70 px-1.5 py-0.5 font-mono text-ui-3xs text-muted-foreground">
-            sampled {MAX_CHART_ROWS.toLocaleString()} of {rows.length.toLocaleString()} rows
+            sampled {MAX_CHART_ROWS.toLocaleString()} of {loadedRows.length.toLocaleString()} {partial ? 'loaded ' : ''}rows
           </div>
         {/if}
         {#snippet failed(error, reset)}

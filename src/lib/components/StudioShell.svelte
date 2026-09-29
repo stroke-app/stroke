@@ -6447,9 +6447,11 @@ let rowSearch = $state('')
     resetTabs()
   }
 
-  async function handleDisconnect() {
+  /** @param {{ forget?: boolean }} [opts] `forget` skips remembering the schema,
+   *  for a connection that was just deleted. */
+  async function handleDisconnect({ forget = false } = {}) {
     // Remember where the user was so reconnecting restores this schema.
-    if (persistConnectionId && activeSchema) setLastSchema(persistConnectionId, activeSchema)
+    if (!forget && persistConnectionId && activeSchema) setLastSchema(persistConnectionId, activeSchema)
     recordActivity({ type: 'disconnect', title: `Disconnected from ${connection?.name ?? 'database'}`, success: true })
     setWasDisconnected(true)
     try { await disconnectPostgres() } catch { /* ignore */ }
@@ -6458,6 +6460,19 @@ let rowSearch = $state('')
     connection = null
     clearConnectionState()
     showConnectionModal = true
+  }
+
+  /**
+   * A saved connection was deleted (sidebar or connection modal). Deleting the
+   * one that is open also ends its session: staying connected to a connection
+   * that no longer exists left nothing to reconnect or switch back to.
+   * @param {string} id
+   */
+  function handleConnectionRemoved(id) {
+    savedConnections = loadSavedConnections()
+    if (connection && id && (id === persistConnectionId || id === connection.id)) {
+      void handleDisconnect({ forget: true })
+    }
   }
 
   /** @param {{ db_type: string, host: string, port: number, user: string, password: string, database: string, name: string }} info */
@@ -6502,7 +6517,9 @@ let rowSearch = $state('')
       const sample = /** @type {import('$lib/stores/connections.js').SavedConnection} */ ({
         id: SAMPLE_DB_ID, type: 'sqlite', name: 'Sample Database', filePath,
       })
-      upsertConnection(sample)
+      // Clicking Sample Database is an explicit re-add, so it may bring back a
+      // sample connection the user deleted earlier.
+      upsertConnection(sample, { revive: true })
       savedConnections = loadSavedConnections()
       localStorage.setItem(SAMPLE_SEEDED_KEY, '1')
       await connectSqlite(sample)
@@ -7064,6 +7081,7 @@ let rowSearch = $state('')
   maxConnections={$hasPro ? Infinity : FREE_CONNECTION_LIMIT}
   activeConnectionName={connection ? (connection.name || connection.database || connection.host || connection.filePath || 'Connected') : ''}
   ondisconnect={requestDisconnect}
+  onremoved={handleConnectionRemoved}
 />
 <SwitchDatabaseDialog
   bind:open={showSwitchDbDialog}
@@ -7100,7 +7118,7 @@ let rowSearch = $state('')
   loading={dbInfoLoading}
   error={dbInfoError}
 />
-<DisconnectDialog bind:open={showDisconnectDialog} connectionName={connection ? (connection.name || connection.database || connection.host || connection.filePath || 'Connected') : ''} ondisconnect={handleDisconnect} />
+<DisconnectDialog bind:open={showDisconnectDialog} connectionName={connection ? (connection.name || connection.database || connection.host || connection.filePath || 'Connected') : ''} ondisconnect={() => handleDisconnect()} />
 <CreateTableDialog
   bind:open={showCreateTableDialog}
   {activeSchema}
@@ -7367,7 +7385,7 @@ let rowSearch = $state('')
         activeConnectionId={connection?.id ?? ''}
         onswitchconnection={(c) => { if (aiMode) exitAiMode(); void handleSwitchDatabase(c) }}
         onaddconnection={() => { showConnectionModal = true }}
-        onremoveconnection={(id) => { savedConnections = removeConnection(id) }}
+        onremoveconnection={(id) => { removeConnection(id); handleConnectionRemoved(id) }}
         onsetconnectiongroup={(id, group) => { savedConnections = setConnectionGroup(id, group) }}
         ondisconnectconnection={() => handleDisconnect()}
         onopenextensiondetail={(ext) => openExtensionDetailTab(ext)}

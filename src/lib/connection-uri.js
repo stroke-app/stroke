@@ -2,6 +2,44 @@
 /** @typedef {{ filePath: string }} ParsedSqliteUri */
 
 /**
+ * Make the user:password part of a connection URL safe for `new URL`.
+ *
+ * Passwords get pasted as typed, and a typed password is not URL-encoded: a
+ * bare `%` that isn't an escape (`p%ss`) made `decodeURIComponent` throw and
+ * the whole import fail, and a raw `#`, `?` or `/` ended the authority early,
+ * so everything after it was read as the fragment, query or path and the
+ * password came back cut short. The host can never contain `@`, so the LAST `@`
+ * is the real split; everything before it is credentials, and every character
+ * there that the URL grammar would misread is escaped. Escapes already present
+ * (`%25`, `%40`) are left as they are, so a correctly encoded URL is unchanged.
+ * @param {string} uri a string with a `scheme://` prefix
+ */
+function escapeUserinfo(uri) {
+  const m = /^([a-z][a-z0-9+.-]*:\/\/)(.*)$/is.exec(uri)
+  if (!m) return uri
+  const [, scheme, rest] = m
+  const at = rest.lastIndexOf('@')
+  if (at < 0) return uri
+  const fix = (/** @type {string} */ part) =>
+    part
+      .replace(/%(?![0-9a-f]{2})/gi, '%25')
+      .replace(/[#?/@\[\] ]/g, (c) => encodeURIComponent(c))
+  const userinfo = rest.slice(0, at)
+  const colon = userinfo.indexOf(':')
+  const safe = colon < 0 ? fix(userinfo) : `${fix(userinfo.slice(0, colon))}:${fix(userinfo.slice(colon + 1))}`
+  return `${scheme}${safe}@${rest.slice(at + 1)}`
+}
+
+/** decodeURIComponent that never throws: a malformed escape stays as written. */
+function decodePart(/** @type {string} */ s) {
+  try {
+    return decodeURIComponent(s)
+  } catch {
+    return s
+  }
+}
+
+/**
  * @param {string} uri
  * @returns {ParsedPostgresUri | { error: string } | null}
  */
@@ -21,7 +59,7 @@ export function parsePostgresUri(uri) {
   }
 
   try {
-    const url = new URL(normalized)
+    const url = new URL(escapeUserinfo(normalized))
     const sslmode = url.searchParams.get('sslmode')?.toLowerCase()
     const ssl =
       sslmode === 'require' ||
@@ -32,9 +70,9 @@ export function parsePostgresUri(uri) {
     return {
       host: url.hostname || '127.0.0.1',
       port: url.port || '5432',
-      database: decodeURIComponent(url.pathname.replace(/^\//, '')) || 'postgres',
-      user: decodeURIComponent(url.username),
-      password: decodeURIComponent(url.password),
+      database: decodePart(url.pathname.replace(/^\//, '')) || 'postgres',
+      user: decodePart(url.username),
+      password: decodePart(url.password),
       ssl,
     }
   } catch {
@@ -62,7 +100,7 @@ export function parseMysqlUri(uri) {
   }
 
   try {
-    const url = new URL(normalized)
+    const url = new URL(escapeUserinfo(normalized))
     const sslMode = url.searchParams.get('ssl-mode')?.toLowerCase()
     const ssl =
       sslMode === 'required' ||
@@ -73,9 +111,9 @@ export function parseMysqlUri(uri) {
     return {
       host: url.hostname || '127.0.0.1',
       port: url.port || '3306',
-      database: decodeURIComponent(url.pathname.replace(/^\//, '')),
-      user: decodeURIComponent(url.username),
-      password: decodeURIComponent(url.password),
+      database: decodePart(url.pathname.replace(/^\//, '')),
+      user: decodePart(url.username),
+      password: decodePart(url.password),
       ssl,
     }
   } catch {
@@ -130,14 +168,14 @@ export function parseMssqlUri(uri) {
 
   const truthy = (v) => v === 'true' || v === '1' || v === 'yes'
   try {
-    const url = new URL(normalized)
+    const url = new URL(escapeUserinfo(normalized))
     const trust = url.searchParams.get('trustservercertificate')?.toLowerCase()
     return {
       host: url.hostname || '127.0.0.1',
       port: url.port || '1433',
-      database: decodeURIComponent(url.pathname.replace(/^\//, '')),
-      user: decodeURIComponent(url.username),
-      password: decodeURIComponent(url.password),
+      database: decodePart(url.pathname.replace(/^\//, '')),
+      user: decodePart(url.username),
+      password: decodePart(url.password),
       encrypt: truthy(url.searchParams.get('encrypt')?.toLowerCase() ?? ''),
       // Default to trusting the cert (matches the form default; most local/dev
       // SQL Servers use a self-signed cert), unless the URI explicitly says false.
@@ -171,15 +209,15 @@ export function parseClickhouseUri(uri) {
   }
 
   try {
-    const url = new URL(normalized)
+    const url = new URL(escapeUserinfo(normalized))
     const secure = scheme === 'https' || url.port === '8443'
     return {
       host: url.hostname || '127.0.0.1',
       port: url.port || (secure ? '8443' : '8123'),
       database:
-        decodeURIComponent(url.pathname.replace(/^\//, '')) || url.searchParams.get('database') || '',
-      user: decodeURIComponent(url.username) || url.searchParams.get('user') || '',
-      password: decodeURIComponent(url.password) || url.searchParams.get('password') || '',
+        decodePart(url.pathname.replace(/^\//, '')) || url.searchParams.get('database') || '',
+      user: decodePart(url.username) || url.searchParams.get('user') || '',
+      password: decodePart(url.password) || url.searchParams.get('password') || '',
       secure,
     }
   } catch {
@@ -340,7 +378,7 @@ export function parseRedisUri(uri) {
   }
   let url
   try {
-    url = new URL(trimmed)
+    url = new URL(escapeUserinfo(trimmed))
   } catch {
     return { error: 'Could not read that Redis URL' }
   }
@@ -352,8 +390,8 @@ export function parseRedisUri(uri) {
     host: url.hostname || '127.0.0.1',
     port: url.port || '6379',
     db: db || '0',
-    user: decodeURIComponent(url.username || ''),
-    password: decodeURIComponent(url.password || ''),
+    user: decodePart(url.username || ''),
+    password: decodePart(url.password || ''),
     tls,
   }
 }
@@ -374,7 +412,7 @@ export function parseLibsqlUri(uri) {
   }
   let url
   try {
-    url = new URL(trimmed)
+    url = new URL(escapeUserinfo(trimmed))
   } catch {
     return { error: 'Could not read that LibSQL URL' }
   }

@@ -11,7 +11,9 @@
   import SearchableMenu from './SearchableMenu.svelte'
   import ProviderAuthPanel from './ProviderAuthPanel.svelte'
   import { Button } from '$lib/components/ui/button/index.js'
-  import { cfStartOAuth, cfOAuthStatus, cfLogout } from '$lib/cloudflare.js'
+  import ConfirmDialog from './ConfirmDialog.svelte'
+  import { cfStartOAuth, cfOAuthStatus, cfLogout, cfGetValidToken } from '$lib/cloudflare.js'
+  import { readProviderList, writeProviderList, clearProviderLists } from '$lib/provider-list-cache.js'
   import { cloudflareListAccounts, cloudflareListD1Databases } from '$lib/api.js'
   import { cn } from '$lib/utils.js'
 
@@ -113,7 +115,35 @@
   }
   const shownError = $derived(friendlyError(errorMsg))
 
+  const CACHE = 'cloudflare:'
+  /** @param {string} accountId */
+  const dbsKey = (accountId) => `${CACHE}dbs:${accountId}`
+
+  /** The account to land on: the saved connection's, else the last one used, else the first. */
+  function pickAccount(/** @type {Array<{id: string}>} */ list) {
+    /** @type {string | undefined} */
+    const last = readProviderList(`${CACHE}lastAccount`)
+    for (const want of [selectedAccountId, initialAccountId, last]) {
+      if (want && list.some((a) => a.id === want)) return want
+    }
+    return list[0]?.id ?? ''
+  }
+
   onMount(async () => {
+    // Open on the accounts and databases from last time, then refresh both
+    // underneath. The token read fails with "not signed in" by itself when the
+    // session is gone, so the status round-trip only runs with nothing to show.
+    /** @type {{ email?: string, accounts?: typeof accounts } | undefined} */
+    const cached = readProviderList(`${CACHE}accounts`)
+    if (cached?.accounts?.length) {
+      email = cached.email ?? ''
+      accounts = cached.accounts
+      selectedAccountId = pickAccount(accounts)
+      databases = readProviderList(dbsKey(selectedAccountId)) ?? []
+      phase = 'selecting'
+      void loadAccounts({ quiet: true })
+      return
+    }
     try {
       const status = await cfOAuthStatus()
       if (status.connected) {
@@ -138,53 +168,81 @@
     }
   }
 
-  async function loadAccounts() {
-    phase = 'fetching'
+  /**
+   * A failure while refreshing a cached view keeps that view: a network blip
+   * shouldn't swap a usable list for an error card. An ended session still
+   * surfaces, because nothing on the cached list would connect.
+   * @param {unknown} e @param {boolean} quiet
+   */
+  function fail(e, quiet) {
+    const msg = String(e)
+    const ended = /not signed in|no.*token|unauthor/i.test(msg)
+    if (ended) clearProviderLists(CACHE)
+    if (quiet && !ended) return
+    phase = 'error'
+    errorMsg = msg
+  }
+
+  /** @param {{ quiet?: boolean }} [opts] */
+  async function loadAccounts({ quiet = false } = {}) {
+    if (!quiet) phase = 'fetching'
     errorMsg = ''
     try {
-      const { cfGetValidToken } = await import('$lib/cloudflare.js')
       const token = await withTimeout(cfGetValidToken(), 20_000, 'reading your Cloudflare session')
+      // Start the D1 list for the account we expect to land on alongside the
+      // account list, instead of waiting for one to finish before the other.
+      /** @type {string} */
+      const guess = accounts.length
+        ? pickAccount(accounts)
+        : initialAccountId || readProviderList(`${CACHE}lastAccount`) || ''
+      const early = guess ? cloudflareListD1Databases(token, guess) : null
+      early?.catch(() => {}) // settled below or abandoned; never an unhandled rejection
       accounts = await withTimeout(
         cloudflareListAccounts(token),
         20_000,
         'listing your Cloudflare accounts',
       )
+      writeProviderList(`${CACHE}accounts`, { email, accounts: $state.snapshot(accounts) })
       phase = 'selecting'
       // Auto-select an account so the D1 database list loads immediately; the
       // user can still switch accounts via the dropdown when there are several.
-      // A saved connection's own account wins, otherwise the first one.
-      if (accounts.length && !selectedAccountId) {
-        const seeded = accounts.some((a) => a.id === initialAccountId)
-          ? initialAccountId
-          : accounts[0].id
-        await selectAccount(seeded)
-      }
+      const id = pickAccount(accounts)
+      if (id) await selectAccount(id, { token, pending: id === guess ? early : null, quiet })
     } catch (e) {
-      phase = 'error'
-      errorMsg = String(e)
+      fail(e, quiet)
     }
   }
 
-  async function selectAccount(id) {
-    selectedAccountId = id
-    selectedDbUuid = ''
-    databases = []
-    loadingDbs = true
+  /**
+   * @param {string} id
+   * @param {{ token?: string, pending?: Promise<typeof databases> | null, quiet?: boolean }} [opts]
+   */
+  async function selectAccount(id, { token, pending = null, quiet = false } = {}) {
+    if (id !== selectedAccountId) {
+      selectedAccountId = id
+      selectedDbUuid = ''
+      // Another account's last-known list, if we have one, while it refreshes.
+      databases = readProviderList(dbsKey(id)) ?? []
+    }
+    writeProviderList(`${CACHE}lastAccount`, id)
+    loadingDbs = databases.length === 0
     try {
-      const { cfGetValidToken } = await import('$lib/cloudflare.js')
-      const token = await withTimeout(cfGetValidToken(), 20_000, 'reading your Cloudflare session')
-      databases = await withTimeout(
-        cloudflareListD1Databases(token, id),
+      const tok = token ?? (await withTimeout(cfGetValidToken(), 20_000, 'reading your Cloudflare session'))
+      const list = await withTimeout(
+        pending ?? cloudflareListD1Databases(tok, id),
         20_000,
         'listing D1 databases for this account',
       )
+      // The user may have switched accounts while this was in flight.
+      if (id !== selectedAccountId) return
+      databases = list
+      writeProviderList(dbsKey(id), $state.snapshot(list))
     } catch (e) {
       // Show the error card - staying in 'selecting' rendered a misleading
       // "No D1 databases in this account" empty state over a real failure.
-      phase = 'error'
-      errorMsg = String(e)
+      if (id === selectedAccountId) fail(e, quiet)
     } finally {
-      loadingDbs = false
+      if (id === selectedAccountId) loadingDbs = false
     }
   }
 
@@ -193,7 +251,6 @@
     const db = databases.find(d => d.uuid === uuid)
     if (!db) return
     try {
-      const { cfGetValidToken } = await import('$lib/cloudflare.js')
       const token = await cfGetValidToken()
       onselect({
         accountId: selectedAccountId,
@@ -207,8 +264,12 @@
     }
   }
 
+  /** Sign-out asks first: saved D1 connections depend on this sign-in. */
+  let confirmSignOut = $state(false)
+
   async function handleLogout() {
     await cfLogout()
+    clearProviderLists(CACHE)
     phase = 'idle'
     email = ''
     accounts = []
@@ -278,8 +339,8 @@
             Try again
           </Button>
           {#if signedIn}
-            <Button variant="ghost" class="text-muted-foreground" onclick={handleLogout}>
-              <LogOut class="size-3.5" />
+            <Button variant="ghost" class="text-muted-foreground" onclick={() => (confirmSignOut = true)}>
+              <LogOut class="size-3.5 shrink-0" aria-hidden="true" />
               Sign out
             </Button>
           {/if}
@@ -302,20 +363,16 @@
           <p class="truncate text-ui-3xs text-muted-foreground">{email}</p>
         {/if}
       </div>
-      <button
-        type="button"
-        title="Disconnect"
-        class="shrink-0 rounded p-1 text-muted-foreground hover:text-destructive transition-colors"
-        onclick={handleLogout}
-      >
-        <LogOut class="size-3.5" />
-      </button>
+      <Button variant="ghost" size="sm" class="shrink-0 text-muted-foreground hover:text-foreground" onclick={() => (confirmSignOut = true)}>
+        <LogOut class="size-3.5 shrink-0" aria-hidden="true" />
+        Sign out
+      </Button>
     </div>
 
     <!-- Account selector -->
     {#if accounts.length > 1}
-      <div class="flex flex-col gap-1.5">
-        <span class="text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground">Account</span>
+      <div class="flex max-w-md flex-col gap-1.5">
+        <span class="text-ui-xs font-medium text-foreground/80">Account</span>
         <SearchableMenu
           items={accounts.map((a) => ({ value: a.id, label: a.name }))}
           placeholder="Search accounts…"
@@ -330,7 +387,7 @@
               class="field-surface flex h-9 w-full items-center gap-2 bg-muted/25 pl-3 pr-2.5 text-left text-ui-xs transition-[border-color,box-shadow] hover:border-border focus:outline-none data-[state=open]:border-ring"
             >
               <span class={cn('min-w-0 flex-1 truncate', !selectedAccountId && 'text-muted-foreground')}>
-                {selectedAccountName || '- select account -'}
+                {selectedAccountName || 'Select an account'}
               </span>
               <ChevronDown class="size-3.5 shrink-0 text-muted-foreground" />
             </button>
@@ -348,8 +405,8 @@
 
     <!-- Database selector -->
     {#if selectedAccountId}
-      <div class="flex flex-col gap-1.5">
-        <span class="text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground">D1 Database</span>
+      <div class="flex max-w-md flex-col gap-1.5">
+        <span class="flex items-baseline gap-1.5 text-ui-xs font-medium text-foreground/80">D1 database{#if databases.length}<span class="font-mono text-ui-2xs tabular-nums text-muted-foreground">{databases.length}</span>{/if}</span>
 
         {#if databases.length > 0}
           <SearchableMenu
@@ -368,7 +425,7 @@
               >
                 <DbIcon id="d1" class={cn('size-4 shrink-0', selectedDbName ? 'text-foreground' : 'text-muted-foreground')} />
                 <span class={cn('min-w-0 flex-1 truncate font-mono', !selectedDbName && 'font-sans text-muted-foreground')}>
-                  {selectedDbName || '- select database -'}
+                  {selectedDbName || 'Select a database'}
                 </span>
                 <ChevronDown class="size-3.5 shrink-0 text-muted-foreground" />
               </button>
@@ -387,16 +444,21 @@
             <span class="min-w-0 flex-1 truncate">Loading databases…</span>
           </div>
         {:else}
-          <div class="flex flex-col items-center gap-2 rounded-lg border border-dashed border-border/50 px-4 py-6 text-center">
-            <DbIcon id="d1" class="size-5 text-muted-foreground" />
-            <p class="text-ui-2xs text-muted-foreground">No D1 databases in this account.</p>
-            <button
-              type="button"
-              class="flex items-center gap-1 text-ui-3xs text-muted-foreground hover:text-muted-foreground"
-              onclick={() => selectAccount(selectedAccountId)}
-            >
-              <RefreshCw class="size-3" /> Retry
-            </button>
+          <!-- The same shape as the sidebar's empty tabs: a mark in a well, a title, one
+         line on what to do, one button. Generous padding, because this block is
+         the whole content of the panel when it shows. -->
+          <div class="flex flex-col items-center gap-4 rounded-xl border border-dashed border-border/60 px-6 py-10 text-center">
+            <div class="flex size-10 items-center justify-center rounded-lg border border-border/60 bg-muted/30">
+              <DbIcon id={"d1"} class="size-5 text-muted-foreground" />
+            </div>
+            <div class="flex max-w-[36ch] flex-col gap-1">
+              <p class="text-ui-sm font-medium text-foreground">No databases yet</p>
+              <p class="text-pretty text-ui-xs leading-relaxed text-muted-foreground">This account has no D1 databases. Create one with <code class="font-mono text-ui-2xs">wrangler d1 create</code> or in the Cloudflare dashboard, then refresh.</p>
+            </div>
+            <Button variant="outline" size="sm" class="group active:scale-[0.96]" onclick={() => selectAccount(selectedAccountId)}>
+              <RefreshCw class="size-3.5 shrink-0 transition-transform duration-500 ease-[var(--ease-out)] group-hover:rotate-180" aria-hidden="true" />
+              Refresh
+            </Button>
           </div>
         {/if}
       </div>
@@ -406,3 +468,16 @@
 
 </div>
 
+<!-- Unlike the other providers, a saved D1 connection reconnects by minting a
+     fresh token from this sign-in (see d1Call in api.js), so say so. -->
+<ConfirmDialog
+  bind:open={confirmSignOut}
+  icon="log-out"
+  title="Sign out of Cloudflare?"
+  description={email ? `Stroke forgets the Cloudflare sign-in for ${email} on this machine.` : 'Stroke forgets its Cloudflare sign-in on this machine.'}
+  note="Saved D1 connections use this sign-in, so they stop connecting until you sign in again."
+  confirmLabel="Sign out"
+  confirmIcon="log-out"
+  variant="destructive"
+  onconfirm={() => void handleLogout()}
+/>

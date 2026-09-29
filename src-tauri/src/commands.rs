@@ -1123,6 +1123,21 @@ pub async fn cancel_query(
     Ok(())
 }
 
+// ── Saved connections ─────────────────────────────────────────────────────────
+
+/// The durable saved-connections payload, or `null` before the first write.
+#[tauri::command(async)]
+pub fn connections_store_read(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    crate::connection_store::read(&dir)
+}
+
+#[tauri::command(async)]
+pub fn connections_store_write(app: tauri::AppHandle, json: String) -> Result<(), String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    crate::connection_store::write(&dir, &json)
+}
+
 // ── License ───────────────────────────────────────────────────────────────────
 
 // `async` so the first call (device-fingerprint subprocess + trial-file I/O)

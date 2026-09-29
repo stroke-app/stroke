@@ -1,6 +1,6 @@
 /**
  * Frontend bridge for database provider adapters (Neon, Supabase, PlanetScale,
- * Prisma Postgres). Mirrors `cloudflare.js`: thin invoke wrappers plus a
+ * Prisma Postgres, TiDB Cloud, Turso, Railway, Nile, Upstash). Mirrors `cloudflare.js`: thin invoke wrappers plus a
  * metadata registry the UI renders from. The heavy lifting (OAuth, listing,
  * building a connectable spec) lives in Rust (`src-tauri/src/providers`).
  */
@@ -11,12 +11,34 @@ import { invoke } from '@tauri-apps/api/core'
  * @typedef {{ db_type: string, host: string, port: number, username: string, password: string, database: string, ssl: boolean, needs_password: boolean, name: string }} ProviderConnection
  */
 
-/** UI metadata. `mode: 'token'` providers paste a credential instead of OAuth. */
+/**
+ * UI metadata. `mode: 'token'` providers paste a credential instead of OAuth.
+ * `signIn` is the quiet line under the sign-in prompt: what kind of flow it is.
+ */
 export const PROVIDERS = [
-  { id: 'neon',        name: 'Neon',            mode: 'oauth', engine: 'postgres', blurb: 'Serverless Postgres, one-click connect' },
-  { id: 'supabase',    name: 'Supabase',        mode: 'oauth', engine: 'postgres', blurb: 'Postgres platform, asks for your DB password once' },
-  { id: 'planetscale', name: 'PlanetScale',     mode: 'oauth', engine: 'mysql',    blurb: 'Serverless MySQL, mints fresh credentials on connect' },
-  { id: 'prisma',      name: 'Prisma Postgres', mode: 'oauth', engine: 'postgres', blurb: 'Serverless Postgres, sign in with Prisma' },
+  { id: 'neon',        name: 'Neon',            mode: 'oauth', engine: 'postgres', blurb: 'Serverless Postgres, one-click connect', signIn: 'Secure PKCE flow' },
+  { id: 'supabase',    name: 'Supabase',        mode: 'oauth', engine: 'postgres', blurb: 'Postgres platform, asks for your DB password once', signIn: 'Secure PKCE flow' },
+  { id: 'planetscale', name: 'PlanetScale',     mode: 'oauth', engine: 'mysql',    blurb: 'Serverless MySQL, mints fresh credentials on connect', signIn: 'Standard OAuth flow' },
+  { id: 'prisma',      name: 'Prisma Postgres', mode: 'oauth', engine: 'postgres', blurb: 'Serverless Postgres, sign in with Prisma', signIn: 'Secure PKCE flow' },
+  { id: 'tidb',        name: 'TiDB Cloud',      mode: 'oauth', engine: 'mysql',    blurb: 'Serverless MySQL, creates a SQL user on connect', signIn: 'Confirm a one-time code in the browser' },
+  { id: 'turso',       name: 'Turso',           mode: 'oauth', engine: 'libsql',   blurb: 'Edge SQLite, creates a database token on connect', signIn: 'Same sign-in as the Turso CLI' },
+  { id: 'railway',     name: 'Railway',         mode: 'oauth', engine: 'postgres', blurb: 'Postgres, MySQL and Redis services on Railway', signIn: 'Secure PKCE flow' },
+  { id: 'nile',        name: 'Nile',            mode: 'oauth', engine: 'postgres', blurb: 'Multi-tenant Postgres, creates credentials on connect', signIn: 'Same sign-in as the Nile CLI' },
+  {
+    id: 'upstash', name: 'Upstash', mode: 'token', engine: 'redis',
+    blurb: 'Serverless Redis, connect with a Developer API key',
+    // Paste-a-credential providers describe their own fields. `join` builds the
+    // one string the backend stores (and splits again) from the field values.
+    token: {
+      help: 'Create a Developer API key in the Upstash console under Account, Management API.',
+      helpUrl: 'https://console.upstash.com/account/api',
+      fields: [
+        { key: 'email', label: 'Account email', type: 'email', autocomplete: 'email', placeholder: 'you@example.com' },
+        { key: 'apiKey', label: 'API key', type: 'password', autocomplete: 'off', placeholder: 'Developer API key', mono: true },
+      ],
+      join: (/** @type {Record<string, string>} */ v) => `${v.email.trim()}:${v.apiKey.trim()}`,
+    },
+  },
 ]
 
 /** @param {string} id */

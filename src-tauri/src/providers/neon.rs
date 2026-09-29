@@ -40,6 +40,10 @@ async fn get(token: &str, path: &str) -> Result<Value, String> {
         .await
         .map_err(|e| format!("Neon request failed: {e}"))?;
     let status = resp.status().as_u16();
+    // Before reading the body: a 401 may not be JSON, and the caller refreshes on it.
+    if status == 401 {
+        return Err(super::UNAUTHORIZED.into());
+    }
     let text = resp
         .text()
         .await
@@ -61,10 +65,25 @@ async fn get(token: &str, path: &str) -> Result<Value, String> {
 pub async fn list_databases(token: &str) -> Result<Vec<ProviderDatabase>, String> {
     let orgs_body = get(token, "/users/me/organizations").await?;
 
+    // One request per org, all in flight at once: with several orgs the serial
+    // loop cost a full round-trip each before the picker could show anything.
+    // try_join_all keeps the orgs' order, so the list reads the same as before.
+    let org_ids: Vec<&str> = orgs_body["organizations"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|org| org["id"].as_str())
+        .collect();
+    let pages = futures::future::join_all(org_ids.iter().map(|org_id| {
+        let path = format!("/projects?org_id={}", urlencoding::encode(org_id));
+        async move { get(token, &path).await }
+    }))
+    .await;
+    // An org the token can't read is skipped rather than failing the list.
+    let pages = super::merge_partial(pages, "")?;
+
     let mut out = Vec::new();
-    for org in orgs_body["organizations"].as_array().into_iter().flatten() {
-        let Some(org_id) = org["id"].as_str() else { continue };
-        let body = get(token, &format!("/projects?org_id={}", urlencoding::encode(org_id))).await?;
+    for body in &pages {
         for p in body["projects"].as_array().into_iter().flatten() {
             if let Some(id) = p["id"].as_str() {
                 out.push(ProviderDatabase {
@@ -85,21 +104,12 @@ pub async fn list_databases(token: &str) -> Result<Vec<ProviderDatabase>, String
 pub async fn build_connection(token: &str, project_id: &str) -> Result<ProviderConnection, String> {
     // Find the project's default branch (fall back to the first).
     let branches = get(token, &format!("/projects/{project_id}/branches")).await?;
-    let branch_list = branches["branches"].as_array().cloned().unwrap_or_default();
-    let branch = branch_list
-        .iter()
-        .find(|b| b["default"].as_bool() == Some(true) || b["primary"].as_bool() == Some(true))
-        .or_else(|| branch_list.first())
-        .ok_or("This Neon project has no branches")?;
-    let branch_id = branch["id"].as_str().ok_or("Neon: missing branch id")?;
+    let branch_id = default_branch(&branches)?;
+    let branch_id = branch_id.as_str();
 
     let dbs = get(token, &format!("/projects/{project_id}/branches/{branch_id}/databases")).await?;
-    let first = dbs["databases"]
-        .as_array()
-        .and_then(|a| a.first())
-        .ok_or("This Neon branch has no databases yet")?;
-    let db_name = first["name"].as_str().ok_or("Neon: missing database name")?;
-    let role = first["owner_name"].as_str().ok_or("Neon: missing owner role")?;
+    let (db_name, role) = first_database(&dbs)?;
+    let (db_name, role) = (db_name.as_str(), role.as_str());
 
     let uri_body = get(
         token,
@@ -129,6 +139,28 @@ pub async fn build_connection(token: &str, project_id: &str) -> Result<ProviderC
     })
 }
 
+/// The project's default branch (Neon also calls it `primary`), else the first.
+fn default_branch(branches: &Value) -> Result<String, String> {
+    let list = branches["branches"].as_array().cloned().unwrap_or_default();
+    let branch = list
+        .iter()
+        .find(|b| b["default"].as_bool() == Some(true) || b["primary"].as_bool() == Some(true))
+        .or_else(|| list.first())
+        .ok_or("This Neon project has no branches")?;
+    branch["id"].as_str().map(String::from).ok_or_else(|| "Neon: missing branch id".into())
+}
+
+/// The branch's first database and the role that owns it.
+fn first_database(dbs: &Value) -> Result<(String, String), String> {
+    let first = dbs["databases"]
+        .as_array()
+        .and_then(|a| a.first())
+        .ok_or("This Neon branch has no databases yet")?;
+    let name = first["name"].as_str().ok_or("Neon: missing database name")?;
+    let role = first["owner_name"].as_str().ok_or("Neon: missing owner role")?;
+    Ok((name.to_string(), role.to_string()))
+}
+
 /// Parse `postgres://user:pass@host[:port]/db?query` into its parts (URL-decoding
 /// the userinfo, which Neon percent-encodes).
 pub(crate) fn parse_pg_uri(uri: &str) -> Result<(String, u16, String, String, String), String> {
@@ -153,4 +185,39 @@ pub(crate) fn parse_pg_uri(uri: &str) -> Result<(String, u16, String, String, St
 
     let dec = |s: &str| urlencoding::decode(s).map(|c| c.into_owned()).unwrap_or_else(|_| s.to_string());
     Ok((host, port, dec(user_raw), dec(pass_raw), dec(&database)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn default_branch_is_preferred_over_the_first() {
+        let b = json!({ "branches": [ { "id": "br-dev" }, { "id": "br-main", "default": true } ] });
+        assert_eq!(default_branch(&b).unwrap(), "br-main");
+        let legacy = json!({ "branches": [ { "id": "br-a" }, { "id": "br-b", "primary": true } ] });
+        assert_eq!(default_branch(&legacy).unwrap(), "br-b");
+        assert_eq!(default_branch(&json!({ "branches": [ { "id": "only" } ] })).unwrap(), "only");
+        assert!(default_branch(&json!({ "branches": [] })).is_err());
+    }
+
+    #[test]
+    fn first_database_carries_its_owner_role() {
+        let dbs = json!({ "databases": [ { "name": "neondb", "owner_name": "neondb_owner" } ] });
+        assert_eq!(first_database(&dbs).unwrap(), ("neondb".into(), "neondb_owner".into()));
+        assert!(first_database(&json!({ "databases": [] })).unwrap_err().contains("no databases"));
+    }
+
+    #[test]
+    fn connection_uri_decodes_credentials_and_drops_the_query() {
+        let (h, p, u, pw, d) = parse_pg_uri(
+            "postgresql://neondb_owner:p%40ss%2Fw@ep-x-pooler.c-4.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require",
+        )
+        .unwrap();
+        assert_eq!((h.as_str(), p), ("ep-x-pooler.c-4.us-east-1.aws.neon.tech", 5432));
+        assert_eq!((u.as_str(), pw.as_str(), d.as_str()), ("neondb_owner", "p@ss/w", "neondb"));
+        let (_, port, ..) = parse_pg_uri("postgres://u:p@h:6543/db").unwrap();
+        assert_eq!(port, 6543);
+    }
 }

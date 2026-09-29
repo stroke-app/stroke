@@ -2078,7 +2078,10 @@
             {/if}
 
             <!-- ── Tables ─────────────────────────────────────────── -->
-            {#if showTables}
+            <!-- `!tabIsEmpty` here and on Views / Materialized views, for the
+                 reason given on Databases above: an empty tab gets exactly one
+                 empty state, the tab-level one below. -->
+            {#if showTables && !tabIsEmpty}
               <!-- Outside `tablesOpen`, like every other section header: a
                    collapsed list still has to say what it is and how much it is
                    hiding. `regularTablesUnpinned` is the denominator because
@@ -2118,14 +2121,7 @@
                       class="flex w-full min-w-full flex-col px-1.5 pb-1 [&>li]:pb-0.5"
                     >
                 {#if regularTables.length === 0 && tables.length > 0}
-                  <li
-                    class="flex w-full flex-col items-center gap-2 px-4 py-8 text-center"
-                  >
-                    <Icon name="table-2" class="size-7 text-muted-foreground" />
-                    <p class="text-ui-sm text-muted-foreground">
-                      No tables in {activeSchema || "schema"}
-                    </p>
-                  </li>
+                  <!-- The tab-level empty state covers this. -->
                 {:else}
                   {#each filteredRegularTables as table (table.name)}
                     {@const isSelected = selectedItems.has(table.name)}
@@ -2317,7 +2313,7 @@
             {/if}
 
             <!-- ── Views ──────────────────────────────────────────── -->
-            {#if showViews && (views.length > 0 || filteredViews.length > 0)}
+            {#if showViews && !tabIsEmpty && (views.length > 0 || filteredViews.length > 0)}
               <div class="flex w-full items-center gap-1 px-2.5 pt-2 pb-1">
                 <span
                   class="text-ui-2xs font-medium tracking-wider text-muted-foreground uppercase"
@@ -2469,7 +2465,7 @@
             {/if}
 
             <!-- ── Materialized Views ─────────────────────────────── -->
-            {#if showMatViews && (matViews.length > 0 || filteredMatViews.length > 0)}
+            {#if showMatViews && !tabIsEmpty && (matViews.length > 0 || filteredMatViews.length > 0)}
               <div class="flex w-full items-center gap-1 px-2.5 pt-2 pb-1">
                 <span
                   class="text-ui-2xs font-medium tracking-wider text-muted-foreground uppercase"

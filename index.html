@@ -37,7 +37,15 @@
         // These two are the base light/dark --background, and they match
         // LIGHT_SURFACE / DARK_SURFACE in src-tauri/src/lib.rs so the window,
         // the webview and the page all come up the same colour.
-        document.documentElement.style.backgroundColor = isLight ? '#f7f7f7' : '#080808'
+        // The theme's own background when a previous run recorded it (see
+        // rememberBootSurface in settings.js); the base colours only on a first
+        // launch or a theme never shown before.
+        let surface = isLight ? '#f7f7f7' : '#080808'
+        try {
+          const boot = JSON.parse(localStorage.getItem('stroke:boot-surface') || 'null')
+          if (boot && boot.theme === theme && typeof boot.color === 'string') surface = boot.color
+        } catch (_) {}
+        document.documentElement.style.backgroundColor = surface
         let zoom = 1
         if (parsed?.zoom != null) zoom = Number(parsed.zoom)
         else if (parsed?.fontSize != null) zoom = Number(parsed.fontSize) / 14
