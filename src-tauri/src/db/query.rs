@@ -2106,6 +2106,9 @@ pub async fn count_table_rows(
 ) -> Result<i64, String> {
     match require_conn(&state)? {
         ActiveConnection::Postgres(_) => {}
+        // The grid's "All" mode takes its total from here, so PostHog needs its
+        // own count or the pager showed no total at all.
+        ActiveConnection::Posthog(cfg) => return super::posthog::count_rows(&cfg, &table, search, filters).await,
         _ => return Ok(-1),
     }
     let pool = require_pool(&state)?;

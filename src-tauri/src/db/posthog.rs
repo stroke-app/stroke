@@ -66,13 +66,32 @@ async fn post_query(config: &PosthogConfig, query: Value) -> Result<Value, Strin
             401 => "PostHog rejected the API key. Check it, and that it has the Query Read scope.".into(),
             403 => format!("PostHog refused access to project {}: {detail}", config.project_id),
             429 => "PostHog's query rate limit was hit (240 a minute, 3 at once). Wait a moment and try again.".into(),
-            _ => format!("PostHog error ({status}): {detail}"),
+            // Seen on internal tables PostHog lists but can't query for a project
+            // (document_embeddings, some preaggregated and raw tables): even
+            // count() fails there. Nothing to change in the query.
+            500..=599 => "PostHog failed on its side (HTTP 5xx). Some of PostHog's internal tables are listed but can't be queried through the API; the main ones (events, persons, sessions) can.".into(),
+            _ => format!("PostHog error ({status}): {}", tidy_error(&detail)),
         });
     }
     if let Some(err) = body["error"].as_str().filter(|e| !e.is_empty()) {
         return Err(format!("PostHog error: {err}"));
     }
     Ok(body)
+}
+
+/// PostHog's 400s can append the whole generated ClickHouse query and its
+/// SETTINGS. Keep the sentence that says what's wrong.
+fn tidy_error(detail: &str) -> String {
+    if detail.contains("Unknown table expression identifier") {
+        return "PostHog lists this table, but it can't be queried on this project.".into();
+    }
+    let cut = [" in scope SELECT", " SETTINGS readonly", "\nSELECT "]
+        .iter()
+        .filter_map(|m| detail.find(m))
+        .min()
+        .unwrap_or(detail.len());
+    let short = detail[..cut].trim();
+    if short.chars().count() > 400 { short.chars().take(400).collect::<String>() + "…" } else { short.to_string() }
 }
 
 /// Only SELECT-shaped HogQL reaches the API: it can't write, so say so up front
@@ -92,14 +111,37 @@ fn type_of(entry: &Value) -> String {
     strip_wrappers(raw)
 }
 
+/// A ClickHouse type as a short grid label: wrappers off (`Nullable`,
+/// `LowCardinality`, `SimpleAggregateFunction(sum, Int64)` → `Int64`) and
+/// parameters dropped (`DateTime64(6, 'UTC')` → `DateTime64`, a long
+/// `Enum8('full' = 0, …)` → `Enum8`).
 fn strip_wrappers(ty: &str) -> String {
-    let mut t = ty;
-    for w in ["Nullable(", "LowCardinality("] {
-        if let Some(inner) = t.strip_prefix(w).and_then(|s| s.strip_suffix(')')) {
-            t = inner;
+    let mut t = ty.trim();
+    loop {
+        let before = t;
+        for w in ["Nullable(", "LowCardinality("] {
+            if let Some(inner) = t.strip_prefix(w).and_then(|s| s.strip_suffix(')')) {
+                t = inner;
+            }
+        }
+        if let Some(inner) = t.strip_prefix("SimpleAggregateFunction(").and_then(|s| s.strip_suffix(')')) {
+            t = inner.split_once(',').map(|(_, ty)| ty.trim()).unwrap_or(inner);
+        }
+        if t == before {
+            break;
         }
     }
-    t.to_string()
+    match t.split_once('(') {
+        Some((name, _)) if matches!(name, "DateTime64" | "DateTime" | "Enum8" | "Enum16" | "Decimal" | "FixedString") => name.to_string(),
+        _ => t.to_string(),
+    }
+}
+
+/// `system.information_schema.columns` → `` `system`.`information_schema`.`columns` ``.
+/// Quoted whole, a three-part name made PostHog answer HTTP 500; unquoted it
+/// works, and quoting each part works for every shape PostHog lists.
+fn quote_table(table: &str) -> String {
+    table.split('.').map(super::sql_util::quote_backtick).collect::<Vec<_>>().join(".")
 }
 
 /// A HogQL response → the app's result shape.
@@ -115,7 +157,9 @@ fn to_sql_result(body: &Value, sql: &str, query_ms: u64) -> SqlResult {
         .map(|(i, n)| {
             let raw = types.get(i).cloned().unwrap_or(Value::Null);
             let mut c = ColumnInfo::new(n.clone(), type_of(&raw));
-            c.nullable = raw.as_array().and_then(|p| p.get(1)).and_then(Value::as_str).is_some_and(|t| t.starts_with("Nullable("));
+            // Read-only analytics: NOT NULL is nothing to act on, and marking
+            // every non-Nullable column required put a `*` on nearly all of them.
+            c.nullable = true;
             c
         })
         .collect();
@@ -264,7 +308,7 @@ pub async fn get_table_rows(
     filters: Option<Vec<RowFilter>>,
 ) -> Result<TableRows, String> {
     let t0 = Instant::now();
-    let tq = super::sql_util::quote_backtick(table);
+    let tq = quote_table(table);
     let has_search = search.as_deref().map(str::trim).is_some_and(|s| !s.is_empty());
     let has_filters = filters.as_ref().is_some_and(|f| !f.is_empty());
     let cols = if has_search || has_filters { get_column_structure(config, table).await? } else { Vec::new() };
@@ -316,6 +360,25 @@ pub async fn get_table_rows(
     })
 }
 
+/// The count for the grid's pager (its "All" mode asks for it separately).
+pub async fn count_rows(
+    config: &PosthogConfig,
+    table: &str,
+    search: Option<String>,
+    filters: Option<Vec<RowFilter>>,
+) -> Result<i64, String> {
+    let has_search = search.as_deref().map(str::trim).is_some_and(|s| !s.is_empty());
+    let has_filters = filters.as_ref().is_some_and(|f| !f.is_empty());
+    let cols = if has_search || has_filters { get_column_structure(config, table).await? } else { Vec::new() };
+    let where_clause = super::clickhouse::build_where(&cols, search.as_deref(), filters.as_deref());
+    let r = query(config, &format!("SELECT count() FROM {}{where_clause}", quote_table(table))).await?;
+    Ok(r.rows
+        .first()
+        .and_then(|row| row.first())
+        .and_then(|v| v.as_i64().or_else(|| v.as_str()?.parse().ok()))
+        .unwrap_or(-1))
+}
+
 /// A readable definition for the DDL view: PostHog tables have no CREATE
 /// statement, so describe the columns instead.
 pub async fn get_ddl(config: &PosthogConfig, table: &str) -> Result<String, String> {
@@ -340,7 +403,8 @@ mod tests {
         let names: Vec<&str> = r.columns.iter().map(|c| c.name.as_str()).collect();
         assert_eq!(names, ["event", "timestamp", "distinct_id"]);
         assert_eq!(r.columns[2].data_type, "String");
-        assert!(r.columns[2].nullable && !r.columns[0].nullable);
+        // Every PostHog column is nullable for the grid: no `*` markers.
+        assert!(r.columns.iter().all(|c| c.nullable));
         assert_eq!(r.rows.len(), 1);
         assert!(r.message.is_none());
     }
@@ -355,6 +419,22 @@ mod tests {
         }}});
         let names: Vec<String> = table_fields(&tables, "events").into_iter().map(|(n, _)| n).collect();
         assert_eq!(names, ["event", "properties"]);
+    }
+
+    #[test]
+    fn type_labels_and_nested_names_match_what_posthog_sends() {
+        assert_eq!(strip_wrappers("LowCardinality(String)"), "String");
+        assert_eq!(strip_wrappers("SimpleAggregateFunction(sum, Int64)"), "Int64");
+        assert_eq!(strip_wrappers("DateTime64(6, 'UTC')"), "DateTime64");
+        assert_eq!(strip_wrappers("Nullable(Enum8('full' = 0, 'propertyless' = 1))"), "Enum8");
+        assert_eq!(quote_table("system.information_schema.columns"), "`system`.`information_schema`.`columns`");
+        assert_eq!(quote_table("events"), "`events`");
+    }
+
+    #[test]
+    fn long_errors_keep_their_first_sentence() {
+        assert!(tidy_error("Unknown table expression identifier 'x' in scope SELECT a FROM x SETTINGS readonly = 2").contains("can't be queried"));
+        assert_eq!(tidy_error("Syntax error near FROM in scope SELECT 1 SETTINGS readonly = 2"), "Syntax error near FROM");
     }
 
     #[test]
