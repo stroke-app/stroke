@@ -347,6 +347,46 @@
   }
 
 
+  // Providers whose build_connection only reads (no password minted, no user or
+  // token created), so it is safe to start on hover and throw away unused. Neon
+  // needs three API calls in a row to build one, so a row the pointer rests on
+  // is usually ready before the click lands.
+  const PREFETCH = new Set(['neon', 'supabase', 'railway', 'upstash'])
+  /** Built connections by db_ref, kept briefly so a stale password never lingers.
+   *  @type {Map<string, { at: number, work: Promise<import('$lib/providers.js').ProviderConnection> }>} */
+  const prefetched = new Map()
+  const PREFETCH_TTL_MS = 60_000
+  /** @type {ReturnType<typeof setTimeout> | undefined} */
+  let hoverTimer
+
+  /** @param {string} ref */
+  function prefetchBuild(ref) {
+    if (!PREFETCH.has(provider) || phase !== 'selecting') return
+    const hit = prefetched.get(ref)
+    if (hit && Date.now() - hit.at < PREFETCH_TTL_MS) return
+    const dbName = databases.find((d) => d.db_ref === ref)?.name ?? ''
+    if (resolveSavedConnection(ref, dbName)) return // connects with no API call anyway
+    const work = providerBuildConnection(provider, ref)
+    work.catch(() => prefetched.delete(ref)) // pick() retries a failed one
+    prefetched.set(ref, { at: Date.now(), work })
+  }
+
+  /** Rest ~120ms before prefetching, so sweeping the pointer down the list costs nothing. @param {string} ref */
+  function hoverRow(ref) {
+    clearTimeout(hoverTimer)
+    hoverTimer = setTimeout(() => prefetchBuild(ref), 120)
+  }
+
+  /** @param {string} ref */
+  function buildFor(ref) {
+    const hit = prefetched.get(ref)
+    prefetched.delete(ref)
+    if (hit && Date.now() - hit.at < PREFETCH_TTL_MS) {
+      return hit.work.catch(() => providerBuildConnection(provider, ref))
+    }
+    return providerBuildConnection(provider, ref)
+  }
+
   async function pick(ref) {
     selectedRef = ref
     phase = 'building'
@@ -363,7 +403,7 @@
         onselect({ reuse: known, providerRef: ref })
         return
       }
-      const conn = { ...(await providerBuildConnection(provider, ref)), providerRef: ref }
+      const conn = { ...(await buildFor(ref)), providerRef: ref }
       if (conn.needs_password) {
         // Reuse a previously-saved password for this exact database (host + user)
         // so we don't ask again. Otherwise ask inline, then connect.
@@ -435,6 +475,7 @@
   async function handleLogout() {
     await providerLogout(provider)
     clearProviderLists(cacheKey)
+    prefetched.clear()
     phase = 'idle'
     databases = []
     selectedRef = ''
@@ -711,7 +752,8 @@
           empty="No matching database"
           contentClass="w-[var(--bits-popover-anchor-width)] min-w-[280px]"
           align="start"
-          onselect={(it) => pick(it.value)}
+          onselect={(it) => { clearTimeout(hoverTimer); pick(it.value) }}
+          onhover={(it) => hoverRow(it.value)}
         >
           {#snippet trigger(props)}
             <button

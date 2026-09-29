@@ -27,6 +27,9 @@
     searchThreshold = -1,
     /** @type {(item: any) => void} */
     onselect = () => {},
+    /** Pointer came to rest on a row: a hint to start work the select will need.
+     *  @type {((item: any) => void) | null} */
+    onhover = null,
     /** snippet({ props }) - renders the trigger button */
     trigger,
     /** snippet(item) - renders one row's content */
@@ -149,6 +152,7 @@
               keywords={it.keywords ?? (it.label ? [it.label] : undefined)}
               disabled={it.disabled}
               onSelect={() => handleSelect(it)}
+              onpointerenter={onhover ? () => onhover?.(it) : undefined}
               class={cn(
                 "flex w-full min-w-0 cursor-default items-center gap-1.5 rounded-md px-1.5 py-1.5 text-ui-xs outline-hidden select-none",
                 "text-foreground/85 hover:bg-accent hover:text-foreground data-selected:bg-accent data-selected:text-foreground",

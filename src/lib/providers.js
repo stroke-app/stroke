@@ -80,6 +80,11 @@ export async function providerOAuthStatus(provider) {
 }
 
 /** @param {string} provider */
+/** Open the HTTPS connection to each signed-in provider's API ahead of use. Fire and forget. */
+export function providerWarm() {
+  return invoke('provider_warm').catch(() => {})
+}
+
 export async function providerLogout(provider) {
   return invoke('provider_logout', { provider })
 }

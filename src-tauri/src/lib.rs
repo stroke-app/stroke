@@ -597,6 +597,7 @@ pub fn run() {
             providers::provider_store_token,
             providers::provider_oauth_status,
             providers::provider_logout,
+            providers::provider_warm,
             providers::provider_list_databases,
             providers::provider_build_connection,
             db::backup::backup_export,

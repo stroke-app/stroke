@@ -100,6 +100,28 @@ impl Provider {
         }
     }
 
+    const ALL: [Provider; 10] = [
+        Self::Neon, Self::Supabase, Self::PlanetScale, Self::Prisma, Self::TiDB,
+        Self::Turso, Self::Railway, Self::Nile, Self::Upstash, Self::PostHog,
+    ];
+
+    /// The API host each listing and connect talks to, for `provider_warm`.
+    /// None for PostHog, whose host is the user's own instance.
+    fn api_origin(&self) -> Option<&'static str> {
+        Some(match self {
+            Self::Neon => "https://console.neon.tech",
+            Self::Supabase => "https://api.supabase.com",
+            Self::PlanetScale => "https://api.planetscale.com",
+            Self::Prisma => "https://api.prisma.io",
+            Self::TiDB => "https://serverless.tidbapi.com",
+            Self::Turso => "https://api.turso.tech",
+            Self::Railway => "https://backboard.railway.com",
+            Self::Nile => "https://global.thenile.dev",
+            Self::Upstash => "https://api.upstash.com",
+            Self::PostHog => return None,
+        })
+    }
+
     /// Stable key used to namespace stored tokens (`__{key}_refresh__`, …).
     fn key(&self) -> &'static str {
         match self {
@@ -1095,6 +1117,28 @@ pub async fn provider_oauth_status(
     })
 }
 
+/// Open the HTTPS connection to every signed-in provider's API ahead of use.
+///
+/// The first call to an API pays DNS, TCP and TLS before the request itself:
+/// three or four round trips, which to PlanetScale's or Neon's API from a far
+/// region is most of a second on top of the request. Called when the connect
+/// dialog opens; the shared client keeps the socket for the listing and the
+/// connect that follow. Unauthenticated `HEAD /`: no token leaves the app, and
+/// whatever it answers is thrown away.
+#[tauri::command]
+pub async fn provider_warm(app: tauri::AppHandle) {
+    let map = crate::secrets::read_all_async(&app).await;
+    for p in Provider::ALL {
+        let Some(origin) = p.api_origin() else { continue };
+        if !map.contains_key(&format!("__{}_access__", p.key())) {
+            continue;
+        }
+        tokio::spawn(async move {
+            let _ = http().head(origin).timeout(std::time::Duration::from_secs(5)).send().await;
+        });
+    }
+}
+
 #[tauri::command]
 pub async fn provider_logout(app: tauri::AppHandle, provider: String) -> Result<(), String> {
     clear_tokens(&app, Provider::parse(&provider)?).await
@@ -1106,7 +1150,12 @@ pub async fn provider_list_databases(
     provider: String,
 ) -> Result<Vec<ProviderDatabase>, String> {
     let p = Provider::parse(&provider)?;
-    with_token(&app, p, |token| async move { p.list_databases(&token).await }).await
+    let t0 = std::time::Instant::now();
+    let r = with_token(&app, p, |token| async move { p.list_databases(&token).await }).await;
+    // "The provider panel is slow" is otherwise unattributable: this says which
+    // provider, and whether it was the listing or the connect that took the time.
+    log::info!("{} list_databases: {} in {}ms", p.key(), if r.is_ok() { "ok" } else { "failed" }, t0.elapsed().as_millis());
+    r
 }
 
 #[tauri::command]
@@ -1116,11 +1165,14 @@ pub async fn provider_build_connection(
     db_ref: String,
 ) -> Result<ProviderConnection, String> {
     let p = Provider::parse(&provider)?;
-    with_token(&app, p, |token| {
+    let t0 = std::time::Instant::now();
+    let r = with_token(&app, p, |token| {
         let db_ref = db_ref.clone();
         async move { p.build_connection(&token, &db_ref).await }
     })
-    .await
+    .await;
+    log::info!("{} build_connection: {} in {}ms", p.key(), if r.is_ok() { "ok" } else { "failed" }, t0.elapsed().as_millis());
+    r
 }
 
 #[cfg(test)]

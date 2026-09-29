@@ -57,7 +57,7 @@
   import { toast } from "$lib/components/ui/sonner/toast.svelte.js";
   import * as ContextMenu from "$lib/components/ui/context-menu/index.js";
   import { parseConnectionUri, detectConnectionUri } from "$lib/connection-uri.js";
-  import { PROVIDERS, providerBuildConnection } from "$lib/providers.js";
+  import { PROVIDERS, providerBuildConnection, providerWarm } from "$lib/providers.js";
   import { providerOf, engineLabel } from "$lib/connection-provider.js";
   import ConfirmDialog from "./ConfirmDialog.svelte";
 
@@ -1568,6 +1568,9 @@
   $effect(() => {
     if (!open) return;
     untrack(() => {
+      // The first provider call pays DNS + TCP + TLS; start those now, while
+      // the dialog is still being read, so a listing or connect doesn't.
+      void providerWarm();
       saved = loadSavedConnections().sort(byLastConnected);
       lastId = getLastConnectionId();
       resetForm(null);
