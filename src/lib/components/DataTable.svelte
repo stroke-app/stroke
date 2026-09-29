@@ -7118,7 +7118,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   // - needed to preventDefault ctrl-zoom and shift-horizontal - otherwise forces
   // the browser to consult JS before every scroll tick, and while the redraw loop
   // is busy that round-trip lands late → the exact stutter reported even on tiny
-  // tables. So the non-passive listener is attached ONLY while Ctrl/Shift is
+  // tables. So the non-passive listener is attached ONLY while Ctrl/Shift/Alt is
   // physically held; the rest of the time there is no blocking wheel listener at
   // all and the OS scrolls the container directly.
   // With eased scrolling on (the default - Settings → Appearance → Native
@@ -7143,10 +7143,56 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       while (_zoomAccum >= 24) { decreaseZoom(); _zoomAccum -= 24 }
     }
 
+    // Alt+wheel steps PRECISE_ROWS rows per notch. On a multi-million-row table the scroll
+    // range is compressed (`_scrollScale` > 1), so a plain notch travels dozens of
+    // rows; this is the way to land on a specific one.
+    // The target is kept as a float in VIRTUAL space rather than read back from
+    // scrollTop: in scaled mode one row is a fractional number of physical pixels,
+    // and the element rounds what it's given, so `scrollTop += step` would drift a
+    // little every notch.
+    const PRECISE_ROWS = 4
+    let _preciseVirt = -1
+    let _preciseAccum = 0
+    function doPreciseStep(/** @type {number} */ dy, /** @type {boolean} */ notch) {
+      // A trackpad sends many small pixel deltas: PRECISE_ROWS rows per notch's
+      // worth (~50px) of travel. A mouse notch (line mode, or one coarse pixel
+      // tick) is exactly PRECISE_ROWS rows.
+      let rows = 0
+      if (notch) rows = Math.sign(dy) * PRECISE_ROWS
+      else {
+        const per = 50 / PRECISE_ROWS
+        _preciseAccum += dy
+        rows = Math.trunc(_preciseAccum / per)
+        _preciseAccum -= rows * per
+      }
+      if (!rows) return
+      // Resync when something else moved the grid since our last step (plain
+      // wheel, scrollbar, keyboard). Snap to a row boundary so each step leaves a
+      // whole row under the header; only valid while every row is ROW_HEIGHT tall.
+      if (_preciseVirt < 0 || Math.abs(_preciseVirt - _scrollTop) > _scrollScale + 1) {
+        _preciseVirt = _scrollTop
+        if (expandedRows.size === 0) {
+          _preciseVirt = insertRowOffset + Math.round((_preciseVirt - insertRowOffset) / ROW_HEIGHT) * ROW_HEIGHT
+        }
+      }
+      const maxVirt = Math.max(0, contentHeight - _viewportHeight)
+      _preciseVirt = Math.min(maxVirt, Math.max(0, _preciseVirt + rows * ROW_HEIGHT))
+      scroller?.stop()
+      el.scrollTop = virtToPhys(_preciseVirt)
+      scroller?.sync()
+    }
+
     // Non-passive: live for every tick under eased scrolling, otherwise only while
     // a modifier that needs preventDefault is down.
     const onWheelActive = (/** @type {WheelEvent} */ e) => {
       if (e.ctrlKey) { e.preventDefault(); doZoom(e.deltaY); return }
+      if (e.altKey && !e.shiftKey && !e.metaKey) {
+        const { dy } = wheelPixels(e, el.clientHeight)
+        if (!dy) return
+        e.preventDefault()
+        doPreciseStep(dy, e.deltaMode !== 0 || Math.abs(dy) >= 40)
+        return
+      }
       // If the pointer is over a nested horizontally-scrollable panel (the FK
       // sub-view), scroll that instead of the main grid.
       const inner = e.target instanceof Element
@@ -7213,7 +7259,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     /** @param {KeyboardEvent} e */
     const onKey = (e) => {
       if (easedScroll) return
-      if (e.ctrlKey || e.shiftKey) attach()
+      if (e.ctrlKey || e.shiftKey || e.altKey) attach()
       else detach()
     }
     // A keyboard scroll, scrollIntoView, or a scrollbar drag moved the element
