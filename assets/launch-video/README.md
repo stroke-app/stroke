@@ -1,8 +1,8 @@
 # Launch video
 
-[![Stroke launch video](stroke-launch.gif)](https://media.stroke.click/launch/stroke-launch-1080p60.mp4)
+[![Stroke launch video](stroke-launch.gif)](https://media.stroke.click/launch/stroke-launch-1080p60.mp4?v=1)
 
-Hosted on Cloudflare R2 (the `stroke` bucket, served at media.stroke.click): [1080p60](https://media.stroke.click/launch/stroke-launch-1080p60.mp4) for the web, [4K 60fps](https://media.stroke.click/launch/stroke-launch-2160p60.mp4) as the master. The landing page plays the 1080p60 cut.
+Hosted on Cloudflare R2 (the `stroke` bucket, served at media.stroke.click): [1080p60](https://media.stroke.click/launch/stroke-launch-1080p60.mp4?v=1) for the web, [4K 60fps](https://media.stroke.click/launch/stroke-launch-2160p60.mp4?v=1) as the master. The landing page plays the 1080p60 cut.
 
 `stroke-launch.mp4` is 44 seconds, 1920×1080 at 30fps with stereo AAC. `stroke-launch.jpg` is its poster (the final frame, also baked into frame 0 so thumbnails show it). `stroke-launch.gif` is a silent 800px loop of the whole video for the README, because GitHub only plays videos uploaded as attachments, never ones stored in the repo.
 

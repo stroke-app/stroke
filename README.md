@@ -4,9 +4,9 @@
 
 **A fast desktop database client, for people and for their AI tools.**
 
-[![Stroke launch video](assets/launch-video/stroke-launch.gif)](https://media.stroke.click/launch/stroke-launch-1080p60.mp4)
+[![Stroke launch video](assets/launch-video/stroke-launch.gif)](https://media.stroke.click/launch/stroke-launch-1080p60.mp4?v=1)
 
-<sub>[Watch the 44-second launch video with sound](https://media.stroke.click/launch/stroke-launch-1080p60.mp4) · [4K](https://media.stroke.click/launch/stroke-launch-2160p60.mp4)</sub>
+<sub>[Watch the 44-second launch video with sound](https://media.stroke.click/launch/stroke-launch-1080p60.mp4?v=1) · [4K](https://media.stroke.click/launch/stroke-launch-2160p60.mp4?v=1)</sub>
 
 [Download](#install) · [What's inside](#whats-inside) · [Build from source](#build-from-source) · [stroke.click](https://stroke.click)
 
