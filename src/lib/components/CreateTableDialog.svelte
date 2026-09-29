@@ -4,6 +4,10 @@
   import * as Dialog from '$lib/components/ui/dialog/index.js'
   import Plus from '@lucide/svelte/icons/plus'
   import Trash2 from '@lucide/svelte/icons/trash-2'
+  import Loader2 from '@lucide/svelte/icons/loader-2'
+  import { Button } from '$lib/components/ui/button/index.js'
+  import { Input } from '$lib/components/ui/input/index.js'
+  import { Checkbox } from '$lib/components/ui/checkbox/index.js'
   import { cn } from '$lib/utils.js'
 
   let {
@@ -137,29 +141,34 @@
     }
   }
 
-  const inputClass = 'h-7 w-full min-w-0 rounded-lg border-2 border-border bg-background/60 px-2 font-mono text-ui-sm text-foreground placeholder:text-muted-foreground outline-none transition-colors focus:border-ring'
-  const selectClass = 'h-7 w-full min-w-0 cursor-pointer appearance-none rounded border border-border bg-background/60 px-2 font-mono text-ui-sm text-foreground outline-none transition-colors focus:border-ring'
 </script>
 
+<!-- The column list is an editable table in the app's `cell-fields` idiom (the
+     structure editor's): the cell is the field, rows are divided by hairlines, and
+     focus highlights the cell. It used to be a row of separately bordered pills
+     per column, five frames wide, with a bare checkbox and a trash can floating
+     at the end. -->
 <Dialog.Root bind:open>
-  <Dialog.Content class="flex max-h-[90vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-xl">
-    <Dialog.Header class="shrink-0 border-b border-border px-5 pt-5 pb-4">
-      <Dialog.Title class="text-ui">New table</Dialog.Title>
-      <Dialog.Description class="text-ui-sm text-muted-foreground">
-        {#if dbType !== 'sqlite' && dbType !== 'd1'}
-          Schema: <span class="font-mono">{activeSchema}</span>
-        {/if}
-      </Dialog.Description>
+  <Dialog.Content class="flex max-h-[90vh] flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl">
+    <Dialog.Header class="shrink-0 gap-1 px-6 pt-6 pb-4">
+      <Dialog.Title>New table</Dialog.Title>
+      {#if dbType !== 'sqlite' && dbType !== 'd1'}
+        <Dialog.Description class="flex items-center gap-1.5 text-ui-xs text-muted-foreground">
+          in schema
+          <span class="rounded border border-border/60 bg-muted/40 px-1.5 py-px font-mono text-ui-2xs text-foreground/80">{activeSchema}</span>
+        </Dialog.Description>
+      {:else}
+        <Dialog.Description class="sr-only">Name the table and define its columns.</Dialog.Description>
+      {/if}
     </Dialog.Header>
 
-    <div class="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 py-4">
-      <!-- Table name -->
+    <div class="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-6 pb-5">
       <div class="flex flex-col gap-1.5">
-        <label class="text-ui-xs font-medium text-muted-foreground" for="create-table-name">Table name</label>
-        <input
+        <label class="text-ui-xs font-medium text-foreground/80" for="create-table-name">Table name</label>
+        <Input
           id="create-table-name"
-          class={cn(inputClass, 'h-8 text-ui-sm')}
-          placeholder="e.g. users"
+          class="h-9 font-mono text-ui-sm"
+          placeholder="users"
           bind:value={tableName}
           onkeydown={(e) => e.key === 'Enter' && handleCreate()}
           autocomplete="off"
@@ -167,113 +176,125 @@
         />
       </div>
 
-      <!-- Columns -->
       <div class="flex flex-col gap-2">
-        <div class="flex items-center gap-2">
-          <span class="text-ui-xs font-medium text-muted-foreground">Columns</span>
-          <span class="font-mono text-ui-2xs text-muted-foreground">{cols.filter(c => c.name.trim()).length}</span>
+        <div class="flex items-baseline gap-2">
+          <span class="text-ui-xs font-medium text-foreground/80" id="create-table-cols">Columns</span>
+          <span class="font-mono text-ui-2xs tabular-nums text-muted-foreground">{cols.filter(c => c.name.trim()).length}</span>
         </div>
 
-        <!-- Column header -->
-        <div class="grid grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_2rem_2rem_minmax(0,1fr)_1.5rem] items-center gap-x-1.5 px-1">
-          <span class="text-ui-2xs text-muted-foreground">Name</span>
-          <span class="text-ui-2xs text-muted-foreground">Type</span>
-          <span class="text-center text-ui-2xs text-muted-foreground">PK</span>
-          <span class="text-center text-ui-2xs text-muted-foreground">NN</span>
-          <span class="text-ui-2xs text-muted-foreground">Default</span>
-          <span></span>
+        <div class="overflow-hidden rounded-xl border border-border/60">
+          <table class="cell-fields w-full table-fixed border-collapse text-ui-xs" aria-labelledby="create-table-cols">
+            <colgroup>
+              <col />
+              <col class="w-[26%]" />
+              <col class="w-16" />
+              <col class="w-16" />
+              <col class="w-[22%]" />
+              <col class="w-9" />
+            </colgroup>
+            <thead class="bg-muted/30">
+              <tr class="text-left text-ui-2xs font-medium text-muted-foreground">
+                <th scope="col" class="px-3 py-2 font-medium">Name</th>
+                <th scope="col" class="px-3 py-2 font-medium">Type</th>
+                <th scope="col" class="px-1 py-2 text-center font-medium" title="Primary key">Primary</th>
+                <th scope="col" class="px-1 py-2 text-center font-medium" title="NOT NULL">Required</th>
+                <th scope="col" class="px-3 py-2 font-medium">Default</th>
+                <th scope="col"><span class="sr-only">Remove</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each cols as col, i (col.id)}
+                <tr class="group border-t border-border/50 transition-colors hover:bg-muted/20">
+                  <td class="p-0">
+                    <input
+                      class="h-9 w-full min-w-0 px-3 font-mono text-ui-xs text-foreground outline-none placeholder:text-muted-foreground/70"
+                      placeholder="column_name"
+                      aria-label="Column {i + 1} name"
+                      bind:value={col.name}
+                      autocomplete="off"
+                      spellcheck="false"
+                    />
+                  </td>
+                  <td class="p-0">
+                    <FieldSelect
+                      size="sm"
+                      class="h-9 w-full px-3 font-mono text-ui-xs"
+                      aria-label="Column {i + 1} type"
+                      bind:value={col.type}
+                      options={typeOptions.map((t) => ({ value: t, label: t }))}
+                    />
+                  </td>
+                  <td class="p-0 text-center">
+                    <Checkbox
+                      checked={col.pk}
+                      aria-label="Column {i + 1} is the primary key"
+                      onCheckedChange={() => patchCol(col.id, { pk: !col.pk })}
+                    />
+                  </td>
+                  <td class="p-0 text-center">
+                    <Checkbox
+                      checked={col.notNull}
+                      aria-label="Column {i + 1} is required (NOT NULL)"
+                      onCheckedChange={() => patchCol(col.id, { notNull: !col.notNull })}
+                    />
+                  </td>
+                  <td class="p-0">
+                    <input
+                      class="h-9 w-full min-w-0 px-3 font-mono text-ui-xs text-foreground outline-none placeholder:text-muted-foreground/60"
+                      placeholder="none"
+                      aria-label="Column {i + 1} default"
+                      bind:value={col.defaultVal}
+                      autocomplete="off"
+                      spellcheck="false"
+                    />
+                  </td>
+                  <td class="p-0 text-center">
+                    <!-- Shown on row hover or focus; always reachable by keyboard. -->
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      class="text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:text-destructive disabled:opacity-0"
+                      onclick={() => removeCol(col.id)}
+                      aria-label="Remove column {col.name || i + 1}"
+                      title="Remove column"
+                      disabled={cols.length === 1}
+                    >
+                      <Trash2 class="size-3.5" aria-hidden="true" />
+                    </Button>
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+          <button
+            type="button"
+            class="flex h-9 w-full items-center gap-1.5 border-t border-border/50 px-3 text-left text-ui-xs text-muted-foreground transition-colors hover:bg-muted/20 hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+            onclick={addCol}
+          >
+            <Plus class="size-3.5 shrink-0" aria-hidden="true" />
+            Add column
+          </button>
         </div>
-
-        <!-- Column rows -->
-        <div class="flex flex-col gap-1">
-          {#each cols as col (col.id)}
-            <div class="grid grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_2rem_2rem_minmax(0,1fr)_1.5rem] items-center gap-x-1.5">
-              <input
-                class={inputClass}
-                placeholder="column_name"
-                bind:value={col.name}
-                autocomplete="off"
-                spellcheck="false"
-              />
-              <FieldSelect
-                size="sm"
-                class="w-full text-ui-xs"
-                bind:value={col.type}
-                options={typeOptions.map((t) => ({ value: t, label: t }))}
-              />
-              <div class="flex justify-center">
-                <input
-                  type="checkbox"
-                  class="size-3.5 cursor-pointer accent-primary"
-                  checked={col.pk}
-                  onchange={() => patchCol(col.id, { pk: !col.pk })}
-                  title="Primary key"
-                />
-              </div>
-              <div class="flex justify-center">
-                <input
-                  type="checkbox"
-                  class="size-3.5 cursor-pointer accent-primary"
-                  checked={col.notNull}
-                  onchange={() => patchCol(col.id, { notNull: !col.notNull })}
-                  title="Not null"
-                />
-              </div>
-              <input
-                class={inputClass}
-                placeholder="optional"
-                bind:value={col.defaultVal}
-                autocomplete="off"
-                spellcheck="false"
-              />
-              <button
-                type="button"
-                class="flex size-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
-                onclick={() => removeCol(col.id)}
-                title="Remove column"
-                disabled={cols.length === 1}
-              >
-                <Trash2 class="size-3" />
-              </button>
-            </div>
-          {/each}
-        </div>
-
-        <button
-          type="button"
-          class="mt-0.5 flex items-center gap-1.5 self-start rounded-md px-2 py-1 text-ui-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          onclick={addCol}
-        >
-          <Plus class="size-3" />
-          Add column
-        </button>
       </div>
 
-      <!-- SQL preview -->
       {#if sql}
         <div class="flex flex-col gap-1.5">
-          <span class="text-ui-xs font-medium text-muted-foreground">SQL preview</span>
-          <pre class="overflow-x-auto rounded-md border border-border bg-muted/40 px-3 py-2.5 font-mono text-ui-2xs leading-relaxed text-muted-foreground whitespace-pre-wrap break-all">{sql}</pre>
+          <span class="text-ui-xs font-medium text-foreground/80">SQL preview</span>
+          <pre class="overflow-x-auto rounded-xl border border-border/60 bg-muted/30 px-3.5 py-3 font-mono text-ui-2xs leading-relaxed whitespace-pre-wrap break-all text-muted-foreground">{sql}</pre>
         </div>
       {/if}
     </div>
 
-    <div class="flex shrink-0 items-center justify-end gap-2 border-t border-border px-5 py-3">
-      <button
-        type="button"
-        class="rounded-md px-3 py-1.5 text-ui-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-        onclick={() => (open = false)}
-      >
-        Cancel
-      </button>
-      <button
-        type="button"
-        class="rounded-md bg-primary px-4 py-1.5 text-ui-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50 disabled:pointer-events-none"
-        disabled={!canSubmit}
-        onclick={handleCreate}
-      >
-        {submitting ? 'Creating…' : 'Create table'}
-      </button>
+    <div class="flex shrink-0 items-center justify-end gap-2 border-t border-border/60 px-6 py-3.5">
+      <Button variant="ghost" onclick={() => (open = false)}>Cancel</Button>
+      <Button disabled={!canSubmit} onclick={handleCreate}>
+        {#if submitting}
+          <Loader2 class="size-3.5 animate-spin" aria-hidden="true" />
+          Creating…
+        {:else}
+          Create table
+        {/if}
+      </Button>
     </div>
   </Dialog.Content>
 </Dialog.Root>
