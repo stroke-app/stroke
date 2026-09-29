@@ -4,6 +4,8 @@
   import CloudflareLogin from "./CloudflareLogin.svelte";
   import ProviderConnect from "./ProviderConnect.svelte";
   import DbIcon from "./DbIcon.svelte";
+  import ConnectOverlay from "./ConnectOverlay.svelte";
+  import { fade } from "svelte/transition";
   import {
     testPostgresConnection,
     connectPostgres,
@@ -339,6 +341,11 @@
   let lastId = $state(getLastConnectionId());
   let editingId = $state(/** @type {string|null} */ (null));
   let connecting = $state(/** @type {string|null} */ (null));
+  /** The connection `connecting` is dialling, for the overlay: its name, icon
+   *  and host, which are often not the form's (a provider pick, a saved row).
+   *  `via` says which control started it, so only that one shows progress.
+   *  @type {{ conn: any, via: string } | null} */
+  let dialing = $state(null);
   let testing = $state(false);
   let error = $state("");
   let testOk = $state(false);
@@ -349,6 +356,7 @@
   function stopOp() {
     opId += 1;
     connecting = null;
+    dialing = null;
     testing = false;
     error = "";
     testOk = false;
@@ -1661,6 +1669,7 @@
   async function connectWith(conn, opts = {}) {
     const myOp = ++opId;
     connecting = conn.id;
+    dialing = { conn, via: opts.via ?? "" };
     error = "";
     // Provider and saved connections dial an address that isn't in the form.
     failTarget = conn.provider && conn.host ? { host: conn.host, port: conn.port } : null;
@@ -1680,7 +1689,10 @@
       }
       failWith(friendlyError(e));
     } finally {
-      if (myOp === opId) connecting = null;
+      if (myOp === opId) {
+        connecting = null;
+        dialing = null;
+      }
     }
   }
 
@@ -2195,6 +2207,7 @@
     if (save && !editingId && blockedAsDuplicate(payload, () => void handleConnect({ save }))) return;
     const myOp = ++opId;
     connecting = editingId ?? "__new__";
+    dialing = { conn: { ...payload, name: payload.name || name || statusTarget }, via: "form" };
     error = "";
     try {
       const existing = editingId ? saved.find((s) => s.id === editingId) : null;
@@ -2230,7 +2243,10 @@
     } catch (e) {
       if (myOp === opId) failWith(friendlyError(e));
     } finally {
-      if (myOp === opId) connecting = null;
+      if (myOp === opId) {
+        connecting = null;
+        dialing = null;
+      }
     }
   }
 
@@ -2312,6 +2328,26 @@
     if (dbType === "d1") return databaseId ? `${databaseId.slice(0, 8)}…` : "—";
     return `${host || "—"}:${port || "—"}/${database || ""}`;
   });
+
+  /** Where a connection is going, for the overlay and footer. @param {any} c */
+  function dialTarget(c) {
+    if (!c) return "";
+    if (c.url) {
+      try {
+        const u = new URL(c.url);
+        return u.host || c.url;
+      } catch {
+        return String(c.url);
+      }
+    }
+    if (c.filePath || c.path) return String(c.filePath ?? c.path);
+    if (c.host) {
+      // PostHog keeps a base URL in `host`.
+      const h = String(c.host).replace(/^https?:\/\//, "");
+      return c.port && !String(c.host).includes("://") ? `${h}:${c.port}` : h;
+    }
+    return c.database ?? "";
+  }
 
   /** Attempt to close the dialog - guard against discarding unsaved edits. */
   function requestClose() {
@@ -3293,6 +3329,24 @@
 
         <!-- ── Form panel ──────────────────────────────────────────── -->
         <div class="relative flex min-h-0 min-w-0 flex-col">
+          <!-- Connecting: the panel gives way to what is being dialled, the same
+               look as the launch reconnect. The saved list on the left stays
+               visible; the footer's Stop and this Cancel both end the attempt. -->
+          {#if dialing}
+            <div
+              class="absolute inset-0 z-20 flex items-center justify-center bg-background/95 backdrop-blur-[2px]"
+              in:fade={{ duration: 120, delay: 150 }}
+              out:fade={{ duration: 100 }}
+            >
+              <ConnectOverlay
+                icon={providerOf(dialing.conn) ?? dialing.conn.type ?? ""}
+                name={dialing.conn.name ?? ""}
+                detail={dialTarget(dialing.conn)}
+                delay={150}
+                oncancel={stopOp}
+              />
+            </div>
+          {/if}
           <!-- ── Header ──────────────────────────────────────────────────────
              One question per screen. Step 1 asks only what you're connecting to;
              the title becomes that choice in step 2, with the back arrow as the
@@ -4537,9 +4591,10 @@
                     >
                   {/if}
                   {#if step !== "pick" && !error}
+                    {@const target = dialing ? dialTarget(dialing.conn) : statusTarget}
                     <span
                       class="min-w-0 truncate font-mono text-ui-2xs text-muted-foreground"
-                      title={statusTarget}>{statusTarget}</span
+                      title={target}>{target}</span
                     >
                   {/if}
                 </div>
@@ -4579,9 +4634,9 @@
                       disabled={isBusy}
                       title="Resume {lastConn.name} ({IS_MAC ? '⌘⇧' : 'Ctrl+Shift+'}Enter)"
                       aria-keyshortcuts="Control+Shift+Enter Meta+Shift+Enter"
-                      onclick={() => connectWith(lastConn)}
+                      onclick={() => connectWith(lastConn, { via: "resume" })}
                     >
-                      {#if connecting === lastConn.id}
+                      {#if connecting === lastConn.id && dialing?.via === "resume"}
                         <Icon
                           name="loader-2"
                           class="size-3.5 animate-spin"

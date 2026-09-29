@@ -5,6 +5,7 @@
   import { setReadOnly } from '$lib/stores/read-only.js'
   import { isWriteSql } from '$lib/sql-write.js'
   import Logo from './Logo.svelte'
+  import ConnectOverlay from './ConnectOverlay.svelte'
   import Database from '@lucide/svelte/icons/database'
   import Boxes from '@lucide/svelte/icons/boxes'
   import FileCode2 from '@lucide/svelte/icons/file-code-2'
@@ -6120,7 +6121,9 @@ let rowSearch = $state('')
     // lands on the ~260ms path instead of the ~6.9s one. Fire and forget.
     const warmHosts = () => {
       try {
-        const hosts = [...new Set(loadSavedConnections().map((c) => c.host).filter(Boolean))]
+        // A PostHog host is a base URL, not a hostname: resolve the name inside it.
+        const hostname = (/** @type {string} */ h) => { try { return h.includes('://') ? new URL(h).hostname : h } catch { return '' } }
+        const hosts = [...new Set(loadSavedConnections().map((c) => hostname(c.host ?? '')).filter(Boolean))]
         if (hosts.length) void prewarmDns(hosts)
       } catch { /* best effort */ }
     }
@@ -7330,35 +7333,14 @@ let rowSearch = $state('')
     class="fixed inset-0 z-50 flex flex-col items-center justify-center gap-7 bg-background"
     out:fade={{ duration: isRevealed() ? 120 : 0 }}
   >
-    <!-- The ring and the label wait before they appear. A warm reconnect lands
-         in a few hundred ms, and showing them at once flashed "Reconnecting"
-         for a moment, then faded it out over the shell - on a cold start that
-         read as the window flickering. The plain surface covers the wait. -->
-    <!-- Spinning ring + logo -->
-    <div class="relative flex size-[88px] items-center justify-center" in:fade={{ delay: 350, duration: 150 }}>
-      <svg class="absolute inset-0 size-full animate-spin" viewBox="0 0 88 88" fill="none" aria-hidden="true">
-        <circle cx="44" cy="44" r="42" stroke="currentColor" stroke-width="1.5"
-          stroke-dasharray="44 220" stroke-linecap="round"
-          class="text-foreground/20" />
-      </svg>
-      <div class="flex size-[72px] items-center justify-center rounded-full border border-border/60 bg-card ring-1 ring-inset ring-white/[0.04] shadow-[0_10px_30px_-14px_rgba(0,0,0,0.7)]">
-        <Logo class="size-9" />
-      </div>
-    </div>
-
-    <!-- Text -->
-    <div class="flex max-w-sm flex-col items-center gap-1.5 text-center" in:fade={{ delay: 350, duration: 150 }}>
-      <p class="max-w-full truncate text-ui-sm font-medium text-foreground/70">
-        {autoConnectVerb}{autoConnectName ? ` to ${shortConnLabel(autoConnectName)}` : ''}
-      </p>
-      <button
-        type="button"
-        class="mt-3 text-ui-2xs text-muted-foreground underline underline-offset-4 transition-colors hover:text-foreground"
-        onclick={() => void cancelAutoConnect()}
-      >
-        Cancel
-      </button>
-    </div>
+    <!-- The ring and the label wait before they appear (ConnectOverlay's
+         `delay`). A warm reconnect lands in a few hundred ms, and showing them
+         at once flashed "Reconnecting" over the shell on a cold start. -->
+    <ConnectOverlay
+      verb={autoConnectVerb}
+      name={autoConnectName ? shortConnLabel(autoConnectName) : ''}
+      oncancel={() => void cancelAutoConnect()}
+    />
   </div>
 {/if}
 
