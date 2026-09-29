@@ -76,6 +76,14 @@ const fontClaudeDefaultApplied = () => {
 const markFontClaudeDefaultApplied = () => {
   try { localStorage.setItem(FONT_DEFAULT_CLAUDE_KEY, '1') } catch {}
 }
+/** And for the move back to Geist, from either of the two defaults before it. */
+const FONT_DEFAULT_GEIST_KEY = 'stroke:font-default-geist'
+const fontGeistDefaultApplied = () => {
+  try { return localStorage.getItem(FONT_DEFAULT_GEIST_KEY) === '1' } catch { return true }
+}
+const markFontGeistDefaultApplied = () => {
+  try { localStorage.setItem(FONT_DEFAULT_GEIST_KEY, '1') } catch {}
+}
 
 /** @typedef {import('$lib/themes/registry.js').ThemeId} ThemeId */
 /** @typedef {'claude' | 'geist' | 'serif' | 'apple' | 'inter' | 'mono' | 'fira' | 'plex' | 'space' | 'source'} FontId */
@@ -173,19 +181,19 @@ export const FONT_PRESETS = {
   },
 }
 /**
- * The app defaults to the Claude preset: a proportional UI with serif titles,
- * monospace kept for the data itself (grid, SQL, identifiers).
+ * The app defaults to Geist: Geist for the UI, Geist Mono for the data (grid,
+ * SQL, identifiers).
  *
- * It replaced the all-mono default, which set JetBrains Mono for the chrome too.
- * That read as a terminal rather than a desktop app: labels, dialogs and error
- * copy all in a code face.
+ * It is the third default. The all-mono one set JetBrains Mono for the chrome
+ * too and read as a terminal rather than a desktop app; the Claude preset that
+ * replaced it (Inter + serif titles) stays available in Settings → Appearance.
  *
  * Existing installs move with each default change exactly once, through the
  * FONT_DEFAULT_* keys above: an update should land the new look, and someone
  * who has since picked their own font should keep it.
  * @type {FontId}
  */
-export const DEFAULT_FONT = 'claude'
+export const DEFAULT_FONT = 'geist'
 /** @returns {FontId} */
 function normalizeFont(/** @type {unknown} */ id) {
   return FONT_PRESETS[/** @type {FontId} */ (id)] ? /** @type {FontId} */ (id) : DEFAULT_FONT
@@ -713,6 +721,7 @@ export function loadSettings() {
       markScrollDefaultApplied()
       markFontDefaultApplied()
       markFontClaudeDefaultApplied()
+      markFontGeistDefaultApplied()
       _settingsCache = {
         ...DEFAULT_SETTINGS,
         theme: systemPreferredTheme(),
@@ -757,6 +766,13 @@ export function loadSettings() {
       // Same rule for the next default: only the previous one (mono) moves.
       if (font === 'mono') { font = DEFAULT_FONT; fontMigrated = true }
       markFontClaudeDefaultApplied()
+    }
+    if (!fontGeistDefaultApplied()) {
+      // Back to Geist: both earlier defaults move, because an install that
+      // skipped the Claude move (marker set, value still mono) is still on a
+      // default nobody picked.
+      if (font === 'claude' || font === 'mono') { font = DEFAULT_FONT; fontMigrated = true }
+      markFontGeistDefaultApplied()
     }
     const iconStyle = normalizeIconStyle(parsed.iconStyle)
     const iconSet = normalizeIconSet(parsed.iconSet)
@@ -862,6 +878,30 @@ function setStore(store, value) {
 
 let _lastAppliedZoom = /** @type {number | null} */ (null)
 
+/** Read by index.html before the bundle loads. Keep the key in sync there. */
+const BOOT_SURFACE_KEY = 'stroke:boot-surface'
+
+/**
+ * Remember this theme's real background so the next launch paints it from the
+ * first frame.
+ *
+ * index.html runs before any stylesheet exists, so it could only paint one of
+ * two hard-coded colours (#080808 / #f7f7f7). Any theme whose --background is
+ * not exactly those - most of them - came up in the wrong shade and switched
+ * when the CSS arrived: the dark-then-different flash on the splash. It also
+ * replaces index.html's inline colour now, which would otherwise outlive the
+ * theme change because an inline style beats the stylesheet.
+ * @param {HTMLElement} root @param {string} theme
+ */
+function rememberBootSurface(root, theme) {
+  try {
+    const color = getComputedStyle(root).getPropertyValue('--background').trim()
+    if (!color) return
+    root.style.backgroundColor = color
+    localStorage.setItem(BOOT_SURFACE_KEY, JSON.stringify({ theme, color }))
+  } catch { /* no storage: the boot falls back to the base light/dark colour */ }
+}
+
 /** @param {AppSettings} settings */
 export function applySettings(settings) {
   const root = document.documentElement
@@ -871,6 +911,7 @@ export function applySettings(settings) {
 
   setAttr(root, 'data-theme', theme)
   if (root.classList.contains('dark') !== dark) root.classList.toggle('dark', dark)
+  rememberBootSurface(root, theme)
   setMode(dark ? 'dark' : 'light')
   setStore(appThemeId, theme)
   setStore(isCurrentThemeDark, dark)

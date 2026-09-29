@@ -36,9 +36,9 @@ mismatched control heights, or one-off selected states.
 ### Fonts (`src/app.css`)
 | Role | Variable | Stack |
 |---|---|---|
-| UI / sans | `--font-sans` | Inter Variable (Claude preset, default) → system-ui |
+| UI / sans | `--font-sans` | Geist Variable (default) → system-ui |
 | Headings | `--heading-font` (utility `font-heading`) | Source Serif 4 Variable (Claude preset), else follows `--font-sans` |
-| Data / mono | `--font-mono` | JetBrains Mono Variable (Claude preset) → ui-monospace |
+| Data / mono | `--font-mono` | Geist Mono Variable (default) → ui-monospace |
 | Code editor | `--editor-font-family` | JetBrains Mono → Geist Mono |
 
 - **Sans** for all chrome, labels, prose, buttons.
