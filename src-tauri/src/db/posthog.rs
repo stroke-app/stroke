@@ -280,15 +280,29 @@ pub async fn get_table_rows(
         _ if table == "events" => " ORDER BY timestamp DESC".to_string(),
         _ => String::new(),
     };
-    let limit = limit.clamp(1, MAX_ROWS);
+    // No OFFSET: PostHog rejects it on personal-API-key queries ("OFFSET is not
+    // supported ... use keyset pagination on timestamp"), even `OFFSET 0`.
+    // Keyset needs a timestamp most tables don't have, so a later page asks for
+    // everything up to its end and drops the rows before it. PostHog's 50,000-row
+    // ceiling bounds that; past it, say what to do.
+    let (limit, offset) = (limit.max(1), offset.max(0));
+    let window = offset.saturating_add(limit);
+    if offset >= MAX_ROWS {
+        return Err(format!(
+            "PostHog's API returns at most {MAX_ROWS} rows per query, so rows past {MAX_ROWS} can't be paged to. Add a filter or sort to reach them."
+        ));
+    }
+    let fetch = window.min(MAX_ROWS);
     let count_sql = format!("SELECT count() FROM {tq}{where_clause}");
-    let data_sql = format!("SELECT * FROM {tq}{where_clause}{order} LIMIT {limit} OFFSET {}", offset.max(0));
+    let data_sql = format!("SELECT * FROM {tq}{where_clause}{order} LIMIT {fetch}");
     let (count, page) = tokio::join!(query(config, &count_sql), query(config, &data_sql));
     let total = count
         .ok()
         .and_then(|r| r.rows.first().and_then(|row| row.first()).and_then(|v| v.as_i64().or_else(|| v.as_str()?.parse().ok())))
         .unwrap_or(-1);
-    let page = page?;
+    let mut page = page?;
+    let skip = (offset as usize).min(page.rows.len());
+    page.rows.drain(..skip);
     Ok(TableRows {
         preview_columns: Vec::new(),
         columns: page.columns,
