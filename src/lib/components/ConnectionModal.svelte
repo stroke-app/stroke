@@ -41,6 +41,7 @@
   import SearchableMenu from "./SearchableMenu.svelte";
   import { Popover, PopoverTrigger, PopoverContent } from "$lib/components/ui/popover/index.js";
   import PasswordInput from "./PasswordInput.svelte";
+  import Kbd from "./Kbd.svelte";
   import { requireUnlock } from "$lib/stores/app-lock.js";
   import { readClipboardText } from "$lib/clipboard.js";
   import { Checkbox } from "$lib/components/ui/checkbox/index.js";
@@ -54,6 +55,7 @@
   import { toast } from "$lib/components/ui/sonner/toast.svelte.js";
   import { parseConnectionUri, detectConnectionUri } from "$lib/connection-uri.js";
   import { PROVIDERS, providerBuildConnection } from "$lib/providers.js";
+  import { providerOf, engineLabel } from "$lib/connection-provider.js";
   import ConfirmDialog from "./ConfirmDialog.svelte";
 
   let {
@@ -161,6 +163,31 @@
           label: "Prisma Postgres",
           desc: "Paste a Prisma Postgres connection string",
         },
+        {
+          id: "tidb",
+          label: "TiDB Cloud",
+          desc: "Serverless MySQL, sign in & pick a cluster",
+        },
+        {
+          id: "turso",
+          label: "Turso",
+          desc: "Edge SQLite, sign in & pick a database",
+        },
+        {
+          id: "railway",
+          label: "Railway",
+          desc: "Postgres, MySQL & Redis, sign in & pick a service",
+        },
+        {
+          id: "nile",
+          label: "Nile",
+          desc: "Multi-tenant Postgres, sign in & pick a database",
+        },
+        {
+          id: "upstash",
+          label: "Upstash",
+          desc: "Serverless Redis, connect with an API key",
+        },
       ],
     },
   ];
@@ -188,6 +215,11 @@
     "supabase",
     "planetscale",
     "prisma",
+    "tidb",
+    "turso",
+    "railway",
+    "nile",
+    "upstash",
     "d1",
     "redis",
   ];
@@ -204,9 +236,12 @@
 
   // Provider (sign-in) ids are surfaced as cards on their own tab, so keep them
   // out of the manual Type dropdown.
-  const PROVIDER_IDS = ["neon", "supabase", "planetscale", "prisma"];
+  const PROVIDER_IDS = ["neon", "supabase", "planetscale", "prisma", "tidb", "turso", "railway", "nile", "upstash"];
   // Providers temporarily turned off (shown as a disabled tab, not connectable).
-  const DISABLED_TABS = new Set(["planetscale"]);
+  // Railway: the adapter is done, but its OAuth app isn't registered yet, so
+  // there is no client id to sign in with.
+  /** @type {Set<string>} */
+  const DISABLED_TABS = new Set(["railway"]);
 
   // Subtle per-engine icon tint (color-500/600), theme-aware via Tailwind tokens.
   const ENGINE_TINT = {
@@ -222,10 +257,16 @@
     "duckdb-memory": "text-yellow-500/80",
     d1: "text-orange-500/80",
     libsql: "text-emerald-500/80",
+    docker: "text-sky-500/80",
     neon: "text-emerald-500/80",
     supabase: "text-emerald-500/80",
     planetscale: "text-foreground/70",
     prisma: "text-indigo-500/80",
+    tidb: "text-red-500/80",
+    turso: "text-teal-500/80",
+    railway: "text-foreground/80",
+    nile: "text-violet-500/80",
+    upstash: "text-emerald-500/80",
     drizzle: "text-lime-500/80",
     redis: "text-red-500/80",
   };
@@ -309,7 +350,6 @@
   // Top-level entry mode: connect manually vs sign in with a hosting provider.
   let entryMode = $state(/** @type {'manual'|'provider'} */ ("manual"));
   // Advanced (SSL / SSH / read-only) disclosure - collapsed by default.
-  let advancedOpen = $state(false);
   let name = $state("");
   let host = $state("127.0.0.1");
   let port = $state("5432");
@@ -468,10 +508,10 @@
 
 
   /** Providers with an account flow, in the order they are offered. */
-  const PROVIDER_CARDS = ["neon", "supabase", "prisma", "planetscale", "d1"];
+  const PROVIDER_CARDS = ["neon", "supabase", "prisma", "planetscale", "tidb", "turso", "railway", "nile", "upstash", "d1"];
 
   /** Names for providers a URI can identify but the catalog has no card for. */
-  const PROVIDER_LABELS = { turso: "Turso", "prisma-postgres": "Prisma Postgres" };
+  const PROVIDER_LABELS = { "prisma-postgres": "Prisma Postgres" };
 
   /** The front page's paste bar. */
   let quickUri = $state("");
@@ -990,7 +1030,6 @@
     // An existing connection already answered "what are you connecting to", so it
     // opens on its details. A new one starts at the choice.
     step = conn ? "form" : "pick";
-    advancedOpen = false;
     flashedFields = new Set();
     error = "";
     testOk = false;
@@ -1009,30 +1048,30 @@
   async function connectProviderConnection(conn) {
     error = "";
     // Credentials reused from a saved connection can have been revoked in the
-    // provider's console since. Probe them first - connectWith reports failures
-    // itself, so letting it fail would toast a scary auth error a moment before
-    // the retry silently succeeded.
-    if (conn.reusedSaved) {
-      const probe = {
-        name: conn.name,
-        host: conn.host,
-        port: conn.port,
-        database: conn.database,
-        user: conn.username,
-        password: conn.password,
-        ssl: conn.ssl,
-      };
-      let usable = true;
-      try {
-        if (conn.db_type === "mysql") await testMysqlConnection(probe);
-        else await testPostgresConnection(probe);
-      } catch {
-        usable = false;
-      }
-      const spec = usable
-        ? conn
-        : await providerBuildConnection(dbType, conn.reusedSaved);
-      await connectProviderResolved(spec);
+    // provider's console since. They used to be probed first with a full test
+    // connect, then connected again for real: two complete handshakes on every
+    // reuse, which against a far region (TiDB in Tokyo, Nile in us-west-2) was
+    // most of the wait. Now the real connect goes first, and only a rejected
+    // login falls back to minting fresh credentials - silently, with no auth
+    // toast ahead of the retry.
+    if (conn.reuse) {
+      const ref = conn.providerRef;
+      await connectWith(
+        // The saved entry as it is, with this panel's read-only choice.
+        { ...conn.reuse, providerRef: ref, readOnly: readOnly || conn.reuse.readOnly || undefined },
+        {
+          onAuthFailure: async () => {
+            const fresh = await providerBuildConnection(dbType, ref);
+            // Supabase never returns a password: a rejected saved one can't be
+            // replaced from here, so say so rather than connect with none.
+            if (fresh.needs_password) {
+              failWith(`The saved password for ${conn.reuse.name} was rejected. Pick the database again and enter the current password.`);
+              return;
+            }
+            await connectProviderResolved({ ...fresh, providerRef: ref });
+          },
+        },
+      );
       return;
     }
     await connectProviderResolved(conn);
@@ -1041,13 +1080,51 @@
   /**
    * Build a SavedConnection from a resolved provider spec and connect.
    * @param {import('$lib/providers.js').ProviderConnection} conn
+   * @param {{ onAuthFailure?: () => Promise<void> }} [opts]
    */
-  async function connectProviderResolved(conn) {
+  async function connectProviderResolved(conn, opts = {}) {
     error = "";
     // dbType is the provider id while the provider flow is showing - tag the
     // connection with it so the status bar can offer switching to the account's
     // other databases later.
     const providerId = PROVIDER_IDS.includes(dbType) ? dbType : undefined;
+    // libsql has no host/port/user: the adapter hands over the `libsql://` URL
+    // in `host` and the database token in `password`.
+    if (conn.db_type === "libsql") {
+      const existing = saved.find((s) => s.type === "libsql" && s.url === conn.host);
+      await connectWith({
+        id: existing?.id ?? newConnectionId(),
+        type: "libsql",
+        name: conn.name,
+        url: conn.host,
+        authToken: conn.password || undefined,
+        provider: providerId,
+        providerRef: conn.providerRef,
+        readOnly: readOnly || undefined,
+      }, opts);
+      return;
+    }
+    // Redis (Upstash, Railway): the saved shape has `db` and `tls`, not a
+    // database name and `ssl`.
+    if (conn.db_type === "redis") {
+      const existing = saved.find(
+        (s) => s.type === "redis" && s.host === conn.host && s.port === conn.port,
+      );
+      await connectWith({
+        id: existing?.id ?? newConnectionId(),
+        type: "redis",
+        name: conn.name,
+        host: conn.host,
+        port: conn.port,
+        password: conn.password,
+        db: Number(conn.database) || 0,
+        tls: conn.ssl,
+        provider: providerId,
+        providerRef: conn.providerRef,
+        readOnly: readOnly || undefined,
+      }, opts);
+      return;
+    }
     const type = conn.db_type === "mysql" ? "mysql" : "postgres";
     // Reuse an existing saved entry for this exact database (host + user) instead
     // of piling up duplicates - connectWith upserts it, keeping the saved password.
@@ -1066,8 +1143,9 @@
       password: conn.password,
       ssl: conn.ssl,
       provider: providerId,
+      providerRef: conn.providerRef,
       readOnly: readOnly || undefined,
-    });
+    }, opts);
   }
 
   /**
@@ -1379,7 +1457,6 @@
         actionLabel: "Enable SSL & retry",
         action: () => {
           ssl = true;
-          advancedOpen = true;
           void handleTest();
         },
       };
@@ -1399,12 +1476,20 @@
         e,
       )
     )
-      return {
-        title: "Nothing answered at that address",
-        hint: `Is the server running, and is ${host}:${port} the right host and port?`,
-        actionLabel: "Edit host",
-        action: () => focusField("cn-host"),
-      };
+      // A provider connect has no host field on screen: name the address it
+      // actually dialled, and say what the driver said, instead of pointing at
+      // the empty manual form ("is 127.0.0.1: the right host").
+      return failTarget
+        ? {
+            title: `Couldn't reach ${failTarget.host}`,
+            hint: `${failTarget.host}:${failTarget.port} did not answer. ${String(e).slice(0, 200)}`,
+          }
+        : {
+            title: "Nothing answered at that address",
+            hint: `Is the server running, and is ${host}:${port} the right host and port?`,
+            actionLabel: "Edit host",
+            action: () => focusField("cn-host"),
+          };
     if (
       /name or service not known|nodename nor servname|getaddrinfo|failed to lookup|dns/.test(
         e,
@@ -1436,6 +1521,8 @@
       catch { return conn.url || "—"; }
     }
     if (conn.type === "d1") return conn.database || conn.name || "—";
+    // Redis has no database name worth showing; where it lives is the useful bit.
+    if (conn.type === "redis") return conn.host ? `${conn.host}${conn.port ? `:${conn.port}` : ""}` : "—";
     return conn.database || "—";
   }
 
@@ -1524,10 +1611,25 @@
     return connectPostgres(conn);
   }
 
-  async function connectWith(conn) {
+  /** The address a non-form connect dialled, for the unreachable hint. @type {{ host: string, port: number } | null} */
+  let failTarget = $state(null);
+
+  /** A driver error that means "these credentials are no good", on any engine. */
+  const AUTH_FAILURE =
+    /password authentication failed|authentication failed|access denied|invalid password|28P01|\b1045\b|role ".*" does not exist/i;
+
+  /**
+   * @param {any} conn
+   * @param {{ onAuthFailure?: () => Promise<void> }} [opts] run instead of the
+   *   error toast when the credentials are rejected (reused provider credentials
+   *   that were revoked: mint fresh ones and try once more).
+   */
+  async function connectWith(conn, opts = {}) {
     const myOp = ++opId;
     connecting = conn.id;
     error = "";
+    // Provider and saved connections dial an address that isn't in the form.
+    failTarget = conn.provider && conn.host ? { host: conn.host, port: conn.port } : null;
     try {
       await openConnection(conn);
       if (myOp !== opId) return; // cancelled by the user
@@ -1537,7 +1639,12 @@
       open = false;
       await onconnected(updated, conn.id);
     } catch (e) {
-      if (myOp === opId) failWith(friendlyError(e));
+      if (myOp !== opId) return;
+      if (opts.onAuthFailure && AUTH_FAILURE.test(String(e))) {
+        await opts.onAuthFailure();
+        return;
+      }
+      failWith(friendlyError(e));
     } finally {
       if (myOp === opId) connecting = null;
     }
@@ -1627,12 +1734,48 @@
    */
   function onRefreshKey(e) {
     if (!open) return;
-    if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
-    if (e.key.toLowerCase() !== "r") return;
-    e.preventDefault();
-    e.stopPropagation();
-    saved = loadSavedConnections().sort(byLastConnected);
-    void refreshLocal();
+    if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+    const key = e.key.toLowerCase();
+    /** @param {() => void} run */
+    const take = (run) => { e.preventDefault(); e.stopPropagation(); run(); };
+    // Mod+Shift+Enter: resume the last connection, the footer's "Resume".
+    if (e.shiftKey) {
+      if (key === "enter") {
+        const last = saved.find((c) => c.id === lastId);
+        if (last && !isBusy) take(() => void connectWith(last));
+      }
+      return;
+    }
+    // The dialog's own chords, caught in the capture phase for the same reason
+    // as ⌘R (see <svelte:window> below): the fields inside stop propagation, and
+    // Mod+N / Mod+F / Mod+L would otherwise reach the app or the webview.
+    if (key === "r") {
+      take(() => {
+        saved = loadSavedConnections().sort(byLastConnected);
+        void refreshLocal();
+      });
+    } else if (key === "n") {
+      take(() => newConnectionForm());
+    } else if (key === "f") {
+      take(() => {
+        if (!railOpen) { railOpen = true; saveRail(); }
+        void tick().then(() => { savedSearchEl?.focus(); savedSearchEl?.select?.(); });
+      });
+    } else if (key === "l") {
+      take(() => {
+        // The paste field on the picker; on the form, the "Paste a URL" bar.
+        if (step === "pick") {
+          quickUriEl?.focus();
+          quickUriEl?.select?.();
+        } else if (entryMode === "manual" && hasFieldToggle) {
+          importOpen = true;
+          void tick().then(() => document.getElementById("cn-import-uri")?.focus());
+        } else {
+          backToPick();
+          void tick().then(() => quickUriEl?.focus());
+        }
+      });
+    }
   }
 
   async function refreshLocal() {
@@ -2248,28 +2391,37 @@
          10px off the card's own border. h-14 with `leading-tight` on both lines
          puts 12px above and below the pair and 2px between them, which is what
          separates a title from its caption rather than stacking them. -->
-    <div class="flex items-center gap-2 pe-3">
+    <!-- One leading edge for the whole card: the icon well, then the title, and
+         the body below indented to that same title edge. It used to lead with a
+         chevron AND an icon, and the body started back at the card's padding,
+         so the fields lined up with neither. The chevron moved to the trailing
+         end, where a disclosure affordance is expected. The hover covers the
+         whole header row, not the part left of the switch. -->
+    <div class="flex items-center gap-3 pe-3.5 transition-colors has-[>button:hover]:bg-muted/25">
       <button
         type="button"
         aria-expanded={isOpen}
         aria-controls="{id}-body"
         onclick={onDisclose}
-        class="flex h-14 min-w-0 flex-1 items-center gap-3 px-3.5 text-left outline-none transition-colors hover:bg-muted/30 focus-visible:bg-muted/30"
+        class="flex h-14 min-w-0 flex-1 items-center gap-3 ps-3.5 text-left outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
       >
+        <span class="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted/50" aria-hidden="true">
+          <Icon name={icon} class="size-4 text-muted-foreground" />
+        </span>
+        <span class="min-w-0 flex-1">
+          <span class="block truncate text-ui-sm font-medium leading-tight text-foreground">{title}</span>
+          <span class="mt-0.5 block truncate text-ui-2xs leading-tight text-muted-foreground">{summary}</span>
+        </span>
         <Icon
-          name="chevron-right"
+          name="chevron-down"
           class={cn(
-            "size-3.5 shrink-0 text-muted-foreground transition-transform duration-150 ease-out",
-            isOpen && "rotate-90",
+            "size-4 shrink-0 text-muted-foreground transition-transform duration-150 ease-out",
+            isOpen && "rotate-180",
           )}
           aria-hidden="true"
         />
-        <Icon name={icon} class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-        <span class="min-w-0 flex-1">
-          <span class="block truncate text-ui-xs font-medium leading-tight text-foreground">{title}</span>
-          <span class="mt-0.5 block truncate text-ui-3xs leading-tight text-muted-foreground">{summary}</span>
-        </span>
       </button>
+      <span class="h-5 w-px shrink-0 bg-border/50" aria-hidden="true"></span>
       <label class="flex shrink-0 cursor-pointer select-none items-center gap-2 py-2">
         <span class="text-ui-3xs text-muted-foreground">{enabled ? "On" : "Off"}</span>
         <!-- The role announces checked/unchecked, so the name must not say it
@@ -2291,7 +2443,8 @@
         id="{id}-body"
         inert={!enabled || undefined}
         class={cn(
-          "flex flex-col gap-3.5 border-t border-border/40 p-3.5 transition-opacity duration-150 ease-out",
+          // ps-14.5 = header ps-3.5 + the 32px well + gap-3: the title's edge.
+          "flex flex-col gap-3.5 border-t border-border/40 py-3.5 ps-14.5 pe-3.5 transition-opacity duration-150 ease-out",
           !enabled && "opacity-45",
         )}
       >
@@ -2304,10 +2457,10 @@
 <!-- A note inside a panel: what the option does to the connection, in one
      sentence, where the decision is being made. -->
 {#snippet panelNote(/** @type {string} */ text)}
-  <p class="flex items-start gap-2 rounded-md bg-muted/30 px-2.5 py-2 text-ui-3xs leading-relaxed text-muted-foreground">
-    <Icon name="info" class="mt-px size-3.5 shrink-0 text-muted-foreground/70" aria-hidden="true" />
-    <span class="min-w-0">{text}</span>
-  </p>
+  <!-- Plain text, not a filled box: a surface inside the card's surface read as
+       a third layer, and its own padding pulled the sentence off the edge the
+       fields below it start on. -->
+  <p class="max-w-[72ch] text-pretty text-ui-2xs leading-relaxed text-muted-foreground">{text}</p>
 {/snippet}
 
 <!-- A path field with a Browse button. The field stays typeable: a path often
@@ -2616,28 +2769,28 @@
   </div>
 {/snippet}
 
-<!-- Collapsible Advanced (used inline by the provider / D1 single-column flows). -->
-{#snippet advancedSection()}
-  <div class="border-t border-border/40 pt-4">
-    <button
-      type="button"
-      onclick={() => (advancedOpen = !advancedOpen)}
-      aria-expanded={advancedOpen}
-      class="flex w-full items-center gap-1.5 text-ui-2xs font-medium uppercase tracking-wider text-muted-foreground transition-colors hover:text-foreground"
-    >
-      <Icon
-        name="chevron-right"
-        class={cn(
-          "size-3.5 shrink-0 transition-transform",
-          advancedOpen && "rotate-90",
-        )}
-      />
-      Advanced
-    </button>
-    {#if advancedOpen}
-      <div class="mt-4">{@render advancedFields()}</div>
-    {/if}
-  </div>
+<!-- Read-only for the provider / D1 flows. It used to sit alone inside a
+     collapsed "Advanced" disclosure: one option behind a click, plus a second
+     divider stacked under the sign-in block's own rule. As a row it shares the
+     sign-in block's 32px icon well and 12px gap, so both line up on one edge. -->
+{#snippet readOnlyRow()}
+  <label for="cn-readonly" class="flex cursor-pointer select-none items-center gap-3">
+    <span class="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted/50" aria-hidden="true">
+      <Icon name="lock" class="size-4 text-muted-foreground" />
+    </span>
+    <span class="flex min-w-0 flex-1 flex-col">
+      <span class="text-ui-sm font-medium leading-snug text-foreground">Read-only</span>
+      <span id="cn-readonly-hint" class="text-ui-xs leading-relaxed text-muted-foreground">
+        Browse and query without changing any data.
+      </span>
+    </span>
+    <Checkbox
+      id="cn-readonly"
+      aria-describedby="cn-readonly-hint"
+      checked={readOnly}
+      onCheckedChange={(v) => (readOnly = v === true)}
+    />
+  </label>
 {/snippet}
 
 <DialogPrimitive.Root bind:open>
@@ -2807,7 +2960,8 @@
                     bind:value={savedQuery}
                     placeholder="Filter connections…"
                     aria-label="Filter saved connections"
-                    title="Filter connections (Shift+Tab from the list)"
+                    title="Filter connections ({IS_MAC ? '⌘' : 'Ctrl'}+F, or Shift+Tab from the list)"
+                    aria-keyshortcuts="Control+F Meta+F"
                     tabindex="-1"
                     autocomplete="off"
                     spellcheck="false"
@@ -2893,6 +3047,11 @@
                         (conn.type === "sqlite" || conn.type === "duckdb")
                           ? `${conn.type}-memory`
                           : conn.type}
+                      {@const prov = providerOf(conn)}
+                      <!-- The provider's mark when there is one (it says where
+                           the database lives), else the engine's. The engine is
+                           then named in the chip, so neither fact is lost. -->
+                      {@const mark = prov ?? cid}
                       <div
                         data-conn-row
                         class={cn(
@@ -2975,8 +3134,8 @@
                               />
                             {:else}
                               <DbIcon
-                                id={cid}
-                                class={cn("size-4", engineTint(cid))}
+                                id={mark}
+                                class={cn("size-4", engineTint(mark))}
                               />
                             {/if}
                           </span>
@@ -2995,9 +3154,13 @@
                             {conn.name || "Unnamed"}
                           </p>
                           <p
-                            class="mt-0.5 truncate text-ui-2xs leading-tight text-muted-foreground"
+                            class="mt-1 flex min-w-0 items-center gap-1.5 text-ui-2xs leading-tight text-muted-foreground"
                           >
-                            {connSubtitle(conn)}
+                            <span
+                              class="shrink-0 rounded border border-border/60 bg-muted/40 px-1 py-px text-ui-3xs font-medium leading-none text-muted-foreground"
+                              >{engineLabel(cid)}</span
+                            >
+                            <span class="min-w-0 truncate">{connSubtitle(conn)}</span>
                           </p>
                         </div>
 
@@ -3052,48 +3215,37 @@
           <!-- The header lines up with whatever is under it: the tile column on
                step 1, the full-width form on step 2. -->
           <div
-            class={cn(
-              "w-full shrink-0 px-8 pt-5",
-              step === "pick" && "max-w-[64rem]",
-            )}
+            class="w-full shrink-0 px-8 pt-5"
           >
             {#if step === "pick"}
               <!-- pe-6 keeps the rescan button clear of the dialog's own close
-                 button, which floats at right-4 top-4 over this same corner. -->
-              <div class="flex items-center gap-3 pe-6">
+                 button, which floats at right-8 top-5 over this same corner. -->
+              <div class="flex items-center gap-3 pe-10">
                 <h2
                   class="text-ui-lg font-semibold tracking-tight text-foreground"
                 >
                   Connect a database
                 </h2>
-                {#if localPhase === "scanning"}
-                  <!-- The scan used to announce itself inside the "Local studios"
-                       heading, which is a heading that may not exist. -->
-                  <span class="flex items-center gap-1.5 text-ui-3xs text-muted-foreground" role="status">
-                    <Icon name="loader-2" class="size-3 animate-spin" aria-hidden="true" />
-                    Scanning
-                  </span>
-                {/if}
-                <!-- The rescan already existed as a size-3 glyph at 35% opacity
-                   beside a section heading, findable only if you knew it was
-                   there. Same action, where you would look for it. -->
+                <!-- One indicator: the rescan button's own arrow turns while a scan
+                     runs. No label beside it, no icon swap to a different spinner
+                     and no width change, so the header never shifts. The live
+                     region tells screen readers. -->
+                <span class="sr-only" role="status">{localPhase === "scanning" ? "Scanning for local databases" : ""}</span>
                 <button
                   type="button"
                   title="Rescan local databases (⌘R)"
-                  aria-label="Rescan local databases"
+                  aria-label={localPhase === "scanning" ? "Scanning local databases" : "Rescan local databases"}
                   disabled={localPhase === "scanning"}
                   onclick={() => {
                     saved = loadSavedConnections().sort(byLastConnected);
                     void refreshLocal();
                   }}
-                  class="field-surface inline-flex size-8 shrink-0 items-center justify-center text-muted-foreground transition-[color,background-color,scale] duration-150 ease-out hover:bg-accent hover:text-foreground active:scale-[0.96] disabled:opacity-50"
+                  class="field-surface inline-flex size-8 shrink-0 items-center justify-center text-muted-foreground transition-[color,background-color,scale] duration-150 ease-out hover:bg-accent hover:text-foreground active:scale-[0.96] disabled:pointer-events-none disabled:text-foreground"
                 >
                   <Icon
                     name="refresh-cw"
-                    class={cn(
-                      "size-3.5 shrink-0",
-                      localPhase === "scanning" && "animate-spin",
-                    )}
+                    class={cn("size-3.5 shrink-0", localPhase === "scanning" && "animate-spin")}
+                    aria-hidden="true"
                   />
                 </button>
               </div>
@@ -3101,13 +3253,17 @@
               <!-- pe-14, not pe-6: the URL button now sits at the right edge of
                    this row and the dialog's own close ✕ floats over the same
                    corner (right-4, size-8). -->
-              <div class="flex items-center gap-2 pe-14">
+              <!-- pe-10 = the 32px close button + the row's own 8px gap, so
+                   "Paste a URL" and ✕ sit 8px apart like every other pair in
+                   this row. The close button shares the 32px edge (right-8)
+                   and the h-8 height of these controls. -->
+              <div class="flex items-center gap-2 pe-10">
                 <button
                   type="button"
                   onclick={backToPick}
                   title="Back"
                   aria-label="Back"
-                  class="-ml-1 inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+                  class="-ms-2 inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
                 >
                   <Icon name="chevron-left" class="size-4" />
                 </button>
@@ -3202,7 +3358,9 @@
               <!-- Left-aligned, not centred: the rail is on the left and the
                    header sits above this, so a column centred in the panel
                    starts somewhere neither of them does. One leading edge. -->
-              <div class="@container flex w-full max-w-[64rem] flex-col gap-5 px-8 py-5">
+              <!-- Full width: the grids below are four columns, so a wide window
+                   buys wider tiles and fewer truncated names, not empty margin. -->
+              <div class="@container flex w-full flex-col gap-5 px-8 py-5">
                   <!-- ── Paste a connection string ─────────────────────────
                        The fastest path there is, and the one a developer already
                        has in a clipboard from their provider dashboard or a
@@ -3212,19 +3370,27 @@
                        "Import from URL" used to live inside the form, behind
                        choosing a driver - which is the one step this removes. -->
                   <div class="flex flex-col gap-1.5">
-                    <div class="flex items-stretch gap-2">
-                      <div class="relative min-w-0 flex-1">
+                    <!-- One frame holding the icon, the field and its action. As
+                         two controls, focus drew the field's border and the ring
+                         just outside it as two stacked lines, and the disabled
+                         Continue sat beside it as a grey block. The frame takes
+                         the focus outline; the field inside it is frameless. -->
+                    <div
+                      class="flex h-9 items-center gap-2 rounded-lg border border-border/70 bg-muted/20 ps-3 pe-1 transition-colors hover:border-border focus-within:border-border focus-within:outline-2 focus-within:outline-offset-1 focus-within:outline-ring/70"
+                    >
                         <Icon
                           name="link-2"
-                          class="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
+                          class="size-3.5 shrink-0 text-muted-foreground"
+                          aria-hidden="true"
                         />
-                        <Input
-                          bind:ref={quickUriEl}
+                        <input
+                          bind:this={quickUriEl}
                           bind:value={quickUri}
                           placeholder="Paste a connection string, or a path to a .db file"
                           aria-label="Paste a connection string"
                           spellcheck="false"
-                          class="h-9 pl-8 font-mono text-ui-xs"
+                          autocomplete="off"
+                          class="no-focus-ring h-full min-w-0 flex-1 bg-transparent font-mono text-ui-2xs text-foreground outline-none placeholder:font-sans placeholder:text-ui-xs placeholder:text-muted-foreground"
                           onclick={() => void prefillFromClipboard()}
                           oninput={(e) => {
                             quickHint = "";
@@ -3239,15 +3405,20 @@
                             useQuickUri();
                           }}
                         />
-                      </div>
+                      {#if !quickUri}
+                        <Kbd combo="Mod+L" size="sm" class="shrink-0 text-muted-foreground" />
+                      {/if}
+                      <!-- Quiet until there is something to continue with, then
+                           primary. Disabled it reads as part of the field, not
+                           as a broken button next to it. -->
                       <button
                         type="button"
                         disabled={!quickUri.trim()}
                         onclick={useQuickUri}
-                        class="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md bg-primary px-3 text-ui-xs font-medium text-primary-foreground transition-[opacity,transform] hover:opacity-90 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40"
+                        class="inline-flex h-7 shrink-0 items-center gap-1 rounded-md bg-primary px-2.5 text-ui-2xs font-medium text-primary-foreground transition-[background-color,color,scale] duration-150 ease-out hover:bg-primary/90 active:scale-[0.96] disabled:pointer-events-none disabled:bg-transparent disabled:text-muted-foreground"
                       >
                         Continue
-                        <Icon name="arrow-right" class="size-3.5 shrink-0" />
+                        <Icon name="arrow-right" class="size-3.5 shrink-0" aria-hidden="true" />
                       </button>
                     </div>
                     {#if quickHint}
@@ -3260,9 +3431,9 @@
                        database list once you are signed in, so they are the only
                        engines worth naming on the front page. -->
                   <div>
-                    <p class="text-ui-3xs font-medium uppercase tracking-[0.08em] text-muted-foreground">
+                    <h3 class="text-ui-xs font-medium text-foreground/80">
                       Connect with a provider
-                    </p>
+                    </h3>
                     <!-- Two columns: five providers in an auto-fill track came
                          out as five marks strung across the window with 200px of
                          air between them. -->
@@ -3270,7 +3441,8 @@
                          room, wrapping to two or three columns only when the
                          panel is narrow. Stacked two-up they took three rows and
                          half the page to say five words. -->
-                    <div class="mt-2 grid grid-cols-2 gap-1.5 @xl:grid-cols-3 @3xl:grid-cols-5">
+                    <!-- Four columns once there is room, two when narrow. -->
+                    <div class="mt-2 grid grid-cols-2 gap-1.5 @2xl:grid-cols-4">
                       {#each PROVIDER_CARDS as id (id)}
                         {@const d = driverById(id)}
                         {@const off = DISABLED_TABS.has(id)}
@@ -3332,22 +3504,27 @@
                   /** @type {string} */ label,
                   /** @type {LocalTarget[]} */ targets,
                   /** @type {boolean} */ lead = false,
+                  /** @type {string} */ mark = "",
                 )}
                   <div>
-                    <p
-                      class="flex items-center gap-1.5 text-ui-3xs font-medium uppercase tracking-[0.08em] text-muted-foreground"
-                    >
+                    <!-- Sentence case, like the other section headings: small
+                         all-caps with wide tracking read as a label on a
+                         control rather than the name of a group. The count is
+                         a pill so it doesn't read as part of the name. -->
+                    <h3 class="flex items-center gap-2 text-ui-xs font-medium text-foreground/80">
                       {#if lead}{@render liveDot()}{/if}
+                      {#if mark}<DbIcon id={mark} class={cn("size-4 shrink-0", engineTint(mark))} />{/if}
                       {label}
-                      <span class="font-mono text-muted-foreground/60"
-                        >· {targets.length}</span
+                      <span
+                        class="rounded-full bg-muted/60 px-1.5 py-px font-mono text-ui-3xs tabular-nums text-muted-foreground"
+                        aria-label="{targets.length} found">{targets.length}</span
                       >
-                    </p>
+                    </h3>
                     <!-- A grid of small cards, two or three across. Four
                          containers as full-width two-line rows took as much
                          height as the whole rest of the page; they are the same
                          shape and the same size as each other, so they tile. -->
-                    <div class="mt-2 grid grid-cols-1 gap-1.5 @xl:grid-cols-2 @4xl:grid-cols-3">
+                    <div class="mt-2 grid grid-cols-1 gap-1.5 @xl:grid-cols-2 @4xl:grid-cols-4">
                       {#each targets as t, i (t.id)}
                         {@const busy = connecting === t.id}
                         <button
@@ -3416,29 +3593,32 @@
                 {/snippet}
 
                 {#if dockerTargets.length > 0}
-                  {@render localGroup("Docker", dockerTargets, false)}
+                  {@render localGroup("Docker", dockerTargets, false, "docker")}
                 {/if}
 
                   <!-- Everything else: the form, on its own engine dropdown.
                        This used to be a second page of seventeen driver tiles. -->
                   <div>
-                    <p class="text-ui-3xs font-medium uppercase tracking-[0.08em] text-muted-foreground">
+                    <h3 class="text-ui-xs font-medium text-foreground/80">
                       Something else
-                    </p>
-                    <button
-                      type="button"
-                      onclick={newConnectionForm}
-                      class="group mt-2 flex h-12 w-full items-center gap-2.5 rounded-lg border border-border/60 bg-card/40 px-3 text-left text-foreground outline-none transition-[color,background-color,border-color,scale] duration-150 ease-out hover:border-border hover:bg-accent/40 focus-visible:border-ring active:scale-[0.99]"
-                    >
-                      <Icon name="plus" class="size-4 shrink-0 text-muted-foreground" />
-                      <span class="min-w-0 flex-1">
-                        <span class="block truncate text-ui-xs font-medium">New connection</span>
-                        <span class="block truncate text-ui-3xs text-muted-foreground">
-                          Pick an engine and enter its details
-                        </span>
-                      </span>
-                      <Icon name="chevron-right" class="size-4 shrink-0 text-muted-foreground" />
-                    </button>
+                    </h3>
+                    <!-- A tile in the provider grid's own columns and in the provider
+                         cards' own style (border, fill, hover, press), so it reads as
+                         one more card in the same set rather than a different kind of
+                         control. It was a primary Button, whose label rendered
+                         unreadable on this surface. -->
+                    <div class="mt-2 grid grid-cols-2 gap-1.5 @2xl:grid-cols-4">
+                      <button
+                        type="button"
+                        onclick={newConnectionForm}
+                        title="Pick an engine and enter its details"
+                        class="group flex h-9 min-w-0 items-center gap-2 rounded-lg border border-border/60 bg-card/40 px-2.5 text-left text-foreground outline-none transition-[color,background-color,border-color,scale] duration-150 ease-out hover:border-border hover:bg-accent/40 focus-visible:border-ring active:scale-[0.98]"
+                      >
+                        <Icon name="plus" class="size-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground" aria-hidden="true" />
+                        <span class="min-w-0 flex-1 truncate text-ui-2xs font-medium">New connection</span>
+                        <Kbd combo="Mod+N" size="sm" class="shrink-0 text-muted-foreground" />
+                      </button>
+                    </div>
                   </div>
 
               </div>
@@ -4002,27 +4182,24 @@
                                 s.user === user &&
                                 s.password,
                             )?.password}
-                          resolveSavedConnection={(dbName) => {
-                            const hit = saved.find(
+                          resolveSavedConnection={(ref, dbName) =>
+                            // By the provider's own reference first. Entries
+                            // saved before it was recorded match on an exact
+                            // database name only: the old `name.endsWith(db)`
+                            // test matched a database called "app" to a saved
+                            // "PlanetScale · myapp" and connected to the wrong one.
+                            saved.find(
                               (s) =>
                                 s.provider === dbType &&
-                                s.password &&
-                                (s.database === dbName ||
-                                  s.name?.endsWith(dbName)),
-                            );
-                            return hit
-                              ? {
-                                  host: hit.host ?? "",
-                                  user: hit.user ?? "",
-                                  password: hit.password ?? "",
-                                  database: hit.database ?? dbName,
-                                }
-                              : undefined;
-                          }}
+                                (s.password || s.authToken) &&
+                                (s.providerRef
+                                  ? s.providerRef === ref
+                                  : !!dbName && s.database === dbName),
+                            )}
                           onselect={(conn) => connectProviderConnection(conn)}
                         />
                       {/key}
-                      {@render advancedSection()}
+                      {@render readOnlyRow()}
                     </div>
                   {:else if dbType === "d1"}
                     <div class="mt-6 flex flex-col gap-4">
@@ -4087,7 +4264,7 @@
                           </div>
                         </div>
                       </details>
-                      {@render advancedSection()}
+                      {@render readOnlyRow()}
                     </div>
                   {/if}
                 </div>
@@ -4278,6 +4455,8 @@
                       variant="ghost"
                       class="max-w-[200px] text-muted-foreground"
                       disabled={isBusy}
+                      title="Resume {lastConn.name} ({IS_MAC ? '⌘⇧' : 'Ctrl+Shift+'}Enter)"
+                      aria-keyshortcuts="Control+Shift+Enter Meta+Shift+Enter"
                       onclick={() => connectWith(lastConn)}
                     >
                       {#if connecting === lastConn.id}
@@ -4371,7 +4550,7 @@
       <button
         type="button"
         onclick={requestClose}
-        class="field-surface absolute right-4 top-5 inline-flex size-8 items-center justify-center text-muted-foreground transition-[color,background-color,scale] duration-150 ease-out hover:bg-accent hover:text-foreground active:scale-[0.96]"
+        class="field-surface absolute right-8 top-5 inline-flex size-8 items-center justify-center text-muted-foreground transition-[color,background-color,scale] duration-150 ease-out hover:bg-accent hover:text-foreground active:scale-[0.96]"
       >
         <Icon name="x" class="size-3.5" />
         <span class="sr-only">Close</span>

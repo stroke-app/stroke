@@ -52,6 +52,10 @@ fn http() -> &'static reqwest::Client {
             .user_agent("stroke/1.0")
             .tcp_keepalive(std::time::Duration::from_secs(60))
             .pool_max_idle_per_host(4)
+            // Idle sockets go before an upstream load balancer's 60s cutoff, so a
+            // request after a pause doesn't go out on a connection already closed
+            // (same fix as the provider client in providers/mod.rs).
+            .pool_idle_timeout(std::time::Duration::from_secs(20))
             // Bounded on purpose. `reqwest` has no default timeout, so a request
             // that never answers - captive portal, dropped route, a stalled edge -
             // leaves the command awaiting forever and the UI on its spinner with no
@@ -125,27 +129,8 @@ async fn await_oauth_callback(
     listener: TcpListener,
     expected_state: &str,
 ) -> Result<String, String> {
-    let success_html = r#"<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="UTF-8"><title>Stroke - authorized</title>
-<style>body{font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#0d0d0d;color:#eee}
-.card{text-align:center;padding:48px;border-radius:16px;border:1px solid #333;background:#111}
-h2{color:#22c55e;margin-bottom:12px}p{color:#888;margin:0}</style></head>
-<body><div class="card">
-<h2>Authorization successful</h2>
-<p>You can close this tab and return to Stroke.</p>
-</div></body></html>"#;
-
-    let error_html = r#"<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="UTF-8"><title>Stroke - error</title>
-<style>body{font-family:system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#0d0d0d;color:#eee}
-.card{text-align:center;padding:48px;border-radius:16px;border:1px solid #4b1c1c;background:#1a0f0f}
-h2{color:#ef4444;margin-bottom:12px}p{color:#888;margin:0}</style></head>
-<body><div class="card">
-<h2>Authorization failed</h2>
-<p>You can close this tab and try again in Stroke.</p>
-</div></body></html>"#;
+    let success_html = crate::oauth_page::page(true, "Cloudflare");
+    let error_html = crate::oauth_page::page(false, "Cloudflare");
 
     let send_html = |html: &str| -> String {
         format!(
@@ -198,7 +183,7 @@ h2{color:#ef4444;margin-bottom:12px}p{color:#888;margin:0}</style></head>
 
     if let Some(err) = &error {
         let _ = stream
-            .write_all(send_html(error_html).as_bytes())
+            .write_all(send_html(&error_html).as_bytes())
             .await;
         return Err(format!("Cloudflare denied authorization: {err}"));
     }
@@ -207,7 +192,7 @@ h2{color:#ef4444;margin-bottom:12px}p{color:#888;margin:0}</style></head>
         Some(c) if !c.is_empty() => c,
         _ => {
             let _ = stream
-                .write_all(send_html(error_html).as_bytes())
+                .write_all(send_html(&error_html).as_bytes())
                 .await;
             return Err("No authorization code in callback".to_string());
         }
@@ -215,13 +200,13 @@ h2{color:#ef4444;margin-bottom:12px}p{color:#888;margin:0}</style></head>
 
     if state.as_deref() != Some(expected_state) {
         let _ = stream
-            .write_all(send_html(error_html).as_bytes())
+            .write_all(send_html(&error_html).as_bytes())
             .await;
         return Err("OAuth state mismatch - possible CSRF".to_string());
     }
 
     let _ = stream
-        .write_all(send_html(success_html).as_bytes())
+        .write_all(send_html(&success_html).as_bytes())
         .await;
     let _ = stream.flush().await;
 

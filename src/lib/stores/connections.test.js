@@ -46,6 +46,18 @@ describe('saved connections', () => {
     expect(loadSavedConnections().map((c) => c.id)).toEqual([])
   })
 
+  it('keeps a Redis provider that serves Redis, drops a stale one', async () => {
+    const store = await import('./connections.js')
+    store.upsertConnection({ id: 'u', type: 'redis', name: 'Upstash · cache', provider: 'upstash', providerRef: 'db-1', host: 'x.upstash.io' })
+    store.upsertConnection({ id: 's', type: 'redis', name: 'old', provider: 'supabase', db: 'postgres' })
+    vi.resetModules()
+    const next = await import('./connections.js')
+    const byId = Object.fromEntries(next.loadSavedConnections().map((c) => [c.id, c]))
+    expect(byId.u).toMatchObject({ provider: 'upstash', providerRef: 'db-1' })
+    expect(byId.s.provider).toBeUndefined()
+    expect(byId.s.db).toBe(0)
+  })
+
   it('lets an explicit re-add revive a deleted id', async () => {
     const { upsertConnection, removeConnection, loadSavedConnections } = await import('./connections.js')
     const conn = { id: 'sample', type: 'sqlite', name: 'Sample Database' }

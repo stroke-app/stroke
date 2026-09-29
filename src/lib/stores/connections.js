@@ -44,13 +44,17 @@ const DISCONNECTED_KEY = 'stroke:disconnected'
  *   ssh?: SshConfig
  *   readOnly?: boolean
  *   environment?: 'prod' | 'staging' | 'dev' | null
- *   provider?: 'neon' | 'supabase' | 'planetscale' | 'prisma'
+ *   provider?: 'neon' | 'supabase' | 'planetscale' | 'prisma' | 'tidb' | 'turso' | 'nile' | 'railway' | 'upstash'
+ *   providerRef?: string  - the provider's own id for this database (its db_ref), so reopening it from the provider picker connects with this entry instead of minting new credentials
  *   group?: string | null
  *   origin?: 'studio' | 'docker'  - discovered locally rather than typed in
  *   tool?: 'prisma' | 'drizzle'
  *   toolLabel?: string
  * }} SavedConnection
  */
+
+/** Providers whose databases can be Redis; any other `provider` on a Redis entry is stale. */
+const REDIS_PROVIDERS = new Set(['upstash', 'railway'])
 
 export function newConnectionId() {
   return crypto.randomUUID()
@@ -97,7 +101,10 @@ export function loadSavedConnections() {
       // Normalize once on load so the UI and backend agree on a numeric logical DB.
       if (engineFamily(type) === 'redis') {
         conn.db = Number(conn.db) || 0
-        delete conn.provider
+        // Only a provider that doesn't serve Redis is stale. Upstash and
+        // Railway do, and dropping theirs turned a saved Upstash database into
+        // an anonymous one after every restart.
+        if (!REDIS_PROVIDERS.has(conn.provider)) delete conn.provider
       }
       return conn
     }).filter((c) => c != null)

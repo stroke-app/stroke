@@ -18,6 +18,7 @@ mod db;
 mod docker;
 mod license;
 mod mcp;
+mod oauth_page;
 mod omniroute;
 mod plugins;
 mod metrics;
