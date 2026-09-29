@@ -494,6 +494,37 @@ fn database_from_inspect(c: &Value) -> Option<DockerDatabase> {
     })
 }
 
+/// Start, stop or restart one container, from the right-click menu on its card.
+///
+/// Only these three: they are reversible, and anything that deletes a container
+/// or its volume belongs in Docker's own tools. The name or id is validated
+/// against Docker's own character set so it can never be read as a flag
+/// (`--rm`, `-f`) by the CLI.
+#[tauri::command]
+pub async fn docker_container_action(container: String, action: String) -> Result<(), String> {
+    if !matches!(action.as_str(), "start" | "stop" | "restart") {
+        return Err(format!("Unsupported Docker action: {action}"));
+    }
+    let valid = !container.is_empty()
+        && !container.starts_with('-')
+        && container.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'));
+    if !valid {
+        return Err("That doesn't look like a container name or id.".into());
+    }
+    let out = docker()
+        .arg(&action)
+        .arg(&container)
+        .output()
+        .await
+        .map_err(|e| format!("Could not run docker: {e}"))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        let msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        Err(if msg.is_empty() { format!("docker {action} failed") } else { msg })
+    }
+}
+
 /// Every database container running on this machine, with the credentials it was
 /// started with. Docker missing or not running is not an error - it just means
 /// there is nothing to offer, and the connection screen stays quiet about it.
@@ -629,5 +660,26 @@ mod tests {
             "NetworkSettings": { "Ports": { "80/tcp": [{ "HostPort": "80" }], "443/tcp": [{ "HostPort": "443" }] } },
         });
         assert!(database_from_inspect(&caddy).is_none());
+    }
+}
+
+#[cfg(test)]
+mod action_tests {
+    use super::docker_container_action;
+
+    /// Nothing that could be read as a docker flag, and nothing destructive.
+    #[tokio::test]
+    async fn rejects_flags_and_unknown_actions_before_running_docker() {
+        for bad in ["--rm", "-f", "a b", "x;rm -rf /", ""] {
+            assert!(docker_container_action(bad.into(), "stop".into()).await.is_err(), "{bad:?}");
+        }
+        assert!(docker_container_action("stroke-test-mysql".into(), "rm".into()).await.unwrap_err().contains("Unsupported"));
+    }
+
+    /// Against the dialect-matrix container: `cargo test --lib docker_live -- --ignored`.
+    #[tokio::test]
+    #[ignore]
+    async fn docker_live_restart_the_test_container() {
+        docker_container_action("stroke-test-mysql".into(), "restart".into()).await.unwrap();
     }
 }

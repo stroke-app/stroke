@@ -586,6 +586,15 @@ export async function scanDockerDatabases() {
 }
 
 /**
+ * Start, stop or restart a container (the Docker card's right-click menu).
+ * @param {string} container name or id
+ * @param {'start' | 'stop' | 'restart'} action
+ */
+export async function dockerContainerAction(container, action) {
+  return inv('docker_container_action', { container, action })
+}
+
+/**
  * Database servers installed natively on this machine. There is no password to
  * recover for these - the row carries the engine's conventional local superuser.
  *

@@ -26,6 +26,7 @@
     connectRedis,
     scanLocalStudios,
     scanDockerDatabases,
+    dockerContainerAction,
     scanMachineDatabases,
   } from "$lib/api.js";
   import {
@@ -54,6 +55,7 @@
   import { IS_MAC } from '$lib/shortcuts.js';
   import { focusTrap } from '$lib/actions/focus-trap.js';
   import { toast } from "$lib/components/ui/sonner/toast.svelte.js";
+  import * as ContextMenu from "$lib/components/ui/context-menu/index.js";
   import { parseConnectionUri, detectConnectionUri } from "$lib/connection-uri.js";
   import { PROVIDERS, providerBuildConnection } from "$lib/providers.js";
   import { providerOf, engineLabel } from "$lib/connection-provider.js";
@@ -1822,11 +1824,62 @@
     localPhase = "done";
   }
 
+  /** The container a Docker card action is running on, so its menu can't fire twice. */
+  let dockerBusy = $state("");
+
+  /**
+   * Start, stop or restart a Docker card's container, then rescan so the list
+   * shows what is actually running. Stopping drops the card (the scan lists
+   * running containers only), so its toast offers the way back.
+   * @param {LocalTarget} t @param {'start' | 'stop' | 'restart'} action
+   */
+  async function dockerAct(t, action) {
+    const name = t.container;
+    if (!name || dockerBusy) return;
+    dockerBusy = name;
+    const verb = { start: "Started", stop: "Stopped", restart: "Restarted" }[action];
+    try {
+      await dockerContainerAction(name, action);
+      toast.success(`${verb} ${name}`, action === "stop"
+        ? { action: { label: "Start again", onClick: () => void dockerAct({ ...t }, "start") } }
+        : {});
+      await refreshLocal();
+    } catch (e) {
+      toast.error(`Couldn't ${action} ${name}`, { description: String(e).replace(/^Error:\s*/, "") });
+    } finally {
+      dockerBusy = "";
+    }
+  }
+
+  /** A local target's connection as a URL, credentials included (it's on loopback). @param {LocalTarget} t */
+  function localUrl(t) {
+    const c = t.conn;
+    if (!c) return "";
+    const scheme = { postgres: "postgresql", mysql: "mysql", mariadb: "mysql", redis: "redis", clickhouse: "clickhouse", mssql: "sqlserver" }[c.type] ?? c.type;
+    const auth = c.user || c.password
+      ? `${encodeURIComponent(c.user ?? "")}${c.password ? `:${encodeURIComponent(c.password)}` : ""}@`
+      : "";
+    const db = c.type === "redis" ? `/${c.db ?? 0}` : c.database ? `/${encodeURIComponent(c.database)}` : "";
+    return `${scheme}://${auth}${c.host}:${c.port}${db}`;
+  }
+
+  /** @param {string} text @param {string} done */
+  async function copyText(text, done) {
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success(done);
+    } catch {
+      toast.error("Couldn't copy to the clipboard");
+    }
+  }
+
   /**
    * One row in "Running on this machine", from either source.
    * @typedef {{
    *   id: string, mark: string, trailingMark: string | null, title: string,
    *   badge: string, subtitle: string, hint: string, conn: any | null,
+   *   container?: string,
    * }} LocalTarget
    */
 
@@ -1867,6 +1920,7 @@
             : { ssl: false };
     return /** @type {LocalTarget} */ ({
       id: `docker:${d.name}`,
+      container: d.name,
       mark: d.engine,
       trailingMark: null,
       title: d.name,
@@ -3554,9 +3608,10 @@
                          height as the whole rest of the page; they are the same
                          shape and the same size as each other, so they tile. -->
                     <div class="mt-2 grid grid-cols-1 gap-1.5 @xl:grid-cols-2 @4xl:grid-cols-4">
-                      {#each targets as t, i (t.id)}
+                {#snippet localCard(/** @type {LocalTarget} */ t, /** @type {number} */ i, /** @type {Record<string, any>} */ cardProps = {})}
                         {@const busy = connecting === t.id}
                         <button
+                          {...cardProps}
                           type="button"
                           disabled={!t.conn || !!connecting}
                           title={t.hint}
@@ -3616,6 +3671,41 @@
                             </span>
                           {/if}
                         </button>
+                {/snippet}
+                      {#each targets as t, i (t.id)}
+                        {#if t.container}
+                          <!-- Docker cards: right-click for the container's own
+                               controls. Reversible actions only; deleting a
+                               container or its volume stays in Docker. -->
+                          <ContextMenu.Root>
+                            <ContextMenu.Trigger>
+                              {#snippet child({ props })}
+                                {@render localCard(t, i, props)}
+                              {/snippet}
+                            </ContextMenu.Trigger>
+                            <ContextMenu.Content class="min-w-52">
+                              <ContextMenu.Item disabled={!t.conn || !!connecting} onSelect={() => void connectLocal(t)}>
+                                <Icon name="plug" /> Connect
+                              </ContextMenu.Item>
+                              <ContextMenu.Separator />
+                              <ContextMenu.Item disabled={dockerBusy === t.container} onSelect={() => void dockerAct(t, "restart")}>
+                                <Icon name="refresh-cw" /> Restart container
+                              </ContextMenu.Item>
+                              <ContextMenu.Item disabled={dockerBusy === t.container} onSelect={() => void dockerAct(t, "stop")}>
+                                <Icon name="square" /> Stop container
+                              </ContextMenu.Item>
+                              <ContextMenu.Separator />
+                              <ContextMenu.Item disabled={!t.conn} onSelect={() => void copyText(localUrl(t), "Connection URL copied")}>
+                                <Icon name="link-2" /> Copy connection URL
+                              </ContextMenu.Item>
+                              <ContextMenu.Item onSelect={() => void copyText(t.container ?? "", "Container name copied")}>
+                                <Icon name="copy" /> Copy container name
+                              </ContextMenu.Item>
+                            </ContextMenu.Content>
+                          </ContextMenu.Root>
+                        {:else}
+                          {@render localCard(t, i)}
+                        {/if}
                       {/each}
                     </div>
                   </div>
