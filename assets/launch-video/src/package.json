@@ -1,0 +1,16 @@
+{
+  "name": "stroke-launch-video",
+  "private": true,
+  "description": "Renders assets/launch-video/stroke-launch.mp4",
+  "scripts": {
+    "build": "bash build.sh",
+    "marks": "node build-marks.mjs",
+    "cues": "node capture.js cues",
+    "audio": "node audio.js",
+    "stills": "node capture.js stills"
+  },
+  "devDependencies": {
+    "playwright-core": "1.58.2",
+    "simple-icons": "16.24.1"
+  }
+}
