@@ -3,6 +3,8 @@
 //   node capture.js stills 3.5 12 ...  -> stills/t_<time>.png
 //   node capture.js video             -> video.mp4 (silent, frames piped to ffmpeg)
 // Set CHROME to a Chromium binary if Playwright's bundled one is not installed.
+// The page is vector, so it renders sharper at any size: DSF=2 FPS=60 CRF=12
+// OUT=video_2160p60.mp4 gives the 4K 60fps master.
 const { chromium } = require('playwright-core')
 const { spawn } = require('child_process')
 const fs = require('fs')
@@ -23,7 +25,8 @@ function chromePath() {
 async function main() {
   const [mode, ...times] = process.argv.slice(2)
   const browser = await chromium.launch({ executablePath: chromePath(), args: ['--allow-file-access-from-files', '--force-color-profile=srgb'] })
-  const page = await browser.newPage({ viewport: { width: 1920, height: 1080 }, deviceScaleFactor: 1 })
+  const DSF = Number(process.env.DSF || 1), FPS = Number(process.env.FPS || TL.fps), OUT = process.env.OUT || 'video.mp4', CRF = process.env.CRF || '16'
+  const page = await browser.newPage({ viewport: { width: 1920, height: 1080 }, deviceScaleFactor: DSF })
   await page.goto('file://' + path.join(__dirname, 'index.html'))
   await page.evaluate(() => window.ready)
   if (mode === 'cues') {
@@ -37,11 +40,11 @@ async function main() {
       await page.screenshot({ path: path.join(__dirname, 'stills', 't_' + t + '.png') })
     }
   } else if (mode === 'video') {
-    const total = Math.round(TL.duration * TL.fps)
-    const ff = spawn('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'image2pipe', '-framerate', String(TL.fps), '-c:v', 'png', '-i', '-',
-      '-c:v', 'libx264', '-preset', 'slow', '-crf', '16', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', path.join(__dirname, 'video.mp4')], { stdio: ['pipe', 'inherit', 'inherit'] })
+    const total = Math.round(TL.duration * FPS)
+    const ff = spawn('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'image2pipe', '-framerate', String(FPS), '-c:v', 'png', '-i', '-',
+      '-c:v', 'libx264', '-preset', 'slow', '-tune', 'animation', '-crf', CRF, '-pix_fmt', 'yuv420p', '-movflags', '+faststart', path.join(__dirname, OUT)], { stdio: ['pipe', 'inherit', 'inherit'] })
     for (let i = 0; i < total; i++) {
-      await page.evaluate(t => window.render(t), i / TL.fps)
+      await page.evaluate(t => window.render(t), i / FPS)
       const buf = await page.screenshot({ type: 'png' })
       if (!ff.stdin.write(buf)) await new Promise(r => ff.stdin.once('drain', r))
       if (i % 120 === 0) process.stdout.write('frame ' + i + '/' + total + '\n')
