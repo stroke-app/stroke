@@ -162,7 +162,7 @@ impl Provider {
     fn callback_ports(&self) -> &'static [u16] {
         match self {
             // Railway, like PlanetScale, matches the redirect URI exactly and
-            // the app registers one: http://localhost:8989/oauth/callback.
+            // the app registers one: http://127.0.0.1:8989/oauth/callback.
             Self::PlanetScale | Self::Railway => &[8989],
             _ => CALLBACK_PORTS,
         }
@@ -191,6 +191,10 @@ impl Provider {
             Self::Neon => format!("http://127.0.0.1:{port}/callback"),
             // nilecli's client allows any localhost port on /callback.
             Self::Nile => format!("http://localhost:{port}/callback"),
+            // Stroke's Railway app is registered with the loopback IP, and
+            // Railway matches the redirect exactly: `localhost` here was
+            // rejected with invalid_redirect_uri.
+            Self::Railway => format!("http://127.0.0.1:{port}/oauth/callback"),
             _ => format!("http://localhost:{port}/oauth/callback"),
         }
     }
@@ -364,10 +368,38 @@ fn now_secs() -> u64 {
 
 // ── Local callback server ────────────────────────────────────────────────────────
 
-async fn bind_callback_listener(ports: &[u16]) -> Result<(TcpListener, u16), String> {
+/// The local end of an OAuth redirect, on both loopback addresses.
+///
+/// A redirect to `http://localhost:…` is resolved by the browser, and some
+/// setups (IPv6-first resolvers, a proxy, some Linux configs) send it to `::1`
+/// before `127.0.0.1`. Listening on IPv4 alone left those sign-ins waiting on a
+/// socket nothing connected to until the 5-minute timeout. The IPv6 listener is
+/// best effort: a machine without IPv6 loopback just doesn't get one.
+pub(crate) struct CallbackListener {
+    v4: TcpListener,
+    v6: Option<TcpListener>,
+}
+
+impl CallbackListener {
+    async fn accept(&self) -> std::io::Result<(tokio::net::TcpStream, std::net::SocketAddr)> {
+        match &self.v6 {
+            Some(v6) => tokio::select! {
+                r = self.v4.accept() => r,
+                r = v6.accept() => r,
+            },
+            None => self.v4.accept().await,
+        }
+    }
+}
+
+pub(crate) async fn bind_callback_listener(ports: &[u16]) -> Result<(CallbackListener, u16), String> {
     for &port in ports {
-        if let Ok(listener) = TcpListener::bind(format!("127.0.0.1:{port}")).await {
-            return Ok((listener, port));
+        if let Ok(v4) = TcpListener::bind(format!("127.0.0.1:{port}")).await {
+            // The port IPv4 actually got (differs from `port` only when it is 0),
+            // so both addresses answer on the same one.
+            let port = v4.local_addr().map(|a| a.port()).unwrap_or(port);
+            let v6 = TcpListener::bind(format!("[::1]:{port}")).await.ok();
+            return Ok((CallbackListener { v4, v6 }, port));
         }
     }
     if ports.len() == 1 {
@@ -388,8 +420,8 @@ async fn bind_callback_listener(ports: &[u16]) -> Result<(TcpListener, u16), Str
 /// Wait for one OAuth redirect and return the value of `value_key` from its
 /// query: the authorization code (`code`), or for a token redirect the token
 /// itself (`jwt`).
-async fn await_oauth_callback(
-    listener: TcpListener,
+pub(crate) async fn await_oauth_callback(
+    listener: CallbackListener,
     expected_state: &str,
     value_key: &str,
     provider_label: &str,
@@ -861,9 +893,7 @@ pub async fn provider_start_oauth(
     );
 
     eprintln!("[provider oauth] {} authorize URL: {auth_url}", p.key());
-    tauri_plugin_opener::OpenerExt::opener(&app)
-        .open_url(auth_url, None::<&str>)
-        .map_err(|e| format!("Could not open browser: {e}"))?;
+    open_sign_in_page(&app, &auth_url);
 
     // Register the cancel waiter BEFORE awaiting so a Cancel click can't slip
     // through between opening the browser and starting to wait.
@@ -895,6 +925,20 @@ pub async fn provider_start_oauth(
         connected: true,
         email: None,
     })
+}
+
+/// Hand the sign-in page to the UI, then try to open it in the browser.
+///
+/// The UI gets the URL first so the "Waiting for…" panel can offer "Open again"
+/// and "Copy link". A failure to open the browser is no longer fatal: with no
+/// default browser set (common on Linux), or a closed tab, the sign-in used to
+/// die with "Could not open browser" or wait five minutes with no way back. Now
+/// the flow keeps waiting and the link is on screen.
+pub(crate) fn open_sign_in_page(app: &tauri::AppHandle, url: &str) {
+    let _ = tauri::Emitter::emit(app, "provider-auth-url", serde_json::json!({ "url": url }));
+    if let Err(e) = tauri_plugin_opener::OpenerExt::opener(app).open_url(url, None::<&str>) {
+        eprintln!("[provider oauth] could not open the browser: {e}");
+    }
 }
 
 /// OAuth 2.0 device code grant (RFC 8628). Opens the verification page with the
@@ -938,9 +982,11 @@ async fn device_code_sign_in(app: &tauri::AppHandle, cfg: &OAuthConfig) -> Resul
             "expiresIn": expires,
         }),
     );
-    tauri_plugin_opener::OpenerExt::opener(app)
-        .open_url(verify_url, None::<&str>)
-        .map_err(|e| format!("Could not open browser: {e}"))?;
+    // The code and a reopen button are already on screen, so a browser that
+    // won't open is not a reason to abandon the sign-in.
+    if let Err(e) = tauri_plugin_opener::OpenerExt::opener(app).open_url(verify_url, None::<&str>) {
+        eprintln!("[provider oauth] could not open the browser: {e}");
+    }
 
     let started = std::time::Instant::now();
     let cancelled = oauth_cancel().notified();
@@ -996,9 +1042,7 @@ async fn token_redirect_sign_in(
         cfg.auth_url.trim_end_matches('/'),
         urlencoding::encode(state),
     );
-    tauri_plugin_opener::OpenerExt::opener(app)
-        .open_url(url, None::<&str>)
-        .map_err(|e| format!("Could not open browser: {e}"))?;
+    open_sign_in_page(app, &url);
     let cancelled = oauth_cancel().notified();
     tokio::select! {
         r = tokio::time::timeout(
@@ -1084,12 +1128,26 @@ mod callback_tests {
         out
     }
 
+    /// A redirect that the browser sends to `::1` is answered too.
+    #[tokio::test]
+    async fn the_callback_answers_on_ipv6_loopback() {
+        let Ok((listener, port)) = super::bind_callback_listener(&[0]).await else { return };
+        if listener.v6.is_none() {
+            return; // no IPv6 loopback on this machine
+        }
+        let waiter = tokio::spawn(async move { await_oauth_callback(listener, "s6", "code", "Neon").await });
+        let mut s = tokio::net::TcpStream::connect(("::1", port)).await.unwrap();
+        s.write_all(b"GET /oauth/callback?code=v6&state=s6 HTTP/1.1\r\nHost: localhost\r\n\r\n").await.unwrap();
+        assert_eq!(waiter.await.unwrap().unwrap(), "v6");
+    }
+
     /// A stray request (favicon, preconnect) used to spend the only accept and
     /// fail the sign-in. It must be answered 404 and the wait must go on.
     #[tokio::test]
     async fn stray_requests_do_not_consume_the_callback() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
+        let listener = super::CallbackListener { v4: listener, v6: None };
         let waiter = tokio::spawn(async move { await_oauth_callback(listener, "s1", "code", "Neon").await });
         // A socket that connects and never sends, then a favicon fetch.
         let _silent = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.unwrap();

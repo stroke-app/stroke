@@ -23,8 +23,7 @@ Stroke is a Rust + Svelte app for browsing, editing and querying databases. It s
 | Turso | libSQL |
 | Cloudflare D1 | SQLite |
 | Upstash | Redis |
-
-Railway is next.
+| Railway | Postgres, MySQL, Redis |
 
 Stroke also finds databases already running on your machine (Docker containers, local Postgres and MySQL, the SQLite file your ORM points at), so a local connection is usually one click. Anything can go through an SSH tunnel.
 

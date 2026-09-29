@@ -238,10 +238,8 @@
   // out of the manual Type dropdown.
   const PROVIDER_IDS = ["neon", "supabase", "planetscale", "prisma", "tidb", "turso", "railway", "nile", "upstash"];
   // Providers temporarily turned off (shown as a disabled tab, not connectable).
-  // Railway: the adapter is done, but its OAuth app isn't registered yet, so
-  // there is no client id to sign in with.
   /** @type {Set<string>} */
-  const DISABLED_TABS = new Set(["railway"]);
+  const DISABLED_TABS = new Set();
 
   // Subtle per-engine icon tint (color-500/600), theme-aware via Tailwind tokens.
   const ENGINE_TINT = {
