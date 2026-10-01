@@ -57,7 +57,7 @@
   import { untrack, onDestroy } from "svelte";
   import { formatCompactCount } from "$lib/table-list.js";
 
-  /** @typedef {import('$lib/monaco-sql-complete.js').SqlSchemaHints} SqlSchemaHints */
+  /** @typedef {import('$lib/sql-complete-data.js').SqlSchemaHints} SqlSchemaHints */
 
   let {
     /** Whether the SQL tab is the active/visible tab - gates global hotkeys. */
@@ -538,9 +538,13 @@
         onclick={stopRun}
         title={tipText('Stop', 'Cancel the running query.')}
       >
-        <span class="relative grid size-3.5 shrink-0 place-items-center">
-          <Loader2 class="size-3.5 animate-spin text-muted-foreground" />
-          <Square class="absolute size-1.5 fill-current text-destructive" />
+        <!-- Drawn, not two icons stacked: Lucide's square carries its own
+             padding in a 24px box, so at 6px it sat off-centre on the arc. A
+             faint full ring, the arc turning over it, the square dead centre. -->
+        <span class="relative grid size-3.5 shrink-0 place-items-center" aria-hidden="true">
+          <span class="absolute inset-0 rounded-full border-[1.5px] border-muted-foreground/25"></span>
+          <span class="absolute inset-0 animate-spin rounded-full border-[1.5px] border-transparent border-t-muted-foreground will-change-transform"></span>
+          <span class="size-1.5 rounded-[1.5px] bg-destructive"></span>
         </span>
         {stopping ? 'Stopping' : 'Stop'}
       </button>
@@ -836,6 +840,7 @@
       bind:value={sql}
       class="absolute inset-0"
       {schemaHints}
+      dialect={engine}
       {onmodk}
       onmodenter={() => handleRun(undefined)}
       onrunstatement={(stmt) => handleRun(stmt)}

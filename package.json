@@ -46,9 +46,11 @@
     "vitest": "^4.1.11"
   },
   "dependencies": {
+    "@codemirror/autocomplete": "^6.20.3",
     "@codemirror/commands": "^6.11.1",
     "@codemirror/lang-html": "^6.4.12",
     "@codemirror/lang-json": "^6.0.2",
+    "@codemirror/lang-sql": "^6.10.0",
     "@codemirror/language": "^6.12.4",
     "@codemirror/search": "^6.7.2",
     "@codemirror/state": "^6.7.6",
@@ -67,6 +69,7 @@
     "@hugeicons/core-free-icons": "^4.2.2",
     "@hugeicons/svelte": "^1.1.4",
     "@lezer/highlight": "^1.2.4",
+    "@replit/codemirror-vim": "^6.4.0",
     "@tailwindcss/vite": "^4.3.0",
     "@tanstack/svelte-hotkeys": "^0.10.0",
     "@tauri-apps/plugin-autostart": "^2.5.1",

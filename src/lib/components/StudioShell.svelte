@@ -132,6 +132,7 @@
     liveStart,
     liveStop,
     getTableColumnStructure,
+    getSchemaColumnStructure,
     getIncomingForeignKeys,
     executeSql,
     executeSqlMulti,
@@ -1074,6 +1075,9 @@
   let hiddenColumns = $state(new Set())
   /** @type {Map<string, typeof columns>} */
   let tableColumnsCache = $state(new Map())
+  /** Bumped on every in-place write to tableColumnsCache: a Map in $state is
+   *  not deeply reactive, so the SQL completion hints never saw new entries. */
+  let tableColumnsVersion = $state(0)
   let primaryKey = $state([])
   /** Data-import dialog for the open table. */
   let importDataOpen = $state(false)
@@ -1634,7 +1638,7 @@ let rowSearch = $state('')
 
   // Stable name arrays derived separately so sqlSchemaHints doesn't rebuild
   // on every row fetch - only rebuilds when the column set actually changes.
-  const _activeColNames = $derived(columns.map((c) => c.name))
+  const _activeColsTyped = $derived(columns.map((c) => ({ name: c.name, type: c.dataType ?? c.data_type ?? '' })))
   const _sqlColNames = $derived(sqlColumns.map((c) => c.name))
   const _tableNames = $derived(tables.map((t) => t.name))
 
@@ -1651,6 +1655,9 @@ let rowSearch = $state('')
     if (activeView !== 'sql' || !connection || !activeSchema) return
     const schema = activeSchema
     const key = `${persistConnectionId}:${schema}`
+    // Columns first, before the early return: they also go stale when the
+    // table list changes, which loadSchemaColumns tracks on its own.
+    void loadSchemaColumns()
     if (key === _sqlHintsLoadedFor) return
     _sqlHintsLoadedFor = key
     // Enum/function completion hints are PostgreSQL-only - skip the round-trips
@@ -1755,28 +1762,98 @@ let rowSearch = $state('')
   })
 
   const sqlSchemaHints = $derived.by(() => {
-    // Only the SQL editor consumes this, and building columnsByTable iterates the
-    // whole table-column cache (dozens of tables). Skip that work entirely unless
-    // the SQL view is active - otherwise every table-tab switch paid for hints
-    // nothing was showing. When the user opens SQL, activeView flips and this
-    // rebuilds fresh from the current caches.
+    // The SQL editor is the always-on consumer, and building columnsByTable
+    // iterates the whole table-column cache (dozens of tables). Skip that work
+    // unless the SQL view is active - otherwise every table-tab switch paid for
+    // hints nothing was showing. When the user opens SQL, activeView flips and
+    // this rebuilds fresh from the current caches.
     if (activeView !== 'sql') {
       return { schemas, activeSchema, tables: _tableNames, columnsByTable: /** @type {Record<string, string[]>} */ ({}) }
     }
-    /** @type {Record<string, string[]>} */
-    const columnsByTable = {}
-    for (const [key, cols] of tableColumnsCache) {
-      columnsByTable[key] = cols.map((c) => c.name)
+    return buildSqlHints()
+  })
+
+  // ── Every column of the schema, for completion ─────────────────────────────
+  // The column cache above only holds tables whose rows were opened, so a query
+  // naming any other table got no column suggestions at all. One catalog call
+  // (the one the ER diagram uses) brings the whole schema's columns, typed.
+  // Loaded the first time completion needs it, or when the SQL tab opens.
+
+  /** @type {Record<string, Array<{ name: string, type: string }>>} */
+  let _schemaColumns = $state({})
+  /** Connection + schema the columns above belong to. */
+  let _schemaColumnsFor = ''
+  /** That, plus the table list generation: a new table (or a dropped one) reloads. */
+  let _schemaColumnsKey = ''
+  let _schemaColumnsGen = 0
+  /** @type {Promise<void>} */
+  let _schemaColumnsReady = Promise.resolve()
+  $effect(() => {
+    void _tableNames
+    _schemaColumnsGen++
+  })
+
+  /** Load the active schema's columns once per schema and table list. */
+  function loadSchemaColumns() {
+    if (!connection || !activeSchema) return Promise.resolve()
+    const owner = `${persistConnectionId}:${activeSchema}`
+    const key = `${owner}:${_schemaColumnsGen}`
+    if (key === _schemaColumnsKey) return _schemaColumnsReady
+    _schemaColumnsKey = key
+    // Another schema's columns would be wrong; this schema's older ones are
+    // only incomplete, so they stay until the new set lands.
+    if (owner !== _schemaColumnsFor) {
+      _schemaColumnsFor = owner
+      _schemaColumns = {}
     }
-    if (activeTable && _activeColNames.length) {
-      columnsByTable[activeTable] = _activeColNames
-      columnsByTable[`${activeSchema}.${activeTable}`] = _activeColNames
+    _schemaColumnsReady = getSchemaColumnStructure(activeSchema)
+      .then((rows) => {
+        if (_schemaColumnsKey !== key) return
+        /** @type {Record<string, Array<{ name: string, type: string }>>} */
+        const next = {}
+        for (const { table, columns: cols } of rows ?? []) {
+          next[table] = cols.map((c) => ({ name: c.name, type: c.dataType ?? '' }))
+        }
+        _schemaColumns = next
+      })
+      .catch(() => {
+        // Let the next request try again rather than caching the failure.
+        if (_schemaColumnsKey === key) _schemaColumnsKey = ''
+      })
+    return _schemaColumnsReady
+  }
+
+  /** @param {any[]} cols */
+  const typedColumns = (cols) => cols.map((c) => ({ name: c.name, type: c.dataType ?? c.data_type ?? '' }))
+
+  /**
+   * The full completion hints, on demand. The table view's review dock calls
+   * this only while it is open, so the cost above is paid only then.
+   */
+  function buildSqlHints() {
+    /** @type {Record<string, Array<string | { name: string, type: string }>>} */
+    const columnsByTable = { ..._schemaColumns }
+    void tableColumnsVersion
+    for (const [key, cols] of tableColumnsCache) {
+      columnsByTable[key] = typedColumns(cols)
+    }
+    if (activeTable && _activeColsTyped.length) {
+      columnsByTable[activeTable] = _activeColsTyped
+      columnsByTable[`${activeSchema}.${activeTable}`] = _activeColsTyped
     }
     if (_sqlColNames.length) {
       columnsByTable.__result__ = _sqlColNames
     }
-    return { schemas, activeSchema, tables: _tableNames, columnsByTable, enumValues: _sqlEnumValues, userFunctions: _sqlUserFunctions }
-  })
+    return {
+      schemas,
+      activeSchema,
+      tables: _tableNames,
+      columnsByTable,
+      enumValues: _sqlEnumValues,
+      userFunctions: _sqlUserFunctions,
+      loadColumns: loadSchemaColumns,
+    }
+  }
 
   const connectionId = $derived(
     connection
@@ -3175,7 +3252,7 @@ let rowSearch = $state('')
   function handleVimFocusIn() {
     if (!$appVimMode) return
     const el = document.activeElement
-    if (el?.closest?.('.monaco-editor') || el?.closest?.('[data-canvas-table]')) return // owned by their own layers
+    if (el?.closest?.('.monaco-editor, .sql-editor-host') || el?.closest?.('[data-canvas-table]')) return // owned by their own layers
     const isInput = el instanceof HTMLElement &&
       (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)
     setVimSubMode(isInput ? 'insert' : 'normal')
@@ -4969,6 +5046,7 @@ let rowSearch = $state('')
 
       // Update AI schema cache (LRU, capped)
       lruSet(tableColumnsCache, `${s.schema}.${s.table}`, result.columns)
+      tableColumnsVersion++
 
       // Sync to global state only if this tab is still active
       if (tabId === activeTabId) {
@@ -5473,6 +5551,7 @@ let rowSearch = $state('')
       const probeUsable = !!probeOrder
       if (includeMeta && nextColumns.length) {
         lruSet(tableColumnsCache, `${ownerSchema}.${ownerTable}`, nextColumns)
+        tableColumnsVersion++
       }
 
       // ── The owner moved to the background while this ran ────────────────────
@@ -8346,6 +8425,7 @@ let rowSearch = $state('')
                 bind:this={dataTable}
                 {columns}
                 {rows}
+                getsqlhints={buildSqlHints}
                 {primaryKey}
                 {foreignKeys}
                 rowNumberOffset={infiniteScroll ? 0 : currentOffset}
