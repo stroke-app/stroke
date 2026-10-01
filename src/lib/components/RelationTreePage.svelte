@@ -41,7 +41,7 @@
   /**
    * @typedef {{ name: string, dataType: string, isNullable: boolean,
    *   columnDefault: string|null, foreignKey: string|null,
-   *   fkConstraintName: string|null, ordinalPosition: number }} Col
+   *   fkConstraintName: string|null, ordinalPosition: number, isPrimaryKey?: boolean }} Col
    * @typedef {{ name: string, columns: Col[], pkCols: Set<string> }} TableMeta
    */
 
@@ -201,7 +201,8 @@
           chunk.map(async t => {
             const cols = /** @type {Col[]} */ (await getTableColumnStructure(activeSchema, t.name))
             const pkCols = new Set(cols.filter(c =>
-              c.columnDefault?.includes('nextval') || (c.name === 'id' && !c.isNullable && !c.foreignKey)
+              c.isPrimaryKey === true ||
+              (c.isPrimaryKey === undefined && (c.columnDefault?.includes('nextval') || (c.name === 'id' && !c.isNullable && !c.foreignKey)))
             ).map(c => c.name))
             return /** @type {TableMeta} */ ({ name: t.name, columns: cols, pkCols })
           })

@@ -338,6 +338,7 @@ pub async fn get_column_structure(handle: &DuckdbHandle, table: &str) -> Result<
                     column_default,
                     foreign_key: None,
                     fk_constraint_name: None,
+                    is_primary_key: false,
                     comment: None,
                 })
             })

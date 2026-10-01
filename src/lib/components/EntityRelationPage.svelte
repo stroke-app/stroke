@@ -69,7 +69,7 @@
   /**
    * @typedef {{ name: string, dataType: string, isNullable: boolean,
    *   columnDefault: string|null, foreignKey: string|null,
-   *   fkConstraintName: string|null, ordinalPosition: number }} Col
+   *   fkConstraintName: string|null, ordinalPosition: number, isPrimaryKey?: boolean }} Col
    * @typedef {{ name: string, columns: Col[], pkCols: Set<string>,
    *   uniqueCols?: Set<string>, hiddenCount?: number }} TableMeta
    * @typedef {'self' | 'related' | 'all'} Scope
@@ -308,9 +308,10 @@
   }
   /** Tables on the page, in card order. */
   const shownTables = $derived(nodes.map((n) => tableMeta.get(n.id)).filter((t) => !!t))
-  /** The drawn relationships in the shape the Mermaid generators take. Hub
-   *  links are left out here too, as on the canvas, and said so in the view. */
-  const mermaidRels = $derived(edges.map((e) => ({
+  /** Every relationship on the page in the shape the Mermaid generators take.
+   *  Hub links are in: the source is an export, and "where is `user`" has to be
+   *  answerable from it. The canvas keeps them as pills. */
+  const mermaidRels = $derived([...edges, ...hubEdges].map((e) => ({
     source: e.source, target: e.target,
     sourceCol: typeof e.sourceHandle === 'string' && e.sourceHandle.startsWith('src-') ? e.sourceHandle.slice(4) : null,
     many: e.many, optional: e.optional,
@@ -991,12 +992,16 @@
 
       for (const { table, columns } of schemaCols) {
         const cols = /** @type {Col[]} */ (columns)
-        // Provisional keys: enough to draw with. refineKeys() replaces these
-        // with the real primary/unique indexes as soon as they land.
+        // The catalog's own key flag where the engine gives one; the old
+        // name-and-default guess only for rows that predate it. refineKeys()
+        // adds the unique keys that make a FK 1:1.
         const pkCols = new Set(
           cols.filter(c =>
-            c.columnDefault?.includes('nextval') ||
-            (c.name === 'id' && !c.isNullable && !c.foreignKey)
+            c.isPrimaryKey === true ||
+            (c.isPrimaryKey === undefined && (
+              c.columnDefault?.includes('nextval') ||
+              (c.name === 'id' && !c.isNullable && !c.foreignKey)
+            ))
           ).map(c => c.name)
         )
         tableMeta.set(table, /** @type {TableMeta} */ ({ name: table, columns: cols, pkCols }))
@@ -1999,8 +2004,8 @@
                 class="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
               ><PanelLeftClose class="size-3.5" /></button>
               <span class="shrink-0 text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground">Mermaid</span>
-              <span class="min-w-0 truncate font-mono text-ui-3xs tabular-nums text-muted-foreground" title="{shownTables.length} tables, {mermaidRels.length} relationships drawn{hubEdges.length ? `, ${hubEdges.length} into hub tables left out` : ''}">
-                {shownTables.length} tables · {mermaidRels.length} links{hubEdges.length ? ` · ${hubEdges.length} hub` : ''}
+              <span class="min-w-0 truncate font-mono text-ui-3xs tabular-nums text-muted-foreground" title="{shownTables.length} tables, {mermaidRels.length} relationships">
+                {shownTables.length} tables · {mermaidRels.length} links
               </span>
               <span class="ml-auto"></span>
               {#if mermaidTouched}
