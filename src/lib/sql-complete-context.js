@@ -55,7 +55,15 @@ const NEXT = /** @type {Record<string, string[]>} */ ({
  *   next: string[],
  *   afterExpr: boolean,
  *   tables: string[],
+ *   predicateColumn: ColumnRef | null,
+ *   comparedColumn: (ColumnRef & { operator: string }) | null,
+ *   verb: string,
  * }} SqlCompletionContext
+ * `predicateColumn`: the column just written in a condition, a space behind
+ * it (`WHERE price |`): an operator comes next. `comparedColumn`: the column
+ * and operator before the caret (`WHERE price >= |`): a value comes next.
+ * `verb`: the statement's first keyword (SELECT, UPDATE ...).
+ * @typedef {{ name: string, qualifier: string | null }} ColumnRef
  */
 
 /**
@@ -128,6 +136,32 @@ function scan(text) {
 const isName = (tok) => tok?.t === 'word' || tok?.t === 'qid'
 /** @param {Token | undefined} tok */
 const kw = (tok) => (tok?.t === 'word' ? tok.v.toUpperCase() : '')
+
+/** Clauses whose body is a condition: a column there is compared to something. */
+const PREDICATE_CLAUSES = new Set(['WHERE', 'AND', 'OR', 'ON', 'HAVING', 'WHEN', 'NOT'])
+/** What a condition's column can follow. */
+const PREDICATE_STARTS = new Set(['WHERE', 'AND', 'OR', 'ON', 'HAVING', 'WHEN', 'NOT'])
+/** Words that look like names but are values or keywords. */
+const NOT_A_COLUMN = new Set(['NULL', 'TRUE', 'FALSE', 'DEFAULT'])
+
+/**
+ * The column (`name` or `qualifier.name`) ending at token `end`, or null.
+ * @param {Token[]} tokens @param {number} end exclusive
+ * @returns {(ColumnRef & { start: number }) | null}
+ */
+function columnBefore(tokens, end) {
+  const tok = tokens[end - 1]
+  if (!isName(tok)) return null
+  const k = kw(tok)
+  if (k && (CLAUSES.has(k) || OPEN_WORDS.has(k) || NOT_A_COLUMN.has(k))) return null
+  let start = end - 1
+  let qualifier = null
+  if (tokens[start - 1]?.v === '.' && isName(tokens[start - 2])) {
+    qualifier = /** @type {Token} */ (tokens[start - 2]).v
+    start -= 2
+  }
+  return { name: /** @type {Token} */ (tok).v, qualifier, start }
+}
 
 /**
  * Tables the statement names, so their columns can be offered.
@@ -214,6 +248,31 @@ export function sqlCompletionContext(text) {
     last?.v === ')' || last?.v === '*' ||
     (last?.t === 'word' && !OPEN_WORDS.has(kw(last)))
 
+  const verb = kw(tokens[0])
+  /** @type {SqlCompletionContext['predicateColumn']} */
+  let predicateColumn = null
+  /** @type {SqlCompletionContext['comparedColumn']} */
+  let comparedColumn = null
+  if (!quote && kind === 'columns' && /\s$/.test(text.slice(0, from))) {
+    if (PREDICATE_CLAUSES.has(clause)) {
+      // `WHERE price |`: the column, with what a condition can start with before it.
+      const col = columnBefore(tokens, tokens.length)
+      const before = col ? tokens[col.start - 1] : undefined
+      if (col && (PREDICATE_STARTS.has(kw(before)) || before?.v === '(')) {
+        predicateColumn = { name: col.name, qualifier: col.qualifier }
+      }
+    }
+    if (PREDICATE_CLAUSES.has(clause) || clause === 'SET') {
+      // `WHERE price >= |`, `SET status = |`, `WHERE name LIKE |`.
+      let j = tokens.length
+      let operator = ''
+      while (j > 0 && tokens[j - 1].t === 'punct' && /^[=<>!~]$/.test(tokens[j - 1].v)) operator = tokens[--j].v + operator
+      if (!operator && (kw(tokens[j - 1]) === 'LIKE' || kw(tokens[j - 1]) === 'ILIKE')) operator = kw(tokens[--j])
+      const col = operator ? columnBefore(tokens, j) : null
+      if (col) comparedColumn = { name: col.name, qualifier: col.qualifier, operator }
+    }
+  }
+
   return {
     kind,
     from,
@@ -221,8 +280,12 @@ export function sqlCompletionContext(text) {
     quote,
     qualifier,
     clause,
-    next: NEXT[clause] ?? [],
+    // RETURNING only ends a write: after a SELECT's WHERE it is an error.
+    next: (NEXT[clause] ?? []).filter((k) => k !== 'RETURNING' || ['UPDATE', 'DELETE', 'INSERT'].includes(verb)),
     afterExpr,
     tables: referencedTables(tokens),
+    predicateColumn,
+    comparedColumn,
+    verb,
   }
 }

@@ -16,8 +16,16 @@ describe('lintSql', () => {
     expect(d[0].start).toBe(sql.lastIndexOf('SELECT'))
   })
 
+  it('flags a statement left without its ; when the buffer holds several', () => {
+    const sql = 'SELECT * FROM ai_settings;\n\nSELECT * FROM ats_stats where'
+    const d = lintSql(sql)
+    expect(d.map((x) => x.message)).toEqual(["Missing ';' at the end of this statement"])
+    expect(sql.slice(d[0].start, d[0].end)).toBe('where')
+    expect(lintSql('SELECT 1;\n\nSELECT 2;')).toEqual([])
+  })
+
   it('does not flag a terminated statement, a CTE, a subquery or a UNION arm', () => {
-    expect(lintSql('SELECT 1;\n\nSELECT 2')).toEqual([])
+    expect(lintSql('SELECT 1;\n\nSELECT 2;')).toEqual([])
     expect(lintSql('WITH x AS (\n  SELECT 1\n)\n\nSELECT * FROM x')).toEqual([])
     expect(lintSql('SELECT * FROM t WHERE id IN (\n\n  SELECT id FROM u\n)')).toEqual([])
     expect(lintSql('SELECT 1\nUNION ALL\n\nSELECT 2')).toEqual([])

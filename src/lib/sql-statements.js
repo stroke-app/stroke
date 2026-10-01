@@ -173,7 +173,26 @@ export function lintSql(text) {
   // tell is a blank line, then a statement keyword, outside any parentheses.
   // (This used to flag a last statement with no `;` - which runs fine - so
   // every one-line query carried a warning.)
-  for (const stmt of splitSqlStatements(text)) {
+  const statements = splitSqlStatements(text)
+  // With several statements in the buffer, each one ends in its `;`: a
+  // statement left open (often the last, half-written one) is warned at its
+  // last word. A buffer holding one query stays clean, `;` or not: it runs fine.
+  if (statements.length > 1) {
+    for (const stmt of statements) {
+      const body = text.slice(stmt.start, stmt.end).replace(/(\s|--[^\n]*)+$/, '')
+      if (!body || body.endsWith(';')) continue
+      const last = /[^\s]+$/.exec(body)
+      const end = stmt.start + body.length
+      diags.push({
+        message: "Missing ';' at the end of this statement",
+        severity: 'warning',
+        start: last ? end - last[0].length : end - 1,
+        end,
+      })
+    }
+  }
+
+  for (const stmt of statements) {
     const body = text.slice(stmt.start, stmt.end)
     // A CTE's main query, or a set operation's next arm, may follow a blank line.
     if (/^\s*with\b/i.test(body)) continue

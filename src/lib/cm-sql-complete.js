@@ -113,19 +113,6 @@ const snippetPreview = (/** @type {string} */ body) => () => {
   return pre
 }
 
-/**
- * Insert a snippet, then open the list for its first field: `${table}` gets the
- * tables right away instead of a placeholder word to delete.
- * @param {Completion} c
- */
-function reopenAfter(c) {
-  const apply = /** @type {(v: EditorView, c: Completion, f: number, t: number) => void} */ (c.apply)
-  return { ...c, apply: (/** @type {EditorView} */ v, /** @type {Completion} */ cc, /** @type {number} */ f, /** @type {number} */ t) => {
-    apply(v, cc, f, t)
-    setTimeout(() => startCompletion(v))
-  } }
-}
-
 /** @typedef {{ keywords: Completion[], functions: Completion[], snippets: Array<Completion & { aliases: string[] }> }} StaticTemplates */
 /** @type {Map<boolean, StaticTemplates>} */
 const staticCache = new Map()
@@ -140,9 +127,7 @@ function staticTemplates(pg) {
       snippetCompletion(toSnippet(fn.sig), { label: fn.label, type: 'function', detail: plainSig(fn.sig), info: fn.doc }),
     ),
     snippets: SQL_SNIPPETS.filter((s) => pg || !s.pg).map((s) => ({
-      ...reopenAfter(
-        snippetCompletion(toSnippet(s.body), { label: s.name, type: 'snippet', detail: s.alias, info: snippetPreview(s.body) }),
-      ),
+      ...snippetCompletion(toSnippet(s.body), { label: s.name, type: 'snippet', detail: s.alias, info: snippetPreview(s.body) }),
       aliases: [s.alias],
     })),
   }
@@ -403,9 +388,10 @@ export function sqlCompletionSource(getHints, getDialect) {
     const ctx = sqlCompletionContext(state.sliceDoc(start, pos))
     if (!ctx) return null
     // Nothing typed: open by itself only where the next token is certainly a
-    // name - just inside a quote, just after a dot, a selected field. Ctrl+Space
-    // always opens.
-    if (!context.explicit && !ctx.prefix && !ctx.quote && ctx.kind !== 'qualified' && sel.empty) return null
+    // name - just inside a quote, just after a dot. A snippet field stays quiet
+    // until something is typed over it (`*` and `100` are often kept as they
+    // are). Ctrl+Space always opens.
+    if (!context.explicit && !ctx.prefix && !ctx.quote && ctx.kind !== 'qualified') return null
 
     const dialect = getDialect() || 'postgres'
     const S = staticTemplates(dialect === 'postgres' || dialect === 'duckdb')

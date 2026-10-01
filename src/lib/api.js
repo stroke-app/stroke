@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core'
+import { invoke, Channel } from '@tauri-apps/api/core'
 import { loadSettings } from '$lib/stores/settings.js'
 import { recordQuery } from '$lib/stores/query-log.js'
 import { assertWritable } from '$lib/stores/read-only.js'
@@ -876,6 +876,72 @@ export async function executeSql(sql, queryId) {
 export async function executeSqlMulti(sql, queryId) {
   if (isWriteSql(sql)) assertWritable('run that statement')
   return await inv('pg_execute_sql_multi', { sql, queryId: queryId ?? null })
+}
+
+/**
+ * executeSqlMulti for the SQL console. A single Postgres statement's rows come
+ * through `onRows` in chunks while they stream in, and the reply carries none
+ * of them: one reply holding a 5M-row result closed the app. Other engines and
+ * scripts answer as before, rows in the reply. Resolves once the reply and
+ * every chunk have landed: the backend ends the channel with a `done` chunk
+ * whatever happened, and channel messages arrive in order.
+ *
+ * `keepInStore`: the rows go to the backend's result store under `queryId`
+ * (Settings → Database → Stream query results). Chunks then carry progress
+ * (`count`, `stored: true`) and only the first one carries rows; the rest are
+ * read with resultWindow.
+ * @typedef {{ offset: number, columns?: any[], rows: any[][], count: number, stored: boolean, done: boolean }} RowChunk
+ * @param {string} sql
+ * @param {string | undefined} queryId
+ * @param {(chunk: RowChunk) => void} onRows
+ * @param {{ keepInStore?: boolean }} [opts]
+ */
+export async function executeSqlStream(sql, queryId, onRows, opts = {}) {
+  if (isWriteSql(sql)) assertWritable('run that statement')
+  /** @type {(v?: unknown) => void} */
+  let landed = () => {}
+  const allLanded = new Promise((resolve) => { landed = resolve })
+  const channel = new Channel((/** @type {any} */ chunk) => {
+    if (chunk.rows.length || chunk.columns || chunk.stored) onRows(chunk)
+    if (chunk.done) landed()
+  })
+  let replied = false
+  try {
+    const results = await inv('pg_execute_sql_stream', {
+      sql,
+      queryId: queryId ?? null,
+      onRows: channel,
+      keepInStore: opts.keepInStore === true,
+    })
+    replied = true
+    return results
+  } finally {
+    // A failed invoke may never have reached the backend, so it does not wait long.
+    await (replied ? allLanded : Promise.race([allLanded, new Promise((r) => setTimeout(r, 2000))]))
+  }
+}
+
+/**
+ * Rows [start, start + count) of a stored result, in its current order.
+ * @param {string} id @param {number} start @param {number} count
+ * @returns {Promise<any[][]>}
+ */
+export async function resultWindow(id, start, count) {
+  return await inv('result_window', { id, start, count })
+}
+
+/**
+ * Sort a stored result by column index (typed by its database type), or back
+ * to the order it arrived in with `column: null`. Waits for every row.
+ * @param {string} id @param {number | null} column @param {boolean} desc
+ */
+export async function resultSort(id, column, desc) {
+  return await inv('result_sort', { id, column, desc })
+}
+
+/** Forget a stored result and its file. Never throws. @param {string} id */
+export function resultDrop(id) {
+  void invoke('result_drop', { id }).catch(() => {})
 }
 
 // ── Instance Insights (PostgreSQL + MySQL monitoring) ───────────────────────

@@ -3,6 +3,7 @@ import { EditorState } from '@codemirror/state'
 import { CompletionContext } from '@codemirror/autocomplete'
 import { sql, PostgreSQL } from '@codemirror/lang-sql'
 import { sqlCompletionSource } from './cm-sql-complete.js'
+import { SQL_SNIPPETS } from './sql-complete-data.js'
 
 /** @type {import('./sql-complete-data.js').SqlSchemaHints} */
 const hints = {
@@ -54,6 +55,18 @@ describe('sqlCompletionSource', () => {
     expect(r?.from).toBe(from)
     expect(r?.to).toBe(from + 'column'.length)
     expect(r?.options.slice(0, 3).map((o) => o.label)).toEqual(['id', 'name', 'createdAt'])
+  })
+
+  it('stays closed on a selected snippet field until something is typed', () => {
+    const doc = 'SELECT * FROM posts'
+    const state = EditorState.create({ doc, selection: { anchor: 7, head: 8 }, extensions: [sql({ dialect: PostgreSQL })] })
+    expect(source(new CompletionContext(state, 8, false))).toBeNull()
+  })
+
+  it('asks for a SELECT snippet\'s table before its columns', () => {
+    for (const s of SQL_SNIPPETS.filter((s) => /^SELECT .*\$\{\d+:[^}]*\}.* FROM \$\{/.test(s.body))) {
+      expect(s.body, s.name).toMatch(/ FROM \$\{1:/)
+    }
   })
 
   it('suggests tables after FROM', () => {

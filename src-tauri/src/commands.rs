@@ -1024,6 +1024,86 @@ pub async fn pg_execute_sql_multi(
     execute_sql_multi(state, sql, query_id).await
 }
 
+/// `pg_execute_sql_multi` for the SQL console: a single Postgres statement's
+/// rows arrive through `on_rows` in chunks while they stream in, and the reply
+/// carries none. The channel always ends with a `done` chunk, whatever the
+/// engine or outcome, so the window knows every row has landed.
+///
+/// `keep_in_store`: the rows go to the result store under `query_id` instead
+/// of through the channel, which then carries progress (Settings → Database →
+/// Stream results). The window reads them with `result_window`.
+#[tauri::command]
+pub async fn pg_execute_sql_stream(
+    state: State<'_, DbState>,
+    store: State<'_, crate::db::result_store::ResultStore>,
+    sql: String,
+    query_id: Option<String>,
+    on_rows: tauri::ipc::Channel<crate::db::RowChunk>,
+    keep_in_store: Option<bool>,
+) -> Result<Vec<crate::db::StatementOutcome>, String> {
+    let store_id = query_id.clone().filter(|_| keep_in_store == Some(true));
+    let spool = match store_id.as_deref() {
+        Some(id) => Some(store.create(id)?),
+        None => None,
+    };
+    let mut sink = crate::db::RowSink::with_spool(on_rows, spool);
+    let result = crate::db::execute_sql_script(state, sql, query_id, Some(&mut sink)).await;
+    // A streamed run already sent its end marker; anything else gets one now.
+    sink.end();
+    // Nothing streamed (a script, a write, an engine that answers in the
+    // reply) or the run failed: no stored result to keep.
+    if let Some(id) = store_id.as_deref() {
+        let failed = result.as_ref().map_or(true, |o| o.iter().any(|s| s.error.is_some()));
+        if !sink.started() || failed {
+            store.drop_result(id);
+        }
+    }
+    result
+}
+
+/// Rows `[start, start + count)` of a stored result, in its current order, as
+/// a JSON array of row arrays (sent as stored, never re-encoded).
+#[tauri::command]
+pub async fn result_window(
+    store: State<'_, crate::db::result_store::ResultStore>,
+    id: String,
+    start: usize,
+    count: usize,
+) -> Result<tauri::ipc::Response, String> {
+    let result = store.get(&id).ok_or("This result is no longer available. Run the query again.")?;
+    let text = tauri::async_runtime::spawn_blocking(move || result.read_window(start, count))
+        .await
+        .map_err(|e| e.to_string())??;
+    Ok(tauri::ipc::Response::new(text))
+}
+
+/// Sort a stored result by a column (typed by the column's database type), or
+/// back to the order it streamed in with `column: null`.
+#[tauri::command]
+pub async fn result_sort(
+    store: State<'_, crate::db::result_store::ResultStore>,
+    id: String,
+    column: Option<usize>,
+    desc: bool,
+) -> Result<(), String> {
+    let result = store.get(&id).ok_or("This result is no longer available. Run the query again.")?;
+    tauri::async_runtime::spawn_blocking(move || result.sort(column, desc))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// A line from the dev-only frame probe (src/lib/perf-probe.js) into the log.
+#[tauri::command]
+pub fn perf_log(line: String) {
+    log::info!("perf: {line}");
+}
+
+/// Forget a stored result (its tab ran again or closed); its file goes with it.
+#[tauri::command]
+pub fn result_drop(store: State<'_, crate::db::result_store::ResultStore>, id: String) {
+    store.drop_result(&id);
+}
+
 /// Execute SQL against an arbitrary saved connection without switching the
 /// global active connection. Used by Data Diff for cross-host comparisons.
 #[tauri::command]

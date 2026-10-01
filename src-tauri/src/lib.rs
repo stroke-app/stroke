@@ -323,6 +323,7 @@ pub fn run() {
         .manage(omniroute::OmniRouteState::new())
         .manage(db::live::LiveState::default())
         .manage(db::tx::TxState::default())
+        .manage(db::result_store::ResultStore::default())
         .setup(move |app| {
             // Load or generate a stable MCP token from the app data directory.
             app.state::<McpState>().init_token(app.handle());
@@ -547,6 +548,11 @@ pub fn run() {
             commands::instance_replication,
             commands::pg_execute_sql,
             commands::pg_execute_sql_multi,
+            commands::pg_execute_sql_stream,
+            commands::result_window,
+            commands::result_sort,
+            commands::result_drop,
+            commands::perf_log,
             commands::pg_explain_sql,
             commands::execute_sql_on_connection,
             commands::list_schemas_on_connection,

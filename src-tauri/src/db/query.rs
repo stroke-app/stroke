@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::{Column, Decode, Postgres, Row, TypeInfo, ValueRef};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tauri::State;
 use uuid::Uuid;
@@ -2894,33 +2894,297 @@ pub(crate) const EXECUTE_SQL_TIMEOUT_MS: i64 = 60_000;
 /// as stopped rather than failed.
 pub(crate) const QUERY_CANCELLED: &str = "Query cancelled";
 
-/// Arm Stop for a Postgres run on `tx`'s connection. When `rx` fires, `cancelled`
-/// is raised first so a row loop draining already-buffered rows bails on its next
-/// row, then `pg_cancel_backend` stops the statement on the server. If the run
-/// finishes first the sender is dropped, `rx.await` errors and the watcher exits.
-async fn arm_pg_cancel(
-    tx: &mut sqlx::Transaction<'_, Postgres>,
+/// Where Stop finds a run's backend.
+enum CancelTarget {
+    /// The run's own `application_name`, set in its BEGIN batch.
+    Tag(String),
+    /// A server that refused the tag: the backend pid, asked for up front.
+    Pid(Option<i32>),
+}
+
+/// An `application_name` no other run has, in this app or in another one on
+/// the same database. Well under Postgres's 63-byte limit.
+fn run_tag() -> String {
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0);
+    format!("stroke-run-{:x}-{nanos:x}-{:x}", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed))
+}
+
+/// Open a console run's transaction: BEGIN, the statement timeout and the run's
+/// tag in one simple-query batch. They were three statements, and sqlx prepares
+/// each `sqlx::query` before running it, so on a fresh connection a run paid
+/// five round trips before the user's SQL was even sent. Measured at a 100ms
+/// round trip (`console_run_live`): `SELECT 1` took 8 round trips, now 4; a
+/// repeat took 5, now 3. A retry passes the same tag, so Stop still reaches it.
+async fn begin_console_tx(
+    pool: &sqlx::PgPool,
+    tag: &str,
+) -> Result<(sqlx::Transaction<'static, Postgres>, CancelTarget), String> {
+    let batch = format!(
+        "BEGIN; SET LOCAL statement_timeout = {EXECUTE_SQL_TIMEOUT_MS}; SET LOCAL application_name = '{tag}'"
+    );
+    match pool.begin_with(batch).await {
+        Ok(tx) => Ok((tx, CancelTarget::Tag(tag.to_string()))),
+        // The server refused part of the batch. The tag only serves Stop, so
+        // fall back to the statements one by one, as before it.
+        Err(sqlx::Error::Database(e)) => {
+            log::info!("console run: combined BEGIN refused ({e}), falling back");
+            let mut tx = pool
+                .begin()
+                .await
+                .map_err(|e| format!("Failed to begin transaction: {e}"))?;
+            let _ = sqlx::query(&format!("SET LOCAL statement_timeout = {EXECUTE_SQL_TIMEOUT_MS}"))
+                .execute(&mut *tx)
+                .await;
+            let pid = sqlx::query_scalar::<_, i32>("SELECT pg_backend_pid()")
+                .fetch_one(&mut *tx)
+                .await
+                .ok();
+            Ok((tx, CancelTarget::Pid(pid)))
+        }
+        Err(e) => {
+            log::info!("console run: BEGIN failed: {e}");
+            Err(format!("Failed to begin transaction: {e}"))
+        }
+    }
+}
+
+/// Arm Stop for a Postgres run. When `rx` fires, `cancelled` is raised first so
+/// a row loop draining already-buffered rows bails on its next row, then
+/// `pg_cancel_backend` stops the statement on the server. The backend is found
+/// by the run's tag at Stop time rather than by `pg_backend_pid()` up front,
+/// which was a round trip on every run for the rare one that gets stopped. It is
+/// also exact: the tag ends with the transaction, so a late Stop matches nothing
+/// instead of whatever that connection runs next. If the run finishes first the
+/// sender is dropped, `rx.await` errors and the watcher exits.
+fn arm_pg_cancel(
     pool: &sqlx::PgPool,
     rx: Option<tokio::sync::oneshot::Receiver<()>>,
     cancelled: Arc<AtomicBool>,
+    target: CancelTarget,
 ) {
     let Some(rx) = rx else { return };
-    let pid = sqlx::query_scalar::<_, i32>("SELECT pg_backend_pid()")
-        .fetch_one(&mut **tx)
-        .await
-        .ok();
     let cancel_pool = pool.clone();
     tokio::spawn(async move {
-        if rx.await.is_ok() {
-            cancelled.store(true, Ordering::Relaxed);
-            if let Some(pid) = pid {
-                let _ = sqlx::query("SELECT pg_cancel_backend($1)")
-                    .bind(pid)
-                    .execute(&cancel_pool)
-                    .await;
+        if rx.await.is_err() {
+            return;
+        }
+        cancelled.store(true, Ordering::Relaxed);
+        let cancel = match target {
+            CancelTarget::Tag(tag) => {
+                sqlx::query("SELECT pg_cancel_backend(pid) FROM pg_stat_activity WHERE application_name = $1")
+                    .bind(tag)
+            }
+            CancelTarget::Pid(Some(pid)) => sqlx::query("SELECT pg_cancel_backend($1)").bind(pid),
+            CancelTarget::Pid(None) => return,
+        };
+        let _ = cancel.execute(&cancel_pool).await;
+    });
+}
+
+/// One message of a streamed result (see `RowSink`).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RowChunk {
+    /// Index of this chunk's first row. 0 starts the result over: a retry
+    /// re-runs the query, so the window drops what it had.
+    offset: usize,
+    /// With the first message of a result only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    columns: Option<Vec<ColumnInfo>>,
+    /// The rows themselves. In store mode only the first message carries any,
+    /// so the grid paints at once; the rest are read by window.
+    rows: Vec<Vec<Value>>,
+    /// Rows in the result so far (readable from the store, in store mode).
+    count: usize,
+    /// The rows live in the result store, under the run's id.
+    stored: bool,
+    /// The last message of a run, rows or not: everything before it has been
+    /// delivered (channel messages arrive in order).
+    done: bool,
+}
+
+/// Streams a console result out while it arrives, one of two ways.
+///
+/// It used to come back as one reply. A 5,011,000-row `SELECT *` on Prisma
+/// Postgres read fine (44s), held 2.8GB in the backend doing it, and handing
+/// the whole result to the window as one IPC message closed the app.
+///
+/// - Rows mode sends the rows themselves in chunks, and the window keeps all
+///   of them (Settings → Database → Stream results off).
+/// - Store mode writes them to the result store (`result_store`) and sends
+///   progress; the window reads the rows it scrolls to. Neither side holds
+///   the whole result in memory.
+///
+/// Either way no message is large, and unlimited rows stay unlimited.
+pub struct RowSink {
+    channel: tauri::ipc::Channel<RowChunk>,
+    spool: Option<super::result_store::SpoolWriter>,
+    buf: Vec<Vec<Value>>,
+    /// Rows and bytes since the last message.
+    since: usize,
+    bytes: usize,
+    /// Rows handed over so far (sent, or written to the store).
+    total: usize,
+    first_sent: bool,
+    /// A row result began streaming (some runs never do: scripts, writes,
+    /// engines that answer in the reply).
+    started: bool,
+    columns: Option<Vec<ColumnInfo>>,
+    last_flush: std::time::Instant,
+    finished: bool,
+}
+
+impl RowSink {
+    /// A small first message fills the grid at once. After that one closes at
+    /// 50k rows, ~4MB of JSON or 250ms, whichever comes first: wide rows
+    /// (embeddings run ~17KB each) stay small per message, and a slow link
+    /// still shows progress.
+    pub(crate) const FIRST_ROWS: usize = 200;
+    const MAX_ROWS: usize = 50_000;
+    const MAX_BYTES: usize = 4 << 20;
+    const MAX_WAIT: std::time::Duration = std::time::Duration::from_millis(250);
+
+    /// Store mode when `spool` is given, rows mode otherwise.
+    pub fn with_spool(channel: tauri::ipc::Channel<RowChunk>, spool: Option<super::result_store::SpoolWriter>) -> Self {
+        Self {
+            channel,
+            spool,
+            buf: Vec::new(),
+            since: 0,
+            bytes: 0,
+            total: 0,
+            first_sent: false,
+            started: false,
+            columns: None,
+            last_flush: std::time::Instant::now(),
+            finished: false,
+        }
+    }
+
+    /// Whether a row result streamed through here (into the store, in store mode).
+    pub fn started(&self) -> bool {
+        self.started
+    }
+
+    /// A result starts (again, after a retry): its columns go with the first message.
+    fn start(&mut self, columns: Vec<ColumnInfo>) -> Result<(), String> {
+        if let Some(spool) = self.spool.as_mut() {
+            spool.start(columns.clone())?;
+        }
+        self.buf.clear();
+        self.since = 0;
+        self.bytes = 0;
+        self.total = 0;
+        self.first_sent = false;
+        self.started = true;
+        self.columns = Some(columns);
+        self.last_flush = std::time::Instant::now();
+        Ok(())
+    }
+
+    fn push(&mut self, row: Vec<Value>) -> Result<(), String> {
+        match self.spool.as_mut() {
+            Some(spool) => {
+                self.bytes += spool.push(&row)?;
+                // The first message carries rows to paint; the store has the rest.
+                if !self.first_sent {
+                    self.buf.push(row);
+                }
+            }
+            None => {
+                self.bytes += row.iter().map(approx_json_len).sum::<usize>() + row.len() + 1;
+                self.buf.push(row);
             }
         }
-    });
+        self.since += 1;
+        self.total += 1;
+        let rows_due = if self.first_sent { Self::MAX_ROWS } else { Self::FIRST_ROWS };
+        if self.since >= rows_due || self.bytes >= Self::MAX_BYTES || self.last_flush.elapsed() >= Self::MAX_WAIT {
+            self.flush(false)?;
+        }
+        Ok(())
+    }
+
+    fn flush(&mut self, done: bool) -> Result<(), String> {
+        let stored = self.spool.is_some() && self.started;
+        let count = match self.spool.as_mut() {
+            Some(spool) if done => spool.finish()?,
+            Some(spool) => spool.flush()?,
+            None => self.total,
+        };
+        let rows = std::mem::take(&mut self.buf);
+        let offset = if stored { 0 } else { self.total - rows.len() };
+        self.first_sent = true;
+        self.since = 0;
+        self.bytes = 0;
+        self.last_flush = std::time::Instant::now();
+        self.channel
+            .send(RowChunk { offset, columns: self.columns.take(), rows, count, stored, done })
+            .map_err(|e| format!("Could not send rows to the window: {e}"))
+    }
+
+    /// The rest of the rows, and the end marker the window waits for.
+    pub fn finish(&mut self) -> Result<(), String> {
+        self.finished = true;
+        self.flush(true)
+    }
+
+    /// The end marker alone, for a run that did not stream to its end (an
+    /// error, a Stop, an engine that answers in the reply). No-op after `finish`.
+    pub fn end(&mut self) {
+        if self.finished {
+            return;
+        }
+        self.finished = true;
+        self.buf.clear();
+        self.columns = None;
+        let _ = self.flush(true);
+    }
+}
+
+/// Roughly how many bytes a cell takes as JSON: enough to size a chunk.
+fn approx_json_len(v: &Value) -> usize {
+    match v {
+        Value::Null => 4,
+        Value::Bool(_) => 5,
+        Value::Number(_) => 12,
+        Value::String(s) => s.len() + 2,
+        Value::Array(a) => a.iter().map(approx_json_len).sum::<usize>() + a.len() + 2,
+        Value::Object(o) => o.iter().map(|(k, v)| k.len() + 3 + approx_json_len(v)).sum::<usize>() + 2,
+    }
+}
+
+/// A statement's failure: the message, and where in the statement Postgres
+/// says it went wrong (a 1-based character position), when it says.
+#[derive(Debug)]
+pub(crate) struct StmtError {
+    pub message: String,
+    pub position: Option<usize>,
+}
+
+impl From<String> for StmtError {
+    fn from(message: String) -> Self {
+        Self { message, position: None }
+    }
+}
+
+impl From<&str> for StmtError {
+    fn from(message: &str) -> Self {
+        Self { message: message.to_string(), position: None }
+    }
+}
+
+/// The position Postgres attached to an error, if any (into the text sent).
+fn pg_error_position(e: &sqlx::Error) -> Option<usize> {
+    let sqlx::Error::Database(db) = e else { return None };
+    match db.try_downcast_ref::<sqlx::postgres::PgDatabaseError>()?.position()? {
+        sqlx::postgres::PgErrorPosition::Original(p) => Some(p),
+        _ => None,
+    }
 }
 
 async fn execute_sql_pg(
@@ -2932,10 +3196,21 @@ async fn execute_sql_pg(
     // Callers that can't be cancelled (diff paths) pass `None`.
     cancel_rx: Option<tokio::sync::oneshot::Receiver<()>>,
 ) -> Result<SqlResult, String> {
+    execute_sql_pg_into(pool, sql, cancel_rx, None).await.map_err(|e| e.message)
+}
+
+/// `execute_sql_pg`, with the last statement's rows sent through `sink` (when
+/// given) instead of collected into the result, which then carries none.
+async fn execute_sql_pg_into(
+    pool: &sqlx::PgPool,
+    sql: &str,
+    cancel_rx: Option<tokio::sync::oneshot::Receiver<()>>,
+    sink: Option<&mut RowSink>,
+) -> Result<SqlResult, StmtError> {
     // Whatever error the cancelled statement surfaced ("canceling statement due
     // to user request", a dropped stream), a stopped run reads as stopped.
     let cancelled = Arc::new(AtomicBool::new(false));
-    let result = run_sql_pg(pool, sql, cancel_rx, cancelled.clone()).await;
+    let result = run_sql_pg(pool, sql, cancel_rx, cancelled.clone(), sink).await;
     if cancelled.load(Ordering::Relaxed) {
         return Err(QUERY_CANCELLED.into());
     }
@@ -2947,7 +3222,8 @@ async fn run_sql_pg(
     sql: &str,
     cancel_rx: Option<tokio::sync::oneshot::Receiver<()>>,
     cancelled: Arc<AtomicBool>,
-) -> Result<SqlResult, String> {
+    mut sink: Option<&mut RowSink>,
+) -> Result<SqlResult, StmtError> {
     let started = std::time::Instant::now();
     let query_ms = || started.elapsed().as_millis() as u64;
 
@@ -2965,16 +3241,10 @@ async fn run_sql_pg(
         return Err("Query is empty".into());
     }
 
-    let mut tx = pool
-        .begin()
-        .await
-        .map_err(|e| format!("Failed to begin transaction: {e}"))?;
-
-    let _ = sqlx::query(&format!("SET LOCAL statement_timeout = {EXECUTE_SQL_TIMEOUT_MS}"))
-        .execute(&mut *tx)
-        .await;
-
-    arm_pg_cancel(&mut tx, pool, cancel_rx, cancelled.clone()).await;
+    let tag = run_tag();
+    let (mut tx, target) = begin_console_tx(pool, &tag).await?;
+    log::info!("console run: transaction open after {}ms", query_ms());
+    arm_pg_cancel(pool, cancel_rx, cancelled.clone(), target);
 
     let last_idx = stmts.len() - 1;
 
@@ -2989,41 +3259,69 @@ async fn run_sql_pg(
             let mut executed = stmt.to_string();
             let mut columns: Vec<ColumnInfo> = Vec::new();
             let mut data: Vec<Vec<Value>> = Vec::new();
+            // Rows read, streamed or kept: `data` stays empty with a sink.
+            let mut total = 0usize;
             let mut capped = false;
             let mut rewritten = false;
 
             loop {
                 let mut stream = sqlx::query(&executed).fetch(&mut *tx);
-                let mut failure = None;
+                let mut failure: Option<(String, Option<usize>)> = None;
                 loop {
                     match stream.try_next().await {
                         Ok(Some(row)) => {
                             if cancelled.load(Ordering::Relaxed) {
                                 return Err(QUERY_CANCELLED.into());
                             }
-                            if data.is_empty() {
+                            if total == 0 {
+                                log::info!("console run: first row after {}ms", query_ms());
                                 columns = row
                                     .columns()
                                     .iter()
                                     .map(|c| ColumnInfo::new(c.name(), pg_type_label(c.type_info().name())))
                                     .collect();
+                                if let Some(sink) = sink.as_deref_mut() {
+                                    if let Err(e) = sink.start(columns.clone()) {
+                                        failure = Some((e, None));
+                                        break;
+                                    }
+                                }
                             }
-                            data.push((0..row.len()).map(|i| cell_to_json(&row, i)).collect());
-                            if data.len() >= EXECUTE_SQL_MAX_ROWS {
+                            let cells: Vec<Value> = (0..row.len()).map(|i| cell_to_json(&row, i)).collect();
+                            match sink.as_deref_mut() {
+                                Some(sink) => {
+                                    if let Err(e) = sink.push(cells) {
+                                        failure = Some((e, None));
+                                        break;
+                                    }
+                                }
+                                None => data.push(cells),
+                            }
+                            total += 1;
+                            if total % 1_000_000 == 0 {
+                                log::info!("console run: {total} rows after {}ms", query_ms());
+                            }
+                            if total >= EXECUTE_SQL_MAX_ROWS {
                                 capped = true;
                                 break;
                             }
                         }
                         Ok(None) => break,
                         Err(e) => {
-                            failure = Some(e.to_string());
+                            log::info!("console run: failed after {}ms: {e}", query_ms());
+                            failure = Some((e.to_string(), pg_error_position(&e)));
                             break;
                         }
                     }
                 }
                 drop(stream);
 
-                let Some(msg) = failure else { break };
+                let Some((msg, position)) = failure else { break };
+                // A rewritten query's position points into the rewrite, not the user's text.
+                let failed = |msg: &str| StmtError {
+                    message: format!("Query failed: {msg}"),
+                    position: if rewritten { None } else { position },
+                };
                 // The transaction is poisoned by the failed statement either way.
                 let _ = tx.rollback().await;
                 // The retry below re-runs only this last statement in a fresh
@@ -3032,25 +3330,18 @@ async fn run_sql_pg(
                 // undone the UPDATE, and retrying just the SELECT would report
                 // success over a write that never happened.
                 if rewritten || last_idx != 0 || !is_missing_binary_output(&msg) {
-                    return Err(format!("Query failed: {msg}"));
+                    return Err(failed(&msg));
                 }
                 let Some(wrapped) = text_safe_wrap(pool, stmt).await else {
-                    return Err(format!("Query failed: {msg}"));
+                    return Err(failed(&msg));
                 };
                 executed = wrapped;
                 rewritten = true;
                 columns.clear();
                 data.clear();
+                total = 0;
                 capped = false;
-                tx = pool
-                    .begin()
-                    .await
-                    .map_err(|e| format!("Failed to begin transaction: {e}"))?;
-                let _ = sqlx::query(&format!(
-                    "SET LOCAL statement_timeout = {EXECUTE_SQL_TIMEOUT_MS}"
-                ))
-                .execute(&mut *tx)
-                .await;
+                tx = begin_console_tx(pool, &tag).await?.0;
             }
             // COMMIT, not ROLLBACK. "Ends in a SELECT" does not mean "read-only":
             // `UPDATE …; SELECT …`, a data-modifying CTE (`WITH d AS (DELETE …
@@ -3060,9 +3351,16 @@ async fn run_sql_pg(
             // It also matters for Nile, whose proxy rejects this ROLLBACK and
             // leaves the connection marked in-transaction, so sqlx closed it and
             // the next query paid a fresh handshake.
+            if let Some(sink) = sink.as_deref_mut() {
+                if let Err(e) = sink.finish() {
+                    let _ = tx.rollback().await;
+                    return Err(e.into());
+                }
+            }
+            log::info!("console run: {total} rows read after {}ms", query_ms());
             let _ = tx.commit().await;
 
-            let row_count = data.len() as i64;
+            let row_count = total as i64;
             return Ok(SqlResult {
                 columns,
                 rows: data,
@@ -3078,10 +3376,10 @@ async fn run_sql_pg(
                 sql: stmt.to_string(),
             });
         } else {
-            let result = sqlx::query(stmt)
-                .execute(&mut *tx)
-                .await
-                .map_err(|e| format!("Statement {} failed: {e}", i + 1))?;
+            let result = sqlx::query(stmt).execute(&mut *tx).await.map_err(|e| StmtError {
+                message: format!("Statement {} failed: {e}", i + 1),
+                position: pg_error_position(&e),
+            })?;
 
             if i == last_idx {
                 let affected = result.rows_affected() as i64;
@@ -3231,16 +3529,9 @@ async fn run_sql_multi_pg(
     cancel_rx: Option<tokio::sync::oneshot::Receiver<()>>,
     cancelled: Arc<AtomicBool>,
 ) -> Result<Vec<SqlResult>, String> {
-    let mut tx = pool
-        .begin()
-        .await
-        .map_err(|e| format!("Failed to begin transaction: {e}"))?;
-
-    let _ = sqlx::query(&format!("SET LOCAL statement_timeout = {EXECUTE_SQL_TIMEOUT_MS}"))
-        .execute(&mut *tx)
-        .await;
-
-    arm_pg_cancel(&mut tx, pool, cancel_rx, cancelled.clone()).await;
+    let tag = run_tag();
+    let (mut tx, target) = begin_console_tx(pool, &tag).await?;
+    arm_pg_cancel(pool, cancel_rx, cancelled.clone(), target);
 
     let mut results: Vec<SqlResult> = Vec::new();
 
@@ -3359,18 +3650,7 @@ pub async fn execute_sql_multi(
             let multi = stmts.len() > 1;
             let mut results: Vec<SqlResult> = Vec::with_capacity(stmts.len());
             for (idx, stmt) in stmts.iter().enumerate() {
-                let r = match &conn {
-                    ActiveConnection::Postgres(_) => unreachable!("handled above"),
-                    ActiveConnection::Sqlite(pool) => super::sqlite::execute_sql(pool, stmt).await,
-                    ActiveConnection::D1(cfg) => super::d1::query(cfg, stmt, vec![]).await,
-                    ActiveConnection::LibSql(cfg) => super::libsql::query(cfg, stmt, vec![]).await,
-                    ActiveConnection::Mysql(pool) => super::mysql::execute_sql(pool, stmt, None).await,
-                    ActiveConnection::Clickhouse(cfg) => super::clickhouse::query(cfg, stmt).await,
-                    ActiveConnection::Posthog(cfg) => super::posthog::query(cfg, stmt).await,
-                    ActiveConnection::Redis(cfg) => super::redis::query(cfg, stmt).await,
-                    ActiveConnection::Duckdb(h) => super::duckdb::execute_sql(h, stmt).await,
-                    ActiveConnection::Mssql(h) => super::mssql::execute_sql(h, stmt).await,
-                };
+                let r = run_one_other(&conn, stmt).await;
                 match r {
                     Ok(res) => results.push(res),
                     Err(e) if multi => return Err(format!("Statement {} failed: {e}", idx + 1)),
@@ -3383,6 +3663,163 @@ pub async fn execute_sql_multi(
     };
     super::connection::unregister_cancel(&state, &cancel_key);
     result
+}
+
+/// One statement on an engine other than Postgres.
+async fn run_one_other(conn: &ActiveConnection, stmt: &str) -> Result<SqlResult, String> {
+    match conn {
+        ActiveConnection::Postgres(_) => unreachable!("Postgres runs through its own path"),
+        ActiveConnection::Sqlite(pool) => super::sqlite::execute_sql(pool, stmt).await,
+        ActiveConnection::D1(cfg) => super::d1::query(cfg, stmt, vec![]).await,
+        ActiveConnection::LibSql(cfg) => super::libsql::query(cfg, stmt, vec![]).await,
+        ActiveConnection::Mysql(pool) => super::mysql::execute_sql(pool, stmt, None).await,
+        ActiveConnection::Clickhouse(cfg) => super::clickhouse::query(cfg, stmt).await,
+        ActiveConnection::Posthog(cfg) => super::posthog::query(cfg, stmt).await,
+        ActiveConnection::Redis(cfg) => super::redis::query(cfg, stmt).await,
+        ActiveConnection::Duckdb(h) => super::duckdb::execute_sql(h, stmt).await,
+        ActiveConnection::Mssql(h) => super::mssql::execute_sql(h, stmt).await,
+    }
+}
+
+/// One statement of a console run: its result, or why it failed.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StatementOutcome {
+    #[serde(flatten)]
+    pub result: SqlResult,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// Where in `sql` it failed: a 1-based character position, as Postgres
+    /// reports it. Other engines do not say.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_position: Option<usize>,
+}
+
+impl StatementOutcome {
+    fn ok(result: SqlResult) -> Self {
+        Self { result, error: None, error_position: None }
+    }
+
+    fn failed(sql: &str, query_ms: u64, error: StmtError) -> Self {
+        Self {
+            result: SqlResult { columns: vec![], rows: vec![], row_count: None, message: None, query_ms, sql: sql.to_string() },
+            error: Some(error.message),
+            error_position: error.position,
+        }
+    }
+}
+
+/// The SQL console's run: every statement, one after another, each committed
+/// on its own, carrying on past a failure so the rest still run and show.
+/// A script used to be one transaction that stopped at its first error, so
+/// `SELECT … ; SELECT … WHERE` (the second unfinished) showed nothing at all.
+///
+/// A single Postgres statement streams through `sink` (into the result store,
+/// in store mode). A script's results come back in the reply.
+pub async fn execute_sql_script(
+    state: State<'_, DbState>,
+    sql: String,
+    query_id: Option<String>,
+    sink: Option<&mut RowSink>,
+) -> Result<Vec<StatementOutcome>, String> {
+    let sql_str = sql.trim().to_string();
+    if sql_str.is_empty() {
+        return Err("Query is empty".into());
+    }
+    let conn = require_conn(&state)?;
+    let stmts = split_sql_statements(&sql_str);
+    if stmts.is_empty() {
+        return Err("Query is empty".into());
+    }
+    log::info!("console run: {} statement(s)", stmts.len());
+    let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
+    let cancel_key = query_id.unwrap_or_else(|| "default".to_string());
+    super::connection::register_cancel(&state, &cancel_key, cancel_tx);
+    let outcomes = match &conn {
+        ActiveConnection::Postgres(pool) => run_script_pg(pool, &stmts, cancel_rx, sink).await,
+        other => run_script_other(other, &stmts, cancel_rx).await,
+    };
+    super::connection::unregister_cancel(&state, &cancel_key);
+    Ok(outcomes)
+}
+
+async fn run_script_pg(
+    pool: &sqlx::PgPool,
+    stmts: &[String],
+    cancel_rx: tokio::sync::oneshot::Receiver<()>,
+    sink: Option<&mut RowSink>,
+) -> Vec<StatementOutcome> {
+    let ms = |t: std::time::Instant| t.elapsed().as_millis() as u64;
+    if stmts.len() == 1 {
+        let t = std::time::Instant::now();
+        return vec![match execute_sql_pg_into(pool, &stmts[0], Some(cancel_rx), sink).await {
+            Ok(r) => StatementOutcome::ok(r),
+            Err(e) => StatementOutcome::failed(&stmts[0], ms(t), e),
+        }];
+    }
+    // Stop has to reach whichever statement is running: the run's one cancel
+    // signal is relayed to a fresh one per statement, and ends the script.
+    let current: Arc<std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>> = Default::default();
+    let stopped = Arc::new(AtomicBool::new(false));
+    {
+        let (current, stopped) = (current.clone(), stopped.clone());
+        tokio::spawn(async move {
+            if cancel_rx.await.is_ok() {
+                stopped.store(true, Ordering::Relaxed);
+                if let Some(tx) = current.lock().unwrap().take() {
+                    let _ = tx.send(());
+                }
+            }
+        });
+    }
+    let mut out = Vec::with_capacity(stmts.len());
+    for stmt in stmts {
+        if stopped.load(Ordering::Relaxed) {
+            break;
+        }
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        *current.lock().unwrap() = Some(tx);
+        let t = std::time::Instant::now();
+        match execute_sql_pg_into(pool, stmt, Some(rx), None).await {
+            Ok(r) => out.push(StatementOutcome::ok(r)),
+            Err(e) => {
+                let stop = e.message == QUERY_CANCELLED;
+                out.push(StatementOutcome::failed(stmt, ms(t), e));
+                if stop {
+                    break;
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Other engines: same carrying-on, cancelled by dropping the run.
+async fn run_script_other(
+    conn: &ActiveConnection,
+    stmts: &[String],
+    cancel_rx: tokio::sync::oneshot::Receiver<()>,
+) -> Vec<StatementOutcome> {
+    // A Mutex for Send; never held across an await.
+    let out = std::sync::Mutex::new(Vec::with_capacity(stmts.len()));
+    let run = async {
+        for stmt in stmts {
+            let t = std::time::Instant::now();
+            let r = run_one_other(conn, stmt).await;
+            let ms = t.elapsed().as_millis() as u64;
+            out.lock().unwrap().push(match r {
+                Ok(res) => StatementOutcome::ok(res),
+                Err(e) => StatementOutcome::failed(stmt, ms, e.into()),
+            });
+        }
+    };
+    tokio::select! {
+        _ = run => {}
+        _ = async { let _ = cancel_rx.await; } => {
+            out.lock().unwrap().push(StatementOutcome::failed("", 0, QUERY_CANCELLED.into()));
+        }
+    }
+    out.into_inner().unwrap_or_default()
 }
 
 // ── D1 / LibSQL helpers (SQLite-over-HTTP) ────────────────────────────────────
@@ -4170,5 +4607,186 @@ mod split_sql_tests {
     fn statement_without_trailing_semicolon() {
         let s = split_sql_statements("select 1;\nselect 2");
         assert_eq!(s, vec!["select 1;", "select 2"]);
+    }
+}
+
+/// What a console run costs in round trips. Point STROKE_PG_URL at a database
+/// behind a fixed added latency and time / RTT is the count. Run with
+/// `STROKE_PG_URL=postgres://… cargo test --lib console_run_live -- --ignored --nocapture --test-threads=1`.
+#[cfg(test)]
+mod console_run_live {
+    use super::*;
+    use sqlx::postgres::PgPoolOptions;
+
+    async fn pool(size: u32) -> sqlx::PgPool {
+        let url = std::env::var("STROKE_PG_URL").expect("STROKE_PG_URL");
+        PgPoolOptions::new().max_connections(size).test_before_acquire(false).connect(&url).await.unwrap()
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn time_console_runs() {
+        // One connection, so every run lands on the same one and its statement
+        // cache: the first run is a fresh connection, the second a repeat.
+        let pool = pool(1).await;
+        for sql in ["SELECT 1 AS fresh", "SELECT 1 AS fresh", "SELECT 2 AS other"] {
+            let (_stop, rx) = tokio::sync::oneshot::channel::<()>();
+            let t = std::time::Instant::now();
+            execute_sql_pg(&pool, sql, Some(rx)).await.unwrap();
+            println!("{sql}: {}ms", t.elapsed().as_millis());
+        }
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn a_large_result_streams_in_contiguous_chunks() {
+        let pool = pool(1).await;
+        let chunks = Arc::new(std::sync::Mutex::new(Vec::<serde_json::Value>::new()));
+        let seen = chunks.clone();
+        let channel = tauri::ipc::Channel::<RowChunk>::new(move |body| {
+            if let tauri::ipc::InvokeResponseBody::Json(json) = body {
+                seen.lock().unwrap().push(serde_json::from_str(&json).unwrap());
+            }
+            Ok(())
+        });
+        let mut sink = RowSink::with_spool(channel, None);
+        let t = std::time::Instant::now();
+        let result = execute_sql_pg_into(
+            &pool,
+            "SELECT g, md5(g::text) AS h FROM generate_series(1, 300000) g",
+            None,
+            Some(&mut sink),
+        )
+        .await
+        .unwrap();
+        sink.end();
+        let chunks = chunks.lock().unwrap();
+        println!("300000 rows in {} chunks, {}ms", chunks.len(), t.elapsed().as_millis());
+        // The reply carries the shape, not the rows.
+        assert!(result.rows.is_empty());
+        assert_eq!(result.row_count, Some(300_000));
+        assert_eq!(result.columns.len(), 2);
+        // Columns once, offsets contiguous, the end marker last and only last.
+        let mut next = 0u64;
+        for (i, c) in chunks.iter().enumerate() {
+            assert_eq!(c["offset"].as_u64().unwrap(), next, "chunk {i} is not contiguous");
+            next += c["rows"].as_array().unwrap().len() as u64;
+            assert_eq!(c.get("columns").is_some(), i == 0);
+            assert_eq!(c["done"].as_bool().unwrap(), i == chunks.len() - 1);
+        }
+        assert_eq!(next, 300_000);
+        assert_eq!(chunks[0]["rows"].as_array().unwrap().len(), RowSink::FIRST_ROWS);
+        assert_eq!(chunks[0]["rows"][0][0], 1);
+    }
+
+    /// Store mode end to end on a big result. Rows default to 5M; set
+    /// STROKE_STORE_ROWS for a quicker run.
+    #[tokio::test]
+    #[ignore]
+    async fn store_mode_streams_reads_and_sorts_a_large_result() {
+        let rss = || {
+            std::fs::read_to_string("/proc/self/status")
+                .ok()
+                .and_then(|s| s.lines().find(|l| l.starts_with("VmRSS")).map(|l| l.split_whitespace().nth(1).unwrap_or("0").parse::<u64>().unwrap_or(0) / 1024))
+                .unwrap_or(0)
+        };
+        let n: usize = std::env::var("STROKE_STORE_ROWS").ok().and_then(|v| v.parse().ok()).unwrap_or(5_000_000);
+        let pool = pool(1).await;
+        let store = super::super::result_store::ResultStore::default();
+        let messages = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let seen = messages.clone();
+        let channel = tauri::ipc::Channel::<RowChunk>::new(move |_| {
+            seen.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        });
+        let mut sink = RowSink::with_spool(channel, Some(store.create("live-store").unwrap()));
+        let sql = format!(
+            "SELECT g AS id, md5(g::text) AS name, \
+             timestamptz '2024-01-01' + (g::bigint * 7919 % {n}) * interval '1.5 seconds' AS at, \
+             ((g::bigint * 31 % 100000) / 100.0)::numeric(10,2) AS price \
+             FROM generate_series(1, {n}) g"
+        );
+        let t = std::time::Instant::now();
+        let result = execute_sql_pg_into(&pool, &sql, None, Some(&mut sink)).await.unwrap();
+        let stream_ms = t.elapsed().as_millis();
+        let rss_streamed = rss();
+        assert!(result.rows.is_empty());
+        assert_eq!(result.row_count, Some(n as i64));
+        let stored = store.get("live-store").unwrap();
+        assert_eq!(stored.len(), n);
+        assert!(stored.is_done());
+
+        let t = std::time::Instant::now();
+        let deep: Vec<Value> = serde_json::from_str(&stored.read_window(n * 4 / 5, 5000).unwrap()).unwrap();
+        let window_ms = t.elapsed().as_micros() as f64 / 1000.0;
+        assert_eq!(deep.len(), 5000);
+        assert_eq!(deep[0][0], (n * 4 / 5 + 1) as i64);
+
+        let t = std::time::Instant::now();
+        stored.sort(Some(2), false).unwrap();
+        let sort_ms = t.elapsed().as_millis();
+        let rss_sorted = rss();
+        let first: Vec<Value> = serde_json::from_str(&stored.read_window(0, 3).unwrap()).unwrap();
+        let firsts: Vec<i64> = first.iter().map(|r| super::super::result_store::tests_support::micros(&r[2])).collect();
+        assert!(firsts.windows(2).all(|w| w[0] <= w[1]), "not in time order: {first:?}");
+        let t = std::time::Instant::now();
+        let sorted_deep: Vec<Value> = serde_json::from_str(&stored.read_window(n / 2, 5000).unwrap()).unwrap();
+        let sorted_window_ms = t.elapsed().as_micros() as f64 / 1000.0;
+        assert_eq!(sorted_deep.len(), 5000);
+
+        stored.sort(Some(3), true).unwrap();
+        let top: Vec<Value> = serde_json::from_str(&stored.read_window(0, 2).unwrap()).unwrap();
+        assert_eq!(top[0][3], "999.99");
+
+        println!(
+            "{n} rows: streamed into the store in {stream_ms}ms ({} messages), \
+             5000-row window at 80% in {window_ms:.1}ms, \
+             sorted by timestamptz in {sort_ms}ms, 5000 sorted rows in {sorted_window_ms:.1}ms; \
+             RSS {rss_streamed}MB after streaming, {rss_sorted}MB after sorting",
+            messages.load(Ordering::Relaxed)
+        );
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn a_script_carries_on_past_a_failed_statement() {
+        let pool = pool(2).await;
+        let stmts: Vec<String> = ["SELECT 1 AS a", "SELECT * FROM no_such_table_here", "SELECT 2 AS b", "SELECT * FROM pg_class WHERE"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let (_stop, rx) = tokio::sync::oneshot::channel::<()>();
+        let out = run_script_pg(&pool, &stmts, rx, None).await;
+        assert_eq!(out.len(), 4);
+        assert!(out[0].error.is_none() && out[0].result.rows == vec![vec![serde_json::json!(1)]]);
+        assert!(out[1].error.as_deref().unwrap().contains("no_such_table_here"), "{:?}", out[1].error);
+        // "no_such_table_here" starts at character 15 of its statement.
+        assert_eq!(out[1].error_position, Some(15));
+        assert_eq!(out[1].result.sql, "SELECT * FROM no_such_table_here");
+        assert!(out[2].error.is_none(), "the statement after the failure still ran");
+        // An unfinished WHERE fails at the end of its own text.
+        assert_eq!(out[3].error_position, Some("SELECT * FROM pg_class WHERE".len() + 1));
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn stop_cancels_the_running_statement() {
+        // Two: Stop cancels from a second connection.
+        let pool = pool(2).await;
+        let (stop, rx) = tokio::sync::oneshot::channel::<()>();
+        let t = std::time::Instant::now();
+        let run = tokio::spawn({
+            let pool = pool.clone();
+            async move { execute_sql_pg(&pool, "SELECT pg_sleep(20)", Some(rx)).await }
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+        stop.send(()).unwrap();
+        let result = run.await.unwrap();
+        println!("stopped after {}ms: {result:?}", t.elapsed().as_millis());
+        assert_eq!(result.unwrap_err(), QUERY_CANCELLED);
+        assert!(t.elapsed() < std::time::Duration::from_secs(10), "the statement kept running on the server");
+        // The connection is usable afterwards and no longer carries the tag.
+        let n: i64 = sqlx::query_scalar("SELECT 41::bigint + 1").fetch_one(&pool).await.unwrap();
+        assert_eq!(n, 42);
     }
 }

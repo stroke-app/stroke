@@ -188,20 +188,22 @@ export const PG_FUNCTIONS = [
  * and shown beside the name. `pg` marks Postgres-only SQL. Bodies are one line
  * wherever the SQL allows (a DDL column list and a transaction's statements
  * are the exceptions): a snippet is a starting point, and Format lays it out.
+ * Field numbers set the Tab order, not the reading order: a SELECT asks for
+ * its table first, so the column fields after it complete that table's columns.
  * @type {Array<{name: string, alias: string, body: string, pg?: boolean}>}
  */
 export const SQL_SNIPPETS = [
   // Reading
-  { name: 'SELECT … FROM',            alias: 'sel',   body: 'SELECT ${1:*} FROM ${2:table}' },
-  { name: 'SELECT … WHERE',           alias: 'selw',  body: 'SELECT ${1:*} FROM ${2:table} WHERE ${3:condition}' },
-  { name: 'SELECT … LIMIT',           alias: 'sell',  body: 'SELECT ${1:*} FROM ${2:table} LIMIT ${3:100}' },
-  { name: 'SELECT … ORDER BY',        alias: 'selo',  body: 'SELECT ${1:*} FROM ${2:table} ORDER BY ${3:column} ${4:DESC} LIMIT ${5:100}' },
-  { name: 'SELECT DISTINCT',          alias: 'seld',  body: 'SELECT DISTINCT ${1:column} FROM ${2:table}' },
+  { name: 'SELECT … FROM',            alias: 'sel',   body: 'SELECT ${2:*} FROM ${1:table}' },
+  { name: 'SELECT … WHERE',           alias: 'selw',  body: 'SELECT ${2:*} FROM ${1:table} WHERE ${3:condition}' },
+  { name: 'SELECT … LIMIT',           alias: 'sell',  body: 'SELECT ${2:*} FROM ${1:table} LIMIT ${3:100}' },
+  { name: 'SELECT … ORDER BY',        alias: 'selo',  body: 'SELECT ${2:*} FROM ${1:table} ORDER BY ${3:column} ${4:DESC} LIMIT ${5:100}' },
+  { name: 'SELECT DISTINCT',          alias: 'seld',  body: 'SELECT DISTINCT ${2:column} FROM ${1:table}' },
   { name: 'SELECT COUNT(*)',          alias: 'selct', body: 'SELECT COUNT(*) FROM ${1:table}' },
-  { name: 'SELECT … GROUP BY',        alias: 'selg',  body: 'SELECT ${1:column}, COUNT(*) AS count FROM ${2:table} GROUP BY ${1:column} ORDER BY count DESC' },
-  { name: 'SELECT … JOIN',            alias: 'selj',  body: 'SELECT ${1:*} FROM ${2:table} t1 JOIN ${3:other} t2 ON t2.${4:id} = t1.${5:other_id}' },
-  { name: 'SELECT duplicates',        alias: 'dup',   body: 'SELECT ${1:column}, COUNT(*) AS count FROM ${2:table} GROUP BY ${1:column} HAVING COUNT(*) > 1 ORDER BY count DESC' },
-  { name: 'SELECT last N days',       alias: 'seldt', body: "SELECT ${1:*} FROM ${2:table} WHERE ${3:created_at} >= now() - interval '${4:7 days}' ORDER BY ${3:created_at} DESC", pg: true },
+  { name: 'SELECT … GROUP BY',        alias: 'selg',  body: 'SELECT ${2:column}, COUNT(*) AS count FROM ${1:table} GROUP BY ${2:column} ORDER BY count DESC' },
+  { name: 'SELECT … JOIN',            alias: 'selj',  body: 'SELECT ${3:*} FROM ${1:table} t1 JOIN ${2:other} t2 ON t2.${4:id} = t1.${5:other_id}' },
+  { name: 'SELECT duplicates',        alias: 'dup',   body: 'SELECT ${2:column}, COUNT(*) AS count FROM ${1:table} GROUP BY ${2:column} HAVING COUNT(*) > 1 ORDER BY count DESC' },
+  { name: 'SELECT last N days',       alias: 'seldt', body: "SELECT ${2:*} FROM ${1:table} WHERE ${3:created_at} >= now() - interval '${4:7 days}' ORDER BY ${3:created_at} DESC", pg: true },
   { name: 'WITH … AS (CTE)',          alias: 'cte',   body: 'WITH ${1:cte} AS (${2:SELECT 1}) SELECT * FROM ${1:cte}' },
   { name: 'EXPLAIN ANALYZE',          alias: 'expl',  body: 'EXPLAIN (ANALYZE, BUFFERS, FORMAT TEXT) ${1:SELECT * FROM table}', pg: true },
   // Writing

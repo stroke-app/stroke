@@ -7,22 +7,22 @@
    * editor next to the CodeMirror one the cell and review docks already use.
    * This builds on that same CodeEditor - one theme, one find panel, one
    * completion engine (cm-sql-complete.js, a port of the Monaco provider) -
-   * and adds what a console needs: statement-aware run keys, the lint and
-   * ran-OK marks in one glyph gutter, the active-statement bar, Format and Vim.
+   * and adds what a console needs: statement-aware run keys, the lint, running
+   * and ran-OK marks in one glyph gutter, the active-statement bar, Format and Vim.
    *
    * Props and exported methods are unchanged, so SqlConsole and SqlCell did not
    * have to change.
    */
   import { onMount } from 'svelte'
-  import { StateEffect, StateField, RangeSet, RangeSetBuilder, Prec } from '@codemirror/state'
-  import { EditorView, Decoration, ViewPlugin, GutterMarker, gutter, gutterLineClass } from '@codemirror/view'
+  import { StateEffect, StateField, RangeSetBuilder, Prec } from '@codemirror/state'
+  import { EditorView, Decoration, ViewPlugin, GutterMarker, gutter, hoverTooltip } from '@codemirror/view'
   import CodeEditor from './CodeEditor.svelte'
-  import { Tick02Icon, AlertCircleIcon, Alert02Icon } from '@hugeicons/core-free-icons'
+  import { AlertCircleIcon, Alert02Icon } from '@hugeicons/core-free-icons'
   import { hugeSvg } from '$lib/cm-huge-icon.js'
   import { formatSql } from '$lib/format-sql.js'
   import { statementAtOffset, lintSql } from '$lib/sql-statements.js'
   import { statementsOf } from '$lib/cm-sql-statements.js'
-  import { appVimMode, appSqlEditor } from '$lib/stores/settings.js'
+  import { appVimMode, appSqlEditor, setSqlEditorOption } from '$lib/stores/settings.js'
   import { sqlEditorFontSize } from '$lib/sql-editor-options.js'
   import { setVimSubMode } from '$lib/vim/vim.js'
   import { cn } from '$lib/utils.js'
@@ -79,14 +79,53 @@
     return statementAtOffset(statementsOf(state), state.selection.main.head)
   }
 
-  // ── Glyph gutter: ran-OK ✓ and lint dots ───────────────────────────────────
+  // ── Glyph gutter: running, ran-OK and lint marks ───────────────────────────
+
+  const SVG_NS = 'http://www.w3.org/2000/svg'
+  /** @param {string} tag @param {Record<string, string | number>} attrs */
+  function svgEl(tag, attrs) {
+    const el = document.createElementNS(SVG_NS, tag)
+    for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, String(v))
+    return el
+  }
+
+  /**
+   * Running, ran-OK and failed are one drawing, so the end of a run reads as
+   * the mark changing rather than being swapped: the spinning arc closes into a
+   * ring and a tick (green) or a cross (red) draws in. Lengths are in
+   * pathLength units (100), so the dash math is percentages. The arc starts at
+   * 12 o'clock.
+   * @param {'running' | 'ok' | 'failed'} kind
+   */
+  function runGlyph(kind) {
+    const svg = svgEl('svg', { viewBox: '0 0 16 16', fill: 'none', 'aria-hidden': 'true' })
+    if (kind === 'running') {
+      svg.classList.add('animate-spin')
+      svg.append(svgEl('circle', { class: 'sql-run-track', cx: 8, cy: 8, r: 6 }))
+    }
+    svg.append(svgEl('circle', { class: 'sql-run-ring', cx: 8, cy: 8, r: 6, pathLength: 100, transform: 'rotate(-90 8 8)' }))
+    if (kind === 'ok') svg.append(svgEl('path', { class: 'sql-run-tick', d: 'M5.4 8.2l1.8 1.8 3.5-3.7', pathLength: 100 }))
+    if (kind === 'failed') {
+      svg.append(svgEl('path', { class: 'sql-run-tick', d: 'M5.9 5.9l4.2 4.2', pathLength: 100 }))
+      svg.append(svgEl('path', { class: 'sql-run-tick', d: 'M10.1 5.9l-4.2 4.2', pathLength: 100 }))
+    }
+    return svg
+  }
+
+  /** How long after a run ends its ✓ still plays the close-and-tick morph. */
+  const MORPH_MS = 600
 
   class GlyphMarker extends GutterMarker {
-    /** @param {'ok' | 'error' | 'warning'} kind @param {string} title */
-    constructor(kind, title) {
+    /**
+     * @param {'running' | 'ok' | 'failed' | 'error' | 'warning'} kind @param {string} title
+     * @param {number} [at] when an 'ok' mark was set: it morphs only while fresh,
+     *   not each time the gutter redraws the line (scrolled away and back).
+     */
+    constructor(kind, title, at = 0) {
       super()
       this.kind = kind
       this.title = title
+      this.at = at
     }
     /** @param {GlyphMarker} other */
     eq(other) { return other.kind === this.kind && other.title === this.title }
@@ -94,19 +133,69 @@
       const el = document.createElement('span')
       el.className = `sql-glyph sql-glyph-${this.kind}`
       el.title = this.title
-      el.append(hugeSvg(this.kind === 'ok' ? Tick02Icon : this.kind === 'error' ? AlertCircleIcon : Alert02Icon))
+      if (this.kind === 'running' || this.kind === 'ok' || this.kind === 'failed') {
+        // `animate-spin` keeps the arc turning under Reduce Motion (app.css),
+        // like every "still working" spinner; the morph is cut to its end.
+        el.append(runGlyph(this.kind))
+        if (this.kind !== 'running' && Date.now() - this.at < MORPH_MS) el.classList.add('sql-glyph-morph')
+      } else {
+        el.append(hugeSvg(this.kind === 'error' ? AlertCircleIcon : Alert02Icon))
+      }
       return el
     }
   }
 
-  /** Line starts of the statements that just ran. Cleared by any edit. */
-  const setExecuted = StateEffect.define()
-  const executedField = StateField.define({
-    create: () => /** @type {number[]} */ ([]),
-    update(lines, tr) {
-      for (const e of tr.effects) if (e.is(setExecuted)) return /** @type {number[]} */ (e.value)
-      return tr.docChanged ? [] : lines
+  /**
+   * The statements of the last run: running now, ran OK, or failed, each by its
+   * range (the gutter mark sits on its first line), plus the text each failure
+   * is underlined at. A ✓ is for the text that ran, so any edit clears it. A
+   * running mark follows its statement until the run ends, and a ✗ with its
+   * underline stays until the failed statement itself is edited.
+   * @typedef {{ from: number, to: number, kind: 'running' | 'ok' | 'failed', title: string }} RunMark
+   * @typedef {{ from: number, to: number, stmtFrom: number, stmtTo: number, message: string }} RunError
+   * @typedef {{ marks: RunMark[], errors: RunError[], at: number }} RunMarks
+   */
+  const NO_RUN_MARKS = /** @type {RunMarks} */ ({ marks: [], errors: [], at: 0 })
+  const setRunMarks = StateEffect.define()
+  const runMarksField = StateField.define({
+    create: () => NO_RUN_MARKS,
+    update(run, tr) {
+      for (const e of tr.effects) if (e.is(setRunMarks)) return /** @type {RunMarks} */ (e.value)
+      if (!tr.docChanged || (!run.marks.length && !run.errors.length)) return run
+      const ch = tr.changes
+      const marks = run.marks
+        .filter((m) => m.kind === 'running' || (m.kind === 'failed' && !ch.touchesRange(m.from, m.to)))
+        .map((m) => ({ ...m, from: ch.mapPos(m.from, 1), to: ch.mapPos(m.to, -1) }))
+      const errors = run.errors
+        .filter((e) => !ch.touchesRange(e.stmtFrom, e.stmtTo))
+        .map((e) => ({ ...e, from: ch.mapPos(e.from, 1), to: ch.mapPos(e.to, -1), stmtFrom: ch.mapPos(e.stmtFrom, 1), stmtTo: ch.mapPos(e.stmtTo, -1) }))
+      return { marks, errors, at: run.at }
     },
+    provide: (f) => EditorView.decorations.from(f, (run) =>
+      Decoration.set(
+        run.errors
+          .filter((e) => e.to > e.from)
+          .map((e) => Decoration.mark({ class: 'cm-sql-run-error' }).range(e.from, e.to)),
+        true,
+      ),
+    ),
+  })
+
+  /** The database's message, on hover over the text it failed at. */
+  const runErrorTooltip = hoverTooltip((view, pos) => {
+    const err = view.state.field(runMarksField).errors.find((e) => pos >= e.from && pos <= e.to)
+    if (!err) return null
+    return {
+      pos: err.from,
+      end: err.to,
+      above: true,
+      create() {
+        const dom = document.createElement('div')
+        dom.className = 'cm-sql-run-error-tip'
+        dom.textContent = err.message
+        return { dom }
+      },
+    }
   })
 
   /** Lint results: squiggles, plus one dot per line in the glyph gutter. */
@@ -174,11 +263,15 @@
     markers(view) {
       /** @type {Map<number, GlyphMarker>} */
       const byLine = new Map()
-      for (const from of view.state.field(executedField)) byLine.set(from, new GlyphMarker('ok', 'Ran successfully'))
+      const run = view.state.field(runMarksField)
+      const doc = view.state.doc
+      for (const m of run.marks) {
+        byLine.set(doc.lineAt(Math.min(m.from, doc.length)).from, new GlyphMarker(m.kind, m.title, run.at))
+      }
       for (const d of view.state.field(lintField).diags) {
         const from = view.state.doc.lineAt(Math.min(d.start, view.state.doc.length)).from
         const prev = byLine.get(from)
-        if (prev?.kind === 'error') continue
+        if (prev?.kind === 'error' || prev?.kind === 'running' || prev?.kind === 'failed') continue
         byLine.set(from, new GlyphMarker(d.severity === 'error' ? 'error' : 'warning', d.message))
       }
       const builder = new RangeSetBuilder()
@@ -188,28 +281,27 @@
     initialSpacer: () => new GlyphMarker('ok', ''),
   })
 
-  // ── Active statement: a bar beside the lines of the one under the caret ──
+  // ── Active statement: a faint band behind the one under the caret ──────
   // Only when the buffer holds more than one, so a single query stays clean.
+  // It was a 2px bar on the gutter's edge, which with line numbers off sat
+  // hard against the run marks.
 
-  class ActiveLineMarker extends GutterMarker {
-    elementClass = 'cm-stmt-active'
-  }
-  const activeLine = new ActiveLineMarker()
+  const activeLineDeco = Decoration.line({ class: 'cm-stmt-active' })
   const activeStatement = StateField.define({
     create: (state) => activeRanges(state),
     update: (v, tr) => (tr.docChanged || tr.selection ? activeRanges(tr.state) : v),
-    provide: (f) => gutterLineClass.from(f),
+    provide: (f) => EditorView.decorations.from(f),
   })
   /** @param {import('@codemirror/state').EditorState} state */
   function activeRanges(state) {
     const stmts = statementsOf(state)
     const stmt = stmts.length > 1 ? statementAtOffset(stmts, state.selection.main.head) : null
-    if (!stmt) return RangeSet.empty
+    if (!stmt) return Decoration.none
     const builder = new RangeSetBuilder()
     const last = state.doc.lineAt(Math.min(stmt.end, state.doc.length)).number
     for (let n = state.doc.lineAt(stmt.start).number; n <= last; n++) {
       const from = state.doc.line(n).from
-      builder.add(from, from, activeLine)
+      builder.add(from, from, activeLineDeco)
     }
     return builder.finish()
   }
@@ -237,6 +329,8 @@
     { key: 'Mod-Shift-o', run: () => call(onmodshifto)() },
     { key: 'Mod-j', run: () => call(onmodj)() },
     { key: 'Mod-Shift-b', run: () => call(onmodshiftb)() },
+    // Wrap on/off: VS Code's key, the one the cell dock uses too.
+    { key: 'Alt-z', run: () => { setSqlEditorOption('wrap', !$appSqlEditor.wrap); return true }, preventDefault: true },
   ]
 
   /** Ctrl/Cmd+L - select the statement under the caret. @param {EditorView} view */
@@ -261,18 +355,72 @@
   const consoleTheme = EditorView.theme({
     '.cm-content': { padding: '12px 0' },
     // Glyphs sit right against the numbers: Monaco's glyph margin, not a column.
+    // Room on both sides: the mark never touches the numbers, or the text
+    // when the numbers are hidden. In em, like the marks: the editor's text
+    // follows the app zoom (--cm-font-size is a type-scale step), and px marks
+    // stayed small beside zoomed text.
     '.cm-sql-glyphs .cm-gutterElement': {
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
-      width: '14px',
-      paddingLeft: '8px',
+      width: '1.05em',
+      padding: '0 0.4em 0 0.55em',
     },
-    '.sql-glyph': { display: 'inline-flex', cursor: 'default' },
-    '.sql-glyph svg': { width: '12px', height: '12px' },
-    '.sql-glyph-ok': { color: 'var(--color-green-500, #22c55e)' },
-    '.sql-glyph-error': { color: 'var(--destructive, #ef4444)' },
-    '.sql-glyph-warning': { color: 'var(--color-amber-500, #f59e0b)' },
+    '.sql-glyph': { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', cursor: 'default' },
+    '.sql-glyph svg': { width: '1em', height: '1em' },
+    // Running: a blue quarter arc turning on a faint track. Done: a bold tick
+    // (or cross) on its own. The ring only exists for the morph, and fades out.
+    '.sql-run-track': { stroke: 'color-mix(in oklch, var(--muted-foreground) 22%, transparent)', strokeWidth: '1.75' },
+    '.sql-run-ring': {
+      stroke: 'var(--primary)',
+      strokeWidth: '1.75',
+      strokeLinecap: 'round',
+      strokeDasharray: '28 100',
+    },
+    '.sql-glyph-ok .sql-run-ring, .sql-glyph-failed .sql-run-ring': { strokeDasharray: '100 100', opacity: '0' },
+    '.sql-glyph-failed .sql-run-tick': { stroke: 'var(--destructive)' },
+    '.sql-glyph-failed.sql-glyph-morph .sql-run-ring': { animation: 'cm-sql-ring-fail 360ms cubic-bezier(0.2, 0, 0, 1) both' },
+    '@keyframes cm-sql-ring-fail': {
+      '0%': { strokeDashoffset: '72', stroke: 'var(--primary)', opacity: '1' },
+      '60%': { strokeDashoffset: '0', stroke: 'var(--destructive)', opacity: '0.5' },
+      '100%': { strokeDashoffset: '0', stroke: 'var(--destructive)', opacity: '0' },
+    },
+    // Where the database says a statement failed, the same mark as a lint error.
+    '.cm-sql-run-error': {
+      textDecoration: 'underline wavy color-mix(in oklch, var(--destructive) 85%, transparent)',
+      textUnderlineOffset: '3px',
+    },
+    '.cm-sql-run-error-tip': {
+      maxWidth: '28rem',
+      padding: '6px 10px',
+      fontFamily: 'var(--font-sans)',
+      fontSize: 'var(--fs-2xs)',
+      lineHeight: '1.5',
+      color: 'var(--foreground)',
+      whiteSpace: 'pre-wrap',
+    },
+    '.sql-run-tick': {
+      stroke: 'var(--success)',
+      strokeWidth: '2.2',
+      strokeLinecap: 'round',
+      strokeLinejoin: 'round',
+      strokeDasharray: '100',
+    },
+    // The morph: the arc grows from the spinner's quarter to the whole ring
+    // (dash offset 72 → 0 shows 28 → 100), then the tick strokes in.
+    '.sql-glyph-morph .sql-run-ring': { animation: 'cm-sql-ring-close 360ms cubic-bezier(0.2, 0, 0, 1) both' },
+    '.sql-glyph-morph .sql-run-tick': { animation: 'cm-sql-tick-draw 220ms 170ms cubic-bezier(0.2, 0, 0, 1) both' },
+    '@keyframes cm-sql-ring-close': {
+      '0%': { strokeDashoffset: '72', stroke: 'var(--primary)', opacity: '1' },
+      '60%': { strokeDashoffset: '0', stroke: 'var(--success)', opacity: '0.5' },
+      '100%': { strokeDashoffset: '0', stroke: 'var(--success)', opacity: '0' },
+    },
+    '@keyframes cm-sql-tick-draw': {
+      from: { strokeDashoffset: '100' },
+      to: { strokeDashoffset: '0' },
+    },
+    '.sql-glyph-error': { color: 'var(--destructive)' },
+    '.sql-glyph-warning': { color: 'var(--warning)' },
     // Three digits reserved, not the cell dock's five: a query is rarely past
     // line 999, and the reserve was the gap between the glyphs and the numbers.
     '.cm-gutters .cm-lineNumbers .cm-gutterElement': {
@@ -287,11 +435,8 @@
       textDecoration: 'underline wavy color-mix(in srgb, var(--color-amber-500, #f59e0b) 75%, transparent)',
       textUnderlineOffset: '3px',
     },
-    // The active-statement bar sits on the right edge of the last gutter
-    // column - the numbers, or the glyphs when numbers are hidden.
-    '.cm-gutter:last-child .cm-gutterElement.cm-stmt-active': {
-      boxShadow: 'inset -2px 0 0 color-mix(in srgb, var(--primary) 45%, transparent)',
-    },
+    // The statement Mod+R would run, when the buffer holds several.
+    '.cm-line.cm-stmt-active': { backgroundColor: 'color-mix(in oklch, var(--foreground) 3.5%, transparent)' },
     // Vim's mode / command line, where monaco-vim's status strip was.
     '.cm-vim-panel': {
       padding: '2px 12px',
@@ -307,7 +452,8 @@
 
   const baseExtensions = [
     Prec.high(glyphGutter),
-    executedField,
+    runMarksField,
+    runErrorTooltip,
     lintField,
     lintRunner,
     activeStatement,
@@ -389,22 +535,100 @@
     if (formatted !== text) view.dispatch({ changes: { from: 0, to: text.length, insert: formatted } })
   }
 
+  /** Statement text compared across the two splitters (editor's, backend's). @param {string} t */
+  const sameText = (t) => t.trim().replace(/;+\s*$/, '').replace(/\s+/g, ' ')
+
   /**
-   * Mark statement(s) as run OK with a ✓ in the glyph gutter. Pass the single
-   * statement that ran (⌘R), or null for all of them (run all). The marks clear
-   * on the next edit.
-   * @param {string | null} [ranStatement]
+   * Set the run marks for statement(s): the single statement that ran (⌘R), or
+   * null for all of them (run all).
+   * @param {'running' | 'ok'} kind @param {string | null} ranStatement
    */
-  export function markExecuted(ranStatement = null) {
+  function markRun(kind, ranStatement) {
     const view = editorRef?.getView()
     if (!view) return
-    const target = typeof ranStatement === 'string' ? ranStatement.trim().replace(/;+\s*$/, '') : null
-    const lines = []
+    const target = typeof ranStatement === 'string' ? sameText(ranStatement) : null
+    /** @type {RunMark[]} */
+    const marks = []
     for (const stmt of statementsOf(view.state)) {
-      if (target !== null && stmt.text.replace(/;+\s*$/, '') !== target) continue
-      lines.push(view.state.doc.lineAt(stmt.start).from)
+      if (target !== null && sameText(stmt.text) !== target) continue
+      marks.push({ from: stmt.start, to: stmt.end, kind, title: kind === 'running' ? 'Running' : 'Ran successfully' })
     }
-    view.dispatch({ effects: setExecuted.of(lines) })
+    view.dispatch({ effects: setRunMarks.of({ marks, errors: [], at: Date.now() }) })
+  }
+
+  /**
+   * Marks from a finished run: a ✓ or ✗ beside each statement that ran,
+   * matched to the editor's statements by text in order, and each failure
+   * underlined where the database says it failed.
+   * @param {Array<{ sql: string, error?: string | null, position?: number | null }>} outcomes
+   */
+  export function markOutcomes(outcomes) {
+    const view = editorRef?.getView()
+    if (!view) return
+    const doc = view.state.doc
+    const stmts = statementsOf(view.state)
+    /** @type {RunMark[]} */
+    const marks = []
+    /** @type {RunError[]} */
+    const errors = []
+    let next = 0
+    for (const o of outcomes) {
+      const want = sameText(o.sql ?? '')
+      let i = next
+      while (i < stmts.length && sameText(stmts[i].text) !== want) i++
+      if (i >= stmts.length) continue
+      next = i + 1
+      const st = stmts[i]
+      if (!o.error) {
+        marks.push({ from: st.start, to: st.end, kind: 'ok', title: 'Ran successfully' })
+        continue
+      }
+      const message = o.error.replace(/^Error:\s*/, '').replace(/^(Query|Statement \d+) failed:\s*(error returned from database:\s*)?/i, '')
+      marks.push({ from: st.start, to: st.end, kind: 'failed', title: message })
+      errors.push({ ...failedRange(doc, st, o.sql ?? '', o.position ?? null), stmtFrom: st.start, stmtTo: st.end, message })
+    }
+    view.dispatch({ effects: setRunMarks.of({ marks, errors, at: Date.now() }) })
+  }
+
+  /**
+   * The text to underline for a failure: the token at the database's position
+   * (1-based characters into the text it was sent), the last token when it
+   * failed at the end of input, the statement's first line when it gave none.
+   * @param {import('@codemirror/state').Text} doc @param {{ start: number, end: number }} st
+   * @param {string} sent @param {number | null} position
+   */
+  function failedRange(doc, st, sent, position) {
+    const word = (/** @type {number} */ p) => /[\w$"]/.test(doc.sliceString(p, p + 1))
+    if (!position) return { from: st.start, to: Math.min(doc.lineAt(st.start).to, st.end) }
+    const at = doc.sliceString(st.start, st.end).indexOf(sent.trim())
+    const base = st.start + Math.max(0, at)
+    let from = base + position - 1
+    if (from >= st.end) {
+      // "at end of input": point at the last thing that was written.
+      let to = st.end
+      while (to > st.start && /[\s;]/.test(doc.sliceString(to - 1, to))) to--
+      from = to
+      while (from > st.start && word(from - 1)) from--
+      return { from: Math.min(from, to - 1 < st.start ? st.start : from), to: Math.max(to, from + 1) }
+    }
+    let to = from
+    while (to < st.end && word(to)) to++
+    return { from, to: to > from ? to : Math.min(from + 1, st.end) }
+  }
+
+  /** Spinner in the glyph gutter while statement(s) run. @param {string | null} [ranStatement] */
+  export function markRunning(ranStatement = null) {
+    markRun('running', ranStatement)
+  }
+
+  /** ✓ in the glyph gutter for statement(s) that ran OK; the next edit clears it. @param {string | null} [ranStatement] */
+  export function markExecuted(ranStatement = null) {
+    markRun('ok', ranStatement)
+  }
+
+  /** Drop the run marks (the run failed or was stopped). */
+  export function clearRunMarks() {
+    editorRef?.getView()?.dispatch({ effects: setRunMarks.of(NO_RUN_MARKS) })
   }
 
   /** Focus the editor (called when the SQL tab becomes active). */

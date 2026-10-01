@@ -31,7 +31,12 @@
       const name = ext
         ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)
         : gl.getParameter(gl.RENDERER)
-      return String(name || 'unknown')
+      const label = String(name || 'unknown')
+      // WebKit masks the renderer as "Apple GPU" on every platform (fingerprinting
+      // protection), which on Linux or Windows names a GPU that is not there and
+      // hides the one thing this line is for: whether it is llvmpipe.
+      if (label === 'Apple GPU' && !/mac/i.test(navigator.platform)) return 'GPU name hidden by WebKit'
+      return label
     } catch {
       return 'unknown'
     }
