@@ -49,6 +49,7 @@
     SQL_TAB_WIDTHS,
     normalizeSqlFormat,
   } from "$lib/sql-format-options.js";
+  import { SQL_EDITOR_FIELDS, SQL_EDITOR_TEXT_SIZES, normalizeSqlEditor } from "$lib/sql-editor-options.js";
   import { aiProfiles, activeProfileId, setActiveProfile } from "$lib/stores/ai-settings.js";
   import PenTool from "@lucide/svelte/icons/pen-tool";
   import LucideSparkles from "@lucide/svelte/icons/sparkles";
@@ -320,6 +321,14 @@
 
   function toggleAutoSaveQueries() {
     settings = updateSettings({ autoSaveQueries: !settings.autoSaveQueries });
+  }
+
+  // ── SQL editor ────────────────────────────────────────────────────────────
+  // Read through the normalizer for the same reason as sqlFmt below.
+  const sqlEd = $derived(/** @type {any} */ (normalizeSqlEditor(settings.sqlEditor)));
+  /** @param {string} key @param {unknown} value */
+  function setSqlEditor(key, value) {
+    settings = updateSettings({ sqlEditor: normalizeSqlEditor({ ...sqlEd, [key]: value }) });
   }
 
   // ── SQL formatting ────────────────────────────────────────────────────────
@@ -748,6 +757,24 @@
        selects just to show the Database tab is what made this pane feel slow, and
        these are settings you touch once. Search still reaches them - a query
        expands the section, because a setting you can't find may as well not exist. -->
+  <!-- SQL editor: six short rows, so unlike formatting it is not collapsed. -->
+  {@render secLabel('SQL editor')}
+  {#each SQL_EDITOR_FIELDS as field (field.key)}
+    {#if show(field.label, field.desc)}
+      {#if field.kind === 'bool'}
+        {@render switchRow(field.label, field.desc, sqlEd[field.key] === true, () => setSqlEditor(field.key, !sqlEd[field.key]))}
+      {:else}
+        <div class={rowCls}>
+          <div class="min-w-0">
+            <p class="text-ui-sm font-medium text-foreground">{field.label}</p>
+            <p class="mt-0.5 text-ui-xs leading-relaxed text-muted-foreground">{field.desc}</p>
+          </div>
+          {@render segmented(field.label, SQL_EDITOR_TEXT_SIZES.map((o) => ({ value: o.id, label: o.label })), sqlEd.textSize, (v) => setSqlEditor('textSize', v))}
+        </div>
+      {/if}
+    {/if}
+  {/each}
+
   {@render secLabel('SQL formatting')}
   {#if !searching}
     <button

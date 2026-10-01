@@ -19,6 +19,7 @@ import {
   buildTypeScale,
 } from '$lib/type-scale.js'
 import { SQL_FORMAT_DEFAULTS, normalizeSqlFormat, setSqlFormatOptions } from '$lib/sql-format-options.js'
+import { SQL_EDITOR_DEFAULTS, normalizeSqlEditor } from '$lib/sql-editor-options.js'
 
 const STORAGE_KEY = 'stroke:settings'
 
@@ -89,7 +90,7 @@ const markFontGeistDefaultApplied = () => {
 /** @typedef {'claude' | 'geist' | 'serif' | 'apple' | 'inter' | 'mono' | 'fira' | 'plex' | 'space' | 'source'} FontId */
 /** @typedef {'regular' | 'light' | 'bold'} IconStyleId */
 /** @typedef {'lucide' | 'hugeicons' | 'phosphor'} IconSetId */
-/** @typedef {{ theme: ThemeId, zoom: number, font: FontId, iconStyle: IconStyleId, iconSet: IconSetId, tableStyle: TableStyleId, jsonTheme: JsonThemeId, mcpAutoStart: boolean, launchAtLogin: boolean, autoReconnectOnStartup: boolean, previewDmlBeforeApply: boolean, defaultDataView: string, paginationMode: string, maxQueryHistory: number, connectTimeoutMs: number, socketTimeoutMs: number, maxAllowedPacket: number, sessionTimezone: string, vimMode: boolean, cmdkAiEnabled: boolean, liveModeEnabled: boolean, lazyWideColumns: boolean, nullSortOrder: string, agentChatFontSize: number, agentCodeFontSize: number, agentThinkingStyle: string, agentShowQueryCards: boolean, agentWebAccess: boolean, tableTextAlign: string, telemetry: boolean, jsonWordWrap: boolean, nativeScroll: boolean, rowSpacing: RowSpacingId, motion: MotionId, zebraRows: boolean, showRowNumbers: boolean, showMenuBar: boolean, numberGrouping: boolean, imagePreview: boolean, openUrlsOnClick: boolean, highlightActiveRow: boolean, gridFontSize: number, autoSaveQueries: boolean, sqlFormat: import('$lib/sql-format-options.js').SqlFormatOptions }} AppSettings */
+/** @typedef {{ theme: ThemeId, zoom: number, font: FontId, iconStyle: IconStyleId, iconSet: IconSetId, tableStyle: TableStyleId, jsonTheme: JsonThemeId, mcpAutoStart: boolean, launchAtLogin: boolean, autoReconnectOnStartup: boolean, previewDmlBeforeApply: boolean, defaultDataView: string, paginationMode: string, maxQueryHistory: number, connectTimeoutMs: number, socketTimeoutMs: number, maxAllowedPacket: number, sessionTimezone: string, vimMode: boolean, cmdkAiEnabled: boolean, liveModeEnabled: boolean, lazyWideColumns: boolean, nullSortOrder: string, agentChatFontSize: number, agentCodeFontSize: number, agentThinkingStyle: string, agentShowQueryCards: boolean, agentWebAccess: boolean, tableTextAlign: string, telemetry: boolean, jsonWordWrap: boolean, nativeScroll: boolean, rowSpacing: RowSpacingId, motion: MotionId, zebraRows: boolean, showRowNumbers: boolean, showMenuBar: boolean, numberGrouping: boolean, imagePreview: boolean, openUrlsOnClick: boolean, highlightActiveRow: boolean, gridFontSize: number, autoSaveQueries: boolean, sqlFormat: import('$lib/sql-format-options.js').SqlFormatOptions, sqlEditor: import('$lib/sql-editor-options.js').SqlEditorOptions }} AppSettings */
 
 /**
  * UI type scale in design pixels: `[step, font-size, line-height?]`, matching
@@ -526,6 +527,8 @@ export const DEFAULT_SETTINGS = {
   // SQL formatter preferences. Defaults live with the formatter (format-sql.js)
   // so there is one source for what a valid option set is.
   sqlFormat: { ...SQL_FORMAT_DEFAULTS },
+  // SQL editor preferences (wrap, line numbers, suggestions...).
+  sqlEditor: { ...SQL_EDITOR_DEFAULTS },
   // Independent of the grid-style preset: two of those presets (Striped, Dots)
   // shade alternate rows as part of their look, and this turns the same shading
   // on for any of the others without changing the separators you picked.
@@ -588,6 +591,9 @@ export const appPreviewDml = writable(true)
 
 /** Reactive: experimental app-wide Vim mode enabled (synced by applySettings). */
 export const appVimMode = writable(false)
+
+/** Reactive SQL editor preferences (synced by applySettings). */
+export const appSqlEditor = writable({ ...SQL_EDITOR_DEFAULTS })
 
 /** Reactive: experimental ⌘K "Ask AI" enabled (off by default; synced by applySettings). */
 export const appCmdkAi = writable(false)
@@ -807,6 +813,7 @@ export function loadSettings() {
     const rowSpacing = normalizeRowSpacing(parsed.rowSpacing)
     const motion = normalizeMotion(parsed.motion)
     const sqlFormat = normalizeSqlFormat(parsed.sqlFormat)
+    const sqlEditor = normalizeSqlEditor(parsed.sqlEditor)
     const zebraRows = parsed.zebraRows === true
     const showRowNumbers = parsed.showRowNumbers === true
     const showMenuBar = parsed.showMenuBar !== false
@@ -828,7 +835,7 @@ export function loadSettings() {
     const agentShowQueryCards = parsed.agentShowQueryCards !== false
     const agentWebAccess = parsed.agentWebAccess === true
     const tableTextAlign = TABLE_ALIGN_IDS.includes(parsed.tableTextAlign) ? parsed.tableTextAlign : DEFAULT_TABLE_ALIGN
-    _settingsCache = { theme, zoom, font, iconStyle, iconSet, tableStyle, jsonTheme, mcpAutoStart, launchAtLogin, autoReconnectOnStartup, previewDmlBeforeApply, defaultDataView, paginationMode, maxQueryHistory, connectTimeoutMs, socketTimeoutMs, maxAllowedPacket, sessionTimezone, vimMode, cmdkAiEnabled, liveModeEnabled, lazyWideColumns, nullSortOrder, agentChatFontSize, agentCodeFontSize, agentThinkingStyle, agentShowQueryCards, agentWebAccess, tableTextAlign, telemetry, jsonWordWrap, nativeScroll, rowSpacing, motion, zebraRows, showRowNumbers, showMenuBar, numberGrouping, imagePreview, openUrlsOnClick, highlightActiveRow, gridFontSize, autoSaveQueries, sqlFormat }
+    _settingsCache = { theme, zoom, font, iconStyle, iconSet, tableStyle, jsonTheme, mcpAutoStart, launchAtLogin, autoReconnectOnStartup, previewDmlBeforeApply, defaultDataView, paginationMode, maxQueryHistory, connectTimeoutMs, socketTimeoutMs, maxAllowedPacket, sessionTimezone, vimMode, cmdkAiEnabled, liveModeEnabled, lazyWideColumns, nullSortOrder, agentChatFontSize, agentCodeFontSize, agentThinkingStyle, agentShowQueryCards, agentWebAccess, tableTextAlign, telemetry, jsonWordWrap, nativeScroll, rowSpacing, motion, zebraRows, showRowNumbers, showMenuBar, numberGrouping, imagePreview, openUrlsOnClick, highlightActiveRow, gridFontSize, autoSaveQueries, sqlFormat, sqlEditor }
     if (fontMigrated) {
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify(_settingsCache)) } catch {}
     }
@@ -991,6 +998,10 @@ export function applySettings(settings) {
   setStore(appRowSpacing, normalizeRowSpacing(settings.rowSpacing))
   // Push formatter prefs into the shared option holder that format-sql.js reads.
   setSqlFormatOptions(settings.sqlFormat)
+  // By value: applySettings runs on every settings change, and a fresh object
+  // each time would reconfigure every open SQL editor for nothing.
+  const sqlEditor = normalizeSqlEditor(settings.sqlEditor)
+  if (JSON.stringify(get(appSqlEditor)) !== JSON.stringify(sqlEditor)) appSqlEditor.set(sqlEditor)
   setStore(appZebraRows, settings.zebraRows === true)
   setStore(appRowNumbers, settings.showRowNumbers === true)
   setStore(appMenuBar, settings.showMenuBar !== false)
