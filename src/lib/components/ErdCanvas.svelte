@@ -27,6 +27,11 @@
     /** Edge id → the polyline the layout reserved for it, when it routes its own
      *  edges. Present means curves along those corridors and no A* at all. */
     hints = /** @type {Map<string, {x:number,y:number}[]>} */ (new Map()),
+    /** Relationships into hub tables: not laid out, not routed. Named on the
+     *  referencing row, counted on the hub's header, drawn as lines only for
+     *  the hovered or selected card. */
+    hubEdges = /** @type {FlowEdge[]} */ ([]),
+    hubs = /** @type {Set<string>} */ (new Set()),
     showTypes = true,
     grid = true,
     onselect = /** @type {(id:string|null)=>void} */ (() => {}),
@@ -181,7 +186,15 @@
   const nodeH = (data) =>
     HDR_H + (data?.columns?.length ?? 0) * ROW_H + (data?.hiddenCount ? ROW_H : 0) + PAD_B
   /** @param {FlowNode} n */
-  const posOf = (n) => (dragPos && dragPos.id === n.id ? dragPos : n.position)
+  const posOfRaw = (n) => (dragPos && dragPos.id === n.id ? dragPos : n.position)
+  /** Where a card is drawn this frame: part way along its glide after a layout. */
+  function posOf(/** @type {FlowNode} */ n) {
+    const g = glide?.get(n.id)
+    if (!g) return posOfRaw(n)
+    const k = Math.min(1, (performance.now() - glideT0) / GLIDE_MS)
+    const e = 1 - Math.pow(1 - k, 3)
+    return { x: g.fx + (g.tx - g.fx) * e, y: g.fy + (g.ty - g.fy) * e }
+  }
 
   /** @type {Map<string,FlowNode>} */
   let byId = new Map()
@@ -209,38 +222,38 @@
    * there is one (a wide fan would otherwise open with it off-screen), else at
    * the graph's top-left so the first ranks are visible.
    */
+  let _revealed = false
   export function reveal() {
     if (!cssW || !nodes.length) return
+    // The first picture snaps into place; every later one (a re-layout, a new
+    // scope) glides there from where the eye already is.
+    const ms = _revealed ? 360 : 0
+    _revealed = true
     // Graph bounding box (world coords).
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity
     for (const n of nodes) {
-      const p = posOf(n), h = nodeH(n.data)
+      const p = n.position, h = nodeH(n.data)
       x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y)
       x1 = Math.max(x1, p.x + NODE_W); y1 = Math.max(y1, p.y + h)
     }
     const bw = x1 - x0 || 1, bh = y1 - y0 || 1
     const zFit = Math.min(cssW / bw, cssH / bh) * (1 - 0.12)
     if (zFit >= READABLE_ZOOM) {
-      fit()
+      fit(0.12, ms)
       return
     }
     const fn = focusId ? byId.get(focusId) : null
     if (fn) {
-      const p = posOf(fn), h = nodeH(fn.data)
-      cam.zoom = READABLE_ZOOM
-      cam.panX = cssW / 2 - (p.x + NODE_W / 2) * READABLE_ZOOM
-      cam.panY = cssH / 2 - (p.y + h / 2) * READABLE_ZOOM
-      markDirty()
+      const p = fn.position, h = nodeH(fn.data)
+      flyTo({ zoom: READABLE_ZOOM, panX: cssW / 2 - (p.x + NODE_W / 2) * READABLE_ZOOM, panY: cssH / 2 - (p.y + h / 2) * READABLE_ZOOM }, ms)
       return
     }
     const M = 56 // screen-px margin from the viewport's top-left
-    cam.zoom = READABLE_ZOOM
-    cam.panX = M - x0 * READABLE_ZOOM
     // Centre vertically when the graph is shorter than the viewport, else top-anchor.
-    cam.panY = bh * READABLE_ZOOM < cssH - M
+    const panY = bh * READABLE_ZOOM < cssH - M
       ? (cssH - bh * READABLE_ZOOM) / 2 - y0 * READABLE_ZOOM
       : M - y0 * READABLE_ZOOM
-    markDirty()
+    flyTo({ zoom: READABLE_ZOOM, panX: M - x0 * READABLE_ZOOM, panY }, ms)
   }
   function ensureFit() {
     if (_fitted || !cssW || !nodes.length) return
@@ -248,6 +261,7 @@
     reveal()
   }
   $effect(() => {
+    startGlide(nodes)
     byId = new Map(nodes.map((n) => [n.id, n]))
     handleIdx = new Map()
     for (const n of nodes) {
@@ -265,7 +279,90 @@
     ensureFit()
     markDirty()
   })
-  $effect(() => { void edges; void selectedId; void focusId; void routing; void hints; void showTypes; void grid; markDirty() })
+  $effect(() => { void edges; void selectedId; void focusId; void routing; void hints; void showTypes; void grid; void hubs; markDirty() })
+  /** Lines into each hub, for the count on its header. */
+  let hubIn = new Map()
+  $effect(() => {
+    const m = new Map()
+    for (const e of hubEdges) m.set(e.target, (m.get(e.target) ?? 0) + (e.mergedCount ?? 1))
+    hubIn = m
+    markDirty()
+  })
+
+  // ── Motion ───────────────────────────────────────────────────────────────
+  /** The app's motion setting, with the OS preference behind "System". */
+  function motionOff() {
+    const m = document.documentElement.dataset.motion
+    return m === 'reduced' || (m !== 'full' && matchMedia('(prefers-reduced-motion: reduce)').matches)
+  }
+
+  let camAnim = 0
+  function cancelCamAnim() { if (camAnim) { cancelAnimationFrame(camAnim); camAnim = 0 } }
+  /**
+   * Ease the camera to a target: the world point under the viewport's centre
+   * glides and the zoom eases in log space, so a 10x change feels even all the
+   * way rather than fast at the start and dead at the end.
+   * @param {{ panX: number, panY: number, zoom: number }} to @param {number} [ms]
+   */
+  function flyTo(to, ms = 360) {
+    cancelCamAnim()
+    if (ms <= 0 || motionOff()) { cam.panX = to.panX; cam.panY = to.panY; cam.zoom = to.zoom; markDirty(); return }
+    const from = { ...cam }
+    const centre = (/** @type {{ panX: number, panY: number, zoom: number }} */ c) =>
+      ({ x: (cssW / 2 - c.panX) / c.zoom, y: (cssH / 2 - c.panY) / c.zoom })
+    const a = centre(from), b = centre(to)
+    const t0 = performance.now()
+    const step = (/** @type {number} */ now) => {
+      const k = Math.min(1, (now - t0) / ms)
+      const e = 1 - Math.pow(1 - k, 3)
+      const z = Math.exp(Math.log(from.zoom) + (Math.log(to.zoom) - Math.log(from.zoom)) * e)
+      const cx = a.x + (b.x - a.x) * e, cy = a.y + (b.y - a.y) * e
+      cam.zoom = z
+      cam.panX = cssW / 2 - cx * z
+      cam.panY = cssH / 2 - cy * z
+      markDirty()
+      camAnim = k < 1 ? requestAnimationFrame(step) : 0
+    }
+    camAnim = requestAnimationFrame(step)
+  }
+
+  /** Where every card was the last time the graph changed, to glide from. */
+  let lastPos = /** @type {Map<string, {x:number,y:number}> | null} */ (null)
+  /** Cards gliding from their previous place to a new layout. */
+  let glide = /** @type {Map<string, {fx:number,fy:number,tx:number,ty:number}> | null} */ (null)
+  let glideT0 = 0
+  let glideAnim = 0
+  const GLIDE_MS = 420
+  /**
+   * A new layout glides in rather than snapping: the eye keeps track of which
+   * card went where. One card moving is a drop, not a layout, and lands where
+   * it was let go.
+   * @param {FlowNode[]} ns
+   */
+  function startGlide(ns) {
+    const prev = lastPos
+    lastPos = new Map(ns.map((n) => [n.id, { x: n.position.x, y: n.position.y }]))
+    if (!prev || motionOff()) return
+    const moves = new Map()
+    for (const n of ns) {
+      const q = prev.get(n.id)
+      if (!q || dragPos?.id === n.id) continue
+      if (Math.abs(q.x - n.position.x) < 1 && Math.abs(q.y - n.position.y) < 1) continue
+      moves.set(n.id, { fx: q.x, fy: q.y, tx: n.position.x, ty: n.position.y })
+    }
+    if (moves.size < 2) { glide = null; return }
+    glide = moves
+    glideT0 = performance.now()
+    if (glideAnim) cancelAnimationFrame(glideAnim)
+    const step = (/** @type {number} */ now) => {
+      markDirty()
+      if (now - glideT0 < GLIDE_MS) { glideAnim = requestAnimationFrame(step); return }
+      glideAnim = 0
+      glide = null
+      markDirty()
+    }
+    glideAnim = requestAnimationFrame(step)
+  }
 
   // ── Render scheduling ───────────────────────────────────────────────────
   let rafId = 0
@@ -658,7 +755,9 @@
       const s = byId.get(e.source), t = byId.get(e.target)
       if (!s || !t) continue
       const dragging = !!dragPos && (dragPos.id === e.source || dragPos.id === e.target)
-      const cached = dragging ? null : routes.get(e.id)
+      // Mid-glide the cards are between layouts and the routes belong to the
+      // new one, so every line is a live elbow until the cards land.
+      const cached = dragging || glide ? null : routes.get(e.id)
 
       // The ports only exist to build a path. When the route is already cached
       // - which is every line on every frame that isn't a drag - working them
@@ -695,8 +794,11 @@
     const wash = cam.zoom < LOD_ROWS
     for (let b = 0; b < bands.length; b++) {
       if (!bands[b].length) continue
-      ctx.globalAlpha = wash && b < 2 ? 0.75 : 1
-      ctx.lineWidth = styles[b].width / cam.zoom
+      // Well under full strength: at fit zoom a hundred lines at 0.75 were the
+      // whole picture and the cards a texture behind them. The selected card's
+      // lines stay full, which is how one relationship is read at that zoom.
+      ctx.globalAlpha = wash && b < 2 ? 0.3 : 1
+      ctx.lineWidth = (wash && b < 2 ? styles[b].width * 0.75 : styles[b].width) / cam.zoom
       ctx.strokeStyle = styles[b].color
       ctx.lineJoin = 'round'
       ctx.lineCap = 'round'
@@ -731,7 +833,57 @@
         }
       }
     }
+
+    // Hub relationships, for the hovered and the selected card only: live
+    // elbows from the ports (they were never laid out or routed), over
+    // everything else. Hover `tenants` and its whole fan appears; move off and
+    // the page is clean again.
+    const active = [selectedId, hoveredId].filter((id) => id && byId.has(id))
+    if (active.length && hubEdges.length) {
+      /** @type {{pts:{x:number,y:number}[], e:FlowEdge}[]} */
+      const live = []
+      for (const e of hubEdges) {
+        if (!active.includes(e.source) && !active.includes(e.target)) continue
+        const s = byId.get(e.source), t = byId.get(e.target)
+        if (!s || !t) continue
+        const { sx, sy, tx, ty, sdx, sdy, tdx, tdy } = portsOf(e, s, t, rowsShown)
+        const pts = corridorPathOrtho({ sx, sy, tx, ty, sdx, sdy, tdx, tdy })
+        const bb = bboxOf(pts)
+        if (bb.x1 < vx0 || bb.x0 > vx1 || bb.y1 < vy0 || bb.y0 > vy1) continue
+        live.push({ pts, e })
+      }
+      if (live.length) {
+        ctx.globalAlpha = 1
+        ctx.lineWidth = 1.8 / cam.zoom
+        ctx.strokeStyle = c('fg', 0.8)
+        ctx.lineJoin = 'round'
+        ctx.lineCap = 'round'
+        ctx.beginPath()
+        for (const { pts } of live) tracePolyline(pts)
+        ctx.stroke()
+        if (marks) {
+          ctx.beginPath()
+          for (const { pts, e } of live) {
+            const a0 = pts[0], a1 = pts[1] ?? pts[0]
+            const z0 = pts[pts.length - 1], z1 = pts[pts.length - 2] ?? z0
+            const sd = unit(a1.x - a0.x, a1.y - a0.y)
+            const td = unit(z1.x - z0.x, z1.y - z0.y)
+            traceMarker(a0.x, a0.y, sd.x, sd.y, e.many === false ? 'bar' : 'fork', false)
+            traceMarker(z0.x, z0.y, td.x, td.y, 'bar', e.optional === true)
+          }
+          ctx.stroke()
+        }
+      }
+    }
     ctx.globalAlpha = 1
+  }
+
+  /** The hub a foreign key points at, or null. `foreignKey` is "table.col" or "schema.table.col". */
+  function hubRefOf(/** @type {string | undefined} */ fk) {
+    if (!fk || !hubs.size) return null
+    const parts = fk.split('.')
+    const t = parts.length >= 3 ? parts[1] : parts[0]
+    return hubs.has(t) ? t : null
   }
 
   /** Count chip on a merged relationship. @param {number} x @param {number} y @param {number} n */
@@ -835,6 +987,21 @@
         ctx.fillText(label, bx + bw / 2, p.y + HDR_H / 2 + 0.5)
         nameW = bx - p.x - 24
       }
+      // How many tables point here. The lines themselves show on hover.
+      const inCount = hubIn.get(n.id) ?? 0
+      if (inCount) {
+        const label = `← ${inCount}`
+        setFont(FONT_BADGE)
+        const bw = ctx.measureText(label).width + 12
+        const bx = p.x + 16 + nameW - bw
+        roundRect(bx, p.y + HDR_H / 2 - 7, bw, 14, 4)
+        setFill(FK_WASH)
+        ctx.fill()
+        setFill(FK_INK)
+        ctx.textAlign = 'center'
+        ctx.fillText(label, bx + bw / 2, p.y + HDR_H / 2 + 0.5)
+        nameW -= bw + 8
+      }
       setFont(`600 13.5px ${FONT_SANS}`)
       setFill(c('fg', 1))
       ctx.textAlign = 'left'
@@ -865,9 +1032,14 @@
         ctx.lineWidth = 0.75 / zoom; ctx.strokeStyle = c('border', 0.12); ctx.stroke()
       }
       const midY = cy + ROW_H / 2
-      const badge = isPk ? 'pk' : isFk ? 'fk' : ''
-      const typeRight = p.x + NODE_W - (badge ? 52 : 16)
-      const nameRight = showTypes ? typeRight - 4 : p.x + NODE_W - (badge ? 46 : 16)
+      // A key into a hub names the hub. That relationship has no line of its
+      // own (see hubEdges), so the row is where it is read.
+      const hubRef = isFk && !isPk ? hubRefOf(col.foreignKey) : null
+      const badge = isPk ? 'pk' : hubRef ? `→ ${hubRef}` : isFk ? 'fk' : ''
+      let bw = badge ? 26 : 0
+      if (hubRef) { setFont(FONT_BADGE); bw = Math.min(110, Math.ceil(ctx.measureText(badge).width) + 14) }
+      const typeRight = p.x + NODE_W - (badge ? bw + 26 : 16)
+      const nameRight = showTypes ? typeRight - 4 : p.x + NODE_W - (badge ? bw + 20 : 16)
 
       // Column name.
       setFont(isPk ? FONT_ROW_PK : FONT_ROW)
@@ -885,7 +1057,7 @@
 
       // PK / FK badge.
       if (badge) {
-        const bw = 26, bx = p.x + NODE_W - bw - 12
+        const bx = p.x + NODE_W - bw - 12
         roundRect(bx, cy + 6, bw, ROW_H - 12, 3)
         setFill(isPk ? PK_WASH : FK_WASH)
         ctx.fill()
@@ -1032,44 +1204,37 @@
   }
 
   // ── Camera ops ─────────────────────────────────────────────────────────
-  export function fit(padding = 0.12) {
+  export function fit(padding = 0.12, ms = 360) {
     if (!nodes.length || !cssW) return
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity
     for (const n of nodes) {
-      const p = posOf(n), h = nodeH(n.data)
+      const p = n.position, h = nodeH(n.data)
       x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y)
       x1 = Math.max(x1, p.x + NODE_W); y1 = Math.max(y1, p.y + h)
     }
     const bw = x1 - x0 || 1, bh = y1 - y0 || 1
     const z = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, Math.min(cssW / bw, cssH / bh) * (1 - padding)))
-    cam.zoom = z
-    cam.panX = (cssW - bw * z) / 2 - x0 * z
-    cam.panY = (cssH - bh * z) / 2 - y0 * z
-    markDirty()
+    flyTo({ zoom: z, panX: (cssW - bw * z) / 2 - x0 * z, panY: (cssH - bh * z) / 2 - y0 * z }, ms)
   }
 
   /** @param {string} id */
   export function focus(id) {
     const n = byId.get(id)
     if (!n || !cssW) return
-    const p = posOf(n), h = nodeH(n.data)
+    const p = n.position, h = nodeH(n.data)
     const z = Math.max(cam.zoom, 0.8)
-    cam.zoom = z
-    cam.panX = cssW / 2 - (p.x + NODE_W / 2) * z
-    cam.panY = cssH / 2 - (p.y + h / 2) * z
-    markDirty()
+    flyTo({ zoom: z, panX: cssW / 2 - (p.x + NODE_W / 2) * z, panY: cssH / 2 - (p.y + h / 2) * z }, 420)
   }
 
   /** @param {number} factor @param {number} [cx] @param {number} [cy] */
-  function zoomBy(factor, cx = cssW / 2, cy = cssH / 2) {
+  function zoomBy(factor, cx = cssW / 2, cy = cssH / 2, ms = 0) {
     const z = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, cam.zoom * factor))
     const wx = (cx - cam.panX) / cam.zoom, wy = (cy - cam.panY) / cam.zoom
-    cam.zoom = z
-    cam.panX = cx - wx * z; cam.panY = cy - wy * z
-    markDirty()
+    flyTo({ zoom: z, panX: cx - wx * z, panY: cy - wy * z }, ms)
   }
-  export function zoomIn() { zoomBy(1.25) }
-  export function zoomOut() { zoomBy(0.8) }
+  // The buttons ease; the wheel is the hand on the dial and stays immediate.
+  export function zoomIn() { zoomBy(1.25, undefined, undefined, 160) }
+  export function zoomOut() { zoomBy(0.8, undefined, undefined, 160) }
 
   // ── Hit testing ───────────────────────────────────────────────────────
   /** @param {number} sx @param {number} sy */
@@ -1086,6 +1251,7 @@
   /** @param {PointerEvent} e */
   function onPointerDown(e) {
     if (!canvas) return
+    cancelCamAnim()
     canvas.setPointerCapture(e.pointerId)
     const r = canvas.getBoundingClientRect()
     const sx = e.clientX - r.left, sy = e.clientY - r.top
@@ -1148,6 +1314,7 @@
   function onWheel(e) {
     e.preventDefault()
     if (!canvas) return
+    cancelCamAnim()
     // Line and page deltas (a notched wheel on some engines) to pixels.
     const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? cssH : 1
     const dx = e.deltaX * unit, dy = e.deltaY * unit

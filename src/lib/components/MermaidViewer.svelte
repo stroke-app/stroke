@@ -4,8 +4,12 @@
   import { cn } from '$lib/utils.js'
   import { svgToPngBlob, downloadBlob, copyPngToClipboard } from '$lib/svg-png.js'
 
-  /** @type {{ code: string, class?: string }} */
-  let { code, class: className = '' } = $props()
+  /**
+   * @type {{ code: string, class?: string, spacing?: { nodeSpacing?: number, layerSpacing?: number, padding?: number } }}
+   * `spacing` goes to the renderer's layout (px between siblings, between layers,
+   * around the canvas); unset, the renderer's own defaults apply.
+   */
+  let { code, class: className = '', spacing = undefined } = $props()
 
   // ── Theme helpers ───────────────────────────────────────────────────────────
 
@@ -19,11 +23,40 @@
   function applyMermaidThemeVars(svg, theme) {
     svg.style.setProperty('--bg', theme.bg)
     svg.style.setProperty('--fg', theme.fg)
-    if (theme.muted) svg.style.setProperty('--muted', theme.muted)
-    if (theme.line) svg.style.setProperty('--line', theme.line)
-    if (theme.accent) svg.style.setProperty('--accent', theme.accent)
-    if (theme.border) svg.style.setProperty('--border', theme.border)
+    // Every variable the renderer reads is set here, on the SVG. Left unset,
+    // `var(--muted)` and friends resolve from the page, where the same names
+    // are the app's chrome fill tokens: edge labels came out in the muted
+    // SURFACE colour (invisible on dark) and arrows in the accent fill.
+    const mix = (/** @type {number} */ pct) => `color-mix(in srgb, ${theme.fg} ${pct}%, ${theme.bg})`
+    svg.style.setProperty('--muted', theme.muted ?? mix(62))
+    svg.style.setProperty('--line', theme.line ?? mix(45))
+    svg.style.setProperty('--accent', theme.accent ?? mix(85))
+    svg.style.setProperty('--border', theme.border ?? mix(22))
+    svg.style.setProperty('--surface', mix(4))
     svg.style.background = theme.bg
+    // Arrowheads in the line colour, not the accent: an orange triangle on
+    // every edge was the loudest thing on the page. And smaller - the
+    // renderer's 8x5 head reads as a flag once the diagram is zoomed in.
+    svg.style.setProperty('--_arrow', theme.line ?? mix(45))
+    for (const m of svg.querySelectorAll('marker')) {
+      const w = m.getAttribute('markerWidth'), h = m.getAttribute('markerHeight')
+      if (w && h && !m.getAttribute('viewBox')) m.setAttribute('viewBox', `0 0 ${w} ${h}`)
+      m.setAttribute('markerWidth', '6')
+      m.setAttribute('markerHeight', '3.75')
+    }
+    // Key badges in the key colours the cards use (ErdCanvas INK), so PK and FK
+    // read the same in the picture as on the canvas instead of one grey chip.
+    const dark = document.documentElement.classList.contains('dark')
+    const ink = dark
+      ? { PK: 'oklch(0.80 0.12 82)', FK: 'oklch(0.70 0.11 252)', UK: 'oklch(0.72 0.03 255)' }
+      : { PK: 'oklch(0.60 0.13 72)', FK: 'oklch(0.52 0.14 255)', UK: 'oklch(0.55 0.03 255)' }
+    for (const t of svg.querySelectorAll('text')) {
+      const key = /** @type {keyof typeof ink} */ ((t.textContent ?? '').trim())
+      if (!(key in ink)) continue
+      t.setAttribute('fill', ink[key])
+      const chip = t.previousElementSibling
+      if (chip instanceof SVGRectElement) chip.setAttribute('fill', `color-mix(in srgb, ${ink[key]} 18%, transparent)`)
+    }
     const bgRect = /** @type {SVGRectElement|null} */ (svg.querySelector('rect.background, rect[class*="background"]'))
     if (bgRect) bgRect.style.fill = theme.bg
   }
@@ -83,7 +116,7 @@
         : _asyncDiagrams[asyncKey]
     }
     try {
-      const svg = renderMermaidSync(normalized, resolveMermaidTheme(themeId))
+      const svg = renderMermaidSync(normalized, { ...resolveMermaidTheme(themeId), font: 'var(--font-sans)', ...(spacing ?? {}) })
       if (mermaidCache.size >= MERMAID_CACHE_MAX) mermaidCache.delete(/** @type {string} */ (mermaidCache.keys().next().value))
       mermaidCache.set(cacheKey, svg)
       return svg
@@ -128,6 +161,9 @@
 
       // ── Pan / zoom ──
       svg.style.transformOrigin = '0 0'
+      // Its own compositor layer: a pan then moves a rasterised layer instead
+      // of repainting every glyph of the diagram per frame.
+      svg.style.willChange = 'transform'
       let scale = 1, tx = 0, ty = 0
       let dragging = false, ox = 0, oy = 0
       let rafId = 0
@@ -227,8 +263,21 @@
 
   let svgContent = $state('')
 
+  // The first picture is drawn at once. Every later change (a keystroke in the
+  // code pane, a hop switch) waits until the input has been still for a
+  // moment: a render is synchronous, and on a page of tables it is tens of
+  // milliseconds that used to land on every keystroke.
+  let _renderedOnce = false
   $effect(() => {
-    svgContent = processMermaidSvg(code)
+    const c = code
+    void spacing
+    if (!_renderedOnce) {
+      _renderedOnce = true
+      svgContent = processMermaidSvg(c)
+      return
+    }
+    const t = setTimeout(() => { svgContent = processMermaidSvg(c) }, 160)
+    return () => clearTimeout(t)
   })
 
   // ── Container ref (needed for dispatch + export) ────────────────────────────

@@ -58,127 +58,105 @@
   const visited = $derived(new Set(path.split(/[><:]/g).filter(Boolean)))
 </script>
 
-<div class="overflow-hidden rounded-lg border transition-colors {isOut ? 'border-info/20 bg-info/[0.04] hover:border-info/35' : 'border-success/20 bg-success/[0.04] hover:border-success/35'}">
-  <!-- Header row -->
-  <div class="flex items-center gap-2.5 px-3 py-2">
-    <!-- Direction + relation label -->
-    <div class="flex shrink-0 items-center gap-1.5">
-      {#if isOut}
-        <ArrowUpRight class="size-3.5 text-info" />
-      {:else}
-        <ArrowDownRight class="size-3.5 text-success" />
-      {/if}
-      <span class="font-mono text-ui-3xs text-muted-foreground">
-        {isOut ? `${fromCol} → ${tableName}.${toCol}` : `${tableName}.${fromCol} → ${toCol}`}
-      </span>
-    </div>
+<!-- One relationship: a list row (DESIGN_SYSTEM §8), the table it leads to as
+     the label and the column pair as its secondary line. Children nest under
+     a hairline, not inside tinted boxes. -->
+<div>
+  <div class="group/rel flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 transition-colors hover:bg-muted/50">
+    {#if isOut}
+      <ArrowUpRight class="size-4 shrink-0 text-muted-foreground" aria-label="References" />
+    {:else}
+      <ArrowDownRight class="size-4 shrink-0 text-muted-foreground" aria-label="Referenced by" />
+    {/if}
 
-    <!-- Table name, click to jump to root -->
     <button
       type="button"
-      class="min-w-0 flex-1 truncate text-left font-mono text-ui-xs font-semibold hover:underline {isOut ? 'text-info' : 'text-success'}"
+      class="flex min-w-0 flex-1 flex-col items-start text-left"
       onclick={() => onfocustable(tableName)}
-    >{tableName}</button>
+      title="Explore {tableName}"
+    >
+      <span class="w-full truncate font-mono text-ui-xs text-foreground/85 group-hover/rel:text-foreground">{tableName}</span>
+      <span class="w-full truncate font-mono text-ui-2xs text-muted-foreground">
+        {isOut ? `${fromCol} → ${tableName}.${toCol}` : `${tableName}.${fromCol} → ${toCol}`}
+      </span>
+    </button>
 
-    <div class="flex shrink-0 items-center gap-1">
-      <!-- Row count, filled in asynchronously; absent until the background pass resolves -->
-      {#if rowCount !== undefined}
-        <span
-          class="inline-flex h-5 items-center gap-1 rounded px-1.5 font-mono text-ui-3xs tabular-nums text-muted-foreground"
-          title="{rowCount.toLocaleString()} row{rowCount === 1 ? '' : 's'}"
-        >
-          <Rows3 class="size-3 opacity-70" />{formatTableRowCount(rowCount)}
-        </span>
-      {/if}
-
-      <!-- Toggle columns -->
-      {#if meta}
-        <button
-          type="button"
-          class="inline-flex h-5 items-center gap-0.5 rounded px-1.5 font-mono text-ui-3xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          onclick={() => toggleCols(colKey)}
-        >{colsOpen ? '−' : '+'}{meta.columns.length}c</button>
-      {/if}
-
-      <!-- Toggle expand -->
-      {#if hasMore}
-        <button
-          type="button"
-          class="inline-flex size-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          onclick={() => toggleExpand(expKey)}
-          title="{isOpen ? 'Collapse' : 'Expand'} relationships"
-        >
-          {#if isOpen}<ChevronDown class="size-3" />{:else}<ChevronRight class="size-3" />{/if}
-        </button>
-      {:else}
-        <span class="size-5"></span>
-      {/if}
-
-      <!-- Open table -->
+    {#if rowCount !== undefined}
+      <span class="inline-flex shrink-0 items-center gap-1 font-mono text-ui-2xs tabular-nums text-muted-foreground" title="{rowCount.toLocaleString()} row{rowCount === 1 ? '' : 's'}">
+        <Rows3 class="size-3.5" />{formatTableRowCount(rowCount)}
+      </span>
+    {/if}
+    {#if meta}
       <button
         type="button"
-        class="inline-flex size-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-        onclick={() => onopentable?.(activeSchema, tableName)}
-        title="Open table"
-      ><ExternalLink class="size-3" /></button>
-    </div>
+        aria-pressed={colsOpen}
+        class="inline-flex h-7 shrink-0 items-center rounded-md px-2 font-mono text-ui-2xs tabular-nums text-muted-foreground transition-colors hover:bg-accent hover:text-foreground {colsOpen ? 'bg-accent text-foreground' : ''}"
+        onclick={() => toggleCols(colKey)}
+        title="{colsOpen ? 'Hide' : 'Show'} the columns of {tableName}"
+      >{meta.columns.length} cols</button>
+    {/if}
+    {#if hasMore}
+      <button
+        type="button"
+        class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        onclick={() => toggleExpand(expKey)}
+        title="{isOpen ? 'Collapse' : 'Expand'} the relationships of {tableName}"
+      >
+        {#if isOpen}<ChevronDown class="size-3.5" />{:else}<ChevronRight class="size-3.5" />{/if}
+      </button>
+    {:else}
+      <span class="size-7 shrink-0"></span>
+    {/if}
+    <button
+      type="button"
+      class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+      onclick={() => onopentable?.(activeSchema, tableName)}
+      title="Open {tableName}"
+    ><ExternalLink class="size-3.5" /></button>
   </div>
 
-  <!-- Columns panel -->
   {#if colsOpen && meta}
-    <div class="border-t border-border/20 bg-background/40 px-3 py-1.5">
+    <div class="mb-1 ml-[1.9rem] border-l border-border/50 pl-3">
       {#each meta.columns as col (col.name)}
         {@const isPk = meta.pkCols.has(col.name)}
         {@const isFk = !!col.foreignKey}
-        <div class="flex items-center gap-1.5 py-[2px]">
-          {#if isPk}<KeyRound class="size-3 shrink-0 text-warning" />
-          {:else if isFk}<Link class="size-3 shrink-0 text-info" />
-          {:else}<span class="size-2.5 shrink-0"></span>{/if}
-          <span class="font-mono text-ui-3xs {isPk ? 'text-warning' : isFk ? 'text-info' : 'text-foreground/55'}">{col.name}</span>
-          <span class="ml-auto font-mono text-ui-3xs text-muted-foreground">{col.dataType}</span>
+        <div class="flex h-6 items-center gap-2">
+          {#if isPk}<KeyRound class="size-3.5 shrink-0 text-warning" aria-label="Primary key" />
+          {:else if isFk}<Link class="size-3.5 shrink-0 text-info" aria-label="Foreign key" />
+          {:else}<span class="size-3.5 shrink-0"></span>{/if}
+          <span class="min-w-0 flex-1 truncate font-mono text-ui-2xs {isPk ? 'text-warning' : isFk ? 'text-info' : 'text-foreground/85'}">{col.name}</span>
+          <span class="shrink-0 font-mono text-ui-2xs text-muted-foreground">{col.dataType}</span>
         </div>
       {/each}
     </div>
   {/if}
 
-  <!-- Expanded children (recursive) -->
   {#if isOpen && hasMore}
     {@const shared = { tableMeta, outbound, inbound, expanded, showCols, rowCounts, toggleExpand, toggleCols, onfocustable, onopentable, activeSchema }}
-    <div class="border-t border-border/20 bg-background/30 p-2">
-
+    <div class="ml-[1.9rem] border-l border-border/50 pl-2">
       {#if nodeOut.length > 0}
-        <div class="mb-1 px-1 font-mono text-ui-3xs uppercase tracking-widest text-muted-foreground">References</div>
-        <div class="flex flex-col gap-1.5 pl-2">
-          {#each nodeOut as rel (rel.col)}
-            {@const childPath = `${path}>${rel.refTable}:${rel.col}`}
-            {#if !visited.has(rel.refTable) || depth < 3}
-              <svelte:self tableName={rel.refTable} fromCol={rel.col} toCol={rel.refCol}
-                direction="out" depth={depth + 1} path={childPath} {...shared} />
-            {:else}
-              <div class="flex items-center gap-2 rounded-md border border-border/20 px-3 py-1.5 font-mono text-ui-3xs text-muted-foreground">
-                <Link class="size-3" />{rel.refTable} (circular)
-              </div>
-            {/if}
-          {/each}
-        </div>
+        <p class="px-2.5 pb-0.5 pt-1.5 text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground/55">References</p>
+        {#each nodeOut as rel (rel.col)}
+          {@const childPath = `${path}>${rel.refTable}:${rel.col}`}
+          {#if !visited.has(rel.refTable) || depth < 3}
+            <svelte:self tableName={rel.refTable} fromCol={rel.col} toCol={rel.refCol}
+              direction="out" depth={depth + 1} path={childPath} {...shared} />
+          {:else}
+            <div class="flex h-7 items-center gap-2 px-2.5 font-mono text-ui-2xs text-muted-foreground"><Link class="size-3.5" />{rel.refTable} · circular</div>
+          {/if}
+        {/each}
       {/if}
-
       {#if nodeIn.length > 0}
-        {#if nodeOut.length > 0}<div class="my-1.5 border-t border-border/20"></div>{/if}
-        <div class="mb-1 px-1 font-mono text-ui-3xs uppercase tracking-widest text-muted-foreground">Referenced by</div>
-        <div class="flex flex-col gap-1.5 pl-2">
-          {#each nodeIn as rel (`${rel.fromTable}${rel.fromCol}`)}
-            {@const childPath = `${path}<${rel.fromTable}:${rel.fromCol}`}
-            {#if !visited.has(rel.fromTable) || depth < 3}
-              <svelte:self tableName={rel.fromTable} fromCol={rel.fromCol} toCol={rel.refCol}
-                direction="in" depth={depth + 1} path={childPath} {...shared} />
-            {:else}
-              <div class="flex items-center gap-2 rounded-md border border-border/20 px-3 py-1.5 font-mono text-ui-3xs text-muted-foreground">
-                <Link class="size-3" />{rel.fromTable} (circular)
-              </div>
-            {/if}
-          {/each}
-        </div>
+        <p class="px-2.5 pb-0.5 pt-1.5 text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground/55">Referenced by</p>
+        {#each nodeIn as rel (`${rel.fromTable}${rel.fromCol}`)}
+          {@const childPath = `${path}<${rel.fromTable}:${rel.fromCol}`}
+          {#if !visited.has(rel.fromTable) || depth < 3}
+            <svelte:self tableName={rel.fromTable} fromCol={rel.fromCol} toCol={rel.refCol}
+              direction="in" depth={depth + 1} path={childPath} {...shared} />
+          {:else}
+            <div class="flex h-7 items-center gap-2 px-2.5 font-mono text-ui-2xs text-muted-foreground"><Link class="size-3.5" />{rel.fromTable} · circular</div>
+          {/if}
+        {/each}
       {/if}
     </div>
   {/if}

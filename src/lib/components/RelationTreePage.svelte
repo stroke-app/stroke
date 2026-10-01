@@ -3,6 +3,7 @@
   import { listTables, getTableColumnStructure, listIndexes, getTableRowCounts } from '$lib/api.js'
   import { formatTableRowCount } from '$lib/table-list.js'
   import RelationTreeNode from './RelationTreeNode.svelte'
+  import { Button } from '$lib/components/ui/button/index.js'
   import Loader from '@lucide/svelte/icons/loader'
   import RefreshCw from '@lucide/svelte/icons/refresh-cw'
   import Search from '@lucide/svelte/icons/search'
@@ -16,11 +17,25 @@
   import ArrowDownRight from '@lucide/svelte/icons/arrow-down-right'
   import ExternalLink from '@lucide/svelte/icons/external-link'
   import Table2 from '@lucide/svelte/icons/table-2'
+  import ZoomIn from '@lucide/svelte/icons/zoom-in'
+  import ZoomOut from '@lucide/svelte/icons/zoom-out'
+  import Maximize2 from '@lucide/svelte/icons/maximize-2'
+  import MermaidViewer from './MermaidViewer.svelte'
+  import { relationsToFlowchart } from '$lib/erd-mermaid.js'
+  import { hubTables } from '$lib/erd-filter.js'
+  import PanelLeftClose from '@lucide/svelte/icons/panel-left-close'
+  import PanelLeftOpen from '@lucide/svelte/icons/panel-left-open'
 
   let {
     schema = 'public',
     schemas = /** @type {string[]} */ ([]),
     onopentable = /** @type {((schema:string, table:string)=>void)|undefined} */ (undefined),
+    /** Inside another page (the schema map): no title row of its own, and the
+     *  flowchart is the first thing shown. */
+    embedded = false,
+    /** Tables already loaded by the parent. Set, nothing is fetched here but
+     *  the row counts. @type {Map<string, TableMeta> | null} */
+    initialMeta = null,
   } = $props()
 
   /**
@@ -44,6 +59,44 @@
 
   /** @type {Map<string, TableMeta>} */
   let tableMeta = $state(new Map())
+
+  // ── Flow / list ───────────────────────────────────────────────────────────
+  /** Around the focused table as a flowchart, the whole page as one, or the list. */
+  let view = $state(/** @type {'flow' | 'all' | 'list'} */ ('list'))
+  /** Hops from the focused table the flowchart reaches. Two is plenty: three is the schema. */
+  let depth = $state(1)
+  /** The table list on the left; folded away, the drawing gets its width.
+   *  Inside the data model it starts folded - that page is about the picture. */
+  let listOpen = $state(untrack(() => !embedded))
+  /** @type {MermaidViewer | null} */
+  let flowViewer = $state(null)
+  /** Every relationship on the page, in the generator's shape. */
+  const flowRels = $derived.by(() => {
+    const rels = []
+    for (const [table, refs] of outbound) for (const r of refs) rels.push({ source: table, target: r.refTable, sourceCol: r.col })
+    return rels
+  })
+  const flowCode = $derived(
+    focusedTable && tableMeta.has(focusedTable)
+      ? relationsToFlowchart([...tableMeta.values()], flowRels, { focus: focusedTable, depth })
+      : '',
+  )
+  /** Above this many tables the whole-page map waits for a click: it is seconds of rendering. */
+  const ALL_AUTO_MAX = 80
+  let allForce = $state(false)
+  const allGated = $derived(tableMeta.size > ALL_AUTO_MAX && !allForce)
+  /**
+   * The whole page, left to right, arrows from the key to what it points at.
+   * Links into hub tables (`tenants` from nearly every table) are left out and
+   * counted: they are most of the ink and none of the shape. One arrow per
+   * pair, named after every column that joins the two.
+   */
+  const flowHubs = $derived(hubTables(flowRels, tableMeta.size))
+  const allRels = $derived(flowRels.filter((r) => !flowHubs.has(r.target)))
+  const allCode = $derived.by(() => {
+    if (!tableMeta.size) return ''
+    return relationsToFlowchart([...tableMeta.values()], allRels, { merge: true, direction: 'LR' })
+  })
 
   /**
    * Per-table exact row counts, filled in a BACKGROUND pass after the tree has
@@ -139,7 +192,8 @@
   async function load() {
     loading = true; loadedCount = 0; error = ''; tableMeta = new Map(); rowCounts = new Map()
     try {
-      const tableList = /** @type {{ name: string }[]} */ (await listTables(activeSchema))
+      const tableList = initialMeta ? [] : /** @type {{ name: string }[]} */ (await listTables(activeSchema))
+      if (initialMeta) tableMeta = new Map(initialMeta)
       totalCount = tableList.length
       for (let i = 0; i < tableList.length; i += BATCH) {
         const chunk = tableList.slice(i, i + BATCH)
@@ -159,8 +213,9 @@
         tableMeta = new Map(tableMeta)
         await tick()
       }
-      // Refine PKs from indexes
+      // Refine PKs from indexes - the parent's tables already carry them.
       try {
+        if (initialMeta) throw null
         const idxs = /** @type {{ tableName:string, isPrimary:boolean, columns:string }[]} */ (
           await listIndexes(activeSchema)
         )
@@ -188,7 +243,16 @@
     }
   }
 
-  $effect(() => { activeSchema; void load() })
+  $effect(() => {
+    void activeSchema
+    void initialMeta
+    // Untracked on purpose. With the tables handed in there is no await before
+    // load() reads and writes the tree's own state (tableMeta, focusedTable),
+    // and an effect that reads what it writes runs itself into the ground.
+    untrack(() => void load())
+  })
+  // Embedded, the schema is the parent's choice; the picker here is hidden.
+  $effect(() => { if (embedded) activeSchema = schema })
 </script>
 
 <svelte:window onkeydown={(e) => {
@@ -201,19 +265,22 @@
 <div class="flex min-h-0 flex-1 overflow-hidden">
 
   <!-- ── Left: table list ──────────────────────────────────────────────────── -->
+  {#if listOpen}
   <div class="flex w-56 shrink-0 flex-col border-r border-border/50 bg-panel">
-    <div class="studio-chrome flex h-10 shrink-0 items-center gap-2 border-b border-border/60 px-3" data-studio-chrome>
-      <GitBranch class="size-3.5 shrink-0 text-muted-foreground" />
-      <span class="font-mono text-ui-xs font-semibold text-foreground/70">Relation Tree</span>
-      <button
-        type="button"
-        disabled={loading}
-        class="ml-auto flex size-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40"
-        onclick={() => void load()}
-      >
-        <RefreshCw class="size-3 {loading ? 'animate-spin' : ''}" />
-      </button>
-    </div>
+    {#if !embedded}
+      <div class="studio-chrome flex h-10 shrink-0 items-center gap-2 border-b border-border/60 px-3" data-studio-chrome>
+        <GitBranch class="size-3.5 shrink-0 text-muted-foreground" />
+        <span class="font-mono text-ui-xs font-semibold text-foreground/70">Relation Tree</span>
+        <button
+          type="button"
+          disabled={loading}
+          class="ml-auto flex size-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40"
+          onclick={() => void load()}
+        >
+          <RefreshCw class="size-3 {loading ? 'animate-spin' : ''}" />
+        </button>
+      </div>
+    {/if}
 
     <!-- Search -->
     <div class="relative px-2 py-1.5">
@@ -267,9 +334,74 @@
       {/if}
     </div>
   </div>
+  {/if}
 
-  <!-- ── Right: tree ───────────────────────────────────────────────────────── -->
-  <div class="min-h-0 min-w-0 flex-1 overflow-y-auto bg-background p-4">
+  <!-- ── Right: the focused table's relationships, drawn or listed ────────── -->
+  <div class="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
+  <div class="flex h-9 shrink-0 items-center gap-2 border-b border-border/40 bg-panel px-2">
+    <button
+      type="button"
+      title={listOpen ? 'Hide the table list' : 'Show the table list'}
+      aria-pressed={listOpen}
+      onclick={() => (listOpen = !listOpen)}
+      class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+    >{#if listOpen}<PanelLeftClose class="size-3.5" />{:else}<PanelLeftOpen class="size-3.5" />{/if}</button>
+    {#if view === 'all'}
+      <span class="min-w-0 truncate font-mono text-ui-xs font-semibold text-foreground/80">{activeSchema}</span>
+      <span class="shrink-0 font-mono text-ui-3xs tabular-nums text-muted-foreground">
+        {tableMeta.size} tables · {allRels.length} links{flowRels.length - allRels.length ? ` · ${flowRels.length - allRels.length} hub links left out` : ''}
+      </span>
+    {:else if focusedTable && tableMeta.has(focusedTable)}
+      <span class="min-w-0 truncate font-mono text-ui-xs font-semibold text-foreground/80">{focusedTable}</span>
+      <span class="shrink-0 font-mono text-ui-3xs tabular-nums text-muted-foreground">
+        {(outbound.get(focusedTable)?.length ?? 0)} out · {(inbound.get(focusedTable)?.length ?? 0)} in
+      </span>
+    {/if}
+    <span class="ml-auto"></span>
+    {#if view === 'flow'}
+      <span class="text-ui-2xs text-muted-foreground">Hops</span>
+      <div class="field-surface inline-flex h-6 items-center bg-muted/25 p-0.5" title="How far from the table to draw: its neighbours, or their neighbours too">
+        {#each [1, 2] as d (d)}
+          <button
+            type="button"
+            aria-pressed={depth === d}
+            onclick={() => (depth = d)}
+            class="inline-flex h-5 min-w-6 items-center justify-center rounded-[5px] px-2 text-ui-2xs tabular-nums transition-[background-color,color] {depth === d ? 'bg-background text-foreground ring-1 ring-inset ring-border/70' : 'text-muted-foreground hover:text-foreground'}"
+          >{d}</button>
+        {/each}
+      </div>
+    {/if}
+    {#if view === 'flow' || view === 'all'}
+      <div class="flex items-center gap-0.5">
+        <button type="button" title="Zoom out" onclick={() => flowViewer?.dispatch('diagram:zoomout')} class="flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"><ZoomOut class="size-3.5" /></button>
+        <button type="button" title="Zoom in" onclick={() => flowViewer?.dispatch('diagram:zoomin')} class="flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"><ZoomIn class="size-3.5" /></button>
+        <button type="button" title="Fit" onclick={() => flowViewer?.dispatch('diagram:reset')} class="flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"><Maximize2 class="size-3.5" /></button>
+      </div>
+    {/if}
+    <div class="field-surface inline-flex h-6 items-center bg-muted/25 p-0.5">
+      {#each [{ id: 'flow', label: 'Flow', hint: 'A flowchart around the table: arrows from the key to what it points at' }, { id: 'all', label: 'All', hint: 'Every table on the page, one line per link' }, { id: 'list', label: 'List', hint: 'Every relationship, table by table, with row counts' }] as m (m.id)}
+        <button
+          type="button"
+          title={m.hint}
+          aria-pressed={view === m.id}
+          onclick={() => (view = /** @type {'flow'|'all'|'list'} */ (m.id))}
+          class="inline-flex h-5 items-center rounded-[5px] px-2 text-ui-2xs transition-[background-color,color] {view === m.id ? 'bg-background text-foreground ring-1 ring-inset ring-border/70' : 'text-muted-foreground hover:text-foreground'}"
+        >{m.label}</button>
+      {/each}
+    </div>
+  </div>
+  {#if view === 'all' && allGated}
+    <div class="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
+      <p class="text-ui-sm text-foreground">{tableMeta.size} tables is a few seconds of rendering.</p>
+      <p class="max-w-sm text-ui-xs text-muted-foreground">Flow draws one table and its neighbours instantly. Or draw the whole page anyway.</p>
+      <Button size="sm" onclick={() => (allForce = true)}>Draw {tableMeta.size} tables</Button>
+    </div>
+  {:else if (view === 'flow' && focusedTable && tableMeta.has(focusedTable)) || (view === 'all' && tableMeta.size > 0)}
+    <div class="min-h-0 flex-1 overflow-hidden">
+      <MermaidViewer bind:this={flowViewer} code={view === 'all' ? allCode : flowCode} spacing={{ nodeSpacing: 36, layerSpacing: 96, padding: 48 }} class="h-full w-full" />
+    </div>
+  {:else}
+  <div class="min-h-0 min-w-0 flex-1 overflow-y-auto p-4">
     {#if !focusedTable || !tableMeta.has(focusedTable)}
       <div class="flex h-full min-h-[200px] flex-col items-center justify-center gap-3">
         <GitBranch class="size-10 text-muted-foreground" />
@@ -283,52 +415,44 @@
       {@const rootCount = rowCounts.get(focusedTable)}
 
       <div class="mx-auto max-w-4xl">
-        <!-- Root card -->
-        <div class="mb-6 overflow-hidden rounded-lg border border-primary/30 bg-primary/5 shadow-sm">
-          <div class="flex items-center gap-3 border-b border-primary/20 px-4 py-3">
-            <div class="flex size-8 items-center justify-center rounded-lg bg-primary/15">
-              <Table2 class="size-4 text-primary" />
-            </div>
+        <!-- The table itself: a card (DESIGN_SYSTEM §9) with its columns behind
+             a disclosure. Plain surfaces, one primary action. -->
+        <div class="mb-5 rounded-lg border border-border bg-panel">
+          <div class="flex items-center gap-3 px-4 py-3">
+            <Table2 class="size-4 shrink-0 text-muted-foreground" />
             <div class="min-w-0 flex-1">
-              <p class="font-mono text-ui-sm font-bold text-foreground">{focusedTable}</p>
-              <p class="font-mono text-ui-2xs text-muted-foreground">
-                {rootMeta?.columns.length ?? 0} columns ·
-                {rootOut.length} outgoing FK ·
-                {rootIn.length} incoming FK{#if rootCount !== undefined} · <span class="tabular-nums text-foreground/70">{formatTableRowCount(rootCount)}</span> rows{/if}
+              <p class="truncate font-mono text-ui font-semibold text-foreground">{focusedTable}</p>
+              <p class="font-mono text-ui-xs tabular-nums text-muted-foreground">
+                {rootMeta?.columns.length ?? 0} columns · {rootOut.length} references · {rootIn.length} referenced by{#if rootCount !== undefined} · {formatTableRowCount(rootCount)} rows{/if}
               </p>
             </div>
-            <button
-              type="button"
-              class="inline-flex h-7 items-center gap-1.5 rounded-md bg-primary px-3 text-ui-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
-              onclick={() => onopentable?.(activeSchema, focusedTable)}
-            >
-              <ExternalLink class="size-3" />Open
-            </button>
+            <Button size="sm" onclick={() => onopentable?.(activeSchema, focusedTable)}>
+              <ExternalLink class="size-3.5" />Open
+            </Button>
           </div>
-
-          <!-- Root columns toggle -->
           {#if rootMeta}
             {@const ck = 'root-cols'}
             {@const open = showCols.has(ck)}
             <button
               type="button"
-              class="flex w-full items-center gap-2 px-4 py-2 text-left transition-colors hover:bg-primary/5"
+              aria-expanded={open}
+              class="flex h-8 w-full items-center gap-2 border-t border-border/50 px-4 text-left text-ui-xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
               onclick={() => toggleCols(ck)}
             >
-              {#if open}<ChevronDown class="size-3 text-muted-foreground" />{:else}<ChevronRight class="size-3 text-muted-foreground" />{/if}
-              <span class="font-mono text-ui-2xs text-muted-foreground">Columns ({rootMeta.columns.length})</span>
+              {#if open}<ChevronDown class="size-3.5" />{:else}<ChevronRight class="size-3.5" />{/if}
+              Columns <span class="tabular-nums">({rootMeta.columns.length})</span>
             </button>
             {#if open}
-              <div class="border-t border-primary/10 bg-background/60 px-4 pb-2 pt-1">
+              <div class="border-t border-border/50 px-4 py-1.5">
                 {#each rootMeta.columns as col (col.name)}
                   {@const isPk = rootMeta.pkCols.has(col.name)}
                   {@const isFk = !!col.foreignKey}
-                  <div class="flex items-center gap-2 py-0.5">
-                    {#if isPk}<KeyRound class="size-3 shrink-0 text-warning" />
-                    {:else if isFk}<Link class="size-3 shrink-0 text-info" />
-                    {:else}<span class="size-3 shrink-0"></span>{/if}
-                    <span class="font-mono text-ui-3xs {isPk ? 'font-semibold text-warning' : isFk ? 'text-info' : 'text-foreground/60'}">{col.name}</span>
-                    <span class="ml-auto font-mono text-ui-3xs text-muted-foreground">{col.dataType}</span>
+                  <div class="flex h-6 items-center gap-2">
+                    {#if isPk}<KeyRound class="size-3.5 shrink-0 text-warning" aria-label="Primary key" />
+                    {:else if isFk}<Link class="size-3.5 shrink-0 text-info" aria-label="Foreign key" />
+                    {:else}<span class="size-3.5 shrink-0"></span>{/if}
+                    <span class="min-w-0 flex-1 truncate font-mono text-ui-xs {isPk ? 'text-warning' : isFk ? 'text-info' : 'text-foreground/85'}">{col.name}</span>
+                    <span class="shrink-0 font-mono text-ui-2xs text-muted-foreground">{col.dataType}</span>
                   </div>
                 {/each}
               </div>
@@ -338,16 +462,14 @@
 
         <!-- Outgoing FKs (this → other) -->
         {#if rootOut.length > 0}
-          <section class="mb-6">
-            <div class="mb-3 flex items-center gap-2">
-              <ArrowUpRight class="size-4 text-info" />
-              <h3 class="font-mono text-ui-xs font-semibold text-foreground/70">
-                References <span class="text-muted-foreground">({rootOut.length})</span>
+          <section class="mb-4">
+            <div class="mb-1 flex items-center gap-2 px-2.5">
+              <h3 class="text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground/55">
+                References <span class="tabular-nums">({rootOut.length})</span>
               </h3>
-              <div class="flex-1 border-t border-border/30"></div>
-              <span class="font-mono text-ui-3xs text-muted-foreground">this FK → other PK</span>
+              <span class="ml-auto text-ui-2xs text-muted-foreground">this key → their row</span>
             </div>
-            <div class="flex flex-col gap-2 pl-4">
+            <div class="flex flex-col">
               {#each rootOut as rel (rel.col)}
                 <RelationTreeNode
                   tableName={rel.refTable}
@@ -365,16 +487,14 @@
 
         <!-- Incoming FKs (other → this) -->
         {#if rootIn.length > 0}
-          <section class="mb-6">
-            <div class="mb-3 flex items-center gap-2">
-              <ArrowDownRight class="size-4 text-success" />
-              <h3 class="font-mono text-ui-xs font-semibold text-foreground/70">
-                Referenced by <span class="text-muted-foreground">({rootIn.length})</span>
+          <section class="mb-4">
+            <div class="mb-1 flex items-center gap-2 px-2.5">
+              <h3 class="text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground/55">
+                Referenced by <span class="tabular-nums">({rootIn.length})</span>
               </h3>
-              <div class="flex-1 border-t border-border/30"></div>
-              <span class="font-mono text-ui-3xs text-muted-foreground">other FK → this PK</span>
+              <span class="ml-auto text-ui-2xs text-muted-foreground">their key → this row</span>
             </div>
-            <div class="flex flex-col gap-2 pl-4">
+            <div class="flex flex-col">
               {#each rootIn as rel (`${rel.fromTable}${rel.fromCol}`)}
                 <RelationTreeNode
                   tableName={rel.fromTable}
@@ -391,12 +511,11 @@
         {/if}
 
         {#if rootOut.length === 0 && rootIn.length === 0}
-          <div class="flex flex-col items-center gap-2 py-10 text-center">
-            <Table2 class="size-8 text-muted-foreground" />
-            <p class="font-mono text-ui-xs text-muted-foreground">No FK relationships found for this table</p>
-          </div>
+          <p class="px-2.5 py-6 text-ui-xs text-muted-foreground">No foreign keys in or out of this table.</p>
         {/if}
       </div>
     {/if}
+  </div>
+  {/if}
   </div>
 </div>

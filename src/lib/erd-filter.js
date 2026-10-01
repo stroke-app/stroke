@@ -136,3 +136,39 @@ export function mergeParallelEdges(edges) {
   }
   return out
 }
+
+/** A table is a hub once this many tables carry a key to it... */
+export const HUB_MIN_REFS = 6
+/** ...and that is at least this share of the tables on the diagram... */
+export const HUB_SHARE = 0.15
+/** ...or this many whatever the share: 25 lines into one card is a fan on any page. */
+export const HUB_ABS_REFS = 25
+
+/**
+ * The hub tables of a diagram: the ones most of it points at.
+ *
+ * `tenant_id` on every table of a multi-tenant schema, `user_id` on half of
+ * them. Drawn, those are a line from nearly every card to one place - most of
+ * the ink on the page, and none of its structure. A hub's relationships are
+ * kept and shown on demand; the clusters form around the links that remain.
+ *
+ * Counted per source table, not per key, so two keys into `users` from one
+ * table are one vote.
+ * @param {{ source: string, target: string }[]} edges
+ * @param {number} tableCount tables on the diagram
+ * @returns {Set<string>}
+ */
+export function hubTables(edges, tableCount) {
+  /** @type {Map<string, Set<string>>} */
+  const from = new Map()
+  for (const e of edges) {
+    if (e.source === e.target) continue
+    let s = from.get(e.target)
+    if (!s) { s = new Set(); from.set(e.target, s) }
+    s.add(e.source)
+  }
+  const min = Math.min(HUB_ABS_REFS, Math.max(HUB_MIN_REFS, Math.round(tableCount * HUB_SHARE)))
+  const out = new Set()
+  for (const [t, s] of from) if (s.size >= min) out.add(t)
+  return out
+}

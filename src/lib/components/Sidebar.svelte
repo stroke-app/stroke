@@ -2058,7 +2058,7 @@
                         </ContextMenu.Item>
                         <ContextMenu.Item onSelect={() => onopentableerd(tableName)}>
                           <Icon name="git-branch" />
-                          Open ERD
+                          Open in data model
                         </ContextMenu.Item>
                         <ContextMenu.Item onSelect={() => onviewddl(tableName)}>
                           <Icon name="code-2" />

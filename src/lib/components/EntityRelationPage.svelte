@@ -21,6 +21,23 @@
   import ListFilter from '@lucide/svelte/icons/list-filter'
   import Crosshair from '@lucide/svelte/icons/crosshair'
   import EyeOff from '@lucide/svelte/icons/eye-off'
+  import GitBranch from '@lucide/svelte/icons/git-branch'
+  import ListTree from '@lucide/svelte/icons/list-tree'
+  import MermaidViewer from './MermaidViewer.svelte'
+  import RelationTreePage from './RelationTreePage.svelte'
+  import CodeEditor from './CodeEditor.svelte'
+  import { Button } from '$lib/components/ui/button/index.js'
+  import ZoomIn from '@lucide/svelte/icons/zoom-in'
+  import ZoomOut from '@lucide/svelte/icons/zoom-out'
+  import Maximize2 from '@lucide/svelte/icons/maximize-2'
+  import BookOpen from '@lucide/svelte/icons/book-open'
+  import FileCode from '@lucide/svelte/icons/file-code'
+  import PanelLeftClose from '@lucide/svelte/icons/panel-left-close'
+  import PanelLeftOpen from '@lucide/svelte/icons/panel-left-open'
+  import WrapText from '@lucide/svelte/icons/wrap-text'
+  import Minimize2 from '@lucide/svelte/icons/minimize-2'
+  import { saveDiagram } from '$lib/stores/saved-diagrams.js'
+  import { erdToMermaid } from '$lib/erd-mermaid.js'
   import { toast } from "$lib/components/ui/sonner/toast.svelte.js"
   import { svgStringToPngBlob, copyPngToClipboard } from '$lib/svg-png.js'
   import { Popover, PopoverTrigger, PopoverContent } from '$lib/components/ui/popover/index.js'
@@ -28,7 +45,8 @@
   import { loadErdSettings, saveErdSettings, SPACING_PRESETS, SCOPE_DEFAULTS, DEFAULT_ERD_SETTINGS } from '$lib/stores/erd-settings.js'
   import { routeEdges, routeToSvgPath, corridorPathOrtho, CLEAR, MAX_ROUTED_NODES } from '$lib/erd-routing.js'
   import { separateCards, wrapTallRanks } from '$lib/erd-layout.js'
-  import { visibleTables, visibleRels, relatedTo, linkedTables, mergeParallelEdges } from '$lib/erd-filter.js'
+  import { layoutWithElk } from '$lib/erd-elk.js'
+  import { visibleTables, visibleRels, relatedTo, linkedTables, mergeParallelEdges, hubTables } from '$lib/erd-filter.js'
   import { cn } from '$lib/utils.js'
 
   let {
@@ -39,6 +57,8 @@
     /** When set, the ERD is scoped to this table + the tables directly FK-connected to it. */
     focusTable = '',
     onclearfocus = /** @type {(() => void)|undefined} */ (undefined),
+    /** Open the Diagrams tab, after the Mermaid view saved its code there. */
+    onopendiagrams = /** @type {(() => void)|undefined} */ (undefined),
     /** True when the host chrome (the table tab bar) owns the Export menu. The
      *  standalone ERD tab has no such menu, so it keeps its own entries. */
     hostExports = false,
@@ -158,7 +178,7 @@
   /** @type {any[]} */
   let edges = $state.raw([])
   /** Foreign keys actually drawn - a merged line stands for several of them. */
-  const fkCount = $derived(edges.reduce((n, e) => n + (e.mergedCount ?? 1), 0))
+  const fkCount = $derived([...edges, ...hubEdges].reduce((n, e) => n + (e.mergedCount ?? 1), 0))
   /**
    * Edge id → the polyline the layout reserved for it. Present only for layouts
    * that route their own edges (Dagre does); empty otherwise, and the renderer
@@ -168,6 +188,155 @@
   // Raw for the same reason: the renderer looks a hint up per edge, and a proxied
   // Map puts a trap on every one of those. Replaced wholesale, never mutated.
   let routeHints = $state.raw(new Map())
+  /** Relationships into hub tables (see hubTables). Not laid out and not routed:
+   *  the canvas names them on the row and draws them for the hovered or selected card. */
+  let hubEdges = $state.raw(/** @type {any[]} */ ([]))
+  /** @type {Set<string>} */
+  let hubs = $state.raw(new Set())
+
+  // ── Views ─────────────────────────────────────────────────────────────────
+  // The same tables three ways: the canvas, Mermaid source with a live preview,
+  // and the relation tree (a flowchart, or the plain list). The canvas keeps
+  // its layout while another view is up; it remounts where it was.
+  /** @type {'canvas' | 'mermaid' | 'tree' | 'dictionary' | 'ddl'} */
+  let erdView = $state('canvas')
+  /** The page over the whole window below the title bar; Esc or the button ends it. */
+  let fullscreen = $state(false)
+  /**
+   * Above this many tables a Mermaid render is seconds of synchronous work,
+   * so the preview waits for a click. The code is still there to copy.
+   */
+  const MERMAID_AUTO_MAX = 60
+  let mermaidForce = $state(false)
+  const mermaidGated = $derived(shownTables.length > MERMAID_AUTO_MAX && !mermaidForce)
+  let viewMenuOpen = $state(false)
+  /** @type {MermaidViewer | null} */
+  let mermaidViewer = $state(null)
+  /** The Mermaid code pane; folded away it leaves the preview the whole width. */
+  let mermaidCodeOpen = $state(true)
+  /** Long relationship lines wrap instead of running off the pane. */
+  let mermaidWrap = $state(false)
+  /** Width of the code pane once the divider has been dragged; 0 is the default split. */
+  let mermaidCodeW = $state(0)
+  /** Drag the divider between the code and the preview. @param {PointerEvent} e */
+  function startMermaidSplit(e) {
+    const host = /** @type {HTMLElement | null} */ (/** @type {HTMLElement} */ (e.currentTarget).parentElement)
+    if (!host) return
+    const rect = host.getBoundingClientRect()
+    const move = (/** @type {PointerEvent} */ ev) => {
+      mermaidCodeW = Math.round(Math.max(280, Math.min(rect.width - 240, ev.clientX - rect.left)))
+    }
+    const up = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+    e.preventDefault()
+  }
+  const VIEWS = /** @type {const} */ ([
+    { id: 'canvas', label: 'Diagram', hint: 'Cards and relationship lines, laid out and routed around each other' },
+    { id: 'mermaid', label: 'Mermaid', hint: 'The same tables as Mermaid source, with a live preview' },
+    { id: 'tree', label: 'Tree', hint: 'One table at a time: what it points at and what points at it' },
+    { id: 'dictionary', label: 'Dictionary', hint: 'Every column on the page in one searchable list: type, nulls, keys and what they reference' },
+    { id: 'ddl', label: 'DDL', hint: 'CREATE statements for the tables on the page, as the database reports them' },
+  ])
+
+  // ── Dictionary ────────────────────────────────────────────────────────────
+  let dictQuery = $state('')
+  /** Rows the dictionary draws. Capped: past this the filter is the tool. */
+  const DICT_ROWS_MAX = 1500
+  const dictRows = $derived.by(() => {
+    const q = dictQuery.trim().toLowerCase()
+    /** @type {{ table: string, col: string, type: string, nullable: boolean, pk: boolean, fk: boolean, uk: boolean, ref: string, refTable: string }[]} */
+    const rows = []
+    for (const t of shownTables) {
+      for (const c of t.columns) {
+        const parts = c.foreignKey ? c.foreignKey.split('.') : null
+        const refTable = parts ? (parts.length >= 3 ? parts[1] : parts[0]) : ''
+        const ref = parts ? (parts.length >= 3 ? `${parts[1]}.${parts[2]}` : parts.join('.')) : ''
+        const type = String(c.dataType ?? '')
+        if (q && !(t.name.toLowerCase().includes(q) || c.name.toLowerCase().includes(q) || type.toLowerCase().includes(q) || ref.toLowerCase().includes(q))) continue
+        rows.push({
+          table: t.name, col: c.name, type, nullable: c.isNullable !== false,
+          pk: t.pkCols?.has(c.name) ?? false, fk: !!c.foreignKey, uk: t.uniqueCols?.has(c.name) ?? false,
+          ref, refTable,
+        })
+      }
+    }
+    return rows
+  })
+  /** Jump from a name anywhere in the page to its card on the diagram. */
+  function focusInDiagram(/** @type {string} */ name) {
+    if (!tableMeta.has(name)) return
+    erdView = 'canvas'
+    selectedTable = name
+    void tick().then(() => erd?.focus(name))
+  }
+
+  // ── DDL ───────────────────────────────────────────────────────────────────
+  /** CREATE statements per table, fetched the first time the view opens. */
+  let ddlCache = $state(/** @type {Map<string, string>} */ (new Map()))
+  let ddlLoading = $state(false)
+  async function ensureDdl() {
+    const todo = shownTables.map((t) => t.name).filter((n) => !ddlCache.has(n))
+    if (!todo.length) return
+    ddlLoading = true
+    try {
+      // A few at a time: one call per table, and a schema can be a few hundred.
+      for (let i = 0; i < todo.length; i += 6) {
+        const next = new Map(ddlCache)
+        await Promise.all(todo.slice(i, i + 6).map(async (name) => {
+          try { next.set(name, String((await getTableDdl(activeSchema, name)) ?? '').trim()) }
+          catch (e) { next.set(name, `-- ${name}: ${String(e)}`) }
+        }))
+        ddlCache = next
+      }
+    } finally {
+      ddlLoading = false
+    }
+  }
+  $effect(() => { if (erdView === 'ddl') void ensureDdl() })
+  const ddlSource = $derived(shownTables.map((t) => ddlCache.get(t.name) ?? `-- ${t.name}: loading…`).join('\n\n'))
+  let copiedAllDdl = $state(false)
+  async function copyAllDdl() {
+    try {
+      await navigator.clipboard.writeText(ddlSource)
+      copiedAllDdl = true
+      setTimeout(() => (copiedAllDdl = false), 1600)
+    } catch { /* clipboard unavailable */ }
+  }
+  /** Tables on the page, in card order. */
+  const shownTables = $derived(nodes.map((n) => tableMeta.get(n.id)).filter((t) => !!t))
+  /** The drawn relationships in the shape the Mermaid generators take. Hub
+   *  links are left out here too, as on the canvas, and said so in the view. */
+  const mermaidRels = $derived(edges.map((e) => ({
+    source: e.source, target: e.target,
+    sourceCol: typeof e.sourceHandle === 'string' && e.sourceHandle.startsWith('src-') ? e.sourceHandle.slice(4) : null,
+    many: e.many, optional: e.optional,
+  })))
+  const mermaidSource = $derived(erdToMermaid(shownTables, mermaidRels, { keysOnly: view.columnMode === 'keys' }))
+  /** The code in the editor. Follows the diagram until the user edits it. */
+  let mermaidDraft = $state('')
+  let mermaidTouched = $state(false)
+  let copiedCode = $state(false)
+  $effect(() => { if (!mermaidTouched) mermaidDraft = mermaidSource })
+  async function copyMermaid() {
+    try {
+      await navigator.clipboard.writeText(mermaidDraft)
+      copiedCode = true
+      setTimeout(() => (copiedCode = false), 1600)
+    } catch { /* clipboard unavailable */ }
+  }
+  /** Save the code as a diagram of this connection and go there to edit it. */
+  function editInDiagrams() {
+    saveDiagram(`Data model · ${activeSchema}`, mermaidDraft, 'Data models')
+    onopendiagrams?.()
+  }
+  /** A layout is running in the worker; the chip says so. */
+  let layingOut = $state(false)
+  /** Bumped per layout request so a slow one cannot land over a newer one. */
+  let _layoutSeq = 0
 
   /** @type {Map<string, {x: number, y: number}>} */
   const _posCache = new Map()
@@ -349,6 +518,76 @@
   }
 
   /**
+   * One component through ELK (see erd-elk.js): cards placed and every line
+   * routed around them in one pass, normalised to the component's top-left.
+   * The lines come back whole, so `hints` carries them port to port.
+   * @param {any[]} ns @param {any[]} es
+   */
+  async function layoutComponentElk(ns, es) {
+    const cards = ns.map((n) => {
+      /** @type {{ name: string }[]} */
+      const cols = n.data?.columns ?? []
+      return {
+        id: n.id, w: NODE_W, h: hOf(n),
+        rowY: (/** @type {string | null} */ col) => {
+          const i = col ? cols.findIndex((c) => c.name === col) : -1
+          return i >= 0 ? HDR_H + i * ROW_H + ROW_H / 2 : HDR_H / 2
+        },
+      }
+    })
+    const links = es
+      .filter((e) => e.source !== e.target)
+      .map((e) => ({
+        id: e.id, source: e.source, target: e.target,
+        sourceCol: typeof e.sourceHandle === 'string' && e.sourceHandle.startsWith('src-') ? e.sourceHandle.slice(4) : null,
+        targetCol: typeof e.targetHandle === 'string' && e.targetHandle.startsWith('tgt-') ? e.targetHandle.slice(4) : null,
+      }))
+    const { pos: at, routes } = await layoutWithElk(cards, links, { rankSep: gaps.rankSep, nodeSep: gaps.nodeSep })
+
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+    for (const c of cards) {
+      const q = at.get(c.id) ?? { x: 0, y: 0 }
+      minX = Math.min(minX, q.x); maxX = Math.max(maxX, q.x + c.w)
+      minY = Math.min(minY, q.y); maxY = Math.max(maxY, q.y + c.h)
+    }
+    for (const pts of routes.values()) {
+      for (const q of pts) {
+        minX = Math.min(minX, q.x); maxX = Math.max(maxX, q.x)
+        minY = Math.min(minY, q.y); maxY = Math.max(maxY, q.y)
+      }
+    }
+    /** @type {Map<string, {x:number,y:number}>} */
+    const pos = new Map()
+    for (const c of cards) {
+      const q = at.get(c.id) ?? { x: 0, y: 0 }
+      pos.set(c.id, { x: Math.round(q.x - minX), y: Math.round(q.y - minY) })
+    }
+    /** @type {Map<string, {x:number,y:number}[]>} */
+    const hints = new Map()
+    for (const [id, pts] of routes) {
+      hints.set(id, pts.map((q) => ({ x: Math.round(q.x - minX), y: Math.round(q.y - minY) })))
+    }
+    return {
+      pos, hints, ids: ns.map((n) => n.id).sort(), wrapped: false,
+      w: Math.round(maxX - minX), h: Math.round(maxY - minY),
+    }
+  }
+
+  /**
+   * ELK first; Dagre with the folding and the router if ELK is unavailable
+   * (its worker could not start, say), so the diagram always draws.
+   * @param {any[]} ns @param {any[]} es
+   */
+  async function layoutComponent(ns, es) {
+    try {
+      return await layoutComponentElk(ns, es)
+    } catch (err) {
+      console.warn('[erd] ELK layout failed, falling back to Dagre:', err)
+      return layoutComponentDagre(ns, es)
+    }
+  }
+
+  /**
    * Dagre one component, normalised to its own top-left corner.
    *
    * The bounding box covers the edge corridors as well as the cards, because a
@@ -362,7 +601,7 @@
    * caller has to route those lines instead of following them.
    * @param {any[]} ns @param {any[]} es
    */
-  function layoutComponent(ns, es) {
+  function layoutComponentDagre(ns, es) {
     const g = new dagre.graphlib.Graph({ multigraph: true })
     // edgesep is what keeps two foreign keys between the same pair of tables in
     // separate corridors instead of one line drawn twice.
@@ -432,9 +671,9 @@
 
   /**
    * @param {any[]} ns @param {any[]} es
-   * @returns {{ nodes: any[], hints: Map<string, {x:number,y:number}[]> }}
+   * @returns {Promise<{ nodes: any[], hints: Map<string, {x:number,y:number}[]> }>}
    */
-  function layoutNodes(ns, es) {
+  async function layoutNodes(ns, es, hubIds = /** @type {Set<string>} */ (new Set())) {
     /** @type {Map<string, {x:number,y:number}>} */
     const placedConn = new Map()
     /** @type {Map<string, {x:number,y:number}[]>} */
@@ -447,10 +686,16 @@
     for (const e of es) { linked.add(e.source); linked.add(e.target) }
 
     const conn = ns.filter(n => linked.has(n.id))
-    const orphans = ns.filter(n => !linked.has(n.id))
+    // A hub with no link of its own left (every line into it is a hub line)
+    // sits in a row across the top, where the row pills point. The other
+    // unlinked cards keep their grid at the bottom.
+    const hubRow = ns.filter(n => !linked.has(n.id) && hubIds.has(n.id))
+    const orphans = ns.filter(n => !linked.has(n.id) && !hubIds.has(n.id))
+    const laidHubs = hubRow.map((n, i) => ({ ...n, position: { x: 40 + i * (NODE_W + gaps.colGap), y: 40 } }))
+    const topY = hubRow.length ? 40 + hubRow.reduce((m, n) => Math.max(m, hOf(n)), 0) + gaps.rowGap * 2 : 40
 
     let laidConn = []
-    let bottomY = 0
+    let bottomY = topY
 
     if (conn.length) {
       // One layout per connected component, packed onto shelves.
@@ -461,7 +706,7 @@
       // cards small enough to be unreadable at fit-zoom. Graphviz calls this
       // `pack`, and it is the difference between a wall and a page. Smaller
       // graphs also lay out faster than one big one, since Dagre is superlinear.
-      const comps = componentsOf(conn, es).map(cp => layoutComponent(cp.nodes, cp.edges))
+      const comps = await Promise.all(componentsOf(conn, es).map(cp => layoutComponent(cp.nodes, cp.edges)))
       comps.sort((x, y) => y.h - x.h || y.w - x.w || (x.ids[0] < y.ids[0] ? -1 : 1))
       // All or nothing on corridors. The renderer decides per diagram whether to
       // follow the layout's lines or route its own around the cards, so a single
@@ -479,8 +724,8 @@
       const targetW = Math.max(comps[0]?.w ?? 0, Math.round(Math.sqrt(area * (16 / 9))))
       const gapX = gaps.colGap * 2
       const gapY = gaps.rowGap * 2
-      let shelfY = 40, shelfH = 0
-      let colX = 40, colY = 40, colW = 0
+      let shelfY = topY, shelfH = 0
+      let colX = 40, colY = topY, colW = 0
       for (const cp of comps) {
         if (colY > shelfY && colY + cp.h > shelfY + shelfH) {
           // Column full: start the next one, or the next shelf if we are at the
@@ -514,7 +759,7 @@
     }
 
     // Orphans in a responsive grid below the connected graph
-    const orphanY = laidConn.length ? bottomY + gaps.rowGap * 2 : 0
+    const orphanY = laidConn.length ? bottomY + gaps.rowGap * 2 : hubRow.length ? topY : 0
     const maxH = orphans.reduce((m, n) => Math.max(m, hOf(n)), HDR_H)
     const GCOLS = Math.max(3, Math.min(6, Math.ceil(Math.sqrt(orphans.length * 1.8))))
     const laidOrphans = orphans.map((n, i) => ({
@@ -525,7 +770,7 @@
       },
     }))
 
-    const combined = [...laidConn, ...laidOrphans]
+    const combined = [...laidHubs, ...laidConn, ...laidOrphans]
     // Dagre separates the cards it places, and the orphan grid below uses a
     // uniform cell, so both are clear by construction. Nudging them now would
     // move cards off the corridors their edge points describe.
@@ -565,7 +810,7 @@
 
   // ── Build graph ───────────────────────────────────────────────────────────
   /** @param {boolean} [forceLayout] */
-  function buildGraph(forceLayout = false) {
+  async function buildGraph(forceLayout = false) {
     const all = [...tableMeta.values()]
     const { rawEdges } = buildEdgeData(all)
     allRels = rawEdges
@@ -598,6 +843,12 @@
     const filteredEdges = mergeParallelEdges(
       visibleRels(rawEdges, visibleIds, { focusTable, scope, picked: pick }),
     )
+    // Hub relationships leave the drawing (Settings → Hub links). The layout
+    // forms its clusters around the links that remain, which is the structure
+    // a line from every card to `tenants` was burying.
+    const hubIds = view.hubLinks === 'lines' ? new Set() : hubTables(filteredEdges, visible.length)
+    const hubEdgesNow = hubIds.size ? filteredEdges.filter((e) => hubIds.has(e.target) && e.source !== e.target) : []
+    const layoutEdges = hubEdgesNow.length ? filteredEdges.filter((e) => !hubIds.has(e.target) || e.source === e.target) : filteredEdges
 
     const keysOnly = view.columnMode === 'keys'
     const rawNodes = visible.map(t => {
@@ -625,14 +876,27 @@
 
     const needsLayout = forceLayout || visible.some(t => !_posCache.has(t.name))
     if (needsLayout) {
-      const laid = layoutNodes(rawNodes, filteredEdges)
+      // The layout runs in a worker. The diagram on screen stays as it is until
+      // the new one is whole - no cards at the origin, no lines moving as they
+      // land - and a result that a later request has overtaken is dropped.
+      const seq = ++_layoutSeq
+      layingOut = true
+      let laid
+      try {
+        laid = await layoutNodes(rawNodes, layoutEdges, hubIds)
+      } finally {
+        if (seq === _layoutSeq) layingOut = false
+      }
+      if (seq !== _layoutSeq) return
       for (const n of laid.nodes) _posCache.set(n.id, n.position)
       nodes = laid.nodes
       routeHints = laid.hints
     } else {
       nodes = rawNodes
     }
-    edges = filteredEdges
+    edges = layoutEdges
+    hubEdges = hubEdgesNow
+    hubs = hubIds
     if (search.trim()) _applySearch(search.trim().toLowerCase())
   }
 
@@ -643,14 +907,13 @@
     _prevFocus = focusTable
     scope = focusTable ? 'related' : 'all'
     _posCache.clear()
-    buildGraph(true)
-    void tick().then(() => erd?.reveal?.())
+    void buildGraph(true).then(() => tick()).then(() => erd?.reveal?.())
   })
 
   // Scope / card geometry / gutters all change the shape of the graph, so they
   // need a fresh layout rather than a rebuild on cached positions.
   const shapeKey = () =>
-    `${scope}|${view.columnMode}|${view.spacing}|${connectedOnly}|${pickVersion}|${drawAll}`
+    `${scope}|${view.columnMode}|${view.spacing}|${view.hubLinks}|${connectedOnly}|${pickVersion}|${drawAll}`
   let _shapeKey = untrack(shapeKey)
   $effect(() => {
     const key = shapeKey()
@@ -658,8 +921,7 @@
     _shapeKey = key
     if (tableMeta.size === 0) return
     _posCache.clear()
-    buildGraph(true)
-    void tick().then(() => erd?.reveal?.())
+    void buildGraph(true).then(() => tick()).then(() => erd?.reveal?.())
   })
 
   // ── Search ────────────────────────────────────────────────────────────────
@@ -671,6 +933,14 @@
     return id.toLowerCase().includes(q) || (t?.columns.some(c => c.name.toLowerCase().includes(q)) ?? false)
   }
 
+  /** Enter flies to the first table the query matches. */
+  function onSearchKey(/** @type {KeyboardEvent} */ e) {
+    if (e.key !== 'Enter') return
+    const q = search.trim().toLowerCase()
+    const hit = q ? nodes.find(n => matchesQuery(n.id, q)) : null
+    if (hit) erd?.focus(hit.id)
+  }
+
   /** @param {string} q */
   function _applySearch(q) {
     nodes = nodes.map(n => ({ ...n, data: { ...n.data, highlighted: matchesQuery(n.id, q) } }))
@@ -678,8 +948,7 @@
 
   function reLayout() {
     _posCache.clear()
-    buildGraph(true)
-    tick().then(() => erd?.reveal?.())
+    void buildGraph(true).then(() => tick()).then(() => erd?.reveal?.())
   }
 
   /** Persist a dragged node's new position so rebuilds and exports keep it. */
@@ -711,6 +980,7 @@
     drawAll = false
     gatedCount = 0
     _posCache.clear()
+    ddlCache = new Map()
 
     try {
       // One call for the whole schema. This used to fan out one request per
@@ -733,7 +1003,7 @@
       }
       tableMeta = new Map(tableMeta)
       await tick()
-      buildGraph(true)
+      await buildGraph(true)
       _shapeKey = shapeKey()
       void refineKeys()
     } catch (e) {
@@ -762,7 +1032,7 @@
           changed = true
         }
       }
-      if (changed) { tableMeta = new Map(tableMeta); buildGraph() }
+      if (changed) { tableMeta = new Map(tableMeta); void buildGraph() }
     } catch { /* non-critical */ }
   }
 
@@ -1175,7 +1445,7 @@
 
   async function exportMermaid() {
     const visIds = new Set(nodes.map(n => n.id))
-    const lines = ['# ER Diagram', '', '```mermaid', 'erDiagram']
+    const lines = ['# Data model', '', '```mermaid', 'erDiagram']
     for (const e of edges) {
       if (!visIds.has(e.source) || !visIds.has(e.target)) continue
       const sm = tableMeta.get(e.source)
@@ -1265,11 +1535,20 @@
 </script>
 
 <svelte:window onkeydown={(e) => {
+  if (e.key === 'Escape' && fullscreen) { fullscreen = false; return }
   if (!searchEl || !searchEl.offsetParent) return
   if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key === 'f') {
     e.preventDefault(); searchEl.focus(); searchEl.select()
   }
 }} />
+
+{#snippet viewIcon(/** @type {string} */ id, /** @type {string} */ cls)}
+  {#if id === 'canvas'}<LayoutDashboard class={cls} />
+  {:else if id === 'mermaid'}<GitBranch class={cls} />
+  {:else if id === 'tree'}<ListTree class={cls} />
+  {:else if id === 'dictionary'}<BookOpen class={cls} />
+  {:else}<FileCode class={cls} />{/if}
+{/snippet}
 
 {#snippet segmented(/** @type {{value:string,label:string,hint?:string}[]} */ items, /** @type {string} */ current, /** @type {(v:string)=>void} */ pick)}
 <div class= "field-surface inline-flex h-7 shrink-0 items-center bg-muted/25 p-0.5">
@@ -1309,10 +1588,13 @@
   </div>
 {/snippet}
 
-<div class="flex min-h-0 flex-1 flex-col overflow-hidden">
+<div
+  class={cn('flex min-h-0 flex-1 flex-col overflow-hidden', fullscreen && 'fixed inset-x-0 bottom-0 z-40 bg-background')}
+  style={fullscreen ? 'top: var(--app-titlebar-h, 38px)' : ''}
+>
   <!-- ── Toolbar ──────────────────────────────────────────────────────────── -->
   <div class="studio-chrome flex h-9 shrink-0 items-center gap-2 border-b border-border bg-panel px-3" data-studio-chrome>
-    <Network class="size-3.5 shrink-0 text-muted-foreground" aria-label="ER diagram" />
+    <Network class="size-3.5 shrink-0 text-muted-foreground" aria-label="Data model" />
 
     {#if schemas.length > 1}
       <Popover bind:open={schemaOpen}>
@@ -1340,6 +1622,7 @@
         type="text"
         bind:this={searchEl}
         bind:value={search}
+        onkeydown={onSearchKey}
         placeholder="Search tables…"
         class= "field-surface h-7 w-40 min-w-0 bg-input/30 pl-7 pr-6 text-ui-sm outline-none placeholder:text-muted-foreground"
       />
@@ -1357,7 +1640,7 @@
         class={cn(
           'inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border px-2 text-ui-sm transition-colors focus:outline-none',
           picked.size
-            ? 'border-primary/40 bg-primary/10 text-foreground'
+            ? 'border-border bg-accent text-foreground'
             : 'border-input bg-input/30 text-muted-foreground hover:bg-accent hover:text-foreground data-[state=open]:bg-accent',
         )}
       >
@@ -1388,39 +1671,45 @@
           {#each [
             { label: 'All', title: 'Clear the filter', on: () => { picked = new Set(); pickVersion += 1 }, off: !picked.size },
             { label: 'Linked', title: 'Only tables with a foreign key', on: () => setPicked(linkedTables(allRels)), off: false },
-            { label: '+ Related', title: 'Add everything the picked tables link to', on: () => setPicked(relatedTo(picked, allRels)), off: !picked.size },
+            { label: 'Related', title: 'Add everything the picked tables link to', on: () => setPicked(relatedTo(picked, allRels)), off: !picked.size },
           ] as act (act.label)}
             <button
               type="button"
               title={act.title}
               disabled={act.off}
               onclick={act.on}
-              class="inline-flex h-6 items-center rounded-md px-2 text-ui-2xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-35"
-            >{act.label}</button>
+              class="field-surface inline-flex h-6 shrink-0 items-center gap-1 whitespace-nowrap bg-input/20 px-2 text-ui-2xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-35"
+            >
+              {#if act.label === 'All'}<LayoutGrid class="size-3 shrink-0" />
+              {:else if act.label === 'Linked'}<Link class="size-3 shrink-0" />
+              {:else}<Network class="size-3 shrink-0" />{/if}
+              {act.label}
+            </button>
           {/each}
           <span class="ml-auto pr-1 font-mono text-ui-3xs tabular-nums text-muted-foreground">
             {picked.size || tableMeta.size}/{tableMeta.size}
           </span>
         </div>
 
-        <div class="max-h-72 overflow-y-auto py-1">
+        <div class="max-h-72 overflow-y-auto p-1">
           {#if !picked.size}
-            <p class="px-3 pb-1 pt-0.5 text-ui-3xs leading-snug text-muted-foreground">
+            <p class="px-2 pb-1 pt-0.5 text-ui-3xs leading-snug text-muted-foreground">
               No filter - every table the scope allows is on the diagram. Tick one to narrow it.
             </p>
           {/if}
           {#each pickerRows.slice(0, PICKER_ROWS) as row (row.name)}
             {@const on = picked.has(row.name)}
-            <div class="flex h-7 items-center gap-2 px-2">
+            <div class={cn('group/pick flex h-7 items-center gap-2 rounded-md px-2 transition-colors hover:bg-accent/50', on && 'bg-accent/60')}>
               <button
                 type="button"
+                aria-pressed={on}
                 onclick={() => togglePicked(row.name)}
                 class="flex min-w-0 flex-1 items-center gap-2 text-left"
               >
                 <span
                   class={cn(
                     'flex size-3.5 shrink-0 items-center justify-center rounded-[4px] border transition-colors',
-                    on ? 'border-primary bg-primary text-primary-foreground' : 'border-border',
+                    on ? 'border-primary bg-primary text-primary-foreground' : 'border-border group-hover/pick:border-muted-foreground/60',
                   )}
                 >
                   {#if on}
@@ -1435,13 +1724,16 @@
                 )}>{row.name}</span>
               </button>
               {#if row.fks}
-                <span class="shrink-0 font-mono text-ui-3xs tabular-nums text-muted-foreground" title="{row.fks} foreign keys">{row.fks} fk</span>
+                <span class="shrink-0 rounded-[3px] bg-muted/50 px-1 font-mono text-ui-3xs tabular-nums text-muted-foreground" title="{row.fks} foreign keys">{row.fks} fk</span>
               {/if}
+              <!-- Per-row action, shown when the row is under the pointer or
+                   the keyboard: twenty "only"s in a column read as a word, not
+                   as buttons. -->
               <button
                 type="button"
                 title="Show only {row.name} and what it links to"
                 onclick={() => isolate(row.name)}
-                class="shrink-0 rounded px-1 text-ui-3xs text-muted-foreground transition-colors hover:text-foreground"
+                class="shrink-0 rounded px-1 text-ui-3xs text-muted-foreground opacity-0 transition-[opacity,color] hover:text-foreground focus-visible:opacity-100 group-hover/pick:opacity-100"
               >only</button>
             </div>
           {/each}
@@ -1495,20 +1787,59 @@
     <div class="ml-auto flex shrink-0 items-center gap-1.5">
       {#if tableMeta.size > 0 && !loading}
         <span class="whitespace-nowrap pr-1 font-mono text-ui-2xs tabular-nums text-muted-foreground">
-          {nodes.length}/{tableMeta.size} tables · {fkCount} fk
+          {nodes.length}/{tableMeta.size} tables · {fkCount} fk{layingOut ? ' · laying out…' : ''}
         </span>
         {#if picked.size}
           <button
             type="button"
             title="Clear the table filter"
             onclick={() => { picked = new Set(); pickVersion += 1 }}
-            class="inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-primary/30 bg-primary/10 px-1.5 text-ui-2xs text-foreground transition-colors hover:bg-primary/20"
+            class="field-surface inline-flex h-6 shrink-0 items-center gap-1 bg-accent px-1.5 text-ui-2xs text-foreground transition-colors hover:bg-accent/70"
           >
             filtered
             <X class="size-2.5" />
           </button>
         {/if}
       {/if}
+
+      <button
+        type="button"
+        title={fullscreen ? 'Exit full screen (Esc)' : 'Full screen'}
+        aria-pressed={fullscreen}
+        onclick={() => (fullscreen = !fullscreen)}
+        class={cn('inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground', fullscreen && 'bg-accent text-foreground')}
+      >{#if fullscreen}<Minimize2 class="size-3.5" />{:else}<Maximize2 class="size-3.5" />{/if}</button>
+
+      <!-- Which view of the map. -->
+      <Popover bind:open={viewMenuOpen}>
+        <PopoverTrigger
+          title="Switch view"
+          class="field-surface inline-flex h-7 shrink-0 items-center gap-1.5 bg-input/30 pl-2 pr-1.5 text-ui-sm text-foreground transition-colors hover:bg-accent focus:outline-none data-[state=open]:bg-accent"
+        >
+          {@render viewIcon(erdView, 'size-3.5 shrink-0 text-muted-foreground')}
+          {VIEWS.find((v) => v.id === erdView)?.label}
+          <ChevronDown class="size-3 shrink-0 text-muted-foreground" />
+        </PopoverTrigger>
+        <PopoverContent class="w-72 p-1" align="end">
+          {#each VIEWS as v (v.id)}
+            <button
+              type="button"
+              aria-pressed={erdView === v.id}
+              onclick={() => { erdView = v.id; viewMenuOpen = false }}
+              class={cn('flex w-full items-start gap-2.5 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-accent', erdView === v.id && 'bg-accent/60')}
+            >
+              <span class="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-md bg-muted/60 text-muted-foreground">
+                {@render viewIcon(v.id, 'size-3.5')}
+              </span>
+              <span class="min-w-0 flex-1">
+                <span class="block text-ui-sm text-foreground">{v.label}</span>
+                <span class="block text-ui-2xs leading-snug text-muted-foreground">{v.hint}</span>
+              </span>
+              {#if erdView === v.id}<Check class="mt-1 size-3.5 shrink-0 text-foreground" />{/if}
+            </button>
+          {/each}
+        </PopoverContent>
+      </Popover>
 
       <div class="h-4 w-px shrink-0 bg-border/60"></div>
 
@@ -1555,6 +1886,17 @@
               ],
               view.routing,
               (v) => updateSettings({ routing: /** @type {'smart'|'direct'} */ (v) }),
+            )}
+          </div>
+          <div class="flex items-center justify-between gap-3 px-3 pb-2">
+            <span class="text-ui-sm text-foreground">Hub links</span>
+            {@render segmented(
+              [
+                { value: 'badges', label: 'Pills', hint: 'A table most of the schema points at (tenants, users) is named on each row instead of drawn from every card; its lines show for the card under the pointer or the selected one' },
+                { value: 'lines', label: 'Lines', hint: 'Draw every relationship, hubs included' },
+              ],
+              view.hubLinks,
+              (v) => updateSettings({ hubLinks: /** @type {'badges'|'lines'} */ (v) }),
             )}
           </div>
           {#if view.routing === 'smart' && !routeHints.size && nodes.length > MAX_ROUTED_NODES}
@@ -1633,6 +1975,193 @@
       </div>
 
     {:else}
+      {#if erdView === 'mermaid'}
+        <!-- Mermaid source on the left, rendered on the right. The source
+             follows the diagram (scope, filter, keys-only) until it is edited;
+             Regenerate hands it back. -->
+        <div class="absolute inset-0 flex min-h-0">
+          {#if !mermaidCodeOpen}
+            <div class="flex w-9 shrink-0 flex-col items-center border-r border-border/60 bg-panel pt-1.5">
+              <button
+                type="button"
+                title="Show the Mermaid code"
+                onclick={() => (mermaidCodeOpen = true)}
+                class="flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              ><PanelLeftOpen class="size-3.5" /></button>
+            </div>
+          {:else}
+          <div class="flex w-[42%] min-w-[280px] shrink-0 flex-col border-r border-border/60 bg-panel" style={mermaidCodeW ? `width:${mermaidCodeW}px` : ''}>
+            <div class="flex h-9 shrink-0 items-center gap-2 border-b border-border/40 px-2.5">
+              <button
+                type="button"
+                title="Hide the code, keep the preview"
+                onclick={() => (mermaidCodeOpen = false)}
+                class="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              ><PanelLeftClose class="size-3.5" /></button>
+              <span class="shrink-0 text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground">Mermaid</span>
+              <span class="min-w-0 truncate font-mono text-ui-3xs tabular-nums text-muted-foreground" title="{shownTables.length} tables, {mermaidRels.length} relationships drawn{hubEdges.length ? `, ${hubEdges.length} into hub tables left out` : ''}">
+                {shownTables.length} tables · {mermaidRels.length} links{hubEdges.length ? ` · ${hubEdges.length} hub` : ''}
+              </span>
+              <span class="ml-auto"></span>
+              {#if mermaidTouched}
+                <button
+                  type="button"
+                  title="Throw the edits away and generate the code from the diagram again"
+                  onclick={() => { mermaidTouched = false; mermaidDraft = mermaidSource }}
+                  class="inline-flex h-6 shrink-0 items-center gap-1 whitespace-nowrap rounded-md px-1.5 text-ui-2xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                ><RefreshCw class="size-3" />Regenerate</button>
+              {/if}
+              <button
+                type="button"
+                title="Wrap long lines"
+                aria-pressed={mermaidWrap}
+                onclick={() => (mermaidWrap = !mermaidWrap)}
+                class={cn('inline-flex size-6 shrink-0 items-center justify-center rounded-md transition-colors hover:bg-accent hover:text-foreground', mermaidWrap ? 'bg-accent text-foreground' : 'text-muted-foreground')}
+              ><WrapText class="size-3.5" /></button>
+              <button
+                type="button"
+                title="Copy the Mermaid code"
+                onclick={copyMermaid}
+                class="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              >{#if copiedCode}<Check class="size-3.5 text-success" />{:else}<Copy class="size-3.5" />{/if}</button>
+              {#if onopendiagrams}
+                <button
+                  type="button"
+                  title="Save this as a diagram of the connection and open it in the Diagrams page"
+                  onclick={editInDiagrams}
+                  class="field-surface inline-flex h-6 shrink-0 items-center gap-1 whitespace-nowrap bg-input/20 px-2 text-ui-2xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                ><GitBranch class="size-3" />Edit in Diagrams</button>
+              {/if}
+            </div>
+            <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
+              <CodeEditor bind:value={mermaidDraft} wrap={mermaidWrap} ariaLabel="Mermaid code" onchange={() => (mermaidTouched = true)} />
+            </div>
+          </div>
+          <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize the code pane"
+            onpointerdown={startMermaidSplit}
+            class="-ml-0.5 w-1 shrink-0 cursor-col-resize transition-colors hover:bg-border active:bg-ring/60"
+          ></div>
+          {/if}
+          <div class="flex min-w-0 flex-1 flex-col">
+            <div class="flex h-9 shrink-0 items-center gap-2 border-b border-border/40 bg-panel px-2.5">
+              <span class="text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground">Preview</span>
+              <span class="ml-auto"></span>
+              <button type="button" title="Zoom out" onclick={() => mermaidViewer?.dispatch('diagram:zoomout')} class="flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"><ZoomOut class="size-3.5" /></button>
+              <button type="button" title="Zoom in" onclick={() => mermaidViewer?.dispatch('diagram:zoomin')} class="flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"><ZoomIn class="size-3.5" /></button>
+              <button type="button" title="Fit" onclick={() => mermaidViewer?.dispatch('diagram:reset')} class="flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"><Maximize2 class="size-3.5" /></button>
+            </div>
+            <div class="min-h-0 flex-1 overflow-hidden bg-background">
+              {#if mermaidGated}
+                <div class="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
+                  <p class="text-ui-sm text-foreground">{shownTables.length} tables is a few seconds of rendering.</p>
+                  <p class="max-w-sm text-ui-xs text-muted-foreground">The code on the left is ready to copy. Narrow the diagram with the table filter, or render it anyway.</p>
+                  <Button size="sm" onclick={() => (mermaidForce = true)}>Render {shownTables.length} tables</Button>
+                </div>
+              {:else}
+                <MermaidViewer bind:this={mermaidViewer} code={mermaidDraft} spacing={{ nodeSpacing: 32, layerSpacing: 72 }} class="h-full w-full" />
+              {/if}
+            </div>
+          </div>
+        </div>
+      {:else if erdView === 'tree'}
+        <!-- One table at a time, from the tables this page already loaded. -->
+        <div class="absolute inset-0 flex min-h-0">
+          <RelationTreePage embedded initialMeta={tableMeta} schema={activeSchema} {schemas} onopentable={(_s, t) => openTable(t)} />
+        </div>
+      {:else if erdView === 'dictionary'}
+        <!-- Every column of every table on the page, one row each. The filter
+             matches table, column, type and reference, so "tenant_id" finds the
+             key wherever it lives and "jsonb" finds every document column. -->
+        <div class="absolute inset-0 flex min-h-0 flex-col">
+          <div class="flex h-9 shrink-0 items-center gap-2 border-b border-border/40 bg-panel px-2.5">
+            <span class="shrink-0 text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground">Dictionary</span>
+            <div class="relative flex min-w-0 items-center">
+              <Search class="pointer-events-none absolute left-2 size-3 text-muted-foreground" />
+              <input
+                type="text"
+                bind:value={dictQuery}
+                placeholder="Filter by table, column, type or reference…"
+                class="field-surface h-7 w-72 min-w-0 bg-input/30 pl-7 pr-6 text-ui-sm outline-none placeholder:text-muted-foreground"
+              />
+              {#if dictQuery}
+                <button type="button" onclick={() => (dictQuery = '')} class="absolute right-2 text-muted-foreground hover:text-foreground"><X class="size-3" /></button>
+              {/if}
+            </div>
+            <span class="ml-auto font-mono text-ui-3xs tabular-nums text-muted-foreground">
+              {dictRows.length} column{dictRows.length === 1 ? '' : 's'} · {shownTables.length} tables
+            </span>
+          </div>
+          <div class="min-h-0 flex-1 overflow-auto">
+            <table class="w-full border-separate border-spacing-0 font-mono text-ui-xs">
+              <thead class="sticky top-0 z-10 bg-panel">
+                <tr>
+                  {#each ['Table', 'Column', 'Type', 'Null', 'Key', 'References'] as h (h)}
+                    <th class="border-b border-border/60 px-3 py-1.5 text-left text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground">{h}</th>
+                  {/each}
+                </tr>
+              </thead>
+              <tbody>
+                {#each dictRows.slice(0, DICT_ROWS_MAX) as r, i (r.table + '.' + r.col)}
+                  {@const sameTable = i > 0 && dictRows[i - 1].table === r.table}
+                  <tr class="group/row hover:bg-accent/40">
+                    <td class={cn('whitespace-nowrap border-b border-border/15 px-3 py-1', sameTable ? 'text-transparent' : 'text-foreground/85')}>
+                      <button type="button" class="hover:underline hover:text-foreground" onclick={() => focusInDiagram(r.table)} title="Show {r.table} on the diagram">{r.table}</button>
+                    </td>
+                    <td class={cn('whitespace-nowrap border-b border-border/15 px-3 py-1', r.pk ? 'font-semibold' : '')} style={r.pk ? `color:${ink.pk}` : r.fk ? `color:${ink.fk}` : ''}>{r.col}</td>
+                    <td class="whitespace-nowrap border-b border-border/15 px-3 py-1 text-muted-foreground">{r.type}</td>
+                    <td class="whitespace-nowrap border-b border-border/15 px-3 py-1 text-ui-3xs text-muted-foreground">{r.nullable ? 'null' : 'not null'}</td>
+                    <td class="whitespace-nowrap border-b border-border/15 px-3 py-1">
+                      {#if r.pk}<span class="rounded-[3px] px-1 text-ui-3xs font-semibold" style="color:{ink.pk};background:color-mix(in oklch, {ink.pk} 14%, transparent)">pk</span>{/if}
+                      {#if r.fk}<span class="rounded-[3px] px-1 text-ui-3xs font-semibold" style="color:{ink.fk};background:color-mix(in oklch, {ink.fk} 14%, transparent)">fk</span>{/if}
+                      {#if r.uk && !r.pk}<span class="rounded-[3px] bg-muted/60 px-1 text-ui-3xs font-semibold text-muted-foreground">uk</span>{/if}
+                    </td>
+                    <td class="whitespace-nowrap border-b border-border/15 px-3 py-1 text-muted-foreground">
+                      {#if r.ref}
+                        <button type="button" class="hover:underline hover:text-foreground" onclick={() => focusInDiagram(r.refTable)} title="Show {r.refTable} on the diagram">→ {r.ref}</button>
+                      {/if}
+                    </td>
+                  </tr>
+                {:else}
+                  <tr><td colspan="6" class="px-3 py-6 text-center text-muted-foreground">No column matches “{dictQuery}”.</td></tr>
+                {/each}
+              </tbody>
+            </table>
+            {#if dictRows.length > DICT_ROWS_MAX}
+              <p class="px-3 py-2 text-ui-2xs text-muted-foreground">{dictRows.length - DICT_ROWS_MAX} more - narrow the filter to reach them.</p>
+            {/if}
+          </div>
+        </div>
+      {:else if erdView === 'ddl'}
+        <!-- The CREATE statements, as the engine reports them, one document.
+             Read-only here; the SQL console is where statements are run. -->
+        <div class="absolute inset-0 flex min-h-0 flex-col">
+          <div class="flex h-9 shrink-0 items-center gap-2 border-b border-border/40 bg-panel px-2.5">
+            <span class="shrink-0 text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground">DDL</span>
+            <span class="font-mono text-ui-3xs tabular-nums text-muted-foreground">{shownTables.length} tables{ddlLoading ? ' · reading…' : ''}</span>
+            {#if ddlLoading}<Loader class="size-3 animate-spin text-muted-foreground" />{/if}
+            <span class="ml-auto"></span>
+            <button
+              type="button"
+              title="Copy every statement"
+              onclick={copyAllDdl}
+              class="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            >{#if copiedAllDdl}<Check class="size-3.5 text-success" />{:else}<Copy class="size-3.5" />{/if}</button>
+            <button
+              type="button"
+              title="Save as a .sql file"
+              onclick={() => void saveExport(ddlSource, `${activeSchema}-schema.sql`, { name: 'SQL', extensions: ['sql'] }, 'DDL')}
+              class="field-surface inline-flex h-6 shrink-0 items-center gap-1 whitespace-nowrap bg-input/20 px-2 text-ui-2xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            ><Download class="size-3" />Export .sql</button>
+          </div>
+          <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <CodeEditor value={ddlSource} readOnly lang="sql" ariaLabel="DDL" />
+          </div>
+        </div>
+      {:else}
       <ErdCanvas
         bind:this={erd}
         {nodes}
@@ -1642,6 +2171,8 @@
         {focusId}
         routing={view.routing}
         hints={routeHints}
+        {hubEdges}
+        {hubs}
         showTypes={view.showTypes}
         grid={view.grid}
         onselect={(id) => (selectedTable = id)}
@@ -1723,6 +2254,7 @@
         </div>
       {/if}
 
+      {/if}
     {/if}
   </div>
 

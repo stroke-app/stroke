@@ -130,7 +130,7 @@
         {@render item("box", "Database objects", "objects", "", !connected)}
         {@render item("server", "Instance insights", "insights", "", !connected)}
         {@render item("git-branch", "Schema explorer", "schema", "", !connected)}
-        {@render item("network", "ER diagram", "erd", "", !connected)}
+        {@render item("network", "Data model", "erd", "", !connected)}
         <Menubar.Separator class={sepCls} />
         {@render item("git-compare", "Data diff", "dataDiff", "", !connected)}
         {@render item("layout-dashboard", "Dashboard", "dashboard", "", !connected)}
