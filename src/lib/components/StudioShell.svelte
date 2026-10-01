@@ -30,7 +30,7 @@
   import { createHotkey } from '@tanstack/svelte-hotkeys'
   import { IS_MAC } from '$lib/shortcuts.js'
   import { findSearchInput, isTypingTarget } from '$lib/focus-search.js'
-  import { cycleTheme, restorePreviousTheme, isCurrentThemeDark, loadSettings, appPaginationMode, appVimMode, appAutoSaveQueries, increaseZoom, decreaseZoom, resetZoom } from '$lib/stores/settings.js'
+  import { appFkAutoExpandJson, cycleTheme, restorePreviousTheme, isCurrentThemeDark, loadSettings, appPaginationMode, appVimMode, appAutoSaveQueries, appStreamResults, increaseZoom, decreaseZoom, resetZoom } from '$lib/stores/settings.js'
   import { requireUnlock } from '$lib/stores/app-lock.js'
   import { isTextEntryTarget, setVimSubMode } from '$lib/vim/vim.js'
   import { normalizeColumn, columnType } from '$lib/column.js'
@@ -136,6 +136,8 @@
     getIncomingForeignKeys,
     executeSql,
     executeSqlMulti,
+    executeSqlStream,
+    resultSort,
     txBegin,
     txExecute,
     txStatus,
@@ -152,6 +154,7 @@
     mcpUpdateConnections,
     geoOverview,
   } from '$lib/api.js'
+  import { StoredResultView } from '$lib/stored-result-view.js'
   import {
     createTableTab,
     createSqlTab,
@@ -492,6 +495,10 @@
   let updateDialog = $state(null)
   let statusBarHasUpdate = $state(false)
   let sidebarOpen = $state(loadLayout().navSidebarOpen)
+  /** The nav sidebar was open when a visual page took the width; put it back on leaving. */
+  let _sidebarBeforeErd = false
+  /** Tab kinds that are a picture first: they get the sidebar's width. */
+  const WIDE_TAB_KINDS = new Set(['erd', 'reltree', 'diagrams'])
   let sidebarEverOpened = $state(loadLayout().navSidebarOpen)
   /** Which switchable sidebar panel is showing: 'tables' | 'connections' | 'extensions'. */
   let navSidebarPanel = $state(loadLayout().navSidebarPanel ?? 'tables')
@@ -1006,6 +1013,17 @@
     if (activeTab?.kind === 'charts') chartsEverOpened = true
     if (activeTab?.kind === 'dashboard') dashboardEverOpened = true
     if (activeTab?.kind === 'erd') erdEverOpened = true
+    // The visual pages want the width: the nav sidebar folds while one of them
+    // is the active tab and comes back when another kind is. Untracked so
+    // Ctrl+B on the tab itself is not undone by this effect re-running.
+    untrack(() => {
+      if (activeTab && WIDE_TAB_KINDS.has(activeTab.kind)) {
+        if (sidebarOpen) { _sidebarBeforeErd = true; sidebarOpen = false }
+      } else if (_sidebarBeforeErd) {
+        _sidebarBeforeErd = false
+        sidebarOpen = true
+      }
+    })
     if (activeTab?.kind === 'diagrams') diagramsEverOpened = true
     if (activeTab?.kind === 'search') searchEverOpened = true
     if (activeTab?.kind === 'schema-timeline') schemaTimelineEverOpened = true
@@ -1290,6 +1308,8 @@
   let tableGetScroll = $state(() => ({ left: 0, top: 0 }))
   /** @type {() => number[]} - live grid's open row-expand panels, persisted per tab */
   let tableGetExpanded = $state(() => /** @type {number[]} */ ([]))
+  /** The active tab was opened by following a foreign key (see openTableTab). */
+  let expandSingleRow = $state(false)
   /** @type {(pos: { left?: number, top?: number }) => void} */
   let tableApplyScroll = $state(() => {})
   /** Put the grid cursor on a cell and scroll it into view (back/forward restore).
@@ -1613,6 +1633,25 @@ let rowSearch = $state('')
   let sqlError = $state('')
   /** @type {any[]} */
   let sqlMultiResults = $state([])
+  /** The active SQL tab's result lives in the backend's result store and
+   *  `sqlRows` is its sparse view (Settings → Database → Stream query results). */
+  let sqlWindowed = $state(false)
+  /** Bumped when stored rows land in `sqlRows` in place. */
+  let sqlDataVersion = $state(0)
+  /** @type {{ slow: boolean, failed: boolean } | null} */
+  let sqlWindowStatus = $state(null)
+  let sqlSorting = $state(false)
+  /** Each statement of the active tab's last run, for the editor's ✓/✗ marks.
+   *  @type {Array<{ sql: string, error: string | null, position: number | null }>} */
+  let sqlRunOutcomes = $state([])
+  // SQL results by tab, kept out of the reactive `tabs` tree. Stored inside it,
+  // a result came back from a tab switch as a deep proxy the grid then read per
+  // cell (the scroll-lag regression `_liveRowsByTab` fixes for table tabs), and
+  // a 5M-row array in there made every switch and close crawl.
+  /** @type {Map<string, any[]>} */
+  const _sqlRowsByTab = new Map()
+  /** @type {Map<string, StoredResultView>} */
+  const _sqlViewsByTab = new Map()
 
   let ormCode = $state('')
   let ormMode = $state(/** @type {'drizzle' | 'prisma'} */ ('drizzle'))
@@ -2084,6 +2123,7 @@ let rowSearch = $state('')
       structureSearch,
       ...(() => { const s = tableGetScroll(); return { scrollLeft: s.left, scrollTop: s.top } })(),
       expandedRows: tableGetExpanded(),
+      expandSingleRow,
     }
   }
 
@@ -2125,6 +2165,7 @@ let rowSearch = $state('')
     tableViewMode = s.tableViewMode ?? 'data'
     structureColumns = /** @type {any} */ (s.structureColumns ?? [])
     structureSearch = s.structureSearch ?? ''
+    expandSingleRow = !!s.expandSingleRow
     // Restore the grid scroll position for this tab. Defer one tick so that
     // if DataTable just remounted (switching from a non-table tab), the new
     // applyScroll binding is in place before we call it - otherwise the old
@@ -2139,7 +2180,8 @@ let rowSearch = $state('')
     return {
       sqlText,
       sqlColumns,
-      sqlRows,
+      // The rows themselves stay in _sqlRowsByTab / _sqlViewsByTab.
+      sqlRows: [],
       sqlQueryMs,
       sqlMessage,
       // The real flag, not a hardcoded false. Saving a running tab as "idle"
@@ -2153,7 +2195,10 @@ let rowSearch = $state('')
   function applySqlSnapshot(s, tabId = null) {
     sqlText = s.sqlText
     sqlColumns = s.sqlColumns
-    sqlRows = s.sqlRows
+    const view = tabId ? _sqlViewsByTab.get(tabId) : undefined
+    sqlWindowed = !!view
+    sqlWindowStatus = null
+    sqlRows = view ? view.rows : (tabId ? _sqlRowsByTab.get(tabId) : undefined) ?? s.sqlRows ?? []
     sqlQueryMs = s.sqlQueryMs
     sqlMessage = s.sqlMessage
     sqlLoading = !!s.sqlLoading && isTabBusy(tabId)
@@ -2174,6 +2219,12 @@ let rowSearch = $state('')
    * @param {Partial<SqlTabState>} patch
    */
   function patchSqlTab(tabId, patch) {
+    if (patch.sqlRows) {
+      // Rows go beside the tab, never into it (see _sqlRowsByTab).
+      if (patch.sqlRows.length) _sqlRowsByTab.set(tabId, patch.sqlRows)
+      else _sqlRowsByTab.delete(tabId)
+      patch = { ...patch, sqlRows: [] }
+    }
     const idx = tabs.findIndex((t) => t.id === tabId && t.kind === 'sql')
     if (idx === -1) return
     const t = tabs[idx]
@@ -2245,6 +2296,7 @@ let rowSearch = $state('')
       // falls out of the recently-viewed window.
       _liveRowsByTab.set(activeTabId, rows)
     } else if (t.kind === 'sql') {
+      if (!_sqlViewsByTab.has(activeTabId)) _sqlRowsByTab.set(activeTabId, sqlRows)
       updated = { ...t, state: cloneSqlTabState(captureSqlSnapshot()) }
     }
     if (updated) {
@@ -2846,8 +2898,12 @@ let rowSearch = $state('')
   createHotkey('Mod+R', (e) => {
     if (!connection) return
     if (commandOpen || showConnectionModal || showSettingsModal) return
+    // Inside a SQL editor Mod+R is the editor's own (run the statement at the
+    // cursor). Hotkeys with a modifier fire in editable fields too, so this ran
+    // right after it and started the WHOLE buffer, replacing that run.
+    if (e.defaultPrevented || (e.target instanceof Element && e.target.closest('.sql-editor-host'))) return
     e.preventDefault()
-    void handleModRefresh()
+    void handleModRefresh({ statementOnly: true })
   })
 
   // Alt+X empties the table search from anywhere in the tab - the ✕ and Escape
@@ -3069,13 +3125,18 @@ let rowSearch = $state('')
     return !!el.closest(`[data-studio-region="${region}"]`)
   }
 
-  async function handleModRefresh() {
+  /** @param {{ statementOnly?: boolean }} [opts] statementOnly: Mod+R, which in a
+   *  SQL tab runs the statement at the cursor; F5 re-runs the whole query. */
+  async function handleModRefresh(opts = {}) {
     if (isFocusInRegion('sidebar')) {
       await loadTables({ force: true })
       return
     }
     if (activeTab?.kind === 'sql') {
-      await runSql()
+      // Mod+R in a SQL tab is "run the statement at the cursor" (Run ▾, the
+      // shortcuts list), from wherever focus is in the tab.
+      if (opts.statementOnly) sqlConsoleRef?.runStatementAtCursor?.()
+      else await runSql()
       return
     }
     if (activeTab?.kind === 'table' && activeTable) {
@@ -3277,6 +3338,8 @@ let rowSearch = $state('')
     _loadSeqByTab.clear()
     fetchingTabIds.clear()
     _sqlQueryIdByTab.clear()
+    for (const id of [..._sqlViewsByTab.keys()]) forgetSqlResult(id)
+    _sqlRowsByTab.clear()
     _autoRefreshByTab.clear()
     _autoRefreshTick += 1
     _busyJobs.clear()
@@ -3747,6 +3810,7 @@ let rowSearch = $state('')
   function rememberClosedTab(tab) {
     if (!tab || tab.kind === 'welcome') return
     _liveRowsByTab.delete(tab.id)
+    forgetSqlResult(tab.id)
     // Anything still in flight for this tab is now orphaned: dropping its load
     // token makes the in-flight result fail its own liveness check instead of
     // being applied to whatever tab took its place.
@@ -4085,7 +4149,7 @@ let rowSearch = $state('')
    */
   async function openTableTab(schema, table, options = {}) {
     track('table_open')
-    const { filters = null, resetQuery = false, search = null, duplicate = false, viewMode = null } = options
+    const { filters = null, resetQuery = false, search = null, duplicate = false, viewMode = null, expandSingleRow: openSingleRow = false } = options
     // `duplicate` forces a second tab for a table that is already open - used when
     // the request comes from inside that table's own tab (e.g. "Open table" in the
     // ERD inspector), where re-activating the existing tab would be a no-op.
@@ -4109,6 +4173,7 @@ let rowSearch = $state('')
           filterBarOpen = filters.length > 0
         }
         page = 1
+        expandSingleRow = openSingleRow
         // This query supersedes whatever `activateTab` may have started for the
         // tab: the filters just changed, so that in-flight page is the wrong
         // one. Waiting for it first keeps the two from writing out of order.
@@ -4142,6 +4207,7 @@ let rowSearch = $state('')
     if (tab.state) {
       if (filters) /** @type {TableTabState} */ (tab.state).rowFilters = filters.map((f) => ({ ...f }))
       if (search !== null) /** @type {TableTabState} */ (tab.state).rowSearch = search
+      if (openSingleRow) /** @type {TableTabState} */ (tab.state).expandSingleRow = true
     }
     tabs = [...tabs, tab]
     activeTabId = tab.id
@@ -4168,6 +4234,7 @@ let rowSearch = $state('')
     focusedCol = null
     inspectorRow = null
     editingCell = null
+    expandSingleRow = openSingleRow
     // A fresh tab opens in the configured default view, never in whatever view the
     // tab you came from happened to be on - the three-dot picker is per tab. Read
     // the setting here (not at startup) so changing it takes effect immediately.
@@ -4309,7 +4376,7 @@ let rowSearch = $state('')
       return
     }
     const refSchema = fk.referencedSchema || activeSchema
-    await openTableTab(refSchema, fk.referencedTable, { filters, resetQuery: true, duplicate: newTab })
+    await openTableTab(refSchema, fk.referencedTable, { filters, resetQuery: true, duplicate: newTab, expandSingleRow: true })
   }
 
   /**
@@ -5939,6 +6006,55 @@ let rowSearch = $state('')
   }
 
   /** @param {string} [overrideSql] */
+  /**
+   * The view of a result streaming into the store for `tabId`. It paints only
+   * while its tab is the one in front; in the background it just keeps count.
+   * @param {string | null} tabId @param {string} id
+   */
+  function storedView(tabId, id) {
+    const inFront = () => activeTabId === tabId && sqlViewOf(tabId) === view
+    const view = new StoredResultView({
+      id,
+      onrows: (r) => { if (inFront()) sqlRows = r },
+      onchange: () => { if (inFront()) sqlDataVersion++ },
+      onstatus: (st) => { if (inFront()) sqlWindowStatus = st },
+    })
+    if (tabId) _sqlViewsByTab.set(tabId, view)
+    return view
+  }
+
+  /** @param {string | null} tabId */
+  function sqlViewOf(tabId) {
+    return tabId ? _sqlViewsByTab.get(tabId) ?? null : null
+  }
+
+  /** Drop a SQL tab's result: its rows here and its file in the store. @param {string} tabId */
+  function forgetSqlResult(tabId) {
+    _sqlViewsByTab.get(tabId)?.dispose()
+    _sqlViewsByTab.delete(tabId)
+    _sqlRowsByTab.delete(tabId)
+  }
+
+  /**
+   * Sort the active tab's stored result in the backend (typed by the column's
+   * database type) and refetch what is on screen, or back to stream order.
+   * @param {{ column: string, direction: 'asc' | 'desc' } | null} sort
+   */
+  async function sortStoredSqlResult(sort) {
+    const view = sqlViewOf(activeTabId)
+    if (!view) return
+    const column = sort ? sqlColumns.findIndex((c) => (c.name ?? c) === sort.column) : -1
+    sqlSorting = true
+    try {
+      await resultSort(view.id, column >= 0 ? column : null, sort?.direction === 'desc')
+      view.reorder()
+    } catch (e) {
+      toast.error(String(e).replace(/^Error:\s*/, ''))
+    } finally {
+      sqlSorting = false
+    }
+  }
+
   async function runSqlOnTab(overrideSql) {
     track('sql_run')
     const sqlRan = typeof overrideSql === 'string' && overrideSql.trim() ? overrideSql : sqlText
@@ -5962,6 +6078,9 @@ let rowSearch = $state('')
     sqlColumns = []
     sqlRows = []
     sqlMultiResults = []
+    // The tab's last result goes, in the store too.
+    if (runTabId) forgetSqlResult(runTabId)
+    if (stillHere()) { sqlWindowed = false; sqlWindowStatus = null; sqlRunOutcomes = [] }
     // Mark the owning tab as running too, so its snapshot says so if the user
     // leaves before this finishes.
     patchSqlTab(runTabId, { sqlLoading: true, sqlError: '', sqlMessage: '', sqlColumns: [], sqlRows: [] })
@@ -5978,7 +6097,66 @@ let rowSearch = $state('')
         results = [await txExecute(txSession, sqlRan)]
         if (runTabId) setTxStatus(runTabId, await txStatus(txSession))
       } else {
-        results = await executeSqlMulti(sqlRan, queryId)
+        // Rows stream in (executeSqlStream), into the backend's result store
+        // when that setting is on, otherwise into this window.
+        /** @type {any[][] | null} */
+        let streamed = null
+        /** @type {any[]} */
+        let streamedCols = []
+        /** @type {StoredResultView | null} */
+        let view = null
+        let lastPaint = 0
+        let paintedLen = 0
+        results = await executeSqlStream(sqlRan, queryId, (chunk) => {
+          if (chunk.stored) {
+            // Store mode: the first message paints, later ones move the count.
+            if (chunk.columns) {
+              view ??= storedView(runTabId, queryId)
+              streamedCols = chunk.columns
+              view.begin(chunk.rows, chunk.count)
+              if (stillHere()) { sqlColumns = streamedCols; sqlWindowed = true }
+              lastPaint = performance.now()
+              return
+            }
+            if (!view) return
+            const now = performance.now()
+            if (chunk.done || now - lastPaint >= 500) { lastPaint = now; view.grow(chunk.count) }
+            return
+          }
+          // Rows mode: every row comes here. The grid gets a new array (its
+          // length is what the grid reads) only when the rows have doubled or
+          // three seconds passed, so a 5M-row result is copied ~20 times in
+          // all, not once a second.
+          if (chunk.offset === 0 || !streamed) { streamed = []; paintedLen = 0 }
+          if (chunk.columns) streamedCols = chunk.columns
+          for (const row of chunk.rows) streamed.push(row)
+          const now = performance.now()
+          const due = paintedLen === 0 || streamed.length >= paintedLen * 2 || now - lastPaint >= 3000
+          if (!stillHere() || !due) return
+          lastPaint = now
+          paintedLen = streamed.length
+          sqlColumns = streamedCols
+          sqlRows = streamed.slice()
+        }, { keepInStore: get(appStreamResults) })
+        // Each statement's outcome, for the editor marks. A single failed
+        // statement is the run failing; in a script the others still ran.
+        if (stillHere()) {
+          sqlRunOutcomes = results.map((r) => ({ sql: r.sql ?? '', error: r.error ?? null, position: r.errorPosition ?? null }))
+        }
+        if (results.length === 1 && results[0].error) throw new Error(results[0].error)
+        const last = results.at(-1)
+        if (view && results.length === 1 && last && !last.rows?.length) {
+          // Store mode: the rows stay in the store; the view is the result.
+          view.grow(last.rowCount ?? view.count)
+          results = [{ ...last, columns: streamedCols.length ? streamedCols : last.columns, rows: view.rows }]
+        } else if (streamed && results.length === 1 && last && !last.rows?.length && streamed.length === last.rowCount) {
+          // A streamed result's reply has no rows; they are all in `streamed`.
+          results = [{ ...last, rows: streamed }]
+        } else if (view && runTabId) {
+          // The run answered in the reply after all (a script, another engine).
+          forgetSqlResult(runTabId)
+          view = null
+        }
       }
       const data = results.length > 0 ? results[results.length - 1] : {}
       const cols = data.columns ?? []
@@ -5989,7 +6167,8 @@ let rowSearch = $state('')
       if (!msg && data.row_count != null && cols.length === 0) {
         msg = `${formatCompactCount(data.row_count)} row(s) affected`
       }
-      patchSqlTab(runTabId, { sqlColumns: cols, sqlRows: rws, sqlQueryMs: ranMs, sqlMessage: msg, sqlError: '' })
+      const stored = runTabId ? _sqlViewsByTab.has(runTabId) : false
+      patchSqlTab(runTabId, { sqlColumns: cols, sqlRows: stored ? [] : rws, sqlQueryMs: ranMs, sqlMessage: msg, sqlError: '' })
       if (stillHere()) {
         sqlMultiResults = results.length > 1 ? results : []
         sqlColumns = cols
@@ -5999,10 +6178,13 @@ let rowSearch = $state('')
       }
     } catch (e) {
       ranError = String(e)
+      if (runTabId) forgetSqlResult(runTabId)
       patchSqlTab(runTabId, { sqlError: ranError })
       if (stillHere()) {
         sqlError = ranError
         sqlMultiResults = []
+        sqlWindowed = false
+        sqlRows = []
       }
       if (isNetworkError(ranError)) { connectionLost = true; void silentReconnect() }
     } finally {
@@ -6063,6 +6245,8 @@ let rowSearch = $state('')
     _loadSeqByTab.clear()
     fetchingTabIds.clear()
     _sqlQueryIdByTab.clear()
+    for (const id of [..._sqlViewsByTab.keys()]) forgetSqlResult(id)
+    _sqlRowsByTab.clear()
     _autoRefreshByTab.clear()
     _autoRefreshTick += 1
     _busyJobs.clear()
@@ -7993,7 +8177,7 @@ let rowSearch = $state('')
         </div>
       {/if}
 
-      <!-- ER Diagram tab -->
+      <!-- Data model tab -->
       {#if erdEverOpened}
         <div
           class={activeTab?.kind === 'erd' ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}
@@ -8002,6 +8186,7 @@ let rowSearch = $state('')
           <svelte:boundary failed={tabError}>
             {#await import('./EntityRelationPage.svelte')}<TabLoading />{:then { default: EntityRelationPage }}
               <EntityRelationPage
+                onopendiagrams={() => openDiagramsTab()}
                 schema={activeSchema}
                 {schemas}
                 focusTable={erdFocusTable}
@@ -8168,6 +8353,15 @@ let rowSearch = $state('')
             {savedQueries}
             columns={sqlColumns}
             rows={sqlRows}
+            runOutcomes={sqlRunOutcomes}
+            windowed={sqlWindowed}
+            dataVersion={sqlDataVersion}
+            windowStatus={sqlWindowStatus}
+            sorting={sqlSorting}
+            onvisiblerange={(start, end) => sqlViewOf(activeTabId)?.visible(start, end)}
+            onretrywindows={() => sqlViewOf(activeTabId)?.retry()}
+            onstoredsort={(sort) => void sortStoredSqlResult(sort)}
+            onloadallrows={(onprogress) => sqlViewOf(activeTabId)?.readAll(onprogress) ?? Promise.resolve(sqlRows)}
             queryMs={sqlQueryMs}
             message={sqlMessage}
             loading={sqlLoading}
@@ -8442,6 +8636,7 @@ let rowSearch = $state('')
                 {hiddenColumns}
                 {reloadToken}
                 {dataVersion}
+                expandSingleRow={expandSingleRow && $appFkAutoExpandJson}
                 {windowed}
                 {windowStatus}
                 onvisiblerange={handleVisibleRange}
@@ -8560,6 +8755,7 @@ let rowSearch = $state('')
                 <div class="flex min-h-0 min-w-0 flex-1">
                   {#await import('./EntityRelationPage.svelte')}<TabLoading />{:then { default: EntityRelationPage }}
                     <EntityRelationPage
+                onopendiagrams={() => openDiagramsTab()}
                       bind:this={erdPane}
                       hostExports
                       insideTableTab
@@ -8740,7 +8936,7 @@ let rowSearch = $state('')
                 {@render jump(GitBranch, "Schema explorer", openSchemaTab)}
                 {@render jump(Gauge, "Instance insights", openInsightsTab)}
                 {@render jump(GitCompare, "Data diff", openDataDiffTab)}
-                {@render jump(Network, "ER diagram", () => openErdTab())}
+                {@render jump(Network, "Data model", () => openErdTab())}
                 {@render jump(LayoutDashboard, "Dashboard", openDashboardTab)}
               </div>
             </div>

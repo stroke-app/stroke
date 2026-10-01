@@ -55,7 +55,6 @@
   import AiChartRenderer from "$lib/components/AiChartRenderer.svelte";
   import {
     chatCompletionStream,
-    chatCompletionRaw,
     manageHistory,
     MAX_AI_RETRIES,
     AI_TOOLS,
@@ -67,6 +66,9 @@
     describeAiError,
     humanizeDbError,
     filterSchemaForQuery,
+    detectPromptTopics,
+    toolsForTurn,
+    titleFromMessage,
   } from "$lib/ai.js";
   import {
     loadSkills,
@@ -247,9 +249,9 @@
     }
   }
   /** Tools advertised this turn. Web tools appear only once the user opts in. */
-  const activeTools = $derived(
-    $appAgentWebAccess ? [...AI_TOOLS, ...AI_WEB_TOOLS] : AI_TOOLS,
-  );
+  /** The tools the current turn advertises - see toolsForTurn. Starts at the
+   *  core set so the context stats have something to count before a turn. */
+  let turnTools = $state(toolsForTurn(new Set()));
   let settingsOpen = $state(false);
   /** @type {'model'|'skills'|'context'|'chat'} */
   let settingsTab = $state("model");
@@ -523,23 +525,13 @@
   async function generateAiTitle() {
     if (!activeConvId) return;
     const userMsg = rawApiHistory.find((m) => m.role === "user");
-    const assistantMsg = rawApiHistory.find((m) => m.role === "assistant");
-    if (!userMsg || !assistantMsg) return;
+    if (!userMsg) return;
+    // From the first message, not from a second model call: on the free tier
+    // that extra request per turn is what tripped the rate limit and the
+    // retry wait that followed.
+    const title = titleFromMessage(String(userMsg.content ?? ""));
+    if (title.length < 3) return;
     try {
-      const { content } = await chatCompletionRaw(settings, [
-        {
-          role: "user",
-          content: `Name this database-assistant conversation with a specific 3-6 word title: what the user is working on, naming the tables, metric or task involved. Prefer "Revenue by plan, last 90d" over "Data question". Never echo a greeting. Reply with ONLY the title - no quotes, no trailing punctuation.\n\nUser: ${String(userMsg.content).slice(0, 600)}\nAssistant: ${String(assistantMsg.content).slice(0, 600)}`,
-        },
-      ]);
-      // Small models like to wrap the answer in quotes or prefix "Title:".
-      const title = content
-        ?.trim()
-        .replace(/^\s*(?:title|chat)\s*:\s*/i, "")
-        .replace(/^["'`]|["'`.]+$/g, "")
-        .trim()
-        .slice(0, 60);
-      if (!title || title.length < 3) return;
       await updateConversation(activeConvId, { title });
       convList = convList.map((c) =>
         c.id === activeConvId ? { ...c, title } : c,
@@ -1341,8 +1333,11 @@
       0,
     );
     const promptChars = turnSystemPrompt.length || 0;
-    const totalChars = historyChars + promptChars;
-    const maxChars = 120_000;
+    // The tool schemas ride on every request too. Left out, a "hi" read ~5.7k
+    // while costing ~8k.
+    const toolsChars = JSON.stringify(turnTools).length;
+    const totalChars = historyChars + promptChars + toolsChars;
+    const maxChars = 60_000;
     const historyTokens = Math.round(historyChars / 4);
     const promptTokens = Math.round(promptChars / 4);
     const totalTokens = Math.round(totalChars / 4);
@@ -1351,6 +1346,7 @@
     return {
       historyChars,
       promptChars,
+      toolsChars,
       totalChars,
       historyTokens,
       promptTokens,
@@ -1569,7 +1565,9 @@
 
     /** @type {Record<string, { rows: Record<string, unknown>[], truncated: boolean }>} */
     const found = {};
-    for (const key of pending) {
+    // In parallel: each is one round trip to the database, and on a far one
+    // six in a row was most of the wait before the first token.
+    await Promise.all(pending.map(async (key) => {
       const schema = key.slice(0, key.indexOf("."));
       const table = key.slice(key.indexOf(".") + 1);
       try {
@@ -1595,7 +1593,7 @@
       } catch {
         /* unreadable table - skip it, the model can still use the columns */
       }
-    }
+    }));
     if (Object.keys(found).length) sampledRows = { ...sampledRows, ...found };
   }
 
@@ -1684,10 +1682,24 @@
       }
     }
 
+    // What this turn needs beyond the core harness. The chart and diagram
+    // skills and tools ride along only once the conversation has asked for
+    // them; a question about row counts used to carry ~3.5k tokens of them.
+    const topics = detectPromptTopics(
+      text,
+      detectPromptTopics(
+        rawApiHistory
+          .filter((m) => m.role === "user")
+          .map((m) => String(m.content ?? ""))
+          .join("\n"),
+      ),
+    );
+    turnTools = toolsForTurn(topics, $appAgentWebAccess);
     const basePrompt = buildSystemPrompt({
       ...filteredCtx,
       sampleRows: sampledRows,
       webAccess: $appAgentWebAccess,
+      topics,
     });
     const ci = $aiChatParams.customInstructions.trim();
     turnSystemPrompt = ci ? `${ci}\n\n---\n\n${basePrompt}` : basePrompt;
@@ -1698,9 +1710,9 @@
       settings,
       apiHistory,
       {
-        maxChars: 200_000,
-        keepLastN: 14,
-        summarizeThreshold: 60_000,
+        maxChars: 60_000,
+        keepLastN: 10,
+        summarizeThreshold: 30_000,
         onStatus: (msg) => {
           aiStatusHint = msg;
         },
@@ -1806,7 +1818,7 @@
     for await (const chunk of chatCompletionStream(
       settings,
       [{ role: "system", content: turnSystemPrompt }, ...apiHistory],
-      activeTools,
+      turnTools,
       abortController?.signal,
       ({ attempt, waitMs }) => {
         const sec = Math.ceil(waitMs / 1000);
@@ -4796,13 +4808,13 @@
                 ></div>
               </div>
               <p class="text-ui-3xs text-muted-foreground">
-                {contextStats.pct}% used · auto-compresses at 30k tokens
+                {contextStats.pct}% used · auto-compresses at 15k tokens
               </p>
             </div>
 
             <!-- Stats 2×2 grid -->
             <div class="grid grid-cols-2 gap-2">
-              {#each [{ label: "Turns", value: String(contextStats.messages) }, { label: "History", value: tokEst(contextStats.historyChars) }, { label: "System", value: tokEst(contextStats.promptChars) }, { label: "Total", value: tokEst(contextStats.totalChars) }] as stat}
+              {#each [{ label: "Turns", value: String(contextStats.messages) }, { label: "History", value: tokEst(contextStats.historyChars) }, { label: "System", value: tokEst(contextStats.promptChars) }, { label: "Tools", value: tokEst(contextStats.toolsChars) }, { label: "Total", value: tokEst(contextStats.totalChars) }] as stat}
                 <div
                   class="flex flex-col gap-0.5 rounded-lg border border-border/40 bg-background/60 px-3 py-2.5"
                 >
@@ -5153,14 +5165,15 @@
     margin: 0.85rem 0 0.3rem;
     color: var(--foreground);
   }
+  /* Relative to the chat size, so one setting moves the whole transcript. */
   :global(.prose-ai h1) {
-    font-size: 1.2rem;
+    font-size: 1.2em;
   }
   :global(.prose-ai h2) {
-    font-size: 1.1rem;
+    font-size: 1.1em;
   }
   :global(.prose-ai h3) {
-    font-size: 1rem;
+    font-size: 1em;
   }
   :global(.prose-ai ul) {
     padding-left: 1.35rem;
@@ -5176,7 +5189,9 @@
     margin: 0.2rem 0;
   }
   :global(.prose-ai code) {
-    font-family: "Geist Mono Variable", "Geist Mono", ui-monospace, monospace;
+    /* The app's mono, not a hardcoded family: code and tables read in the same
+       face as the grid and the SQL editor whatever font preset is on. */
+    font-family: var(--font-mono);
     font-size: 0.8125em;
     font-weight: 500;
     background: color-mix(in oklch, var(--muted) 90%, var(--foreground) 5%);
@@ -5209,7 +5224,7 @@
     background: var(--editor-surface) !important;
   }
   :global(.prose-ai pre.shiki code) {
-    font-family: ui-monospace, "Geist Mono", monospace;
+    font-family: var(--font-mono);
     font-size: var(--ai-code-font-size, 0.825rem);
     line-height: 1.6;
   }
@@ -5236,7 +5251,7 @@
     border-collapse: collapse;
     width: max-content;
     min-width: 100%;
-    font-size: 0.8125rem;
+    font-size: 0.875em;
   }
   :global(.prose-ai th) {
     position: sticky;
@@ -5250,7 +5265,7 @@
     text-align: left;
     white-space: nowrap;
     color: var(--muted-foreground);
-    font-size: 0.75rem;
+    font-size: 0.8em;
     letter-spacing: 0.04em;
     text-transform: uppercase;
   }
@@ -5261,8 +5276,8 @@
     border-bottom: 1px solid color-mix(in oklch, var(--border) 45%, transparent);
     border-right: 1px solid color-mix(in oklch, var(--border) 40%, transparent);
     padding: 0.4rem 1rem;
-    font-family: "Geist Mono Variable", "Geist Mono", ui-monospace, monospace;
-    font-size: 0.8125rem;
+    font-family: var(--font-mono);
+    font-size: 1em;
     white-space: nowrap;
     color: var(--foreground);
   }

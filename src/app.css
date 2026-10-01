@@ -518,14 +518,17 @@ html[data-os="linux"]   { --window-radius: 8px; }
   }
 
   body {
-    @apply m-0 h-full min-h-0 overflow-hidden bg-background text-foreground;
+    /* `clip`, not `hidden`: hidden still makes a scroll container, and a focus()
+       on content below the fold scrolled the body (and the title bar) off the
+       top of the window. clip cannot scroll at all. */
+    @apply m-0 h-full min-h-0 overflow-clip bg-background text-foreground;
     font-family: var(--font-sans);
     /* No border-radius: the window uses native OS decorations, so the OS draws
        the (rectangular) frame and corners. */
   }
 
   #app {
-    @apply m-0 h-full min-h-0 overflow-hidden;
+    @apply m-0 h-full min-h-0 overflow-clip;
     user-select: none;
     -webkit-user-select: none;
   }

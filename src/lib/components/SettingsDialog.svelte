@@ -296,6 +296,10 @@
     settings = updateSettings({ imagePreview: !settings.imagePreview });
   }
 
+  function toggleFkAutoExpandJson() {
+    settings = updateSettings({ fkAutoExpandJson: !settings.fkAutoExpandJson });
+  }
+
   function toggleOpenUrls() {
     settings = updateSettings({ openUrlsOnClick: !settings.openUrlsOnClick });
   }
@@ -321,6 +325,10 @@
 
   function toggleAutoSaveQueries() {
     settings = updateSettings({ autoSaveQueries: !settings.autoSaveQueries });
+  }
+
+  function toggleStreamResults() {
+    settings = updateSettings({ streamResults: settings.streamResults === false });
   }
 
   // ── SQL editor ────────────────────────────────────────────────────────────
@@ -387,7 +395,7 @@
     { id: 'record', label: 'Record', icon: 'layout-list' },
     { id: 'text',   label: 'Text',   icon: 'file-text' },
     { id: 'chart',  label: 'Chart',  icon: 'bar-chart-2' },
-    { id: 'erd',    label: 'ERD',    icon: 'git-branch' },
+    { id: 'erd',    label: 'Data model', icon: 'network' },
   ];
   const defaultViewOption = $derived(
     DATA_VIEW_OPTIONS.find((o) => o.id === settings.defaultDataView) ?? DATA_VIEW_OPTIONS[0],
@@ -750,6 +758,15 @@
       'Keep every successful run in Saved Queries, deduplicated by its SQL.',
       settings.autoSaveQueries,
       toggleAutoSaveQueries,
+    )}
+  {/if}
+
+  {#if show('Stream query results', 'Keep large results in a file and load the rows you scroll to')}
+    {@render switchRow(
+      'Stream query results',
+      'Keep a result in a file on this machine and load only the rows you scroll to, so millions of rows scroll and switch tabs smoothly. Off loads every row into the window.',
+      settings.streamResults !== false,
+      toggleStreamResults,
     )}
   {/if}
 
@@ -1294,6 +1311,14 @@
       'Tint the full row holding the focused cell. The cell keeps its outline either way.',
       settings.highlightActiveRow,
       toggleHighlightActiveRow,
+    )}
+  {/if}
+  {#if show('Expand single related row', 'Show a lone related row as JSON in the dock')}
+    {@render switchRow(
+      'Expand single related row',
+      'When following a foreign key opens a sub view with exactly one row, that row opens as JSON.',
+      settings.fkAutoExpandJson,
+      toggleFkAutoExpandJson,
     )}
   {/if}
   {#if show('Rows per page', 'How many rows a newly opened table fetches')}

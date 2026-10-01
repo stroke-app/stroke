@@ -38,6 +38,7 @@ import { loadDefaultPageSize } from '$lib/table-query.js'
  * @property {number} [scrollLeft]
  * @property {number} [scrollTop]
  * @property {number[]} [expandedRows] - row indices with an open inline detail panel; restored in background/snapshot panes
+ * @property {boolean} [expandSingleRow] - opened by following a foreign key: the one row it lands on opens as JSON
  * @property {boolean} [windowedHead] - result set is browsed in windows (huge/heavy result); `rows` lives outside the reactive tree
  * @property {number[]} [windowedLoaded] - window indices resident when the tab was last left
  * @property {number} [windowRows] - rows per window, measured from the payload when the view was built
@@ -89,6 +90,7 @@ export function cloneTableTabState(state) {
     hiddenColumns: new Set(state.hiddenColumns),
     editingCell: state.editingCell ? { ...state.editingCell } : null,
     expandedRows: [...(state.expandedRows ?? [])],
+    expandSingleRow: state.expandSingleRow,
     // Immutable value array, like `columns` - reassigned wholesale by loadStructure().
     structureColumns: state.structureColumns,
   }
@@ -223,7 +225,7 @@ const SINGLETON_TAB_TITLES = {
   dashboard: 'Dashboard',
   reltree: 'Relation Tree',
   diagrams: 'Diagrams',
-  erd: 'ER Diagram',
+  erd: 'Data Model',
   license: 'Stroke Pro',
   search: 'Find in database',
   'schema-timeline': 'Schema Timeline',

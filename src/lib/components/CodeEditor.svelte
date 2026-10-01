@@ -43,7 +43,7 @@
   import { sqlDialectFor } from '$lib/cm-sql-dialects.js'
   import {
     autocompletion, acceptCompletion, closeBrackets, closeBracketsKeymap, completionStatus, closeCompletion,
-    startCompletion, snippetKeymap, nextSnippetField, prevSnippetField, clearSnippet,
+    snippetKeymap, nextSnippetField, prevSnippetField, clearSnippet,
   } from '@codemirror/autocomplete'
   import { sqlCompletionSource } from '$lib/cm-sql-complete.js'
   import { ArrowDown01Icon, ArrowRight01Icon } from '@hugeicons/core-free-icons'
@@ -150,8 +150,12 @@
    * over the text and washed it out.
    */
   const theme = EditorView.theme({
+    // Scoped to `.cm-editor`: CodeMirror puts every theme class on the tooltip
+    // host it appends to <body> as well (tooltips({ parent })), and a 100%-tall
+    // host made the body scrollable, so a focus() scrolled the whole app chrome
+    // 23px up under the window edge.
+    '&.cm-editor': { height: '100%' },
     '&': {
-      height: '100%',
       backgroundColor: 'transparent',
       color: 'var(--foreground)',
       // A surface can set these on an ancestor: the SQL console follows the
@@ -232,7 +236,10 @@
       borderRadius: '2px',
     },
     '.cm-placeholder': { color: 'var(--muted-foreground)' },
-    // SQL completion list: small, quiet, one line per name.
+    // SQL completion list: small, quiet, one line per name. Row metrics are in
+    // em, not px: the text follows the app zoom (--fs-*), and fixed 22px rows
+    // with 8px gaps went cramped as soon as the zoom went past 100%. At the
+    // default size a row is 25px, the app's menu row.
     '.cm-tooltip': {
       backgroundColor: 'var(--popover)',
       color: 'var(--popover-foreground)',
@@ -244,17 +251,18 @@
     '.cm-tooltip.cm-tooltip-autocomplete > ul': {
       fontFamily: 'var(--font-mono)',
       fontSize: 'var(--fs-2xs)',
-      padding: '3px',
-      minWidth: '200px',
-      maxWidth: '420px',
-      maxHeight: '182px',
+      padding: '0.3em',
+      minWidth: '16em',
+      maxWidth: '34em',
+      // Seven and a half rows: the half row says the list scrolls.
+      maxHeight: 'calc(7.5 * 1.9em + 0.6em)',
     },
     '.cm-tooltip.cm-tooltip-autocomplete > ul > li': {
       display: 'flex',
       alignItems: 'center',
-      height: '22px',
-      padding: '0 8px',
-      borderRadius: '5px',
+      height: '1.9em',
+      padding: '0 0.65em',
+      borderRadius: '0.4em',
       color: 'color-mix(in oklch, var(--foreground) 78%, transparent)',
     },
     '.cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected]': {
@@ -265,9 +273,9 @@
     '.cm-completionMatchedText': { textDecoration: 'none', color: 'var(--foreground)', fontWeight: '600' },
     '.cm-completion-kind': {
       flexShrink: '0',
-      width: '6px',
-      height: '6px',
-      marginRight: '8px',
+      width: '0.45em',
+      height: '0.45em',
+      marginRight: '0.7em',
       borderRadius: '9999px',
       backgroundColor: 'var(--muted-foreground)',
     },
@@ -289,8 +297,8 @@
       whiteSpace: 'pre',
     },
     '.cm-tooltip.cm-completionInfo': {
-      maxWidth: '420px',
-      padding: '6px 10px',
+      maxWidth: '38em',
+      padding: '0.6em 0.9em',
       fontFamily: 'var(--font-sans)',
       fontSize: 'var(--fs-3xs)',
       lineHeight: '1.5',
@@ -300,7 +308,7 @@
     '.cm-completionDetail': {
       flexShrink: '0',
       marginLeft: 'auto',
-      paddingLeft: '16px',
+      paddingLeft: '1.75em',
       fontStyle: 'normal',
       fontSize: 'var(--fs-3xs)',
       color: 'var(--muted-foreground)',
@@ -714,25 +722,16 @@
 
   /**
    * Snippet keys. Tab with the list open takes the suggestion; otherwise it
-   * moves to the next field and opens the list there, so a snippet is filled by
-   * picking - `${table}`, Tab, `${column}` - not by typing over placeholders.
+   * moves to the next field. A field opens no list by itself: typing over the
+   * placeholder does, so a field kept as it is (`*`, `100`) costs one Tab.
    * Escape closes the list before it leaves the snippet.
    * @type {import('@codemirror/view').KeyBinding[]}
    */
   const snippetKeys = [
     {
       key: 'Tab',
-      run: (v) => {
-        if (completionStatus(v.state) === 'active' && acceptCompletion(v)) return true
-        if (!nextSnippetField(v)) return false
-        setTimeout(() => startCompletion(v))
-        return true
-      },
-      shift: (v) => {
-        if (!prevSnippetField(v)) return false
-        setTimeout(() => startCompletion(v))
-        return true
-      },
+      run: (v) => (completionStatus(v.state) === 'active' && acceptCompletion(v)) || nextSnippetField(v),
+      shift: prevSnippetField,
     },
     { key: 'Escape', run: (v) => (completionStatus(v.state) ? closeCompletion(v) : clearSnippet(v)) },
   ]

@@ -51,3 +51,6 @@ file.txt
 **/.claude/phobos-state.md
 **/.claude/phobos-activity.log
 **/.claude/phobos-benchmark.jsonl
+
+# Local brag/demo media, not source
+brag-output/

@@ -278,6 +278,10 @@ import FilterX from "@lucide/svelte/icons/filter-x";
      *  Null for the live grid, which persists via getScroll/getExpanded. */
     initialScroll = /** @type {{ left?: number, top?: number } | null} */ (null),
     initialExpandedRows = /** @type {number[] | null} */ (null),
+    /** The tab was opened by following a foreign key: the moment exactly one row
+     *  lands, it opens as JSON. One row alone says little, its panel says it all.
+     *  Off via Settings → Data grid → Expand single related row. */
+    expandSingleRow = false,
     /** Assigned by this component so the parent can persist the open row-expand
      *  panels per tab (mirrors getScroll). Returns the open row indices. */
     getExpanded = $bindable(/** @type {() => number[]} */ (() => [])),
@@ -4300,6 +4304,21 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     })
   })
 
+  // A tab opened by following a foreign key: the one row the key points at
+  // opens as JSON the moment it lands. Once per row set, so collapsing it by
+  // hand sticks until the next fetch. A set that landed while the tab was in
+  // the background is handled by the per-table restore further down.
+  let _autoExpandedRows = /** @type {unknown} */ (null)
+  $effect(() => {
+    if (!expandSingleRow || loading || rows.length !== 1) return
+    const r = rows
+    untrack(() => {
+      if (_autoExpandedRows === r) return
+      _autoExpandedRows = r
+      if (expandedRows.size === 0) expandedRows = new Set([0])
+    })
+  })
+
   // Persist staged changes when the component tears down (switching to a SQL/AI
   // tab unmounts DataTable) so they survive until the user returns to the table.
   onDestroy(() => {
@@ -4615,7 +4634,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   // ── Per-tab expand/sub-view state preservation ───────────────────────────────
   // Expand rows and FK sub-view are saved per columnWidthsKey so switching tabs
   // restores exactly what the user had open in each table.
-  /** @type {Map<string, { expandedRows: Set<number>, fkSubview: typeof fkSubview, newRowDrafts: Record<string, string>[] | null, newRowFocusCol: string | null }>} */
+  /** @type {Map<string, { expandedRows: Set<number>, expandedRowHeights: Map<number, number>, fkSubview: typeof fkSubview, newRowDrafts: Record<string, string>[] | null, newRowFocusCol: string | null }>} */
   const _tabExpandCache = new Map()
   // Cap the per-tab cache: each entry can retain a whole FK sub-view's fetched
   // rows, so an unbounded map would accumulate row data for every table visited
@@ -4633,6 +4652,10 @@ import FilterX from "@lucide/svelte/icons/filter-x";
         _tabExpandCache.delete(_lastTabKey) // re-insert at MRU position
         _tabExpandCache.set(_lastTabKey, {
           expandedRows: new Set(expandedRows),
+          // The measured panel heights travel with the rows. Without them a
+          // restored panel started at the 280px placeholder and the rows under
+          // it jumped when it measured - the flick on every switch back.
+          expandedRowHeights: new Map(expandedRowHeights),
           fkSubview: fkSubview,
           // The draft belongs to the table it was opened on. One component serves
           // every tab, so without this the Add row you started in one table was
@@ -4658,7 +4681,9 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       }
       // Restore state for the tab we're entering (fresh Set/null if first visit)
       const saved = _tabExpandCache.get(newKey)
-      expandedRows = saved ? new Set(saved.expandedRows) : new Set()
+      expandedRows = saved ? new Set(saved.expandedRows)
+        : new Set(expandSingleRow && rows.length === 1 ? [0] : [])
+      expandedRowHeights = saved ? new Map(saved.expandedRowHeights) : new Map()
       fkSubview = saved?.fkSubview ?? null
       newRowDrafts = saved?.newRowDrafts?.length ? saved.newRowDrafts.map((d) => ({ ...d })) : null
       newRowFocusCol = saved?.newRowFocusCol ?? null
@@ -4738,11 +4763,20 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   $effect(() => {
     const container = tableContainer
     if (!container) return
-    _viewportWidth = container.clientWidth
-    _viewportHeight = container.clientHeight
-    _physScrollTop = Math.round(container.scrollTop)
-    _scrollTop = physToVirt(_physScrollTop)
-    _scrollLeft = Math.round(container.scrollLeft)
+    // The container is the only dependency. `physToVirt` reads `_physScrollTop`
+    // and `_scrollScale`; tracked, they re-ran this effect on every scroll frame.
+    // Each run re-measured with the integer `clientWidth`, then the observer it
+    // re-created answered with the fractional contentRect width, so
+    // `_viewportWidth` flipped twice a frame. Every flip re-ran the canvas layout
+    // effect (which cancels the scroll blit) and re-laid-out the expanded-row
+    // panels at a new width - a scroll with a JSON panel open ran at ~20fps.
+    untrack(() => {
+      _viewportWidth = container.clientWidth
+      _viewportHeight = container.clientHeight
+      _physScrollTop = Math.round(container.scrollTop)
+      _scrollTop = physToVirt(_physScrollTop)
+      _scrollLeft = Math.round(container.scrollLeft)
+    })
 
     // Use contentRect directly - it's provided synchronously by the ResizeObserver
     // entry with no forced layout reflow. Removing the rAF here eliminates one full
@@ -5673,7 +5707,11 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     // delta have to land on whole device pixels for the copy to be exact; at the
     // usual DPR of 1 or 2 they always do, and on a fractional DPR we simply fall
     // back to a full repaint for the frames where they do not.
-    const blitScale = _viewportWidth > 0 ? ctx.canvas.width / _viewportWidth : 0
+    // The surface transform's own scale, so a `dy` in CSS px maps to whole
+    // device px exactly as draw() places rows. Dividing the backing width by
+    // the viewport width gave 1538 / 1537.5 on a fractional viewport, no `dy`
+    // was ever an integer multiple of that, and the blit never ran.
+    const blitScale = _surfaceDpr
     const canBlit =
       dy !== 0 &&
       Number.isInteger(dy) &&
@@ -5744,9 +5782,17 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       // fractional viewport size or a 1.5x DPR make source and destination differ
       // by a fraction of a pixel - drawImage would then *resample* the band, and
       // because each frame copies the previous one that blur would compound over a
-      // scroll into visibly smeared text. `blitScale` is read off the canvas
-      // rather than from devicePixelRatio because syncCanvasSurface caps it at 2.
-      const devH = ctx.canvas.height
+      // scroll into visibly smeared text. `blitScale` is the scale
+      // syncCanvasSurface applied, not raw devicePixelRatio, which it caps at 2.
+      // Only the viewport band moves. The surface can be taller than the
+      // viewport (syncCanvasSurface keeps the tallest height it has had) and
+      // everything below the viewport on it is stale. Moving the whole surface
+      // dragged that band into view one `dy` per frame once the viewport had
+      // shrunk (a dock opened, the app zoomed in): rows from an old frame cut
+      // across the live ones, and a blank band where the surface had been
+      // cleared. Floored so a fractional height is repainted by the strip
+      // rather than resampled by the copy.
+      const devH = Math.floor(H * blitScale)
       const headDev = HEADER_H * blitScale
       const kDev = dy * blitScale // integer: canBlit required it
       // dy > 0 means the content moved up: keep the lower band, expose the bottom.
@@ -5940,8 +5986,8 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       let lastVis = i
       // On a blit frame every row outside the exposed strip is already on the
       // canvas, translated into place. A row straddling the strip edge is
-      // repainted whole: the half that was blitted is overpainted with identical
-      // pixels, which is cheaper than clipping and cannot leave a seam. The loop
+      // cleared and repainted whole, which is cheaper than clipping and cannot
+      // leave a seam. The loop
       // itself still runs to completion - emitVisibleRange drives row windowing
       // and must see the true visible range on every frame, blit or not.
       // Widened by a pixel at each edge: a row's separators and focus ring sit on
@@ -5950,6 +5996,26 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       // blit met the strip. Worst case that is one extra row at each end.
       const repaintTop = stripTop - 1
       const repaintBot = stripTop + stripH + 1
+      // Those rows are redrawn whole, so they are cleared whole first, not just
+      // the strip. Text drawn over its own blitted copy doubles every
+      // antialiased edge, and those rows came out brighter and bolder than the
+      // rest, as if highlighted, wherever the strip edge happened to fall.
+      if (canBlit) {
+        let bandTop = Infinity
+        let bandBot = -Infinity
+        for (let j = i; j < n; j++) {
+          const ry = rowViewportY(j)
+          if (ry >= H || ry >= repaintBot) break
+          if (ry + ROW_HEIGHT <= HEADER_H || ry + ROW_HEIGHT <= repaintTop) continue
+          if (ry < bandTop) bandTop = ry
+          if (ry + ROW_HEIGHT > bandBot) bandBot = ry + ROW_HEIGHT
+        }
+        if (bandBot > bandTop) {
+          const top = Math.floor(bandTop)
+          ctx.fillStyle = cPanel
+          ctx.fillRect(0, top, W, Math.ceil(bandBot) - top)
+        }
+      }
       for (; i < n; i++) {
         const ry = rowViewportY(i)
         if (ry >= H) break
@@ -7093,6 +7159,8 @@ import FilterX from "@lucide/svelte/icons/filter-x";
    *  short-circuit here risked leaving a fresh canvas untransformed → blank). */
   /** Tallest the grid viewport has been - see the height in syncCanvasSurface. */
   let _tallestViewportH = 0
+  /** Scale of the canvas transform, as applied by syncCanvasSurface (DPR, capped). */
+  let _surfaceDpr = 1
   function syncCanvasSurface() {
     const canvas = canvasEl
     const probe = colorProbe
@@ -7116,6 +7184,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     if (_viewportHeight > _tallestViewportH) _tallestViewportH = _viewportHeight
     const cssH = Math.max(1, Math.round(Math.max(_viewportHeight, Math.min(spacerHeight, _tallestViewportH))))
     const dpr = Math.min(window.devicePixelRatio || 1, 2)
+    _surfaceDpr = dpr
     const bw = Math.max(1, Math.round(cssW * dpr))
     const bh = Math.max(1, Math.round(cssH * dpr))
     canvas.style.width = cssW + 'px'
@@ -8335,27 +8404,27 @@ import FilterX from "@lucide/svelte/icons/filter-x";
                        make every row below jitter while scrolling. Only panels
                        actually touching the band pay anything, and only while they
                        do. -->
-                  {#if _scrollScale === 1}
-                    <!-- Normal table: content-space vertical (native scroll moves it,
-                         no per-frame re-render), sticky-left for the horizontal pin. -->
-                    {@const clipTop = Math.max(0, HEADER_H - (rowDocTop(exIdx) + ROW_HEIGHT - _scrollTop))}
-                    <div class="absolute z-10 left-0 right-0" style="top:{rowDocTop(exIdx) + ROW_HEIGHT + clipTop}px">
-                      <div style="position:sticky; left:0; width:{_viewportWidth}px{clipTop > 0 ? '; overflow:hidden' : ''}">
-                        <div style={clipTop > 0 ? `margin-top:-${clipTop}px` : ''} use:trackExpandHeight={exIdx}>
-                          {@render expandBody(exIdx)}
-                        </div>
-                      </div>
-                    </div>
-                  {:else if rowViewportY(exIdx) > -_viewportHeight * 2 && rowViewportY(exIdx) < _viewportHeight + ROW_HEIGHT}
-                    <!-- Huge/scaled table: viewport-sticky layer + viewport y. Content y
-                         would be tens of millions of px (past WebKit's layout range), and
-                         a far-off-screen panel there would also blow out the scroll height,
-                         so only render when the expanded row is near the viewport. -->
+                  <!-- Every table: a viewport-pinned layer, placed at the same scroll
+                       position the canvas paints with. It was content space on normal
+                       tables, moved by the native scroll; WebKit moves that on its own
+                       scrolling thread, ahead of the canvas, so the rows under a panel
+                       slid against it while scrolling (measured: the gap below one
+                       changed from 18 to 35px across consecutive frames). Pinned, the
+                       panel and the rows move in the same frame.
+
+                       Moved by a transform, never by `top`: a `top` write lays the
+                       panel out again on every scroll frame. No `will-change` on
+                       it: a promoted layer here painted at a stale offset for a
+                       frame on tab switches and resizes (see the canvas anchor). -->
+                  {#if rowViewportY(exIdx) > -_viewportHeight * 2 && rowViewportY(exIdx) < _viewportHeight + ROW_HEIGHT}
+                    <!-- Only near the viewport: on a huge table the y would be past
+                         WebKit's layout range, and the height a panel had is kept while
+                         it is away (trackExpandHeight), so the rows below do not move. -->
                     {@const clipTopScaled = Math.max(0, HEADER_H - (rowViewportY(exIdx) + ROW_HEIGHT))}
                     <div style="position:sticky;top:0;left:0;width:0;height:0;overflow:visible;z-index:10">
                       <div
-                        class="absolute left-0"
-                        style="top:{rowViewportY(exIdx) + ROW_HEIGHT + clipTopScaled}px; width:{_viewportWidth}px{clipTopScaled > 0 ? '; overflow:hidden' : ''}"
+                        class="absolute left-0 top-0"
+                        style="transform:translateY({rowViewportY(exIdx) + ROW_HEIGHT + clipTopScaled}px); width:{_viewportWidth}px{clipTopScaled > 0 ? '; overflow:hidden' : ''}"
                       >
                         <div style={clipTopScaled > 0 ? `margin-top:-${clipTopScaled}px` : ''} use:trackExpandHeight={exIdx}>
                           {@render expandBody(exIdx)}
