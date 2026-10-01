@@ -103,7 +103,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   import { formatSql } from "$lib/format-sql.js";
   import * as Dialog from "$lib/components/ui/dialog/index.js";
   import * as Select from "$lib/components/ui/select/index.js";
-  import ShikiBlock from "./ShikiBlock.svelte";
+  import DmlReviewPanel from "./DmlReviewPanel.svelte";
   import {
     savePendingChanges,
     loadPendingChanges,
@@ -219,6 +219,12 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     tableName = '',
     /** Engine family - drives identifier quoting in the DML preview. */
     dialect = /** @type {import('$lib/dml-preview.js').Dialect} */ ('postgres'),
+    /**
+     * The database's completion hints (schemas, tables, columns), built on
+     * demand - the review dock asks only while it is open.
+     * @type {(() => import('$lib/sql-complete-data.js').SqlSchemaHints) | null}
+     */
+    getsqlhints = null,
     /** Set of column names to hide. Controlled externally (toolbar). */
     hiddenColumns = /** @type {Set<string>} */ (new Set()),
     /**
@@ -414,12 +420,18 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   const hasPendingChanges = $derived(pendingEdits.size > 0 || pendingDeletes.size > 0);
 
   /**
-   * DML preview / confirm dialog. Non-null while open. Every write path (apply
-   * staged edits, insert a new row, delete rows) routes through this so the user
-   * can review the exact SQL before it runs. `run` performs the actual write.
-   * @type {{ kind: 'update' | 'insert' | 'delete', title: string, description: string, statements: string[], confirmLabel: string, destructive: boolean, run: () => Promise<void> } | null}
+   * DML review dock. Non-null while open. Every write path (apply staged
+   * edits, insert a new row, delete rows) routes through this so the user can
+   * review the exact SQL before it runs. `run` performs the actual write.
+   * `rebuild`, when set, regenerates the review from the current staged state:
+   * the grid stays editable under the dock, and `run` writes whatever is staged
+   * at the time, so the SQL on screen has to follow it.
+   * @typedef {{ kind: 'update' | 'insert' | 'delete', title: string, description: string, statements: string[], confirmLabel: string, destructive: boolean, run: () => Promise<void>, rebuild?: () => DmlReview | null }} DmlReview
+   * @type {DmlReview | null}
    */
   let dmlPreview = $state(null);
+  /** @type {{ focus: () => void } | null} */
+  let dmlPanel = $state(null);
   /** True while the confirmed write is in flight. */
   let dmlPreviewRunning = $state(false);
   /** Prettified SQL shown in the (editable) preview editor. Bound to the editor. */
@@ -433,22 +445,70 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   const dmlContext = $derived({ dialect, schema, table: tableName, columns, primaryKey });
 
   /**
+   * Completion for the review: the whole database's hints, with this table's
+   * columns carrying their types. Built only while the review is open.
+   */
+  const dmlReviewOpen = $derived(dmlPreview !== null);
+  const dmlCompletion = $derived.by(() => {
+    if (!dmlReviewOpen) return {};
+    const base = getsqlhints?.() ?? {};
+    const own = columns.map((c) => ({ name: c.name, type: c.dataType ?? c.data_type ?? "" }));
+    const tables = base.tables ?? [];
+    return {
+      ...base,
+      tables: tables.includes(tableName) ? tables : [...tables, tableName],
+      columnsByTable: {
+        ...base.columnsByTable,
+        [tableName]: own,
+        ...(schema ? { [`${schema}.${tableName}`]: own } : {}),
+      },
+    };
+  });
+
+  /**
    * Route a write through the confirm dialog, or run it straight away when the
    * "Preview SQL before applying" setting is off.
-   * @param {NonNullable<typeof dmlPreview>} config
+   * @param {DmlReview} config
    */
   function requestWrite(config) {
-    if ($appPreviewDml) {
-      dmlPreview = config;
-      // Prettify the generated statements for a readable, editable preview.
-      dmlOriginalSql = formatSql(config.statements.join("\n"));
-      dmlEditedSql = dmlOriginalSql;
-    } else {
-      void config.run();
-    }
+    if (!$appPreviewDml) { void config.run(); return; }
+    // Apply again while the review is up: never confirm (a double-click would
+    // skip the review) and never throw away SQL the user has typed.
+    if (dmlPreview && (dmlPreviewRunning || dmlWasEdited)) { dmlPanel?.focus(); return; }
+    showDmlReview(config);
+    dmlPanel?.focus();
   }
 
-  /** Run the previewed write, then close the dialog. */
+  /** @param {DmlReview} config */
+  function showDmlReview(config) {
+    const wasEdited = dmlPreview !== null && dmlWasEdited;
+    dmlPreview = config;
+    // Prettify the generated statements for a readable, editable preview.
+    dmlOriginalSql = formatSql(config.statements.join("\n"));
+    if (!wasEdited) dmlEditedSql = dmlOriginalSql;
+  }
+
+  /** @param {{ refocus?: boolean }} [opts] */
+  function closeDmlPreview({ refocus = true } = {}) {
+    if (dmlPreviewRunning) return;
+    dmlPreview = null;
+    if (refocus) tick().then(() => tableContainer?.focus({ preventScroll: true }));
+  }
+
+  // Keep the review in step with the grid under it (see `rebuild`).
+  $effect(() => {
+    void pendingEdits;
+    void pendingDeletes;
+    void newRowDrafts;
+    untrack(() => {
+      if (!dmlPreview?.rebuild || dmlPreviewRunning) return;
+      const next = dmlPreview.rebuild();
+      if (next) showDmlReview(next);
+      else closeDmlPreview({ refocus: false });
+    });
+  });
+
+  /** Run the previewed write, then close the review. */
   async function confirmDmlPreview() {
     if (!dmlPreview || dmlPreviewRunning) return;
     dmlPreviewRunning = true;
@@ -467,7 +527,8 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       } else {
         await dmlPreview.run();
       }
-      dmlPreview = null;
+      dmlPreviewRunning = false;
+      closeDmlPreview();
     } finally {
       dmlPreviewRunning = false;
     }
@@ -651,6 +712,8 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   let fkDockHeight = $state(loadDockHeight('stroke:fk-dock-height', 260))
   /** The full-size cell editor is the second dock, and remembers its own height. */
   let cellDockHeight = $state(loadDockHeight('stroke:cell-dock-height', 220))
+  /** The DML review is the third, with its own height too. */
+  let reviewDockHeight = $state(loadDockHeight('stroke:review-dock-height', 220))
   /** rAF handle + pending height for the dock drag. */
   let _fkDockRafId = 0
   let _fkDockPendingH = 0
@@ -670,14 +733,19 @@ import FilterX from "@lucide/svelte/icons/filter-x";
    * Drag-resize a bottom dock. Both docks are flex siblings of the scroll
    * container with the same constraints and the same reflow cost, so they share
    * the drag rather than keeping two copies of it.
-   * @param {PointerEvent} e @param {'fk' | 'cell'} which
+   * @param {PointerEvent} e @param {'fk' | 'cell' | 'review'} which
    */
   function startDockResize(e, which) {
     e.preventDefault()
     clearActiveResizeListeners()
-    const startY = e.clientY, startH = which === 'fk' ? fkDockHeight : cellDockHeight
-    const storageKey = which === 'fk' ? 'stroke:fk-dock-height' : 'stroke:cell-dock-height'
-    const setH = (/** @type {number} */ h) => { if (which === 'fk') fkDockHeight = h; else cellDockHeight = h }
+    const getH = () => (which === 'fk' ? fkDockHeight : which === 'cell' ? cellDockHeight : reviewDockHeight)
+    const startY = e.clientY, startH = getH()
+    const storageKey = `stroke:${which}-dock-height`
+    const setH = (/** @type {number} */ h) => {
+      if (which === 'fk') fkDockHeight = h
+      else if (which === 'cell') cellDockHeight = h
+      else reviewDockHeight = h
+    }
     // Cleared per drag: a bare click with no movement would otherwise flush the
     // PREVIOUS drag's height on pointerup and make the dock jump.
     _fkDockPendingH = 0
@@ -703,7 +771,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       // Land on the last position the pointer actually reached, not on whichever
       // frame happened to win the race with pointerup.
       if (_fkDockPendingH) setH(_fkDockPendingH)
-      try { localStorage.setItem(storageKey, String(which === 'fk' ? fkDockHeight : cellDockHeight)) } catch {}
+      try { localStorage.setItem(storageKey, String(getH())) } catch {}
     }
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
@@ -1984,23 +2052,34 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     });
   }
 
-  /** Open the DML preview for all staged changes (edits + deletes + a pending insert). */
+  /** Open the DML review for all staged changes (edits + deletes + a pending insert). */
   function applyPendingEdits() {
+    if ((!hasPendingChanges && !pendingInsertValues()) || saving) return;
+    const review = pendingChangesReview();
+    if (review) requestWrite(review);
+  }
+
+  /**
+   * The review for everything staged, or null when nothing is.
+   * @returns {DmlReview | null}
+   */
+  function pendingChangesReview() {
     const { insertValues, editEntries, deleteIndices, statements } = pendingChangeSql();
-    if ((!hasPendingChanges && !insertValues) || saving) return;
+    if (!statements.length) return null;
     const parts = [];
     if (editEntries.length) parts.push(`${editEntries.length} cell${editEntries.length === 1 ? "" : "s"} updated`);
     if (deleteIndices.length) parts.push(`${deleteIndices.length} row${deleteIndices.length === 1 ? "" : "s"} deleted`);
     if (insertValues) parts.push("1 row inserted");
-    requestWrite({
+    return {
       kind: deleteIndices.length ? "delete" : insertValues && !editEntries.length ? "insert" : "update",
-      title: "Review changes",
+      title: `Review ${statements.length} change${statements.length === 1 ? "" : "s"}`,
       description: `${parts.join(", ")}.${deleteIndices.length ? " Deletions cannot be undone." : ""}`,
       statements,
       confirmLabel: "Apply changes",
       destructive: deleteIndices.length > 0,
       run: executePendingChanges,
-    });
+      rebuild: pendingChangesReview,
+    };
   }
 
   /** Flush all staged edits and deletes (and a pending insert) to the database. */
@@ -9201,6 +9280,39 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     />
   </div>
 {/if}
+
+<!-- Review before any edit, insert or delete is applied. The last dock, so it
+     sits on the bottom edge with the staged rows still visible above it. -->
+{#if dmlPreview}
+  <div
+    class="relative z-10 flex shrink-0 flex-col border-t border-border/60 bg-background"
+    style="height:{reviewDockHeight}px"
+  >
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+    <div
+      role="separator"
+      aria-orientation="horizontal"
+      aria-label="Resize review panel"
+      class="absolute inset-x-0 -top-1 z-10 h-2 cursor-row-resize"
+      onpointerdown={(e) => startDockResize(e, 'review')}
+    ></div>
+    <DmlReviewPanel
+      bind:this={dmlPanel}
+      bind:sql={dmlEditedSql}
+      title={dmlPreview.title}
+      description={dmlPreview.description}
+      confirmLabel={dmlPreview.confirmLabel}
+      destructive={dmlPreview.destructive}
+      originalSql={dmlOriginalSql}
+      edited={dmlWasEdited}
+      {dialect}
+      sqlHints={dmlCompletion}
+      running={dmlPreviewRunning}
+      onconfirm={confirmDmlPreview}
+      oncancel={() => closeDmlPreview()}
+    />
+  </div>
+{/if}
 </div>
 
 {#if statsCol && hasTableContext}
@@ -9379,87 +9491,3 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   value={arrayEditorValue}
   onsave={commitArrayEditor}
 />
-
-<!-- DML preview / confirm: shown before any edit, insert, or delete is applied. -->
-<Dialog.Root
-  open={dmlPreview !== null}
-  onOpenChange={(o) => { if (!o && !dmlPreviewRunning) dmlPreview = null }}
->
-  <Dialog.Content class="max-w-2xl gap-3">
-    {#if dmlPreview}
-      <Dialog.Header class="gap-1">
-        <Dialog.Title class="text-ui-sm">{dmlPreview.title}</Dialog.Title>
-        <Dialog.Description class="text-ui-xs text-muted-foreground">
-          {dmlPreview.description}
-        </Dialog.Description>
-      </Dialog.Header>
-
-      <div class="flex items-center justify-between gap-2">
-        <span class="text-ui-2xs font-medium uppercase tracking-wide text-muted-foreground">
-          SQL to run{dmlPreview.statements.length > 1 ? ` · ${dmlPreview.statements.length} statements` : ''}
-        </span>
-        {#if dmlWasEdited}
-          <button
-            type="button"
-            onclick={() => { dmlEditedSql = dmlOriginalSql }}
-            disabled={dmlPreviewRunning}
-            class="inline-flex items-center gap-1 text-ui-2xs text-muted-foreground transition-transform duration-100 ease-out hover:text-foreground active:scale-[0.97] disabled:opacity-50"
-            title="Discard your edits and restore the generated SQL"
-          >
-            <RotateCcw class="size-3" />
-            Reset SQL
-          </button>
-        {/if}
-      </div>
-
-      <!-- Editable, prettified SQL. Monaco loads lazily (kept out of the plain
-           table-browsing bundle); Shiki renders an instant highlighted preview
-           while it mounts. Editing the SQL switches Apply to run it verbatim. -->
-      <div class="flex h-[min(46vh,380px)] min-h-[160px] flex-col overflow-hidden rounded-lg border border-border/50 bg-background/40">
-        {#await import('./SqlEditor.svelte')}
-          <ShikiBlock code={dmlEditedSql} lang="sql" />
-        {:then { default: SqlEditor }}
-          <SqlEditor bind:value={dmlEditedSql} onmodenter={confirmDmlPreview} class="rounded-lg" />
-        {/await}
-      </div>
-
-      {#if dmlWasEdited}
-        <p class="text-ui-2xs text-warning">
-          You edited the SQL, Apply will run it exactly as written.
-        </p>
-      {/if}
-
-      <Dialog.Footer class="gap-2 sm:justify-end">
-        <button
-          type="button"
-          onclick={() => { if (!dmlPreviewRunning) dmlPreview = null }}
-          disabled={dmlPreviewRunning}
-          class="inline-flex h-8 items-center rounded-md px-3 text-ui-xs text-muted-foreground transition-transform duration-100 ease-out hover:bg-accent hover:text-foreground active:scale-[0.97] disabled:opacity-50"
-        >
-          Cancel
-        </button>
-        <button
-          type="button"
-          onclick={confirmDmlPreview}
-          disabled={dmlPreviewRunning}
-          class={cn(
-            "inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-ui-xs font-medium transition-transform duration-100 ease-out active:scale-[0.97] disabled:opacity-60",
-            dmlPreview.destructive
-              ? "bg-destructive text-destructive-foreground hover:opacity-90"
-              : "bg-primary text-primary-foreground hover:opacity-90"
-          )}
-        >
-          {#if dmlPreviewRunning}
-            <Loader class="size-3 animate-spin" />
-          {:else if dmlPreview.destructive}
-            <Trash2 class="size-3" />
-          {:else}
-            <Check class="size-3" />
-          {/if}
-          {dmlPreview.confirmLabel}
-        </button>
-      </Dialog.Footer>
-    {/if}
-  </Dialog.Content>
-</Dialog.Root>
-
