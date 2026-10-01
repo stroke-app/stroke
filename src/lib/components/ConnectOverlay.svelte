@@ -37,11 +37,19 @@
 
 <div class="flex flex-col items-center gap-6 text-center">
   <div class="relative flex size-[88px] items-center justify-center" in:fade={{ delay, duration: 150 }}>
-    <svg class="absolute inset-0 size-full motion-safe:animate-spin" viewBox="0 0 88 88" fill="none" aria-hidden="true">
+    <!-- The track stays put; only the arc turns, on its own layer so the GPU
+         drives it. `animate-spin`, not `motion-safe:animate-spin`: app.css keeps
+         spinners turning (slower) under reduced motion, and the motion-safe
+         variant opted this one out - with Reduce Motion on, the arc froze. -->
+    <svg class="absolute inset-0 size-full" viewBox="0 0 88 88" fill="none" aria-hidden="true">
       <circle cx="44" cy="44" r="42" stroke="currentColor" stroke-width="1.5" class="text-foreground/[0.07]" />
-      <circle cx="44" cy="44" r="42" stroke="currentColor" stroke-width="1.5"
-        stroke-dasharray="44 220" stroke-linecap="round" class="text-foreground/45" />
     </svg>
+    <div class="absolute inset-0 animate-spin will-change-transform" aria-hidden="true">
+      <svg class="size-full" viewBox="0 0 88 88" fill="none">
+        <circle cx="44" cy="44" r="42" stroke="currentColor" stroke-width="1.5"
+          stroke-dasharray="44 220" stroke-linecap="round" class="text-foreground/45" />
+      </svg>
+    </div>
     <div class="flex size-[72px] items-center justify-center rounded-full border border-border/60 bg-card ring-1 ring-inset ring-white/[0.04] shadow-[0_10px_30px_-14px_rgba(0,0,0,0.7)]">
       {#if icon}
         <DbIcon id={icon} class="size-8 shrink-0" />
