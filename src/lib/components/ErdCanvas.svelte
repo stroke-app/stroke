@@ -1204,17 +1204,31 @@
   }
 
   // ── Camera ops ─────────────────────────────────────────────────────────
-  export function fit(padding = 0.12, ms = 360) {
-    if (!nodes.length || !cssW) return
+  /** The cards' bounding box in world space, or null before a layout. */
+  function contentBounds() {
+    if (!nodes.length) return null
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity
     for (const n of nodes) {
       const p = n.position, h = nodeH(n.data)
       x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y)
       x1 = Math.max(x1, p.x + NODE_W); y1 = Math.max(y1, p.y + h)
     }
-    const bw = x1 - x0 || 1, bh = y1 - y0 || 1
-    const z = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, Math.min(cssW / bw, cssH / bh) * (1 - padding)))
-    flyTo({ zoom: z, panX: (cssW - bw * z) / 2 - x0 * z, panY: (cssH - bh * z) / 2 - y0 * z }, ms)
+    return { x0, y0, bw: x1 - x0 || 1, bh: y1 - y0 || 1 }
+  }
+
+  export function fit(padding = 0.12, ms = 360) {
+    const b = contentBounds()
+    if (!b || !cssW) return
+    const z = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, Math.min(cssW / b.bw, cssH / b.bh) * (1 - padding)))
+    flyTo({ zoom: z, panX: (cssW - b.bw * z) / 2 - b.x0 * z, panY: (cssH - b.bh * z) / 2 - b.y0 * z }, ms)
+  }
+
+  /** Zooming out stops where the whole layout fits, and never goes below
+   *  half size: a small schema at MIN_ZOOM is a row of specks. */
+  function minZoom() {
+    const b = contentBounds()
+    if (!b || !cssW) return MIN_ZOOM
+    return Math.max(MIN_ZOOM, Math.min(0.5, Math.min(cssW / b.bw, cssH / b.bh) * 0.88))
   }
 
   /** @param {string} id */
@@ -1228,7 +1242,7 @@
 
   /** @param {number} factor @param {number} [cx] @param {number} [cy] */
   function zoomBy(factor, cx = cssW / 2, cy = cssH / 2, ms = 0) {
-    const z = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, cam.zoom * factor))
+    const z = Math.max(minZoom(), Math.min(MAX_ZOOM, cam.zoom * factor))
     const wx = (cx - cam.panX) / cam.zoom, wy = (cy - cam.panY) / cam.zoom
     flyTo({ zoom: z, panX: cx - wx * z, panY: cy - wy * z }, ms)
   }
