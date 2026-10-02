@@ -184,6 +184,15 @@ export const SHORTCUT_GROUPS = [
     ],
   },
   {
+    label: 'Data model',
+    icon: 'network',
+    shortcuts: [
+      { combo: 'Mod+Shift+Enter', desc: 'Toggle full screen' },
+      { combo: 'Mod+F', desc: 'Search tables (Diagram) or columns (Dictionary)' },
+      { combo: 'Escape', desc: 'Exit full screen' },
+    ],
+  },
+  {
     label: 'AI Chat',
     icon: 'bot',
     shortcuts: [

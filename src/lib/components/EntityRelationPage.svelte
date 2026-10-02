@@ -36,6 +36,10 @@
   import PanelLeftOpen from '@lucide/svelte/icons/panel-left-open'
   import WrapText from '@lucide/svelte/icons/wrap-text'
   import Minimize2 from '@lucide/svelte/icons/minimize-2'
+  import Plus from '@lucide/svelte/icons/plus'
+  import Scan from '@lucide/svelte/icons/scan'
+  import Kbd from './Kbd.svelte'
+  import { keycaps, IS_MAC } from '$lib/shortcuts.js'
   import { saveDiagram } from '$lib/stores/saved-diagrams.js'
   import { erdToMermaid } from '$lib/erd-mermaid.js'
   import { toast } from "$lib/components/ui/sonner/toast.svelte.js"
@@ -108,6 +112,9 @@
   let error = $state('')
   let search = $state('')
   let searchEl = $state(/** @type {HTMLInputElement | null} */ (null))
+  let rootEl = $state(/** @type {HTMLDivElement | null} */ (null))
+  /** Full screen like a maximised terminal pane: ⌘⇧↵ / Ctrl+Shift+Enter. */
+  const FULLSCREEN_KEYS = keycaps('Mod+Shift+Enter').join(IS_MAC ? '' : '+')
   let activeSchema = $state(untrack(() => schema))
   let schemaOpen = $state(false)
   let settingsOpen = $state(false)
@@ -212,8 +219,9 @@
   let viewMenuOpen = $state(false)
   /** @type {MermaidViewer | null} */
   let mermaidViewer = $state(null)
-  /** The Mermaid code pane; folded away it leaves the preview the whole width. */
-  let mermaidCodeOpen = $state(true)
+  /** The Mermaid code pane. Starts folded: the picture is what the view is
+   *  opened for, and the code is one click away to copy or edit. */
+  let mermaidCodeOpen = $state(false)
   /** Long relationship lines wrap instead of running off the pane. */
   let mermaidWrap = $state(false)
   /** Width of the code pane once the divider has been dragged; 0 is the default split. */
@@ -242,6 +250,23 @@
     { id: 'ddl', label: 'DDL', hint: 'CREATE statements for the tables on the page, as the database reports them' },
   ])
 
+  // ── Tree ──────────────────────────────────────────────────────────────────
+  // The Tree draws inside this page and its controls live in this page's bar,
+  // so the state is held here and bound down.
+  let treeView = $state(/** @type {'flow' | 'all' | 'list'} */ ('all'))
+  let treeDepth = $state(1)
+  /** Folded at first: the picture is what the view is opened for. */
+  let treeListOpen = $state(false)
+  let treeSearch = $state('')
+  let treeSummary = $state('')
+  /** @type {RelationTreePage | null} */
+  let treePage = $state(null)
+  const TREE_VIEWS = [
+    { value: 'flow', label: 'Flow', hint: 'A flowchart around the table: arrows from the key to what it points at' },
+    { value: 'all', label: 'All', hint: 'Every table on the page, one line per link' },
+    { value: 'list', label: 'List', hint: 'Every relationship, table by table, with row counts' },
+  ]
+
   // ── Dictionary ────────────────────────────────────────────────────────────
   let dictQuery = $state('')
   /** Rows the dictionary draws. Capped: past this the filter is the tool. */
@@ -266,13 +291,6 @@
     }
     return rows
   })
-  /** Jump from a name anywhere in the page to its card on the diagram. */
-  function focusInDiagram(/** @type {string} */ name) {
-    if (!tableMeta.has(name)) return
-    erdView = 'canvas'
-    selectedTable = name
-    void tick().then(() => erd?.focus(name))
-  }
 
   // ── DDL ───────────────────────────────────────────────────────────────────
   /** CREATE statements per table, fetched the first time the view opens. */
@@ -1114,22 +1132,24 @@
    */
   function setPicked(names) {
     const next = new Set(names)
-    picked = next.size >= tableMeta.size ? new Set() : next
+    // A pick that matches what the page shows unfiltered is no pick at all.
+    const resolved = sameSet(next, baseOnPage) ? new Set() : next
+    if (sameSet(resolved, picked)) return
+    picked = resolved
     pickVersion += 1
     // An explicit choice is the point the gate was waiting for.
     if (picked.size) { drawAll = false; gatedCount = 0 }
   }
 
-  /** @param {string} name */
+  /** The boxes show what is on the page, so a tick puts a table on it and an
+   *  untick takes it off. Narrowing 900 tables to three is the search and
+   *  "Show only", or a row's Focus - not 897 unticks. @param {string} name */
   function togglePicked(name) {
-    // From "no filter", the first tick means "just this one" - starting from
-    // every table selected and asking the user to untick 900 of them is not a
-    // filter, it's a chore.
-    if (!picked.size) { setPicked([name]); return }
-    const next = new Set(picked)
+    if (name === focusTable) return
+    const next = new Set(onPage)
     if (next.has(name)) next.delete(name)
     else next.add(name)
-    if (!next.size) { picked = new Set(); pickVersion += 1; return }
+    if (!next.size) return
     setPicked(next)
   }
 
@@ -1141,8 +1161,7 @@
 
   /** Drop one table from the diagram. @param {string} name */
   function hideTable(name) {
-    const base = picked.size ? picked : new Set(tableMeta.keys())
-    const next = new Set(base)
+    const next = new Set(onPage)
     next.delete(name)
     if (!next.size) return
     setPicked(next)
@@ -1163,6 +1182,29 @@
     }
     return rows.sort((a, b) => a.name.localeCompare(b.name))
   })
+
+  /** @param {Set<string>} a @param {Set<string>} b */
+  const sameSet = (a, b) => a.size === b.size && [...a].every((n) => b.has(n))
+  /** What the scope and "only linked" put on the page with no pick. */
+  const baseOnPage = $derived(visibleTables({
+    tables: [...tableMeta.keys()], rels: allRels, focusTable, scope, connectedOnly, picked: null,
+  }))
+  /** What is on the page now - what the filter's boxes show. */
+  const onPage = $derived(picked.size
+    ? visibleTables({ tables: [...tableMeta.keys()], rels: allRels, focusTable, scope, connectedOnly, picked })
+    : baseOnPage)
+  const linkedSet = $derived(linkedTables(allRels))
+  /** The page plus every table one foreign key away from it. */
+  const grown = $derived(relatedTo(onPage, allRels))
+  /** The Tree reads the whole schema; every other view draws the filtered page. */
+  const filterApplies = $derived(erdView !== 'tree')
+
+  /** Every table the filter's search matches, and nothing else. */
+  function showOnlyMatches() {
+    if (!pickerRows.length) return
+    setPicked(pickerRows.map((r) => r.name))
+    pickQuery = ''
+  }
 
   /** @param {Partial<import('$lib/stores/erd-settings.js').ErdSettings>} patch */
   function updateSettings(patch) {
@@ -1541,8 +1583,13 @@
 
 <svelte:window onkeydown={(e) => {
   if (e.key === 'Escape' && fullscreen) { fullscreen = false; return }
+  const mod = (e.ctrlKey || e.metaKey) && !e.altKey
+  // Only the page on screen answers: a hidden tab's page has no width.
+  if (mod && e.shiftKey && e.key === 'Enter' && rootEl?.offsetWidth) {
+    e.preventDefault(); fullscreen = !fullscreen; return
+  }
   if (!searchEl || !searchEl.offsetParent) return
-  if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key === 'f') {
+  if (mod && !e.shiftKey && e.key === 'f') {
     e.preventDefault(); searchEl.focus(); searchEl.select()
   }
 }} />
@@ -1556,7 +1603,7 @@
 {/snippet}
 
 {#snippet segmented(/** @type {{value:string,label:string,hint?:string}[]} */ items, /** @type {string} */ current, /** @type {(v:string)=>void} */ pick)}
-<div class= "field-surface inline-flex h-7 shrink-0 items-center bg-muted/25 p-0.5">
+  <div class="field-surface inline-flex h-6 shrink-0 items-center bg-muted/25 p-0.5">
     {#each items as it (it.value)}
       <button
         type="button"
@@ -1564,9 +1611,9 @@
         aria-pressed={current === it.value}
         onclick={() => pick(it.value)}
         class={cn(
-          'inline-flex h-6 items-center rounded-[6px] px-2 text-ui-xs whitespace-nowrap transition-colors',
+          'inline-flex h-5 min-w-7 items-center justify-center rounded-[5px] px-1.5 text-ui-2xs whitespace-nowrap transition-colors',
           current === it.value
-            ? 'bg-background font-medium text-foreground ring-1 ring-inset ring-border/70'
+            ? 'bg-background text-foreground ring-1 ring-inset ring-border/70'
             : 'text-muted-foreground hover:text-foreground',
         )}
       >{it.label}</button>
@@ -1574,26 +1621,29 @@
   </div>
 {/snippet}
 
-{#snippet switchRow(/** @type {string} */ label, /** @type {string} */ desc, /** @type {boolean} */ checked, /** @type {() => void} */ ontoggle)}
-  <div class="flex items-center justify-between gap-3 px-3 py-2">
-    <div class="min-w-0">
-      <p class="text-ui-sm text-foreground">{label}</p>
-      <p class="mt-0.5 text-ui-2xs leading-snug text-muted-foreground">{desc}</p>
-    </div>
-    <button
-      type="button" role="switch" aria-checked={checked} aria-label={label}
-      onclick={ontoggle}
-      class={cn(
-        'relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors duration-150 px-0.5',
-        checked ? 'bg-primary' : 'bg-muted',
-      )}
-    >
-      <span class={cn('pointer-events-none block size-4 rounded-full bg-background shadow-sm transition-transform duration-150', checked ? 'translate-x-4' : 'translate-x-0')}></span>
-    </button>
+{#snippet settingRow(/** @type {string} */ label, /** @type {string} */ hint, /** @type {import('svelte').Snippet} */ control)}
+  <div class="flex h-8 items-center justify-between gap-3 px-2" title={hint}>
+    <span class="truncate text-ui-xs text-foreground">{label}</span>
+    {@render control()}
   </div>
 {/snippet}
 
+{#snippet switchRow(/** @type {string} */ label, /** @type {string} */ hint, /** @type {boolean} */ checked, /** @type {() => void} */ ontoggle)}
+  <!-- The whole row is the switch: a 28px toggle is a small thing to aim at. -->
+  <button
+    type="button" role="switch" aria-checked={checked} title={hint}
+    onclick={ontoggle}
+    class="flex h-8 w-full items-center justify-between gap-3 rounded-sm px-2 text-left hover:bg-accent"
+  >
+    <span class="truncate text-ui-xs text-foreground">{label}</span>
+    <span class={cn('inline-flex h-4 w-7 shrink-0 items-center rounded-full px-0.5 transition-colors duration-150', checked ? 'bg-primary' : 'bg-input')}>
+      <span class={cn('block size-3 rounded-full transition-transform duration-150', checked ? 'translate-x-3 bg-background' : 'translate-x-0 bg-foreground/80')}></span>
+    </span>
+  </button>
+{/snippet}
+
 <div
+  bind:this={rootEl}
   class={cn('flex min-h-0 flex-1 flex-col overflow-hidden', fullscreen && 'fixed inset-x-0 bottom-0 z-40 bg-background')}
   style={fullscreen ? 'top: var(--app-titlebar-h, 38px)' : ''}
 >
@@ -1621,139 +1671,222 @@
       </Popover>
     {/if}
 
-    <div class="relative flex min-w-0 shrink items-center">
-      <Search class="pointer-events-none absolute left-2 size-3.5 text-muted-foreground" />
-      <input
-        type="text"
-        bind:this={searchEl}
-        bind:value={search}
-        onkeydown={onSearchKey}
-        placeholder="Search tables…"
-        class= "field-surface h-7 w-40 min-w-0 bg-input/30 pl-7 pr-6 text-ui-sm outline-none placeholder:text-muted-foreground"
-      />
-      {#if search}
-        <button type="button" onclick={() => (search = '')} class="absolute right-2 text-muted-foreground hover:text-foreground">
-          <X class="size-3" />
-        </button>
-      {/if}
-    </div>
+    <!-- The view's own search: ⌘F lands here. Mermaid, Tree and DDL have none
+         in this bar - their editors and lists carry their own. -->
+    {#if erdView === 'canvas'}
+      <div class="relative flex min-w-0 shrink items-center">
+        <Search class="pointer-events-none absolute left-2 size-3.5 text-muted-foreground" />
+        <input
+          type="text"
+          bind:this={searchEl}
+          bind:value={search}
+          onkeydown={onSearchKey}
+          placeholder="Search tables…"
+          aria-label="Search tables"
+          class= "field-surface h-7 w-40 min-w-0 bg-input/30 pl-7 pr-6 text-ui-sm outline-none placeholder:text-muted-foreground"
+        />
+        {#if search}
+          <button type="button" onclick={() => (search = '')} class="absolute right-2 text-muted-foreground hover:text-foreground">
+            <X class="size-3" />
+          </button>
+        {/if}
+      </div>
+    {:else if erdView === 'dictionary'}
+      <div class="relative flex min-w-0 shrink items-center">
+        <Search class="pointer-events-none absolute left-2 size-3.5 text-muted-foreground" />
+        <input
+          type="text"
+          bind:this={searchEl}
+          bind:value={dictQuery}
+          onkeydown={(e) => { if (e.key === 'Escape' && dictQuery) { dictQuery = ''; e.stopPropagation() } }}
+          placeholder="Search columns, types, references…"
+          aria-label="Search the dictionary"
+          class= "field-surface h-7 w-64 min-w-0 bg-input/30 pl-7 pr-6 text-ui-sm outline-none placeholder:text-muted-foreground"
+        />
+        {#if dictQuery}
+          <button type="button" onclick={() => (dictQuery = '')} class="absolute right-2 text-muted-foreground hover:text-foreground">
+            <X class="size-3" />
+          </button>
+        {/if}
+      </div>
+    {:else if erdView === 'tree'}
+      <button
+        type="button"
+        title={treeListOpen ? 'Hide the table list' : 'Show the table list'}
+        aria-label={treeListOpen ? 'Hide the table list' : 'Show the table list'}
+        aria-pressed={treeListOpen}
+        onclick={() => (treeListOpen = !treeListOpen)}
+        class={cn('inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground', treeListOpen && 'bg-accent text-foreground')}
+      >{#if treeListOpen}<PanelLeftClose class="size-3.5" />{:else}<PanelLeftOpen class="size-3.5" />{/if}</button>
+      <div class="relative flex min-w-0 shrink items-center">
+        <Search class="pointer-events-none absolute left-2 size-3.5 text-muted-foreground" />
+        <!-- Typing opens the list it filters. -->
+        <input
+          type="text"
+          bind:this={searchEl}
+          bind:value={treeSearch}
+          oninput={() => (treeListOpen = true)}
+          onkeydown={(e) => { if (e.key === 'Escape' && treeSearch) { treeSearch = ''; e.stopPropagation() } }}
+          placeholder="Filter tables…"
+          aria-label="Filter tables"
+          class= "field-surface h-7 w-40 min-w-0 bg-input/30 pl-7 pr-6 text-ui-sm outline-none placeholder:text-muted-foreground"
+        />
+        {#if treeSearch}
+          <button type="button" onclick={() => (treeSearch = '')} class="absolute right-2 text-muted-foreground hover:text-foreground">
+            <X class="size-3" />
+          </button>
+        {/if}
+      </div>
+    {/if}
 
-    <!-- Table filter: which tables are on the diagram at all. -->
+    {#if filterApplies}
+    <!-- Table filter: which tables are on the page. The boxes say what is on it
+         now, whatever put it there - the scope, "only linked", or a pick. -->
     <Popover bind:open={pickerOpen}>
       <PopoverTrigger
-        title="Choose which tables the diagram shows"
+        title="Choose the tables on the page"
         class={cn(
-          'inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border px-2 text-ui-sm transition-colors focus:outline-none',
-          picked.size
-            ? 'border-border bg-accent text-foreground'
-            : 'border-input bg-input/30 text-muted-foreground hover:bg-accent hover:text-foreground data-[state=open]:bg-accent',
+          'field-surface inline-flex h-7 shrink-0 items-center gap-1.5 px-2 text-ui-xs transition-colors focus:outline-none',
+          onPage.size < tableMeta.size
+            ? 'bg-accent text-foreground'
+            : 'bg-input/30 text-muted-foreground hover:bg-accent hover:text-foreground data-[state=open]:bg-accent',
         )}
       >
         <ListFilter class="size-3.5 shrink-0" />
-        {#if picked.size}
-          <span class="font-mono text-ui-2xs tabular-nums">{picked.size}</span>
+        {#if onPage.size < tableMeta.size}
+          <span class="font-mono text-ui-2xs tabular-nums">{onPage.size}/{tableMeta.size}</span>
         {/if}
       </PopoverTrigger>
-      <PopoverContent class="w-72 p-0" align="start">
-        <div class="border-b border-border/40 p-2">
+      <PopoverContent class="w-80 p-0" align="start">
+        <div class="flex flex-col gap-2 border-b border-border/50 p-2">
           <div class="relative flex items-center">
-            <Search class="pointer-events-none absolute left-2 size-3.5 text-muted-foreground" />
+            <Search class="pointer-events-none absolute left-2.5 size-3.5 text-muted-foreground" />
             <!-- svelte-ignore a11y_autofocus -->
             <input
               type="text"
               autofocus
               bind:value={pickQuery}
               placeholder="Find a table…"
+              aria-label="Find a table"
               onkeydown={(e) => {
-                if (e.key === 'Enter' && pickerRows.length) { togglePicked(pickerRows[0].name); e.preventDefault() }
+                if (e.key === 'Enter' && pickQuery.trim()) { showOnlyMatches(); e.preventDefault() }
               }}
-              class= "field-surface h-7 w-full bg-input/30 pl-7 pr-2 text-ui-sm outline-none placeholder:text-muted-foreground focus:border-ring/55"
+              class= "field-surface h-8 w-full bg-input/30 pl-8 pr-2 text-ui-sm outline-none placeholder:text-muted-foreground"
             />
+          </div>
+          <div class="flex items-center gap-1">
+            {#each [
+              { id: 'all', label: 'All', title: 'Every table in the schema', active: onPage.size === tableMeta.size, disabled: false, run: () => setPicked(tableMeta.keys()) },
+              { id: 'linked', label: 'Linked', title: 'Only the tables with a foreign key, in or out', active: onPage.size < tableMeta.size && sameSet(onPage, linkedSet), disabled: !linkedSet.size, run: () => setPicked(linkedSet) },
+              { id: 'grow', label: 'Neighbours', title: 'Add every table one foreign key away from the ones on the page', active: false, disabled: grown.size === onPage.size, run: () => setPicked(grown) },
+            ] as p (p.id)}
+              <button
+                type="button"
+                title={p.title}
+                aria-pressed={p.id === 'grow' ? undefined : p.active}
+                disabled={p.disabled}
+                onclick={p.run}
+                class={cn(
+                  'inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-2 text-ui-2xs disabled:pointer-events-none disabled:opacity-40',
+                  p.active ? 'bg-accent font-medium text-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground',
+                )}
+              >
+                {#if p.id === 'all'}<LayoutGrid class="size-3 shrink-0" />
+                {:else if p.id === 'linked'}<Link class="size-3 shrink-0" />
+                {:else}<Plus class="size-3 shrink-0" />{/if}
+                {p.label}
+              </button>
+            {/each}
           </div>
         </div>
 
-        <div class="flex items-center gap-1 border-b border-border/40 px-2 py-1.5">
-          {#each [
-            { label: 'All', title: 'Clear the filter', on: () => { picked = new Set(); pickVersion += 1 }, off: !picked.size },
-            { label: 'Linked', title: 'Only tables with a foreign key', on: () => setPicked(linkedTables(allRels)), off: false },
-            { label: 'Related', title: 'Add everything the picked tables link to', on: () => setPicked(relatedTo(picked, allRels)), off: !picked.size },
-          ] as act (act.label)}
-            <button
-              type="button"
-              title={act.title}
-              disabled={act.off}
-              onclick={act.on}
-              class="field-surface inline-flex h-6 shrink-0 items-center gap-1 whitespace-nowrap bg-input/20 px-2 text-ui-2xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-35"
-            >
-              {#if act.label === 'All'}<LayoutGrid class="size-3 shrink-0" />
-              {:else if act.label === 'Linked'}<Link class="size-3 shrink-0" />
-              {:else}<Network class="size-3 shrink-0" />{/if}
-              {act.label}
-            </button>
-          {/each}
-          <span class="ml-auto pr-1 font-mono text-ui-3xs tabular-nums text-muted-foreground">
-            {picked.size || tableMeta.size}/{tableMeta.size}
-          </span>
-        </div>
-
         <div class="max-h-72 overflow-y-auto p-1">
-          {#if !picked.size}
-            <p class="px-2 pb-1 pt-0.5 text-ui-3xs leading-snug text-muted-foreground">
-              No filter - every table the scope allows is on the diagram. Tick one to narrow it.
-            </p>
-          {/if}
           {#each pickerRows.slice(0, PICKER_ROWS) as row (row.name)}
-            {@const on = picked.has(row.name)}
-            <div class={cn('group/pick flex h-7 items-center gap-2 rounded-md px-2 transition-colors hover:bg-accent/50', on && 'bg-accent/60')}>
+            {@const on = onPage.has(row.name)}
+            {@const locked = row.name === focusTable}
+            <div class="group/pick relative flex h-7 items-center rounded-sm hover:bg-accent">
               <button
                 type="button"
-                aria-pressed={on}
+                role="checkbox"
+                aria-checked={on}
+                disabled={locked}
+                title={locked ? 'The table this diagram was opened for is always on it' : undefined}
                 onclick={() => togglePicked(row.name)}
-                class="flex min-w-0 flex-1 items-center gap-2 text-left"
+                class="flex h-full min-w-0 flex-1 items-center gap-2 px-2 text-left disabled:cursor-default"
               >
-                <span
-                  class={cn(
-                    'flex size-3.5 shrink-0 items-center justify-center rounded-[4px] border transition-colors',
-                    on ? 'border-primary bg-primary text-primary-foreground' : 'border-border group-hover/pick:border-muted-foreground/60',
-                  )}
-                >
-                  {#if on}
-                    <Check class="size-3" />
-                  {:else if !picked.size}
-                    <span class="size-1 rounded-full bg-muted-foreground/40"></span>
-                  {/if}
-                </span>
                 <span class={cn(
-                  'min-w-0 flex-1 truncate font-mono text-ui-2xs',
-                  picked.size && !on ? 'text-muted-foreground' : 'text-foreground/85',
-                )}>{row.name}</span>
+                  'flex size-4 shrink-0 items-center justify-center rounded-[4px] border',
+                  on ? 'border-primary bg-primary text-primary-foreground' : 'border-input dark:bg-input/30',
+                  locked && 'opacity-60',
+                )}>
+                  {#if on}<Check class="size-3" />{/if}
+                </span>
+                <span class={cn('min-w-0 flex-1 truncate font-mono text-ui-xs', on ? 'text-foreground' : 'text-muted-foreground')}>{row.name}</span>
+                {#if locked}
+                  <span class="shrink-0 pr-1 text-ui-3xs text-muted-foreground">this table</span>
+                {:else if row.fks}
+                  <span class="shrink-0 pr-1 font-mono text-ui-3xs tabular-nums text-muted-foreground group-hover/pick:opacity-0 group-focus-within/pick:opacity-0" title="{row.fks} foreign keys">{row.fks} fk</span>
+                {/if}
               </button>
-              {#if row.fks}
-                <span class="shrink-0 rounded-[3px] bg-muted/50 px-1 font-mono text-ui-3xs tabular-nums text-muted-foreground" title="{row.fks} foreign keys">{row.fks} fk</span>
+              {#if !locked}
+                <!-- Sits where the fk count is, shown under the pointer or the
+                     keyboard: a column of twenty "Focus"es reads as a word. -->
+                <button
+                  type="button"
+                  title="Show only {row.name} and the tables it links to"
+                  onclick={() => isolate(row.name)}
+                  class="absolute right-1 inline-flex h-5 items-center rounded-md px-1.5 text-ui-3xs font-medium text-muted-foreground opacity-0 hover:bg-background hover:text-foreground focus-visible:opacity-100 group-hover/pick:opacity-100"
+                >Focus</button>
               {/if}
-              <!-- Per-row action, shown when the row is under the pointer or
-                   the keyboard: twenty "only"s in a column read as a word, not
-                   as buttons. -->
-              <button
-                type="button"
-                title="Show only {row.name} and what it links to"
-                onclick={() => isolate(row.name)}
-                class="shrink-0 rounded px-1 text-ui-3xs text-muted-foreground opacity-0 transition-[opacity,color] hover:text-foreground focus-visible:opacity-100 group-hover/pick:opacity-100"
-              >only</button>
             </div>
           {/each}
           {#if pickerRows.length > PICKER_ROWS}
-            <p class="px-3 py-1.5 text-ui-3xs text-muted-foreground">
+            <p class="px-2 py-1.5 text-ui-3xs text-muted-foreground">
               {pickerRows.length - PICKER_ROWS} more - narrow the search to reach them.
             </p>
           {:else if !pickerRows.length}
-            <p class="px-3 py-1.5 text-ui-3xs text-muted-foreground">No table matches “{pickQuery}”.</p>
+            <p class="px-2 py-1.5 text-ui-2xs text-muted-foreground">No table matches “{pickQuery}”.</p>
+          {/if}
+        </div>
+
+        <div class="flex h-9 items-center gap-2 border-t border-border/50 px-2">
+          {#if pickQuery.trim() && pickerRows.length}
+            <button
+              type="button"
+              onclick={showOnlyMatches}
+              class="flex h-7 min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-left text-ui-xs text-foreground hover:bg-accent"
+            >
+              <span class="min-w-0 flex-1 truncate">Show only {pickerRows.length === 1 ? 'this table' : `these ${pickerRows.length}`}</span>
+              <Kbd combo="Enter" size="sm" />
+            </button>
+          {:else}
+            <span class="min-w-0 flex-1 truncate px-1 text-ui-2xs tabular-nums text-muted-foreground">
+              {onPage.size} of {tableMeta.size} tables on the page
+            </span>
+            {#if picked.size}
+              <button
+                type="button"
+                title="Back to what the scope and settings show"
+                onclick={() => setPicked([])}
+                class="inline-flex h-6 shrink-0 items-center rounded-md px-2 text-ui-2xs text-muted-foreground hover:bg-accent hover:text-foreground"
+              >Reset</button>
+            {/if}
           {/if}
         </div>
       </PopoverContent>
     </Popover>
+    {#if picked.size}
+      <button
+        type="button"
+        title="Clear the table filter"
+        aria-label="Clear the table filter"
+        onclick={() => setPicked([])}
+        class="hit-area -ml-1 inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+      ><X class="size-3" /></button>
+    {/if}
+    {/if}
 
-    {#if focusTable}
+    {#if focusTable && filterApplies}
       <!-- Scope: what the diagram covers, relative to the table it was opened for.
            Icons only - the table's name is already in the tab and on its card. -->
       <div class="ml-0.5 flex shrink-0 items-center gap-1">
@@ -1790,26 +1923,59 @@
     {/if}
 
     <div class="ml-auto flex shrink-0 items-center gap-1.5">
+      <!-- The view's own numbers and actions. -->
       {#if tableMeta.size > 0 && !loading}
-        <span class="whitespace-nowrap pr-1 font-mono text-ui-2xs tabular-nums text-muted-foreground">
-          {nodes.length}/{tableMeta.size} tables · {fkCount} fk{layingOut ? ' · laying out…' : ''}
-        </span>
-        {#if picked.size}
+        {#if erdView === 'canvas'}
+          <span class="whitespace-nowrap pr-1 font-mono text-ui-2xs tabular-nums text-muted-foreground">
+            {nodes.length}/{tableMeta.size} tables · {fkCount} fk{layingOut ? ' · laying out…' : ''}
+          </span>
+        {:else if erdView === 'dictionary'}
+          <span class="whitespace-nowrap pr-1 font-mono text-ui-2xs tabular-nums text-muted-foreground">
+            {dictRows.length} column{dictRows.length === 1 ? '' : 's'} · {shownTables.length} tables
+          </span>
+        {:else if erdView === 'ddl'}
+          <span class="inline-flex items-center gap-1.5 whitespace-nowrap pr-1 font-mono text-ui-2xs tabular-nums text-muted-foreground">
+            {#if ddlLoading}<Loader class="size-3 shrink-0 animate-spin" />{/if}
+            {shownTables.length} tables{ddlLoading ? ' · reading…' : ''}
+          </span>
           <button
             type="button"
-            title="Clear the table filter"
-            onclick={() => { picked = new Set(); pickVersion += 1 }}
-            class="field-surface inline-flex h-6 shrink-0 items-center gap-1 bg-accent px-1.5 text-ui-2xs text-foreground transition-colors hover:bg-accent/70"
-          >
-            filtered
-            <X class="size-2.5" />
-          </button>
+            title="Copy every statement"
+            aria-label="Copy every statement"
+            onclick={copyAllDdl}
+            class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          >{#if copiedAllDdl}<Check class="size-3.5 text-success" />{:else}<Copy class="size-3.5" />{/if}</button>
+          <Button
+            variant="outline"
+            size="sm"
+            title="Save as a .sql file"
+            onclick={() => void saveExport(ddlSource, `${activeSchema}-schema.sql`, { name: 'SQL', extensions: ['sql'] }, 'DDL')}
+          ><Download class="size-3.5" />Export .sql</Button>
+        {:else if erdView === 'tree'}
+          {#if treeSummary}
+            <span class="min-w-0 truncate whitespace-nowrap pr-1 font-mono text-ui-2xs tabular-nums text-muted-foreground">{treeSummary}</span>
+          {/if}
+          {#if treeView === 'flow'}
+            {@render segmented(
+              [{ value: '1', label: '1 hop', hint: 'The table and its neighbours' }, { value: '2', label: '2 hops', hint: 'Their neighbours too' }],
+              String(treeDepth),
+              (v) => (treeDepth = Number(v)),
+            )}
+          {/if}
+          {#if treeView !== 'list'}
+            <div class="flex shrink-0 items-center">
+              <button type="button" title="Zoom out" aria-label="Zoom out" onclick={() => treePage?.zoom('out')} class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"><ZoomOut class="size-3.5" /></button>
+              <button type="button" title="Zoom in" aria-label="Zoom in" onclick={() => treePage?.zoom('in')} class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"><ZoomIn class="size-3.5" /></button>
+              <button type="button" title="Fit" aria-label="Fit" onclick={() => treePage?.zoom('fit')} class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"><Scan class="size-3.5" /></button>
+            </div>
+          {/if}
+          {@render segmented(TREE_VIEWS, treeView, (v) => (treeView = /** @type {'flow'|'all'|'list'} */ (v)))}
         {/if}
       {/if}
 
       <button
         type="button"
-        title={fullscreen ? 'Exit full screen (Esc)' : 'Full screen'}
+        title={fullscreen ? `Exit full screen (${FULLSCREEN_KEYS} or Esc)` : `Full screen (${FULLSCREEN_KEYS})`}
         aria-pressed={fullscreen}
         onclick={() => (fullscreen = !fullscreen)}
         class={cn('inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground', fullscreen && 'bg-accent text-foreground')}
@@ -1848,7 +2014,8 @@
 
       <div class="h-4 w-px shrink-0 bg-border/60"></div>
 
-      <!-- Diagram settings -->
+      {#if erdView === 'canvas'}
+      <!-- Diagram settings: cards, layout and lines, so the Diagram's alone. -->
       <Popover bind:open={settingsOpen}>
         <PopoverTrigger
           class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,transform] duration-150 ease-out hover:bg-accent hover:text-foreground active:scale-[0.97] focus:outline-none data-[state=open]:bg-accent data-[state=open]:text-foreground"
@@ -1856,34 +2023,22 @@
         >
           <SlidersHorizontal class="size-3.5" />
         </PopoverTrigger>
-        <PopoverContent class="w-72 py-1" align="end">
-          <div class="px-3 pb-1.5 pt-2">
-            <p class="text-ui-2xs font-semibold uppercase tracking-[0.06em] text-muted-foreground">Cards</p>
-          </div>
-          <div class="flex items-center justify-between gap-3 px-3 pb-2">
-            <span class="text-ui-sm text-foreground">Columns</span>
+        <PopoverContent class="w-64 p-1" align="end">
+          {#snippet columnsCtl()}
             {@render segmented(
-              [{ value: 'all', label: 'All' }, { value: 'keys', label: 'Keys only', hint: 'Show only PK/FK columns' }],
+              [{ value: 'all', label: 'All' }, { value: 'keys', label: 'Keys', hint: 'Only the key columns: primary and foreign' }],
               view.columnMode,
               (v) => updateSettings({ columnMode: /** @type {'all'|'keys'} */ (v) }),
             )}
-          </div>
-          {@render switchRow('Data types', 'Show each column’s type on the card', view.showTypes, () => updateSettings({ showTypes: !view.showTypes }))}
-
-          <div class="mt-1 border-t border-border/40"></div>
-          <div class="px-3 pb-1.5 pt-2">
-            <p class="text-ui-2xs font-semibold uppercase tracking-[0.06em] text-muted-foreground">Layout</p>
-          </div>
-          <div class="flex items-center justify-between gap-3 px-3 pb-2">
-            <span class="text-ui-sm text-foreground">Spacing</span>
+          {/snippet}
+          {#snippet spacingCtl()}
             {@render segmented(
               [{ value: 'compact', label: 'S' }, { value: 'comfortable', label: 'M' }, { value: 'spacious', label: 'L' }],
               view.spacing,
               (v) => updateSettings({ spacing: /** @type {'compact'|'comfortable'|'spacious'} */ (v) }),
             )}
-          </div>
-          <div class="flex items-center justify-between gap-3 px-3 pb-1">
-            <span class="text-ui-sm text-foreground">Relationships</span>
+          {/snippet}
+          {#snippet routingCtl()}
             {@render segmented(
               [
                 { value: 'smart', label: 'Routed', hint: 'Follow the corridors the layout kept clear of the cards' },
@@ -1892,9 +2047,8 @@
               view.routing,
               (v) => updateSettings({ routing: /** @type {'smart'|'direct'} */ (v) }),
             )}
-          </div>
-          <div class="flex items-center justify-between gap-3 px-3 pb-2">
-            <span class="text-ui-sm text-foreground">Hub links</span>
+          {/snippet}
+          {#snippet hubCtl()}
             {@render segmented(
               [
                 { value: 'badges', label: 'Pills', hint: 'A table most of the schema points at (tenants, users) is named on each row instead of drawn from every card; its lines show for the card under the pointer or the selected one' },
@@ -1903,43 +2057,53 @@
               view.hubLinks,
               (v) => updateSettings({ hubLinks: /** @type {'badges'|'lines'} */ (v) }),
             )}
-          </div>
+          {/snippet}
+
+          {@render settingRow('Columns', 'Every column on the card, or only the keys', columnsCtl)}
+          {@render switchRow('Data types', 'Show each column’s type on the card', view.showTypes, () => updateSettings({ showTypes: !view.showTypes }))}
+
+          <div class="-mx-1 my-1 h-px bg-border/60"></div>
+          {@render settingRow('Spacing', 'Room between the cards', spacingCtl)}
+          {@render settingRow('Routing', 'How relationship lines find their way between cards', routingCtl)}
           {#if view.routing === 'smart' && !routeHints.size && nodes.length > MAX_ROUTED_NODES}
-            <p class="px-3 pb-2 text-ui-2xs leading-snug text-muted-foreground">
-              Drawing direct lines: routing is capped at {MAX_ROUTED_NODES} tables and this view has {nodes.length}.
+            <p class="px-2 pb-1 text-ui-2xs leading-snug text-muted-foreground">
+              Lines are direct: routing stops at {MAX_ROUTED_NODES} tables and this page has {nodes.length}.
             </p>
           {/if}
+          {@render settingRow('Hub links', 'How links into tables most of the schema points at are drawn', hubCtl)}
           {@render switchRow('Only linked tables', 'Hide tables without any foreign key', connectedOnly, () => updateSettings({ connectedOnly: !connectedOnly }))}
           {@render switchRow('Grid dots', 'Dotted background on the canvas', view.grid, () => updateSettings({ grid: !view.grid }))}
 
-          <div class="mt-1 border-t border-border/40 pt-1">
+          {#if !hostExports}
+            <div class="-mx-1 my-1 h-px bg-border/60"></div>
             <button
               type="button"
-              class="flex w-full items-center gap-2 rounded-md px-3 py-2 text-ui-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-              onclick={() => { reLayout(); settingsOpen = false }}
+              disabled={exporting || tableMeta.size === 0}
+              class="flex h-8 w-full items-center gap-2 rounded-sm px-2 text-left text-ui-xs text-foreground hover:bg-accent disabled:pointer-events-none disabled:opacity-40"
+              onclick={() => { exportDiagram('copy-png'); settingsOpen = false }}
             >
-              <LayoutDashboard class="size-3.5 shrink-0" />
-              Re-run auto layout
+              <Copy class="size-3.5 shrink-0 text-muted-foreground" />Copy as PNG
             </button>
-            {#if !hostExports}
-              {#each [
-                { kind: /** @type {const} */ ('copy-png'), label: 'Copy as PNG' },
-                { kind: /** @type {const} */ ('png'), label: 'Download PNG' },
-                { kind: /** @type {const} */ ('svg'), label: 'Download SVG' },
-                { kind: /** @type {const} */ ('mermaid'), label: 'Download Mermaid' },
-              ] as item (item.kind)}
-                <button
-                  type="button"
-                  disabled={exporting || tableMeta.size === 0}
-                  class="flex w-full items-center gap-2 rounded-md px-3 py-2 text-ui-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
-                  onclick={() => { exportDiagram(item.kind); settingsOpen = false }}
-                >
-                  {#if exporting}<Loader class="size-3.5 shrink-0 animate-spin" />{:else}<Download class="size-3.5 shrink-0" />{/if}
-                  {item.label}
-                </button>
-              {/each}
-            {/if}
-          </div>
+            <div class="flex h-8 items-center gap-2 px-2">
+              {#if exporting}<Loader class="size-3.5 shrink-0 animate-spin text-muted-foreground" />{:else}<Download class="size-3.5 shrink-0 text-muted-foreground" />{/if}
+              <span class="text-ui-xs text-foreground">Download</span>
+              <div class="ml-auto flex items-center gap-0.5">
+                {#each [
+                  { kind: /** @type {const} */ ('png'), label: 'PNG' },
+                  { kind: /** @type {const} */ ('svg'), label: 'SVG' },
+                  { kind: /** @type {const} */ ('mermaid'), label: 'Mermaid' },
+                ] as item (item.kind)}
+                  <button
+                    type="button"
+                    title="Download the diagram as {item.label}"
+                    disabled={exporting || tableMeta.size === 0}
+                    class="inline-flex h-6 items-center rounded-md px-1.5 text-ui-2xs text-muted-foreground hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+                    onclick={() => { exportDiagram(item.kind); settingsOpen = false }}
+                  >{item.label}</button>
+                {/each}
+              </div>
+            </div>
+          {/if}
         </PopoverContent>
       </Popover>
 
@@ -1951,6 +2115,7 @@
       >
         <LayoutDashboard class="size-3.5" />
       </button>
+      {/if}
 
 
       <button
@@ -2075,31 +2240,25 @@
       {:else if erdView === 'tree'}
         <!-- One table at a time, from the tables this page already loaded. -->
         <div class="absolute inset-0 flex min-h-0">
-          <RelationTreePage embedded initialMeta={tableMeta} schema={activeSchema} {schemas} onopentable={(_s, t) => openTable(t)} />
+          <RelationTreePage
+            bind:this={treePage}
+            embedded
+            bind:view={treeView}
+            bind:depth={treeDepth}
+            bind:listOpen={treeListOpen}
+            bind:listSearch={treeSearch}
+            bind:summary={treeSummary}
+            initialMeta={tableMeta}
+            schema={activeSchema}
+            {schemas}
+            onopentable={(_s, t) => openTable(t)}
+          />
         </div>
       {:else if erdView === 'dictionary'}
         <!-- Every column of every table on the page, one row each. The filter
              matches table, column, type and reference, so "tenant_id" finds the
              key wherever it lives and "jsonb" finds every document column. -->
         <div class="absolute inset-0 flex min-h-0 flex-col">
-          <div class="flex h-9 shrink-0 items-center gap-2 border-b border-border/40 bg-panel px-2.5">
-            <span class="shrink-0 text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground">Dictionary</span>
-            <div class="relative flex min-w-0 items-center">
-              <Search class="pointer-events-none absolute left-2 size-3 text-muted-foreground" />
-              <input
-                type="text"
-                bind:value={dictQuery}
-                placeholder="Filter by table, column, type or reference…"
-                class="field-surface h-7 w-72 min-w-0 bg-input/30 pl-7 pr-6 text-ui-sm outline-none placeholder:text-muted-foreground"
-              />
-              {#if dictQuery}
-                <button type="button" onclick={() => (dictQuery = '')} class="absolute right-2 text-muted-foreground hover:text-foreground"><X class="size-3" /></button>
-              {/if}
-            </div>
-            <span class="ml-auto font-mono text-ui-3xs tabular-nums text-muted-foreground">
-              {dictRows.length} column{dictRows.length === 1 ? '' : 's'} · {shownTables.length} tables
-            </span>
-          </div>
           <div class="min-h-0 flex-1 overflow-auto">
             <table class="w-full border-separate border-spacing-0 font-mono text-ui-xs">
               <thead class="sticky top-0 z-10 bg-panel">
@@ -2114,7 +2273,7 @@
                   {@const sameTable = i > 0 && dictRows[i - 1].table === r.table}
                   <tr class="group/row hover:bg-accent/40">
                     <td class={cn('whitespace-nowrap border-b border-border/15 px-3 py-1', sameTable ? 'text-transparent' : 'text-foreground/85')}>
-                      <button type="button" class="hover:underline hover:text-foreground" onclick={() => focusInDiagram(r.table)} title="Show {r.table} on the diagram">{r.table}</button>
+                      <button type="button" class="hover:underline hover:text-foreground" onclick={() => openTable(r.table)} title="Open {r.table}">{r.table}</button>
                     </td>
                     <td class={cn('whitespace-nowrap border-b border-border/15 px-3 py-1', r.pk ? 'font-semibold' : '')} style={r.pk ? `color:${ink.pk}` : r.fk ? `color:${ink.fk}` : ''}>{r.col}</td>
                     <td class="whitespace-nowrap border-b border-border/15 px-3 py-1 text-muted-foreground">{r.type}</td>
@@ -2126,7 +2285,7 @@
                     </td>
                     <td class="whitespace-nowrap border-b border-border/15 px-3 py-1 text-muted-foreground">
                       {#if r.ref}
-                        <button type="button" class="hover:underline hover:text-foreground" onclick={() => focusInDiagram(r.refTable)} title="Show {r.refTable} on the diagram">→ {r.ref}</button>
+                        <button type="button" class="hover:underline hover:text-foreground" onclick={() => openTable(r.refTable)} title="Open {r.refTable}">→ {r.ref}</button>
                       {/if}
                     </td>
                   </tr>
@@ -2144,24 +2303,6 @@
         <!-- The CREATE statements, as the engine reports them, one document.
              Read-only here; the SQL console is where statements are run. -->
         <div class="absolute inset-0 flex min-h-0 flex-col">
-          <div class="flex h-9 shrink-0 items-center gap-2 border-b border-border/40 bg-panel px-2.5">
-            <span class="shrink-0 text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground">DDL</span>
-            <span class="font-mono text-ui-3xs tabular-nums text-muted-foreground">{shownTables.length} tables{ddlLoading ? ' · reading…' : ''}</span>
-            {#if ddlLoading}<Loader class="size-3 animate-spin text-muted-foreground" />{/if}
-            <span class="ml-auto"></span>
-            <button
-              type="button"
-              title="Copy every statement"
-              onclick={copyAllDdl}
-              class="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            >{#if copiedAllDdl}<Check class="size-3.5 text-success" />{:else}<Copy class="size-3.5" />{/if}</button>
-            <button
-              type="button"
-              title="Save as a .sql file"
-              onclick={() => void saveExport(ddlSource, `${activeSchema}-schema.sql`, { name: 'SQL', extensions: ['sql'] }, 'DDL')}
-              class="field-surface inline-flex h-6 shrink-0 items-center gap-1 whitespace-nowrap bg-input/20 px-2 text-ui-2xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            ><Download class="size-3" />Export .sql</button>
-          </div>
           <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
             <CodeEditor value={ddlSource} readOnly lang="sql" ariaLabel="DDL" />
           </div>

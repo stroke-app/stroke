@@ -11,10 +11,10 @@
   import KeyRound from '@lucide/svelte/icons/key-round'
   import Link from '@lucide/svelte/icons/link'
   import ChevronRight from '@lucide/svelte/icons/chevron-right'
-  import ChevronDown from '@lucide/svelte/icons/chevron-down'
   import GitBranch from '@lucide/svelte/icons/git-branch'
   import ArrowUpRight from '@lucide/svelte/icons/arrow-up-right'
   import ArrowDownRight from '@lucide/svelte/icons/arrow-down-right'
+  import ArrowRight from '@lucide/svelte/icons/arrow-right'
   import ExternalLink from '@lucide/svelte/icons/external-link'
   import Table2 from '@lucide/svelte/icons/table-2'
   import ZoomIn from '@lucide/svelte/icons/zoom-in'
@@ -36,6 +36,17 @@
     /** Tables already loaded by the parent. Set, nothing is fetched here but
      *  the row counts. @type {Map<string, TableMeta> | null} */
     initialMeta = null,
+    // Bound by a host that draws the controls in its own bar (the data
+    // model); embedded, this page has no bar of its own.
+    /** Around the focused table as a flowchart, the whole page as one, or the list. */
+    view = $bindable(/** @type {'flow' | 'all' | 'list'} */ ('all')),
+    /** Hops from the focused table the flowchart reaches. Two is plenty: three is the schema. */
+    depth = $bindable(1),
+    /** The table list on the left; folded away, the drawing gets its width. */
+    listOpen = $bindable(true),
+    listSearch = $bindable(''),
+    /** One line about what is on screen, for the host's bar. */
+    summary = $bindable(''),
   } = $props()
 
   /**
@@ -52,7 +63,6 @@
   let error = $state('')
   let activeSchema = $state(untrack(() => schema))
   let schemaOpen = $state(false)
-  let listSearch = $state('')
   let listSearchEl = $state(/** @type {HTMLInputElement | null} */ (null))
   /** @type {string|null} */
   let focusedTable = $state(null)
@@ -61,13 +71,6 @@
   let tableMeta = $state(new Map())
 
   // ── Flow / list ───────────────────────────────────────────────────────────
-  /** Around the focused table as a flowchart, the whole page as one, or the list. */
-  let view = $state(/** @type {'flow' | 'all' | 'list'} */ ('list'))
-  /** Hops from the focused table the flowchart reaches. Two is plenty: three is the schema. */
-  let depth = $state(1)
-  /** The table list on the left; folded away, the drawing gets its width.
-   *  Inside the data model it starts folded - that page is about the picture. */
-  let listOpen = $state(untrack(() => !embedded))
   /** @type {MermaidViewer | null} */
   let flowViewer = $state(null)
   /** Every relationship on the page, in the generator's shape. */
@@ -97,6 +100,21 @@
     if (!tableMeta.size) return ''
     return relationsToFlowchart([...tableMeta.values()], allRels, { merge: true, direction: 'LR' })
   })
+
+  const summaryText = $derived.by(() => {
+    if (view === 'all') {
+      const hubsLeft = flowRels.length - allRels.length
+      return `${tableMeta.size} tables · ${allRels.length} links${hubsLeft ? ` · ${hubsLeft} hub links left out` : ''}`
+    }
+    if (!focusedTable || !tableMeta.has(focusedTable)) return ''
+    return `${focusedTable} · ${outbound.get(focusedTable)?.length ?? 0} out · ${inbound.get(focusedTable)?.length ?? 0} in`
+  })
+  $effect(() => { summary = summaryText })
+
+  /** Zoom the drawing from a host's bar. @param {'in' | 'out' | 'fit'} how */
+  export function zoom(how) {
+    flowViewer?.dispatch(how === 'in' ? 'diagram:zoomin' : how === 'out' ? 'diagram:zoomout' : 'diagram:reset')
+  }
 
   /**
    * Per-table exact row counts, filled in a BACKGROUND pass after the tree has
@@ -283,7 +301,8 @@
       </div>
     {/if}
 
-    <!-- Search -->
+    <!-- Search - embedded, it lives in the host's bar. -->
+    {#if !embedded}
     <div class="relative px-2 py-1.5">
       <Search class="pointer-events-none absolute left-4 top-1/2 size-3 -translate-y-1/2 text-muted-foreground" />
       <input
@@ -294,6 +313,7 @@
         class= "field-surface h-7 w-full bg-background/60 pl-7 pr-2 font-mono text-ui-xs outline-none placeholder:text-muted-foreground"
       />
     </div>
+    {/if}
 
     <!-- Progress -->
     {#if loading && totalCount > 0}
@@ -339,6 +359,7 @@
 
   <!-- ── Right: the focused table's relationships, drawn or listed ────────── -->
   <div class="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
+  {#if !embedded}
   <div class="flex h-9 shrink-0 items-center gap-2 border-b border-border/40 bg-panel px-2">
     <button
       type="button"
@@ -391,6 +412,7 @@
       {/each}
     </div>
   </div>
+  {/if}
   {#if view === 'all' && allGated}
     <div class="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
       <p class="text-ui-sm text-foreground">{tableMeta.size} tables is a few seconds of rendering.</p>
@@ -415,104 +437,118 @@
       {@const shared = { tableMeta, outbound, inbound, expanded, showCols, rowCounts, toggleExpand, toggleCols, activeSchema, onopentable, onfocustable: (name) => (focusedTable = name) }}
       {@const rootCount = rowCounts.get(focusedTable)}
 
-      <div class="mx-auto max-w-4xl">
-        <!-- The table itself: a card (DESIGN_SYSTEM §9) with its columns behind
-             a disclosure. Plain surfaces, one primary action. -->
-        <div class="mb-5 rounded-lg border border-border bg-panel">
-          <div class="flex items-center gap-3 px-4 py-3">
-            <Table2 class="size-4 shrink-0 text-muted-foreground" />
-            <div class="min-w-0 flex-1">
-              <p class="truncate font-mono text-ui font-semibold text-foreground">{focusedTable}</p>
-              <p class="font-mono text-ui-xs tabular-nums text-muted-foreground">
-                {rootMeta?.columns.length ?? 0} columns · {rootOut.length} references · {rootIn.length} referenced by{#if rootCount !== undefined} · {formatTableRowCount(rootCount)} rows{/if}
-              </p>
-            </div>
-            <Button size="sm" onclick={() => onopentable?.(activeSchema, focusedTable)}>
-              <ExternalLink class="size-3.5" />Open
-            </Button>
+      <div class="mx-auto flex max-w-4xl flex-col gap-6">
+        <!-- The table: its name, its size, one action. -->
+        <header class="flex items-center gap-3">
+          <span class="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border bg-panel">
+            <Table2 class="size-4 text-muted-foreground" />
+          </span>
+          <div class="min-w-0 flex-1">
+            <h2 class="truncate font-mono text-ui-lg font-semibold text-foreground">{focusedTable}</h2>
+            <p class="truncate text-ui-xs tabular-nums text-muted-foreground">
+              {#if rootCount !== undefined}{formatTableRowCount(rootCount)} {rootCount === 1 ? 'row' : 'rows'} · {/if}{rootMeta?.columns.length ?? 0} columns · {activeSchema}
+            </p>
           </div>
-          {#if rootMeta}
-            {@const ck = 'root-cols'}
-            {@const open = showCols.has(ck)}
+          <Button variant="outline" size="sm" onclick={() => onopentable?.(activeSchema, focusedTable)}>
+            <ExternalLink class="size-3.5" />Open table
+          </Button>
+        </header>
+
+        {#if rootMeta}
+          {@const ck = 'root-cols'}
+          {@const open = showCols.has(ck)}
+          {@const fkCols = rootMeta.columns.filter((c) => !!c.foreignKey).length}
+          <section>
             <button
               type="button"
               aria-expanded={open}
-              class="flex h-8 w-full items-center gap-2 border-t border-border/50 px-4 text-left text-ui-xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+              class="flex h-7 w-full items-center gap-2 rounded-md px-1 text-left"
               onclick={() => toggleCols(ck)}
             >
-              {#if open}<ChevronDown class="size-3.5" />{:else}<ChevronRight class="size-3.5" />{/if}
-              Columns <span class="tabular-nums">({rootMeta.columns.length})</span>
+              <ChevronRight class="size-3.5 shrink-0 text-muted-foreground transition-transform duration-150 ease-out {open ? 'rotate-90' : ''}" />
+              <h3 class="text-ui-sm font-medium text-foreground">Columns</h3>
+              <span class="font-mono text-ui-2xs tabular-nums text-muted-foreground">{rootMeta.columns.length}</span>
+              <span class="ml-auto truncate text-ui-2xs tabular-nums text-muted-foreground">{rootMeta.pkCols.size} primary · {fkCols} foreign</span>
             </button>
             {#if open}
-              <div class="border-t border-border/50 px-4 py-1.5">
+              <div class="mt-2 divide-y divide-border/40 overflow-hidden rounded-lg border border-border bg-panel">
                 {#each rootMeta.columns as col (col.name)}
                   {@const isPk = rootMeta.pkCols.has(col.name)}
-                  {@const isFk = !!col.foreignKey}
-                  <div class="flex h-6 items-center gap-2">
-                    {#if isPk}<KeyRound class="size-3.5 shrink-0 text-warning" aria-label="Primary key" />
-                    {:else if isFk}<Link class="size-3.5 shrink-0 text-info" aria-label="Foreign key" />
-                    {:else}<span class="size-3.5 shrink-0"></span>{/if}
-                    <span class="min-w-0 flex-1 truncate font-mono text-ui-xs {isPk ? 'text-warning' : isFk ? 'text-info' : 'text-foreground/85'}">{col.name}</span>
-                    <span class="shrink-0 font-mono text-ui-2xs text-muted-foreground">{col.dataType}</span>
+                  {@const ref = col.foreignKey ? col.foreignKey.split('.') : null}
+                  {@const refTable = ref ? (ref.length >= 3 ? ref[1] : ref[0]) : ''}
+                  {@const refCol = ref ? ref[ref.length - 1] : ''}
+                  <div class="grid h-8 grid-cols-[1rem_minmax(0,1fr)_minmax(0,0.6fr)_minmax(0,1fr)] items-center gap-3 px-3">
+                    {#if isPk}<KeyRound class="size-3.5 text-warning" aria-label="Primary key" />
+                    {:else if ref}<Link class="size-3.5 text-info" aria-label="Foreign key" />
+                    {:else}<span></span>{/if}
+                    <span class="truncate font-mono text-ui-xs {isPk ? 'text-warning' : ref ? 'text-info' : 'text-foreground'}">{col.name}</span>
+                    <span class="truncate font-mono text-ui-2xs text-muted-foreground">{col.dataType}{col.isNullable ? '' : ' · not null'}</span>
+                    {#if ref && tableMeta.has(refTable)}
+                      <button
+                        type="button"
+                        class="flex min-w-0 items-center gap-1 justify-self-start font-mono text-ui-2xs text-muted-foreground hover:text-foreground hover:underline"
+                        title="Explore {refTable}"
+                        onclick={() => (focusedTable = refTable)}
+                      ><ArrowRight class="size-3 shrink-0" /><span class="truncate">{refTable}.{refCol}</span></button>
+                    {:else}<span></span>{/if}
                   </div>
                 {/each}
               </div>
             {/if}
+          </section>
+        {/if}
+
+        {#each [
+          { id: 'out', title: 'References', hint: `Tables ${focusedTable} points at`, rels: rootOut },
+          { id: 'in', title: 'Referenced by', hint: `Tables that point at ${focusedTable}`, rels: rootIn },
+        ] as sec (sec.id)}
+          {#if sec.rels.length > 0}
+            <section>
+              <div class="mb-2 flex h-7 items-center gap-2 px-1">
+                {#if sec.id === 'out'}<ArrowUpRight class="size-3.5 shrink-0 text-info" />
+                {:else}<ArrowDownRight class="size-3.5 shrink-0 text-success" />{/if}
+                <h3 class="text-ui-sm font-medium text-foreground">{sec.title}</h3>
+                <span class="font-mono text-ui-2xs tabular-nums text-muted-foreground">{sec.rels.length}</span>
+                <span class="ml-auto truncate text-ui-2xs text-muted-foreground">{sec.hint}</span>
+              </div>
+              <div class="divide-y divide-border/50 overflow-hidden rounded-lg border border-border bg-panel">
+                {#if sec.id === 'out'}
+                  {#each rootOut as rel (rel.col)}
+                    <RelationTreeNode
+                      tableName={rel.refTable}
+                      parent={focusedTable}
+                      fromCol={rel.col}
+                      toCol={rel.refCol}
+                      direction="out"
+                      depth={1}
+                      path="{focusedTable}>{rel.refTable}"
+                      {...shared}
+                    />
+                  {/each}
+                {:else}
+                  {#each rootIn as rel (`${rel.fromTable}${rel.fromCol}`)}
+                    <RelationTreeNode
+                      tableName={rel.fromTable}
+                      parent={focusedTable}
+                      fromCol={rel.fromCol}
+                      toCol={rel.refCol}
+                      direction="in"
+                      depth={1}
+                      path="{focusedTable}<{rel.fromTable}"
+                      {...shared}
+                    />
+                  {/each}
+                {/if}
+              </div>
+            </section>
           {/if}
-        </div>
-
-        <!-- Outgoing FKs (this → other) -->
-        {#if rootOut.length > 0}
-          <section class="mb-4">
-            <div class="mb-1 flex items-center gap-2 px-2.5">
-              <h3 class="text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground/55">
-                References <span class="tabular-nums">({rootOut.length})</span>
-              </h3>
-              <span class="ml-auto text-ui-2xs text-muted-foreground">this key → their row</span>
-            </div>
-            <div class="flex flex-col">
-              {#each rootOut as rel (rel.col)}
-                <RelationTreeNode
-                  tableName={rel.refTable}
-                  fromCol={rel.col}
-                  toCol={rel.refCol}
-                  direction="out"
-                  depth={1}
-                  path="{focusedTable}>{rel.refTable}"
-                  {...shared}
-                />
-              {/each}
-            </div>
-          </section>
-        {/if}
-
-        <!-- Incoming FKs (other → this) -->
-        {#if rootIn.length > 0}
-          <section class="mb-4">
-            <div class="mb-1 flex items-center gap-2 px-2.5">
-              <h3 class="text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground/55">
-                Referenced by <span class="tabular-nums">({rootIn.length})</span>
-              </h3>
-              <span class="ml-auto text-ui-2xs text-muted-foreground">their key → this row</span>
-            </div>
-            <div class="flex flex-col">
-              {#each rootIn as rel (`${rel.fromTable}${rel.fromCol}`)}
-                <RelationTreeNode
-                  tableName={rel.fromTable}
-                  fromCol={rel.fromCol}
-                  toCol={rel.refCol}
-                  direction="in"
-                  depth={1}
-                  path="{focusedTable}<{rel.fromTable}"
-                  {...shared}
-                />
-              {/each}
-            </div>
-          </section>
-        {/if}
+        {/each}
 
         {#if rootOut.length === 0 && rootIn.length === 0}
-          <p class="px-2.5 py-6 text-ui-xs text-muted-foreground">No foreign keys in or out of this table.</p>
+          <div class="rounded-lg border border-dashed border-border px-4 py-8 text-center">
+            <p class="text-ui-sm text-foreground">No foreign keys</p>
+            <p class="mt-1 text-ui-xs text-muted-foreground">{focusedTable} points at no other table, and no table points at it.</p>
+          </div>
         {/if}
       </div>
     {/if}
