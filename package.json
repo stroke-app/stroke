@@ -1,7 +1,7 @@
 {
   "name": "stroke",
   "private": true,
-  "version": "2.2.2",
+  "version": "2.2.3",
   "description": "Fast, minimal desktop database client for PostgreSQL, MySQL, SQLite, D1, and more",
   "license": "SEE LICENSE IN LICENSE",
   "homepage": "https://stroke.click",
