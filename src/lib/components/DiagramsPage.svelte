@@ -1,6 +1,7 @@
 <script>
   import { savedDiagrams, saveDiagram, updateDiagram, deleteDiagram, switchDiagramsConnection } from '$lib/stores/saved-diagrams.js'
   import MermaidViewer from './MermaidViewer.svelte'
+  import CodeEditor from './CodeEditor.svelte'
   import Download from '@lucide/svelte/icons/download'
   import Copy from '@lucide/svelte/icons/copy'
   import GitBranch from '@lucide/svelte/icons/git-branch'
@@ -312,11 +313,9 @@
         <div class="flex min-h-0 flex-1 gap-0 overflow-hidden">
           <div class="flex w-1/2 min-w-0 flex-col border-r border-border/40 p-3">
             <p class="mb-1.5 text-ui-3xs font-medium uppercase tracking-wide text-muted-foreground">Mermaid code</p>
-            <textarea
-              bind:value={draftCode}
-              spellcheck="false"
-              class="min-h-0 flex-1 resize-none rounded-lg border-2 border-border bg-background/40 p-3 font-mono text-ui-sm text-foreground placeholder:text-muted-foreground focus:border-ring/55 focus:ring-2 focus:ring-ring/15 focus:outline-none [font-feature-settings:'liga'_0,'calt'_0] [font-variant-ligatures:none]"
-            ></textarea>
+            <div class="field-surface flex min-h-0 flex-1 flex-col overflow-hidden bg-background/40">
+              <CodeEditor bind:value={draftCode} ariaLabel="Mermaid code" placeholder="flowchart TD" />
+            </div>
           </div>
           <div class="flex w-1/2 min-w-0 flex-col overflow-hidden">
             <p class="shrink-0 px-3 pb-1.5 pt-3 text-ui-3xs font-medium uppercase tracking-wide text-muted-foreground">Preview</p>

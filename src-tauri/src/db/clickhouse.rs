@@ -251,6 +251,7 @@ pub async fn get_column_structure(
                 column_default: default,
                 foreign_key: None,
                 fk_constraint_name: None,
+                is_primary_key: false,
                 comment,
             })
         })

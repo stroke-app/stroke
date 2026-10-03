@@ -49,6 +49,7 @@
     SQL_TAB_WIDTHS,
     normalizeSqlFormat,
   } from "$lib/sql-format-options.js";
+  import { SQL_EDITOR_FIELDS, SQL_EDITOR_TEXT_SIZES, normalizeSqlEditor } from "$lib/sql-editor-options.js";
   import { aiProfiles, activeProfileId, setActiveProfile } from "$lib/stores/ai-settings.js";
   import PenTool from "@lucide/svelte/icons/pen-tool";
   import LucideSparkles from "@lucide/svelte/icons/sparkles";
@@ -295,6 +296,10 @@
     settings = updateSettings({ imagePreview: !settings.imagePreview });
   }
 
+  function toggleFkAutoExpandJson() {
+    settings = updateSettings({ fkAutoExpandJson: !settings.fkAutoExpandJson });
+  }
+
   function toggleOpenUrls() {
     settings = updateSettings({ openUrlsOnClick: !settings.openUrlsOnClick });
   }
@@ -320,6 +325,18 @@
 
   function toggleAutoSaveQueries() {
     settings = updateSettings({ autoSaveQueries: !settings.autoSaveQueries });
+  }
+
+  function toggleStreamResults() {
+    settings = updateSettings({ streamResults: settings.streamResults === false });
+  }
+
+  // ── SQL editor ────────────────────────────────────────────────────────────
+  // Read through the normalizer for the same reason as sqlFmt below.
+  const sqlEd = $derived(/** @type {any} */ (normalizeSqlEditor(settings.sqlEditor)));
+  /** @param {string} key @param {unknown} value */
+  function setSqlEditor(key, value) {
+    settings = updateSettings({ sqlEditor: normalizeSqlEditor({ ...sqlEd, [key]: value }) });
   }
 
   // ── SQL formatting ────────────────────────────────────────────────────────
@@ -378,7 +395,7 @@
     { id: 'record', label: 'Record', icon: 'layout-list' },
     { id: 'text',   label: 'Text',   icon: 'file-text' },
     { id: 'chart',  label: 'Chart',  icon: 'bar-chart-2' },
-    { id: 'erd',    label: 'ERD',    icon: 'git-branch' },
+    { id: 'erd',    label: 'Data model', icon: 'network' },
   ];
   const defaultViewOption = $derived(
     DATA_VIEW_OPTIONS.find((o) => o.id === settings.defaultDataView) ?? DATA_VIEW_OPTIONS[0],
@@ -744,10 +761,37 @@
     )}
   {/if}
 
+  {#if show('Stream query results', 'Keep large results in a file and load the rows you scroll to')}
+    {@render switchRow(
+      'Stream query results',
+      'Keep a result in a file on this machine and load only the rows you scroll to, so millions of rows scroll and switch tabs smoothly. Off loads every row into the window.',
+      settings.streamResults !== false,
+      toggleStreamResults,
+    )}
+  {/if}
+
   <!-- SQL formatting: nine options, so it opens COLLAPSED. Mounting nine popover
        selects just to show the Database tab is what made this pane feel slow, and
        these are settings you touch once. Search still reaches them - a query
        expands the section, because a setting you can't find may as well not exist. -->
+  <!-- SQL editor: six short rows, so unlike formatting it is not collapsed. -->
+  {@render secLabel('SQL editor')}
+  {#each SQL_EDITOR_FIELDS as field (field.key)}
+    {#if show(field.label, field.desc)}
+      {#if field.kind === 'bool'}
+        {@render switchRow(field.label, field.desc, sqlEd[field.key] === true, () => setSqlEditor(field.key, !sqlEd[field.key]))}
+      {:else}
+        <div class={rowCls}>
+          <div class="min-w-0">
+            <p class="text-ui-sm font-medium text-foreground">{field.label}</p>
+            <p class="mt-0.5 text-ui-xs leading-relaxed text-muted-foreground">{field.desc}</p>
+          </div>
+          {@render segmented(field.label, SQL_EDITOR_TEXT_SIZES.map((o) => ({ value: o.id, label: o.label })), sqlEd.textSize, (v) => setSqlEditor('textSize', v))}
+        </div>
+      {/if}
+    {/if}
+  {/each}
+
   {@render secLabel('SQL formatting')}
   {#if !searching}
     <button
@@ -1267,6 +1311,14 @@
       'Tint the full row holding the focused cell. The cell keeps its outline either way.',
       settings.highlightActiveRow,
       toggleHighlightActiveRow,
+    )}
+  {/if}
+  {#if show('Expand single related row', 'Show a lone related row as JSON in the dock')}
+    {@render switchRow(
+      'Expand single related row',
+      'When following a foreign key opens a sub view with exactly one row, that row opens as JSON.',
+      settings.fkAutoExpandJson,
+      toggleFkAutoExpandJson,
     )}
   {/if}
   {#if show('Rows per page', 'How many rows a newly opened table fetches')}

@@ -11,6 +11,7 @@
   import Bot from "@lucide/svelte/icons/bot";
   import Palette from "@lucide/svelte/icons/palette";
   import Settings from "@lucide/svelte/icons/settings";
+  import Network from "@lucide/svelte/icons/network";
   import X from "@lucide/svelte/icons/x";
 
   import { SHORTCUT_GROUPS, keycaps, comboText, IS_MAC } from "$lib/shortcuts.js";
@@ -37,6 +38,7 @@
     bot: Bot,
     palette: Palette,
     settings: Settings,
+    network: Network,
   };
 
   /**

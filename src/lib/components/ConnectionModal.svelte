@@ -3334,7 +3334,7 @@
                visible; the footer's Stop and this Cancel both end the attempt. -->
           {#if dialing}
             <div
-              class="absolute inset-0 z-20 flex items-center justify-center bg-background/95 backdrop-blur-[2px]"
+              class="absolute inset-0 z-20 flex items-center justify-center bg-background"
               in:fade={{ duration: 120, delay: 150 }}
               out:fade={{ duration: 100 }}
             >

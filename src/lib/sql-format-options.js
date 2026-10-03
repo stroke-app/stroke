@@ -15,7 +15,7 @@
 /** @typedef {{ keywordCase: SqlCase, dataTypeCase: SqlCase, functionCase: SqlCase,
  *   identifierCase: SqlCase, tabWidth: number, useTabs: boolean,
  *   logicalOperatorNewline: 'before' | 'after', expressionWidth: number,
- *   linesBetweenQueries: number }} SqlFormatOptions */
+ *   linesBetweenQueries: number, compactClauses: boolean, lineWidth: number }} SqlFormatOptions */
 
 /** @type {SqlFormatOptions} */
 export const SQL_FORMAT_DEFAULTS = {
@@ -31,6 +31,11 @@ export const SQL_FORMAT_DEFAULTS = {
   logicalOperatorNewline: 'before',
   expressionWidth: 50,
   linesBetweenQueries: 1,
+  // Not sql-formatter options: format-sql.js applies these after it, because the
+  // library always gives a clause's body its own line - `SELECT`, `  *`, `FROM`,
+  // `  users` for a one-line query.
+  compactClauses: true,
+  lineWidth: 80,
 }
 
 export const SQL_CASE_OPTIONS = [
@@ -51,6 +56,8 @@ export const SQL_FORMAT_FIELDS = [
   { key: 'logicalOperatorNewline', label: 'Logical operator newline', desc: 'Put AND / OR before or after the line break.', kind: 'operatorNewline' },
   { key: 'expressionWidth', label: 'Expression width', desc: 'Characters allowed inside parentheses before wrapping.', kind: 'number', min: 20, max: 200, step: 10 },
   { key: 'linesBetweenQueries', label: 'Lines between queries', desc: 'Blank lines between separate statements.', kind: 'number', min: 0, max: 5, step: 1 },
+  { key: 'compactClauses', label: 'Compact clauses', desc: 'Keep a clause on its keyword\'s line when it fits - SELECT * / FROM users, not four lines.', kind: 'bool' },
+  { key: 'lineWidth', label: 'Line width', desc: 'Longest line a compact clause may make before it wraps.', kind: 'number', min: 40, max: 200, step: 10 },
 ]
 
 const CASES = SQL_CASE_OPTIONS.map((c) => c.id)
@@ -82,6 +89,8 @@ export function normalizeSqlFormat(raw) {
     logicalOperatorNewline: r.logicalOperatorNewline === 'after' ? 'after' : 'before',
     expressionWidth: asInt(r.expressionWidth, SQL_FORMAT_DEFAULTS.expressionWidth, 20, 200),
     linesBetweenQueries: asInt(r.linesBetweenQueries, SQL_FORMAT_DEFAULTS.linesBetweenQueries, 0, 5),
+    compactClauses: r.compactClauses !== false,
+    lineWidth: asInt(r.lineWidth, SQL_FORMAT_DEFAULTS.lineWidth, 40, 200),
   }
 }
 

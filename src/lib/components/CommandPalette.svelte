@@ -106,7 +106,7 @@
     { icon: 'terminal',        label: 'SQL editor',       keys: '⌘⇧S', action: onopensql,        show: connected && !isRedis, value: 'open sql editor query console' },
     { icon: 'plus',            label: 'New SQL Editor',                action: onnewsql,         show: connected && !isRedis, value: 'new sql editor tab additional multiple query console open another' },
     { icon: 'code-2',          label: 'ORM Runner',       keys: '⌘⇧O', action: onopenorm,        show: connected && !isRedis, value: 'open orm runner drizzle prisma query builder' },
-    { icon: 'network',         label: 'ER Diagram',                    action: onopenerd,        show: connected && !isRedis, value: 'open er diagram entity relationship foreign key pk fk graph' },
+    { icon: 'network',         label: 'Data Model',                    action: onopenerd,        show: connected && !isRedis, value: 'open data model er diagram erd entity relationship foreign key pk fk graph mermaid tree dictionary ddl schema map' },
     { icon: 'layout-template', label: 'Schema Explorer',               action: onopenSchema,     show: connected && hasSchemaExplorer, value: 'open schema explorer indexes enums views materialized' },
     { icon: 'shield-check',    label: 'Security',                      action: onopensecurity,   show: connected && hasSecurity, value: 'open security roles users policies rls row level' },
     { icon: 'shield-check',    label: 'Advisor',                       action: onopenadvisor,    show: connected && !isRedis, value: 'open advisor lint audit checks security performance schema rls unused index foreign key bloat' },

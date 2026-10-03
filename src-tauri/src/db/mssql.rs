@@ -351,6 +351,7 @@ pub async fn get_column_structure(handle: &MssqlHandle, schema: &str, table: &st
                 column_default,
                 foreign_key: None,
                 fk_constraint_name: None,
+                is_primary_key: false,
                 comment: None,
             })
         })

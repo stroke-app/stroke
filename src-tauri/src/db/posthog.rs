@@ -289,6 +289,7 @@ pub async fn get_column_structure(config: &PosthogConfig, table: &str) -> Result
             column_default: None,
             foreign_key: None,
             fk_constraint_name: None,
+            is_primary_key: false,
             comment: None,
         })
         .collect())

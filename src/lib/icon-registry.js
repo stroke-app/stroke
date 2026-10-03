@@ -136,6 +136,9 @@ import ArrowDown01 from '@lucide/svelte/icons/arrow-down-0-1'
 import ArrowDownAZ from '@lucide/svelte/icons/arrow-down-a-z'
 import ArrowUp01 from '@lucide/svelte/icons/arrow-up-0-1'
 import ArrowUpAZ from '@lucide/svelte/icons/arrow-up-a-z'
+import WrapText from '@lucide/svelte/icons/wrap-text'
+import ListOrdered from '@lucide/svelte/icons/list-ordered'
+import FileDiff from '@lucide/svelte/icons/file-diff'
 
 // ── Hugeicons data ───────────────────────────────────────────────────────────
 import {
@@ -161,6 +164,7 @@ import {
   SortByDown01Icon, SortingUpIcon, SortByUp01Icon,
   LayoutThreeColumnIcon,
   SidebarLeftIcon, SidebarLeft01Icon,
+  TextWrapIcon, LeftToRightListNumberIcon, FileDiffIcon,
 } from '@hugeicons/core-free-icons'
 
 /** @type {Record<string, { lucide: any, huge?: any }>} */
@@ -291,6 +295,9 @@ export const ICON_MAP = {
   'arrow-down-a-z': { lucide: ArrowDownAZ,    huge: SortByDown01Icon },
   'arrow-up-0-1':   { lucide: ArrowUp01,      huge: SortingUpIcon },
   'arrow-up-a-z':   { lucide: ArrowUpAZ,      huge: SortByUp01Icon },
+  'wrap-text':      { lucide: WrapText,       huge: TextWrapIcon },
+  'list-ordered':   { lucide: ListOrdered,    huge: LeftToRightListNumberIcon },
+  'file-diff':      { lucide: FileDiff,       huge: FileDiffIcon },
 }
 
 // ── Phosphor set (third family) ──────────────────────────────────────────────

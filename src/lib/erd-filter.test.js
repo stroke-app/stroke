@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { relatedTo, linkedTables, visibleTables, visibleRels, mergeParallelEdges } from './erd-filter.js'
+import { relatedTo, linkedTables, visibleTables, visibleRels, mergeParallelEdges, hubTables } from './erd-filter.js'
 
 /** @param {[string,string][]} pairs */
 const rels = (pairs) => pairs.map(([source, target]) => ({ source, target }))
@@ -168,5 +168,29 @@ describe('mergeParallelEdges', () => {
 
   it('has nothing to merge in an empty schema', () => {
     expect(mergeParallelEdges([])).toEqual([])
+  })
+})
+
+describe('hubTables', () => {
+  it('names the table most of the diagram points at, counting source tables', () => {
+    const edges = []
+    for (let i = 0; i < 20; i++) edges.push({ source: `t${i}`, target: 'tenants' })
+    for (let i = 0; i < 3; i++) edges.push({ source: `t${i}`, target: 'users' })
+    // Two keys from one table into `users` is still one table.
+    edges.push({ source: 't0', target: 'users' })
+    const hubs = hubTables(edges, 24)
+    expect(hubs.has('tenants')).toBe(true)
+    expect(hubs.has('users')).toBe(false)
+  })
+  it('needs the floor and the share, unless the count alone is a fan', () => {
+    const refs = (/** @type {number} */ n) => Array.from({ length: n }, (_, i) => ({ source: `a${i}`, target: 'x' }))
+    // Six referrers on a hundred tables (15% is fifteen): not a hub...
+    expect(hubTables(refs(6), 100).has('x')).toBe(false)
+    // ...on forty it is (15% is six).
+    expect(hubTables(refs(6), 40).has('x')).toBe(true)
+    // Five never is, however small the page.
+    expect(hubTables(refs(5), 8).has('x')).toBe(false)
+    // Twenty-five is, however large the page.
+    expect(hubTables(refs(25), 500).has('x')).toBe(true)
   })
 })

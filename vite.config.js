@@ -49,6 +49,9 @@ export default defineConfig({
     // old runtime-*/index-client-*/Icon-* paths -> the whole app goes blank.
     include: [
       'canvas-confetti',
+      // The ER diagram's layout engine, reached only through the lazily loaded
+      // page; CommonJS, so it has to be pre-bundled before the page asks for it.
+      'elkjs/lib/elk-api.js',
       // src/lib/monaco.js composes the editor entry by hand out of subpaths, and it
       // is itself only reached through a lazy import, so the same scan misses all of
       // these. Keep this list in step with the imports at the top of that file.

@@ -18,12 +18,18 @@
    * @property {string} [placeholder]
    * @property {string} [ariaLabel]
    * @property {import('@codemirror/view').KeyBinding[]} [keys] Extra bindings, checked first.
+   * @property {'' | 'sql'} [lang] Force a language. Empty guesses from the text.
+   * @property {string} [dialect] SQL dialect for `lang="sql"` (the app's Dialect ids).
+   * @property {import('$lib/sql-complete-data.js').SqlSchemaHints} [sqlHints]
+   *   Schemas, tables, columns, enums and functions for SQL completion.
+   * @property {import('@codemirror/state').Extension} [extensions] More extensions (a surface's
+   *   own gutters, keymaps, lint). Reconfigured in place when the value changes.
    */
   import { onMount, onDestroy } from 'svelte'
   import { EditorState, Compartment } from '@codemirror/state'
   import {
     EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter,
-    drawSelection, placeholder as placeholderExt,
+    drawSelection, placeholder as placeholderExt, tooltips,
   } from '@codemirror/view'
   import {
     search, searchKeymap, openSearchPanel, closeSearchPanel, highlightSelectionMatches,
@@ -33,6 +39,15 @@
   import { HighlightStyle, syntaxHighlighting, bracketMatching, foldGutter, codeFolding } from '@codemirror/language'
   import { json } from '@codemirror/lang-json'
   import { html } from '@codemirror/lang-html'
+  import { sql } from '@codemirror/lang-sql'
+  import { sqlDialectFor } from '$lib/cm-sql-dialects.js'
+  import {
+    autocompletion, acceptCompletion, closeBrackets, closeBracketsKeymap, completionStatus, closeCompletion,
+    snippetKeymap, nextSnippetField, prevSnippetField, clearSnippet,
+  } from '@codemirror/autocomplete'
+  import { sqlCompletionSource } from '$lib/cm-sql-complete.js'
+  import { ArrowDown01Icon, ArrowRight01Icon } from '@hugeicons/core-free-icons'
+  import { hugeSvg } from '$lib/cm-huge-icon.js'
   import { tags as t } from '@lezer/highlight'
 
   let {
@@ -43,6 +58,16 @@
     ariaLabel = '',
     keys = [],
     gutter = true,
+    lang = '',
+    dialect = '',
+    sqlHints = /** @type {import('$lib/sql-complete-data.js').SqlSchemaHints} */ ({}),
+    /** Fold arrows in the gutter (independent of line numbers). */
+    folding = true,
+    /** SQL: open the completion list while typing (Ctrl+Space works regardless). */
+    suggestWhileTyping = true,
+    /** Called with the new text on every edit (the same string `value` gets). */
+    onchange = /** @type {((text: string) => void) | undefined} */ (undefined),
+    extensions = [],
   } = $props()
 
   /** @type {HTMLDivElement | null} */
@@ -54,6 +79,12 @@
   const gutterC = new Compartment()
   const readOnlyC = new Compartment()
   const langC = new Compartment()
+  const extraC = new Compartment()
+  const measureC = new Compartment()
+  const completeC = new Compartment()
+  /** Two empty themes to flip between: see `remeasure`. */
+  const MEASURE_FLIP = [EditorView.theme({}), EditorView.theme({})]
+  let measureFlip = 0
 
   /**
    * Longest logical line, without splitting the string into an array - a
@@ -79,9 +110,14 @@
    */
   const MAX_TOKENIZE_LINE = 20_000
 
+
+
   /** JSON by its first character, markup by an early tag; everything else plain. */
   function languageFor(/** @type {string} */ text) {
     if (longestLine(text) > MAX_TOKENIZE_LINE) return []
+    if (lang === 'sql') {
+      return sql({ dialect: sqlDialectFor(dialect) })
+    }
     if (/^\s*[[{]/.test(text)) return json()
     if (/<[A-Za-z!/]/.test(text.slice(0, 2000))) return html()
     return []
@@ -98,6 +134,12 @@
     { tag: t.attributeName, color: 'var(--json-number)' },
     { tag: [t.comment, t.blockComment], color: 'var(--json-null)', fontStyle: 'italic' },
     { tag: [t.punctuation, t.bracket, t.angleBracket, t.separator], color: 'var(--muted-foreground)' },
+    // SQL. A quoted identifier is a name, not a string: without its own rule it
+    // inherits the string green and "name" = 'ad' reads as two strings.
+    { tag: t.keyword, color: 'var(--json-boolean)' },
+    { tag: t.operator, color: 'var(--muted-foreground)' },
+    { tag: t.special(t.string), color: 'var(--foreground)' },
+    { tag: t.lineComment, color: 'var(--json-null)', fontStyle: 'italic' },
   ])
 
   /*
@@ -108,16 +150,22 @@
    * over the text and washed it out.
    */
   const theme = EditorView.theme({
+    // Scoped to `.cm-editor`: CodeMirror puts every theme class on the tooltip
+    // host it appends to <body> as well (tooltips({ parent })), and a 100%-tall
+    // host made the body scrollable, so a focus() scrolled the whole app chrome
+    // 23px up under the window edge.
+    '&.cm-editor': { height: '100%' },
     '&': {
-      height: '100%',
       backgroundColor: 'transparent',
       color: 'var(--foreground)',
-      fontSize: 'var(--fs-2xs)',
+      // A surface can set these on an ancestor: the SQL console follows the
+      // editor font setting, the docks stay at the UI's code size.
+      fontSize: 'var(--cm-font-size, var(--fs-2xs))',
     },
     '&.cm-focused': { outline: 'none' },
     '.cm-scroller': {
-      fontFamily: 'var(--font-mono)',
-      lineHeight: '1.6',
+      fontFamily: 'var(--cm-font-family, var(--font-mono))',
+      lineHeight: 'var(--cm-line-height, 1.6)',
       overflow: 'auto',
     },
     '.cm-content': { padding: '6px 0', caretColor: 'var(--foreground)' },
@@ -141,8 +189,8 @@
       color: 'color-mix(in oklch, var(--muted-foreground) 50%, transparent)',
       border: 'none',
       borderRight: '1px solid color-mix(in oklch, var(--border) 40%, transparent)',
-      fontFamily: 'var(--font-mono)',
-      fontSize: 'var(--fs-2xs)',
+      fontFamily: 'var(--cm-font-family, var(--font-mono))',
+      fontSize: 'var(--cm-font-size, var(--fs-2xs))',
       fontVariantNumeric: 'tabular-nums',
     },
     // Five digits reserved up front. The gutter sizes to the widest number, so
@@ -159,12 +207,18 @@
     // Fold arrows only where they apply and only while the gutter is hovered,
     // so an unfoldable plain-text value has no blank strip beside its numbers.
     '.cm-foldGutter .cm-gutterElement': {
-      padding: '0 6px 0 0',
-      width: '12px',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '0 4px 0 0',
+      width: '16px',
       cursor: 'pointer',
       opacity: '0',
       transition: 'opacity 120ms',
     },
+    '.cm-fold-marker': { display: 'inline-flex', color: 'var(--muted-foreground)' },
+    '.cm-fold-marker:hover': { color: 'var(--foreground)' },
+    '.cm-fold-marker svg': { width: '12px', height: '12px' },
     '.cm-gutters:hover .cm-foldGutter .cm-gutterElement': { opacity: '1' },
     '.cm-foldPlaceholder': {
       backgroundColor: 'color-mix(in oklch, var(--muted) 60%, transparent)',
@@ -182,6 +236,83 @@
       borderRadius: '2px',
     },
     '.cm-placeholder': { color: 'var(--muted-foreground)' },
+    // SQL completion list: small, quiet, one line per name. Row metrics are in
+    // em, not px: the text follows the app zoom (--fs-*), and fixed 22px rows
+    // with 8px gaps went cramped as soon as the zoom went past 100%. At the
+    // default size a row is 25px, the app's menu row.
+    '.cm-tooltip': {
+      backgroundColor: 'var(--popover)',
+      color: 'var(--popover-foreground)',
+      border: '1px solid color-mix(in oklch, var(--border) 80%, transparent)',
+      borderRadius: '8px',
+      boxShadow: '0 8px 24px rgba(0, 0, 0, 0.35), 0 1px 3px rgba(0, 0, 0, 0.2)',
+      overflow: 'hidden',
+    },
+    '.cm-tooltip.cm-tooltip-autocomplete > ul': {
+      fontFamily: 'var(--font-mono)',
+      fontSize: 'var(--fs-2xs)',
+      padding: '0.3em',
+      minWidth: '16em',
+      maxWidth: '34em',
+      // Seven and a half rows: the half row says the list scrolls.
+      maxHeight: 'calc(7.5 * 1.9em + 0.6em)',
+    },
+    '.cm-tooltip.cm-tooltip-autocomplete > ul > li': {
+      display: 'flex',
+      alignItems: 'center',
+      height: '1.9em',
+      padding: '0 0.65em',
+      borderRadius: '0.4em',
+      color: 'color-mix(in oklch, var(--foreground) 78%, transparent)',
+    },
+    '.cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected]': {
+      backgroundColor: 'color-mix(in oklch, var(--foreground) 9%, transparent)',
+      color: 'var(--foreground)',
+    },
+    '.cm-completionLabel': { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+    '.cm-completionMatchedText': { textDecoration: 'none', color: 'var(--foreground)', fontWeight: '600' },
+    '.cm-completion-kind': {
+      flexShrink: '0',
+      width: '0.45em',
+      height: '0.45em',
+      marginRight: '0.7em',
+      borderRadius: '9999px',
+      backgroundColor: 'var(--muted-foreground)',
+    },
+    '.cm-completion-kind-column': { backgroundColor: 'var(--json-key)' },
+    '.cm-completion-kind-table': { backgroundColor: 'var(--json-number)' },
+    '.cm-completion-kind-keyword': { backgroundColor: 'var(--json-boolean)' },
+    '.cm-completion-kind-type': { backgroundColor: 'var(--json-string)' },
+    '.cm-completion-kind-schema': { backgroundColor: 'color-mix(in oklch, var(--json-number) 55%, transparent)' },
+    '.cm-completion-kind-function': { backgroundColor: 'var(--json-string)' },
+    '.cm-completion-kind-snippet': { backgroundColor: 'transparent', boxShadow: 'inset 0 0 0 1.5px var(--muted-foreground)' },
+    '.cm-completion-kind-enum': { backgroundColor: 'var(--primary)' },
+    // The doc beside the list for functions and snippets.
+    '.cm-snippet-preview': {
+      margin: '0',
+      fontFamily: 'var(--font-mono)',
+      fontSize: 'var(--fs-3xs)',
+      lineHeight: '1.55',
+      color: 'var(--foreground)',
+      whiteSpace: 'pre',
+    },
+    '.cm-tooltip.cm-completionInfo': {
+      maxWidth: '38em',
+      padding: '0.6em 0.9em',
+      fontFamily: 'var(--font-sans)',
+      fontSize: 'var(--fs-3xs)',
+      lineHeight: '1.5',
+      color: 'var(--muted-foreground)',
+      whiteSpace: 'pre-wrap',
+    },
+    '.cm-completionDetail': {
+      flexShrink: '0',
+      marginLeft: 'auto',
+      paddingLeft: '1.75em',
+      fontStyle: 'normal',
+      fontSize: 'var(--fs-3xs)',
+      color: 'var(--muted-foreground)',
+    },
     '.cm-searchMatch': {
       backgroundColor: 'color-mix(in oklch, var(--warning) 30%, transparent)',
       borderRadius: '2px',
@@ -553,6 +684,72 @@
     return true
   }
 
+  const foldMarkers = foldGutter({
+    markerDOM(open) {
+      const el = document.createElement('span')
+      el.className = 'cm-fold-marker'
+      el.title = open ? 'Fold' : 'Unfold'
+      el.append(hugeSvg(open ? ArrowDown01Icon : ArrowRight01Icon))
+      return el
+    },
+  })
+
+  /** A 6px dot before each suggestion: what kind of thing it is, by colour. */
+  const kindDot = {
+    position: 20,
+    render(/** @type {import('@codemirror/autocomplete').Completion} */ c) {
+      const el = document.createElement('span')
+      el.className = `cm-completion-kind cm-completion-kind-${c.type ?? 'text'}`
+      return el
+    },
+  }
+
+  /**
+   * SQL only: context-aware completion (cm-sql-complete.js) and paired quotes
+   * and brackets, so typing `"` opens a name with the column list already up.
+   * A JSON cell has nothing worth suggesting. The list renders on <body> so
+   * the dock's edge never clips it.
+   */
+  /** @param {boolean} onTyping */
+  const completionConfig = (onTyping) =>
+    autocompletion({
+      override: [sqlCompletionSource(() => sqlHints, () => dialect)],
+      activateOnTyping: onTyping,
+      icons: false,
+      addToOptions: [kindDot],
+      maxRenderedOptions: 50,
+    })
+
+  /**
+   * Snippet keys. Tab with the list open takes the suggestion; otherwise it
+   * moves to the next field. A field opens no list by itself: typing over the
+   * placeholder does, so a field kept as it is (`*`, `100`) costs one Tab.
+   * Escape closes the list before it leaves the snippet.
+   * @type {import('@codemirror/view').KeyBinding[]}
+   */
+  const snippetKeys = [
+    {
+      key: 'Tab',
+      run: (v) => (completionStatus(v.state) === 'active' && acceptCompletion(v)) || nextSnippetField(v),
+      shift: prevSnippetField,
+    },
+    { key: 'Escape', run: (v) => (completionStatus(v.state) ? closeCompletion(v) : clearSnippet(v)) },
+  ]
+
+  const sqlEditing = () =>
+    lang === 'sql'
+      ? [
+          completeC.of(completionConfig(suggestWhileTyping)),
+          closeBrackets(),
+          keymap.of(closeBracketsKeymap),
+          snippetKeymap.of(snippetKeys),
+          tooltips({ parent: document.body }),
+        ]
+      : []
+
+  /** @param {boolean} numbers @param {boolean} fold */
+  const gutterExt = (numbers, fold) => [...(numbers ? [lineNumbers()] : []), ...(fold ? [foldMarkers] : [])]
+
   function freshState(/** @type {string} */ doc) {
     return EditorState.create({
       doc,
@@ -560,7 +757,7 @@
         // Reconfigurable: the panel hides the gutter on request, and hiding it
         // means dropping the fold gutter with it - a fold arrow column with no
         // numbers beside it is a stripe nothing explains.
-        gutterC.of(gutter ? [lineNumbers(), foldGutter({ openText: '▾', closedText: '▸' })] : []),
+        gutterC.of(gutterExt(gutter, folding)),
         codeFolding(),
         highlightActiveLine(),
         highlightActiveLineGutter(),
@@ -578,7 +775,7 @@
           ...keys,
           // Tab indents - this is an editor, and the values that need it are
           // JSON and SQL. Shift+Tab is left alone so it still leaves the field.
-          { key: 'Tab', run: insertTab },
+          { key: 'Tab', run: (v) => acceptCompletion(v) || insertTab(v) },
           // Replace: Ctrl+H (VS Code on Windows/Linux) and Mod+Alt+F (its macOS
           // binding - macOS takes Cmd+H to hide the app).
           { key: 'Mod-h', run: openReplace, preventDefault: true },
@@ -589,39 +786,98 @@
         ]),
         syntaxHighlighting(highlight),
         theme,
+        sqlEditing(),
         placeholderExt(placeholder),
         EditorView.contentAttributes.of({ 'aria-label': ariaLabel, spellcheck: 'false' }),
         wrapC.of(wrap ? EditorView.lineWrapping : []),
         readOnlyC.of(EditorState.readOnly.of(readOnly)),
         langC.of(languageFor(doc)),
+        extraC.of(extensions),
+        measureC.of(MEASURE_FLIP[measureFlip]),
         EditorView.updateListener.of((u) => {
-          if (u.docChanged) value = u.state.doc.toString()
+          if (!u.docChanged) return
+          // One copy of the text per edit, shared by the binding and onchange.
+          const text = u.state.doc.toString()
+          emitted = text
+          value = text
+          onchange?.(text)
         }),
       ],
     })
   }
 
+  /**
+   * Make CodeMirror measure the text again. It measures line height and
+   * character width once, then again only when content redraws or web fonts
+   * finish - not when the root's CSS changes. Zoom, the font setting and a
+   * theme switch all change it, and the gutter rows then kept the old height
+   * and drifted off their lines (Monaco needed its own remeasure for the same
+   * reason). Swapping the theme facet is the public way to request it.
+   */
+  function remeasure() {
+    if (!view) return
+    measureFlip ^= 1
+    view.dispatch({ effects: measureC.reconfigure(MEASURE_FLIP[measureFlip]) })
+  }
+
   onMount(() => {
     if (!host) return
     view = new EditorView({ parent: host, state: freshState(value) })
+    // A hidden character inside the scroller, so it takes the editor's own font
+    // and line height from the theme: its box changes exactly when the text
+    // metrics do - the theme or a stylesheet landing after mount, zoom, the font
+    // setting, a web font swapping in. Each change (and the first report)
+    // re-measures.
+    const probe = document.createElement('span')
+    probe.textContent = 'M'
+    probe.setAttribute('aria-hidden', 'true')
+    probe.style.cssText = 'position:absolute;top:0;left:0;visibility:hidden;pointer-events:none;white-space:pre;font-family:var(--cm-font-family, var(--font-mono))'
+    view.scrollDOM.append(probe)
+    let raf = 0
+    const ro = new ResizeObserver(() => {
+      cancelAnimationFrame(raf)
+      raf = requestAnimationFrame(remeasure)
+    })
+    ro.observe(probe)
+    return () => { cancelAnimationFrame(raf); ro.disconnect(); probe.remove() }
   })
   onDestroy(() => view?.destroy())
 
   // A value set from outside (a new cell) is a new document: fresh state, so
   // undo cannot walk back into the previous cell. Our own edits come back
   // through `value` equal to the doc and are skipped here.
+  /** The text this editor last handed out, so its own edits coming back through
+   *  `value` are recognised without copying the document again. */
+  let emitted = /** @type {string | null} */ (null)
   $effect(() => {
     const next = value
-    if (view && next !== view.state.doc.toString()) view.setState(freshState(next))
+    if (!view || next === emitted) return
+    if (next !== view.state.doc.toString()) view.setState(freshState(next))
   })
   $effect(() => { const w = wrap; view?.dispatch({ effects: wrapC.reconfigure(w ? EditorView.lineWrapping : []) }) })
   $effect(() => {
     const g = gutter
-    view?.dispatch({ effects: gutterC.reconfigure(g ? [lineNumbers(), foldGutter({ openText: '▾', closedText: '▸' })] : []) })
+    const f = folding
+    view?.dispatch({ effects: gutterC.reconfigure(gutterExt(g, f)) })
   })
   $effect(() => { const r = readOnly; view?.dispatch({ effects: readOnlyC.reconfigure(EditorState.readOnly.of(r)) }) })
+  // A new dialect's keywords, without resetting the doc. Tables and columns
+  // are read by the completion source on every query and need nothing here.
+  $effect(() => {
+    void dialect
+    if (lang === 'sql') view?.dispatch({ effects: langC.reconfigure(languageFor(view.state.doc.toString())) })
+  })
+
+  $effect(() => { const x = extensions; view?.dispatch({ effects: extraC.reconfigure(x) }) })
+  $effect(() => {
+    const t = suggestWhileTyping
+    if (lang === 'sql') view?.dispatch({ effects: completeC.reconfigure(completionConfig(t)) })
+  })
 
   export function focus() { view?.focus() }
+
+  /** The live view, for a surface that drives it (SqlEditor). */
+  export function getView() { return view }
 
   /** Open find and replace (the panel's toolbar button). */
   export function find() {
@@ -644,4 +900,4 @@
   }
 </script>
 
-<div bind:this={host} class="min-h-0 min-w-0 flex-1 overflow-hidden"></div>
+<div bind:this={host} class="relative min-h-0 min-w-0 flex-1 overflow-hidden"></div>

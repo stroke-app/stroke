@@ -4,8 +4,9 @@ const STORAGE_KEY = 'stroke:erd'
  * @typedef {'all' | 'keys'} ColumnMode
  * @typedef {'compact' | 'comfortable' | 'spacious'} Spacing
  * @typedef {'smart' | 'direct'} Routing
+ * @typedef {'badges' | 'lines'} HubLinks
  * @typedef {{ columnMode: ColumnMode, showTypes: boolean, connectedOnly: boolean,
- *   spacing: Spacing, routing: Routing, grid: boolean, touched: string[] }} ErdSettings
+ *   spacing: Spacing, routing: Routing, hubLinks: HubLinks, grid: boolean, touched: string[] }} ErdSettings
  */
 
 /**
@@ -21,6 +22,9 @@ export const DEFAULT_ERD_SETTINGS = {
   connectedOnly: false,
   spacing: 'comfortable',
   routing: 'smart',
+  // A table most of the schema points at (tenants, users) is named on each
+  // referencing row instead of drawn as a line from every card.
+  hubLinks: 'badges',
   grid: true,
   touched: [],
 }
@@ -59,6 +63,7 @@ export function loadErdSettings() {
       connectedOnly: p.connectedOnly === true,
       spacing: p.spacing in SPACING_PRESETS ? p.spacing : DEFAULT_ERD_SETTINGS.spacing,
       routing: p.routing === 'direct' ? 'direct' : 'smart',
+      hubLinks: p.hubLinks === 'lines' ? 'lines' : 'badges',
       grid: p.grid !== false,
       touched: Array.isArray(p.touched) ? p.touched.filter(k => typeof k === 'string') : [],
     }

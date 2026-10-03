@@ -87,7 +87,7 @@ export function splitSqlStatements(text) {
 /**
  * Lightweight SQL lint - catches lexical problems worth flagging while typing:
  * unterminated strings/identifiers, unclosed block comments and dollar quotes,
- * unbalanced parentheses, and a missing `;` on the final statement.
+ * unbalanced parentheses, and a `;` missing between two statements.
  *
  * @param {string} text
  * @returns {SqlDiagnostic[]}
@@ -169,19 +169,72 @@ export function lintSql(text) {
     diags.push({ message: 'Unclosed parenthesis', severity: 'warning', start: p, end: p + 1 })
   }
 
-  // Final statement not terminated with `;`
-  const stmts = splitSqlStatements(text)
-  const last = stmts[stmts.length - 1]
-  if (last && !last.text.endsWith(';')) {
-    diags.push({
-      message: "Statement is not terminated with ';'",
-      severity: 'warning',
-      start: Math.max(last.end - 1, last.start),
-      end: last.end,
-    })
+  // A `;` missed between two statements: they would run as one and fail. The
+  // tell is a blank line, then a statement keyword, outside any parentheses.
+  // (This used to flag a last statement with no `;` - which runs fine - so
+  // every one-line query carried a warning.)
+  const statements = splitSqlStatements(text)
+  // With several statements in the buffer, each one ends in its `;`: a
+  // statement left open (often the last, half-written one) is warned at its
+  // last word. A buffer holding one query stays clean, `;` or not: it runs fine.
+  if (statements.length > 1) {
+    for (const stmt of statements) {
+      const body = text.slice(stmt.start, stmt.end).replace(/(\s|--[^\n]*)+$/, '')
+      if (!body || body.endsWith(';')) continue
+      const last = /[^\s]+$/.exec(body)
+      const end = stmt.start + body.length
+      diags.push({
+        message: "Missing ';' at the end of this statement",
+        severity: 'warning',
+        start: last ? end - last[0].length : end - 1,
+        end,
+      })
+    }
+  }
+
+  for (const stmt of statements) {
+    const body = text.slice(stmt.start, stmt.end)
+    // A CTE's main query, or a set operation's next arm, may follow a blank line.
+    if (/^\s*with\b/i.test(body)) continue
+    const re = /\n[ \t]*\r?\n\s*(select|insert|update|delete|with|create|alter|drop|truncate|explain|grant|revoke)\b/gi
+    for (let m; (m = re.exec(body)); ) {
+      const before = body.slice(0, m.index)
+      if (parenDepth(before) !== 0) continue
+      if (/(\(|,|\b(union|intersect|except|all|as|in|exists))\s*$/i.test(before)) continue
+      const at = stmt.start + m.index + m[0].length - m[1].length
+      diags.push({
+        message: "Missing ';' - this starts a new statement, so the two would run as one",
+        severity: 'warning',
+        start: at,
+        end: at + m[1].length,
+      })
+    }
   }
 
   return diags
+}
+
+/**
+ * Open parentheses at the end of `text`, not counting any inside strings,
+ * quoted names or comments.
+ * @param {string} text
+ */
+function parenDepth(text) {
+  let depth = 0
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]
+    if (c === "'" || c === '"' || c === '`') {
+      const close = text.indexOf(c, i + 1)
+      if (close === -1) return depth
+      i = close
+    } else if (c === '-' && text[i + 1] === '-') {
+      const nl = text.indexOf('\n', i)
+      if (nl === -1) return depth
+      i = nl
+    } else if (c === '(') depth++
+    else if (c === ')') depth = Math.max(0, depth - 1)
+  }
+  return depth
 }
 
 /**

@@ -16,6 +16,7 @@
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
   import Download from "@lucide/svelte/icons/download";
   import Table2 from "@lucide/svelte/icons/table-2";
+  import SlidersHorizontal from "@lucide/svelte/icons/sliders-horizontal";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
   import { cn, isNetworkError } from "$lib/utils.js";
   import { hasPro } from '$lib/stores/license.js'
@@ -54,10 +55,14 @@
     loadLayout,
     saveLayout,
   } from "$lib/stores/layout.js";
+  import { appSqlEditor, setSqlEditorOption } from "$lib/stores/settings.js";
+  import { SQL_EDITOR_FIELDS, SQL_EDITOR_TEXT_SIZES } from "$lib/sql-editor-options.js";
+  import { sortRowsByColumn } from "$lib/result-sort.js";
+  import SqlErrorConsole from "./SqlErrorConsole.svelte";
   import { untrack, onDestroy } from "svelte";
   import { formatCompactCount } from "$lib/table-list.js";
 
-  /** @typedef {import('$lib/monaco-sql-complete.js').SqlSchemaHints} SqlSchemaHints */
+  /** @typedef {import('$lib/sql-complete-data.js').SqlSchemaHints} SqlSchemaHints */
 
   let {
     /** Whether the SQL tab is the active/visible tab - gates global hotkeys. */
@@ -111,10 +116,36 @@
     /** @param {{ error: string, sql: string }} detail */
     onfixwithai = /** @type {((detail: { error: string, sql: string }) => void) | undefined} */ (undefined),
     onprorequired = /** @type {() => void} */ (() => {}),
+    /** The result lives in the backend's result store and `rows` is a sparse
+     *  view of it (stored-result-view.js): the grid runs windowed, sorting
+     *  happens in the backend, export reads the store. */
+    windowed = false,
+    dataVersion = 0,
+    /** @type {{ slow: boolean, failed: boolean } | null} */
+    windowStatus = null,
+    /** A stored result is being sorted in the backend. */
+    sorting = false,
+    onvisiblerange = /** @type {(start: number, end: number) => void} */ (() => {}),
+    onretrywindows = /** @type {() => void} */ (() => {}),
+    /** @type {(sort: { column: string, direction: 'asc' | 'desc' } | null) => void} */
+    onstoredsort = () => {},
+    /** Every row of the result, read from the store for a windowed one.
+     *  @type {(onprogress?: (n: number) => void) => Promise<any[][]>} */
+    onloadallrows = async () => rows,
+    /** Each statement of the last run: its text, and its error and where it
+     *  failed (a 1-based position into that text) when it failed.
+     *  @type {Array<{ sql: string, error: string | null, position: number | null }>} */
+    runOutcomes = [],
   } = $props();
 
-  /** @type {{ focus: () => void, markExecuted: (ranStatement?: string | null) => void, getStatementAtCursor: () => string, getSelectionText: () => string } | null} */
+  /** @type {{ focus: () => void, markRunning: (ranStatement?: string | null) => void, markExecuted: (ranStatement?: string | null) => void, markOutcomes: (outcomes: Array<{ sql: string, error: string | null, position: number | null }>) => void, clearRunMarks: () => void, getStatementAtCursor: () => string, getSelectionText: () => string } | null} */
   let sqlEditorRef = $state(null)
+
+  /** Mod+R from outside the editor: the selection, else the statement at the cursor. */
+  export function runStatementAtCursor() {
+    const stmt = sqlEditorRef?.getSelectionText?.() || sqlEditorRef?.getStatementAtCursor?.() || ''
+    if (stmt.trim()) handleRun(stmt)
+  }
 
   /** Focus the SQL editor - called by the parent when this tab becomes active. */
   export function focusEditor() {
@@ -196,9 +227,10 @@
   let explainError = $state('')
   let selected = $state(new Set())
 
-  /** @typedef {{ columns: any[], rows: any[][], message: string, queryMs: number }} ResultSet */
+  /** @typedef {{ columns: any[], rows: any[][], message: string, queryMs: number, sql: string, error: string, errorPosition: number | null }} ResultSet */
 
-  /** One entry per statement when the last run executed multiple statements. */
+  /** One entry per statement when the last run executed multiple statements.
+   *  A failed one carries its error: the rest still ran, and show. */
   const resultSets = $derived(
     (multiResults?.length ?? 0) > 1
       ? multiResults.map((res) => /** @type {ResultSet} */ ({
@@ -206,9 +238,32 @@
           rows: res.rows ?? [],
           message: res.message ?? '',
           queryMs: res.query_ms ?? res.queryMs ?? 0,
+          sql: res.sql ?? '',
+          error: res.error ?? '',
+          errorPosition: res.errorPosition ?? null,
         }))
       : []
   )
+  const activeSet = $derived(resultSets.length > 1 ? resultSets[Math.min(activeResultIdx, resultSets.length - 1)] : null)
+  /** The error on screen: the selected statement's, or the run's. */
+  const shownError = $derived(activeSet?.error || error)
+  /** The statement that error belongs to and where it failed, for the console. */
+  const failedStatement = $derived.by(() => {
+    if (activeSet?.error) return { sql: activeSet.sql, position: activeSet.errorPosition }
+    const only = runOutcomes.length === 1 ? runOutcomes[0] : null
+    if (error && only?.error) return { sql: only.sql, position: only.position }
+    return { sql: '', position: /** @type {number | null} */ (null) }
+  })
+
+  // After a script with a failure, open the first failed statement's tab: the
+  // error is what needs reading, and the tab strip shows the rest ran.
+  $effect(() => {
+    const sets = resultSets
+    untrack(() => {
+      const failed = sets.findIndex((r) => r.error)
+      if (failed >= 0) activeResultIdx = failed
+    })
+  })
 
   // A new run replaces the previous results: reset selection and result-set
   // index, and leave the explain view (it shows the previous query's plan).
@@ -222,14 +277,22 @@
     })
   })
 
-  // When a run finishes without an error, mark the executed statement(s) with
-  // a ✓ in the editor gutter (⌘R marks one, Run marks all).
+  // The editor gutter follows the run: a spinner beside the statement(s) while
+  // they run, a ✓ when they finish OK, nothing after an error or a Stop (the
+  // results pane says which). ⌘R marks one statement, Run marks all.
   let wasLoading = false
   $effect(() => {
     const l = loading
     const err = error
     untrack(() => {
-      if (wasLoading && !l && !err) sqlEditorRef?.markExecuted?.(lastRanStatement)
+      if (l && !wasLoading) sqlEditorRef?.markRunning?.(lastRanStatement)
+      else if (wasLoading && !l) {
+        // Per statement when the run reported them: ✓ or ✗ each, failures
+        // underlined where the database says they failed.
+        if (runOutcomes.length && !/Query cancelled/i.test(err)) sqlEditorRef?.markOutcomes?.(runOutcomes)
+        else if (err) sqlEditorRef?.clearRunMarks?.()
+        else sqlEditorRef?.markExecuted?.(lastRanStatement)
+      }
       wasLoading = l
     })
   })
@@ -258,39 +321,8 @@
    */
   let resultSort = $state(null)
 
-  // Sort text for object cells is computed once per value (row references are
-  // stable until a re-run) - stringifying inside the comparator would redo the
-  // work n·log n times and stall on large JSON cells.
-  /** @type {WeakMap<object, string>} */
-  const _sortTextCache = new WeakMap()
-
-  // One collator for the whole sort - localeCompare with an options object
-  // resolves locale/options once per comparison, the slow path on big results.
-  const cellCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
-  /** @param {unknown} v */
-  function cellSortText(v) {
-    if (v === null || typeof v !== 'object') return String(v)
-    const hit = _sortTextCache.get(v)
-    if (hit !== undefined) return hit
-    let s
-    try { s = JSON.stringify(v) } catch { s = String(v) }
-    _sortTextCache.set(v, s)
-    return s
-  }
-
-  /** Compare two cell values: numbers numerically, everything else as text. */
-  function compareCellValues(a, b) {
-    if (typeof a === 'number' && typeof b === 'number') return a - b
-    if (typeof a === 'boolean' && typeof b === 'boolean') return a === b ? 0 : a ? 1 : -1
-    const sa = cellSortText(a)
-    const sb = cellSortText(b)
-    if (sa.trim() !== '' && sb.trim() !== '') {
-      const na = Number(sa)
-      const nb = Number(sb)
-      if (!Number.isNaN(na) && !Number.isNaN(nb)) return na - nb
-    }
-    return cellCollator.compare(sa, sb)
-  }
+  /** The query sorts its own rows (checked on the editor text: good enough for a hint). */
+  const hasOrderBy = $derived(/\border\s+by\b/i.test(sql))
 
   const currentDisplay = $derived.by(() => {
     const base = resultSets.length > 1
@@ -300,20 +332,13 @@
           return { columns: s.columns, rows: s.rows, queryMs: s.queryMs, message: s.message }
         })()
       : { columns, rows, queryMs, message }
-    if (!resultSort) return base
+    // A stored result is sorted in the backend; the view refetches in order.
+    if (!resultSort || windowed) return base
     const colIdx = base.columns.findIndex((c) => (c.name ?? c) === resultSort.column)
     if (colIdx < 0) return base
-    const dir = resultSort.direction === 'desc' ? -1 : 1
-    const sorted = [...base.rows].sort((ra, rb) => {
-      const a = ra[colIdx]
-      const b = rb[colIdx]
-      const aNull = a === null || a === undefined
-      const bNull = b === null || b === undefined
-      // NULLs sort last in either direction.
-      if (aNull || bNull) return aNull && bNull ? 0 : aNull ? 1 : -1
-      return dir * compareCellValues(a, b)
-    })
-    return { ...base, rows: sorted }
+    // Typed by the column's database type, one key per row (result-sort.js).
+    const col = base.columns[colIdx]
+    return { ...base, rows: sortRowsByColumn(base.rows, colIdx, col?.dataType, resultSort.direction === 'desc') }
   })
 
   /** @param {{ column: string, direction: 'asc' | 'desc' } | null} sort */
@@ -323,6 +348,7 @@
     resultSort = Array.isArray(sorts) ? (sorts[0] ?? null) : sorts
     // Row indices change with the order - selection would point at the wrong rows.
     selected = new Set()
+    if (windowed) onstoredsort(resultSort)
   }
 
   async function handleExplain() {
@@ -385,11 +411,13 @@
   // from Rust instead of assembling it in the webview.
   const JSON_VIEW_ROWS = 1000
 
-  const jsonRows = $derived(
-    currentDisplay.rows.length > JSON_VIEW_ROWS
+  const jsonRows = $derived.by(() => {
+    const head = currentDisplay.rows.length > JSON_VIEW_ROWS
       ? currentDisplay.rows.slice(0, JSON_VIEW_ROWS)
-      : currentDisplay.rows,
-  )
+      : currentDisplay.rows
+    // A windowed result's array is sparse: only the rows it holds.
+    return windowed ? head.filter((r) => r !== undefined) : head
+  })
   const rowObjects = $derived(
     currentDisplay.columns.length > 0 && jsonRows.length > 0
       ? rowsToObjects(currentDisplay.columns, jsonRows)
@@ -403,7 +431,8 @@
    * @param {'csv'|'json'|'sql'|'tsv'|'md'|'jsonl'} format */
   async function exportAs(format) {
     const columns = currentDisplay.columns.map((c) => ({ name: c.name ?? String(c) }))
-    const rows = /** @type {any[][]} */ (currentDisplay.rows)
+    // A windowed result holds only the rows near the viewport here.
+    const rows = /** @type {any[][]} */ (windowed ? await onloadallrows() : currentDisplay.rows)
     const content =
       format === 'csv' ? rowsToCsv(columns, rows)
         : format === 'json' ? rowsToJson(columns, rows)
@@ -427,8 +456,9 @@
   let savingQuery = $state(false);
 
   function fixWithAi() {
-    if (!error || !sql.trim()) return
-    onfixwithai?.({ error, sql: sql.trim() })
+    const failedSql = activeSet?.error ? activeSet.sql : sql
+    if (!shownError || !failedSql.trim()) return
+    onfixwithai?.({ error: shownError, sql: failedSql.trim() })
   }
 
   // Stop is fire-and-forget on the backend; `stopping` only keeps a second
@@ -442,17 +472,17 @@
   }
   // The backend reports a stopped run as an error string. It is the user's own
   // action, not a failure, so it gets its own quiet view instead of the red one.
-  const stopped = $derived(/Query cancelled/i.test(error))
+  const stopped = $derived(/Query cancelled/i.test(shownError))
   // Tauri errors arrive as `Error: <message>`; the prefix repeats the header.
-  const errorText = $derived(error.replace(/^Error:\s*/, ''))
+  const errorText = $derived(shownError.replace(/^Error:\s*/, ''))
 
   let errorCopied = $state(false)
   /** @type {ReturnType<typeof setTimeout> | null} */
   let errorCopyTimer = null
   async function copyError() {
-    if (!error) return
+    if (!shownError) return
     try {
-      await navigator.clipboard.writeText(error)
+      await navigator.clipboard.writeText(shownError)
       errorCopied = true
       if (errorCopyTimer) clearTimeout(errorCopyTimer)
       errorCopyTimer = setTimeout(() => { errorCopied = false }, 1600)
@@ -527,84 +557,14 @@
     class="studio-chrome flex h-9 shrink-0 items-center gap-1.5 border-b border-border bg-panel px-2"
     data-studio-chrome
   >
-    {#if loading}
-      <!-- Same footprint as Run + its menu (h-7, ~76px), so the toolbar doesn't
-           shift when a run starts. The spinner says "running", the square
-           inside it says what a click does. -->
-      <button
-        type="button"
-        class="group inline-flex h-7 min-w-[4.75rem] shrink-0 select-none items-center gap-2 rounded-md border border-border bg-muted/40 pl-2 pr-2.5 text-ui-2xs font-medium text-foreground transition-[background-color,border-color,scale] duration-150 hover:border-destructive/40 hover:bg-destructive/10 active:scale-[0.96] disabled:pointer-events-none disabled:opacity-60"
-        disabled={stopping}
-        onclick={stopRun}
-        title={tipText('Stop', 'Cancel the running query.')}
-      >
-        <span class="relative grid size-3.5 shrink-0 place-items-center">
-          <Loader2 class="size-3.5 animate-spin text-muted-foreground" />
-          <Square class="absolute size-1.5 fill-current text-destructive" />
-        </span>
-        {stopping ? 'Stopping' : 'Stop'}
-      </button>
-    {:else}
-      {#if txStatus?.open}
-        <!-- An open transaction changes what Run means, so it is said next to
-             Run, and its two exits sit beside it.
-             -
-             The state and the actions are separate controls now. They were one
-             amber pill with a neutral Commit and a red Roll back inside it:
-             three semantic colours in a 28px box, with the destructive red
-             measuring 4.80:1 against the amber wash it sat on - technically
-             legible, and still two alarm hues arguing inside one chip. The chip
-             now carries one hue and says one thing; the actions are ordinary
-             `h-7` toolbar buttons with real hit areas, and red appears on the
-             one control that destroys work, on hover, where it means something.
-             (Measured on --panel in the dark theme: warning text on the wash
-             8.69:1, the count 6.68:1.) -->
-        <div class="flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-warning/25 bg-warning/10 px-2">
-          <span class="size-1.5 shrink-0 rounded-full bg-warning" aria-hidden="true"></span>
-          <span class="whitespace-nowrap text-ui-2xs font-medium text-warning">In transaction</span>
-          <span class="whitespace-nowrap font-mono text-ui-2xs tabular-nums text-muted-foreground">
-            {txStatus.statements}<span class="ml-0.5">{txStatus.statements === 1 ? 'stmt' : 'stmts'}</span>
-          </span>
-        </div>
-        <Button
-          variant="outline"
-          size="sm"
-          class="h-7 shrink-0"
-          disabled={txBusy}
-          onclick={() => oncommittransaction()}
-          title={tipText('Commit', `Save everything this transaction has done: ${txStatus.statements} statement(s), ${txStatus.rowsAffected} row(s) changed.`)}
-        >
-          Commit
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          class="h-7 shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive focus-visible:bg-destructive/10 focus-visible:text-destructive"
-          disabled={txBusy}
-          onclick={() => onrollbacktransaction()}
-          title={tipText('Roll back', 'Undo everything this transaction has done.')}
-        >
-          Roll back
-        </Button>
-      {:else}
-        <Button
-          variant="outline"
-          size="sm"
-          class="h-7 shrink-0"
-          disabled={txBusy}
-          onclick={() => onbegintransaction()}
-          title={tipText(
-            'Begin transaction',
-            'Run statements without saving them, then commit or roll back.',
-          )}
-        >
-          Begin
-        </Button>
-      {/if}
+    <!-- Run leads: it is what this toolbar is for. Stop takes its place in the
+         same grid cell, so it is exactly Run's width and nothing after it moves
+         when a run starts. Run stays mounted (invisible) to hold the width. -->
+    <div class="grid shrink-0">
       <!-- Split button: one wrapper owns the radius + shadow; the halves are
            plain buttons (the Button component's transparent border,
            bg-clip-padding and elevate shadow would each paint a seam). -->
-      <div class="flex shrink-0 items-stretch overflow-hidden rounded-md elevate-1">
+      <div class={cn('col-start-1 row-start-1 flex shrink-0 items-stretch overflow-hidden rounded-md elevate-1', loading && 'invisible')}>
         <button
           type="button"
           class="inline-flex h-7 shrink-0 select-none items-center gap-2 bg-primary pl-2.5 pr-2 text-ui-2xs font-medium text-primary-foreground transition-[background-color,opacity] hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50"
@@ -661,6 +621,81 @@
           </DropdownMenu.Content>
         </DropdownMenu.Root>
       </div>
+      {#if loading}
+        <!-- No spinner here: the results pane and the editor gutter already
+             say "running". The square says what a click does. -->
+        <button
+          type="button"
+          class="group col-start-1 row-start-1 inline-flex h-7 w-full shrink-0 select-none items-center gap-2 rounded-md border border-border bg-muted/40 pl-2 pr-2.5 text-ui-2xs font-medium text-foreground transition-[background-color,border-color,scale] duration-150 hover:border-destructive/40 hover:bg-destructive/10 active:scale-[0.96] disabled:pointer-events-none disabled:opacity-60"
+          disabled={stopping}
+          onclick={stopRun}
+          title={tipText('Stop', 'Cancel the running query.')}
+        >
+          <!-- Drawn, not Lucide's square: that one carries its own padding in
+               a 24px box and sits off-centre at this size. -->
+          <span class="grid size-3.5 shrink-0 place-items-center" aria-hidden="true">
+            <span class="size-2.5 rounded-[2px] bg-destructive"></span>
+          </span>
+          {stopping ? 'Stopping' : 'Stop'}
+        </button>
+      {/if}
+    </div>
+
+    {#if txStatus?.open}
+      <!-- An open transaction changes what Run means, so it is said next to
+           Run, and its two exits sit beside it.
+           -
+           The state and the actions are separate controls now. They were one
+           amber pill with a neutral Commit and a red Roll back inside it:
+           three semantic colours in a 28px box, with the destructive red
+           measuring 4.80:1 against the amber wash it sat on - technically
+           legible, and still two alarm hues arguing inside one chip. The chip
+           now carries one hue and says one thing; the actions are ordinary
+           `h-7` toolbar buttons with real hit areas, and red appears on the
+           one control that destroys work, on hover, where it means something.
+           (Measured on --panel in the dark theme: warning text on the wash
+           8.69:1, the count 6.68:1.) -->
+      <div class="flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-warning/25 bg-warning/10 px-2">
+        <span class="size-1.5 shrink-0 rounded-full bg-warning" aria-hidden="true"></span>
+        <span class="whitespace-nowrap text-ui-2xs font-medium text-warning">In transaction</span>
+        <span class="whitespace-nowrap font-mono text-ui-2xs tabular-nums text-muted-foreground">
+          {txStatus.statements}<span class="ml-0.5">{txStatus.statements === 1 ? 'stmt' : 'stmts'}</span>
+        </span>
+      </div>
+      <Button
+        variant="outline"
+        size="sm"
+        class="h-7 shrink-0"
+        disabled={txBusy || loading}
+        onclick={() => oncommittransaction()}
+        title={tipText('Commit', `Save everything this transaction has done: ${txStatus.statements} statement(s), ${txStatus.rowsAffected} row(s) changed.`)}
+      >
+        Commit
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        class="h-7 shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive focus-visible:bg-destructive/10 focus-visible:text-destructive"
+        disabled={txBusy || loading}
+        onclick={() => onrollbacktransaction()}
+        title={tipText('Roll back', 'Undo everything this transaction has done.')}
+      >
+        Roll back
+      </Button>
+    {:else}
+      <Button
+        variant="outline"
+        size="sm"
+        class="h-7 shrink-0"
+        disabled={txBusy || loading}
+        onclick={() => onbegintransaction()}
+        title={tipText(
+          'Begin transaction',
+          'Run statements without saving them, then commit or roll back.',
+        )}
+      >
+        Begin
+      </Button>
     {/if}
 
     {#if sqlParams.length > 0}
@@ -683,6 +718,9 @@
 
     <div class="mx-0.5 h-4 w-px shrink-0 bg-border" aria-hidden="true"></div>
 
+    <!-- Grouped by space, not more rules: what to do with this query (format,
+         explain, copy as ORM), then where queries are kept (save, history),
+         then the editor's view options apart at the trailing edge. -->
     <div class="flex min-w-0 items-center gap-0.5">
       <Button
         type="button"
@@ -696,6 +734,52 @@
         <Braces class="size-3.5 shrink-0" />
       </Button>
 
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        class={cn(
+          'size-7 p-0 hover:text-foreground',
+          outputView === 'explain' ? 'text-foreground' : 'text-muted-foreground',
+        )}
+        disabled={!sql.trim() || explainLoading}
+        onclick={handleExplain}
+        title={tipText('Explain plan', 'Visualize how the database executes this query, spot slow scans and missing indexes.')}
+      >
+        {#if explainLoading}
+          <Loader2 class="size-3.5 shrink-0 animate-spin" />
+        {:else}
+          <ScanSearch class="size-3.5 shrink-0" />
+        {/if}
+      </Button>
+
+      <DropdownMenu.Root>
+        <DropdownMenu.Trigger
+          class="flex h-7 items-center gap-1 rounded-md px-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground data-[state=open]:bg-accent data-[state=open]:text-foreground disabled:pointer-events-none disabled:opacity-50"
+          disabled={!sql.trim()}
+          title="Copy as ORM query, Drizzle or Prisma"
+        >
+          {#if ormCopied}
+            <CheckCheck class="size-3.5 shrink-0 text-success" />
+          {:else}
+            <Code2 class="size-3.5 shrink-0" />
+          {/if}
+          <ChevronDown class="size-3 shrink-0 opacity-50" />
+        </DropdownMenu.Trigger>
+        <DropdownMenu.Content align="start" class="min-w-44">
+          <DropdownMenu.Item class="gap-2 whitespace-nowrap font-mono text-ui-xs" onclick={() => copyAsOrm('drizzle')}>
+            <Code2 class="size-3.5 shrink-0 text-muted-foreground" />
+            Copy as Drizzle
+          </DropdownMenu.Item>
+          <DropdownMenu.Item class="gap-2 whitespace-nowrap font-mono text-ui-xs" onclick={() => copyAsOrm('prisma')}>
+            <Code2 class="size-3.5 shrink-0 text-muted-foreground" />
+            Copy as Prisma
+          </DropdownMenu.Item>
+        </DropdownMenu.Content>
+      </DropdownMenu.Root>
+    </div>
+
+    <div class="ml-3 flex min-w-0 items-center gap-0.5">
       <Button
         type="button"
         variant="ghost"
@@ -721,48 +805,41 @@
       >
         <History class="size-3.5 shrink-0" />
       </Button>
+    </div>
 
-      <Button
-        type="button"
-        variant="ghost"
-        size="sm"
-        class={cn(
-          'size-7 p-0 hover:text-foreground',
-          outputView === 'explain' ? 'text-foreground' : 'text-muted-foreground',
-        )}
-        disabled={!sql.trim() || explainLoading}
-        onclick={handleExplain}
-        title={tipText('Explain plan', 'Visualize how the database executes this query, spot slow scans and missing indexes.')}
-      >
-        {#if explainLoading}
-          <Loader2 class="size-3.5 shrink-0 animate-spin" />
-        {:else}
-          <ScanSearch class="size-3.5 shrink-0" />
-        {/if}
-      </Button>
-
+    <div class="ml-auto flex shrink-0 items-center">
+      <!-- The editor's own view options, the same switches as Settings →
+           Database → SQL editor. Toggles keep the menu open, so several can
+           be flipped in one visit. -->
       <DropdownMenu.Root>
         <DropdownMenu.Trigger
-          class="flex h-7 items-center gap-1 rounded-md px-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
-          disabled={!sql.trim()}
-          title="Copy as ORM query, Drizzle or Prisma"
+          class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground data-[state=open]:bg-accent data-[state=open]:text-foreground"
+          aria-label="Editor options"
+          title={tipText('Editor options', 'Line numbers, wrapping, suggestions and text size. Also in Settings → Database → SQL editor.')}
         >
-          {#if ormCopied}
-            <CheckCheck class="size-3.5 shrink-0 text-success" />
-          {:else}
-            <Code2 class="size-3.5 shrink-0" />
-          {/if}
-          <ChevronDown class="size-3 shrink-0 opacity-50" />
+          <SlidersHorizontal class="size-3.5 shrink-0" />
         </DropdownMenu.Trigger>
-        <DropdownMenu.Content align="start" class="min-w-44">
-          <DropdownMenu.Item class="gap-2 whitespace-nowrap font-mono text-ui-xs" onclick={() => copyAsOrm('drizzle')}>
-            <Code2 class="size-3.5 shrink-0 text-muted-foreground" />
-            Copy as Drizzle
-          </DropdownMenu.Item>
-          <DropdownMenu.Item class="gap-2 whitespace-nowrap font-mono text-ui-xs" onclick={() => copyAsOrm('prisma')}>
-            <Code2 class="size-3.5 shrink-0 text-muted-foreground" />
-            Copy as Prisma
-          </DropdownMenu.Item>
+        <DropdownMenu.Content align="end" class="min-w-52">
+          {#each SQL_EDITOR_FIELDS.filter((f) => f.kind === 'bool') as field (field.key)}
+            <DropdownMenu.CheckboxItem
+              checked={$appSqlEditor[field.key] === true}
+              closeOnSelect={false}
+              onCheckedChange={(on) => setSqlEditorOption(/** @type {any} */ (field.key), on)}
+            >
+              <span data-slot="menu-label">{field.label}</span>
+              {#if field.key === 'wrap'}<DropdownMenu.Shortcut combo="Alt+Z" />{/if}
+            </DropdownMenu.CheckboxItem>
+          {/each}
+          <DropdownMenu.Separator />
+          <DropdownMenu.Label>Text size</DropdownMenu.Label>
+          <DropdownMenu.RadioGroup
+            value={$appSqlEditor.textSize}
+            onValueChange={(v) => setSqlEditorOption('textSize', /** @type {any} */ (v))}
+          >
+            {#each SQL_EDITOR_TEXT_SIZES as size (size.id)}
+              <DropdownMenu.RadioItem value={size.id} closeOnSelect={false}>{size.label}</DropdownMenu.RadioItem>
+            {/each}
+          </DropdownMenu.RadioGroup>
         </DropdownMenu.Content>
       </DropdownMenu.Root>
     </div>
@@ -836,6 +913,7 @@
       bind:value={sql}
       class="absolute inset-0"
       {schemaHints}
+      dialect={engine}
       {onmodk}
       onmodenter={() => handleRun(undefined)}
       onrunstatement={(stmt) => handleRun(stmt)}
@@ -884,20 +962,36 @@
     >
       <!-- Result-set selector tabs (only when multi-result) -->
       {#if resultSets.length > 1}
-        {#each resultSets as _rs, i (i)}
-          {@const rsActive = Math.min(activeResultIdx, resultSets.length - 1) === i}
-          <button
-            type="button"
-            onclick={() => { activeResultIdx = i; resultSort = null; selected = new Set() }}
-            class={cn(
-              'relative flex items-center border-b-2 px-2.5 font-mono text-ui-xs transition-colors',
-              rsActive ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-muted-foreground',
-            )}
-          >
-            Result {i + 1}
-          </button>
-        {/each}
-        <div class="mx-1.5 h-3.5 w-px shrink-0 self-center bg-border/60"></div>
+        <!-- One pill per statement: compact, the selected one filled, a failed
+             one red with its ✗, each with its row count so they tell apart.
+             Scrolls sideways when a script has many. -->
+        <div class="flex min-w-0 items-center gap-0.5 overflow-x-auto px-1.5 [scrollbar-width:none]" role="tablist" aria-label="Statement results">
+          {#each resultSets as rs, i (i)}
+            {@const rsActive = Math.min(activeResultIdx, resultSets.length - 1) === i}
+            <button
+              type="button"
+              role="tab"
+              aria-selected={rsActive}
+              onclick={() => { activeResultIdx = i; resultSort = null; selected = new Set() }}
+              title={rs.error ? rs.error.replace(/^Error:\s*/, '') : rs.sql}
+              class={cn(
+                'flex h-6 shrink-0 items-center gap-1 rounded-md px-2 text-ui-2xs font-medium whitespace-nowrap transition-colors',
+                rs.error
+                  ? rsActive ? 'bg-destructive/12 text-destructive' : 'text-destructive/80 hover:bg-destructive/10 hover:text-destructive'
+                  : rsActive ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground',
+              )}
+            >
+              {#if rs.error}<X class="size-3 shrink-0" aria-label="Failed" />{/if}
+              Result {i + 1}
+              {#if !rs.error}
+                <span class={cn('font-mono text-ui-3xs tabular-nums', rsActive ? 'text-muted-foreground' : 'text-muted-foreground/70')}>
+                  {rs.columns.length ? formatCompactCount(rs.rows.length) : '✓'}
+                </span>
+              {/if}
+            </button>
+          {/each}
+        </div>
+        <div class="mx-1 h-4 w-px shrink-0 self-center bg-border"></div>
       {/if}
 
       <!-- View tabs (icon-only). The Error tab appears with a label only after a
@@ -908,7 +1002,7 @@
           { id: 'chart',   label: 'Chart',   Icon: BarChart2,  pro: true },
           { id: 'json',    label: 'JSON',    Icon: Braces,     pro: true },
           { id: 'explain', label: 'Explain', Icon: ScanSearch, pro: true },
-          ...(error ? [{ id: 'error', label: stopped ? 'Stopped' : 'Error', Icon: stopped ? Square : CircleAlert, pro: false }] : []),
+          ...(shownError ? [{ id: 'error', label: stopped ? 'Stopped' : 'Error', Icon: stopped ? Square : CircleAlert, pro: false }] : []),
         ] as tab (tab.id)}
           {@const locked = tab.pro && !$hasPro}
           {@const tabActive = !locked && outputVisible && outputView === tab.id}
@@ -938,6 +1032,15 @@
 
       <!-- Right: metadata + toggle -->
       <div class="ml-auto flex shrink-0 items-center gap-3 pr-1.5">
+        {#if outputVisible && currentDisplay.rows.length > 1 && !resultSort && !hasOrderBy}
+          <!-- Without ORDER BY the database returns rows in whatever order it
+               reads them (storage order, roughly), which is rarely id or time
+               order. Said once, quietly, where the row count is. -->
+          <span
+            class="font-mono text-ui-2xs text-muted-foreground/70"
+            title="The query has no ORDER BY, so rows come back in the order the database read them. Add ORDER BY, or click a column header to sort."
+          >unordered</span>
+        {/if}
         {#if outputVisible && currentDisplay.rows.length > 0}
           <span class="font-mono text-ui-2xs tabular-nums text-muted-foreground">{formatCompactCount(currentDisplay.rows.length)} rows</span>
         {/if}
@@ -994,7 +1097,7 @@
     {#if outputVisible}
       <div class="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-panel">
         {#key `${outputView}:${Math.min(activeResultIdx, Math.max(resultSets.length - 1, 0))}`}
-          {#if outputView === 'error'}
+          {#if outputView === 'error' || activeSet?.error}
             {#if stopped}
               <div class="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
                 <span class="grid size-8 place-items-center rounded-full bg-muted/60">
@@ -1009,69 +1112,39 @@
                   Run again
                 </Button>
               </div>
-            {:else if isNetworkError(error)}
+            {:else if isNetworkError(shownError)}
               <div class="flex h-full flex-col items-center justify-center gap-2.5 px-6 text-center">
                 <WifiOff class="size-6 text-muted-foreground" />
                 <p class="font-mono text-ui-sm text-muted-foreground">Cannot reach database, check your connection and try again.</p>
               </div>
             {:else}
-              <!-- SQL error as a console pane (VS Code / Postman feel): neutral
-                   monospace output on the panel surface, colour reserved for a
-                   small severity marker and a thin gutter rail, never a red wash.
-                   Body is fully SELECTABLE (the app is select-none by default;
-                   data-studio-selectable re-enables selection here). -->
-              <div data-studio-selectable="text" class="flex h-full min-h-0 flex-col font-mono">
-                <!-- Console toolbar, neutral chrome, ghost actions -->
-                <div class="flex h-10 shrink-0 items-center gap-2 border-b border-border/60 pl-3 pr-1.5 font-sans select-none">
-                  <CircleAlert class="size-3.5 shrink-0 text-destructive" />
-                  <span class="text-ui-xs font-medium text-foreground">Query failed</span>
-                  {#if currentDisplay.queryMs > 0}
-                    <span class="text-ui-2xs tabular-nums text-muted-foreground">after {currentDisplay.queryMs}ms</span>
-                  {/if}
-                  <div class="ml-auto flex shrink-0 items-center gap-1">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-sm"
-                      onclick={copyError}
-                      title="Copy error"
-                      aria-label="Copy error"
-                      class="text-muted-foreground hover:text-foreground"
-                    >
-                      {#if errorCopied}<Check class="size-3.5 shrink-0" />{:else}<Copy class="size-3.5 shrink-0" />{/if}
-                    </Button>
-                    {#if onfixwithai}
-                      <Button type="button" variant="outline" size="sm" onclick={fixWithAi}>
-                        <Wand2 class="size-3.5 shrink-0" data-icon="inline-start" />
-                        Fix with AI
-                      </Button>
-                    {/if}
-                  </div>
-                </div>
-                <!-- Console output, neutral text, red only in the thin left rail.
-                     overflow-wrap:anywhere wraps at word boundaries first and only
-                     breaks inside a token when it can't fit (unlike break-all,
-                     which chopped ordinary words mid-character). -->
-                <div class="min-h-0 flex-1 overflow-auto px-3 py-3">
-                  <div class="border-l-2 border-destructive/40 pl-3">
-                    <pre class="select-text whitespace-pre-wrap [overflow-wrap:anywhere] text-ui-xs leading-relaxed text-foreground/85">{errorText}</pre>
-                    {#if /statement timeout|canceling statement due to/i.test(error)}
-                      <p class="mt-3 text-ui-2xs leading-relaxed text-muted-foreground">
-                        The query timed out. If this table has large JSON/text columns, select just the
-                        columns you need instead of <code class="rounded bg-muted/60 px-1 py-px text-foreground/70">*</code>, or add a smaller
-                        <code class="rounded bg-muted/60 px-1 py-px text-foreground/70">LIMIT</code>.
-                      </p>
-                    {:else if /relation "[^"]*" does not exist|column "[^"]*" does not exist/i.test(error)}
-                      <p class="mt-3 text-ui-2xs leading-relaxed text-muted-foreground">
-                        PostgreSQL folds unquoted names to lowercase, so a table like
-                        <code class="rounded bg-muted/60 px-1 py-px text-foreground/70">Products</code> only matches when quoted -
-                        <code class="rounded bg-muted/60 px-1 py-px text-foreground/70">SELECT * FROM "Products"</code>. Pick the table from
-                        autocomplete and it inserts the quoted form for you.
-                      </p>
-                    {/if}
-                  </div>
-                </div>
-              </div>
+              <!-- The failed statement as a console prints it: the message, where
+                   it failed, the statement with the failing text underlined. -->
+              <SqlErrorConsole
+                error={shownError}
+                sql={failedStatement.sql}
+                position={failedStatement.position}
+                queryMs={currentDisplay.queryMs}
+                dialect={engine}
+                copied={errorCopied}
+                oncopy={copyError}
+                onfixwithai={onfixwithai ? fixWithAi : undefined}
+              >
+                {#if /statement timeout|canceling statement due to/i.test(shownError)}
+                  <p class="mt-2.5 text-ui-3xs leading-relaxed text-muted-foreground">
+                    The query timed out. If this table has large JSON/text columns, select just the
+                    columns you need instead of <code class="rounded bg-muted/60 px-1 py-px text-foreground/70">*</code>, or add a smaller
+                    <code class="rounded bg-muted/60 px-1 py-px text-foreground/70">LIMIT</code>.
+                  </p>
+                {:else if /relation "[^"]*" does not exist|column "[^"]*" does not exist/i.test(shownError)}
+                  <p class="mt-2.5 text-ui-3xs leading-relaxed text-muted-foreground">
+                    PostgreSQL folds unquoted names to lowercase, so a table like
+                    <code class="rounded bg-muted/60 px-1 py-px text-foreground/70">Products</code> only matches when quoted -
+                    <code class="rounded bg-muted/60 px-1 py-px text-foreground/70">SELECT * FROM "Products"</code>. Pick the table from
+                    autocomplete and it inserts the quoted form for you.
+                  </p>
+                {/if}
+              </SqlErrorConsole>
             {/if}
           {:else if outputView === 'explain'}
             {#if explainLoading}
@@ -1103,10 +1176,15 @@
               <DataTable
                 columns={currentDisplay.columns}
                 rows={currentDisplay.rows}
-                {loading}
+                loading={loading || sorting}
                 bind:selected
                 rowSort={resultSort}
                 onsortchange={handleResultSort}
+                {windowed}
+                {dataVersion}
+                {windowStatus}
+                {onvisiblerange}
+                onretrywindows={onretrywindows}
                 readonly
               />
             {/if}

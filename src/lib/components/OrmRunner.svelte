@@ -32,7 +32,7 @@
     saveLayout,
   } from "$lib/stores/layout.js";
 
-  /** @typedef {import('$lib/monaco-sql-complete.js').SqlSchemaHints} SqlSchemaHints */
+  /** @typedef {import('$lib/sql-complete-data.js').SqlSchemaHints} SqlSchemaHints */
 
   let {
     code = $bindable(""),

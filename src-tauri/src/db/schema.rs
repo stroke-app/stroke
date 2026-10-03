@@ -44,6 +44,10 @@ pub struct ColumnStructureRow {
     pub foreign_key: Option<String>,
     pub fk_constraint_name: Option<String>,
     pub comment: Option<String>,
+    /// Part of the table's primary key. From the catalog, never guessed from a
+    /// name: `id TEXT PRIMARY KEY` on SQLite reports as nullable, and a `uuid`
+    /// key has no `nextval` default, so neither heuristic found them.
+    pub is_primary_key: bool,
 }
 
 /// One table's column list, as returned by the schema-wide structure fetch.
@@ -1294,6 +1298,7 @@ async fn get_column_structure_sqlite(
         let name: String = r.try_get::<Option<String>, _>(1).ok().flatten()?;
         let data_type = r.try_get::<Option<String>, _>(2).ok().flatten().unwrap_or_default().to_lowercase();
         let notnull: i64 = r.try_get::<Option<i64>, _>(3).ok().flatten().unwrap_or(0);
+        let pk: i64 = r.try_get::<Option<i64>, _>(5).ok().flatten().unwrap_or(0);
         let column_default: Option<String> = r.try_get::<Option<String>, _>(4).ok().flatten();
         let foreign_key = fk_map.get(&name).cloned();
         Some(ColumnStructureRow {
@@ -1301,6 +1306,7 @@ async fn get_column_structure_sqlite(
             name: name.clone(),
             data_type,
             is_nullable: notnull == 0,
+            is_primary_key: pk > 0,
             column_default,
             foreign_key,
             fk_constraint_name: None,
@@ -1317,7 +1323,7 @@ async fn get_column_structure_mysql(
     use std::collections::HashMap;
 
     let col_rows = sqlx::query(
-        "SELECT ORDINAL_POSITION, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT \
+        "SELECT ORDINAL_POSITION, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT, COLUMN_KEY \
          FROM information_schema.COLUMNS \
          WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? \
          ORDER BY ORDINAL_POSITION",
@@ -1370,6 +1376,7 @@ async fn get_column_structure_mysql(
             name: name.clone(),
             data_type,
             is_nullable: is_nullable_str.eq_ignore_ascii_case("YES"),
+            is_primary_key: my_text(r, 5).map(|k| k.eq_ignore_ascii_case("PRI")).unwrap_or(false),
             column_default,
             foreign_key,
             fk_constraint_name,
@@ -1403,6 +1410,7 @@ fn parse_column_structure_from_pragma_results(
         let name = r.get(1)?.as_str()?.to_string();
         let data_type = r.get(2).and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
         let notnull = r.get(3).and_then(|v| v.as_i64()).unwrap_or(0);
+        let pk = r.get(5).and_then(|v| v.as_i64()).unwrap_or(0);
         let column_default = r.get(4).and_then(|v| v.as_str()).map(|s| s.to_string());
         let foreign_key = fk_map.get(&name).cloned();
         Some(ColumnStructureRow {
@@ -1410,6 +1418,7 @@ fn parse_column_structure_from_pragma_results(
             name: name.clone(),
             data_type,
             is_nullable: notnull == 0,
+            is_primary_key: pk > 0,
             column_default,
             foreign_key,
             fk_constraint_name: None,
@@ -1499,7 +1508,11 @@ async fn get_column_structure_pg(
                   AND pc.conkey[1] = a.attnum
                 LIMIT 1
             ),
-            col_description(a.attrelid, a.attnum)
+            col_description(a.attrelid, a.attnum),
+            EXISTS (
+                SELECT 1 FROM pg_catalog.pg_constraint pk
+                WHERE pk.contype = 'p' AND pk.conrelid = a.attrelid AND a.attnum = ANY(pk.conkey)
+            )
         FROM pg_catalog.pg_attribute a
         JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
@@ -1526,7 +1539,8 @@ async fn get_column_structure_pg(
             let foreign_key: Option<String> = r.try_get(5).ok().flatten();
             let fk_constraint_name: Option<String> = r.try_get(6).ok().flatten();
             let comment: Option<String> = r.try_get(7).ok().flatten();
-            ColumnStructureRow { ordinal_position: ordinal, name, data_type, is_nullable, column_default, foreign_key, fk_constraint_name, comment }
+            let is_primary_key: bool = r.try_get(8).unwrap_or(false);
+            ColumnStructureRow { ordinal_position: ordinal, name, data_type, is_nullable, column_default, foreign_key, fk_constraint_name, comment, is_primary_key }
         })
         .collect();
 
@@ -1621,7 +1635,11 @@ async fn schema_column_structure_pg(
                   AND pc.conkey[1] = a.attnum
                 LIMIT 1
             ),
-            col_description(a.attrelid, a.attnum)
+            col_description(a.attrelid, a.attnum),
+            EXISTS (
+                SELECT 1 FROM pg_catalog.pg_constraint pk
+                WHERE pk.contype = 'p' AND pk.conrelid = a.attrelid AND a.attnum = ANY(pk.conkey)
+            )
         FROM pg_catalog.pg_attribute a
         JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
@@ -1648,6 +1666,7 @@ async fn schema_column_structure_pg(
             foreign_key: r.try_get(6).ok().flatten(),
             fk_constraint_name: r.try_get(7).ok().flatten(),
             comment: r.try_get(8).ok().flatten(),
+            is_primary_key: r.try_get(9).unwrap_or(false),
         })
     }).collect()))
 }
@@ -1659,7 +1678,7 @@ async fn schema_column_structure_mysql(
     use std::collections::HashMap;
 
     let col_rows = sqlx::query(
-        "SELECT TABLE_NAME, ORDINAL_POSITION, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT \
+        "SELECT TABLE_NAME, ORDINAL_POSITION, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT, COLUMN_KEY \
          FROM information_schema.COLUMNS \
          WHERE TABLE_SCHEMA = ? \
          ORDER BY TABLE_NAME, ORDINAL_POSITION",
@@ -1709,6 +1728,7 @@ async fn schema_column_structure_mysql(
             name,
             data_type,
             is_nullable: nullable.eq_ignore_ascii_case("YES"),
+            is_primary_key: my_text(r, 6).map(|k| k.eq_ignore_ascii_case("PRI")).unwrap_or(false),
             column_default,
             foreign_key: fk.map(|(t, _)| t.clone()),
             fk_constraint_name: fk.map(|(_, c)| c.clone()),
