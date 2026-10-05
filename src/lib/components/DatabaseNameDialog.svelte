@@ -11,7 +11,7 @@
     open = $bindable(false),
     /** @type {'rename' | 'duplicate'} */
     mode = 'rename',
-    /** @type {'postgres' | 'mysql'} */
+    /** @type {import('$lib/database-admin.js').AdminKind} */
     kind = 'postgres',
     /** The database being renamed or copied. */
     source = '',

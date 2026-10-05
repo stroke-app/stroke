@@ -8,8 +8,10 @@
 
   let {
     open = $bindable(false),
-    /** @type {'postgres' | 'mysql'} */
+    /** @type {import('$lib/database-admin.js').AdminKind} */
     kind = 'postgres',
+    /** The engine can close other sessions as part of the drop (`canForceDrop`). */
+    forceable = false,
     name = '',
     /** Number of sessions currently on it, when known - '' hides the line. */
     sessions = '',
@@ -20,7 +22,8 @@
   let typed = $state('')
   let force = $state(false)
 
-  const supportsForce = $derived(kind === 'postgres')
+  const supportsForce = $derived(forceable)
+  const engineName = $derived(kind === 'mssql' ? 'SQL Server' : 'Postgres')
   const matches = $derived(typed.trim() === name)
   const sql = $derived(dropDatabaseSql(kind, name, { force: supportsForce && force }))
 
@@ -56,7 +59,7 @@
       <div class="min-w-0">
         <p class="text-ui-xs font-medium text-foreground">Close other sessions</p>
         <p class="mt-0.5 text-ui-2xs text-muted-foreground">
-          {sessions ? `${sessions} session(s) connected. ` : ''}Postgres refuses the drop while anything is connected.
+          {sessions ? `${sessions} session(s) connected. ` : ''}{engineName} refuses the drop while anything is connected.
         </p>
       </div>
       <button

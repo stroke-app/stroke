@@ -10,7 +10,7 @@
 import { engineFamily } from '$lib/stores/connections.js'
 
 /** @typedef {import('$lib/stores/connections.js').SavedConnection} Conn */
-/** @typedef {'postgres' | 'mysql'} AdminKind */
+/** @typedef {'postgres' | 'mysql' | 'mssql' | 'clickhouse'} AdminKind */
 /** @typedef {'create' | 'rename' | 'duplicate' | 'drop' | 'terminate' | 'info'} AdminAction */
 
 /**
@@ -20,8 +20,9 @@ import { engineFamily } from '$lib/stores/connections.js'
  * Provider connections (Neon, Supabase, PlanetScale) are ruled out on purpose:
  * their sibling "databases" are projects and branches addressed by an API ref,
  * not names in a catalog, so a `DROP DATABASE "<ref>"` would either miss or hit
- * the wrong thing. SQLite and D1 are files and Cloudflare-managed resources;
- * Redis addresses numbered logical DBs.
+ * the wrong thing. SQLite and DuckDB are single files, D1 databases are
+ * Cloudflare resources, PostHog is read-only and Redis addresses numbered
+ * logical DBs, so none of them get the menu.
  * @param {Conn | null | undefined} conn
  * @returns {AdminKind | null}
  */
@@ -30,7 +31,27 @@ export function dbAdminKind(conn) {
   const family = engineFamily(conn.type)
   if (family === 'postgres') return 'postgres'
   if (family === 'mysql') return 'mysql'
+  if (family === 'mssql') return 'mssql'
+  if (family === 'clickhouse') return 'clickhouse'
   return null
+}
+
+/** PlanetScale serves one database per branch and refuses CREATE and DROP
+ *  DATABASE over SQL, even when it was added by hand as plain MySQL.
+ *  @param {Conn | null | undefined} conn */
+function isPlanetScaleHost(conn) {
+  return /(^|\.)psdb\.cloud$/i.test(String(conn?.host ?? ''))
+}
+
+/**
+ * Whether the drop can close other sessions first: Postgres 13+ has
+ * `WITH (FORCE)`, SQL Server rolls them back by going single-user. CockroachDB
+ * speaks Postgres but has neither.
+ * @param {Conn | null | undefined} conn
+ */
+export function canForceDrop(conn) {
+  const kind = dbAdminKind(conn)
+  return (kind === 'postgres' && conn?.type !== 'cockroachdb') || kind === 'mssql'
 }
 
 /**
@@ -47,10 +68,16 @@ export function dbAdminKind(conn) {
 export function dbActionBlocker(action, conn, opts = {}) {
   const kind = dbAdminKind(conn)
   if (!kind) return 'This connection has no server-level databases to manage.'
+  if (action !== 'info' && isPlanetScaleHost(conn)) return 'PlanetScale manages databases per branch. Create, copy or delete them in PlanetScale.'
   if (kind === 'mysql') {
-    if (action === 'rename') return 'MySQL has no RENAME DATABASE. Dump the schema and reload it under the new name.'
-    if (action === 'duplicate') return 'MySQL cannot copy a database in one statement. Export it and import under a new name.'
+    if (action === 'rename') return 'MySQL has no RENAME DATABASE. Duplicate it under the new name, then drop the old one.'
     if (action === 'terminate') return 'Not needed on MySQL: DROP DATABASE does not wait for other sessions.'
+  }
+  if (kind === 'mssql' && action === 'terminate') return 'Turn on "Close other sessions" when dropping: SQL Server ends them as part of the drop.'
+  if (kind === 'clickhouse' && action === 'terminate') return 'Not needed on ClickHouse: a query holds no session on a database.'
+  if (conn?.type === 'cockroachdb') {
+    if (action === 'duplicate') return 'CockroachDB has no database templates. Use BACKUP and RESTORE from the SQL editor.'
+    if (action === 'terminate') return 'CockroachDB cannot close sessions by database.'
   }
   if (!opts.isCurrent) return ''
   if (action === 'rename') return 'Cannot rename the database you are connected to. Switch to another one first.'
@@ -66,7 +93,10 @@ export function canDbAction(action, conn, opts = {}) {
 
 /** Quote a database name for the dialect. @param {AdminKind} kind @param {string} name */
 export function quoteDb(kind, name) {
-  return kind === 'mysql' ? `\`${String(name).replace(/`/g, '``')}\`` : `"${String(name).replace(/"/g, '""')}"`
+  const n = String(name)
+  if (kind === 'mysql' || kind === 'clickhouse') return `\`${n.replace(/`/g, '``')}\``
+  if (kind === 'mssql') return `[${n.replace(/]/g, ']]')}]`
+  return `"${n.replace(/"/g, '""')}"`
 }
 
 /** Single-quote a string literal - these statements have no parameter binding. @param {string} v */
@@ -96,6 +126,8 @@ export function validateDbName(name, existing = []) {
 /** @param {AdminKind} kind @param {CreateDbOptions} opts */
 export function createDatabaseSql(kind, opts) {
   const { name, owner = '', encoding = '', lcCollate = '', lcCtype = '', template = '', connectionLimit = -1 } = opts
+  // The create dialog offers no options for these two; the server defaults apply.
+  if (kind === 'mssql' || kind === 'clickhouse') return `CREATE DATABASE ${quoteDb(kind, name)}`
   if (kind === 'mysql') {
     let sql = `CREATE DATABASE ${quoteDb(kind, name)}`
     if (encoding) sql += ` CHARACTER SET ${encoding}`
@@ -115,41 +147,93 @@ export function createDatabaseSql(kind, opts) {
 /** @param {AdminKind} kind @param {string} from @param {string} to */
 export function renameDatabaseSql(kind, from, to) {
   if (kind === 'mysql') throw new Error('MySQL cannot rename a database')
+  if (kind === 'mssql') return `ALTER DATABASE ${quoteDb(kind, from)} MODIFY NAME = ${quoteDb(kind, to)}`
+  if (kind === 'clickhouse') return `RENAME DATABASE ${quoteDb(kind, from)} TO ${quoteDb(kind, to)}`
   return `ALTER DATABASE ${quoteDb(kind, from)} RENAME TO ${quoteDb(kind, to)}`
 }
 
 /**
- * Copy an existing database, structure and rows, under a new name. Postgres
- * does it by using the source as a template, which is why the source has to be
- * session-free.
+ * What copying a database runs, for the dialog's preview. The copy itself is
+ * `cloneDatabase` in api.js. Postgres does it in one statement by using the
+ * source as a template, which is why the source has to be session-free. MySQL
+ * and ClickHouse have no such statement, so the server rebuilds the copy table
+ * by table; SQL Server goes through a backup. Those show the outline.
  * @param {AdminKind} kind @param {string} from @param {string} to
  */
 export function duplicateDatabaseSql(kind, from, to) {
-  if (kind === 'mysql') throw new Error('MySQL cannot copy a database in one statement')
-  return `CREATE DATABASE ${quoteDb(kind, to)} WITH TEMPLATE ${quoteDb(kind, from)}`
+  const f = quoteDb(kind, from)
+  const t = quoteDb(kind, to)
+  if (kind === 'mysql') {
+    return `CREATE DATABASE ${t}\n-- then, for each table:\n--   CREATE TABLE as SHOW CREATE TABLE ${f}.<table> reports it\n--   INSERT INTO ${t}.<table> SELECT ... FROM ${f}.<table>\n-- then its routines, views and triggers`
+  }
+  if (kind === 'clickhouse') {
+    return `CREATE DATABASE ${t}\n-- then, for each table:\n--   CREATE TABLE ${t}.<table> AS ${f}.<table>\n--   INSERT INTO ${t}.<table> SELECT * FROM ${f}.<table>\n-- then its views and materialized views`
+  }
+  if (kind === 'mssql') {
+    return `BACKUP DATABASE ${f} TO DISK = N'<default backup folder>' WITH COPY_ONLY\nRESTORE DATABASE ${t} FROM DISK = N'<default backup folder>' WITH MOVE ...`
+  }
+  return `CREATE DATABASE ${t} WITH TEMPLATE ${f}`
 }
 
 /**
  * @param {AdminKind} kind @param {string} name
- * @param {{ force?: boolean }} [opts] Postgres 13+ FORCE closes other sessions
- *   instead of refusing; without it a single idle connection blocks the drop.
+ * @param {{ force?: boolean }} [opts] close other sessions instead of refusing:
+ *   Postgres 13+ has FORCE, SQL Server rolls them back by going single-user.
+ *   Without it a single idle connection blocks the drop on both.
  */
 export function dropDatabaseSql(kind, name, opts = {}) {
-  if (kind === 'mysql') return `DROP DATABASE ${quoteDb(kind, name)}`
-  return `DROP DATABASE ${quoteDb(kind, name)}${opts.force ? ' WITH (FORCE)' : ''}`
+  const q = quoteDb(kind, name)
+  if (kind === 'postgres') return `DROP DATABASE ${q}${opts.force ? ' WITH (FORCE)' : ''}`
+  if (kind === 'mssql' && opts.force) return `ALTER DATABASE ${q} SET SINGLE_USER WITH ROLLBACK IMMEDIATE;\nDROP DATABASE ${q}`
+  return `DROP DATABASE ${q}`
 }
 
 /** Close every other session on a database, so a rename or copy can proceed.
  *  @param {AdminKind} kind @param {string} name */
 export function terminateSessionsSql(kind, name) {
-  if (kind === 'mysql') throw new Error('Not supported on MySQL')
+  if (kind !== 'postgres') throw new Error('Only supported on Postgres')
   return `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = ${lit(name)} AND pid <> pg_backend_pid()`
+}
+
+/**
+ * How many sessions are on a database, for the drop dialog's warning, or ''
+ * where the engine has no per-database sessions to count.
+ * @param {AdminKind} kind @param {string} name
+ */
+export function sessionCountSql(kind, name) {
+  if (kind === 'postgres') return `SELECT count(*) FROM pg_stat_activity WHERE datname = ${lit(name)}`
+  if (kind === 'mssql') return `SELECT COUNT(*) FROM sys.dm_exec_sessions WHERE database_id = DB_ID(${lit(name)})`
+  return ''
 }
 
 /** @typedef {{ label: string, value: string }} DbInfoRow */
 
 /** Catalog read behind Database info. @param {AdminKind} kind @param {string} name */
 export function databaseInfoSql(kind, name) {
+  if (kind === 'mssql') {
+    return `SELECT d.name,
+       SUSER_SNAME(d.owner_sid) AS owner,
+       d.collation_name,
+       d.state_desc,
+       d.recovery_model_desc,
+       d.compatibility_level,
+       CONVERT(varchar(19), d.create_date, 120) AS created,
+       (SELECT SUM(CAST(f.size AS bigint)) * 8192 FROM sys.master_files f WHERE f.database_id = d.database_id) AS size_bytes,
+       (SELECT COUNT(*) FROM sys.dm_exec_sessions s WHERE s.database_id = d.database_id) AS sessions
+FROM sys.databases d
+WHERE d.name = ${lit(name)}`
+  }
+  if (kind === 'clickhouse') {
+    // Scalar subqueries on the literal: older ClickHouse has no correlated ones.
+    return `SELECT name,
+       engine,
+       comment,
+       (SELECT count() FROM system.tables WHERE database = ${lit(name)}) AS table_count,
+       (SELECT sum(total_rows) FROM system.tables WHERE database = ${lit(name)}) AS total_rows,
+       (SELECT sum(total_bytes) FROM system.tables WHERE database = ${lit(name)}) AS size_bytes
+FROM system.databases
+WHERE name = ${lit(name)}`
+  }
   if (kind === 'mysql') {
     return `SELECT s.SCHEMA_NAME,
        s.DEFAULT_CHARACTER_SET_NAME,
@@ -197,6 +281,29 @@ export function databaseInfoRows(kind, result) {
   const row = result?.rows?.[0]
   if (!row) return []
   const str = (/** @type {unknown} */ v) => (v == null || v === '' ? '-' : String(v))
+  if (kind === 'mssql') {
+    return [
+      { label: 'Name', value: str(row[0]) },
+      { label: 'Owner', value: str(row[1]) },
+      { label: 'Collation', value: str(row[2]) },
+      { label: 'State', value: str(row[3]) },
+      { label: 'Recovery model', value: str(row[4]) },
+      { label: 'Compatibility level', value: str(row[5]) },
+      { label: 'Created', value: str(row[6]) },
+      { label: 'Size on disk', value: prettyBytes(Number(row[7])) },
+      { label: 'Active sessions', value: str(row[8]) },
+    ]
+  }
+  if (kind === 'clickhouse') {
+    return [
+      { label: 'Name', value: str(row[0]) },
+      { label: 'Engine', value: str(row[1]) },
+      { label: 'Tables', value: str(row[3]) },
+      { label: 'Rows', value: str(row[4]) },
+      { label: 'Size', value: prettyBytes(Number(row[5])) },
+      { label: 'Comment', value: str(row[2]) },
+    ]
+  }
   if (kind === 'mysql') {
     return [
       { label: 'Name', value: str(row[0]) },

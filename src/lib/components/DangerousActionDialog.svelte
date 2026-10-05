@@ -1,6 +1,7 @@
 <script>
   import ConfirmDialog from './ConfirmDialog.svelte';
   import { cn } from '$lib/utils.js';
+  import { dropObjectSql, supportsCascade, truncateTableSql } from '$lib/table-admin.js';
 
   /**
    * @typedef {'drop' | 'truncate'} ActionKind
@@ -10,6 +11,10 @@
     open = $bindable(false),
     /** @type {ActionKind} */
     action = 'drop',
+    /** What is being dropped: views need DROP VIEW. @type {import('$lib/table-admin.js').ObjectKind} */
+    objectKind = 'table',
+    /** How the connected engine spells it. @type {import('$lib/table-admin.js').TableDialect} */
+    dialect = 'postgres',
     schema = '',
     table = '',
     cascade = $bindable(false),
@@ -17,16 +22,30 @@
   } = $props();
 
   const isDropAction = $derived(action === 'drop');
-  const title = $derived(isDropAction ? 'Drop table' : 'Truncate table');
+  const isView = $derived(objectKind !== 'table');
+  const canCascade = $derived(isDropAction && supportsCascade(dialect));
+  const title = $derived(isDropAction ? (isView ? 'Drop view' : 'Drop table') : 'Truncate table');
   const description = $derived(
     isDropAction
-      ? 'Permanently removes the table, all data, and constraints. This cannot be undone.'
+      ? isView
+        ? 'Removes the view. The tables it reads from are not touched.'
+        : 'Permanently removes the table, all data, and constraints. This cannot be undone.'
       : 'Deletes every row in this table. The table structure is kept but all data is permanently lost.',
   );
+  // The exact statement the backend will run, spelled for this engine.
+  const sql = $derived.by(() => {
+    try {
+      return isDropAction
+        ? dropObjectSql(dialect, schema, table, { kind: objectKind, cascade: canCascade && cascade })
+        : truncateTableSql(dialect, schema, table);
+    } catch (e) {
+      return String(e).replace(/^Error:\s*/i, '');
+    }
+  });
 </script>
 
 {#snippet extra()}
-  {#if isDropAction}
+  {#if canCascade}
     <div class="flex items-center justify-between gap-4 px-5 py-3.5">
       <div>
         <p class="text-ui-xs font-medium text-foreground">Cascade</p>
@@ -56,13 +75,7 @@
   <div class="px-5 py-4">
     <p class="mb-2 text-ui-3xs font-semibold uppercase tracking-[0.07em] text-muted-foreground">Will execute</p>
     <div class="rounded-lg border border-border/20 bg-muted/[0.3] px-3.5 py-2.5">
-      <code class="break-all font-mono text-ui-xs">
-        <span class="text-destructive">{isDropAction ? 'DROP TABLE' : 'TRUNCATE TABLE'}</span>
-        <span class="text-foreground/70"> "{schema}"."{table}"</span>
-        {#if isDropAction && cascade}
-          <span class="text-muted-foreground"> CASCADE</span>
-        {/if}
-      </code>
+      <code class="break-all font-mono text-ui-xs text-destructive">{sql}</code>
     </div>
   </div>
 {/snippet}
@@ -76,5 +89,5 @@
   confirmIcon="trash-2"
   variant="destructive"
   {extra}
-  onconfirm={() => onconfirm(cascade)}
+  onconfirm={() => onconfirm(canCascade && cascade)}
 />
