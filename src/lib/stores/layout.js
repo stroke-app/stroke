@@ -7,7 +7,7 @@ const STORAGE_KEY = 'stroke:layout'
 /** @typedef {{ navSidebarWidth: number, navSidebarOpen: boolean, navSidebarSide: 'left' | 'right', navSidebarPanel: string, inspectorWidth: number, inspectorView: InspectorView, sqlEditorHeight: number, logPanelWidth: number, logPanelOpen: boolean, aiSidebarWidth: number, aiSidebarOpen: boolean, statusBarVisible: boolean, tabBarVisible: boolean, tableToolbarVisible: boolean }} PanelLayout */
 
 export const DEFAULT_LAYOUT = {
-  navSidebarWidth: 220,
+  navSidebarWidth: 320, // NAV_SIDEBAR_MIN: the header row fits whole
   navSidebarOpen: true,
   navSidebarSide: /** @type {'left' | 'right'} */ ('left'),
   navSidebarPanel: 'tables',
@@ -42,7 +42,12 @@ export function setSidebarSide(side) {
   saveLayout({ navSidebarSide: next })
 }
 
-export const NAV_SIDEBAR_MIN = 180
+// Narrow enough to stay out of the way, wide enough for the header row whole:
+// 6 tabs at 32 + their 4px gaps (212), 3 actions at 28 + 2px gaps (88), the
+// 4px between them and 8px padding each side - 320 at a 16px rem (the width
+// is scaled by --app-scale, so it holds at every zoom). Any narrower and the
+// tab strip clips its last icons under the actions.
+export const NAV_SIDEBAR_MIN = 320
 // Long, prefix-heavy table names (django_/invoicing_/bots_…) truncate well past
 // 420px, so the nav sidebar can be dragged much wider.
 export const NAV_SIDEBAR_MAX = 720

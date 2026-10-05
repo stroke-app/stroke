@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { EditorState } from '@codemirror/state'
+import { EditorState, EditorSelection } from '@codemirror/state'
 import { CompletionContext } from '@codemirror/autocomplete'
 import { sql, PostgreSQL } from '@codemirror/lang-sql'
 import { sqlCompletionSource, completionIsTypedOut } from './cm-sql-complete.js'
@@ -155,17 +155,10 @@ function completeOn(dialect, doc, { pos = doc.length, explicit = false } = {}) {
 /** Run a name option's apply against a stand-in view; returns the new text. */
 function accept(r, label) {
   const c = r.options.find((o) => o.label === label)
-  let doc = r.state.doc.toString()
-  const view = {
-    state: r.state,
-    dispatch: (/** @type {any} */ tr) => {
-      for (const ch of [].concat(tr.changes).sort((a, b) => b.from - a.from)) {
-        doc = doc.slice(0, ch.from) + ch.insert + doc.slice(ch.to ?? ch.from)
-      }
-    },
-  }
+  let state = r.state
+  const view = { get state() { return state }, dispatch: (/** @type {any} */ tr) => { state = state.update(tr).state } }
   c.apply(view, c, r.from, r.state.doc.length)
-  return doc
+  return state.doc.toString()
 }
 
 describe('data types', () => {
@@ -280,5 +273,49 @@ describe('completionIsTypedOut', () => {
     expect(completionIsTypedOut(fn.state, fn.options.find((o) => o.label === 'count'))).toBe(false)
     const schema = completeOn('postgres', 'SELECT * FROM public', { explicit: true })
     expect(completionIsTypedOut(schema.state, schema.options.find((o) => o.label === 'public'))).toBe(false)
+  })
+})
+
+describe('completion in a trigger', () => {
+  const triggerHints = {
+    activeSchema: 'main',
+    tables: ['user', 'account'],
+    columnsByTable: { user: ['id', 'email', 'updated_at'], account: ['id', 'user_id'] },
+  }
+  const src = sqlCompletionSource(() => triggerHints, () => 'sqlite')
+
+  it("offers the trigger table's columns after NEW.", () => {
+    const doc = 'CREATE TRIGGER t AFTER UPDATE ON user FOR EACH ROW BEGIN\n  UPDATE account SET user_id = NEW.'
+    const state = EditorState.create({ doc, extensions: [sql()] })
+    const r = src(new CompletionContext(state, doc.length, false))
+    expect(r?.options.map((o) => o.label)).toEqual(['id', 'email', 'updated_at'])
+  })
+
+  it("offers a Postgres trigger function's table columns after NEW.", () => {
+    const pgHints = { activeSchema: 'public', tables: ['users'], columnsByTable: { users: ['id', 'updated_at'] } }
+    const pgSrc = sqlCompletionSource(() => pgHints, () => 'postgres')
+    const fn = 'CREATE OR REPLACE FUNCTION set_updated_at() RETURNS trigger LANGUAGE plpgsql AS $$\nBEGIN\n  NEW.'
+    const doc = `${fn}\nEND;\n$$;\n\nCREATE TRIGGER trg BEFORE UPDATE ON users FOR EACH ROW EXECUTE FUNCTION set_updated_at();`
+    const state = EditorState.create({ doc, extensions: [sql({ dialect: PostgreSQL })] })
+    const r = pgSrc(new CompletionContext(state, fn.length, false))
+    expect(r?.options.map((o) => o.label)).toEqual(['id', 'updated_at'])
+  })
+
+  it('writes a picked table into every copy of a linked template field', () => {
+    const doc = 'CREATE TRIGGER t AFTER UPDATE ON table_name FOR EACH ROW BEGIN\n  UPDATE table_name SET x = 1;\nEND;'
+    const a = doc.indexOf('table_name')
+    const b = doc.indexOf('table_name', a + 1)
+    let state = EditorState.create({
+      doc,
+      selection: EditorSelection.create([EditorSelection.range(a, a + 10), EditorSelection.range(b, b + 10)], 0),
+      extensions: [sql(), EditorState.allowMultipleSelections.of(true)],
+    })
+    const r = src(new CompletionContext(state, a + 10, true))
+    const pick = r?.options.find((o) => o.label === 'user')
+    const view = { get state() { return state }, dispatch: (/** @type {any} */ spec) => { state = state.update(spec).state } }
+    const apply = /** @type {any} */ (pick?.apply)
+    apply(view, pick, r?.from, r?.to)
+    expect(state.doc.toString()).toBe('CREATE TRIGGER t AFTER UPDATE ON user FOR EACH ROW BEGIN\n  UPDATE user SET x = 1;\nEND;')
+    expect(state.selection.ranges.length).toBe(2)
   })
 })

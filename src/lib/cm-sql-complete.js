@@ -19,6 +19,7 @@
 import {
   snippet, snippetCompletion, pickedCompletion, startCompletion, completionStatus, selectedCompletion, closeCompletion,
 } from '@codemirror/autocomplete'
+import { EditorSelection } from '@codemirror/state'
 import { isStatementSnippet, snippetEndsStatement } from './sql-terminator.js'
 import { statementAt } from '$lib/cm-sql-statements.js'
 import { sqlCompletionContext } from '$lib/sql-complete-context.js'
@@ -77,25 +78,31 @@ function quoteName(name, dialect) {
  * @param {number} from @param {number} to
  */
 function applyName(view, c, from, to) {
+  const { state } = view
   const quote = c._quote ?? null
   const suffix = c._suffix ?? ''
-  /** @type {{ from: number, to?: number, insert: string }[]} */
-  let changes
-  let end
-  if (quote) {
-    const closes = view.state.sliceDoc(to, to + 1) === quote
-    const name = c.label.replaceAll(quote, quote + quote) + (closes ? '' : quote)
-    changes = [{ from, to, insert: name }]
-    if (suffix) changes.push({ from: closes ? to + 1 : to, insert: suffix })
-    end = from + name.length + (closes ? 1 : 0) + suffix.length
-  } else {
-    const name = quoteName(c.label, c._dialect ?? 'postgres') + suffix
-    changes = [{ from, to, insert: name }]
-    end = from + name.length
-  }
+  const name = quote ? c.label.replaceAll(quote, quote + quote) : quoteName(c.label, c._dialect ?? 'postgres')
+  // At every cursor that holds the same text, as CodeMirror's own completion
+  // does. A template field used twice (`ON ${4:table}` and `UPDATE ${4:table}`
+  // in a trigger) is two cursors: written at one only, the other kept the
+  // placeholder, and the trigger was created pointing at `table_name`.
+  const { main } = state.selection
+  const fromOff = from - main.from
+  const toOff = to - main.from
+  const replaced = state.sliceDoc(from, to)
   view.dispatch({
-    changes,
-    selection: { anchor: end },
+    ...state.changeByRange((range) => {
+      const rFrom = range.from + fromOff
+      const rTo = to === main.from ? range.to : range.from + toOff
+      if (range !== main && from !== to && state.sliceDoc(rFrom, rTo) !== replaced) return { range }
+      if (!quote) {
+        return { changes: { from: rFrom, to: rTo, insert: name + suffix }, range: EditorSelection.cursor(rFrom + name.length + suffix.length) }
+      }
+      const closes = state.sliceDoc(rTo, rTo + 1) === quote
+      const changes = [{ from: rFrom, to: rTo, insert: name + (closes ? '' : quote) }]
+      if (suffix) changes.push({ from: closes ? rTo + 1 : rTo, to: closes ? rTo + 1 : rTo, insert: suffix })
+      return { changes, range: EditorSelection.cursor(rFrom + name.length + 1 + suffix.length) }
+    }),
     annotations: pickedCompletion.of(c),
     userEvent: 'input.complete',
   })
@@ -332,10 +339,14 @@ function statementRange(state, pos) {
  * @param {import('$lib/sql-complete-context.js').SqlCompletionContext} ctx
  * @param {HintTemplates} H @param {StaticTemplates} S
  * @param {string} dialect @param {string} statement the whole statement, for aliases
+ * @param {string | null} rowTable the table a trigger's NEW / OLD rows belong to
  * @returns {{ entries: Entry[], missing: string[] }} `missing`: named tables with no columns known
  */
-function buildCandidates(ctx, H, S, dialect, statement) {
+function buildCandidates(ctx, H, S, dialect, statement, rowTable) {
   const { aliasMap, referencedTables } = analyzeQuery(statement, H.tables)
+  // In a trigger, NEW and OLD (SQL Server: inserted / deleted) are rows of the
+  // table it is on.
+  if (rowTable) for (const row of ROW_ALIASES) aliasMap[row] ??= rowTable.toLowerCase()
   const typed = ctx.prefix !== ''
   /** @type {Entry[]} */
   const entries = []
@@ -351,7 +362,7 @@ function buildCandidates(ctx, H, S, dialect, statement) {
     add(/** @type {Completion} */ (name({ label: c.name, type: 'column', detail: c.type ? `${c.type} · ${c.table}` : c.table })), TIER[tier])
 
   // Tables the statement names (by name or alias) - their columns rank first.
-  const refs = new Set([...referencedTables, ...ctx.tables.map((t) => t.toLowerCase())])
+  const refs = new Set([...referencedTables, ...ctx.tables.map((t) => t.toLowerCase()), ...(rowTable ? [rowTable.toLowerCase()] : [])])
   /** @type {Set<string>} */
   const missing = new Set()
   const wantColumnsOf = (/** @type {string} */ t) => {
@@ -448,6 +459,23 @@ function buildCandidates(ctx, H, S, dialect, statement) {
 // ── Source ───────────────────────────────────────────────────────────────────
 
 const EMPTY_HINTS = /** @type {SqlSchemaHints} */ ({})
+/** What a trigger body calls its rows. */
+const ROW_ALIASES = ['new', 'old', 'inserted', 'deleted']
+
+/**
+ * Postgres: the table a trigger function serves, from the CREATE TRIGGER in
+ * the document that EXECUTEs it.
+ * @param {string} doc @param {string} fn
+ */
+function tableForTriggerFunction(doc, fn) {
+  const name = fn.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const re = new RegExp(
+    `create\\s+(?:or\\s+replace\\s+)?(?:constraint\\s+)?trigger\\b[^;]*?\\bon\\s+(?:[\\w$]+\\.|"[^"]+"\\.)?("[^"]+"|[\\w$]+)[^;]*?\\bexecute\\s+(?:function|procedure)\\s+(?:[\\w$]+\\.|"[^"]+"\\.)?"?${name}"?\\s*\\(`,
+    'i',
+  )
+  const m = re.exec(doc)
+  return m ? m[1].replace(/^"|"$/g, '') : null
+}
 /** Tables already waited for, per table list - a table with no columns waits once. */
 /** @type {WeakMap<object, Set<string>>} */
 const waitedFor = new WeakMap()
@@ -493,10 +521,13 @@ export function sqlCompletionSource(getHints, getDialect) {
     ].join('\u0001')
 
     const statement = state.sliceDoc(start, end)
+    // A Postgres trigger function's rows belong to the table of the trigger
+    // that runs it, further down the document.
+    const rowTable = ctx.rowTable ?? (ctx.routine ? tableForTriggerFunction(state.doc.toString(), ctx.routine) : null)
     /** @param {SqlSchemaHints} hints */
     const candidates = (hints) => {
       if (memo && memo.key === key && memo.hints === hints) return { entries: memo.entries, missing: [] }
-      const built = buildCandidates(ctx, hintTemplates(hints), S, dialect, statement)
+      const built = buildCandidates(ctx, hintTemplates(hints), S, dialect, statement, rowTable)
       memo = { key, hints, entries: built.entries }
       return built
     }

@@ -106,3 +106,36 @@ describe('sqlCompletionContext', () => {
     expect(ctx('UPDATE "t" SET "a" = 1;\nDEL')).toMatchObject({ kind: 'statement', prefix: 'DEL' })
   })
 })
+
+describe('sqlCompletionContext in a trigger', () => {
+  const head = 'CREATE TRIGGER trg_after_update '
+  it('offers the timing, then the events, then ON', () => {
+    expect(ctx(head)).toMatchObject({ kind: 'ddl', next: ['BEFORE', 'AFTER', 'INSTEAD', 'ON'] })
+    expect(ctx(`${head}AFTER `)).toMatchObject({ kind: 'ddl', next: ['INSERT', 'UPDATE', 'DELETE'] })
+    expect(ctx(`${head}AFTER UPDATE `)).toMatchObject({ kind: 'ddl', next: ['ON', 'OR', 'OF'] })
+  })
+
+  it('offers tables after ON', () => {
+    expect(ctx(`${head}AFTER UPDATE ON `)?.kind).toBe('tables')
+    expect(ctx(`${head}AFTER UPDATE ON us`)).toMatchObject({ kind: 'tables', prefix: 'us' })
+  })
+
+  it('offers FOR EACH ROW and the body after the table', () => {
+    expect(ctx(`${head}AFTER UPDATE ON user `)?.next).toContain('FOR')
+    expect(ctx(`${head}AFTER UPDATE ON user FOR EACH `)?.next).toEqual(['ROW', 'STATEMENT'])
+  })
+
+  it('keeps the trigger table across the statements of its body', () => {
+    const body = `${head}AFTER UPDATE ON user FOR EACH ROW BEGIN\n  SELECT 1;\n  UPDATE account SET a = NEW.`
+    expect(ctx(body)).toMatchObject({ kind: 'qualified', qualifier: 'NEW', rowTable: 'user' })
+  })
+
+  it('reads a body statement by its own rules', () => {
+    const c = ctx(`${head}AFTER UPDATE ON user FOR EACH ROW BEGIN\n  UPDATE `)
+    expect(c?.kind).toBe('tables')
+  })
+
+  it('names the function being written', () => {
+    expect(ctx('CREATE OR REPLACE FUNCTION set_updated_at() RETURNS trigger AS $$ BEGIN NEW.')?.routine).toBe('set_updated_at')
+  })
+})

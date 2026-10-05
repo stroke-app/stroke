@@ -26,6 +26,7 @@
   import { hugeSvg } from '$lib/cm-huge-icon.js'
   import { formatSql } from '$lib/format-sql.js'
   import { statementAtOffset, lintSql } from '$lib/sql-statements.js'
+  import { checkObjectSql } from '$lib/sql-object-check.js'
   import { statementsOf } from '$lib/cm-sql-statements.js'
   import { appVimMode, appSqlEditor, setSqlEditorOption } from '$lib/stores/settings.js'
   import { sqlEditorFontSize } from '$lib/sql-editor-options.js'
@@ -238,6 +239,17 @@
     }
   })
 
+  /** Tables whose columns the object check asked for, once each. */
+  const columnsAsked = new Set()
+  /** Load the columns a trigger body's NEW / SET names are checked against;
+   *  the new hints lint the editor again. @param {string[]} tables */
+  function loadColumnsFor(tables) {
+    const fresh = tables.filter((t) => !columnsAsked.has(t))
+    if (!fresh.length || !schemaHints.loadColumns) return
+    for (const t of fresh) columnsAsked.add(t)
+    void schemaHints.loadColumns(fresh).catch(() => {})
+  }
+
   /** Lint results: squiggles, plus one dot per line in the glyph gutter. */
   const setLint = StateEffect.define()
   const lintField = StateField.define({
@@ -262,7 +274,14 @@
     const typing = (/** @type {import('$lib/sql-statements.js').SqlDiagnostic} */ d) =>
       !!d.fix && d.fix.insert === ';' && d.fix.from === d.end &&
       caret >= d.end && d.end >= caretLine.from && !text.slice(d.end, caret).trim()
-    const diags = readOnly || !$appSqlEditor.lint ? [] : lintSql(text).filter((d) => !typing(d))
+    let diags = readOnly || !$appSqlEditor.lint ? [] : lintSql(text).filter((d) => !typing(d))
+    if (!readOnly && $appSqlEditor.lint) {
+      // A trigger, routine or view naming a table or column the schema lacks:
+      // the engine would create it and fail when it runs.
+      const objects = checkObjectSql(text, schemaHints, dialect)
+      if (objects.diags.length) diags = [...diags, ...objects.diags].sort((a, b) => a.start - b.start)
+      loadColumnsFor(objects.missing)
+    }
     const deco = Decoration.set(
       diags
         .filter((d) => d.end > d.start)
@@ -1108,10 +1127,13 @@
     return () => cm?.off('vim-mode-change', onMode)
   })
 
-  // Problem markers switched on or off in Settings: lint again (or clear) now,
-  // not on the next keystroke.
+  // Problem markers switched on or off in Settings, or the schema the object
+  // check reads changed: lint again (or clear) now, not on the next keystroke.
   $effect(() => {
     void $appSqlEditor.lint
+    // New schema hints (a table list, a table's columns): the object check
+    // reads them.
+    void schemaHints
     const view = editorRef?.getView()
     view?.dispatch({ effects: setLint.of(lintFor(view.state)) })
   })

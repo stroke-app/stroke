@@ -777,6 +777,11 @@
         highlightActiveLine(),
         highlightActiveLineGutter(),
         drawSelection(),
+        // A template field used twice (a trigger's `ON ${4:table}` and the
+        // `UPDATE ${4:table}` in its body) is one cursor per copy. Without
+        // this the state keeps only the first, so typing in one left the other
+        // as the placeholder - and the trigger was created on `table_name`.
+        EditorState.allowMultipleSelections.of(true),
         history(),
         bracketMatching(),
         // Find and replace: Mod-F opens it at the top, Enter / Shift-Enter step,

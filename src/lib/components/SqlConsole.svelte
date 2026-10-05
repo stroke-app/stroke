@@ -16,6 +16,7 @@
   import SlidersHorizontal from "@lucide/svelte/icons/sliders-horizontal";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
   import { toast } from "$lib/components/ui/sonner/toast.svelte.js";
+  import { checkObjectSql, objectProblemSummary } from "$lib/sql-object-check.js";
   import { cn, isNetworkError } from "$lib/utils.js";
   import { hasPro } from '$lib/stores/license.js'
   import SqlEditor from "./SqlEditor.svelte";
@@ -268,10 +269,33 @@
   /** The statement a run waiting on a variable was for (undefined: the whole editor). */
   let pendingRunSql = /** @type {string | undefined} */ (undefined)
 
-  /** @param {string | undefined} statementSql @returns {boolean} whether it ran */
-  function handleRun(statementSql) {
+  /**
+   * A CREATE TRIGGER / FUNCTION / PROCEDURE / VIEW that names a table or
+   * column the schema does not have stops here: every engine creates it as
+   * written and it fails the first time it runs (for a trigger, on every write
+   * to its table). The toast says what is wrong; Run anyway sends it.
+   * @param {string} target @param {() => void} runAnyway
+   * @returns {boolean} whether the run was stopped
+   */
+  function stopForObjectProblems(target, runAnyway) {
+    const problem = objectProblemSummary(checkObjectSql(target, schemaHints, engine).diags)
+    if (!problem) return false
+    toast.error(problem, {
+      description: 'Not created: it would fail when it runs. Fix the underlined name, or run it as written.',
+      action: { label: 'Run anyway', onClick: runAnyway },
+    })
+    return true
+  }
+
+  /**
+   * @param {string | undefined} statementSql
+   * @param {boolean} [checked] the object check was seen and overridden
+   * @returns {boolean} whether it ran
+   */
+  function handleRun(statementSql, checked = false) {
     const single = typeof statementSql === 'string' && statementSql.trim() ? statementSql : undefined
     const target = single ?? sql
+    if (!checked && stopForObjectProblems(target, () => handleRun(statementSql, true))) return false
     const prep = prepareRun(target)
     // Waiting on a variable: Enter in the panel runs this same target.
     pendingRunSql = prep ? undefined : single
@@ -297,6 +321,7 @@
       return
     }
     if (action === 'newtab' && onrunnewtab) {
+      if (stopForObjectProblems(text, () => { const p = prepareRun(text); if (p) onrunnewtab(p.text) })) return
       const prep = prepareRun(text)
       if (prep) onrunnewtab(prep.text)
       else pendingRunSql = text

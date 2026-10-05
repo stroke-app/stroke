@@ -76,11 +76,16 @@ const NEXT = /** @type {Record<string, string[]>} */ ({
  *   predicateColumn: ColumnRef | null,
  *   comparedColumn: (ColumnRef & { operator: string }) | null,
  *   verb: string,
+ *   rowTable: string | null,
+ *   routine: string | null,
  * }} SqlCompletionContext
  * `predicateColumn`: the column just written in a condition, a space behind
  * it (`WHERE price |`): an operator comes next. `comparedColumn`: the column
  * and operator before the caret (`WHERE price >= |`): a value comes next.
  * `verb`: the statement's first keyword (SELECT, UPDATE ...).
+ * `rowTable`: inside CREATE TRIGGER, the table it fires on - what NEW. and
+ * OLD. are rows of. `routine`: inside CREATE FUNCTION, its name (a Postgres
+ * trigger function's table is named by the CREATE TRIGGER that runs it).
  * `types`: a data type goes here (a column definition, ALTER ... TYPE,
  * CAST(x AS ...), x::...); `next` holds keywords that can stand there too.
  * `ddl`: only keywords go here, `next` first (a new column's name, the action
@@ -92,12 +97,14 @@ const NEXT = /** @type {Record<string, string[]>} */ ({
  * Tokens of the statement the text ends in, or where the text ends inside
  * something that is not SQL to complete.
  * @param {string} text
- * @returns {{ tokens: Token[], open: { quote: string, start: number } | null } | null}
+ * @returns {{ tokens: Token[], open: { quote: string, start: number } | null, head: Token[] | null } | null}
  *   null inside a string literal or a comment.
  */
 function scan(text) {
   /** @type {Token[]} */
   let tokens = []
+  /** The tokens before the first `;`: a trigger or routine's head, once its body has statements. @type {Token[] | null} */
+  let head = null
   const n = text.length
   let i = 0
   while (i < n) {
@@ -122,7 +129,7 @@ function scan(text) {
         const k = text.indexOf(c, j)
         if (k === -1) {
           if (c === "'") return null
-          return { tokens, open: { quote: c, start: i } }
+          return { tokens, open: { quote: c, start: i }, head }
         }
         if (text[k + 1] === c) { j = k + 2; continue }
         j = k
@@ -147,11 +154,11 @@ function scan(text) {
       i = j
       continue
     }
-    if (c === ';') tokens = []
+    if (c === ';') { head ??= tokens; tokens = [] }
     else tokens.push({ t: 'punct', v: c })
     i++
   }
-  return { tokens, open: null }
+  return { tokens, open: null, head }
 }
 
 /** @param {Token | undefined} tok */
@@ -355,6 +362,84 @@ function alterTable(tokens) {
   return null
 }
 
+/** Trigger events. */
+const TRIGGER_EVENTS = ['INSERT', 'UPDATE', 'DELETE']
+/** What starts a trigger's body: past it the general rules apply. */
+const TRIGGER_BODY = new Set(['BEGIN', 'AS', 'EXECUTE', 'DO'])
+
+/**
+ * Index of TRIGGER in `CREATE [OR REPLACE] [TEMP] [CONSTRAINT] TRIGGER`, or -1.
+ * @param {Token[]} tokens
+ */
+function triggerKeyword(tokens) {
+  if (kw(tokens[0]) !== 'CREATE') return -1
+  for (let i = 1; i < Math.min(tokens.length, 6); i++) {
+    const k = kw(tokens[i])
+    if (k === 'TRIGGER') return i
+    if (!['OR', 'REPLACE', 'ALTER', 'TEMP', 'TEMPORARY', 'CONSTRAINT'].includes(k) && !k.startsWith('DEFINER')) return -1
+  }
+  return -1
+}
+
+/**
+ * The table a CREATE TRIGGER fires on: the name after its ON.
+ * @param {Token[]} tokens
+ */
+function triggerTable(tokens) {
+  const t = triggerKeyword(tokens)
+  if (t < 0) return null
+  for (let i = t + 1; i < tokens.length; i++) {
+    if (TRIGGER_BODY.has(kw(tokens[i]))) return null
+    if (kw(tokens[i]) !== 'ON' || !isName(tokens[i + 1])) continue
+    const end = nameEnd(tokens, i + 1)
+    return /** @type {Token} */ (tokens[end - 1]).v
+  }
+  return null
+}
+
+/**
+ * Inside a CREATE TRIGGER's head (before its body): what goes at the caret.
+ * @param {Token[]} tokens
+ * @returns {{ kind: 'tables' | 'ddl', next: string[] } | null}
+ */
+function triggerHead(tokens) {
+  const t = triggerKeyword(tokens)
+  if (t < 0 || tokens.slice(t).some((x) => TRIGGER_BODY.has(kw(x)))) return null
+  const last = tokens.at(-1)
+  const k = kw(last)
+  const at = t + 1 + ifExists(tokens, t + 1)
+  // CREATE TRIGGER |: its new name.
+  if (tokens.length <= at) return { kind: 'ddl', next: [] }
+  const nameEndAt = nameEnd(tokens, at)
+  if (tokens.length === nameEndAt) return { kind: 'ddl', next: ['BEFORE', 'AFTER', 'INSTEAD', 'ON'] }
+  if (k === 'ON') return { kind: 'tables', next: [] }
+  if (k === 'BEFORE' || k === 'AFTER') return { kind: 'ddl', next: TRIGGER_EVENTS }
+  if (k === 'INSTEAD') return { kind: 'ddl', next: ['OF'] }
+  if (k === 'OF' && kw(tokens.at(-2)) === 'INSTEAD') return { kind: 'ddl', next: TRIGGER_EVENTS }
+  if (k === 'OR') return { kind: 'ddl', next: TRIGGER_EVENTS }
+  if (TRIGGER_EVENTS.includes(k)) return { kind: 'ddl', next: k === 'UPDATE' ? ['ON', 'OR', 'OF'] : ['ON', 'OR'] }
+  if (k === 'FOR') return { kind: 'ddl', next: ['EACH'] }
+  if (k === 'EACH') return { kind: 'ddl', next: ['ROW', 'STATEMENT'] }
+  if (k === 'ROW' || k === 'STATEMENT') return { kind: 'ddl', next: ['BEGIN', 'WHEN', 'EXECUTE'] }
+  // CREATE TRIGGER t AFTER UPDATE ON table |
+  const on = tokens.findLastIndex((x) => kw(x) === 'ON')
+  if (on > t && nameEnd(tokens, on + 1) === tokens.length) {
+    return { kind: 'ddl', next: ['FOR', 'BEGIN', 'WHEN', 'EXECUTE', 'REFERENCING', 'AFTER', 'INSTEAD'] }
+  }
+  return null
+}
+
+/**
+ * The name of the CREATE FUNCTION being written, or null.
+ * @param {Token[]} tokens
+ */
+function routineName(tokens) {
+  if (kw(tokens[0]) !== 'CREATE') return null
+  const f = tokens.findIndex((x, i) => i < 5 && kw(x) === 'FUNCTION')
+  if (f < 0 || !isName(tokens[f + 1])) return null
+  return /** @type {Token} */ (tokens[nameEnd(tokens, f + 1) - 1]).v
+}
+
 /**
  * @param {string} text the document up to the caret (a bounded slice is fine)
  * @returns {SqlCompletionContext | null} null where nothing should be offered
@@ -363,6 +448,9 @@ export function sqlCompletionContext(text) {
   const scanned = scan(text)
   if (!scanned) return null
   const { tokens, open } = scanned
+  // A body's statements end in `;`, which clears the tokens: the head the
+  // statement opened with (CREATE TRIGGER ... ON t) is kept apart.
+  const head = scanned.head ?? tokens
 
   let prefix = ''
   let from = text.length
@@ -402,13 +490,17 @@ export function sqlCompletionContext(text) {
   let qualifier = null
   /** Keywords for this position when the clause table does not know it (DDL). @type {string[] | null} */
   let nextHere = null
-  /** @type {{ kind: 'types' | 'ddl', next: string[] } | null} */
+  /** @type {{ kind: 'types' | 'ddl' | 'tables', next: string[] } | null} */
   let ddl = null
   if (last?.v === '.' && isName(tokens.at(-2))) {
     kind = 'qualified'
     qualifier = /** @type {Token} */ (tokens.at(-2)).v
   } else if (!tokens.length) {
     kind = 'statement'
+  } else if (!scanned.head && (ddl = triggerHead(tokens))) {
+    // CREATE TRIGGER's head: AFTER UPDATE | is an event list, ON | a table.
+    kind = ddl.kind
+    nextHere = ddl.next
   } else if (TABLE_KEYWORDS.has(kw(last)) || (clause === 'FROM' && last?.v === ',') || (indexOn && kw(last) === 'ON')) {
     kind = 'tables'
   } else if ((ddl = typeGoesHere(tokens) ? { kind: 'types', next: [] } : createTableEntry(tokens) ?? alterTable(tokens))) {
@@ -478,5 +570,7 @@ export function sqlCompletionContext(text) {
     predicateColumn,
     comparedColumn,
     verb,
+    rowTable: triggerTable(head),
+    routine: routineName(head),
   }
 }
