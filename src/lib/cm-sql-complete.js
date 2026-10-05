@@ -16,11 +16,15 @@
  *
  * Only the CodeEditor chunk imports this; none of it reaches startup.
  */
-import { snippetCompletion, pickedCompletion, startCompletion } from '@codemirror/autocomplete'
+import {
+  snippet, snippetCompletion, pickedCompletion, startCompletion, completionStatus, selectedCompletion, closeCompletion,
+} from '@codemirror/autocomplete'
+import { isStatementSnippet, snippetEndsStatement } from './sql-terminator.js'
 import { statementAt } from '$lib/cm-sql-statements.js'
 import { sqlCompletionContext } from '$lib/sql-complete-context.js'
 import {
-  PG_KEYWORDS, PG_FUNCTIONS, SQL_SNIPPETS, TABLE_CTX_KWS, COLUMN_CTX_KWS, SQL_KW_SET, analyzeQuery,
+  PG_KEYWORDS, DDL_KEYWORDS, DIALECT_KEYWORDS, PG_FUNCTIONS, PG_FUNCTION_FAMILIES, DIALECT_FUNCTIONS,
+  SQL_SNIPPETS, SQL_TYPES, TABLE_CTX_KWS, COLUMN_CTX_KWS, SQL_KW_SET, analyzeQuery, sqlFamily,
 } from '$lib/sql-complete-data.js'
 
 /** @typedef {import('$lib/sql-complete-data.js').SqlSchemaHints} SqlSchemaHints */
@@ -44,22 +48,22 @@ const COLUMN_WAIT_MS = 1500
 
 // ── Identifier insertion ─────────────────────────────────────────────────────
 
-const isMysql = (/** @type {string} */ d) => d === 'mysql' || d === 'mariadb'
-
 /**
  * Whether a name has to be quoted to mean itself. Postgres folds bare names to
- * lower case, so `userId` must be quoted there; MySQL does not fold.
+ * lower case, so `userId` must be quoted there. The other engines keep a bare
+ * name's case (or compare without it), and SQL Server reads "x" as a string
+ * when QUOTED_IDENTIFIER is off, so a mixed-case name stays bare there.
  * @param {string} name @param {string} dialect
  */
 function needsQuote(name, dialect) {
   if (SQL_KW_SET.has(name.toUpperCase())) return true
-  return isMysql(dialect) ? !/^[A-Za-z_][\w$]*$/.test(name) : !/^[a-z_][a-z0-9_$]*$/.test(name)
+  return sqlFamily(dialect) === 'postgres' ? !/^[a-z_][a-z0-9_$]*$/.test(name) : !/^[A-Za-z_][\w$]*$/.test(name)
 }
 
 /** @param {string} name @param {string} dialect */
 function quoteName(name, dialect) {
   if (!needsQuote(name, dialect)) return name
-  const q = isMysql(dialect) ? '`' : '"'
+  const q = sqlFamily(dialect) === 'mysql' ? '`' : '"'
   return q + name.replaceAll(q, q + q) + q
 }
 
@@ -105,6 +109,27 @@ const toSnippet = (/** @type {string} */ body) => body.replace(/\$0/g, '${}')
 /** A signature without its tab stops, for the detail column. */
 const plainSig = (/** @type {string} */ body) => body.replace(/\$\{\d+:?([^}]*)\}/g, '$1').replace(/\$\d+/g, '')
 
+/**
+ * A snippet completion that closes the statement with `;` when it writes a
+ * whole statement and nothing follows it on its line (sql-terminator.js).
+ * Clause snippets (JOIN, ORDER BY) and a statement typed into a bracket or in
+ * front of more SQL go in as written.
+ * @param {string} body @param {Omit<Completion, 'apply'>} info
+ */
+function statementSnippet(body, info) {
+  const plain = snippetCompletion(toSnippet(body), info)
+  if (!isStatementSnippet(body)) return plain
+  const closed = snippet(toSnippet(`${body};`))
+  return {
+    ...plain,
+    apply: (/** @type {import('@codemirror/view').EditorView} */ view, /** @type {Completion} */ c, /** @type {number} */ from, /** @type {number} */ to) => {
+      const rest = view.state.doc.sliceString(to, view.state.doc.lineAt(to).to)
+      if (snippetEndsStatement(rest)) closed(view, c, from, to)
+      else /** @type {any} */ (plain.apply)(view, c, from, to)
+    },
+  }
+}
+
 /** The SQL a snippet writes, beside the list - the name alone says little. */
 const snippetPreview = (/** @type {string} */ body) => () => {
   const pre = document.createElement('pre')
@@ -113,27 +138,69 @@ const snippetPreview = (/** @type {string} */ body) => () => {
   return pre
 }
 
-/** @typedef {{ keywords: Completion[], functions: Completion[], snippets: Array<Completion & { aliases: string[] }> }} StaticTemplates */
-/** @type {Map<boolean, StaticTemplates>} */
+/**
+ * @typedef {{ c: Completion, common: boolean }} TypeOption
+ * @typedef {{
+ *   keywords: Completion[],
+ *   functions: Completion[],
+ *   functionNames: Set<string>,
+ *   snippets: Array<Completion & { aliases: string[] }>,
+ *   types: TypeOption[],
+ *   typesUpper: TypeOption[],
+ * }} StaticTemplates
+ * `typesUpper`: the same types written in capitals, for when that is what is
+ * being typed (`VARC` → `VARCHAR(255)`). ClickHouse types keep their case.
+ */
+/** @type {Map<string, StaticTemplates>} */
 const staticCache = new Map()
+/** DDL words that are not query keywords as well (SET, DROP stay everywhere). */
+const DDL_KEYWORD_SET = new Set(DDL_KEYWORDS.filter((k) => !PG_KEYWORDS.includes(k)))
 
-/** @param {boolean} pg Postgres-family: include the Postgres-only snippets */
-function staticTemplates(pg) {
-  const hit = staticCache.get(pg)
+/** @param {{ label: string, sig?: string, common?: boolean }} t @param {boolean} upper */
+function typeOption(t, upper) {
+  const label = upper ? t.label.toUpperCase() : t.label
+  // Only the name goes up: `VARCHAR(${1:255})`, the placeholder stays as written.
+  const sig = t.sig && (upper ? t.sig.replace(/^[^(]+/, (name) => name.toUpperCase()) : t.sig)
+  const c = sig
+    ? snippetCompletion(toSnippet(sig), { label, type: 'type', detail: plainSig(sig) })
+    : { label, type: 'type' }
+  return { c, common: !!t.common }
+}
+
+/**
+ * The fixed vocabulary for one engine family: its keywords, the functions and
+ * snippets that run on it, and its column types.
+ * @param {ReturnType<typeof sqlFamily>} family
+ */
+function staticTemplates(family) {
+  const hit = staticCache.get(family)
   if (hit) return hit
+  const keywordLabels = [...new Set([...PG_KEYWORDS, ...DDL_KEYWORDS, ...(DIALECT_KEYWORDS[family] ?? [])])]
+  const fnDefs = [
+    ...PG_FUNCTIONS.filter((fn) => PG_FUNCTION_FAMILIES[fn.label]?.includes(family) ?? true),
+    ...DIALECT_FUNCTIONS.filter((fn) => fn.only.includes(family)),
+  ]
+  const typeDefs = SQL_TYPES[family] ?? SQL_TYPES.postgres
+  const caseSensitiveTypes = family === 'clickhouse'
   const built = {
-    keywords: PG_KEYWORDS.map((label) => ({ label, type: 'keyword' })),
-    functions: PG_FUNCTIONS.map((fn) =>
+    keywords: keywordLabels.map((label) => ({ label, type: 'keyword' })),
+    functions: fnDefs.map((fn) =>
       snippetCompletion(toSnippet(fn.sig), { label: fn.label, type: 'function', detail: plainSig(fn.sig), info: fn.doc }),
     ),
-    snippets: SQL_SNIPPETS.filter((s) => pg || !s.pg).map((s) => ({
-      ...snippetCompletion(toSnippet(s.body), { label: s.name, type: 'snippet', detail: s.alias, info: snippetPreview(s.body) }),
+    functionNames: new Set(fnDefs.map((fn) => fn.label.toLowerCase())),
+    snippets: SQL_SNIPPETS.filter((s) => !s.only || s.only.includes(family)).map((s) => ({
+      ...statementSnippet(s.body, { label: s.name, type: 'snippet', detail: s.alias, info: snippetPreview(s.body) }),
       aliases: [s.alias],
     })),
+    types: typeDefs.map((t) => typeOption(t, false)),
+    typesUpper: caseSensitiveTypes ? typeDefs.map((t) => typeOption(t, false)) : typeDefs.map((t) => typeOption(t, true)),
   }
-  staticCache.set(pg, built)
+  staticCache.set(family, built)
   return built
 }
+
+/** Capitals typed (`VARC`, `I`): write the type in capitals too. @param {string} prefix */
+const typedInCapitals = (prefix) => /[A-Z]/.test(prefix) && prefix === prefix.toUpperCase()
 
 /**
  * @typedef {{ name: string, table: string, type: string }} ColumnHint
@@ -144,8 +211,10 @@ function staticTemplates(pg) {
  *   tableSet: Set<string>,
  *   colsByTable: Map<string, ColumnHint[]>,
  *   enums: Completion[],
+ *   enumTypes: Completion[],
  *   userFns: Completion[],
  * }} HintTemplates
+ * `enumTypes`: the user's enum types by name, offered where a type goes.
  */
 
 /** @type {WeakMap<object, HintTemplates>} */
@@ -187,6 +256,7 @@ function hintTemplates(hints) {
   const userFns = (hints.userFunctions ?? []).map((f) =>
     snippetCompletion(`${f.name}(\${})`, { label: f.name, type: 'function', detail: `→ ${f.returnType}`, info: f.signature }),
   )
+  const enumTypes = Object.keys(hints.enumValues ?? {}).map((name) => ({ label: name, type: 'type', detail: 'enum' }))
   const tables = hints.tables ?? []
   const built = {
     activeSchema: hints.activeSchema ?? 'public',
@@ -195,6 +265,7 @@ function hintTemplates(hints) {
     tableSet: new Set(tables.map((t) => t.toLowerCase())),
     colsByTable,
     enums,
+    enumTypes,
     userFns,
   }
   hintsCache.set(hints, built)
@@ -304,10 +375,19 @@ function buildCandidates(ctx, H, S, dialect, statement) {
     }
   }
 
-  /** @param {number} tier @param {Set<string> | null} only */
-  function keywords(tier, only) {
-    const next = new Set(ctx.kind === 'keywords' || ctx.afterExpr || ctx.kind === 'statement' ? ctx.next : [])
+  const nextFirst = ctx.kind === 'keywords' || ctx.kind === 'statement' || ctx.kind === 'ddl' || ctx.kind === 'types' || ctx.afterExpr
+  // DDL's own words (COLUMN, RENAME, TEMP ...) have no place in a query's clauses.
+  const ddlWords = ctx.kind === 'statement' || ctx.kind === 'ddl' || ctx.kind === 'types'
+  /**
+   * @param {number} tier @param {Set<string> | null} only
+   * @param {boolean} [besideFunctions] functions are in the list too: COALESCE
+   *   and CAST are offered once, as the function with its signature
+   */
+  function keywords(tier, only, besideFunctions = false) {
+    const next = new Set(nextFirst ? ctx.next : [])
     for (const k of S.keywords) {
+      if (!ddlWords && DDL_KEYWORD_SET.has(k.label) && !next.has(k.label)) continue
+      if (besideFunctions && S.functionNames.has(k.label.toLowerCase())) continue
       if (next.has(k.label)) { add(k, NEXT_BOOST); continue }
       if (only && !only.has(k.label)) continue
       add(k, TIER[tier])
@@ -339,12 +419,20 @@ function buildCandidates(ctx, H, S, dialect, statement) {
     // Past the table name: the clause keywords.
     keywords(0, typed ? null : TABLE_CTX_KWS)
     for (const t of H.tables) tableOption(t, 7)
+  } else if (ctx.kind === 'types') {
+    // A column definition, ALTER ... TYPE, CAST(x AS ...), x::...
+    keywords(0, new Set(ctx.next))
+    for (const t of typedInCapitals(ctx.prefix) ? S.typesUpper : S.types) add(t.c, TIER[t.common ? 0 : 1])
+    if (sqlFamily(dialect) === 'postgres') for (const e of H.enumTypes) add(e, TIER[1])
+  } else if (ctx.kind === 'ddl') {
+    // Only the statement's own words go here: a new name is not one to pick.
+    keywords(3, typed ? null : new Set(ctx.next))
   } else if (ctx.kind === 'columns') {
     // SELECT / WHERE / SET / ON ...
     columns(0, 1)
     for (const f of S.functions) add(f, TIER[2])
     for (const f of H.userFns) add(f, TIER[2])
-    keywords(3, typed ? null : COLUMN_CTX_KWS)
+    keywords(3, typed ? null : COLUMN_CTX_KWS, true)
     for (const e of H.enums) add(e, TIER[6])
     for (const t of H.tables) tableOption(t, 7)
     for (const s of H.schemas) schemaOption(s, 8)
@@ -388,18 +476,19 @@ export function sqlCompletionSource(getHints, getDialect) {
     const ctx = sqlCompletionContext(state.sliceDoc(start, pos))
     if (!ctx) return null
     // Nothing typed: open by itself only where the next token is certainly a
-    // name - just inside a quote, just after a dot. A snippet field stays quiet
-    // until something is typed over it (`*` and `100` are often kept as they
-    // are). Ctrl+Space always opens.
-    if (!context.explicit && !ctx.prefix && !ctx.quote && ctx.kind !== 'qualified') return null
+    // name or a type - just inside a quote, just after a dot or a `::`. A
+    // snippet field stays quiet until something is typed over it (`*` and
+    // `100` are often kept as they are). Ctrl+Space always opens.
+    const afterCast = ctx.kind === 'types' && state.sliceDoc(pos - 2, pos) === '::'
+    if (!context.explicit && !ctx.prefix && !ctx.quote && ctx.kind !== 'qualified' && !afterCast) return null
 
     const dialect = getDialect() || 'postgres'
-    const S = staticTemplates(dialect === 'postgres' || dialect === 'duckdb')
+    const S = staticTemplates(sqlFamily(dialect))
     const wordFrom = start + ctx.from
     // What the candidates depend on: the statement minus the word being typed,
     // and the shape of the position. Same key → same candidates.
     const key = [
-      ctx.kind, ctx.quote, ctx.qualifier, ctx.afterExpr, ctx.prefix !== '', dialect,
+      ctx.kind, ctx.quote, ctx.qualifier, ctx.afterExpr, ctx.prefix !== '', typedInCapitals(ctx.prefix), dialect,
       state.sliceDoc(start, wordFrom), state.sliceDoc(to, end),
     ].join('\u0001')
 
@@ -431,6 +520,42 @@ export function sqlCompletionSource(getHints, getDialect) {
 }
 
 /**
+ * Whether taking `c` would leave the text as it is: the word before the caret
+ * already is that keyword or name. A snippet, a schema (it adds a dot), a name
+ * that needs quoting and a value all still write something.
+ * @param {import('@codemirror/state').EditorState} state @param {Completion} c
+ */
+export function completionIsTypedOut(state, c) {
+  const head = state.selection.main.head
+  const line = state.doc.lineAt(head)
+  const word = /[\w$]*$/.exec(state.sliceDoc(line.from, head))?.[0] ?? ''
+  if (!word) return false
+  if (c.apply === applyName) {
+    const n = /** @type {Completion & { _quote?: string | null, _dialect?: string, _suffix?: string }} */ (c)
+    if (n._quote || n._suffix || needsQuote(c.label, n._dialect ?? 'postgres')) return false
+    return word === c.label
+  }
+  if (c.apply) return false
+  // A keyword typed in another case: taking it would only change the case.
+  return word.toLowerCase() === c.label.toLowerCase()
+}
+
+/**
+ * Enter with the list open on a word already typed out (`FROM users` and
+ * `users` on top) closes the list and lets Enter break the line. Taking the
+ * suggestion would change nothing and cost the keystroke. Bound above the
+ * completion keymap, so it runs first.
+ * @param {EditorView} view
+ */
+export function enterPastTypedWord(view) {
+  if (completionStatus(view.state) !== 'active') return false
+  const c = selectedCompletion(view.state)
+  if (!c || !completionIsTypedOut(view.state, c)) return false
+  closeCompletion(view)
+  return false
+}
+
+/**
  * Filter and sort the candidates by what has been typed.
  * @param {Entry[]} entries @param {string} q @param {number} from @param {number} to
  * @returns {import('@codemirror/autocomplete').CompletionResult | null}
@@ -440,7 +565,11 @@ function finish(entries, q, from, to) {
   const hits = []
   for (const e of entries) {
     const m = matchLabel(e.c.label, e.lc, q, e.aliases)
-    if (m) hits.push({ e, score: m.score, at: m.at })
+    // A keyword is typed from its start: `em` finds user_email, never TEMP. A
+    // snippet from the start of one of its words: `na` is not EXPLAIN ANALYZE.
+    if (m && (!q || (e.c.type === 'keyword' ? m.score >= 5 : e.c.type === 'snippet' ? m.score >= 4 : true))) {
+      hits.push({ e, score: m.score, at: m.at })
+    }
   }
   if (!hits.length) return null
   // Match kind, then context tier, then (while typing) the shorter name, then
