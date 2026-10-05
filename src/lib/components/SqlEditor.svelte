@@ -16,13 +16,13 @@
   import { onMount } from 'svelte'
   import { StateEffect, StateField, RangeSetBuilder, Prec, EditorState } from '@codemirror/state'
   import { EditorView, Decoration, ViewPlugin, GutterMarker, WidgetType, gutter, hoverTooltip, keymap, drawSelection, highlightWhitespace } from '@codemirror/view'
-  import { indentUnit } from '@codemirror/language'
+  import { indentUnit, foldGutter } from '@codemirror/language'
   import { insertNewlineKeepIndent } from '@codemirror/commands'
   import { snippet, completionStatus, hasNextSnippetField, hasPrevSnippetField } from '@codemirror/autocomplete'
   import { wantsTerminator } from '$lib/sql-terminator.js'
   import { IS_MAC } from '$lib/shortcuts.js'
   import CodeEditor from './CodeEditor.svelte'
-  import { AlertCircleIcon, Alert02Icon } from '@hugeicons/core-free-icons'
+  import { AlertCircleIcon, Alert02Icon, ArrowDown01Icon, ArrowRight01Icon } from '@hugeicons/core-free-icons'
   import { hugeSvg } from '$lib/cm-huge-icon.js'
   import { formatSql } from '$lib/format-sql.js'
   import { statementAtOffset, lintSql } from '$lib/sql-statements.js'
@@ -424,6 +424,24 @@
     },
     initialSpacer: () => new GlyphMarker('ok', ''),
   })
+
+  /**
+   * Fold arrows on the mark's side of the numbers, not between the numbers and
+   * the gutter line where CodeEditor puts them: there they were a strip that
+   * stays empty until hovered and made the gap before the line two and a half
+   * times the gap after it. Here the line has the numbers g before it and the
+   * text g after it, arrows or not. High precedence, after the marks' gutter,
+   * so the columns run mark, arrow, number.
+   */
+  const foldColumn = Prec.high(foldGutter({
+    markerDOM(open) {
+      const el = document.createElement('span')
+      el.className = 'cm-fold-marker'
+      el.title = open ? 'Fold' : 'Unfold'
+      el.append(hugeSvg(open ? ArrowDown01Icon : ArrowRight01Icon))
+      return el
+    },
+  }))
 
   // ── Active statement: a faint band behind the one under the caret ──────
   // Only when the buffer holds more than one, so a single query stays clean.
@@ -962,6 +980,14 @@
       minWidth: 'calc(3ch + 0.5em)',
       padding: '0 0.5em 0 0',
     },
+    // The fold arrow: as wide as itself plus g, in the editor's em like the
+    // mark, so mark, arrow and number step across at the same gap.
+    '.cm-gutters .cm-foldGutter .cm-gutterElement': {
+      boxSizing: 'content-box',
+      width: '0.85em',
+      padding: '0 0.5em 0 0',
+    },
+    '.cm-gutters .cm-fold-marker svg': { width: '0.85em', height: '0.85em' },
     '.cm-sql-lint-error': {
       textDecoration: 'underline wavy color-mix(in oklch, var(--destructive) 85%, transparent)',
       textUnderlineOffset: '3px',
@@ -1103,6 +1129,8 @@
   let vimExtension = $state(/** @type {import('@codemirror/state').Extension | null} */ (null))
   const editing = $derived([
     ...editingExtensions($appSqlEditor),
+    // Beside the numbers only: an arrow column with no numbers is a stripe nothing explains.
+    ...($appSqlEditor.lineNumbers && $appSqlEditor.folding ? [foldColumn] : []),
     ...(onlens && !readOnly && $appSqlEditor.codeLens === 'current' ? [lensRoom] : []),
   ])
   const extensions = $derived([...(vimExtension ? [Prec.highest(vimExtension)] : []), ...baseExtensions, ...editing])
@@ -1342,7 +1370,7 @@
     {readOnly}
     wrap={$appSqlEditor.wrap}
     gutter={$appSqlEditor.lineNumbers}
-    folding={$appSqlEditor.folding}
+    folding={false}
     suggestWhileTyping={$appSqlEditor.suggestWhileTyping}
     acceptOnEnter={$appSqlEditor.acceptOnEnter}
     {onchange}
