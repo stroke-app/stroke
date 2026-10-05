@@ -2974,7 +2974,11 @@ let rowSearch = $state('')
     if (e.defaultPrevented || (e.target instanceof Element && e.target.closest('.sql-editor-host'))) return
     e.preventDefault()
     void handleModRefresh({ statementOnly: true })
-  })
+  // The library calls preventDefault() before the callback by default, which
+  // made `e.defaultPrevented` above always true: Mod+R returned there and never
+  // refreshed a table. Off here, defaultPrevented means another handler took
+  // the key, which is what the check is for, and the callback prevents it itself.
+  }, { preventDefault: false })
 
   // Alt+X empties the table search from anywhere in the tab - the ✕ and Escape
   // both want the caret already in the box, and the point of a search you are
