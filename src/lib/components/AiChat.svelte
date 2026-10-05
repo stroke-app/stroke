@@ -71,6 +71,7 @@
     titleFromMessage,
     historyBudget,
   } from "$lib/ai.js";
+  import { chartRows } from "$lib/ai-chart-data.js";
   import {
     loadSkills,
     saveSkills,
@@ -2301,9 +2302,12 @@
           columns: colObjs,
         });
       } else if (call.function.name === "render_chart") {
-        const chartSpec = args;
+        // Rows, whatever shape the model sent them in (a JSON string, the
+        // execute_sql result, arrays): a string used to pass this check on its
+        // length and crash the chart view.
+        const chartSpec = { ...args, data: chartRows(args.data, args) };
         const chartId = uid();
-        if (!chartSpec.data?.length) {
+        if (!chartSpec.data.length) {
           items.push(
             /** @type {ChatItem} */ ({
               id: chartId,
@@ -2315,7 +2319,7 @@
           );
           toolResult = JSON.stringify({
             error:
-              "No data provided. Execute a SQL query first and pass the results.",
+              "No usable data. Run execute_sql first and pass its `rows` array (row objects) as `data`.",
           });
         } else {
           items.push(
@@ -3963,11 +3967,13 @@
 
                             // Build the full ECharts option so previews render immediately
                             const spec = item.spec;
-                            const keys = spec.data?.length
-                              ? Object.keys(spec.data[0] ?? {})
+                            // Saved chats can hold a spec from before data was normalised.
+                            const specRows = chartRows(spec.data, spec);
+                            const keys = specRows.length
+                              ? Object.keys(specRows[0] ?? {})
                               : [];
                             const cols = keys.map((k) => {
-                              const sample = spec.data.find(
+                              const sample = specRows.find(
                                 (r) => r[k] != null,
                               )?.[k];
                               const dt =
@@ -3979,10 +3985,9 @@
                                     : "text";
                               return { name: k, dataType: dt, data_type: dt };
                             });
-                            const rows =
-                              spec.data?.map((obj) =>
-                                keys.map((k) => obj[k]),
-                              ) ?? [];
+                            const rows = specRows.map((obj) =>
+                              keys.map((k) => obj[k]),
+                            );
                             let previewOption = {};
                             try {
                               previewOption = buildOption({
