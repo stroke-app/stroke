@@ -853,18 +853,23 @@
 
   const consoleTheme = EditorView.theme({
     '.cm-content': { padding: '12px 0' },
-    // Glyphs sit right against the numbers: Monaco's glyph margin, not a column.
-    // Room on both sides: the mark never touches the numbers, or the text
-    // when the numbers are hidden. In em, like the marks: the editor's text
-    // follows the app zoom (--cm-font-size is a type-scale step), and px marks
-    // stayed small beside zoomed text.
+    // One gap, g = 0.5em, sets every step of the gutter: either side of the
+    // run mark, after the line numbers, and from the gutter's edge to the
+    // text - so the mark sits centred in its column and the edge line is as
+    // far from the mark as from the code, numbers or not. It was 0.55em before
+    // the mark, 0.4em after it and a fixed 10px before the text, and the 1em
+    // mark overflowed a 1.05em border-box cell. In em throughout: the text
+    // follows the app zoom (--cm-font-size is a type-scale step), so a px gap
+    // drifted against it.
     '.cm-sql-glyphs .cm-gutterElement': {
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
-      width: '1.05em',
-      padding: '0 0.4em 0 0.55em',
+      boxSizing: 'content-box',
+      width: '1em',
+      padding: '0 0.5em',
     },
+    '.cm-content .cm-line': { paddingLeft: '0.5em' },
     '.sql-glyph': { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', cursor: 'default' },
     '.sql-glyph svg': { width: '1em', height: '1em' },
     // Running: a blue quarter arc turning on a faint track. Done: a bold tick
@@ -952,9 +957,10 @@
     '.sql-glyph-warning': { color: 'var(--warning)' },
     // Three digits reserved, not the cell dock's five: a query is rarely past
     // line 999, and the reserve was the gap between the glyphs and the numbers.
+    // The mark's column already ends in g, so the numbers only need g after.
     '.cm-gutters .cm-lineNumbers .cm-gutterElement': {
-      minWidth: 'calc(3ch + 10px)',
-      padding: '0 4px 0 6px',
+      minWidth: 'calc(3ch + 0.5em)',
+      padding: '0 0.5em 0 0',
     },
     '.cm-sql-lint-error': {
       textDecoration: 'underline wavy color-mix(in oklch, var(--destructive) 85%, transparent)',
@@ -968,12 +974,12 @@
     '.cm-line.cm-stmt-active': { backgroundColor: 'color-mix(in oklch, var(--foreground) 3.5%, transparent)' },
     // Statement actions: dense chrome in the sans face, muted until pointed
     // at. The first label lines up with the statement's text: a line's left
-    // padding (CodeEditor's 10px) less a button's own 6px.
+    // padding (g, in the editor's em) less a button's own 6px.
     '.cm-sql-lens': {
       display: 'flex',
       alignItems: 'center',
       height: '1.7em',
-      paddingLeft: '4px',
+      paddingLeft: 'max(0px, calc(var(--cm-font-size, 13px) * 0.5 - 6px))',
       fontFamily: 'var(--font-sans)',
       fontSize: 'var(--fs-2xs)',
       lineHeight: '1',
