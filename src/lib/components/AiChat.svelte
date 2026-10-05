@@ -75,8 +75,9 @@
     saveSkills,
     parseSkillFile,
   } from "$lib/stores/ai-skills.js";
-  import { renderMermaidSync, THEMES } from "beautiful-mermaid";
-  import { mermaidThemeFor, normalizeThemeId } from "$lib/themes/registry.js";
+  import { renderMermaidSync } from "beautiful-mermaid";
+  import { normalizeThemeId } from "$lib/themes/registry.js";
+  import { liveMermaidTheme } from "$lib/mermaid-theme.js";
   import { toast } from "$lib/components/ui/sonner/toast.svelte.js";
   import {
     aiSettings,
@@ -846,20 +847,24 @@
   /** App :root defines --muted, --accent, --border which inherit into SVG and override
    *  beautiful-mermaid's color-mix fallbacks - ER attributes/lines become illegible. */
   /** @param {import('$lib/themes/registry.js').ThemeId} themeId */
-  function resolveMermaidTheme(themeId) {
-    const base =
-      themeId === "light" ? THEMES["zinc-light"] : THEMES["zinc-dark"];
-    return { ...base, ...mermaidThemeFor(themeId) };
+  // The app theme's tokens, as the Mermaid views use (the id only keys the cache).
+  function resolveMermaidTheme(/** @type {string} */ _themeId) {
+    return liveMermaidTheme();
   }
 
   /** @param {SVGSVGElement} svg @param {ReturnType<typeof resolveMermaidTheme>} theme */
   function applyMermaidThemeVars(svg, theme) {
     svg.style.setProperty("--bg", theme.bg);
     svg.style.setProperty("--fg", theme.fg);
-    if (theme.muted) svg.style.setProperty("--muted", theme.muted);
-    if (theme.line) svg.style.setProperty("--line", theme.line);
-    if (theme.accent) svg.style.setProperty("--accent", theme.accent);
-    if (theme.border) svg.style.setProperty("--border", theme.border);
+    // Every variable the renderer reads is set on the SVG: left unset, `--line`
+    // and `--accent` resolve from the page, where the same names are the app's
+    // chrome tokens (arrows in the accent fill). Mixed from fg/bg, as in MermaidViewer.
+    const mix = (/** @type {number} */ pct) => `color-mix(in srgb, ${theme.fg} ${pct}%, ${theme.bg})`;
+    svg.style.setProperty("--muted", theme.muted ?? mix(62));
+    svg.style.setProperty("--line", theme.line ?? mix(45));
+    svg.style.setProperty("--accent", theme.accent ?? mix(85));
+    svg.style.setProperty("--border", theme.border ?? mix(22));
+    svg.style.setProperty("--surface", mix(4));
   }
 
   /** @type {Map<string, string>} */
