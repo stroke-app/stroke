@@ -93,3 +93,11 @@ describe('identity and small talk', () => {
     expect(prompt).toMatch(/Do not introduce yourself, list tables or restate any of this/)
   })
 })
+
+test('details left open are the model\'s to choose, and what it creates it runs', () => {
+  const prompt = buildSystemPrompt(ctx)
+  expect(prompt).not.toMatch(/I don't have enough context/)
+  expect(prompt).toMatch(/a new table's columns, types and keys/)
+  expect(prompt).toMatch(/never once the user has said to decide or not to ask/)
+  expect(prompt).toMatch(/run the CREATE \/ ALTER \/ INSERT with execute_sql/)
+})
