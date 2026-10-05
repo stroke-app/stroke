@@ -90,7 +90,9 @@ describe('identity and small talk', () => {
     const prompt = buildSystemPrompt({ ...ctx, modelLabel: 'Claude Haiku 4.5' })
     expect(prompt).toContain('You run on Claude Haiku 4.5.')
     expect(prompt).toMatch(/Asked which model or AI you are: one sentence - Stroke's assistant running on Claude Haiku 4.5/)
-    expect(prompt).toMatch(/Do not introduce yourself, list tables or restate any of this/)
+    expect(prompt).toMatch(/no tool call, no table names, nothing about yourself/)
+    // Phrases the model echoes back verbatim stay out of the greeting rule.
+    expect(prompt).not.toMatch(/"what can you do"/)
   })
 })
 
@@ -100,4 +102,14 @@ test('details left open are the model\'s to choose, and what it creates it runs'
   expect(prompt).toMatch(/a new table's columns, types and keys/)
   expect(prompt).toMatch(/never once the user has said to decide or not to ask/)
   expect(prompt).toMatch(/run the CREATE \/ ALTER \/ INSERT with execute_sql/)
+})
+
+test('tool arguments streamed as {} then the real object parse as the real object', async () => {
+  const { normalizeToolArgs } = await import('./ai.js')
+  const sql = 'CREATE TABLE `t` (`id` INT, `note` VARCHAR(20) DEFAULT \'{x}\')'
+  expect(JSON.parse(normalizeToolArgs('{}' + JSON.stringify({ sql })))).toEqual({ sql })
+  expect(JSON.parse(normalizeToolArgs('{"a":1}{"b":2}'))).toEqual({ a: 1, b: 2 })
+  expect(normalizeToolArgs('{"sql":"SELECT 1"}')).toBe('{"sql":"SELECT 1"}')
+  expect(normalizeToolArgs('')).toBe('{}')
+  expect(normalizeToolArgs('{"sql": "SELECT')).toBe('{"sql": "SELECT')
 })

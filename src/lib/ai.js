@@ -1061,22 +1061,63 @@ export async function* chatCompletionStream(settings, messages, tools = null, si
     } catch (err) {
       const status = describeAiError(err).status
       const transient = !emitted && status != null && RETRYABLE_STATUSES.has(status) && !signal?.aborted
+      // On the free gateway an overloaded alias is usually overloaded for a
+      // while, and its other alias is served elsewhere: switch at the first
+      // failure, at once, rather than waiting out the backoff on the same one.
+      const fallback = transient && !fellBack && isStrokeFreeEndpoint(base) ? FREE_FALLBACK[String(body.model)] : undefined
+      if (fallback) {
+        fellBack = true
+        body.model = fallback
+        attempt = -1
+        onRetry?.({ attempt: 1, waitMs: 0, status, model: fallback })
+        continue
+      }
       if (transient && attempt < MAX_AI_RETRIES) {
         const waitMs = backoffMs(attempt, null)
         onRetry?.({ attempt: attempt + 1, waitMs, status })
         await sleep(waitMs, signal)
         continue
       }
-      // Retries spent on the free gateway: its other alias, once, before the
-      // error reaches the user.
-      const fallback = transient && !fellBack && isStrokeFreeEndpoint(base) ? FREE_FALLBACK[String(body.model)] : undefined
-      if (!fallback) throw err
-      fellBack = true
-      body.model = fallback
-      attempt = -1
-      onRetry?.({ attempt: 1, waitMs: 0, status, model: fallback })
+      throw err
     }
   }
+}
+
+/**
+ * A tool call's streamed arguments as one JSON object.
+ *
+ * Some providers stream an empty `{}` first and the real arguments after it,
+ * so the deltas concatenate to `{}{"sql": "CREATE TABLE …"}` - not JSON. The
+ * call then failed to parse and the statement never ran. The top-level objects
+ * are read one by one and merged, later keys winning; anything unreadable is
+ * passed on as it was, for the caller's own error.
+ * @param {string} raw
+ */
+export function normalizeToolArgs(raw) {
+  const text = String(raw ?? '').trim()
+  if (!text) return '{}'
+  try { JSON.parse(text); return text } catch { /* concatenated objects, below */ }
+  /** @type {Record<string, unknown>} */
+  const merged = {}
+  let depth = 0, start = -1, inString = false, escaped = false, found = 0
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]
+    if (inString) {
+      if (escaped) escaped = false
+      else if (c === '\\') escaped = true
+      else if (c === '"') inString = false
+      continue
+    }
+    if (c === '"') inString = true
+    else if (c === '{') { if (depth++ === 0) start = i }
+    else if (c === '}' && depth > 0 && --depth === 0) {
+      try {
+        const obj = JSON.parse(text.slice(start, i + 1))
+        if (obj && typeof obj === 'object' && !Array.isArray(obj)) { Object.assign(merged, obj); found++ }
+      } catch { return text }
+    }
+  }
+  return found ? JSON.stringify(merged) : text
 }
 
 /**
@@ -1194,7 +1235,7 @@ async function* streamOnce(url, reqHeaders, body, signal, onRetry) {
           .map(([, { id, name, args }]) => ({
             id: id || `call_${Math.random().toString(36).slice(2, 9)}`,
             type: 'function',
-            function: { name, arguments: args },
+            function: { name, arguments: normalizeToolArgs(args) },
           }))
       ),
     }
@@ -1957,7 +1998,7 @@ ${toolLines}
 1. Answer directly. No "Sure!", "Great!", "Here is…" openers.
 2. One format per answer: a chart or a diagram through its tool, an explanation as prose. Fenced code blocks always name their language (\`\`\`sql, \`\`\`json).
 3. Prose: at most 4 short paragraphs, **bold** for key terms.
-4. Greetings and small talk ("hi", "thanks"): one short friendly sentence asking what they want to do, and no tool call. Do not introduce yourself, list tables or restate any of this. Only "what can you do" gets two concrete examples that name real tables from the list above.
+4. A greeting or thanks gets one short friendly sentence such as "Hi! What would you like to do with your data?" - no tool call, no table names, nothing about yourself. When asked about your abilities, name two concrete things you could do, using real tables from the list above.
 4b. Asked which model or AI you are: one sentence - ${ctx.modelLabel ? `Stroke's assistant running on ${ctx.modelLabel}` : "Stroke's assistant, running on the model selected in Settings → AI"}. No talk of architecture or training.
 5. A general question that needs no data ("what is an index?", "how do I write a join?") gets a direct answer and no tool call.
 6. Details the user left open are yours to choose: a new table's columns, types and keys, sample rows, a name. Pick what fits the request and this schema's conventions (naming style, id type, timestamp columns, the foreign keys it needs), say the choice in one line, and do it - never ask for them. Ask only when WHAT to do is unclear (which of two tables, which rows), and never once the user has said to decide or not to ask.
