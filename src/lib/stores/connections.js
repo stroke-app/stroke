@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import { saveSqlDraft } from '$lib/stores/sql-draft.js'
+import { saveSqlDraft, saveSqlTabs } from '$lib/stores/sql-draft.js'
 
 const STORAGE_KEY = 'stroke:connections'
 /**
@@ -272,6 +272,7 @@ export function purgeConnectionData(id) {
       `stroke:active-dashboard:${id}`,
       `stroke:saved-diagrams:${id}`,
       `stroke:last-schema:${id}`,
+      `stroke:query-folders:${id}`,
     ]) localStorage.removeItem(key)
     // Per-table keys carry a `:<schema>.<table>` suffix - match by prefix,
     // iterating backwards because removeItem reindexes localStorage.
@@ -282,7 +283,7 @@ export function purgeConnectionData(id) {
       }
     }
   } catch { /* storage failure must not block deleting the connection */ }
-  try { saveSqlDraft(id, '') } catch { /* ditto */ }
+  try { saveSqlDraft(id, ''); saveSqlTabs(id, []) } catch { /* ditto */ }
   // IndexedDB rows are cleared fire-and-forget (dynamic imports keep this module
   // free of a static cycle via schema-snapshots -> api -> connections). A
   // failure only leaves orphaned rows behind, never an error in the delete flow.

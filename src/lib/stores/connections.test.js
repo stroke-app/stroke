@@ -11,7 +11,7 @@ vi.mock('@tauri-apps/api/core', () => ({
     throw new Error(`unexpected command ${cmd}`)
   }),
 }))
-vi.mock('$lib/stores/sql-draft.js', () => ({ saveSqlDraft: () => {} }))
+vi.mock('$lib/stores/sql-draft.js', () => ({ saveSqlDraft: () => {}, saveSqlTabs: () => {} }))
 
 /** Minimal in-memory localStorage for the node test environment. */
 function installLocalStorage() {

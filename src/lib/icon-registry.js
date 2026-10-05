@@ -62,6 +62,9 @@ import Filter from '@lucide/svelte/icons/filter'
 import MoreHorizontal from '@lucide/svelte/icons/more-horizontal'
 import Menu from '@lucide/svelte/icons/menu'
 import FolderOpen from '@lucide/svelte/icons/folder-open'
+import Folder from '@lucide/svelte/icons/folder'
+import FolderPlus from '@lucide/svelte/icons/folder-plus'
+import FileCode from '@lucide/svelte/icons/file-code'
 import Archive from '@lucide/svelte/icons/archive'
 import ArrowUpCircle from '@lucide/svelte/icons/arrow-up-circle'
 import ChevronsDown from '@lucide/svelte/icons/chevrons-down'
@@ -150,7 +153,7 @@ import {
   AiBrain01Icon, Alert02Icon, AlertCircleIcon, Shield01Icon, PencilEdit01Icon,
   BracketsIcon, SquareLock01Icon, DashboardSquare01Icon, HistoryIcon, Clock01Icon,
   FlashIcon, Settings01Icon, Maximize01Icon, FilterIcon, MoreHorizontalIcon,
-  Menu01Icon, FolderOpenIcon, Archive01Icon, CircleArrowUp01Icon, ArrowDownDoubleIcon,
+  Menu01Icon, FolderOpenIcon, Folder01Icon, FolderAddIcon, FileScriptIcon, Archive01Icon, CircleArrowUp01Icon, ArrowDownDoubleIcon,
   ArrowLeftDoubleIcon, ArrowRightDoubleIcon, ArrowUpDoubleIcon, CloudIcon, CommandIcon,
   HardDriveIcon, DashboardSquare02Icon, SquareUnlock01Icon, Moon02Icon, RadioIcon,
   ServerStack01Icon, Settings02Icon, Sun03Icon, ArrowTurnBackwardIcon, Unlink01Icon,
@@ -220,6 +223,9 @@ export const ICON_MAP = {
   'more-horizontal':{ lucide: MoreHorizontal,huge: MoreHorizontalIcon },
   'menu':           { lucide: Menu,          huge: Menu01Icon },
   'folder-open':    { lucide: FolderOpen,    huge: FolderOpenIcon },
+  'folder':         { lucide: Folder,        huge: Folder01Icon },
+  'folder-plus':    { lucide: FolderPlus,    huge: FolderAddIcon },
+  'file-code':      { lucide: FileCode,      huge: FileScriptIcon },
   'archive':        { lucide: Archive,       huge: Archive01Icon },
   'arrow-up-circle':{ lucide: ArrowUpCircle, huge: CircleArrowUp01Icon },
   'chevrons-down':  { lucide: ChevronsDown,  huge: ArrowDownDoubleIcon },
@@ -350,6 +356,9 @@ import PhFunnel from 'phosphor-svelte/lib/Funnel'
 import PhDotsThree from 'phosphor-svelte/lib/DotsThree'
 import PhList from 'phosphor-svelte/lib/List'
 import PhFolderOpen from 'phosphor-svelte/lib/FolderOpen'
+import PhFolder from 'phosphor-svelte/lib/Folder'
+import PhFolderPlus from 'phosphor-svelte/lib/FolderPlus'
+import PhFileSql from 'phosphor-svelte/lib/FileSql'
 import PhArchive from 'phosphor-svelte/lib/Archive'
 import PhCloud from 'phosphor-svelte/lib/Cloud'
 import PhCommand from 'phosphor-svelte/lib/Command'
@@ -441,6 +450,9 @@ export const PHOSPHOR_MAP = {
   'more-horizontal': PhDotsThree,
   'menu': PhList,
   'folder-open': PhFolderOpen,
+  'folder': PhFolder,
+  'folder-plus': PhFolderPlus,
+  'file-code': PhFileSql,
   'archive': PhArchive,
   'cloud': PhCloud,
   'command': PhCommand,
