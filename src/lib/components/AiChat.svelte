@@ -5126,16 +5126,19 @@
      conversation is set in one size rather than three. */
   .ai-composer-input,
   :global(.ai-user-bubble) {
+    font-family: var(--font-reading, var(--font-sans));
     font-size: var(--ai-chat-font-size, 0.9375rem);
     line-height: 1.6;
     letter-spacing: -0.011em;
   }
 
   :global(.prose-ai) {
-    /* Follow the app's font setting. This used to hardcode the Inter stack, so
-       picking another font changed the composer and the user's turns but left
-       every response in Inter - one conversation in two typefaces. */
-    font-family: var(--font-sans);
+    /* Follow the app's font setting through its reading face (the sans, or a
+       proportional face under the Mono preset). This used to hardcode the
+       Inter stack, so picking another font changed the composer and the
+       user's turns but left every response in Inter: one conversation in two
+       typefaces. */
+    font-family: var(--font-reading, var(--font-sans));
     font-size: var(--ai-chat-font-size, 0.9375rem);
     line-height: 1.65;
     color: var(--foreground);

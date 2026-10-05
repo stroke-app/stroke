@@ -15,9 +15,15 @@
   import X from "@lucide/svelte/icons/x";
   import History from "@lucide/svelte/icons/history";
   import Trash2 from "@lucide/svelte/icons/trash-2";
-  import Plus from "@lucide/svelte/icons/plus";
   import At from "@lucide/svelte/icons/at-sign";
   import Slash from "@lucide/svelte/icons/slash";
+  import SquarePen from "@lucide/svelte/icons/square-pen";
+  import MessageSquareText from "@lucide/svelte/icons/message-square-text";
+  import Gauge from "@lucide/svelte/icons/gauge";
+  import Network from "@lucide/svelte/icons/network";
+  import Rows3 from "@lucide/svelte/icons/rows-3";
+  import FileText from "@lucide/svelte/icons/file-text";
+  import CodeXml from "@lucide/svelte/icons/code-xml";
   import { cn } from "$lib/utils.js";
   import { executeSql } from "$lib/api.js";
   import { isReadOnly } from '$lib/stores/read-only.js'
@@ -61,7 +67,7 @@
 
   /**
    * @typedef {
-   *   | { id: string, kind: 'user', text: string }
+   *   | { id: string, kind: 'user', text: string, sql?: string }
    *   | { id: string, kind: 'assistant', parts: import('$lib/ai.js').AssistantPart[] }
    *   | { id: string, kind: 'streaming' }
    *   | { id: string, kind: 'result', sql: string, columns: {name:string,dataType?:string}[], rows: unknown[][], total: number, error: string|null, isSchema?: boolean, capped?: boolean }
@@ -189,6 +195,8 @@
       }
       if (e.key === 'Escape') { mentionOpen = false; return }
     }
+    // Backspace in an empty box takes the attached statement off, as with a chip.
+    if (e.key === 'Backspace' && attachedSql && !inputText) { e.preventDefault(); attachedSql = ''; return }
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(); return }
   }
 
@@ -446,15 +454,31 @@
     return new Date(ts).toLocaleDateString()
   }
 
+  /** Readable names for the tab kinds the panel can sit beside. */
+  const VIEW_NAMES = /** @type {Record<string, string>} */ ({
+    table: 'a table', sql: 'the SQL editor', orm: 'the ORM runner', schema: 'the schema explorer',
+    erd: 'the schema diagram', welcome: 'the start page', objects: 'the database objects page',
+  })
+
+  /**
+   * What is on screen, said every turn, including when nothing is open: with
+   * no line at all the model answered "I can't see your UI" to "explain the
+   * open table" instead of saying no table is open.
+   */
   function buildViewContext() {
     const lines = ['', '=== CURRENT WORKSPACE CONTEXT ===']
-    if (schemaContext.activeTable) lines.push(`The user is viewing table "${schemaContext.activeSchema}.${schemaContext.activeTable}".`)
+    lines.push('This block is the live state of the user\'s workspace and you can rely on it. Never say you cannot see the user\'s screen, table or editor; if they refer to something that is not open, say it is not open and offer what is.')
+    lines.push(`Connection schema: "${schemaContext.activeSchema}" (${schemaContext.tables?.length ?? 0} tables).`)
+    lines.push(`The user is on ${VIEW_NAMES[currentView] ?? `the "${currentView}" page`}.`)
+    if (schemaContext.activeTable) lines.push(`Open table: "${schemaContext.activeSchema}.${schemaContext.activeTable}".`)
+    else lines.push('No table is open.')
     if (currentView === 'sql') {
-      lines.push('The user has the SQL editor open. Return runnable SQL in ```sql blocks.')
       const t = (currentSql ?? '').trim()
-      if (t) { lines.push('Current SQL:'); lines.push('```sql'); lines.push(t.slice(0, 4000)); lines.push('```') }
+      if (t) { lines.push('SQL in the editor:'); lines.push('```sql'); lines.push(t.slice(0, 4000)); lines.push('```') }
+      else lines.push('The SQL editor is empty.')
+      lines.push('Return runnable SQL in ```sql blocks.')
     } else if (currentView === 'orm') {
-      lines.push(`The user has the ORM runner open in ${ormMode} mode.`)
+      lines.push(`The ORM runner is open in ${ormMode} mode.`)
     } else {
       lines.push('Return SQL in ```sql blocks when relevant.')
     }
@@ -507,16 +531,20 @@
 
   // ── Send ──────────────────────────────────────────────────────────────────
   async function send(/** @type {string[]} */ [overrideText] = []) {
-    const text = (overrideText ?? inputText).trim()
+    const sql = attachedSql
+    // An attachment alone is a question too: what does this do.
+    const text = (overrideText ?? inputText).trim() || (sql ? 'Explain this query.' : '')
     if (!text || loading) return
     if (!configured) { onopensettings(); return }
     error = ''; aiStatusHint = ''
     if (!overrideText) { inputText = ''; resetInputHeight() }
+    attachedSql = ''
 
     const ctxNote = contextTables.length ? `\n\n(Focus on these tables: ${contextTables.join(', ')})` : ''
-    items.push(/** @type {ChatItem} */ ({ id: uid(), kind: 'user', text }))
-    apiHistory.push({ role: 'user', content: text + ctxNote })
-    rawApiHistory.push({ role: 'user', content: text + ctxNote })
+    const content = sql ? `${text}\n\n\`\`\`sql\n${sql}\n\`\`\`` : text
+    items.push(/** @type {ChatItem} */ ({ id: uid(), kind: 'user', text, ...(sql ? { sql } : {}) }))
+    apiHistory.push({ role: 'user', content: content + ctxNote })
+    rawApiHistory.push({ role: 'user', content: content + ctxNote })
     if (contextTables.length) contextTables = []
     await scrollBottom()
 
@@ -564,6 +592,56 @@
   export function sendMessage(text) {
     if (!text.trim()) return
     void send([text])
+  }
+
+  /**
+   * SQL handed over by the editor's Ask AI. It rides with the next message as
+   * a card above the box instead of a fenced block typed into it, so the box
+   * stays free for the question and the card can be dropped with one click.
+   */
+  let attachedSql = $state('')
+
+  /**
+   * Start a message without sending it (the SQL editor's Ask AI). A fenced SQL
+   * block in `text` becomes the attachment; the rest goes in the box, caret at
+   * its end.
+   * @param {string} text
+   */
+  export function draftMessage(text) {
+    const fence = text.match(/```(?:sql)?[ \t]*\n([\s\S]*?)```/i)
+    if (fence) {
+      attachedSql = fence[1].trim()
+      inputText = text.replace(fence[0], '').trim()
+    } else {
+      inputText = text
+    }
+    void tick().then(() => {
+      resizeInput()
+      inputRef?.focus()
+      const end = inputText.length
+      inputRef?.setSelectionRange?.(end, end)
+    })
+  }
+
+  /**
+   * A user message split into prose and fenced code, so a bubble shows SQL as
+   * code rather than backticks (older chats carry the fence in the text).
+   * @param {string} text
+   */
+  function splitFences(text) {
+    /** @type {{ code: boolean, content: string }[]} */
+    const out = []
+    const re = /```[\w-]*[ \t]*\n([\s\S]*?)```/g
+    let at = 0
+    for (const m of text.matchAll(re)) {
+      const before = text.slice(at, m.index).trim()
+      if (before) out.push({ code: false, content: before })
+      out.push({ code: true, content: m[1].trim() })
+      at = (m.index ?? 0) + m[0].length
+    }
+    const rest = text.slice(at).trim()
+    if (rest) out.push({ code: false, content: rest })
+    return out
   }
 
   const AI_ROW_LIMIT = 500; const AI_DISPLAY_ROWS = 100
@@ -757,13 +835,14 @@
   }
   function resetInputHeight() { if (inputRef) inputRef.style.height = 'auto' }
 
+  /** Starters for an empty chat, each with an icon that says what it does. */
   const suggestions = $derived.by(() => {
-    /** @type {string[]} */
+    /** @type {{ label: string, icon: typeof Sparkles }[]} */
     const out = []
-    if (currentView === 'sql' && (currentSql ?? '').trim()) out.push('Explain this query', 'Optimize this query')
-    else if (currentView === 'orm') out.push(`Write a ${ormMode} query for the active table`)
-    if (schemaContext.activeTable) { out.push(`Show 10 recent rows from ${schemaContext.activeTable}`, `Describe ${schemaContext.activeTable}`) }
-    else { out.push('List the tables', 'Draw an ERD of this schema') }
+    if (currentView === 'sql' && (currentSql ?? '').trim()) out.push({ label: 'Explain this query', icon: MessageSquareText }, { label: 'Optimize this query', icon: Gauge })
+    else if (currentView === 'orm') out.push({ label: `Write a ${ormMode} query for the active table`, icon: CodeXml })
+    if (schemaContext.activeTable) out.push({ label: `Show 10 recent rows from ${schemaContext.activeTable}`, icon: Rows3 }, { label: `Describe ${schemaContext.activeTable}`, icon: FileText })
+    else out.push({ label: 'List the tables', icon: Table2 }, { label: 'Draw an ERD of this schema', icon: Network })
     return out.slice(0, 4)
   })
 
@@ -782,26 +861,30 @@
   <!-- Header -->
   <div class="studio-chrome flex h-9 shrink-0 items-center gap-1.5 border-b border-border/50 px-3" data-studio-chrome>
     <Sparkles class="size-3.5 shrink-0 text-primary" />
-    <span class="min-w-0 flex-1 text-ui-xs font-semibold text-foreground/70">Assistant</span>
+    <span class="min-w-0 flex-1 truncate text-ui-xs font-medium text-foreground">Assistant</span>
 
     <!-- Model picker -->
     <AiModelPicker onopenSettings={onopensettings} />
 
-    <div class="flex items-center">
+    <div class="flex items-center gap-0.5">
+      <button type="button"
+        class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+        title="New chat"
+        aria-label="New chat"
+        disabled={items.length === 0 && !loading}
+        onclick={() => void newChat()}
+      ><SquarePen class="size-3.5" /></button>
       <button type="button"
         class={cn('inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground', historyOpen && 'bg-accent text-foreground')}
         title="Conversation history"
+        aria-label="Conversation history"
+        aria-pressed={historyOpen}
         onclick={() => { historyOpen = !historyOpen; if (historyOpen) void loadConvList() }}
       ><History class="size-3.5" /></button>
       <button type="button"
-        class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-30"
-        title="New chat"
-        disabled={items.length === 0 && !loading}
-        onclick={() => void newChat()}
-      ><Plus class="size-3.5" /></button>
-      <button type="button"
         class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         title="Close (⌘I)"
+        aria-label="Close the assistant"
         onclick={onclose}
       ><X class="size-3.5" /></button>
     </div>
@@ -812,7 +895,7 @@
     <button type="button" class="absolute inset-0 z-30 cursor-default" aria-label="Close history" onclick={() => (historyOpen = false)}></button>
     <div class="absolute right-2 top-11 z-40 flex max-h-[55%] w-[calc(100%-1rem)] flex-col overflow-hidden rounded-[10px] border border-border/60 bg-popover elevate-2-rim">
       <div class="flex items-center justify-between gap-2 border-b border-border/50 px-3 py-2.5">
-        <span class="text-ui-xs font-medium text-foreground/70">History</span>
+        <span class="text-ui-xs font-medium text-foreground">History</span>
         {#if convList.length}
           <button type="button" class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-ui-2xs text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive" onclick={() => void clearAllConversations()}>
             <Trash2 class="size-3" />Clear all
@@ -826,7 +909,7 @@
           {#each convList as conv (conv.id)}
             <div class={cn('group flex items-center gap-1 rounded-lg px-2 py-1.5 transition-colors hover:bg-accent/40', conv.id === activeConvId && 'bg-accent/60')}>
               <button type="button" class="flex min-w-0 flex-1 flex-col items-start gap-0.5 text-left" onclick={() => void selectConversation(conv.id)}>
-                <span class="w-full truncate text-ui-xs text-foreground/80">{conv.title}</span>
+                <span class="w-full truncate text-ui-xs text-foreground">{conv.title}</span>
                 <span class="text-ui-2xs text-muted-foreground">{relTime(conv.updatedAt)}</span>
               </button>
               <button type="button" class="inline-flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100" onclick={() => void removeConversation(conv.id)}>
@@ -844,44 +927,51 @@
     class="app-scroll relative min-h-0 flex-1 overflow-y-auto [will-change:transform] [overflow-anchor:none]">
 
     {#if items.length === 0}
-      <!-- Empty state -->
-      <div class="flex h-full flex-col items-center justify-center gap-5 px-4 py-6 text-center">
-        <div class="flex size-9 items-center justify-center rounded-lg border border-primary/20 bg-primary/8">
-          <Sparkles class="size-4 text-primary" />
-        </div>
-        <div class="space-y-1.5">
-          <p class="text-ui-sm font-medium text-foreground/80">Ask anything</p>
-          {#if schemaContext.activeTable}
-            <p class="font-mono text-ui-xs text-muted-foreground">{schemaContext.activeSchema}.{schemaContext.activeTable}</p>
-          {:else if schemaContext.tables?.length}
-            <p class="font-mono text-ui-xs text-muted-foreground">{schemaContext.activeSchema} · {schemaContext.tables.length} tables</p>
-          {:else}
-            <p class="text-ui-xs text-muted-foreground">Knows your schema, table, and editor</p>
-          {/if}
+      <!-- Empty state. It sits at the foot of the pane, just above the box:
+           the starters are where the hands already are, and a tall pane no
+           longer leaves them floating in the middle. -->
+      <div class="flex min-h-full flex-col justify-end gap-4 px-3 pb-3 pt-6">
+        <div class="flex items-start gap-2.5 px-1">
+          <span class="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+            <Sparkles class="size-4" />
+          </span>
+          <div class="min-w-0">
+            <p class="text-ui-sm font-medium text-foreground">Ask about your data</p>
+            {#if schemaContext.activeTable}
+              <p class="truncate font-mono text-ui-2xs text-muted-foreground">{schemaContext.activeSchema}.{schemaContext.activeTable}</p>
+            {:else if schemaContext.tables?.length}
+              <p class="truncate font-mono text-ui-2xs text-muted-foreground">{schemaContext.activeSchema} · {schemaContext.tables.length} tables</p>
+            {:else}
+              <p class="text-ui-2xs text-muted-foreground">Knows your schema, the open table and the editor</p>
+            {/if}
+          </div>
         </div>
 
         {#if !configured}
           <button
             type="button"
-            class="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3.5 py-2 text-ui-xs font-medium text-primary-foreground elevate-1 transition-[background-color,transform] duration-150 hover:bg-primary/90 active:scale-[0.97]"
+            class="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg bg-primary px-3 text-ui-xs font-medium text-primary-foreground transition-[background-color,scale] duration-150 hover:bg-primary/90 active:scale-[0.96]"
             onclick={onopensettings}
           >
             <Sparkles class="size-3.5" />Configure a model
           </button>
         {:else}
-          <div class="w-full overflow-hidden rounded-lg border border-border/35">
-            <div class="grid grid-cols-1 gap-px bg-border/25">
-              {#each suggestions as s}
+          <ul class="flex flex-col gap-0.5" aria-label="Suggestions">
+            {#each suggestions as s (s.label)}
+              {@const Icon = s.icon}
+              <li>
                 <button type="button"
-                  class="flex items-center gap-2.5 bg-background px-3.5 py-2.5 text-left transition-colors hover:bg-muted/25 disabled:opacity-40"
-                  onclick={() => void send([s])}
+                  class="group/sug flex h-8 w-full items-center gap-2.5 rounded-md px-2 text-left text-ui-xs text-foreground transition-colors hover:bg-accent disabled:opacity-40"
+                  disabled={loading}
+                  onclick={() => void send([s.label])}
                 >
-                  <Sparkles class="size-3 shrink-0 text-muted-foreground" />
-                  <span class="text-ui-xs text-muted-foreground">{s}</span>
+                  <Icon class="size-3.5 shrink-0 text-muted-foreground transition-colors group-hover/sug:text-foreground" />
+                  <span class="min-w-0 flex-1 truncate">{s.label}</span>
+                  <CornerDownLeft class="size-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/sug:opacity-100" />
                 </button>
-              {/each}
-            </div>
-          </div>
+              </li>
+            {/each}
+          </ul>
         {/if}
       </div>
 
@@ -895,8 +985,21 @@
                excluded so their ping/bounce isn't clipped by paint containment). -->
           <div class={item.kind === 'thinking' || item.kind === 'executing' || item.kind === 'streaming' ? '' : '[content-visibility:auto] [contain-intrinsic-size:auto_100px]'}>
           {#if item.kind === 'user'}
+            <!-- Prose stays prose; SQL, attached or fenced in an older chat,
+                 shows as code inside the bubble instead of backticks. -->
             <div class="flex justify-end">
-              <div class="max-w-[88%] rounded-xl rounded-tr-md bg-primary px-3 py-2 text-ui-xs leading-relaxed text-primary-foreground whitespace-pre-wrap">{item.text}</div>
+              <div class="flex max-w-[88%] min-w-0 flex-col gap-1.5 rounded-xl rounded-tr-md bg-primary px-3 py-2 text-ui-xs leading-relaxed text-primary-foreground">
+                {#each splitFences(item.text) as part, pi (pi)}
+                  {#if part.code}
+                    <pre class="max-h-40 overflow-auto rounded-md bg-primary-foreground/12 px-2 py-1.5 font-mono text-ui-2xs leading-snug whitespace-pre-wrap">{part.content}</pre>
+                  {:else}
+                    <p class="font-reading whitespace-pre-wrap break-words">{part.content}</p>
+                  {/if}
+                {/each}
+                {#if item.sql}
+                  <pre class="max-h-40 overflow-auto rounded-md bg-primary-foreground/12 px-2 py-1.5 font-mono text-ui-2xs leading-snug whitespace-pre-wrap">{item.sql}</pre>
+                {/if}
+              </div>
             </div>
 
           {:else if item.kind === 'thinking'}
@@ -1071,7 +1174,7 @@
   {/if}
 
   <!-- Input area -->
-  <div class="relative shrink-0 border-t border-border/50 bg-background p-2.5">
+  <div class="relative shrink-0 bg-background px-2 pb-2 pt-1">
 
     <!-- @ mention popup -->
     {#if mentionOpen && mentionItems.length > 0}
@@ -1111,27 +1214,51 @@
       </div>
     {/if}
 
-    <!-- Input box -->
-    <div class="overflow-hidden rounded-lg border border-border/50 bg-muted/10 transition-colors focus-within:border-border/80 focus-within:bg-background">
-      <!-- Context bar: show active table/view -->
-      {#if contextTables.length || schemaContext.activeTable || (currentView === 'sql' && currentSql.trim())}
-        <div class="flex flex-wrap items-center gap-1 border-b border-border/30 px-2.5 py-1.5">
+    <!-- Input box. One surface: context chips, an attached statement, the
+         text and the actions, grouped by space rather than inner rules. The
+         box is rounded-xl so its corner runs concentric with the send
+         button's rounded-lg at 6px inset. -->
+    <div class="flex flex-col gap-1.5 rounded-xl border border-border/60 bg-muted/20 p-1.5 transition-[border-color,background-color] focus-within:border-border focus-within:bg-background">
+      {#if contextTables.length || schemaContext.activeTable || (currentView === 'sql' && currentSql.trim() && !attachedSql)}
+        <div class="flex flex-wrap items-center gap-1 px-1 pt-0.5">
+          <!-- Mentioned tables: the schema is dropped when it is the one in use,
+               so two or three fit on a line instead of one chip per line. -->
           {#each contextTables as t (t)}
-            <span class="inline-flex items-center gap-1 rounded-md bg-primary/10 py-0.5 pl-1.5 pr-1 font-mono text-ui-3xs text-primary">
-              <Table2 class="size-3 shrink-0" />{t}
-              <button type="button" class="ml-0.5 flex rounded-md text-primary transition-colors hover:text-primary" title="Remove" onclick={() => (contextTables = contextTables.filter((x) => x !== t))}>
-                <X class="size-2.5" />
+            {@const short = t.startsWith(`${schemaContext.activeSchema}.`) ? t.slice(schemaContext.activeSchema.length + 1) : t}
+            <span class="inline-flex h-6 max-w-full min-w-0 items-center gap-1 rounded-md bg-primary/10 pl-1.5 pr-0.5 text-primary" title={t}>
+              <Table2 class="size-3 shrink-0" />
+              <span class="min-w-0 truncate font-mono text-ui-2xs">{short}</span>
+              <button type="button" class="inline-flex size-5 shrink-0 items-center justify-center rounded text-primary/80 transition-colors hover:bg-primary/15 hover:text-primary" title="Remove {t}" aria-label="Remove {t}" onclick={() => (contextTables = contextTables.filter((x) => x !== t))}>
+                <X class="size-3" />
               </button>
             </span>
           {/each}
           {#if schemaContext.activeTable && !contextTables.includes(`${schemaContext.activeSchema}.${schemaContext.activeTable}`)}
-            <span class="inline-flex items-center gap-1 rounded-md bg-muted/50 px-1.5 py-0.5 font-mono text-ui-3xs text-muted-foreground">
-              <Table2 class="size-3 shrink-0" />{schemaContext.activeSchema}.{schemaContext.activeTable}
+            <span class="inline-flex h-6 max-w-full min-w-0 items-center gap-1 rounded-md bg-foreground/[0.06] px-1.5 text-muted-foreground" title="{schemaContext.activeSchema}.{schemaContext.activeTable} is part of every question">
+              <Table2 class="size-3 shrink-0" />
+              <span class="min-w-0 truncate font-mono text-ui-2xs">{schemaContext.activeTable}</span>
             </span>
           {/if}
-          {#if currentView === 'sql' && currentSql.trim()}
-            <span class="inline-flex items-center gap-1 rounded-md bg-muted/50 px-1.5 py-0.5 font-mono text-ui-3xs text-muted-foreground">SQL editor</span>
+          {#if currentView === 'sql' && currentSql.trim() && !attachedSql}
+            <span class="inline-flex h-6 items-center gap-1 rounded-md bg-foreground/[0.06] px-1.5 text-ui-2xs text-muted-foreground" title="The SQL in the editor is part of every question">
+              <CodeXml class="size-3 shrink-0" />Editor SQL
+            </span>
           {/if}
+        </div>
+      {/if}
+
+      {#if attachedSql}
+        <!-- The statement from the editor's Ask AI: goes with the next message. -->
+        <div class="group/att flex items-start gap-2 rounded-lg bg-foreground/[0.05] py-1.5 pl-2 pr-1">
+          <CodeXml class="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+          <pre class="line-clamp-3 min-w-0 flex-1 font-mono text-ui-2xs leading-snug whitespace-pre-wrap break-all text-foreground" title={attachedSql}>{attachedSql}</pre>
+          <button
+            type="button"
+            class="inline-flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            title="Remove the statement"
+            aria-label="Remove the attached statement"
+            onclick={() => { attachedSql = ''; inputRef?.focus() }}
+          ><X class="size-3" /></button>
         </div>
       {/if}
 
@@ -1141,35 +1268,40 @@
         oninput={handleInputChange}
         onkeydown={handleInputKeydown}
         rows="1"
-        placeholder={configured ? 'Ask anything,  @ tables · / commands' : 'Configure a model first'}
+        aria-label="Message"
+        placeholder={!configured ? 'Configure a model first' : attachedSql ? 'Ask about this query, or press Enter to explain it' : 'Ask about your data'}
         disabled={!configured}
-        class="no-focus-ring max-h-40 min-h-[2.25rem] w-full resize-none bg-transparent px-3 pt-2 pb-1 text-ui-xs leading-relaxed text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-60"
+        class="no-focus-ring max-h-40 min-h-[2.25rem] w-full resize-none bg-transparent px-1.5 py-1 font-reading text-ui-xs leading-relaxed text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-60"
       ></textarea>
 
-      <!-- Bottom toolbar -->
-      <div class="flex items-center gap-1 px-2 pb-1.5">
+      <!-- Actions -->
+      <div class="flex items-center gap-0.5">
         <button type="button"
-          class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-muted-foreground"
+          class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           title="Mention a table (@)"
+          aria-label="Mention a table"
           onclick={() => { inputText += '@'; inputRef?.focus(); void tick().then(resizeInput) }}
         ><At class="size-3.5" /></button>
         <button type="button"
-          class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-muted-foreground"
+          class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           title="Quick commands (/)"
+          aria-label="Quick commands"
           onclick={() => { inputText = '/'; slashQuery = ''; slashIdx = 0; slashOpen = true; inputRef?.focus(); void tick().then(resizeInput) }}
         ><Slash class="size-3.5" /></button>
-        <div class="flex-1"></div>
+        <span class="flex-1"></span>
         {#if loading}
-          <button type="button" class="inline-flex size-7 shrink-0 items-center justify-center rounded-lg border border-border/50 bg-background text-foreground/60 transition-colors hover:border-ring/50 hover:text-foreground" onclick={stop} title="Stop">
-            <Square class="size-3 fill-current" />
+          <button type="button" class="inline-flex size-7 shrink-0 items-center justify-center rounded-lg bg-foreground/[0.08] text-foreground transition-[background-color,scale] duration-150 hover:bg-foreground/15 active:scale-[0.96]" onclick={stop} title="Stop" aria-label="Stop">
+            <Square class="size-2.5 fill-current" />
           </button>
         {:else}
+          {@const ready = (inputText.trim() || attachedSql) && configured}
           <button type="button"
-            class={cn('flex size-7 shrink-0 items-center justify-center rounded-lg transition-all', inputText.trim() && configured ? 'bg-primary text-primary-foreground hover:opacity-90' : 'bg-muted/40 text-muted-foreground cursor-not-allowed')}
-            disabled={!inputText.trim() || !configured}
+            class={cn('inline-flex size-7 shrink-0 items-center justify-center rounded-lg transition-[background-color,color,scale] duration-150', ready ? 'bg-primary text-primary-foreground hover:bg-primary/90 active:scale-[0.96]' : 'bg-foreground/[0.06] text-muted-foreground')}
+            disabled={!ready}
             onclick={() => void send()}
             title="Send (Enter)"
-          ><Send class="size-3" /></button>
+            aria-label="Send"
+          ><Send class="size-3.5 -translate-x-px translate-y-px" /></button>
         {/if}
       </div>
     </div>

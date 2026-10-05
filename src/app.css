@@ -450,6 +450,9 @@ html[data-os="linux"]   { --window-radius: 8px; }
      (the Claude preset pairs Inter with a serif); this block is inlined, so the
      utility has to point at a variable the preset can override. */
   --font-heading: var(--heading-font, var(--font-sans));
+  /* Long prose (the AI chat). Follows the sans unless the preset says
+     otherwise: the Mono preset reads chat replies in a proportional face. */
+  --font-reading: var(--reading-font, var(--font-sans));
 }
 
 @layer base {
