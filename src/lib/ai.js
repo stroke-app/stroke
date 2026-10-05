@@ -667,9 +667,17 @@ async function tauriFetch(url, init, signal) {
       controller.close()
     }
 
+    // Stopped while the listeners above were being set up: an abort event that
+    // already fired never reaches a listener added now, so the request went out
+    // anyway and its stream ran to the end with nothing able to end it.
+    if (signal?.aborted) {
+      cleanup()
+      controller.close()
+      return { ok: true, body: readable }
+    }
     signal?.addEventListener('abort', onAbort, { once: true })
 
-    invoke('ai_fetch', { url, apiKey, body, stream: true, requestId, ...(hasExtra ? { extraHeaders } : {}) })
+    invoke('ai_fetch',{ url, apiKey, body, stream: true, requestId, ...(hasExtra ? { extraHeaders } : {}) })
       .then(cleanup)
       .catch((e) => {
         if (!cleanedUp) {
@@ -1081,6 +1089,43 @@ export async function* chatCompletionStream(settings, messages, tools = null, si
       throw err
     }
   }
+}
+
+/**
+ * The history as a provider accepts it: every tool call answered, every tool
+ * answer right after the call it answers.
+ *
+ * Stop can land between a reply that called tools and their results, leaving
+ * calls with no answer, and a stopped turn still settling can append a result
+ * after the next question. Either made every later request in the chat fail
+ * with a 400 about tool call ids. Unanswered calls get a "cancelled" answer;
+ * answers with no call before them are dropped. The stored history is not
+ * changed - this is the copy a request sends.
+ * @param {ApiMessage[]} history
+ * @returns {ApiMessage[]}
+ */
+export function repairToolPairs(history) {
+  /** @type {ApiMessage[]} */
+  const out = []
+  for (let i = 0; i < history.length; i++) {
+    const m = history[i]
+    if (m.role === 'tool') continue // placed with its call, below
+    out.push(m)
+    const calls = m.role === 'assistant' && Array.isArray(m.tool_calls) ? m.tool_calls : []
+    if (!calls.length) continue
+    /** @type {Map<string, ApiMessage>} */
+    const answers = new Map()
+    let j = i + 1
+    for (; j < history.length && history[j].role === 'tool'; j++) {
+      const id = String(history[j].tool_call_id ?? '')
+      if (!answers.has(id)) answers.set(id, history[j])
+    }
+    for (const c of calls) {
+      out.push(answers.get(c.id) ?? { role: 'tool', tool_call_id: c.id, content: JSON.stringify({ cancelled: true, reason: 'Stopped by the user before this ran.' }) })
+    }
+    i = j - 1
+  }
+  return out
 }
 
 /**

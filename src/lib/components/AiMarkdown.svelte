@@ -6,6 +6,7 @@
   import { cn } from '$lib/utils.js'
   import { shortcutKeys } from '$lib/kbd-text.js'
   import { escapeHtml } from '$lib/json-inspector.js'
+  import { safeRawHtml, isSafeHref } from '$lib/markdown-safe.js'
 
   let {
     content = '',
@@ -24,10 +25,16 @@
   const renderer = new marked.Renderer()
   renderer.image = ({ href, title, text }) => {
     const url = href ?? ''
-    const label = text || title || url.split('/').pop()?.split('?')[0] || 'image'
-    const escaped = url.replace(/"/g, '&quot;')
+    const label = escapeHtml(text || title || url.split('/').pop()?.split('?')[0] || 'image')
+    if (!isSafeHref(url)) return label
+    const escaped = escapeHtml(url).replace(/"/g, '&quot;')
     return `<a href="${escaped}" target="_blank" rel="noopener noreferrer" class="prose-ai-img-link" title="${escaped}">${label}</a>`
   }
+  // The reply is the model's text, not markup for the app: raw HTML in it
+  // shows as text (see markdown-safe.js), and links go only to web or mail.
+  renderer.html = ({ text }) => safeRawHtml(text)
+  const link = renderer.link.bind(renderer)
+  renderer.link = (token) => (isSafeHref(token.href) ? link(token) : renderer.parser.parseInline(token.tokens))
   // A shortcut in backticks renders as key caps; everything else stays code.
   // The `+` stays as text between the caps so a copy reads `Ctrl+Shift+P`.
   const codespan = renderer.codespan.bind(renderer)

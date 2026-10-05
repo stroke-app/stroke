@@ -70,6 +70,7 @@
     toolsForTurn,
     titleFromMessage,
     historyBudget,
+    repairToolPairs,
   } from "$lib/ai.js";
   import { chartRows } from "$lib/ai-chart-data.js";
   import {
@@ -737,6 +738,14 @@
   let streamingId = $state(/** @type {string | null} */ (null));
   /** AbortController for the in-flight fetch; replaced each send() call */
   let abortController = /** @type {AbortController | null} */ (null);
+  /**
+   * Which turn owns the transcript's live state. Stop and every new turn bump
+   * it; a turn whose number is no longer current leaves the UI alone. Without
+   * it a stopped turn still settling (a slow query, a stream the provider kept
+   * sending) went on writing into the next one and, finishing, cleared its
+   * controller and spinner: the turn after that could not be stopped.
+   */
+  let turnSeq = 0;
 
   /** rAF handle for scroll debouncing during streaming */
   let rafId = /** @type {number | null} */ (null);
@@ -792,30 +801,51 @@
     pinToBottom();
   }
 
+  /**
+   * End the running turn on screen, now, whatever it is waiting on.
+   *
+   * This used to return unless a live, un-aborted controller was in place, so
+   * any path that left the spinner up without one (a run from a code block, a
+   * turn cleared by an older one finishing) had a Stop button and an Escape
+   * that did nothing. The UI is finalised here and the turn is disowned; the
+   * work still in flight drops its results when it lands.
+   */
   function stop() {
-    if (!abortController || abortController.signal.aborted) return;
-    abortController.abort();
-    // Flush any buffered content before reading it
-    flushStreamingContent();
-    // Immediately finalize UI - don't wait for the async finally block
-    const partial = streamingContent.trim();
-    const sid = streamingId;
-    loading = false;
-    streamingContent = "";
-    streamingId = null;
-    items = items
-      .filter((i) => i.kind !== "thinking" && i.kind !== "executing")
-      .map((i) => {
-        if (sid && i.id === sid) {
-          return /** @type {ChatItem} */ ({
-            id: sid,
-            kind: "assistant",
-            parts: parseAssistantMessage(partial || "…"),
-          });
-        }
-        return i;
-      })
-      .filter((i) => i.kind !== "streaming");
+    if (!loading && !abortController) return;
+    turnSeq++;
+    const ctrl = abortController;
+    abortController = null;
+    try {
+      ctrl?.abort();
+      // A pending confirm would hold the tool loop forever: answer it as declined.
+      for (const i of items.filter((i) => i.kind === "confirm")) i.resolve(false);
+      flushStreamingContent();
+      const partial = streamingContent.trim();
+      const sid = streamingId;
+      items = items
+        .filter((i) => i.kind !== "thinking" && i.kind !== "executing")
+        .map((i) =>
+          sid && i.id === sid
+            ? /** @type {ChatItem} */ ({
+                id: sid,
+                kind: "assistant",
+                parts: parseAssistantMessage(partial || "…"),
+                ts: Date.now(),
+              })
+            : i,
+        )
+        .filter((i) => i.kind !== "streaming");
+    } finally {
+      if (_streamTimer !== null) {
+        clearTimeout(_streamTimer);
+        _streamTimer = null;
+      }
+      _pendingStreamContent = "";
+      streamingContent = "";
+      streamingId = null;
+      aiStatusHint = "";
+      loading = false;
+    }
   }
 
   function abortCurrentRequest() {
@@ -829,6 +859,7 @@
     for (const i of items.filter((i) => i.kind === "confirm")) {
       i.resolve(false);
     }
+    turnSeq++;
     if (abortController) {
       abortController.abort();
       abortController = null;
@@ -1646,7 +1677,11 @@
     await scrollBottom();
 
     loading = true;
-    abortController = new AbortController();
+    const turn = ++turnSeq;
+    const ctrl = new AbortController();
+    abortController = ctrl;
+    /** Stopped, or replaced by a newer turn: leave the shared state alone. */
+    const disowned = () => turn !== turnSeq;
     executedCalls = new Set();
     failureTracker = new Map();
 
@@ -1660,6 +1695,7 @@
     if (looksLikeDataQuery) {
       aiStatusHint = "Analyzing schema…";
       await ensureFullSchemaCache();
+      if (disowned()) return;
       aiStatusHint = "";
     }
 
@@ -1685,6 +1721,7 @@
       if (keys.length) {
         aiStatusHint = "Reading sample rows…";
         await ensureSampleRows(keys);
+        if (disowned()) return;
         aiStatusHint = "";
       }
     }
@@ -1723,10 +1760,11 @@
       {
         ...historyBudget(settings),
         onStatus: (msg) => {
-          aiStatusHint = msg;
+          if (!disowned()) aiStatusHint = msg;
         },
       },
     );
+    if (disowned()) return;
     const managedLen = managedHistory.length;
     if (summarized) {
       apiHistory = managedHistory;
@@ -1738,15 +1776,24 @@
     const isFirstTurn =
       rawApiHistory.filter((m) => m.role === "user").length === 1;
     try {
-      await runAiTurn(0);
+      await runAiTurn(0, ctrl);
+      if (disowned()) return;
       // Append all messages added during this turn to the full uncompressed history
       rawApiHistory.push(...apiHistory.slice(managedLen));
       await persistCurrent();
       // Generate AI title after the first turn, in the background
       if (isFirstTurn) void generateAiTitle();
     } catch (e) {
-      if (/** @type {any} */ (e)?.name !== "AbortError") error = String(e);
+      if (/** @type {any} */ (e)?.name !== "AbortError" && !disowned()) error = String(e);
     } finally {
+      // Stop already finalised the screen, and a newer turn may own it now.
+      if (!disowned()) await finishTurn();
+    }
+  }
+
+  /** Close out the current turn's UI: the streamed reply kept, indicators gone. */
+  async function finishTurn() {
+    try {
       // Flush any rAF-buffered content before reading it
       flushStreamingContent();
       // Finalize any in-progress streaming item (abort or error mid-stream)
@@ -1773,12 +1820,14 @@
           (i) => i.kind !== "thinking" && i.kind !== "executing",
         );
       }
+    } finally {
+      // Whatever went wrong above, the spinner and Stop must not outlive the turn.
       abortController = null;
       loading = false;
       openResultId = null;
-      await tick();
-      inputRef?.focus();
     }
+    await tick();
+    inputRef?.focus();
   }
 
   /** Max rows fetched from DB per AI tool call - prevents OOM on large tables */
@@ -1802,19 +1851,23 @@
     return { sql: `${cleaned}\nLIMIT ${AI_ROW_LIMIT}`, capped: true };
   }
 
-  /** @param {number} depth */
-  async function runAiTurn(depth) {
+  /**
+   * @param {number} depth
+   * @param {AbortController} ctrl this turn's own controller. It used to read
+   *   the shared one, so a stopped turn that was still settling picked up the
+   *   NEXT turn's live controller and carried on as if nothing had happened.
+   */
+  async function runAiTurn(depth, ctrl) {
     if (depth > 40)
       throw new Error("Too many AI iterations, aborting runaway execution");
-    // A null controller means the turn was aborted or finalized - the chain can
-    // resume here after a declined confirm, so treat it the same as an abort.
-    if (!abortController || abortController.signal.aborted)
+    // The chain can resume here after a declined confirm, so check first.
+    if (ctrl.signal.aborted)
       throw Object.assign(new Error("Aborted"), { name: "AbortError" });
 
     // Space out follow-up turns after tool calls to avoid burst rate limits
     if (depth > 0) {
       await new Promise((r) => setTimeout(r, 300));
-      if (!abortController || abortController.signal.aborted)
+      if (ctrl.signal.aborted)
         throw Object.assign(new Error("Aborted"), { name: "AbortError" });
     }
 
@@ -1826,10 +1879,11 @@
 
     for await (const chunk of chatCompletionStream(
       settings,
-      [{ role: "system", content: turnSystemPrompt }, ...apiHistory],
+      [{ role: "system", content: turnSystemPrompt }, ...repairToolPairs(apiHistory)],
       turnTools,
-      abortController?.signal,
+      ctrl.signal,
       ({ attempt, waitMs, status, model }) => {
+        if (ctrl.signal.aborted) return;
         if (model) {
           aiStatusHint = `Busy, trying ${modelDisplayName({ model }).split(",")[0]} instead…`;
           return;
@@ -1839,6 +1893,8 @@
         aiStatusHint = `${why}, retrying in ${sec}s (attempt ${attempt}/${MAX_AI_RETRIES})…`;
       },
     )) {
+      // A provider can keep streaming after Stop; nothing more reaches the screen.
+      if (ctrl.signal.aborted) break;
       if (chunk.textDelta) {
         aiStatusHint = "";
         fullContent += chunk.textDelta;
@@ -1864,7 +1920,7 @@
     }
 
     // Bail out immediately if the user stopped generation - stop() already finalized UI
-    if (!abortController || abortController.signal.aborted) {
+    if (ctrl.signal.aborted) {
       throw Object.assign(new Error("Aborted"), { name: "AbortError" });
     }
 
@@ -1898,14 +1954,16 @@
         tool_calls: toolCalls,
       });
       for (const call of toolCalls) {
-        await runToolCall(call);
+        await runToolCall(call, ctrl);
       }
+      if (ctrl.signal.aborted)
+        throw Object.assign(new Error("Aborted"), { name: "AbortError" });
       // The next turn is the model interpreting the tool output - show that as a
       // distinct phase instead of a generic "Thinking…". Cleared when it streams.
       aiStatusHint = "Reviewing results…";
       items.push(/** @type {ChatItem} */ ({ id: uid(), kind: "thinking" }));
       scrollBottomSoon();
-      await runAiTurn(depth + 1);
+      await runAiTurn(depth + 1, ctrl);
     } else if (fullContent) {
       apiHistory.push({ role: "assistant", content: fullContent });
       // Fallback: if no streaming item was created (non-streaming endpoint), add it now
@@ -1934,11 +1992,14 @@
     }
   }
 
-  /** @param {import('$lib/ai.js').ToolCall} call */
-  async function runToolCall(call) {
+  /**
+   * @param {import('$lib/ai.js').ToolCall} call
+   * @param {AbortController} ctrl the turn's own controller
+   */
+  async function runToolCall(call, ctrl) {
     // The tool loop can resume here after an abort resolves a pending confirm -
     // answer the call as cancelled instead of executing it for a dead turn.
-    if (!abortController || abortController.signal.aborted) {
+    if (ctrl.signal.aborted) {
       apiHistory.push({
         role: "tool",
         tool_call_id: call.id,
@@ -2541,6 +2602,10 @@
       if (!confirmed) return;
     }
     loading = true;
+    // Owned like a turn, so Stop frees the composer (the statement itself
+    // cannot be recalled once sent) and a later turn is not cleared by this
+    // one finishing.
+    const turn = ++turnSeq;
     const execId = uid();
     items.push(
       /** @type {ChatItem} */ ({
@@ -2588,7 +2653,7 @@
       autoOpenResult(sqlErrId);
       await scrollBottom();
     } finally {
-      loading = false;
+      if (turn === turnSeq) loading = false;
     }
   }
 
