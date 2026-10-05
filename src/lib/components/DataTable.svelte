@@ -100,7 +100,6 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     buildDeleteStatements,
     buildInsertStatements,
   } from "$lib/dml-preview.js";
-  import { formatSql } from "$lib/format-sql.js";
   import * as Dialog from "$lib/components/ui/dialog/index.js";
   import * as Select from "$lib/components/ui/select/index.js";
   import DmlReviewPanel from "./DmlReviewPanel.svelte";
@@ -483,13 +482,39 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     dmlPanel?.focus();
   }
 
+  // sql-formatter is ~250 KB, and this grid is on the startup path: it loads
+  // once the app is idle instead, so a review still opens formatted, in the
+  // same frame, and stays synchronous for the rebuild effect below.
+  /** @type {((sql: string) => string) | null} */
+  let formatSqlFn = null;
+  /** @type {Promise<(sql: string) => string> | null} */
+  let formatterLoad = null;
+  function loadFormatter() {
+    formatterLoad ??= import("$lib/format-sql.js").then((m) => (formatSqlFn = m.formatSql));
+    return formatterLoad;
+  }
+  $effect(() => {
+    const idle = window.requestIdleCallback ?? ((/** @type {() => void} */ cb) => setTimeout(cb, 1500));
+    idle(() => void loadFormatter().catch(() => {}));
+  });
+
   /** @param {DmlReview} config */
   function showDmlReview(config) {
     const wasEdited = dmlPreview !== null && dmlWasEdited;
     dmlPreview = config;
     // Prettify the generated statements for a readable, editable preview.
-    dmlOriginalSql = formatSql(config.statements.join("\n"));
+    const raw = config.statements.join("\n");
+    dmlOriginalSql = formatSqlFn ? formatSqlFn(raw) : raw;
     if (!wasEdited) dmlEditedSql = dmlOriginalSql;
+    if (formatSqlFn) return;
+    // A review in the first moments after startup: the raw SQL until the
+    // formatter lands, then the formatted one unless it was edited meanwhile.
+    void loadFormatter().then((fmt) => {
+      if (dmlPreview !== config || dmlOriginalSql !== raw) return;
+      const pretty = fmt(raw);
+      if (dmlEditedSql === raw) dmlEditedSql = pretty;
+      dmlOriginalSql = pretty;
+    }).catch(() => {});
   }
 
   /** @param {{ refocus?: boolean }} [opts] */
@@ -2045,7 +2070,9 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   async function copyPendingChangeSql() {
     const { statements, editEntries, deleteIndices, insertValues } = pendingChangeSql();
     if (!statements.length) return;
-    const ok = await writeClipboard(formatSql(statements.join("\n")));
+    const raw = statements.join("\n");
+    const fmt = formatSqlFn ?? (await loadFormatter().catch(() => null));
+    const ok = await writeClipboard(fmt ? fmt(raw) : raw);
     if (!ok) { toast.error("Could not copy to clipboard"); return; }
     const parts = [];
     if (editEntries.length) parts.push(`${editEntries.length} update${editEntries.length === 1 ? "" : "s"}`);
