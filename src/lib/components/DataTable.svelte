@@ -64,7 +64,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     defaultColumnWidth,
   } from "$lib/table-column-widths.js";
   import { formatCompactCount } from "$lib/table-list.js";
-  import { keycaps } from "$lib/shortcuts.js";
+  import { keycaps, comboTitle } from "$lib/shortcuts.js";
   import { cn } from "$lib/utils.js";
   import { buildQuickFilter } from "$lib/quick-filter.js";
   import {
@@ -8101,8 +8101,8 @@ import FilterX from "@lucide/svelte/icons/filter-x";
                         title={missingHere.length
                           ? `${missingHere.length} required field${missingHere.length === 1 ? '' : 's'} still empty: ${missingHere.join(', ')}`
                           : di === 0 && draftCount > 1
-                            ? `Insert all ${draftCount} rows (⌘↵)`
-                            : 'Insert this row (⌘↵)'}
+                            ? `Insert all ${draftCount} rows (${comboTitle('Mod+Enter')})`
+                            : `Insert this row (${comboTitle('Mod+Enter')})`}
                       />
                     {/if}
                   </div>

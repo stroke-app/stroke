@@ -1,4 +1,5 @@
 <script>
+  import { comboTitle } from '$lib/shortcuts.js'
   import { untrack } from "svelte";
   import { getAppScale } from '$lib/app-zoom.js';
   import { createHotkey } from "@tanstack/svelte-hotkeys";
@@ -45,6 +46,9 @@
 
   let {
     connectionName = "",
+    /** A table tab is open: Mod+Alt+Left/Right there jumps to its first / last
+     *  column, and cycles these sections only while focus is in the sidebar. */
+    tableNav = false,
     /** Which sidebar panel is showing: 'tables' | 'connections' | 'extensions'. */
     navSidebarPanel = "tables",
     /** Saved connections list (Connections panel). @type {import('$lib/stores/connections.js').SavedConnection[]} */
@@ -488,9 +492,6 @@
    * ⌘1-9 is already "go to editor tab" and ⌘⌥1-9 is "switch saved connection",
    * so neither of those ranges was free.
    */
-  const modLabel =
-    typeof navigator !== 'undefined' && /mac/i.test(navigator.platform) ? '\u2318' : 'Ctrl+'
-
   /** @param {number} delta */
   function cycleSidebarTab(delta) {
     const i = SIDEBAR_TABS.findIndex((t) => t.id === sidebarTab)
@@ -504,13 +505,16 @@
       sidebarTab = tab.id
     })
   })
+  /** Mod+Alt+Left/Right is the table's (first / last column) unless focus is here. */
+  const yieldsArrowNav = () =>
+    tableNav && !(document.activeElement instanceof Element && document.activeElement.closest('[data-studio-region="sidebar"]'))
   createHotkey('Mod+Alt+ArrowRight', (e) => {
-    if (!connectionName) return
+    if (!connectionName || yieldsArrowNav()) return
     e.preventDefault()
     cycleSidebarTab(1)
   })
   createHotkey('Mod+Alt+ArrowLeft', (e) => {
-    if (!connectionName) return
+    if (!connectionName || yieldsArrowNav()) return
     e.preventDefault()
     cycleSidebarTab(-1)
   })
@@ -1297,7 +1301,7 @@
                 data-roving
                 aria-selected={active}
                 aria-label={count > 0 ? `${tab.label}, ${count}` : tab.label}
-                title={`${tab.label} · ${modLabel}⇧${SIDEBAR_TABS.indexOf(tab) + 1}`}
+                title={`${tab.label} · ${comboTitle(`Mod+Shift+${SIDEBAR_TABS.indexOf(tab) + 1}`)}`}
                 tabindex={active ? 0 : -1}
                 disabled={!connectionName}
                 class={cn(
@@ -1456,7 +1460,7 @@
           <button
             type="button"
             class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40"
-            title="Refresh tables (⌘R)"
+            title={`Refresh tables (${comboTitle('Mod+R')})`}
             disabled={loadingTables || !connectionName}
             onclick={onrefresh}
           >

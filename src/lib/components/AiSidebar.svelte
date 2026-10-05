@@ -1,4 +1,5 @@
 <script>
+  import { comboTitle } from '$lib/shortcuts.js'
   import { tick, onMount, onDestroy } from "svelte";
   import { getAppScale } from '$lib/app-zoom.js';
   import Sparkles from "@lucide/svelte/icons/sparkles";
@@ -883,7 +884,7 @@
       ><History class="size-3.5" /></button>
       <button type="button"
         class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-        title="Close (⌘I)"
+        title={`Close (${comboTitle('Mod+I')})`}
         aria-label="Close the assistant"
         onclick={onclose}
       ><X class="size-3.5" /></button>

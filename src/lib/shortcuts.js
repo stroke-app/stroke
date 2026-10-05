@@ -45,6 +45,23 @@ export function keycaps(combo) {
   return combo.split('+').map((part) => GLYPH[part] ?? KEYCAP[part] ?? part)
 }
 
+/** Keys a tooltip spells out in words off macOS, where the glyphs are not the convention. */
+const TITLE_WORD = /** @type {Record<string, string>} */ ({
+  Mod: 'Ctrl', Meta: 'Win', Shift: 'Shift', Enter: 'Enter', Backspace: 'Backspace', Escape: 'Esc',
+  Up: '↑', Down: '↓', Left: '←', Right: '→', ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→',
+})
+
+/**
+ * A combo as tooltip text: `⌘⇧P` on macOS, `Ctrl+Shift+P` elsewhere. One
+ * spelling per platform for every title in the app - they were written out
+ * by hand, half of them as ⌘ glyphs that Windows and Linux showed as they are.
+ * @param {string} combo
+ */
+export function comboTitle(combo) {
+  if (IS_MAC) return keycaps(combo).map((k) => TITLE_WORD[k] && k.startsWith('Arrow') ? TITLE_WORD[k] : k).join('')
+  return combo.split('+').map((part) => TITLE_WORD[part] ?? part).join('+')
+}
+
 /**
  * A combo as flat text, for searching. Includes both the printed keycaps and
  * the written names, so "cmd b", "⌘ b" and "mod b" all find the same row.
@@ -87,7 +104,7 @@ export const SHORTCUT_GROUPS = [
       { combo: 'Alt+Shift+T', desc: 'Toggle tab bar' },
       { combo: 'Mod+B', desc: 'Toggle sidebar' },
       { combo: 'Mod+Shift+1-6', desc: 'Sidebar tabs, in order: Tables, Databases, Queries, and the rest' },
-      { combo: 'Mod+Alt+Left/Right', desc: 'Cycle sidebar sections' },
+      { combo: 'Mod+Alt+Left/Right', desc: 'Cycle sidebar sections (in a table, from the sidebar only: there it is first / last column)' },
       { combo: 'Mod+Shift+F', desc: 'Focus table filter' },
       { combo: 'Shift+Enter', desc: 'Sidebar: open the table and focus the grid' },
       { combo: 'Mod+D', desc: 'Switch database' },
@@ -147,7 +164,7 @@ export const SHORTCUT_GROUPS = [
     icon: 'code-2',
     shortcuts: [
       { combo: 'Mod+Enter', desc: 'Run query' },
-      { combo: 'Mod+S', desc: 'Format code' },
+      { combo: 'Mod+S', desc: 'Re-indent the code' },
     ],
   },
   {
@@ -221,8 +238,8 @@ export const SHORTCUT_GROUPS = [
     icon: 'palette',
     shortcuts: [
       { combo: 'Mod+B', desc: 'Toggle sidebar' },
-      { combo: 'Mod+Shift+T', desc: 'Toggle tab bar' },
-      { combo: 'Mod+Shift+B', desc: 'Toggle status bar' },
+      { combo: 'Alt+Shift+T', desc: 'Toggle tab bar' },
+      { combo: 'Mod+Shift+B', desc: 'Toggle status bar (the SQL editor and AI chat use it for their lists)' },
       { combo: 'Mod+M', desc: 'Cycle theme' },
       { combo: 'Mod+Shift+M', desc: 'Previous theme' },
       { combo: 'Mod+Plus', desc: 'Zoom in' },

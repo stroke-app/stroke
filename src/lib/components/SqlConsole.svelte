@@ -599,10 +599,9 @@
         e.preventDefault()
         toggleHistory()
         onmodshiftb?.()
-      } else if (e.key === 's' && !e.shiftKey) {
-        e.preventDefault()
-        void saveQuery()
       }
+      // Mod+S is the shell's (it saves this query from anywhere in the tab):
+      // handling it here as well saved the query twice.
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)

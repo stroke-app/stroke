@@ -1451,27 +1451,26 @@
       void send();
       return;
     }
-    // Ctrl/Cmd + Z → undo
-    if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) {
+    // Ctrl/Cmd + Z → undo. The key is lower-cased: with Shift held it arrives
+    // as "Z", so the redo chord below never matched.
+    const k = e.key.toLowerCase();
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && k === "z" && !e.shiftKey) {
       e.preventDefault();
       undoInput();
       return;
     }
     // Ctrl/Cmd + Shift + Z  or  Ctrl + Y → redo
     if (
-      ((e.ctrlKey || e.metaKey) && e.key === "z" && e.shiftKey) ||
-      (e.ctrlKey && e.key === "y")
+      ((e.ctrlKey || e.metaKey) && !e.altKey && k === "z" && e.shiftKey) ||
+      (e.ctrlKey && !e.altKey && k === "y")
     ) {
       e.preventDefault();
       redoInput();
       return;
     }
-    // Ctrl/Cmd + Backspace → clear the entire input
-    if (e.key === "Backspace" && (e.ctrlKey || e.metaKey)) {
-      e.preventDefault();
-      inputText = "";
-      resetInputHeight();
-    }
+    // Ctrl/Cmd + Backspace is left to the field: a word on Windows and Linux,
+    // the line on macOS, as in every other box in the app. It used to clear the
+    // whole message, which on Windows is where you reach to delete one word.
   }
 
   /**

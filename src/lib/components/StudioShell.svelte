@@ -2477,7 +2477,15 @@ let rowSearch = $state('')
     // The schema diagram's own search, for whichever of its views is up. The
     // sidebar's filter used to take the key on this page.
     if (activeTab?.kind === 'erd') { e.preventDefault(); void erdTabPage?.focusSearch?.(); return }
-    if (activeTab?.kind !== 'table' || !activeTable) return
+    if (activeTab?.kind !== 'table' || !activeTable) {
+      // A page with no search of its own finds in the sidebar. The sidebar's
+      // listener meant to do that, but this hotkey marks the key handled first,
+      // so it never ran. The schema page and the SQL tab keep theirs.
+      if (activeTab?.kind === 'schema' || activeTab?.kind === 'sql') return
+      const filter = document.querySelector('[data-sidebar-filter]')
+      if (filter instanceof HTMLInputElement && filter.offsetParent) { e.preventDefault(); filter.focus(); filter.select() }
+      return
+    }
     e.preventDefault()
     if (dataViewMode === 'erd' && erdPane?.focusSearch) { void erdPane.focusSearch(); return }
     tableToolbar?.focusRowSearch?.()
@@ -2591,6 +2599,10 @@ let rowSearch = $state('')
   }
 
   createHotkey('Mod+Shift+B', (e) => {
+    // The SQL editor (History) and the AI chat (conversation list) bind it for
+    // their own lists. Both listen beside this one, so it toggled the status bar
+    // as well as the list.
+    if (aiMode || activeTab?.kind === 'sql') return
     e.preventDefault()
     toggleStatusBar()
   })
@@ -2598,6 +2610,9 @@ let rowSearch = $state('')
   // Reopen the most recently closed tab (browser-style).
   createHotkey('Mod+Shift+T', (e) => {
     if (!connection) return
+    // In the AI chat it starts a new conversation; reopening a tab behind it as
+    // well was the same key doing two things.
+    if (aiMode) return
     e.preventDefault()
     reopenLastClosedTab()
   })
@@ -2968,6 +2983,8 @@ let rowSearch = $state('')
   createHotkey('Mod+R', (e) => {
     if (!connection) return
     if (commandOpen || showConnectionModal || showSettingsModal) return
+    // The schema page refreshes itself on Mod+R (its own listener).
+    if (activeTab?.kind === 'schema') return
     // Inside a SQL editor Mod+R is the editor's own (run the statement at the
     // cursor). Hotkeys with a modifier fire in editable fields too, so this ran
     // right after it and started the WHOLE buffer, replacing that run.
@@ -3046,8 +3063,9 @@ let rowSearch = $state('')
       ) return
 
       // Ctrl/Cmd+Alt+Left/Right → scroll grid to the first / last column.
+      // From the sidebar the same chord cycles its sections instead.
       if (e.altKey) {
-        if (activeTab?.kind !== 'table' || !activeTable) return
+        if (activeTab?.kind !== 'table' || !activeTable || isFocusInRegion('sidebar')) return
         if (e.key === 'ArrowLeft') { e.preventDefault(); scrollTableLeft(); return }
         if (e.key === 'ArrowRight') { e.preventDefault(); scrollTableRight(); return }
         return
@@ -8079,6 +8097,7 @@ let rowSearch = $state('')
           </div>
         {/snippet}
       <Sidebar
+        tableNav={activeTab?.kind === 'table' && !!activeTable}
         bind:openFindReplace={sidebarOpenFindReplace}
         bind:showTablesTab={sidebarShowTables}
         frColumns={columns}

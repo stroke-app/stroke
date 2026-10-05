@@ -1,4 +1,5 @@
 <script>
+  import { comboTitle } from '$lib/shortcuts.js'
   import { onMount } from 'svelte'
   import { getAppScale } from '$lib/app-zoom.js'
   import X from '@lucide/svelte/icons/x'
@@ -136,7 +137,7 @@
     <button
       type="button"
       class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground"
-      title="Close (⌘⇧L)"
+      title={`Close (${comboTitle('Mod+Shift+L')})`}
       onclick={onclose}
     ><X class="size-3" /></button>
   </div>

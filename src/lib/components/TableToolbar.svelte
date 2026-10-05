@@ -11,13 +11,13 @@
   import { getColumnEnumValues } from "$lib/cell-value.js";
   import { slotRoll } from "$lib/actions/slot-text.js";
   import { cn } from "$lib/utils.js";
-  import { IS_MAC, keycaps } from "$lib/shortcuts.js";
+  import { IS_MAC, keycaps, comboTitle } from "$lib/shortcuts.js";
   import Kbd from "./Kbd.svelte";
   /** Tooltip keycaps. A control that has a shortcut should say so where the
    *  pointer already is - the shortcuts dialog is where you look when you do not
    *  know a key exists, not when you are already on the button. */
   const KEY = {
-    search: IS_MAC ? "⌘F" : "Ctrl+F",
+    search: comboTitle('Mod+F'),
     filter: IS_MAC ? "⌥A" : "Alt+A",
     sort: IS_MAC ? "⌥S" : "Alt+S",
     columns: IS_MAC ? "⌥C" : "Alt+C",

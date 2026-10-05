@@ -1,4 +1,5 @@
 <script>
+  import { comboTitle } from '$lib/shortcuts.js'
   import Kbd from './Kbd.svelte'
   import { startTelemetry, stopTelemetry } from "$lib/telemetry.js";
   import Minus from "@lucide/svelte/icons/minus";
@@ -985,7 +986,7 @@
     {@render switchRow('Vim mode', 'Experimental: modal keyboard navigation (hjkl, gg/G, i/Esc) across the grid, the SQL editor, and tabs', settings.vimMode, toggleVimMode)}
   {/if}
   {#if show('Cmd+K AI', 'Experimental, ask AI directly from the command palette')}
-    {@render switchRow('⌘K AI (experimental)', 'Experimental, show "Ask AI" in the ⌘K command palette. Off by default.', settings.cmdkAiEnabled, toggleCmdkAi)}
+    {@render switchRow(`${comboTitle('Mod+K')} AI (experimental)`, `Experimental, show "Ask AI" in the ${comboTitle('Mod+K')} command palette. Off by default.`, settings.cmdkAiEnabled, toggleCmdkAi)}
   {/if}
   {#if show('Live mode', 'Experimental, auto-refresh the active table when its data changes')}
     {@render switchRow('Live mode (experimental)', 'Experimental, show the Live auto-refresh toggle in the status bar. Off by default.', settings.liveModeEnabled, toggleLiveMode)}
@@ -1408,7 +1409,7 @@
   {#if show('Menu bar', 'File, Edit, View, Tools and Help in the title bar')}
     {@render switchRow(
       'Menu bar',
-      'Show File, Edit, View, Tools and Help in the title bar. All of it is also in ⌘K.',
+      `Show File, Edit, View, Tools and Help in the title bar. All of it is also in ${comboTitle('Mod+K')}.`,
       settings.showMenuBar,
       toggleMenuBar,
     )}
