@@ -1,6 +1,7 @@
 <script>
   import { renderMermaidSync } from 'beautiful-mermaid'
   import { normalizeThemeId } from '$lib/themes/registry.js'
+  import { liveMermaidTheme } from '$lib/mermaid-theme.js'
   import { cn } from '$lib/utils.js'
   import { svgToPngBlob, downloadBlob, copyPngToClipboard } from '$lib/svg-png.js'
 
@@ -13,23 +14,8 @@
 
   // ── Theme helpers ───────────────────────────────────────────────────────────
 
-  /**
-   * The diagram's colours, read off the app's own theme tokens, so the picture
-   * sits on the page like any other surface in every theme. A fixed palette
-   * per theme drifted from the themes it was copied from and gave themes
-   * without an entry the generic grey. Read as values rather than var()
-   * references, so an exported SVG or PNG keeps them away from the app.
-   */
-  function resolveMermaidTheme() {
-    const cs = getComputedStyle(document.documentElement)
-    const v = (/** @type {string} */ name) => cs.getPropertyValue(name).trim()
-    /** @type {{ bg: string, fg: string, muted?: string, border?: string, line?: string, accent?: string }} */
-    const theme = { bg: v('--background') || '#1c1c1c', fg: v('--foreground') || '#f0f0f0' }
-    const muted = v('--muted-foreground'), border = v('--border')
-    if (muted) theme.muted = muted
-    if (border) theme.border = border
-    return theme
-  }
+  /** The diagram's colours: the app theme's tokens (mermaid-theme.js). */
+  const resolveMermaidTheme = liveMermaidTheme
 
   /** @param {SVGSVGElement} svg @param {ReturnType<typeof resolveMermaidTheme>} theme */
   function applyMermaidThemeVars(svg, theme) {

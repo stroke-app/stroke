@@ -18,7 +18,8 @@
    * @property {string} [placeholder]
    * @property {string} [ariaLabel]
    * @property {import('@codemirror/view').KeyBinding[]} [keys] Extra bindings, checked first.
-   * @property {'' | 'sql'} [lang] Force a language. Empty guesses from the text.
+   * @property {string} [lang] Force a language by id ('sql', 'json', 'typescript', 'csv',
+   *   'prisma', 'plaintext' ... - see cm-languages.js). Empty guesses JSON or markup from the text.
    * @property {string} [dialect] SQL dialect for `lang="sql"` (the app's Dialect ids).
    * @property {import('$lib/sql-complete-data.js').SqlSchemaHints} [sqlHints]
    *   Schemas, tables, columns, enums and functions for SQL completion.
@@ -26,7 +27,7 @@
    *   own gutters, keymaps, lint). Reconfigured in place when the value changes.
    */
   import { onMount, onDestroy } from 'svelte'
-  import { EditorState, Compartment } from '@codemirror/state'
+  import { EditorState, Compartment, Prec } from '@codemirror/state'
   import {
     EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter,
     drawSelection, placeholder as placeholderExt, tooltips,
@@ -36,16 +37,17 @@
     SearchQuery, setSearchQuery, getSearchQuery, findNext, findPrevious, replaceNext, replaceAll as replaceAllMatches,
   } from '@codemirror/search'
   import { history, defaultKeymap, historyKeymap, insertTab } from '@codemirror/commands'
-  import { HighlightStyle, syntaxHighlighting, bracketMatching, foldGutter, codeFolding } from '@codemirror/language'
+  import { HighlightStyle, syntaxHighlighting, bracketMatching, foldGutter, codeFolding, foldKeymap, foldAll, unfoldAll } from '@codemirror/language'
   import { json } from '@codemirror/lang-json'
   import { html } from '@codemirror/lang-html'
   import { sql } from '@codemirror/lang-sql'
   import { sqlDialectFor } from '$lib/cm-sql-dialects.js'
+  import { languageExtension } from '$lib/cm-languages.js'
   import {
     autocompletion, acceptCompletion, closeBrackets, closeBracketsKeymap, completionStatus, closeCompletion,
-    snippetKeymap, nextSnippetField, prevSnippetField, clearSnippet,
+    snippetKeymap, nextSnippetField, prevSnippetField, clearSnippet, completionKeymap,
   } from '@codemirror/autocomplete'
-  import { sqlCompletionSource } from '$lib/cm-sql-complete.js'
+  import { sqlCompletionSource, enterPastTypedWord } from '$lib/cm-sql-complete.js'
   import { ArrowDown01Icon, ArrowRight01Icon } from '@hugeicons/core-free-icons'
   import { hugeSvg } from '$lib/cm-huge-icon.js'
   import { tags as t } from '@lezer/highlight'
@@ -65,6 +67,8 @@
     folding = true,
     /** SQL: open the completion list while typing (Ctrl+Space works regardless). */
     suggestWhileTyping = true,
+    /** SQL: Enter takes the highlighted suggestion. Off, only Tab does. */
+    acceptOnEnter = true,
     /** Called with the new text on every edit (the same string `value` gets). */
     onchange = /** @type {((text: string) => void) | undefined} */ (undefined),
     extensions = [],
@@ -112,12 +116,13 @@
 
 
 
-  /** JSON by its first character, markup by an early tag; everything else plain. */
+  /** The language asked for; without one, JSON by its first character, markup by an early tag. */
   function languageFor(/** @type {string} */ text) {
     if (longestLine(text) > MAX_TOKENIZE_LINE) return []
     if (lang === 'sql') {
       return sql({ dialect: sqlDialectFor(dialect) })
     }
+    if (lang) return languageExtension(lang, dialect)
     if (/^\s*[[{]/.test(text)) return json()
     if (/<[A-Za-z!/]/.test(text.slice(0, 2000))) return html()
     return []
@@ -140,6 +145,10 @@
     { tag: t.operator, color: 'var(--muted-foreground)' },
     { tag: t.special(t.string), color: 'var(--foreground)' },
     { tag: t.lineComment, color: 'var(--json-null)', fontStyle: 'italic' },
+    // Script (the ORM runner) and schema files (Prisma): names, calls, attributes.
+    { tag: [t.function(t.variableName), t.function(t.propertyName)], color: 'var(--json-number)' },
+    { tag: [t.meta, t.annotation], color: 'var(--json-number)' },
+    { tag: [t.regexp, t.escape], color: 'var(--json-string)' },
   ])
 
   /*
@@ -210,8 +219,8 @@
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
-      padding: '0 4px 0 0',
-      width: '16px',
+      padding: '0',
+      width: '12px',
       cursor: 'pointer',
       opacity: '0',
       transition: 'opacity 120ms',
@@ -710,15 +719,20 @@
    * A JSON cell has nothing worth suggesting. The list renders on <body> so
    * the dock's edge never clips it.
    */
-  /** @param {boolean} onTyping */
-  const completionConfig = (onTyping) =>
+  /** @param {boolean} onTyping @param {boolean} [enterAccepts] */
+  const completionConfig = (onTyping, enterAccepts = true) => [
     autocompletion({
       override: [sqlCompletionSource(() => sqlHints, () => dialect)],
       activateOnTyping: onTyping,
       icons: false,
       addToOptions: [kindDot],
       maxRenderedOptions: 50,
-    })
+      // Off, the list's keys are bound below without Enter, so Enter always
+      // breaks the line and Tab is the one way to take a suggestion.
+      defaultKeymap: enterAccepts,
+    }),
+    ...(enterAccepts ? [] : [Prec.highest(keymap.of(completionKeymap.filter((b) => b.key !== 'Enter')))]),
+  ]
 
   /**
    * Snippet keys. Tab with the list open takes the suggestion; otherwise it
@@ -739,7 +753,10 @@
   const sqlEditing = () =>
     lang === 'sql'
       ? [
-          completeC.of(completionConfig(suggestWhileTyping)),
+          // Ahead of the completion keymap (same precedence, listed first): Enter
+          // on a word already typed out breaks the line instead of re-inserting it.
+          Prec.highest(keymap.of([{ key: 'Enter', run: enterPastTypedWord }])),
+          completeC.of(completionConfig(suggestWhileTyping, acceptOnEnter)),
           closeBrackets(),
           keymap.of(closeBracketsKeymap),
           snippetKeymap.of(snippetKeys),
@@ -747,8 +764,13 @@
         ]
       : []
 
-  /** @param {boolean} numbers @param {boolean} fold */
-  const gutterExt = (numbers, fold) => [...(numbers ? [lineNumbers()] : []), ...(fold ? [foldMarkers] : [])]
+  /**
+   * Fold arrows only beside line numbers. Without numbers the arrow column
+   * was an empty 16px strip (the arrows show on hover only) between the run
+   * marks and the text; folding still works from the keyboard and the menu.
+   * @param {boolean} numbers @param {boolean} fold
+   */
+  const gutterExt = (numbers, fold) => [...(numbers ? [lineNumbers()] : []), ...(numbers && fold ? [foldMarkers] : [])]
 
   function freshState(/** @type {string} */ doc) {
     return EditorState.create({
@@ -762,6 +784,11 @@
         highlightActiveLine(),
         highlightActiveLineGutter(),
         drawSelection(),
+        // A template field used twice (a trigger's `ON ${4:table}` and the
+        // `UPDATE ${4:table}` in its body) is one cursor per copy. Without
+        // this the state keeps only the first, so typing in one left the other
+        // as the placeholder - and the trigger was created on `table_name`.
+        EditorState.allowMultipleSelections.of(true),
         history(),
         bracketMatching(),
         // Find and replace: Mod-F opens it at the top, Enter / Shift-Enter step,
@@ -782,6 +809,10 @@
           { key: 'Mod-Alt-f', run: openReplace, preventDefault: true },
           ...searchKeymap,
           ...historyKeymap,
+          // Fold the statement at the caret (Ctrl+Shift+[ / ]), or all of
+          // them (Ctrl+Alt+[ / ]). A multi-line statement folds to its first
+          // line; a block comment to its markers.
+          ...foldKeymap,
           ...defaultKeymap,
         ]),
         syntaxHighlighting(highlight),
@@ -839,7 +870,16 @@
       raf = requestAnimationFrame(remeasure)
     })
     ro.observe(probe)
-    return () => { cancelAnimationFrame(raf); ro.disconnect(); probe.remove() }
+    // A chord the editor acted on is the editor's. CodeMirror marks it handled
+    // (preventDefault) and lets it bubble, and the app's hotkeys on `document`
+    // do not look at that: Ctrl+/ commented the line and then opened the
+    // shortcuts panel, Ctrl+W closed two tabs, Ctrl+J and Ctrl+Shift+B toggled
+    // twice and so did nothing. Keys the editor passed on still reach the app.
+    const ownChord = (/** @type {KeyboardEvent} */ e) => {
+      if (e.defaultPrevented && (e.ctrlKey || e.metaKey || e.altKey)) e.stopPropagation()
+    }
+    view.dom.addEventListener('keydown', ownChord)
+    return () => { cancelAnimationFrame(raf); ro.disconnect(); probe.remove(); view?.dom.removeEventListener('keydown', ownChord) }
   })
   onDestroy(() => view?.destroy())
 
@@ -863,18 +903,26 @@
   $effect(() => { const r = readOnly; view?.dispatch({ effects: readOnlyC.reconfigure(EditorState.readOnly.of(r)) }) })
   // A new dialect's keywords, without resetting the doc. Tables and columns
   // are read by the completion source on every query and need nothing here.
+  // Another language for the same editor (a view switching CSV to Markdown).
   $effect(() => {
     void dialect
-    if (lang === 'sql') view?.dispatch({ effects: langC.reconfigure(languageFor(view.state.doc.toString())) })
+    void lang
+    if (lang) view?.dispatch({ effects: langC.reconfigure(languageFor(view.state.doc.toString())) })
   })
 
   $effect(() => { const x = extensions; view?.dispatch({ effects: extraC.reconfigure(x) }) })
   $effect(() => {
     const t = suggestWhileTyping
-    if (lang === 'sql') view?.dispatch({ effects: completeC.reconfigure(completionConfig(t)) })
+    const e = acceptOnEnter
+    if (lang === 'sql') view?.dispatch({ effects: completeC.reconfigure(completionConfig(t, e)) })
   })
 
   export function focus() { view?.focus() }
+
+  /** Fold every statement and block comment down to its first line. */
+  export function foldEverything() { if (view) foldAll(view) }
+  /** Open every fold. */
+  export function unfoldEverything() { if (view) unfoldAll(view) }
 
   /** The live view, for a surface that drives it (SqlEditor). */
   export function getView() { return view }

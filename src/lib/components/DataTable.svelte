@@ -1,5 +1,9 @@
 <script>
   import { tick, onDestroy, untrack } from "svelte";
+  import {
+    pgArrayElem, pgArrayText, isSqlArrayType, isVectorType, foldLines, valuesEqual,
+    cellJsonString, csvCell, cellSqlLiteral, mdCell, isOversizeValue,
+  } from "$lib/cell-format.js";
   import { fade } from "svelte/transition";
   import { cubicOut } from "svelte/easing";
   import { zoomState } from '$lib/stores/canvas-zoom.svelte.js'
@@ -60,7 +64,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     defaultColumnWidth,
   } from "$lib/table-column-widths.js";
   import { formatCompactCount } from "$lib/table-list.js";
-  import { keycaps } from "$lib/shortcuts.js";
+  import { keycaps, comboTitle } from "$lib/shortcuts.js";
   import { cn } from "$lib/utils.js";
   import { buildQuickFilter } from "$lib/quick-filter.js";
   import {
@@ -100,7 +104,6 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     buildDeleteStatements,
     buildInsertStatements,
   } from "$lib/dml-preview.js";
-  import { formatSql } from "$lib/format-sql.js";
   import * as Dialog from "$lib/components/ui/dialog/index.js";
   import * as Select from "$lib/components/ui/select/index.js";
   import DmlReviewPanel from "./DmlReviewPanel.svelte";
@@ -483,13 +486,39 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     dmlPanel?.focus();
   }
 
+  // sql-formatter is ~250 KB, and this grid is on the startup path: it loads
+  // once the app is idle instead, so a review still opens formatted, in the
+  // same frame, and stays synchronous for the rebuild effect below.
+  /** @type {((sql: string) => string) | null} */
+  let formatSqlFn = null;
+  /** @type {Promise<(sql: string) => string> | null} */
+  let formatterLoad = null;
+  function loadFormatter() {
+    formatterLoad ??= import("$lib/format-sql.js").then((m) => (formatSqlFn = m.formatSql));
+    return formatterLoad;
+  }
+  $effect(() => {
+    const idle = window.requestIdleCallback ?? ((/** @type {() => void} */ cb) => setTimeout(cb, 1500));
+    idle(() => void loadFormatter().catch(() => {}));
+  });
+
   /** @param {DmlReview} config */
   function showDmlReview(config) {
     const wasEdited = dmlPreview !== null && dmlWasEdited;
     dmlPreview = config;
     // Prettify the generated statements for a readable, editable preview.
-    dmlOriginalSql = formatSql(config.statements.join("\n"));
+    const raw = config.statements.join("\n");
+    dmlOriginalSql = formatSqlFn ? formatSqlFn(raw) : raw;
     if (!wasEdited) dmlEditedSql = dmlOriginalSql;
+    if (formatSqlFn) return;
+    // A review in the first moments after startup: the raw SQL until the
+    // formatter lands, then the formatted one unless it was edited meanwhile.
+    void loadFormatter().then((fmt) => {
+      if (dmlPreview !== config || dmlOriginalSql !== raw) return;
+      const pretty = fmt(raw);
+      if (dmlEditedSql === raw) dmlEditedSql = pretty;
+      dmlOriginalSql = pretty;
+    }).catch(() => {});
   }
 
   /** @param {{ refocus?: boolean }} [opts] */
@@ -1226,23 +1255,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     return String(value);
   }
 
-  // Render a JS array as a Postgres array literal for display: {a,b}, {} for
-  // empty, NULL for null elements. Elements are quoted only when they contain a
-  // delimiter/quote/brace/whitespace or would be ambiguous - matching pgAdmin.
-  function pgArrayElem(el) {
-    if (el === null || el === undefined) return "NULL";
-    // Nested arrays (multi-dim) recurse; objects (e.g. json[]) fall back to JSON.
-    if (Array.isArray(el)) return pgArrayText(el);
-    if (typeof el === "object") return JSON.stringify(el);
-    const s = String(el);
-    if (s === "" || /[",{}\\\s]/.test(s) || /^null$/i.test(s)) {
-      return '"' + s.replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
-    }
-    return s;
-  }
-  function pgArrayText(arr) {
-    return "{" + arr.map(pgArrayElem).join(",") + "}";
-  }
+
   // Display for SQL *array columns* (drawCell passes the value after confirming
   // the column type ends with []). Cached per value object so the scroll hot
   // path never rebuilds the string.
@@ -1269,15 +1282,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     _arrayDisplayCache.set(arr, s ?? pgArrayText(arr));
     return s ?? pgArrayText(arr);
   }
-  /** True when a column's SQL type is an array (ends with []). */
-  function isSqlArrayType(colType) {
-    return /\[\]\s*$/.test(colType ?? "");
-  }
 
-  /** pgvector column types, whose values arrive as `[0.1,0.2,…]` text. */
-  function isVectorType(colType) {
-    return /^(vector|halfvec|sparsevec)\b/i.test(String(colType ?? "").trim());
-  }
 
   // An embedding printed in full fills the row with digits that say nothing at a
   // glance. The dimension leads, then as much of the head as fits. Display only:
@@ -1334,18 +1339,6 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     );
   }
 
-  /**
-   * Fold a multi-line value onto the one line a grid row has for it.
-   *
-   * fillText draws no line breaks, so a newline came out as nothing at all
-   * while the indentation around it was drawn in full - pretty-printed JSON
-   * read as `[   "a",   "b" ]`, gaps where the structure used to be. The break
-   * and the whitespace either side of it collapse to a single space, which is
-   * what the copy-as-TSV path already does with the same values.
-   */
-  function foldLines(/** @type {string} */ s) {
-    return s.includes("\n") || s.includes("\r") ? s.replace(/\s*[\r\n]+\s*/g, " ") : s;
-  }
 
   function displayCell(value) {
     // Escaped before the cut, so the limit counts what is actually drawn and an
@@ -1897,15 +1890,6 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     pendingEdits = next;
   }
 
-  /** Loose equality for cell values (handles object/array via JSON). */
-  function valuesEqual(/** @type {unknown} */ a, /** @type {unknown} */ b) {
-    if (a === b) return true;
-    if (a === null || b === null || a === undefined || b === undefined) return false;
-    if (typeof a === "object" || typeof b === "object") {
-      try { const sa = JSON.stringify(a); return sa === JSON.stringify(b); } catch { return false; }
-    }
-    return false;
-  }
 
   /** @param {'down'|'right'|'left'|null} afterAction @param {boolean} [autoEdit] */
   async function commitEditWithAction(afterAction, autoEdit = false) {
@@ -2045,7 +2029,9 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   async function copyPendingChangeSql() {
     const { statements, editEntries, deleteIndices, insertValues } = pendingChangeSql();
     if (!statements.length) return;
-    const ok = await writeClipboard(formatSql(statements.join("\n")));
+    const raw = statements.join("\n");
+    const fmt = formatSqlFn ?? (await loadFormatter().catch(() => null));
+    const ok = await writeClipboard(fmt ? fmt(raw) : raw);
     if (!ok) { toast.error("Could not copy to clipboard"); return; }
     const parts = [];
     if (editEntries.length) parts.push(`${editEntries.length} update${editEntries.length === 1 ? "" : "s"}`);
@@ -2693,41 +2679,9 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       : [rowIdx];
   }
 
-  /** Full text of an object cell for copy/export - oversize sentinels become
-   * their marker + preview so exports show the truncation explicitly. */
-  function cellJsonString(value) {
-    const over = oversizeCellInfo(value);
-    return over ? oversizeCellText(over) : JSON.stringify(value);
-  }
 
-  /** Escape a cell value for CSV (RFC 4180). */
-  function csvCell(value) {
-    if (value === null || value === undefined) return '';
-    const s = typeof value === 'object' ? cellJsonString(value) : String(value);
-    if (s.includes(',') || s.includes('"') || s.includes('\n') || s.includes('\r')) {
-      return '"' + s.replace(/"/g, '""') + '"';
-    }
-    return s;
-  }
 
-  /** Escape a cell value for SQL INSERT. */
-  function sqlLiteral(value) {
-    if (value === null || value === undefined) return 'NULL';
-    if (typeof value === 'boolean') return value ? 'TRUE' : 'FALSE';
-    if (typeof value === 'number') return String(value);
-    if (typeof value === 'object') {
-      const s = cellJsonString(value).replace(/'/g, "''");
-      return `'${s}'`;
-    }
-    return "'" + String(value).replace(/'/g, "''") + "'";
-  }
 
-  /** Markdown-safe cell text. */
-  function mdCell(value) {
-    if (value === null || value === undefined) return 'NULL';
-    const s = typeof value === 'object' ? cellJsonString(value) : String(value);
-    return s.replace(/\|/g, '\\|').replace(/\n/g, ' ');
-  }
 
   /**
    * Copy one column's values, one per line, for the rows currently loaded.
@@ -2815,7 +2769,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       const tbl = schema ? `"${schema}"."${tableName || 'table'}"` : `"${tableName || 'table'}"`;
       const insertCols = columns.map((c) => `"${c.name}"`).join(', ');
       text = allRows
-        .map((r) => `INSERT INTO ${tbl} (${insertCols}) VALUES (${r.map(sqlLiteral).join(', ')});`)
+        .map((r) => `INSERT INTO ${tbl} (${insertCols}) VALUES (${r.map(cellSqlLiteral).join(', ')});`)
         .join('\n');
     }
 
@@ -5582,22 +5536,6 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     return text.slice(0, lo) + '…'
   }
 
-  /**
-   * Hover-button rects for a cell (viewport coords).
-   *
-   * The buttons sit on whichever side the value is *not* using: right of
-   * left-aligned text, left of right-aligned text. That way they always land in
-   * the cell's empty space, so showing them neither covers the value nor pushes
-   * it sideways. Reserving a fixed strip instead left a permanent dead gap down
-   * the column.
-   *
-   * Must stay in step with the draw pass below - this is the click target for
-   * what that paints.
-   */
-  /** True when a cell holds the "this is N bytes" stand-in rather than a value. */
-  function isOversizeValue(v) {
-    return !!v && typeof v === 'object' && /** @type {any} */ (v).__strokeOversize === true
-  }
 
   /**
    * The per-cell Load control: a download arrow that becomes a spinner while the
@@ -5622,6 +5560,18 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     ctx.restore()
   }
 
+  /**
+   * Hover-button rects for a cell (viewport coords).
+   *
+   * The buttons sit on whichever side the value is *not* using: right of
+   * left-aligned text, left of right-aligned text. That way they always land in
+   * the cell's empty space, so showing them neither covers the value nor pushes
+   * it sideways. Reserving a fixed strip instead left a permanent dead gap down
+   * the column.
+   *
+   * Must stay in step with the draw pass below - this is the click target for
+   * what that paints.
+   */
   function cellButtonRects(cellX, w, ry, rh, { alignRight = false, withLoad = false }) {
     const cy = ry + rh / 2
     const rect = (/** @type {number} */ x) => ({ x, y: ry, w: ICON_HIT, h: rh, cx: x + ICON_HIT / 2, cy })
@@ -8151,8 +8101,8 @@ import FilterX from "@lucide/svelte/icons/filter-x";
                         title={missingHere.length
                           ? `${missingHere.length} required field${missingHere.length === 1 ? '' : 's'} still empty: ${missingHere.join(', ')}`
                           : di === 0 && draftCount > 1
-                            ? `Insert all ${draftCount} rows (⌘↵)`
-                            : 'Insert this row (⌘↵)'}
+                            ? `Insert all ${draftCount} rows (${comboTitle('Mod+Enter')})`
+                            : `Insert this row (${comboTitle('Mod+Enter')})`}
                       />
                     {/if}
                   </div>

@@ -5,7 +5,7 @@
   // toolbar and an empty results pane wrapped around a CREATE TABLE you cannot
   // usefully execute against the table it already describes. This surface is for
   // reading: the editor fills the tab, with a copy action and the object's name.
-  import MonacoTextView from './MonacoTextView.svelte'
+  import CodeTextView from './CodeTextView.svelte'
   import Icon from './Icon.svelte'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
   import { saveExportAs } from '$lib/api.js'
@@ -74,5 +74,5 @@
       </button>
     </span>
   </div>
-  <MonacoTextView text={pretty} language="sql" wordWrap="on" />
+  <CodeTextView text={pretty} language="sql" wordWrap="on" />
 </div>

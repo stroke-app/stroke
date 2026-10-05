@@ -1,9 +1,5 @@
 <script>
-  import { onMount } from 'svelte'
-  import * as monaco from '$lib/monaco.js'
-  import { configureMonacoWorkers, editorFontFamily } from '$lib/monaco-env.js'
-  import { defineStrokeMonacoThemes, applyMonacoTheme, monacoThemeId, readEditorFontOptions } from '$lib/monaco-themes.js'
-  import { normalizeThemeId } from '$lib/themes/registry.js'
+  import CodeTextView from './CodeTextView.svelte'
   import Table2 from '@lucide/svelte/icons/table-2'
   import Copy from '@lucide/svelte/icons/copy'
   import Download from '@lucide/svelte/icons/download'
@@ -37,10 +33,6 @@
   const truncated = $derived(shownRows > 0 && rowCount > shownRows)
 
 
-  /** @type {HTMLElement | null} */
-  let container = $state(null)
-  /** @type {monaco.editor.IStandaloneCodeEditor | null} */
-  let editor = null
   let copied = $state(false)
   /** @type {ReturnType<typeof setTimeout> | null} */
   let copiedTimer = null
@@ -113,9 +105,6 @@
     }
   }
 
-  function currentTheme() {
-    return normalizeThemeId(document.documentElement.dataset.theme)
-  }
 
   function handleCopy() {
     navigator.clipboard.writeText(displayedJson).then(() => {
@@ -125,80 +114,6 @@
     })
   }
 
-  onMount(() => {
-    configureMonacoWorkers()
-    defineStrokeMonacoThemes()
-    if (!container) return
-
-    const { fontSize, lineHeight } = readEditorFontOptions()
-
-    editor = monaco.editor.create(container, {
-      value: json,
-      language: 'json',
-      theme: monacoThemeId(currentTheme()),
-      readOnly: true,
-      // automaticLayout:false - that option runs a 100ms setInterval per editor
-      // forever; a ResizeObserver (below) handles relayout without the polling.
-      automaticLayout: false,
-      minimap: { enabled: false },
-      fontFamily: editorFontFamily(),
-      fontSize,
-      lineHeight,
-      fontLigatures: false,
-      fontWeight: 'normal',
-      padding: { top: 12, bottom: 12 },
-      scrollBeyondLastLine: false,
-      wordWrap: $appJsonWordWrap ? 'on' : 'off',
-      renderLineHighlight: 'none',
-      lineNumbers: 'on',
-      // 4 (not 3) so the right-aligned numbers get a character of inset instead
-      // of sitting flush against the editor edge, and 6px (not Monaco's default
-      // 10) of decoration space on the other side - the two together make the
-      // gutter read as evenly padded rather than shoved left.
-      lineNumbersMinChars: 4,
-      lineDecorationsWidth: 6,
-      glyphMargin: false,
-      folding: true,
-      foldingHighlight: false,
-      scrollbar: { verticalScrollbarSize: 8, horizontalScrollbarSize: 8 },
-      overviewRulerLanes: 0,
-      hideCursorInOverviewRuler: true,
-      overviewRulerBorder: false,
-      smoothScrolling: true,
-      cursorStyle: 'line-thin',
-      contextmenu: false,
-      selectionHighlight: false,
-      occurrencesHighlight: 'off',
-      codeLens: false,
-      renderValidationDecorations: 'off',
-    })
-
-    const themeObs = new MutationObserver(() => {
-      applyMonacoTheme(currentTheme())
-    })
-    themeObs.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ['class', 'data-theme'],
-    })
-
-    const ro = new ResizeObserver(() => editor?.layout())
-    ro.observe(container)
-
-    return () => {
-      ro.disconnect()
-      editor?.dispose()
-      editor = null
-      themeObs.disconnect()
-    }
-  })
-
-  $effect(() => {
-    if (!editor) return
-    if (editor.getValue() !== displayedJson) editor.setValue(displayedJson)
-  })
-
-  // Wrap is an app setting, so a change made anywhere reflows this editor too.
-  $effect(() => { editor?.updateOptions({ wordWrap: $appJsonWordWrap ? 'on' : 'off' }) })
 </script>
 
 <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -288,21 +203,7 @@
     </div>
   </div>
 
-  <!-- Monaco JSON editor -->
-  <div class="relative min-h-0 flex-1 overflow-hidden">
-    <div bind:this={container} class="absolute inset-0 h-full w-full"></div>
-  </div>
+  <!-- JSON body (⌘F to search). Wrap is an app setting, so a change made
+       anywhere reflows this view too. -->
+  <CodeTextView text={displayedJson} language="json" wordWrap={$appJsonWordWrap ? 'on' : 'off'} ariaLabel="Result as JSON" />
 </div>
-
-<style>
-  div :global(.monaco-editor),
-  div :global(.monaco-editor .margin),
-  div :global(.monaco-editor-background) {
-    border-radius: 0 !important;
-  }
-
-  div :global(.monaco-editor .view-lines),
-  div :global(.monaco-editor .view-line) {
-    font-weight: 400 !important;
-  }
-</style>

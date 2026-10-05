@@ -49,8 +49,93 @@ describe('sqlCompletionContext', () => {
     expect(ctx('UPDATE t SET a = 4')).toBeNull()
   })
 
+  it('knows where a data type goes', () => {
+    expect(ctx('CREATE TABLE t (id va')).toMatchObject({ kind: 'types', prefix: 'va' })
+    expect(ctx('CREATE TABLE IF NOT EXISTS s.t (\n  id int,\n  name va')).toMatchObject({ kind: 'types' })
+    expect(ctx('CREATE TABLE t (price numeric(10, 2), name t')).toMatchObject({ kind: 'types' })
+    expect(ctx('SELECT CAST(x AS ')).toMatchObject({ kind: 'types' })
+    expect(ctx('SELECT x::')).toMatchObject({ kind: 'types', prefix: '' })
+    expect(ctx('SELECT x::tim')).toMatchObject({ kind: 'types', prefix: 'tim' })
+    expect(ctx('SELECT CONVERT(')).toMatchObject({ kind: 'types' })
+    expect(ctx('ALTER TABLE users ADD COLUMN age ')).toMatchObject({ kind: 'types' })
+    expect(ctx('ALTER TABLE users ADD age ')).toMatchObject({ kind: 'types' })
+    expect(ctx('ALTER TABLE users ALTER COLUMN email TYPE ')).toMatchObject({ kind: 'types', next: [] })
+    expect(ctx('ALTER TABLE users ALTER COLUMN email SET DATA TYPE ')).toMatchObject({ kind: 'types' })
+    expect(ctx('ALTER TABLE t MODIFY COLUMN c ')).toMatchObject({ kind: 'types' })
+    expect(ctx('ALTER TABLE t CHANGE COLUMN a b ')).toMatchObject({ kind: 'types' })
+    // An alias is not a type.
+    expect(ctx('SELECT a AS ').kind).not.toBe('types')
+  })
+
+  it('offers TYPE beside the types after ALTER COLUMN name', () => {
+    const c = ctx('ALTER TABLE users ALTER COLUMN email ')
+    expect(c.kind).toBe('types')
+    expect(c.next).toContain('TYPE')
+  })
+
+  it('offers the statement\'s own words around a column definition, no names', () => {
+    expect(ctx('CREATE TABLE t (')).toMatchObject({ kind: 'ddl' })
+    expect(ctx('CREATE TABLE t (').next).toContain('PRIMARY')
+    const after = ctx('CREATE TABLE t (id int ')
+    expect(after.kind).toBe('ddl')
+    expect(after.next).toEqual(expect.arrayContaining(['NOT', 'DEFAULT', 'REFERENCES']))
+    expect(ctx('CREATE TABLE t (id int REFERENCES ')).toMatchObject({ kind: 'tables' })
+    const refCols = ctx('CREATE TABLE t (id int REFERENCES users (')
+    expect(refCols.kind).toBe('columns')
+    expect(refCols.tables).toContain('users')
+  })
+
+  it('reads ALTER TABLE actions', () => {
+    expect(ctx('ALTER TABLE users ').next).toEqual(expect.arrayContaining(['ADD', 'DROP', 'ALTER', 'RENAME']))
+    expect(ctx('ALTER TABLE users ')).toMatchObject({ kind: 'ddl' })
+    expect(ctx('ALTER TABLE users ADD ').next).toContain('COLUMN')
+    expect(ctx('ALTER TABLE users DROP COLUMN ')).toMatchObject({ kind: 'columns', tables: ['users'] })
+    expect(ctx('ALTER TABLE users ALTER COLUMN ')).toMatchObject({ kind: 'columns', tables: ['users'] })
+  })
+
+  it('offers tables after TRUNCATE and CREATE INDEX ... ON, keywords after the name', () => {
+    expect(ctx('TRUNCATE ')).toMatchObject({ kind: 'tables' })
+    expect(ctx('TRUNCATE users ')).toMatchObject({ kind: 'ddl', next: ['CASCADE', 'RESTRICT'] })
+    expect(ctx('DROP TABLE users ')).toMatchObject({ kind: 'ddl', next: ['CASCADE', 'RESTRICT'] })
+    expect(ctx('CREATE INDEX i ON ')).toMatchObject({ kind: 'tables' })
+    expect(ctx('CREATE INDEX i ON users (')).toMatchObject({ kind: 'columns', tables: ['users'] })
+  })
+
   it('reads doubled quotes as escapes and starts over after a semicolon', () => {
     expect(ctx(`UPDATE t SET a = 'it''s' W`).next).toContain('WHERE')
     expect(ctx('UPDATE "t" SET "a" = 1;\nDEL')).toMatchObject({ kind: 'statement', prefix: 'DEL' })
+  })
+})
+
+describe('sqlCompletionContext in a trigger', () => {
+  const head = 'CREATE TRIGGER trg_after_update '
+  it('offers the timing, then the events, then ON', () => {
+    expect(ctx(head)).toMatchObject({ kind: 'ddl', next: ['BEFORE', 'AFTER', 'INSTEAD', 'ON'] })
+    expect(ctx(`${head}AFTER `)).toMatchObject({ kind: 'ddl', next: ['INSERT', 'UPDATE', 'DELETE'] })
+    expect(ctx(`${head}AFTER UPDATE `)).toMatchObject({ kind: 'ddl', next: ['ON', 'OR', 'OF'] })
+  })
+
+  it('offers tables after ON', () => {
+    expect(ctx(`${head}AFTER UPDATE ON `)?.kind).toBe('tables')
+    expect(ctx(`${head}AFTER UPDATE ON us`)).toMatchObject({ kind: 'tables', prefix: 'us' })
+  })
+
+  it('offers FOR EACH ROW and the body after the table', () => {
+    expect(ctx(`${head}AFTER UPDATE ON user `)?.next).toContain('FOR')
+    expect(ctx(`${head}AFTER UPDATE ON user FOR EACH `)?.next).toEqual(['ROW', 'STATEMENT'])
+  })
+
+  it('keeps the trigger table across the statements of its body', () => {
+    const body = `${head}AFTER UPDATE ON user FOR EACH ROW BEGIN\n  SELECT 1;\n  UPDATE account SET a = NEW.`
+    expect(ctx(body)).toMatchObject({ kind: 'qualified', qualifier: 'NEW', rowTable: 'user' })
+  })
+
+  it('reads a body statement by its own rules', () => {
+    const c = ctx(`${head}AFTER UPDATE ON user FOR EACH ROW BEGIN\n  UPDATE `)
+    expect(c?.kind).toBe('tables')
+  })
+
+  it('names the function being written', () => {
+    expect(ctx('CREATE OR REPLACE FUNCTION set_updated_at() RETURNS trigger AS $$ BEGIN NEW.')?.routine).toBe('set_updated_at')
   })
 })

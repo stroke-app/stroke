@@ -1,4 +1,5 @@
 <script>
+  import { comboTitle } from '$lib/shortcuts.js'
   import Plus from '@lucide/svelte/icons/plus'
   import Save from '@lucide/svelte/icons/save'
   import FolderOpen from '@lucide/svelte/icons/folder-open'
@@ -220,7 +221,7 @@
       <button
         onclick={save}
         class="flex items-center gap-1.5 rounded px-2.5 py-1 text-ui-xs text-muted-foreground hover:bg-muted hover:text-foreground"
-        title="Save (⌘S)"
+        title={`Save (${comboTitle('Mod+S')})`}
       >
         <Save class="size-3.5" />
         Save

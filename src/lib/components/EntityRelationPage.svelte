@@ -23,8 +23,11 @@
   import EyeOff from '@lucide/svelte/icons/eye-off'
   import GitBranch from '@lucide/svelte/icons/git-branch'
   import ListTree from '@lucide/svelte/icons/list-tree'
+  import Workflow from '@lucide/svelte/icons/workflow'
+  import Waypoints from '@lucide/svelte/icons/waypoints'
   import MermaidViewer from './MermaidViewer.svelte'
   import RelationTreePage from './RelationTreePage.svelte'
+  import ErdHierarchy from './ErdHierarchy.svelte'
   import CodeEditor from './CodeEditor.svelte'
   import { Button } from '$lib/components/ui/button/index.js'
   import ZoomIn from '@lucide/svelte/icons/zoom-in'
@@ -45,6 +48,7 @@
   import { toast } from "$lib/components/ui/sonner/toast.svelte.js"
   import { svgStringToPngBlob, copyPngToClipboard } from '$lib/svg-png.js'
   import { Popover, PopoverTrigger, PopoverContent } from '$lib/components/ui/popover/index.js'
+  import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js'
   import { isCurrentThemeDark } from '$lib/stores/settings.js'
   import { loadErdSettings, saveErdSettings, SPACING_PRESETS, SCOPE_DEFAULTS, DEFAULT_ERD_SETTINGS } from '$lib/stores/erd-settings.js'
   import { routeEdges, routeToSvgPath, corridorPathOrtho, CLEAR, MAX_ROUTED_NODES } from '$lib/erd-routing.js'
@@ -202,10 +206,11 @@
   let hubs = $state.raw(new Set())
 
   // ── Views ─────────────────────────────────────────────────────────────────
-  // The same tables three ways: the canvas, Mermaid source with a live preview,
-  // and the relation tree (a flowchart, or the plain list). The canvas keeps
-  // its layout while another view is up; it remounts where it was.
-  /** @type {'canvas' | 'mermaid' | 'tree' | 'dictionary' | 'ddl'} */
+  // The same tables several ways: the canvas, the hierarchy (foreign-key
+  // order, top to bottom), Mermaid source with a live preview, the relation
+  // tree, the column dictionary and the DDL. The canvas keeps its layout while
+  // another view is up; it remounts where it was.
+  /** @type {'canvas' | 'hierarchy' | 'mermaid' | 'tree' | 'dictionary' | 'ddl'} */
   let erdView = $state('canvas')
   /** The page over the whole window below the title bar; Esc or the button ends it. */
   let fullscreen = $state(false)
@@ -216,7 +221,6 @@
   const MERMAID_AUTO_MAX = 60
   let mermaidForce = $state(false)
   const mermaidGated = $derived(shownTables.length > MERMAID_AUTO_MAX && !mermaidForce)
-  let viewMenuOpen = $state(false)
   /** @type {MermaidViewer | null} */
   let mermaidViewer = $state(null)
   /** The Mermaid code pane. Starts folded: the picture is what the view is
@@ -244,6 +248,7 @@
   }
   const VIEWS = /** @type {const} */ ([
     { id: 'canvas', label: 'Diagram', hint: 'Cards and relationship lines, laid out and routed around each other' },
+    { id: 'hierarchy', label: 'Hierarchy', hint: 'Top to bottom in foreign-key order, like a roadmap: each table sits under the tables it points at' },
     { id: 'mermaid', label: 'Mermaid', hint: 'The same tables as Mermaid source, with a live preview' },
     { id: 'tree', label: 'Tree', hint: 'One table at a time: what it points at and what points at it' },
     { id: 'dictionary', label: 'Dictionary', hint: 'Every column on the page in one searchable list: type, nulls, keys and what they reference' },
@@ -266,6 +271,36 @@
     { value: 'all', label: 'All', hint: 'Every table on the page, one line per link' },
     { value: 'list', label: 'List', hint: 'Every relationship, table by table, with row counts' },
   ]
+
+  // ── Hierarchy ─────────────────────────────────────────────────────────────
+  let hierQuery = $state('')
+  /** Lines into hub tables left out, as the Diagram's pills setting does. */
+  let hierHideHubs = $state(untrack(() => view.hubLinks !== 'lines'))
+  let hierSummary = $state('')
+  let hierHubCount = $state(0)
+  /** @type {ErdHierarchy | null} */
+  let hierPage = $state(null)
+
+  // ── Find (Ctrl/⌘F) ────────────────────────────────────────────────────────
+  /** @type {CodeEditor | null} */
+  let mermaidEditor = $state(null)
+  /** @type {CodeEditor | null} */
+  let ddlEditor = $state(null)
+  /**
+   * Ctrl/⌘F for whichever view is up: the bar's search box, or the code's own
+   * find panel in Mermaid (its code pane opened first) and DDL.
+   */
+  export async function focusSearch() {
+    if (erdView === 'mermaid') {
+      // A folded pane mounts its editor a frame after it opens.
+      if (!mermaidCodeOpen) { mermaidCodeOpen = true; await tick(); await new Promise((r) => requestAnimationFrame(r)) }
+      mermaidEditor?.find()
+      return
+    }
+    if (erdView === 'ddl') { ddlEditor?.find(); return }
+    searchEl?.focus()
+    searchEl?.select()
+  }
 
   // ── Dictionary ────────────────────────────────────────────────────────────
   let dictQuery = $state('')
@@ -349,7 +384,7 @@
   }
   /** Save the code as a diagram of this connection and go there to edit it. */
   function editInDiagrams() {
-    saveDiagram(`Data model · ${activeSchema}`, mermaidDraft, 'Data models')
+    saveDiagram(`Schema diagram · ${activeSchema}`, mermaidDraft, 'Schema diagrams')
     onopendiagrams?.()
   }
   /** A layout is running in the worker; the chip says so. */
@@ -1492,7 +1527,7 @@
 
   async function exportMermaid() {
     const visIds = new Set(nodes.map(n => n.id))
-    const lines = ['# Data model', '', '```mermaid', 'erDiagram']
+    const lines = ['# Schema diagram', '', '```mermaid', 'erDiagram']
     for (const e of edges) {
       if (!visIds.has(e.source) || !visIds.has(e.target)) continue
       const sm = tableMeta.get(e.source)
@@ -1588,15 +1623,57 @@
   if (mod && e.shiftKey && e.key === 'Enter' && rootEl?.offsetWidth) {
     e.preventDefault(); fullscreen = !fullscreen; return
   }
-  if (!searchEl || !searchEl.offsetParent) return
-  if (mod && !e.shiftKey && e.key === 'f') {
-    e.preventDefault(); searchEl.focus(); searchEl.select()
+  // Ctrl/⌘F normally arrives through the shell (focusSearch); this catches
+  // it when nothing upstream took it, and only for the page on screen.
+  if (e.defaultPrevented || !rootEl?.offsetWidth) return
+  if (mod && !e.shiftKey && (e.key === 'f' || e.key === 'F')) {
+    if (e.target instanceof Element && e.target.closest('.cm-editor')) return
+    e.preventDefault(); void focusSearch()
   }
 }} />
+
+{#snippet searchBox(
+  /** @type {string} */ value,
+  /** @type {(v: string) => void} */ set,
+  /** @type {{ label: string, placeholder: string, wide?: boolean, onkeydown?: (e: KeyboardEvent) => void, oninput?: () => void }} */ o,
+)}
+  <!-- Wide enough for its placeholder in a monospace UI font, and the right
+       padding only makes room for the clear button when there is something
+       to clear, so an empty box never cuts its own hint short. -->
+  <div class={cn('relative flex min-w-0 shrink items-center', o.wide ? 'w-72' : 'w-52')}>
+    <Search class="pointer-events-none absolute left-2.5 size-3.5 text-muted-foreground" />
+    <input
+      type="text"
+      bind:this={searchEl}
+      {value}
+      oninput={(e) => { set(e.currentTarget.value); o.oninput?.() }}
+      onkeydown={(e) => {
+        if (e.key === 'Escape' && value) { set(''); e.stopPropagation(); return }
+        o.onkeydown?.(e)
+      }}
+      placeholder={o.placeholder}
+      aria-label={o.label}
+      title="{o.label} ({keycaps('Mod+F').join(IS_MAC ? '' : '+')})"
+      spellcheck="false"
+      autocomplete="off"
+      class={cn('field-surface h-7 w-full min-w-0 bg-input/30 pl-8 text-ui-sm text-foreground outline-none placeholder:text-muted-foreground', value ? 'pr-7' : 'pr-2.5')}
+    />
+    {#if value}
+      <button
+        type="button"
+        onclick={() => { set(''); searchEl?.focus() }}
+        aria-label="Clear"
+        title="Clear (Esc)"
+        class="absolute right-1 inline-flex size-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+      ><X class="size-3" /></button>
+    {/if}
+  </div>
+{/snippet}
 
 {#snippet viewIcon(/** @type {string} */ id, /** @type {string} */ cls)}
   {#if id === 'canvas'}<LayoutDashboard class={cls} />
   {:else if id === 'mermaid'}<GitBranch class={cls} />
+  {:else if id === 'hierarchy'}<Workflow class={cls} />
   {:else if id === 'tree'}<ListTree class={cls} />
   {:else if id === 'dictionary'}<BookOpen class={cls} />
   {:else}<FileCode class={cls} />{/if}
@@ -1649,7 +1726,7 @@
 >
   <!-- ── Toolbar ──────────────────────────────────────────────────────────── -->
   <div class="studio-chrome flex h-9 shrink-0 items-center gap-2 border-b border-border bg-panel px-3" data-studio-chrome>
-    <Network class="size-3.5 shrink-0 text-muted-foreground" aria-label="Data model" />
+    <Network class="size-3.5 shrink-0 text-muted-foreground" aria-label="Schema diagram" />
 
     {#if schemas.length > 1}
       <Popover bind:open={schemaOpen}>
@@ -1671,44 +1748,20 @@
       </Popover>
     {/if}
 
-    <!-- The view's own search: ⌘F lands here. Mermaid, Tree and DDL have none
-         in this bar - their editors and lists carry their own. -->
+    <!-- The view's own search, one box for every view: Ctrl/⌘F lands here
+         (the shell routes it, see focusSearch). Mermaid and DDL search their
+         code, so they get a button that opens the editor's find instead. -->
     {#if erdView === 'canvas'}
-      <div class="relative flex min-w-0 shrink items-center">
-        <Search class="pointer-events-none absolute left-2 size-3.5 text-muted-foreground" />
-        <input
-          type="text"
-          bind:this={searchEl}
-          bind:value={search}
-          onkeydown={onSearchKey}
-          placeholder="Search tables…"
-          aria-label="Search tables"
-          class= "field-surface h-7 w-40 min-w-0 bg-input/30 pl-7 pr-6 text-ui-sm outline-none placeholder:text-muted-foreground"
-        />
-        {#if search}
-          <button type="button" onclick={() => (search = '')} class="absolute right-2 text-muted-foreground hover:text-foreground">
-            <X class="size-3" />
-          </button>
-        {/if}
-      </div>
+      {@render searchBox(search, (v) => (search = v), { label: 'Search tables', placeholder: 'Search tables', onkeydown: onSearchKey })}
     {:else if erdView === 'dictionary'}
-      <div class="relative flex min-w-0 shrink items-center">
-        <Search class="pointer-events-none absolute left-2 size-3.5 text-muted-foreground" />
-        <input
-          type="text"
-          bind:this={searchEl}
-          bind:value={dictQuery}
-          onkeydown={(e) => { if (e.key === 'Escape' && dictQuery) { dictQuery = ''; e.stopPropagation() } }}
-          placeholder="Search columns, types, references…"
-          aria-label="Search the dictionary"
-          class= "field-surface h-7 w-64 min-w-0 bg-input/30 pl-7 pr-6 text-ui-sm outline-none placeholder:text-muted-foreground"
-        />
-        {#if dictQuery}
-          <button type="button" onclick={() => (dictQuery = '')} class="absolute right-2 text-muted-foreground hover:text-foreground">
-            <X class="size-3" />
-          </button>
-        {/if}
-      </div>
+      {@render searchBox(dictQuery, (v) => (dictQuery = v), { label: 'Search the dictionary', placeholder: 'Search columns and types', wide: true })}
+    {:else if erdView === 'hierarchy'}
+      <!-- Enter steps through the matches, centring each. -->
+      {@render searchBox(hierQuery, (v) => (hierQuery = v), {
+        label: 'Find a table',
+        placeholder: 'Find a table',
+        onkeydown: (e) => { if (e.key === 'Enter') { e.preventDefault(); hierPage?.next() } },
+      })}
     {:else if erdView === 'tree'}
       <button
         type="button"
@@ -1718,25 +1771,16 @@
         onclick={() => (treeListOpen = !treeListOpen)}
         class={cn('inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground', treeListOpen && 'bg-accent text-foreground')}
       >{#if treeListOpen}<PanelLeftClose class="size-3.5" />{:else}<PanelLeftOpen class="size-3.5" />{/if}</button>
-      <div class="relative flex min-w-0 shrink items-center">
-        <Search class="pointer-events-none absolute left-2 size-3.5 text-muted-foreground" />
-        <!-- Typing opens the list it filters. -->
-        <input
-          type="text"
-          bind:this={searchEl}
-          bind:value={treeSearch}
-          oninput={() => (treeListOpen = true)}
-          onkeydown={(e) => { if (e.key === 'Escape' && treeSearch) { treeSearch = ''; e.stopPropagation() } }}
-          placeholder="Filter tables…"
-          aria-label="Filter tables"
-          class= "field-surface h-7 w-40 min-w-0 bg-input/30 pl-7 pr-6 text-ui-sm outline-none placeholder:text-muted-foreground"
-        />
-        {#if treeSearch}
-          <button type="button" onclick={() => (treeSearch = '')} class="absolute right-2 text-muted-foreground hover:text-foreground">
-            <X class="size-3" />
-          </button>
-        {/if}
-      </div>
+      <!-- Typing opens the list it filters. -->
+      {@render searchBox(treeSearch, (v) => (treeSearch = v), { label: 'Filter tables', placeholder: 'Filter tables', oninput: () => (treeListOpen = true) })}
+    {:else}
+      <button
+        type="button"
+        title="Find in the {erdView === 'ddl' ? 'DDL' : 'Mermaid code'} ({keycaps('Mod+F').join(IS_MAC ? '' : '+')})"
+        aria-label="Find in the code"
+        onclick={() => void focusSearch()}
+        class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+      ><Search class="size-3.5" /></button>
     {/if}
 
     {#if filterApplies}
@@ -1951,6 +1995,31 @@
             title="Save as a .sql file"
             onclick={() => void saveExport(ddlSource, `${activeSchema}-schema.sql`, { name: 'SQL', extensions: ['sql'] }, 'DDL')}
           ><Download class="size-3.5" />Export .sql</Button>
+        {:else if erdView === 'hierarchy'}
+          {#if hierSummary}
+            <span class="min-w-0 truncate whitespace-nowrap pr-1 font-mono text-ui-2xs tabular-nums text-muted-foreground">{hierSummary}</span>
+          {/if}
+          {#if hierHubCount > 0}
+            <!-- One switch: on draws the lines into hub tables (tenants, users);
+                 off leaves them out and counts them on the hub's card. -->
+            <button
+              type="button"
+              aria-pressed={!hierHideHubs}
+              onclick={() => (hierHideHubs = !hierHideHubs)}
+              title={hierHideHubs
+                ? 'Draw the lines into hub tables, the ones most of the schema points at'
+                : 'Leave out the lines into hub tables; their cards count them instead'}
+              class={cn(
+                'inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-ui-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground',
+                !hierHideHubs && 'bg-accent text-foreground',
+              )}
+            ><Waypoints class="size-3.5 shrink-0" />Hub lines</button>
+          {/if}
+          <div class="flex shrink-0 items-center">
+            <button type="button" title="Zoom out" aria-label="Zoom out" onclick={() => hierPage?.zoom('out')} class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"><ZoomOut class="size-3.5" /></button>
+            <button type="button" title="Zoom in" aria-label="Zoom in" onclick={() => hierPage?.zoom('in')} class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"><ZoomIn class="size-3.5" /></button>
+            <button type="button" title="Fit" aria-label="Fit" onclick={() => hierPage?.zoom('fit')} class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"><Scan class="size-3.5" /></button>
+          </div>
         {:else if erdView === 'tree'}
           {#if treeSummary}
             <span class="min-w-0 truncate whitespace-nowrap pr-1 font-mono text-ui-2xs tabular-nums text-muted-foreground">{treeSummary}</span>
@@ -1981,36 +2050,27 @@
         class={cn('inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground', fullscreen && 'bg-accent text-foreground')}
       >{#if fullscreen}<Minimize2 class="size-3.5" />{:else}<Maximize2 class="size-3.5" />{/if}</button>
 
-      <!-- Which view of the map. -->
-      <Popover bind:open={viewMenuOpen}>
-        <PopoverTrigger
+      <!-- Which view of the map: one line each, the description on hover. -->
+      <DropdownMenu.Root>
+        <DropdownMenu.Trigger
           title="Switch view"
           class="field-surface inline-flex h-7 shrink-0 items-center gap-1.5 bg-input/30 pl-2 pr-1.5 text-ui-sm text-foreground transition-colors hover:bg-accent focus:outline-none data-[state=open]:bg-accent"
         >
           {@render viewIcon(erdView, 'size-3.5 shrink-0 text-muted-foreground')}
           {VIEWS.find((v) => v.id === erdView)?.label}
           <ChevronDown class="size-3 shrink-0 text-muted-foreground" />
-        </PopoverTrigger>
-        <PopoverContent class="w-72 p-1" align="end">
-          {#each VIEWS as v (v.id)}
-            <button
-              type="button"
-              aria-pressed={erdView === v.id}
-              onclick={() => { erdView = v.id; viewMenuOpen = false }}
-              class={cn('flex w-full items-start gap-2.5 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-accent', erdView === v.id && 'bg-accent/60')}
-            >
-              <span class="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-md bg-muted/60 text-muted-foreground">
-                {@render viewIcon(v.id, 'size-3.5')}
-              </span>
-              <span class="min-w-0 flex-1">
-                <span class="block text-ui-sm text-foreground">{v.label}</span>
-                <span class="block text-ui-2xs leading-snug text-muted-foreground">{v.hint}</span>
-              </span>
-              {#if erdView === v.id}<Check class="mt-1 size-3.5 shrink-0 text-foreground" />{/if}
-            </button>
-          {/each}
-        </PopoverContent>
-      </Popover>
+        </DropdownMenu.Trigger>
+        <DropdownMenu.Content align="end" class="min-w-40">
+          <DropdownMenu.RadioGroup value={erdView} onValueChange={(v) => (erdView = /** @type {typeof erdView} */ (v))}>
+            {#each VIEWS as v (v.id)}
+              <DropdownMenu.RadioItem value={v.id} title={v.hint}>
+                {@render viewIcon(v.id, 'size-3.5 shrink-0 text-muted-foreground')}
+                <span data-slot="menu-label">{v.label}</span>
+              </DropdownMenu.RadioItem>
+            {/each}
+          </DropdownMenu.RadioGroup>
+        </DropdownMenu.Content>
+      </DropdownMenu.Root>
 
       <div class="h-4 w-px shrink-0 bg-border/60"></div>
 
@@ -2204,7 +2264,7 @@
               {/if}
             </div>
             <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
-              <CodeEditor bind:value={mermaidDraft} wrap={mermaidWrap} ariaLabel="Mermaid code" onchange={() => (mermaidTouched = true)} />
+              <CodeEditor bind:this={mermaidEditor} bind:value={mermaidDraft} wrap={mermaidWrap} ariaLabel="Mermaid code" onchange={() => (mermaidTouched = true)} />
             </div>
           </div>
           <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
@@ -2236,6 +2296,21 @@
               {/if}
             </div>
           </div>
+        </div>
+      {:else if erdView === 'hierarchy'}
+        <!-- The tables on the page in foreign-key order, top to bottom. -->
+        <div class="absolute inset-0">
+          <ErdHierarchy
+            bind:this={hierPage}
+            tables={shownTables}
+            rels={mermaidRels}
+            schema={activeSchema}
+            hideHubs={hierHideHubs}
+            query={hierQuery}
+            bind:summary={hierSummary}
+            bind:hubCount={hierHubCount}
+            onopen={(name) => openTable(name)}
+          />
         </div>
       {:else if erdView === 'tree'}
         <!-- One table at a time, from the tables this page already loaded. -->
@@ -2304,7 +2379,7 @@
              Read-only here; the SQL console is where statements are run. -->
         <div class="absolute inset-0 flex min-h-0 flex-col">
           <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
-            <CodeEditor value={ddlSource} readOnly lang="sql" ariaLabel="DDL" />
+            <CodeEditor bind:this={ddlEditor} value={ddlSource} readOnly lang="sql" ariaLabel="DDL" />
           </div>
         </div>
       {:else}

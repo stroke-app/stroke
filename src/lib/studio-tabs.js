@@ -225,7 +225,7 @@ const SINGLETON_TAB_TITLES = {
   dashboard: 'Dashboard',
   reltree: 'Relation Tree',
   diagrams: 'Diagrams',
-  erd: 'Data Model',
+  erd: 'Schema Diagram',
   license: 'Stroke Pro',
   search: 'Find in database',
   'schema-timeline': 'Schema Timeline',

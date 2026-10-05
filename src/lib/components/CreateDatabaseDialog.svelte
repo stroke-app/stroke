@@ -38,6 +38,12 @@
   let showAdvanced = $state(false)
 
   const isMySQL = $derived(connType === 'mysql')
+  // The options below are Postgres and MySQL settings; SQL Server and ClickHouse
+  // take the server's defaults, so they get the name alone.
+  const hasOptions = $derived(connType === 'postgres' || connType === 'mysql')
+  const engineLabel = $derived(
+    ({ mysql: 'MySQL', mssql: 'SQL Server', clickhouse: 'ClickHouse' })[/** @type {string} */ (connType)] ?? 'PostgreSQL',
+  )
 
   const PG_ENCODINGS = [
     'UTF8', 'SQL_ASCII', 'BIG5', 'EUC_CN', 'EUC_JP', 'EUC_KR', 'EUC_TW',
@@ -122,7 +128,7 @@
       <div class="min-w-0">
         <Dialog.Title class="text-ui-sm font-semibold leading-none">Create database</Dialog.Title>
         <p class="mt-1 truncate text-ui-xs text-muted-foreground">
-          {isMySQL ? 'MySQL' : 'PostgreSQL'} · on this server
+          {engineLabel} · on this server
         </p>
       </div>
     </div>
@@ -156,6 +162,7 @@
         </p>
       </div>
 
+      {#if hasOptions}
       <!-- Advanced toggle -->
       <button
         type="button"
@@ -266,6 +273,7 @@
             </div>
           {/if}
         </div>
+      {/if}
       {/if}
 
       <!-- Error -->

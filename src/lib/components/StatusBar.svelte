@@ -1,4 +1,5 @@
 <script>
+  import { comboTitle } from '$lib/shortcuts.js'
   import Icon         from './Icon.svelte'
   import { IS_MAC }   from '$lib/shortcuts.js'
   import { tick, onMount } from 'svelte'
@@ -173,13 +174,13 @@
       el.tagName === 'INPUT' ||
       el.tagName === 'TEXTAREA' ||
       el.isContentEditable ||
-      !!el.closest('.monaco-editor')
+      !!el.closest('.cm-editor')
     )
   }
 
   /**
    * Global shortcuts: ⌘D toggles the database switcher, ⌘⇧C the connection
-   * switcher. Skipped while typing (inputs, textareas, Monaco) so ⌘D keeps
+   * switcher. Skipped while typing (inputs, textareas, code editors) so ⌘D keeps
    * its editor meaning there.
    * @param {KeyboardEvent} e
    */
@@ -385,7 +386,7 @@
       type="button"
       class="mr-0.5 inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring"
       aria-pressed={sidebarVisible}
-      title={sidebarVisible ? `Hide sidebar (${IS_MAC ? '⌘B' : 'Ctrl+B'})` : `Show sidebar (${IS_MAC ? '⌘B' : 'Ctrl+B'})`}
+      title={`${sidebarVisible ? 'Hide' : 'Show'} sidebar (${comboTitle('Mod+B')})`}
       aria-label={sidebarVisible ? 'Hide sidebar' : 'Show sidebar'}
       onclick={ontoggleSidebar}
     >
@@ -427,7 +428,7 @@
               {...props}
               type="button"
               class={cn(labelBtn, 'text-muted-foreground')}
-              title="Switch connection (⇧⌘C) · double-click to manage"
+              title={`Switch connection (${comboTitle('Mod+Shift+C')}) · double-click to manage`}
               ondblclick={openConnectionManager}
             >
               {@render connTriggerInner(true)}
@@ -474,7 +475,7 @@
         <button
           type="button"
           class={cn(labelBtn, 'text-muted-foreground')}
-          title="Manage connections (⇧⌘C)"
+          title={`Manage connections (${comboTitle('Mod+Shift+C')})`}
           onclick={onconnect}
           ondblclick={openConnectionManager}
         >
@@ -493,7 +494,7 @@
           <DropdownMenu.Trigger
             class={cn(labelBtn, 'text-muted-foreground', !canSwitchDb && 'cursor-default hover:bg-transparent hover:text-muted-foreground')}
             disabled={!canSwitchDb}
-            title={canSwitchDb ? 'Switch database (⌘D)' : currentDbLabel}
+            title={canSwitchDb ? `Switch database (${comboTitle('Mod+D')})` : currentDbLabel}
           >
             {#if connection?.type === 'sqlite'}
               <Icon name="hard-drive" class="size-3 shrink-0" />
@@ -623,17 +624,17 @@
       {#if showTableNav}
         {@render sep()}
         <div class="flex items-center gap-px">
-          <button type="button" class={iconBtn} onclick={onscrolltabletop} title="Go to top (⌘↑)" aria-label="Scroll to top">
+          <button type="button" class={iconBtn} onclick={onscrolltabletop} title={`Go to top (${comboTitle('Mod+Up')})`} aria-label="Scroll to top">
             <Icon name="chevrons-up" class="size-3.5" />
           </button>
-          <button type="button" class={iconBtn} onclick={onscrolltablebottom} title="Go to bottom (⌘↓)" aria-label="Scroll to bottom">
+          <button type="button" class={iconBtn} onclick={onscrolltablebottom} title={`Go to bottom (${comboTitle('Mod+Down')})`} aria-label="Scroll to bottom">
             <Icon name="chevrons-down" class="size-3.5" />
           </button>
           {#if canScrollTableHorizontally}
-            <button type="button" class={iconBtn} onclick={onscrolltableleft} title="Go to first column (⌘⌥←)" aria-label="Scroll to leftmost column">
+            <button type="button" class={iconBtn} onclick={onscrolltableleft} title={`Go to first column (${comboTitle('Mod+Alt+Left')})`} aria-label="Scroll to leftmost column">
               <Icon name="chevrons-left" class="size-3.5" />
             </button>
-            <button type="button" class={iconBtn} onclick={onscrolltableright} title="Go to last column (⌘⌥→)" aria-label="Scroll to rightmost column">
+            <button type="button" class={iconBtn} onclick={onscrolltableright} title={`Go to last column (${comboTitle('Mod+Alt+Right')})`} aria-label="Scroll to rightmost column">
               <Icon name="chevrons-right" class="size-3.5" />
             </button>
           {/if}
@@ -739,7 +740,7 @@
           class="inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-ui-2xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground disabled:opacity-40"
           onclick={onresetedits}
           disabled={applying}
-          title="Discard {pendingEditCount} unsaved change{pendingEditCount === 1 ? '' : 's'} ({IS_MAC ? '⌥⌫' : 'Alt+Backspace'})"
+          title="Discard {pendingEditCount} unsaved change{pendingEditCount === 1 ? '' : 's'} (${comboTitle('Alt+Backspace')})"
         >
           <Icon name="undo-2" class="size-3 shrink-0" />
           <span class="@max-[780px]/sb:hidden">Reset</span>
@@ -750,7 +751,7 @@
             class="inline-flex items-center gap-1 pl-2 pr-1.5 text-ui-2xs font-medium transition-opacity hover:opacity-85 disabled:opacity-60"
             onclick={onapplyedits}
             disabled={applying}
-            title="Apply {pendingEditCount} unsaved change{pendingEditCount === 1 ? '' : 's'} ({IS_MAC ? '⌘S' : 'Ctrl+S'})"
+            title="Apply {pendingEditCount} unsaved change{pendingEditCount === 1 ? '' : 's'} (${comboTitle('Mod+S')})"
           >
             {#if applying}
               <span class="size-3 shrink-0 animate-spin rounded-full border border-current/40 border-t-current"></span>
@@ -800,7 +801,7 @@
         type="button"
         class={iconBtn}
         onclick={onopenpages}
-        title="Go to page (⌘⇧P)"
+        title={`Go to page (${comboTitle('Mod+Shift+P')})`}
         aria-label="Go to page"
       >
         <Icon name="layout-template" class="size-3.5" />
@@ -813,13 +814,13 @@
       type="button"
       class={cn(iconBtn, aiMode ? 'text-primary! hover:text-primary!' : '')}
       onclick={onopenaimode}
-      title={aiMode ? 'Close AI (⌘⇧E)' : 'Open AI (⌘⇧E)'}
+      title={`${aiMode ? 'Close' : 'Open'} AI (${comboTitle('Mod+Shift+E')})`}
     >
       <Icon name="bot" class="size-3.5" />
     </button>
 
     <!-- Command palette -->
-    <button type="button" class={iconBtn} onclick={onopencommand} title="Command menu (⌘K)">
+    <button type="button" class={iconBtn} onclick={onopencommand} title={`Command menu (${comboTitle('Mod+K')})`}>
       <Icon name="command" class="size-3.5" />
     </button>
 
@@ -842,7 +843,7 @@
     <button
       type="button"
       class={iconBtn}
-      title={$isCurrentThemeDark ? 'Switch to light (⌘M)' : 'Switch to dark (⌘M)'}
+      title={`Switch to ${$isCurrentThemeDark ? 'light' : 'dark'} (${comboTitle('Mod+M')})`}
       onclick={() => toggleLightDark()}
     >
       {#if $isCurrentThemeDark}
@@ -865,7 +866,7 @@
     />
 
     <!-- Settings -->
-    <button type="button" class={iconBtn} onclick={onopensettings} title="Settings (⌘,)">
+    <button type="button" class={iconBtn} onclick={onopensettings} title={`Settings (${comboTitle('Mod+,')})`}>
       <Icon name="settings" class="size-3.5" />
     </button>
 

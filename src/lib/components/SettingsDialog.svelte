@@ -1,4 +1,5 @@
 <script>
+  import { comboTitle } from '$lib/shortcuts.js'
   import Kbd from './Kbd.svelte'
   import { startTelemetry, stopTelemetry } from "$lib/telemetry.js";
   import Minus from "@lucide/svelte/icons/minus";
@@ -395,7 +396,7 @@
     { id: 'record', label: 'Record', icon: 'layout-list' },
     { id: 'text',   label: 'Text',   icon: 'file-text' },
     { id: 'chart',  label: 'Chart',  icon: 'bar-chart-2' },
-    { id: 'erd',    label: 'Data model', icon: 'network' },
+    { id: 'erd',    label: 'Schema diagram', icon: 'network' },
   ];
   const defaultViewOption = $derived(
     DATA_VIEW_OPTIONS.find((o) => o.id === settings.defaultDataView) ?? DATA_VIEW_OPTIONS[0],
@@ -774,7 +775,7 @@
        selects just to show the Database tab is what made this pane feel slow, and
        these are settings you touch once. Search still reaches them - a query
        expands the section, because a setting you can't find may as well not exist. -->
-  <!-- SQL editor: six short rows, so unlike formatting it is not collapsed. -->
+  <!-- SQL editor: one short row each, so unlike formatting it is not collapsed. -->
   {@render secLabel('SQL editor')}
   {#each SQL_EDITOR_FIELDS as field (field.key)}
     {#if show(field.label, field.desc)}
@@ -786,7 +787,11 @@
             <p class="text-ui-sm font-medium text-foreground">{field.label}</p>
             <p class="mt-0.5 text-ui-xs leading-relaxed text-muted-foreground">{field.desc}</p>
           </div>
-          {@render segmented(field.label, SQL_EDITOR_TEXT_SIZES.map((o) => ({ value: o.id, label: o.label })), sqlEd.textSize, (v) => setSqlEditor('textSize', v))}
+          {#if field.kind === 'choice'}
+            {@render segmented(field.label, /** @type {any} */ (field).options, sqlEd[field.key], (v) => setSqlEditor(field.key, v))}
+          {:else}
+            {@render segmented(field.label, SQL_EDITOR_TEXT_SIZES.map((o) => ({ value: o.id, label: o.label })), sqlEd.textSize, (v) => setSqlEditor('textSize', v))}
+          {/if}
         </div>
       {/if}
     {/if}
@@ -981,7 +986,7 @@
     {@render switchRow('Vim mode', 'Experimental: modal keyboard navigation (hjkl, gg/G, i/Esc) across the grid, the SQL editor, and tabs', settings.vimMode, toggleVimMode)}
   {/if}
   {#if show('Cmd+K AI', 'Experimental, ask AI directly from the command palette')}
-    {@render switchRow('⌘K AI (experimental)', 'Experimental, show "Ask AI" in the ⌘K command palette. Off by default.', settings.cmdkAiEnabled, toggleCmdkAi)}
+    {@render switchRow(`${comboTitle('Mod+K')} AI (experimental)`, `Experimental, show "Ask AI" in the ${comboTitle('Mod+K')} command palette. Off by default.`, settings.cmdkAiEnabled, toggleCmdkAi)}
   {/if}
   {#if show('Live mode', 'Experimental, auto-refresh the active table when its data changes')}
     {@render switchRow('Live mode (experimental)', 'Experimental, show the Live auto-refresh toggle in the status bar. Off by default.', settings.liveModeEnabled, toggleLiveMode)}
@@ -1361,6 +1366,22 @@
       />
     </div>
   {/if}
+  {#if show('Comments in the sidebar', 'Table, view and routine comments as a second line under their names')}
+    {@render switchRow(
+      'Comments in the sidebar',
+      'Show the comment a table, view or routine carries in the catalog as a second line under its name. Read once per schema.',
+      settings.sidebarComments,
+      () => (settings = updateSettings({ sidebarComments: !settings.sidebarComments })),
+    )}
+  {/if}
+  {#if show('Remember open groups', 'The Objects tab reopens the groups you had open, per connection')}
+    {@render switchRow(
+      'Remember open groups',
+      'The Objects tab reopens the groups you left open, per connection. Off, Views and Functions start open and the rest folded.',
+      settings.sidebarRememberGroups,
+      () => (settings = updateSettings({ sidebarRememberGroups: !settings.sidebarRememberGroups })),
+    )}
+  {/if}
   {#if show('Motion', 'How much the interface animates')}
     <div class={rowCls}>
       <div class="min-w-0">
@@ -1388,7 +1409,7 @@
   {#if show('Menu bar', 'File, Edit, View, Tools and Help in the title bar')}
     {@render switchRow(
       'Menu bar',
-      'Show File, Edit, View, Tools and Help in the title bar. All of it is also in ⌘K.',
+      `Show File, Edit, View, Tools and Help in the title bar. All of it is also in ${comboTitle('Mod+K')}.`,
       settings.showMenuBar,
       toggleMenuBar,
     )}

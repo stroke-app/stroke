@@ -83,29 +83,3 @@ export function compactClauses(sql, width, unit) {
   }
   return out.join('\n')
 }
-
-/** @param {typeof import('monaco-editor')} monaco */
-export function registerMonacoSqlFormatter(monaco) {
-  if (registerMonacoSqlFormatter.done) return
-  registerMonacoSqlFormatter.done = true
-
-  /** @param {import('monaco-editor').editor.ITextModel} model */
-  /** @param {import('monaco-editor').Range} [range] */
-  function editsFor(model, range) {
-    const text = range ? model.getValueInRange(range) : model.getValue()
-    const formatted = formatSql(text)
-    if (formatted === text) return []
-    const target = range ?? model.getFullModelRange()
-    return [{ range: target, text: formatted }]
-  }
-
-  monaco.languages.registerDocumentFormattingEditProvider('sql', {
-    provideDocumentFormattingEdits: (model) => editsFor(model),
-  })
-
-  monaco.languages.registerDocumentRangeFormattingEditProvider('sql', {
-    provideDocumentRangeFormattingEdits: (model, range) => editsFor(model, range),
-  })
-}
-
-registerMonacoSqlFormatter.done = false

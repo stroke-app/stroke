@@ -689,6 +689,52 @@ export async function listFunctions(schema) {
   return inv('pg_list_functions', { schema })
 }
 
+/**
+ * @typedef {{ kind: string, name: string, args: string, table: string, detail: string, subtype: string, comment: string | null }} DbObject
+ * @typedef {{ kinds: string[], cascade: boolean, objects: DbObject[] }} ObjectListing
+ */
+
+/**
+ * Functions, procedures, triggers, sequences, types and events in a schema,
+ * and which of those kinds the engine has. Views come from `listTables`.
+ * @param {string} schema
+ * @returns {Promise<ObjectListing>}
+ */
+export async function listDbObjects(schema) {
+  return inv('list_db_objects', { schema })
+}
+
+/**
+ * The object as a statement that recreates it (CREATE OR REPLACE where the
+ * engine has one, a DROP ... IF EXISTS in front where it does not).
+ * @param {string} schema @param {Pick<DbObject, 'kind' | 'name'> & Partial<DbObject>} obj
+ * @returns {Promise<string>}
+ */
+export async function getObjectDefinition(schema, obj) {
+  return inv('get_object_definition', { kind: obj.kind, schema, name: obj.name, args: obj.args ?? '', table: obj.table ?? '' })
+}
+
+/**
+ * Drop one object. Resolves to the statement that ran.
+ * @param {string} schema @param {Pick<DbObject, 'kind' | 'name'> & Partial<DbObject>} obj @param {boolean} [cascade]
+ * @returns {Promise<string>}
+ */
+export async function dropDbObject(schema, obj, cascade = false) {
+  assertWritable('drop this object')
+  return inv('drop_db_object', {
+    kind: obj.kind, schema, name: obj.name, args: obj.args ?? '', table: obj.table ?? '', subtype: obj.subtype ?? '', cascade,
+  })
+}
+
+/**
+ * Table and view comments in a schema, for the sidebar.
+ * @param {string} schema
+ * @returns {Promise<{ name: string, comment: string }[]>}
+ */
+export async function listObjectComments(schema) {
+  return inv('list_object_comments', { schema })
+}
+
 /** @returns {Promise<void>} */
 export async function pingConnection() {
   await inv('ping_db_connection')
@@ -726,10 +772,23 @@ export async function truncateTable(schema, table) {
  * @param {string} schema
  * @param {string} table
  * @param {boolean} [cascade]
+ * @param {'table' | 'view' | 'materialized_view'} [kind] views need DROP VIEW
  */
-export async function dropTable(schema, table, cascade = false) {
+export async function dropTable(schema, table, cascade = false, kind = 'table') {
   assertWritable('drop a table')
-  return inv('pg_drop_table', { schema, table, cascade })
+  return inv('pg_drop_table', { schema, table, cascade, kind })
+}
+
+/**
+ * Copy a database on the current server under a new name, structure and rows.
+ * The copy runs server-side; nothing passes through the app.
+ * @param {string} source
+ * @param {string} target
+ * @returns {Promise<{ message: string, warnings: string[] }>}
+ */
+export async function cloneDatabase(source, target) {
+  assertWritable('copy a database')
+  return inv('pg_clone_database', { source, target })
 }
 
 /**
@@ -803,6 +862,9 @@ export async function countTableRows(schema, table, query = {}) {
     // rows is a pager that disagrees with the page.
     searchCaseSensitive: query.searchCaseSensitive ?? false,
     filters: query.filters?.length ? query.filters : null,
+    // Settings → SQL editor → Exact row count: COUNT(*) even where the
+    // planner's estimate would answer instantly.
+    exact: (() => { try { return loadSettings().sqlEditor?.exactRowCount === true } catch { return false } })(),
   })
   return Number(n)
 }

@@ -263,7 +263,7 @@ pub async fn list_tables(config: &PosthogConfig) -> Result<Vec<TableInfo>, Strin
                         _ => "table",
                     };
                     let row_count = t["row_count"].as_f64().map(|n| n as i64).unwrap_or(-1);
-                    Some(TableInfo { name, kind: kind.to_string(), row_count, rls_enabled: None })
+                    Some(TableInfo { name, kind: kind.to_string(), row_count, rls_enabled: None, created_at: None, create_order: None })
                 })
                 .collect()
         })

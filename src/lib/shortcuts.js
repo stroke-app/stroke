@@ -45,6 +45,23 @@ export function keycaps(combo) {
   return combo.split('+').map((part) => GLYPH[part] ?? KEYCAP[part] ?? part)
 }
 
+/** Keys a tooltip spells out in words off macOS, where the glyphs are not the convention. */
+const TITLE_WORD = /** @type {Record<string, string>} */ ({
+  Mod: 'Ctrl', Meta: 'Win', Shift: 'Shift', Enter: 'Enter', Backspace: 'Backspace', Escape: 'Esc',
+  Up: '↑', Down: '↓', Left: '←', Right: '→', ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→',
+})
+
+/**
+ * A combo as tooltip text: `⌘⇧P` on macOS, `Ctrl+Shift+P` elsewhere. One
+ * spelling per platform for every title in the app - they were written out
+ * by hand, half of them as ⌘ glyphs that Windows and Linux showed as they are.
+ * @param {string} combo
+ */
+export function comboTitle(combo) {
+  if (IS_MAC) return keycaps(combo).map((k) => TITLE_WORD[k] && k.startsWith('Arrow') ? TITLE_WORD[k] : k).join('')
+  return combo.split('+').map((part) => TITLE_WORD[part] ?? part).join('+')
+}
+
 /**
  * A combo as flat text, for searching. Includes both the printed keycaps and
  * the written names, so "cmd b", "⌘ b" and "mod b" all find the same row.
@@ -86,8 +103,8 @@ export const SHORTCUT_GROUPS = [
       { combo: 'Mod+1-9', desc: 'Go to tab (9 = last)' },
       { combo: 'Alt+Shift+T', desc: 'Toggle tab bar' },
       { combo: 'Mod+B', desc: 'Toggle sidebar' },
-      { combo: 'Mod+Shift+1-5', desc: 'Sidebar: Tables / Databases / Views / Recent / Pins' },
-      { combo: 'Mod+Alt+Left/Right', desc: 'Cycle sidebar sections' },
+      { combo: 'Mod+Shift+1-6', desc: 'Sidebar tabs, in order: Tables, Databases, Queries, and the rest' },
+      { combo: 'Mod+Alt+Left/Right', desc: 'Cycle sidebar sections (in a table, from the sidebar only: there it is first / last column)' },
       { combo: 'Mod+Shift+F', desc: 'Focus table filter' },
       { combo: 'Shift+Enter', desc: 'Sidebar: open the table and focus the grid' },
       { combo: 'Mod+D', desc: 'Switch database' },
@@ -122,10 +139,24 @@ export const SHORTCUT_GROUPS = [
     shortcuts: [
       { combo: 'Mod+Enter', desc: 'Run all statements' },
       { combo: 'Mod+R', desc: 'Run statement at cursor' },
+      { combo: IS_MAC ? 'Mod+Alt+[' : 'Mod+Shift+[', desc: 'Fold the statement at the cursor' },
+      { combo: IS_MAC ? 'Mod+Alt+]' : 'Mod+Shift+]', desc: 'Unfold it' },
+      { combo: 'Ctrl+Alt+[', desc: 'Fold all statements' },
+      { combo: 'Ctrl+Alt+]', desc: 'Unfold all' },
       { combo: 'Mod+L', desc: 'Select current statement' },
-      { combo: 'Mod+S', desc: 'Save query' },
+      { combo: 'Mod+S', desc: 'Save query (into the saved query it came from)' },
+      { combo: 'Mod+Shift+S', desc: 'Save as a new query' },
+      { combo: 'Mod+/', desc: 'Comment or uncomment lines' },
+      { combo: 'Shift+Enter', desc: 'New line (same as Enter; keeps the indentation)' },
+      { combo: 'Tab', desc: 'Add the suggested ; at the end of a statement' },
+      { combo: 'Mod+.', desc: 'Fix the problem under the caret (add ;, close a bracket or string)' },
+      { combo: 'Alt+↑', desc: 'Move line up (Alt+↓: down)' },
+      { combo: 'Shift+Alt+↓', desc: 'Copy line down (Shift+Alt+↑: up)' },
+      { combo: 'Mod+Shift+K', desc: 'Delete line' },
+      { combo: 'Mod+D', desc: 'Select the next match of the selection' },
+      { combo: 'Mod+]', desc: 'Indent line (Mod+[: outdent)' },
       { combo: 'Mod+J', desc: 'Toggle output panel' },
-      { combo: 'Mod+Shift+B', desc: 'Query history' },
+      { combo: 'Mod+Shift+B', desc: 'History list in the results pane' },
     ],
   },
   {
@@ -133,7 +164,7 @@ export const SHORTCUT_GROUPS = [
     icon: 'code-2',
     shortcuts: [
       { combo: 'Mod+Enter', desc: 'Run query' },
-      { combo: 'Mod+S', desc: 'Format code' },
+      { combo: 'Mod+S', desc: 'Re-indent the code' },
     ],
   },
   {
@@ -184,11 +215,11 @@ export const SHORTCUT_GROUPS = [
     ],
   },
   {
-    label: 'Data model',
+    label: 'Schema diagram',
     icon: 'network',
     shortcuts: [
       { combo: 'Mod+Shift+Enter', desc: 'Toggle full screen' },
-      { combo: 'Mod+F', desc: 'Search tables (Diagram) or columns (Dictionary)' },
+      { combo: 'Mod+F', desc: 'Search the view: tables (Diagram, Hierarchy, Tree), columns (Dictionary), code (Mermaid, DDL)' },
       { combo: 'Escape', desc: 'Exit full screen' },
     ],
   },
@@ -207,8 +238,8 @@ export const SHORTCUT_GROUPS = [
     icon: 'palette',
     shortcuts: [
       { combo: 'Mod+B', desc: 'Toggle sidebar' },
-      { combo: 'Mod+Shift+T', desc: 'Toggle tab bar' },
-      { combo: 'Mod+Shift+B', desc: 'Toggle status bar' },
+      { combo: 'Alt+Shift+T', desc: 'Toggle tab bar' },
+      { combo: 'Mod+Shift+B', desc: 'Toggle status bar (the SQL editor and AI chat use it for their lists)' },
       { combo: 'Mod+M', desc: 'Cycle theme' },
       { combo: 'Mod+Shift+M', desc: 'Previous theme' },
       { combo: 'Mod+Plus', desc: 'Zoom in' },

@@ -27,8 +27,10 @@ export function formatCompactCount(count) {
     return sign + text + suffix
   }
 
-  if (abs < 1_000_000) return withSuffix(abs, 1000, 'k')
-  return withSuffix(abs, 1_000_000, 'M')
+  // The unit follows the rounded value: 999,999 reads 1M, not 1000k.
+  if (abs < 999_500) return withSuffix(abs, 1000, 'k')
+  if (abs < 999_500_000) return withSuffix(abs, 1_000_000, 'M')
+  return withSuffix(abs, 1_000_000_000, 'B')
 }
 
 /** @param {number | string | null | undefined} count */
@@ -47,4 +49,27 @@ export function normalizeTableRowCount(count) {
   const n = Number(count)
   if (!Number.isFinite(n) || n < 0) return null
   return n
+}
+
+/**
+ * Oldest first by when a table was created. A real creation time (MySQL,
+ * SQL Server) wins; engines without one hand over a creation order instead
+ * (Postgres OID, SQLite catalog rowid, DuckDB object id). Tables with neither
+ * go last, and the name breaks ties so the order is stable.
+ * @param {{ name: string, createdAt?: string | null, createOrder?: number | null }} a
+ * @param {{ name: string, createdAt?: string | null, createOrder?: number | null }} b
+ */
+export function compareCreated(a, b) {
+  const at = a.createdAt ?? null, bt = b.createdAt ?? null
+  if (at !== null || bt !== null) {
+    if (at === null) return 1
+    if (bt === null) return -1
+    if (at !== bt) return at < bt ? -1 : 1
+  } else {
+    const ao = a.createOrder ?? null, bo = b.createOrder ?? null
+    if (ao === null && bo !== null) return 1
+    if (bo === null && ao !== null) return -1
+    if (ao !== null && bo !== null && ao !== bo) return ao - bo
+  }
+  return a.name.localeCompare(b.name)
 }

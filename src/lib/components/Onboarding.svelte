@@ -29,7 +29,7 @@
   const FEATURES = [
     { icon: 'database', title: 'Connect any database', desc: 'Postgres, MySQL, SQLite, ClickHouse, Cloudflare D1 and more, all from one window.', preview: 'connect' },
     { icon: 'table-2',  title: 'Browse & edit rows',   desc: 'Filter, sort, paginate, and edit data with a fast spreadsheet feel.',   preview: 'table'   },
-    { icon: 'terminal', title: 'Full SQL editor',      desc: 'A multi-tab Monaco editor with history, saved queries, and AI fixes.', preview: 'sql'     },
+    { icon: 'terminal', title: 'Full SQL editor',      desc: 'A multi-tab editor with schema-aware completion, history, saved queries, and AI fixes.', preview: 'sql'     },
     { icon: 'bot',      title: 'AI assistance',        desc: 'Generate SQL, fix errors, and ask questions with any AI model.',        preview: 'ai'      },
   ]
 

@@ -1,4 +1,5 @@
 <script>
+  import { chartRows } from '$lib/ai-chart-data.js'
   /**
    * Renders AI-generated charts using ECharts + the shared buildOption() utility.
    * Spec format: { type, title, data, x_col, y_col, z_col?, group_col? }
@@ -28,9 +29,11 @@
 
   const isDark = $derived($isCurrentThemeDark)
 
+  // Rows whatever shape the spec carries them in (ai-chart-data.js).
+  const data = $derived(chartRows(spec?.data, spec ?? {}))
   const converted = $derived.by(() => {
-    if (!spec?.data?.length) return null
-    const keys = Object.keys(spec.data[0] ?? {})
+    if (!data.length) return null
+    const keys = Object.keys(data[0] ?? {})
 
     /** @param {unknown} v */
     function detectType(v) {
@@ -43,12 +46,12 @@
     }
 
     const columns = keys.map(k => {
-      const sample = spec.data.find(r => r[k] != null)?.[k]
+      const sample = data.find(r => r[k] != null)?.[k]
       const dt = detectType(sample)
       return { name: k, dataType: dt, data_type: dt }
     })
 
-    const rows = spec.data.map(obj =>
+    const rows = data.map(obj =>
       keys.map(k => {
         const v = obj[k]
         const col = columns.find(c => c.name === k)
@@ -186,13 +189,15 @@
     chart?.dispatchAction({ type: 'restore' })
   }
 
-  const hasData = $derived((spec?.data?.length ?? 0) > 0)
+  const hasData = $derived(data.length > 0)
+  /** The spec with its rows normalised, for the charts that read `spec.data` themselves. */
+  const rowSpec = $derived(spec ? { ...spec, data } : spec)
 </script>
 
 {#if spec?.type === 'choropleth'}
-  <ChoroplethChart bind:this={choroplethRef} {spec} {noTitle} {scrollZoom} />
+  <ChoroplethChart bind:this={choroplethRef} spec={rowSpec} {noTitle} {scrollZoom} />
 {:else if spec?.type === 'meter'}
-  <CarbonMeterChart {spec} {noTitle} />
+  <CarbonMeterChart spec={rowSpec} {noTitle} />
 {:else if hasData}
   <div bind:this={el} class="h-full w-full"></div>
 {:else}

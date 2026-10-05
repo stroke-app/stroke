@@ -782,6 +782,62 @@ pub async fn pg_list_functions(
     list_functions(state, schema).await
 }
 
+/// Functions, procedures, triggers, sequences, types and events in one schema,
+/// and which of those kinds the engine has (the sidebar's Objects tab).
+#[tauri::command]
+pub async fn list_db_objects(
+    state: State<'_, DbState>,
+    schema: String,
+) -> Result<crate::db::objects::ObjectListing, String> {
+    crate::db::objects::list_db_objects(state, schema).await
+}
+
+#[tauri::command]
+pub async fn get_object_definition(
+    state: State<'_, DbState>,
+    kind: String,
+    schema: String,
+    name: String,
+    args: Option<String>,
+    table: Option<String>,
+) -> Result<String, String> {
+    crate::db::objects::get_object_definition(state, kind, schema, name, args.unwrap_or_default(), table.unwrap_or_default()).await
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn drop_db_object(
+    state: State<'_, DbState>,
+    kind: String,
+    schema: String,
+    name: String,
+    args: Option<String>,
+    table: Option<String>,
+    subtype: Option<String>,
+    cascade: Option<bool>,
+) -> Result<String, String> {
+    crate::db::objects::drop_object(
+        state,
+        kind,
+        schema,
+        name,
+        args.unwrap_or_default(),
+        table.unwrap_or_default(),
+        subtype.unwrap_or_default(),
+        cascade.unwrap_or(false),
+    )
+    .await
+}
+
+/// Table and view comments for one schema (the sidebar's comments setting).
+#[tauri::command]
+pub async fn list_object_comments(
+    state: State<'_, DbState>,
+    schema: String,
+) -> Result<Vec<crate::db::objects::ObjectComment>, String> {
+    crate::db::objects::list_object_comments(state, schema).await
+}
+
 #[tauri::command]
 pub async fn ping_db_connection(state: State<'_, DbState>) -> Result<(), String> {
     ping_connection(state).await
@@ -802,8 +858,21 @@ pub async fn pg_drop_table(
     schema: String,
     table: String,
     cascade: bool,
+    // `table` (the default), `view` or `materialized_view`.
+    kind: Option<String>,
 ) -> Result<(), String> {
-    drop_table(state, schema, table, cascade).await
+    drop_table(state, schema, table, cascade, kind).await
+}
+
+/// Copy a database on the current server under a new name, structure and rows.
+#[tauri::command]
+pub async fn pg_clone_database(
+    state: State<'_, DbState>,
+    source: String,
+    target: String,
+) -> Result<crate::db::admin::CloneSummary, String> {
+    let conn = crate::db::connection::require_conn(&state)?;
+    crate::db::admin::clone_database(&conn, &source, &target).await
 }
 
 #[tauri::command]
@@ -890,6 +959,9 @@ pub async fn pg_count_table_rows(
     // Optional - defaults to false. Mirrors the rows query's own flag.
     search_case_sensitive: Option<bool>,
     filters: Option<Vec<crate::db::RowFilter>>,
+    // Optional - defaults to false. True counts a large table instead of
+    // taking the planner's estimate (the "Exact row count" setting).
+    exact: Option<bool>,
 ) -> Result<i64, String> {
     count_table_rows(
         state,
@@ -899,6 +971,7 @@ pub async fn pg_count_table_rows(
         search_is_regex.unwrap_or(false),
         search_case_sensitive.unwrap_or(false),
         filters,
+        exact.unwrap_or(false),
     )
     .await
 }

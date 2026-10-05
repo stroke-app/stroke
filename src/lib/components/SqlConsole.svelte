@@ -1,16 +1,13 @@
 <script>
-  import FieldSelect from './FieldSelect.svelte';
   import { rowsToCsv, rowsToJson, rowsToSql, rowsToTsv, rowsToMarkdown, rowsToJsonl, rowsToObjects, saveExportFile, buildExportFilename } from '$lib/export.js'
   import Play from "@lucide/svelte/icons/play";
   import WifiOff from "@lucide/svelte/icons/wifi-off";
   import Braces from "@lucide/svelte/icons/braces";
   import Wand2 from "@lucide/svelte/icons/wand-2";
-  import CheckCheck from "@lucide/svelte/icons/check-check";
   import Copy from "@lucide/svelte/icons/copy";
   import Check from "@lucide/svelte/icons/check";
   import CircleAlert from "@lucide/svelte/icons/circle-alert";
   import Loader2 from "@lucide/svelte/icons/loader-2";
-  import History from "@lucide/svelte/icons/history";
   import Bookmark from "@lucide/svelte/icons/bookmark";
   import Code2 from "@lucide/svelte/icons/code-2";
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
@@ -18,6 +15,8 @@
   import Table2 from "@lucide/svelte/icons/table-2";
   import SlidersHorizontal from "@lucide/svelte/icons/sliders-horizontal";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
+  import { toast } from "$lib/components/ui/sonner/toast.svelte.js";
+  import { checkObjectSql, objectProblemSummary } from "$lib/sql-object-check.js";
   import { cn, isNetworkError } from "$lib/utils.js";
   import { hasPro } from '$lib/stores/license.js'
   import SqlEditor from "./SqlEditor.svelte";
@@ -47,9 +46,12 @@
     missingSqlParams,
     substituteSqlParams,
     dialectForEngine,
-    loadStoredParamValues,
-    saveStoredParamValues,
+    loadScopedParamValues,
+    saveScopedParamValues,
+    clearStoredParamValues,
   } from "$lib/sql-params.js";
+  import { applyAutoLimit } from "$lib/sql-auto-limit.js";
+  import { splitSqlStatements } from "$lib/sql-statements.js";
   import {
     clampSqlEditorHeight,
     loadLayout,
@@ -59,7 +61,7 @@
   import { SQL_EDITOR_FIELDS, SQL_EDITOR_TEXT_SIZES } from "$lib/sql-editor-options.js";
   import { sortRowsByColumn } from "$lib/result-sort.js";
   import SqlErrorConsole from "./SqlErrorConsole.svelte";
-  import { untrack, onDestroy } from "svelte";
+  import { untrack, onDestroy, tick } from "svelte";
   import { formatCompactCount } from "$lib/table-list.js";
 
   /** @typedef {import('$lib/sql-complete-data.js').SqlSchemaHints} SqlSchemaHints */
@@ -102,16 +104,24 @@
     onmodaltd = undefined,
     onmodshifto = undefined,
     onmodshiftb = undefined,
+    /** Set true to open the History list in the results pane; it reads back
+     *  false once the list is up, so the next request opens it again. */
     queryHistoryVisible = $bindable(false),
     /** @type {import('$lib/stores/query-history.js').QueryHistoryEntry[]} */
     queryHistory = [],
     /** @type {import('$lib/stores/query-history.js').SavedQuery[]} */
     savedQueries = [],
     onqueryrefresh = async () => {},
-    /** @param {string} sql */
-    onhistoryselect = (sql) => {},
-    /** @param {string} name @param {string} sql */
+    /** Load a query into this editor tab. @param {string} sql */
+    onhistoryselect = /** @type {(sql: string) => unknown} */ ((sql) => {}),
+    /** Save as a new query, named. @param {string} name @param {string} sql */
     onsavequery = async (name, sql) => {},
+    /** Save in place when this tab belongs to a saved query, or its text is
+     *  saved already. Resolves false when there is nothing to save into, and
+     *  the name dialog opens. @type {(sql: string) => Promise<boolean>} */
+    onsaveinplace = async (sql) => false,
+    /** Name of the saved query this tab belongs to, or ''. */
+    savedQueryName = '',
     /** Called when user clicks "Fix with AI" - parent opens sidebar and sends the message */
     /** @param {{ error: string, sql: string }} detail */
     onfixwithai = /** @type {((detail: { error: string, sql: string }) => void) | undefined} */ (undefined),
@@ -133,12 +143,20 @@
      *  @type {(onprogress?: (n: number) => void) => Promise<any[][]>} */
     onloadallrows = async () => rows,
     /** Each statement of the last run: its text, and its error and where it
-     *  failed (a 1-based position into that text) when it failed.
-     *  @type {Array<{ sql: string, error: string | null, position: number | null }>} */
+     *  failed (a 1-based position into that text) when it failed; its time and
+     *  rows (or rows affected) when it ran.
+     *  @type {Array<{ sql: string, error: string | null, position: number | null, ms?: number | null, rows?: number | null, affected?: number | null }>} */
     runOutcomes = [],
+    /** Where this tab's variable values are kept: its connection, and its saved
+     *  query or its title (tab ids restart every session). */
+    paramScope = '',
+    /** Run SQL in a new editor tab (a statement's New tab action). @type {((sql: string) => void) | undefined} */
+    onrunnewtab = undefined,
+    /** Ask the AI chat about a statement (its Ask AI action). @type {((sql: string) => void) | undefined} */
+    onaskai = undefined,
   } = $props();
 
-  /** @type {{ focus: () => void, markRunning: (ranStatement?: string | null) => void, markExecuted: (ranStatement?: string | null) => void, markOutcomes: (outcomes: Array<{ sql: string, error: string | null, position: number | null }>) => void, clearRunMarks: () => void, getStatementAtCursor: () => string, getSelectionText: () => string } | null} */
+  /** @type {{ focus: () => void, markRunning: (ranStatement?: string | null) => void, markExecuted: (ranStatement?: string | null, run?: { ms?: number | null, rows?: number | null }) => void, markOutcomes: (outcomes: Array<{ sql: string, sent?: string, error: string | null, position: number | null, ms?: number | null, rows?: number | null, affected?: number | null }>) => void, clearRunMarks: () => void, getStatementAtCursor: () => string, getSelectionText: () => string } | null} */
   let sqlEditorRef = $state(null)
 
   /** Mod+R from outside the editor: the selection, else the statement at the cursor. */
@@ -147,9 +165,22 @@
     if (stmt.trim()) handleRun(stmt)
   }
 
+  /** Run the whole editor, as Run does (a statement opened in a new tab). */
+  export function runEditor() {
+    handleRun(undefined)
+  }
+
   /** Focus the SQL editor - called by the parent when this tab becomes active. */
   export function focusEditor() {
     sqlEditorRef?.focus()
+  }
+
+  /**
+   * Replace the editor content with a snippet template and walk its fields.
+   * @param {string} template
+   */
+  export function applySnippet(template) {
+    return /** @type {any} */ (sqlEditorRef)?.insertSnippet?.(template) ?? false
   }
 
   /**
@@ -165,36 +196,152 @@
   /** The statement that ran last (⌘R), or null when the whole buffer ran. */
   let lastRanStatement = /** @type {string | null} */ (null)
 
-  // ── Named parameters (:name) ────────────────────────────────────────────────
+  // ── Variables (:name, $name, ${name}) ───────────────────────────────────────
   /** @type {Record<string, import('$lib/sql-params.js').SqlParamValue>} */
-  let paramValues = $state(loadStoredParamValues())
+  let paramValues = $state({})
   let paramsPanelOpen = $state(false)
-  const sqlParams = $derived(extractSqlParams(sql))
+  const paramOpts = $derived({ engine })
+  const sqlParams = $derived($appSqlEditor.variables ? extractSqlParams(sql, paramOpts) : [])
+  /** Values while Remember is off: until the app closes, per scope. */
+  const sessionParamValues = new Map()
+
+  // Each tab has its own values (this one console serves every editor tab).
+  $effect(() => {
+    const scope = paramScope
+    untrack(() => {
+      paramValues = $appSqlEditor.rememberVariables ? loadScopedParamValues(scope) : { ...(sessionParamValues.get(scope) ?? {}) }
+    })
+  })
+  // Remember switched off: what is on screen stays for this session, and
+  // nothing stays on disk.
+  let rememberedBefore = untrack(() => $appSqlEditor.rememberVariables)
+  $effect(() => {
+    const remember = $appSqlEditor.rememberVariables
+    untrack(() => {
+      if (rememberedBefore && !remember) {
+        sessionParamValues.set(paramScope, paramValues)
+        clearStoredParamValues()
+      }
+      rememberedBefore = remember
+    })
+  })
 
   /** @param {string} name @param {import('$lib/sql-params.js').SqlParamValue} next */
   function setParam(name, next) {
     paramValues = { ...paramValues, [name]: next }
-    saveStoredParamValues(paramValues)
+    if ($appSqlEditor.rememberVariables) saveScopedParamValues(paramScope, paramValues)
+    else sessionParamValues.set(paramScope, paramValues)
   }
 
-  /** @param {string | undefined} statementSql */
-  function handleRun(statementSql) {
+  /**
+   * The text to send for `target`: variables filled in as escaped literals
+   * (the substituted text is what executes and what history records, so runs
+   * stay reproducible), then a LIMIT where Settings asks for one. Null when a
+   * variable still has no value: the Variables panel opens and the run waits.
+   * @param {string} target
+   * @returns {{ text: string, changed: boolean } | null}
+   */
+  function prepareRun(target) {
+    let text = target
+    let changed = false
+    if ($appSqlEditor.variables && extractSqlParams(target, paramOpts).length > 0) {
+      if (missingSqlParams(target, paramValues, paramOpts).length > 0) {
+        paramsPanelOpen = true
+        return null
+      }
+      text = substituteSqlParams(target, paramValues, dialectForEngine(engine), paramOpts)
+      changed = true
+    }
+    const limited = applyAutoLimit(text, $appSqlEditor.autoLimit, engine)
+    if (limited.changed) {
+      text = limited.sql
+      changed = true
+    }
+    return { text, changed }
+  }
+
+  /**
+   * The editor's own text of each statement of the last run, when what was
+   * sent differs from it, so the marks land on the statements as written.
+   * @type {string[] | null}
+   */
+  let runOriginals = null
+  /** The statement a run waiting on a variable was for (undefined: the whole editor). */
+  let pendingRunSql = /** @type {string | undefined} */ (undefined)
+
+  /**
+   * A CREATE TRIGGER / FUNCTION / PROCEDURE / VIEW that names a table or
+   * column the schema does not have stops here: every engine creates it as
+   * written and it fails the first time it runs (for a trigger, on every write
+   * to its table). The toast says what is wrong; Run anyway sends it.
+   * @param {string} target @param {() => void} runAnyway
+   * @returns {boolean} whether the run was stopped
+   */
+  function stopForObjectProblems(target, runAnyway) {
+    const problem = objectProblemSummary(checkObjectSql(target, schemaHints, engine).diags)
+    if (!problem) return false
+    toast.error(problem, {
+      description: 'Not created: it would fail when it runs. Fix the underlined name, or run it as written.',
+      action: { label: 'Run anyway', onClick: runAnyway },
+    })
+    return true
+  }
+
+  /**
+   * @param {string | undefined} statementSql
+   * @param {boolean} [checked] the object check was seen and overridden
+   * @returns {boolean} whether it ran
+   */
+  function handleRun(statementSql, checked = false) {
     const single = typeof statementSql === 'string' && statementSql.trim() ? statementSql : undefined
     const target = single ?? sql
-    if (extractSqlParams(target).length > 0) {
-      // Block the run until every parameter has a usable value, then inline
-      // them as escaped literals - the substituted text is what executes (and
-      // what history records), so runs stay reproducible.
-      if (missingSqlParams(target, paramValues).length > 0) {
-        paramsPanelOpen = true
-        return
-      }
-      lastRanStatement = single ?? null
-      onrun(substituteSqlParams(target, paramValues, dialectForEngine(engine)))
+    if (!checked && stopForObjectProblems(target, () => handleRun(statementSql, true))) return false
+    const prep = prepareRun(target)
+    // Waiting on a variable: Enter in the panel runs this same target.
+    pendingRunSql = prep ? undefined : single
+    if (!prep) return false
+    lastRanStatement = single ?? null
+    runOriginals = prep.changed ? splitSqlStatements(target).map((st) => st.text) : null
+    onrun(prep.changed ? prep.text : single)
+    return true
+  }
+
+  /**
+   * A statement action from the row above it in the editor.
+   * @param {'run' | 'newtab' | 'json' | 'variables' | 'ai'} action @param {string} text
+   */
+  function onStatementAction(action, text) {
+    if (action === 'variables') {
+      pendingRunSql = text
+      paramsPanelOpen = true
       return
     }
-    lastRanStatement = single ?? null
-    onrun(single)
+    if (action === 'ai') {
+      onaskai?.(text)
+      return
+    }
+    if (action === 'newtab' && onrunnewtab) {
+      if (stopForObjectProblems(text, () => { const p = prepareRun(text); if (p) onrunnewtab(p.text) })) return
+      const prep = prepareRun(text)
+      if (prep) onrunnewtab(prep.text)
+      else pendingRunSql = text
+      return
+    }
+    if (action === 'json' && !$hasPro) {
+      onprorequired()
+      return
+    }
+    if (handleRun(text) && action === 'json') {
+      outputView = 'json'
+      if (!outputVisible) toggleOutput()
+    }
+  }
+
+  /** The last run's outcomes, named by the editor's text where the sent text differs. */
+  function outcomesForMarks() {
+    const orig = runOriginals
+    if (!orig || orig.length !== runOutcomes.length) return runOutcomes
+    return runOutcomes.map((o, i) => ({ ...o, sql: orig[i], sent: o.sql }))
   }
 
   // ── Run split-button dropdown ───────────────────────────────────────────────
@@ -217,8 +364,64 @@
   }
 
   // ── Result view state ───────────────────────────────────────────────────────
-  /** @type {'table' | 'chart' | 'json' | 'explain' | 'error'} */
+  /** @type {'table' | 'chart' | 'json' | 'explain' | 'error' | 'history' | 'saved' | 'charts'} */
   let outputView = $state('table')
+  /**
+   * History, Saved and the saved charts open in the results pane, beside the
+   * result views. They were a column beside the editor, which narrowed it.
+   */
+  const LIST_VIEWS = /** @type {const} */ ([
+    { id: 'history', label: 'History', hint: 'Every query run on this connection, from any editor tab' },
+    { id: 'saved', label: 'Saved', hint: 'Queries saved on this connection' },
+    { id: 'charts', label: 'Charts', hint: 'Charts saved on this connection' },
+  ])
+  const listView = $derived(outputView === 'history' || outputView === 'saved' || outputView === 'charts')
+  /** The result view to go back to when a list closes. */
+  let lastResultView = /** @type {'table' | 'chart' | 'json' | 'explain' | 'error'} */ ('table')
+  $effect(() => {
+    const v = outputView
+    if (v !== 'history' && v !== 'saved' && v !== 'charts') lastResultView = v
+  })
+
+  /** Result views on screen, rather than a list. */
+  const resultShown = $derived(outputVisible && !listView)
+
+  /** @param {'history' | 'saved' | 'charts'} view */
+  function openList(view) {
+    outputView = view
+    if (!outputVisible) toggleOutput()
+  }
+
+  /** Open a list, or close the open one back to the result. @param {'history' | 'saved' | 'charts'} view */
+  function toggleList(view) {
+    if (!outputVisible || outputView !== view) return openList(view)
+    closeList()
+  }
+
+  function closeList() {
+    outputView = lastResultView === 'error' && !shownError ? 'table' : lastResultView
+    sqlEditorRef?.focus()
+  }
+
+  /** Ctrl/Cmd+Shift+B: the History list, or back to the result. */
+  const toggleHistory = () => toggleList('history')
+
+  // The shell asks for the History list (the palette, the menu) by setting the
+  // flag; it is a request, not a state, so it is handed back at once.
+  $effect(() => {
+    if (!queryHistoryVisible) return
+    untrack(() => {
+      openList('history')
+      queryHistoryVisible = false
+    })
+  })
+
+  /** Load a listed query into the editor, then run it. @param {string} text */
+  async function runListed(text) {
+    await onhistoryselect(text)
+    await tick()
+    handleRun(undefined)
+  }
   let chartType = $state('bar')
   let activeResultIdx = $state(0)
   /** @type {object | null} */
@@ -273,7 +476,11 @@
       selected = new Set()
       activeResultIdx = 0
       resultSort = null
-      if (outputView === 'explain') outputView = 'table'
+      // A run is for its result: a list (History, Saved) gives way to it.
+      if (outputView === 'explain' || listView) outputView = 'table'
+      // Settings → SQL editor → Show results when a query runs. Not saved as
+      // the pane's state: collapsing it again is still remembered.
+      if (!outputVisible && $appSqlEditor.revealResultsOnRun) outputVisible = true
     })
   })
 
@@ -289,9 +496,9 @@
       else if (wasLoading && !l) {
         // Per statement when the run reported them: ✓ or ✗ each, failures
         // underlined where the database says they failed.
-        if (runOutcomes.length && !/Query cancelled/i.test(err)) sqlEditorRef?.markOutcomes?.(runOutcomes)
+        if (runOutcomes.length && !/Query cancelled/i.test(err)) sqlEditorRef?.markOutcomes?.(outcomesForMarks())
         else if (err) sqlEditorRef?.clearRunMarks?.()
-        else sqlEditorRef?.markExecuted?.(lastRanStatement)
+        else sqlEditorRef?.markExecuted?.(lastRanStatement, { ms: queryMs, rows: columns.length ? rows.length : null })
       }
       wasLoading = l
     })
@@ -390,12 +597,11 @@
         toggleOutput()
       } else if ((e.key === 'b' || e.key === 'B') && e.shiftKey) {
         e.preventDefault()
-        queryHistoryVisible = !queryHistoryVisible
+        toggleHistory()
         onmodshiftb?.()
-      } else if (e.key === 's' && !e.shiftKey) {
-        e.preventDefault()
-        openSaveDialog()
       }
+      // Mod+S is the shell's (it saves this query from anywhere in the tab):
+      // handling it here as well saved the query twice.
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -448,6 +654,22 @@
   const initialLayout = loadLayout();
   let editorHeight = $state(initialLayout.sqlEditorHeight);
   let resizeStartHeight = initialLayout.sqlEditorHeight;
+
+  // Results beside the editor: the editor's width, kept like its height is.
+  const EDITOR_WIDTH_KEY = 'stroke:sql-editor-width';
+  /** @type {HTMLElement | null} */
+  let splitEl = $state(null);
+  let editorWidth = $state((() => {
+    try { const n = Number(localStorage.getItem(EDITOR_WIDTH_KEY)); return Number.isFinite(n) && n > 0 ? n : 560 } catch { return 560 }
+  })());
+  let resizeStartWidth = 560;
+  /** Both sides keep room to work in. @param {number} w */
+  function clampEditorWidth(w) {
+    const total = splitEl?.clientWidth ?? 0;
+    const max = total > 0 ? Math.max(280, total - 320) : 1600;
+    return Math.round(Math.min(max, Math.max(280, w)));
+  }
+  const beside = $derived($appSqlEditor.resultsBeside && outputVisible);
   /** @type {(() => Promise<void>) | null} */
   let formatSql = $state(null);
 
@@ -505,23 +727,41 @@
     return clampSqlEditorHeight(height, consoleEl?.clientHeight ?? 0);
   }
 
+  /** Save as a new query: the name dialog. Ctrl/Cmd+Shift+S, Shift+click Save. */
   function openSaveDialog() {
-    saveQueryName = queryTitle(sql);
+    if (!sql.trim()) return;
+    saveQueryName = savedQueryName ? `${savedQueryName} copy` : queryTitle(sql);
     saveDialogOpen = true;
   }
 
-  let ormCopied = $state(/** @type {'drizzle' | 'prisma' | null} */ (null))
-  /** @type {ReturnType<typeof setTimeout> | null} */
-  let ormCopiedTimer = null
+  /**
+   * Ctrl/Cmd+S and the Save button. A tab that belongs to a saved query saves
+   * into it; only text nobody saved yet asks for a name.
+   */
+  export async function saveQuery() {
+    if (!sql.trim() || savingQuery || saveDialogOpen) return;
+    savingQuery = true;
+    let handled = false;
+    try {
+      handled = await onsaveinplace(sql);
+    } finally {
+      savingQuery = false;
+    }
+    if (!handled) openSaveDialog();
+  }
 
-  /** @param {'drizzle' | 'prisma'} kind */
-  function copyAsOrm(kind) {
-    const code = kind === 'drizzle' ? sqlToDrizzle(sql) : sqlToPrisma(sql, [])
+  let queryCopied = $state(false)
+  /** @type {ReturnType<typeof setTimeout> | null} */
+  let queryCopiedTimer = null
+
+  /** @param {'sql' | 'drizzle' | 'prisma'} kind */
+  function copyQueryAs(kind) {
+    const code = kind === 'sql' ? sql : kind === 'drizzle' ? sqlToDrizzle(sql) : sqlToPrisma(sql, [])
     navigator.clipboard.writeText(code).then(() => {
-      ormCopied = kind
-      if (ormCopiedTimer) clearTimeout(ormCopiedTimer)
-      ormCopiedTimer = setTimeout(() => { ormCopied = null }, 2000)
-    })
+      queryCopied = true
+      if (queryCopiedTimer) clearTimeout(queryCopiedTimer)
+      queryCopiedTimer = setTimeout(() => { queryCopied = false }, 2000)
+    }).catch(() => toast.error('Copy failed', { description: 'The clipboard is not available.' }))
   }
 
   async function confirmSaveQuery() {
@@ -535,23 +775,22 @@
     }
   }
 
+  /** How a variable's value goes into the SQL. */
+  const PARAM_MODES = [
+    { value: 'auto', label: 'Auto', hint: 'Numbers, true / false and NULL as they are; anything else as a quoted string' },
+    { value: 'text', label: 'Text', hint: 'Always a quoted string' },
+    { value: 'raw', label: 'Raw SQL', hint: 'Inserted as written: a function call, a column, an expression' },
+    { value: 'null', label: 'NULL', hint: 'NULL, whatever is typed' },
+  ]
+
   onDestroy(() => {
     // Clear copy-feedback timers so they don't fire state writes after unmount
-    if (ormCopiedTimer) clearTimeout(ormCopiedTimer)
+    if (queryCopiedTimer) clearTimeout(queryCopiedTimer)
     if (errorCopyTimer) clearTimeout(errorCopyTimer)
   })
 </script>
 
 <div class="flex min-h-0 flex-1 overflow-hidden">
-  <QueryHistoryPanel
-    bind:visible={queryHistoryVisible}
-    history={queryHistory}
-    saved={savedQueries}
-    onselect={(text) => onhistoryselect(text)}
-    onrefresh={onqueryrefresh}
-    onclose={() => (queryHistoryVisible = false)}
-  />
-
   <div bind:this={consoleEl} class="flex min-h-0 min-w-0 flex-1 flex-col">
   <div
     class="studio-chrome flex h-9 shrink-0 items-center gap-1.5 border-b border-border bg-panel px-2"
@@ -708,20 +947,18 @@
           paramsPanelOpen ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground',
         )}
         onclick={() => (paramsPanelOpen = !paramsPanelOpen)}
-        title={tipText('Query parameters', 'Set values for :name placeholders, they are inlined as escaped literals when the query runs.')}
+        title={tipText('Variables', 'Set values for :name, $name and ${name} variables. They are inlined as escaped literals when the query runs.')}
       >
         <Variable class="size-3.5 shrink-0" />
-        Parameters
+        Variables
         <span class="rounded bg-muted/70 px-1 font-mono text-ui-3xs tabular-nums text-muted-foreground">{sqlParams.length}</span>
       </Button>
     {/if}
 
-    <div class="mx-0.5 h-4 w-px shrink-0 bg-border" aria-hidden="true"></div>
-
-    <!-- Grouped by space, not more rules: what to do with this query (format,
-         explain, copy as ORM), then where queries are kept (save, history),
-         then the editor's view options apart at the trailing edge. -->
-    <div class="flex min-w-0 items-center gap-0.5">
+    <!-- Grouped by space, not rules: the run controls lead, then what to do
+         with this query (format, explain, copy), then the trailing edge with
+         the editor's view options and Save, the last thing a session ends on. -->
+    <div class="ml-2 flex min-w-0 items-center gap-0.5">
       <Button
         type="button"
         variant="ghost"
@@ -729,6 +966,7 @@
         class="size-7 p-0 text-muted-foreground hover:text-foreground"
         disabled={!sql.trim()}
         onclick={() => void formatSql?.()}
+        aria-label="Format SQL"
         title={tipText('Format SQL', 'Reformat the whole editor with consistent casing and indentation.')}
       >
         <Braces class="size-3.5 shrink-0" />
@@ -744,6 +982,7 @@
         )}
         disabled={!sql.trim() || explainLoading}
         onclick={handleExplain}
+        aria-label="Explain plan"
         title={tipText('Explain plan', 'Visualize how the database executes this query, spot slow scans and missing indexes.')}
       >
         {#if explainLoading}
@@ -753,61 +992,42 @@
         {/if}
       </Button>
 
+      <!-- Copy reads as copy: the clipboard icon and a caret for the menu,
+           the same 28px shape as its neighbours. The icon turns into a check
+           for two seconds after a copy, so the click is seen to land. -->
       <DropdownMenu.Root>
         <DropdownMenu.Trigger
-          class="flex h-7 items-center gap-1 rounded-md px-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground data-[state=open]:bg-accent data-[state=open]:text-foreground disabled:pointer-events-none disabled:opacity-50"
+          class="inline-flex h-7 shrink-0 items-center gap-0.5 rounded-md pl-1.5 pr-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground data-[state=open]:bg-accent data-[state=open]:text-foreground disabled:pointer-events-none disabled:opacity-50"
           disabled={!sql.trim()}
-          title="Copy as ORM query, Drizzle or Prisma"
+          aria-label="Copy query as"
+          title={tipText('Copy', 'Copy the query as SQL, or as a Drizzle or Prisma call.')}
         >
-          {#if ormCopied}
-            <CheckCheck class="size-3.5 shrink-0 text-success" />
+          {#if queryCopied}
+            <Check class="size-3.5 shrink-0 text-success" />
           {:else}
-            <Code2 class="size-3.5 shrink-0" />
+            <Copy class="size-3.5 shrink-0" />
           {/if}
-          <ChevronDown class="size-3 shrink-0 opacity-50" />
+          <ChevronDown class="size-3 shrink-0" />
         </DropdownMenu.Trigger>
-        <DropdownMenu.Content align="start" class="min-w-44">
-          <DropdownMenu.Item class="gap-2 whitespace-nowrap font-mono text-ui-xs" onclick={() => copyAsOrm('drizzle')}>
-            <Code2 class="size-3.5 shrink-0 text-muted-foreground" />
-            Copy as Drizzle
+        <DropdownMenu.Content align="start" class="min-w-48">
+          <DropdownMenu.Item onSelect={() => copyQueryAs('sql')}>
+            <Copy class="size-3.5 shrink-0 text-muted-foreground" />
+            <span data-slot="menu-label">Copy SQL</span>
           </DropdownMenu.Item>
-          <DropdownMenu.Item class="gap-2 whitespace-nowrap font-mono text-ui-xs" onclick={() => copyAsOrm('prisma')}>
+          <DropdownMenu.Separator />
+          <DropdownMenu.Item onSelect={() => copyQueryAs('drizzle')}>
             <Code2 class="size-3.5 shrink-0 text-muted-foreground" />
-            Copy as Prisma
+            <span data-slot="menu-label">Copy as Drizzle</span>
+          </DropdownMenu.Item>
+          <DropdownMenu.Item onSelect={() => copyQueryAs('prisma')}>
+            <Code2 class="size-3.5 shrink-0 text-muted-foreground" />
+            <span data-slot="menu-label">Copy as Prisma</span>
           </DropdownMenu.Item>
         </DropdownMenu.Content>
       </DropdownMenu.Root>
     </div>
 
-    <div class="ml-3 flex min-w-0 items-center gap-0.5">
-      <Button
-        type="button"
-        variant="ghost"
-        size="sm"
-        class="size-7 p-0 text-muted-foreground hover:text-foreground"
-        disabled={!sql.trim()}
-        onclick={openSaveDialog}
-        title={tipText('Save query', 'Keep this query for later, saved queries live in History → Saved, per connection.', [mod, 'S'])}
-      >
-        <Bookmark class="size-3.5 shrink-0" />
-      </Button>
-
-      <Button
-        type="button"
-        variant="ghost"
-        size="sm"
-        class={cn(
-          'size-7 p-0 hover:text-foreground',
-          queryHistoryVisible ? 'text-foreground' : 'text-muted-foreground',
-        )}
-        onclick={() => (queryHistoryVisible = !queryHistoryVisible)}
-        title={tipText('Query history', 'Browse and re-run everything you have executed, plus your saved queries.', [mod, '⇧', 'B'])}
-      >
-        <History class="size-3.5 shrink-0" />
-      </Button>
-    </div>
-
-    <div class="ml-auto flex shrink-0 items-center">
+    <div class="ml-auto flex shrink-0 items-center gap-1.5">
       <!-- The editor's own view options, the same switches as Settings →
            Database → SQL editor. Toggles keep the menu open, so several can
            be flipped in one visit. -->
@@ -820,7 +1040,7 @@
           <SlidersHorizontal class="size-3.5 shrink-0" />
         </DropdownMenu.Trigger>
         <DropdownMenu.Content align="end" class="min-w-52">
-          {#each SQL_EDITOR_FIELDS.filter((f) => f.kind === 'bool') as field (field.key)}
+          {#each SQL_EDITOR_FIELDS.filter((f) => f.kind === 'bool' && /** @type {any} */ (f).menu !== false) as field (field.key)}
             <DropdownMenu.CheckboxItem
               checked={$appSqlEditor[field.key] === true}
               closeOnSelect={false}
@@ -830,6 +1050,15 @@
               {#if field.key === 'wrap'}<DropdownMenu.Shortcut combo="Alt+Z" />{/if}
             </DropdownMenu.CheckboxItem>
           {/each}
+          <DropdownMenu.Separator />
+          <DropdownMenu.Item onSelect={() => sqlEditorRef?.foldAll?.()}>
+            <span data-slot="menu-label">Fold all statements</span>
+            <DropdownMenu.Shortcut combo="Ctrl+Alt+[" />
+          </DropdownMenu.Item>
+          <DropdownMenu.Item onSelect={() => sqlEditorRef?.unfoldAll?.()}>
+            <span data-slot="menu-label">Unfold all</span>
+            <DropdownMenu.Shortcut combo="Ctrl+Alt+]" />
+          </DropdownMenu.Item>
           <DropdownMenu.Separator />
           <DropdownMenu.Label>Text size</DropdownMenu.Label>
           <DropdownMenu.RadioGroup
@@ -842,71 +1071,111 @@
           </DropdownMenu.RadioGroup>
         </DropdownMenu.Content>
       </DropdownMenu.Root>
+
+      <!-- Save at the trailing edge, labelled: it is the one action here that
+           keeps work, and an icon alone read as a bookmark toggle. -->
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        class="h-7 shrink-0 gap-1.5"
+        disabled={!sql.trim() || savingQuery}
+        onclick={(e) => (e.shiftKey ? openSaveDialog() : void saveQuery())}
+        title={savedQueryName
+          ? tipText(`Save "${savedQueryName}"`, `Writes this tab into the saved query. Shift+click or ${mod}⇧S saves a copy under a new name.`, [mod, 'S'])
+          : tipText('Save query', 'Keep this query for later, under Saved in the results pane, per connection.', [mod, 'S'])}
+      >
+        {#if savingQuery}
+          <Loader2 class="size-3.5 shrink-0 animate-spin" />
+        {:else}
+          <Bookmark class={cn('size-3.5 shrink-0', savedQueryName && 'fill-current')} />
+        {/if}
+        Save
+      </Button>
     </div>
   </div>
 
   {#if paramsPanelOpen && sqlParams.length > 0}
+    <!-- One field per variable: the name leads as its prefix, the value takes
+         the width, and how the value goes into the SQL is a small menu at the
+         field's end. It was three separate boxes spread across the row, with
+         the close button stranded far from them. -->
     <div class="shrink-0 border-b border-border/60 bg-panel px-3 py-2">
-      <div class="flex w-full max-w-2xl items-center gap-1.5 pb-1.5">
-        <Variable class="size-3 text-muted-foreground" />
-        <span class="select-none text-ui-3xs font-medium uppercase tracking-[0.08em] text-muted-foreground">Parameters</span>
-        <span
-          class="select-none text-ui-3xs text-muted-foreground"
-          title="Auto detects numbers, booleans and NULL, everything else runs as a quoted string."
-        >· Enter runs</span>
-        <button
-          type="button"
-          class="ml-auto inline-flex size-5 items-center justify-center rounded text-muted-foreground transition-[background-color,color] hover:bg-accent hover:text-foreground"
-          aria-label="Close parameters"
-          onclick={() => (paramsPanelOpen = false)}
-        >
-          <X class="size-3" />
-        </button>
-      </div>
-      <div class="flex w-full max-w-2xl flex-col gap-1">
+      <div class="flex w-full max-w-xl flex-col gap-1.5">
+        <div class="flex h-6 items-center gap-2">
+          <Variable class="size-3.5 shrink-0 text-muted-foreground" />
+          <span class="text-ui-xs font-medium text-foreground">Variables</span>
+          <span class="font-mono text-ui-2xs tabular-nums text-muted-foreground">{sqlParams.length}</span>
+          <span class="ml-auto text-ui-2xs text-muted-foreground">Enter to run</span>
+          <button
+            type="button"
+            class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            aria-label="Close variables"
+            title="Close (Esc)"
+            onclick={() => (paramsPanelOpen = false)}
+          >
+            <X class="size-3.5" />
+          </button>
+        </div>
         {#each sqlParams as p (p.name)}
           {@const v = paramValues[p.name] ?? { value: '', mode: 'auto' }}
-          <div class="grid grid-cols-[minmax(5rem,8.5rem)_5.25rem_minmax(0,1fr)] items-center gap-1.5">
+          {@const mode = PARAM_MODES.find((m) => m.value === v.mode) ?? PARAM_MODES[0]}
+          <div class="field-surface flex h-8 min-w-0 items-stretch overflow-hidden bg-input/30 focus-within:outline-2 focus-within:outline-offset-1 focus-within:outline-ring">
             <span
-              class="justify-self-start truncate rounded bg-muted/50 px-1.5 py-0.5 font-mono text-ui-2xs text-foreground/75"
-              title=":{p.name}"
-            ><span class="text-muted-foreground">:</span>{p.name}</span>
-            <div class="relative">
-              <FieldSelect
-                size="sm"
-                class="w-full bg-input/30 text-ui-xs"
-                aria-label="Parameter type for {p.name}"
-                value={v.mode}
-                onchange={(mode) => setParam(p.name, { ...v, mode: /** @type {any} */ (mode) })}
-                options={[
-                  { value: 'auto', label: 'Auto' },
-                  { value: 'text', label: 'Text' },
-                  { value: 'raw', label: 'Raw SQL' },
-                  { value: 'null', label: 'NULL' },
-                ]}
-              />
-            </div>
+              class="flex min-w-[6.5rem] max-w-[14rem] shrink-0 items-center truncate border-r border-border/60 px-2.5 font-mono text-ui-xs text-foreground"
+              title="{p.sigil}{p.name}"
+            ><span class="text-muted-foreground">{p.sigil}</span>{p.name}</span>
             <input
               type="text"
               value={v.value}
               disabled={v.mode === 'null'}
-              placeholder={v.mode === 'null' ? 'NULL' : v.mode === 'raw' ? 'now(), inserted verbatim' : 'value'}
+              placeholder={v.mode === 'null' ? 'NULL' : v.mode === 'raw' ? 'now(), inserted as written' : 'Value'}
               aria-label="Value for {p.name}"
-              class= "field-surface h-7 w-full min-w-0 border-transparent bg-input/30 px-2 font-mono text-ui-xs text-foreground transition-colors placeholder:text-muted-foreground hover: focus:outline-none disabled:opacity-40"
+              spellcheck="false"
+              autocomplete="off"
+              class="no-focus-ring min-w-0 flex-1 bg-transparent px-2.5 font-mono text-ui-xs text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-50"
               oninput={(e) => setParam(p.name, { ...v, value: e.currentTarget.value })}
-              onkeydown={(e) => { if (e.key === 'Enter') handleRun(undefined) }}
+              onkeydown={(e) => {
+                if (e.key === 'Enter') handleRun(pendingRunSql)
+                else if (e.key === 'Escape') { e.stopPropagation(); paramsPanelOpen = false }
+              }}
             />
+            <DropdownMenu.Root>
+              <DropdownMenu.Trigger
+                class="inline-flex shrink-0 items-center gap-1 border-l border-border/60 pl-2.5 pr-2 text-ui-2xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground data-[state=open]:bg-accent data-[state=open]:text-foreground"
+                aria-label="How {p.name} goes into the SQL: {mode.label}"
+                title={mode.hint}
+              >
+                {mode.label}
+                <ChevronDown class="size-3 shrink-0" />
+              </DropdownMenu.Trigger>
+              <DropdownMenu.Content align="end" class="min-w-40">
+                <DropdownMenu.RadioGroup value={v.mode} onValueChange={(m) => setParam(p.name, { ...v, mode: /** @type {any} */ (m) })}>
+                  {#each PARAM_MODES as m (m.value)}
+                    <DropdownMenu.RadioItem value={m.value} title={m.hint}>
+                      <span data-slot="menu-label">{m.label}</span>
+                    </DropdownMenu.RadioItem>
+                  {/each}
+                </DropdownMenu.RadioGroup>
+              </DropdownMenu.Content>
+            </DropdownMenu.Root>
           </div>
         {/each}
       </div>
     </div>
   {/if}
 
+  <!-- Editor and results: one above the other, or side by side (Settings →
+       SQL editor → Results beside the editor). Collapsed, the results bar
+       always sits under the editor. -->
+  <div bind:this={splitEl} class={cn('flex min-h-0 flex-1', beside ? 'flex-row' : 'flex-col')}>
   <div
-    class={outputVisible
+    class={beside
       ? "relative shrink-0 overflow-hidden bg-panel"
-      : "relative min-h-0 flex-1 overflow-hidden bg-panel"}
-    style={outputVisible ? `height: ${editorHeight}px` : undefined}
+      : outputVisible
+        ? "relative shrink-0 overflow-hidden bg-panel"
+        : "relative min-h-0 flex-1 overflow-hidden bg-panel"}
+    style={beside ? `width: ${editorWidth}px` : outputVisible ? `height: ${editorHeight}px` : undefined}
   >
     <SqlEditor
       bind:this={sqlEditorRef}
@@ -917,7 +1186,8 @@
       {onmodk}
       onmodenter={() => handleRun(undefined)}
       onrunstatement={(stmt) => handleRun(stmt)}
-      onmods={openSaveDialog}
+      onmods={() => void saveQuery()}
+      onmodshifts={openSaveDialog}
       {onmodi}
       {onmodw}
       {onmodn}
@@ -928,14 +1198,30 @@
       {onmodaltd}
       {onmodshifto}
       onmodj={toggleOutput}
-      onmodshiftb={() => { queryHistoryVisible = !queryHistoryVisible; onmodshiftb?.() }}
+      onmodshiftb={() => { toggleHistory(); onmodshiftb?.() }}
+      onlens={onStatementAction}
       onactionsready={(actions) => {
         formatSql = actions.format;
       }}
     />
   </div>
 
-  {#if outputVisible}
+  {#if beside}
+  <ResizeHandle
+    axis="x"
+    edge="end"
+    onresizestart={() => {
+      resizeStartWidth = editorWidth;
+    }}
+    onresize={(dx) => {
+      editorWidth = clampEditorWidth(resizeStartWidth + dx);
+    }}
+    onresizeend={() => {
+      resizeStartWidth = editorWidth;
+      try { localStorage.setItem(EDITOR_WIDTH_KEY, String(editorWidth)) } catch { /* only the width is lost */ }
+    }}
+  />
+  {:else if outputVisible}
   <ResizeHandle
     axis="y"
     edge="end"
@@ -954,7 +1240,7 @@
 
   <!-- Output panel: header always visible, content toggles with Cmd+J
        (a failed run surfaces in the "Error" view tab below, not a banner). -->
-  <div class={outputVisible ? "flex min-h-0 flex-1 flex-col overflow-hidden" : "flex shrink-0 flex-col"}>
+  <div class={outputVisible ? "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" : "flex shrink-0 flex-col"}>
     <!-- Output tab bar -->
     <div
       class="studio-chrome flex h-8 shrink-0 items-stretch border-b border-border bg-panel"
@@ -972,7 +1258,7 @@
               type="button"
               role="tab"
               aria-selected={rsActive}
-              onclick={() => { activeResultIdx = i; resultSort = null; selected = new Set() }}
+              onclick={() => { activeResultIdx = i; resultSort = null; selected = new Set(); if (listView) outputView = 'table' }}
               title={rs.error ? rs.error.replace(/^Error:\s*/, '') : rs.sql}
               class={cn(
                 'flex h-6 shrink-0 items-center gap-1 rounded-md px-2 text-ui-2xs font-medium whitespace-nowrap transition-colors',
@@ -1030,9 +1316,28 @@
         {/each}
       </div>
 
+      <!-- The lists, beside the result views. They are the connection's, so
+           every editor tab shows the same ones. -->
+      <div class="mx-0.5 h-4 w-px shrink-0 self-center bg-border" aria-hidden="true"></div>
+      <div class="flex items-center gap-0.5 px-1">
+        {#each LIST_VIEWS as lv (lv.id)}
+          {@const on = outputVisible && outputView === lv.id}
+          <button
+            type="button"
+            aria-pressed={on}
+            onclick={() => toggleList(lv.id)}
+            class={cn(
+              'flex h-7 items-center rounded-md px-2 text-ui-2xs font-medium whitespace-nowrap transition-colors',
+              on ? 'bg-muted/70 text-foreground' : 'text-muted-foreground hover:bg-muted/40 hover:text-foreground',
+            )}
+            title={lv.id === 'history' ? tipText(lv.label, lv.hint, [mod, '⇧', 'B']) : tipText(lv.label, lv.hint)}
+          >{lv.label}</button>
+        {/each}
+      </div>
+
       <!-- Right: metadata + toggle -->
       <div class="ml-auto flex shrink-0 items-center gap-3 pr-1.5">
-        {#if outputVisible && currentDisplay.rows.length > 1 && !resultSort && !hasOrderBy}
+        {#if resultShown && currentDisplay.rows.length > 1 && !resultSort && !hasOrderBy}
           <!-- Without ORDER BY the database returns rows in whatever order it
                reads them (storage order, roughly), which is rarely id or time
                order. Said once, quietly, where the row count is. -->
@@ -1041,18 +1346,18 @@
             title="The query has no ORDER BY, so rows come back in the order the database read them. Add ORDER BY, or click a column header to sort."
           >unordered</span>
         {/if}
-        {#if outputVisible && currentDisplay.rows.length > 0}
+        {#if resultShown && currentDisplay.rows.length > 0}
           <span class="font-mono text-ui-2xs tabular-nums text-muted-foreground">{formatCompactCount(currentDisplay.rows.length)} rows</span>
         {/if}
-        {#if outputVisible && currentDisplay.queryMs > 0}
+        {#if resultShown && currentDisplay.queryMs > 0}
           <span class="font-mono text-ui-2xs tabular-nums text-muted-foreground">{currentDisplay.queryMs}ms</span>
         {/if}
-        {#if outputVisible && currentDisplay.message}
+        {#if resultShown && currentDisplay.message}
           <span class="max-w-[160px] truncate font-mono text-ui-2xs text-muted-foreground">{currentDisplay.message}</span>
         {/if}
 
         <!-- Export dropdown, only when there are results -->
-        {#if outputVisible && currentDisplay.rows.length > 0}
+        {#if resultShown && currentDisplay.rows.length > 0}
           <DropdownMenu.Root>
             <DropdownMenu.Trigger
               class="flex size-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
@@ -1097,7 +1402,17 @@
     {#if outputVisible}
       <div class="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-panel">
         {#key `${outputView}:${Math.min(activeResultIdx, Math.max(resultSets.length - 1, 0))}`}
-          {#if outputView === 'error' || activeSet?.error}
+          {#if outputView === 'history' || outputView === 'saved' || outputView === 'charts'}
+            <QueryHistoryPanel
+              view={outputView}
+              history={queryHistory}
+              saved={savedQueries}
+              onselect={(text) => { void onhistoryselect(text); sqlEditorRef?.focus() }}
+              onrun={(text) => void runListed(text)}
+              onrefresh={onqueryrefresh}
+              onescape={closeList}
+            />
+          {:else if outputView === 'error' || activeSet?.error}
             {#if stopped}
               <div class="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
                 <span class="grid size-8 place-items-center rounded-full bg-muted/60">
@@ -1201,14 +1516,17 @@
     {/if}
   </div>
   </div>
+  </div>
 </div>
 
 <Dialog.Root bind:open={saveDialogOpen}>
   <Dialog.Content class="max-w-md gap-4">
     <Dialog.Header>
-      <Dialog.Title class="text-ui-sm font-semibold">Save query</Dialog.Title>
+      <Dialog.Title class="text-ui-sm font-semibold">{savedQueryName ? 'Save as a new query' : 'Save query'}</Dialog.Title>
       <Dialog.Description class="text-ui-xs text-muted-foreground">
-        Saved queries are stored per connection and appear in History → Saved.
+        {savedQueryName
+          ? `A copy of "${savedQueryName}". This tab moves to the copy; ${mod}S then saves into it.`
+          : `Saved queries are kept per connection, under Saved in the results pane. After this, ${mod}S saves this tab into it.`}
       </Dialog.Description>
     </Dialog.Header>
     <div class="flex flex-col gap-2">

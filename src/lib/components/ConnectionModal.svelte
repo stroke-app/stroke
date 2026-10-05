@@ -54,7 +54,7 @@
   import { Dialog as DialogPrimitive } from "bits-ui";
   import ResizeHandle from "./ResizeHandle.svelte";
   import { cn } from "$lib/utils.js";
-  import { IS_MAC } from '$lib/shortcuts.js';
+  import { IS_MAC, comboTitle } from '$lib/shortcuts.js';
   import { focusTrap } from '$lib/actions/focus-trap.js';
   import { toast } from "$lib/components/ui/sonner/toast.svelte.js";
   import * as ContextMenu from "$lib/components/ui/context-menu/index.js";
@@ -2966,7 +2966,7 @@
                 railOpen = true;
                 saveRail();
               }}
-              title="Show connections (⌘B)"
+              title={`Show connections (${comboTitle('Mod+B')})`}
               aria-label="Show connections"
               class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
             >
@@ -3011,7 +3011,7 @@
                   railOpen = false;
                   saveRail();
                 }}
-                title="Hide connections (⌘B)"
+                title={`Hide connections (${comboTitle('Mod+B')})`}
                 aria-label="Hide connections"
                 class="ml-auto inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
               >
@@ -3082,7 +3082,7 @@
                     bind:value={savedQuery}
                     placeholder="Filter connections…"
                     aria-label="Filter saved connections"
-                    title="Filter connections ({IS_MAC ? '⌘' : 'Ctrl'}+F, or Shift+Tab from the list)"
+                    title={`Filter connections (${comboTitle('Mod+F')}, or Shift+Tab from the list)`}
                     aria-keyshortcuts="Control+F Meta+F"
                     tabindex="-1"
                     autocomplete="off"
@@ -3222,7 +3222,7 @@
                           if (next < 0) savedSearchEl?.focus();
                           else /** @type {HTMLElement|undefined} */ (rows[next])?.focus();
                         }}
-                        title="Click to edit · double-click to connect ({IS_MAC ? '⌘' : 'Ctrl'}+Enter)"
+                        title={`Click to edit · double-click to connect (${comboTitle('Mod+Enter')})`}
                       >
                         {#if isSel}
                           <!-- Selection bar. Hidden while the keyboard focus
@@ -3237,7 +3237,7 @@
                         <button
                           type="button"
                           class="relative flex size-6 shrink-0 items-center justify-center rounded-md disabled:opacity-30"
-                          title="Connect ({IS_MAC ? '⌘' : 'Ctrl'}+Enter)"
+                          title={`Connect (${comboTitle('Mod+Enter')})`}
                           aria-label="Connect to {conn.name || 'this connection'}"
                           tabindex="-1"
                           disabled={!!connecting}
@@ -3373,7 +3373,7 @@
                 <span class="sr-only" role="status">{localPhase === "scanning" ? "Scanning for local databases" : ""}</span>
                 <button
                   type="button"
-                  title="Rescan local databases (⌘R)"
+                  title={`Rescan local databases (${comboTitle('Mod+R')})`}
                   aria-label={localPhase === "scanning" ? "Scanning local databases" : "Rescan local databases"}
                   disabled={localPhase === "scanning"}
                   onclick={() => {
@@ -4632,7 +4632,7 @@
                       variant="ghost"
                       class="max-w-[200px] text-muted-foreground"
                       disabled={isBusy}
-                      title="Resume {lastConn.name} ({IS_MAC ? '⌘⇧' : 'Ctrl+Shift+'}Enter)"
+                      title={`Resume ${lastConn.name} (${comboTitle('Mod+Shift+Enter')})`}
                       aria-keyshortcuts="Control+Shift+Enter Meta+Shift+Enter"
                       onclick={() => connectWith(lastConn, { via: "resume" })}
                     >

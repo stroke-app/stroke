@@ -60,6 +60,24 @@ async function getElk() {
 }
 
 /**
+ * One ELK layout of a whole graph. When the worker cannot start, the bundled
+ * build takes over on the main thread from then on, as in `layoutWithElk`.
+ * @param {any} graph
+ * @param {any} [elk] an engine to run instead (the tests pass the bundled one)
+ */
+export async function runElk(graph, elk) {
+  if (elk) return elk.layout(graph)
+  try {
+    return await (await getElk()).layout(graph)
+  } catch (err) {
+    if (_bundled || typeof Worker === 'undefined') throw err
+    _bundled = true
+    _elk = null
+    return (await getElk()).layout(graph)
+  }
+}
+
+/**
  * Cards per layer. The square root keeps the page near landscape whatever the
  * schema's size: 30 tables fold into layers of 6, 135 into layers of 12.
  * @param {number} n

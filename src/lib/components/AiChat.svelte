@@ -69,19 +69,24 @@
     detectPromptTopics,
     toolsForTurn,
     titleFromMessage,
+    historyBudget,
+    repairToolPairs,
   } from "$lib/ai.js";
+  import { chartRows } from "$lib/ai-chart-data.js";
   import {
     loadSkills,
     saveSkills,
     parseSkillFile,
   } from "$lib/stores/ai-skills.js";
-  import { renderMermaidSync, THEMES } from "beautiful-mermaid";
-  import { mermaidThemeFor, normalizeThemeId } from "$lib/themes/registry.js";
+  import { renderMermaidSync } from "beautiful-mermaid";
+  import { normalizeThemeId } from "$lib/themes/registry.js";
+  import { liveMermaidTheme } from "$lib/mermaid-theme.js";
   import { toast } from "$lib/components/ui/sonner/toast.svelte.js";
   import {
     aiSettings,
     aiProfiles,
     activeProfileId,
+    modelDisplayName,
   } from "$lib/stores/ai-settings.js";
   import BrandIcon from "$lib/components/BrandIcon.svelte";
   import { hasBrand } from "$lib/brand-icons.js";
@@ -733,6 +738,14 @@
   let streamingId = $state(/** @type {string | null} */ (null));
   /** AbortController for the in-flight fetch; replaced each send() call */
   let abortController = /** @type {AbortController | null} */ (null);
+  /**
+   * Which turn owns the transcript's live state. Stop and every new turn bump
+   * it; a turn whose number is no longer current leaves the UI alone. Without
+   * it a stopped turn still settling (a slow query, a stream the provider kept
+   * sending) went on writing into the next one and, finishing, cleared its
+   * controller and spinner: the turn after that could not be stopped.
+   */
+  let turnSeq = 0;
 
   /** rAF handle for scroll debouncing during streaming */
   let rafId = /** @type {number | null} */ (null);
@@ -788,30 +801,51 @@
     pinToBottom();
   }
 
+  /**
+   * End the running turn on screen, now, whatever it is waiting on.
+   *
+   * This used to return unless a live, un-aborted controller was in place, so
+   * any path that left the spinner up without one (a run from a code block, a
+   * turn cleared by an older one finishing) had a Stop button and an Escape
+   * that did nothing. The UI is finalised here and the turn is disowned; the
+   * work still in flight drops its results when it lands.
+   */
   function stop() {
-    if (!abortController || abortController.signal.aborted) return;
-    abortController.abort();
-    // Flush any buffered content before reading it
-    flushStreamingContent();
-    // Immediately finalize UI - don't wait for the async finally block
-    const partial = streamingContent.trim();
-    const sid = streamingId;
-    loading = false;
-    streamingContent = "";
-    streamingId = null;
-    items = items
-      .filter((i) => i.kind !== "thinking" && i.kind !== "executing")
-      .map((i) => {
-        if (sid && i.id === sid) {
-          return /** @type {ChatItem} */ ({
-            id: sid,
-            kind: "assistant",
-            parts: parseAssistantMessage(partial || "…"),
-          });
-        }
-        return i;
-      })
-      .filter((i) => i.kind !== "streaming");
+    if (!loading && !abortController) return;
+    turnSeq++;
+    const ctrl = abortController;
+    abortController = null;
+    try {
+      ctrl?.abort();
+      // A pending confirm would hold the tool loop forever: answer it as declined.
+      for (const i of items.filter((i) => i.kind === "confirm")) i.resolve(false);
+      flushStreamingContent();
+      const partial = streamingContent.trim();
+      const sid = streamingId;
+      items = items
+        .filter((i) => i.kind !== "thinking" && i.kind !== "executing")
+        .map((i) =>
+          sid && i.id === sid
+            ? /** @type {ChatItem} */ ({
+                id: sid,
+                kind: "assistant",
+                parts: parseAssistantMessage(partial || "…"),
+                ts: Date.now(),
+              })
+            : i,
+        )
+        .filter((i) => i.kind !== "streaming");
+    } finally {
+      if (_streamTimer !== null) {
+        clearTimeout(_streamTimer);
+        _streamTimer = null;
+      }
+      _pendingStreamContent = "";
+      streamingContent = "";
+      streamingId = null;
+      aiStatusHint = "";
+      loading = false;
+    }
   }
 
   function abortCurrentRequest() {
@@ -825,6 +859,7 @@
     for (const i of items.filter((i) => i.kind === "confirm")) {
       i.resolve(false);
     }
+    turnSeq++;
     if (abortController) {
       abortController.abort();
       abortController = null;
@@ -846,20 +881,24 @@
   /** App :root defines --muted, --accent, --border which inherit into SVG and override
    *  beautiful-mermaid's color-mix fallbacks - ER attributes/lines become illegible. */
   /** @param {import('$lib/themes/registry.js').ThemeId} themeId */
-  function resolveMermaidTheme(themeId) {
-    const base =
-      themeId === "light" ? THEMES["zinc-light"] : THEMES["zinc-dark"];
-    return { ...base, ...mermaidThemeFor(themeId) };
+  // The app theme's tokens, as the Mermaid views use (the id only keys the cache).
+  function resolveMermaidTheme(/** @type {string} */ _themeId) {
+    return liveMermaidTheme();
   }
 
   /** @param {SVGSVGElement} svg @param {ReturnType<typeof resolveMermaidTheme>} theme */
   function applyMermaidThemeVars(svg, theme) {
     svg.style.setProperty("--bg", theme.bg);
     svg.style.setProperty("--fg", theme.fg);
-    if (theme.muted) svg.style.setProperty("--muted", theme.muted);
-    if (theme.line) svg.style.setProperty("--line", theme.line);
-    if (theme.accent) svg.style.setProperty("--accent", theme.accent);
-    if (theme.border) svg.style.setProperty("--border", theme.border);
+    // Every variable the renderer reads is set on the SVG: left unset, `--line`
+    // and `--accent` resolve from the page, where the same names are the app's
+    // chrome tokens (arrows in the accent fill). Mixed from fg/bg, as in MermaidViewer.
+    const mix = (/** @type {number} */ pct) => `color-mix(in srgb, ${theme.fg} ${pct}%, ${theme.bg})`;
+    svg.style.setProperty("--muted", theme.muted ?? mix(62));
+    svg.style.setProperty("--line", theme.line ?? mix(45));
+    svg.style.setProperty("--accent", theme.accent ?? mix(85));
+    svg.style.setProperty("--border", theme.border ?? mix(22));
+    svg.style.setProperty("--surface", mix(4));
   }
 
   /** @type {Map<string, string>} */
@@ -1446,27 +1485,26 @@
       void send();
       return;
     }
-    // Ctrl/Cmd + Z → undo
-    if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) {
+    // Ctrl/Cmd + Z → undo. The key is lower-cased: with Shift held it arrives
+    // as "Z", so the redo chord below never matched.
+    const k = e.key.toLowerCase();
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && k === "z" && !e.shiftKey) {
       e.preventDefault();
       undoInput();
       return;
     }
     // Ctrl/Cmd + Shift + Z  or  Ctrl + Y → redo
     if (
-      ((e.ctrlKey || e.metaKey) && e.key === "z" && e.shiftKey) ||
-      (e.ctrlKey && e.key === "y")
+      ((e.ctrlKey || e.metaKey) && !e.altKey && k === "z" && e.shiftKey) ||
+      (e.ctrlKey && !e.altKey && k === "y")
     ) {
       e.preventDefault();
       redoInput();
       return;
     }
-    // Ctrl/Cmd + Backspace → clear the entire input
-    if (e.key === "Backspace" && (e.ctrlKey || e.metaKey)) {
-      e.preventDefault();
-      inputText = "";
-      resetInputHeight();
-    }
+    // Ctrl/Cmd + Backspace is left to the field: a word on Windows and Linux,
+    // the line on macOS, as in every other box in the app. It used to clear the
+    // whole message, which on Windows is where you reach to delete one word.
   }
 
   /**
@@ -1639,7 +1677,11 @@
     await scrollBottom();
 
     loading = true;
-    abortController = new AbortController();
+    const turn = ++turnSeq;
+    const ctrl = new AbortController();
+    abortController = ctrl;
+    /** Stopped, or replaced by a newer turn: leave the shared state alone. */
+    const disowned = () => turn !== turnSeq;
     executedCalls = new Set();
     failureTracker = new Map();
 
@@ -1653,6 +1695,7 @@
     if (looksLikeDataQuery) {
       aiStatusHint = "Analyzing schema…";
       await ensureFullSchemaCache();
+      if (disowned()) return;
       aiStatusHint = "";
     }
 
@@ -1678,6 +1721,7 @@
       if (keys.length) {
         aiStatusHint = "Reading sample rows…";
         await ensureSampleRows(keys);
+        if (disowned()) return;
         aiStatusHint = "";
       }
     }
@@ -1700,24 +1744,27 @@
       sampleRows: sampledRows,
       webAccess: $appAgentWebAccess,
       topics,
+      // So "which model are you?" gets the real answer, not a guess.
+      modelLabel: modelDisplayName(settings),
     });
     const ci = $aiChatParams.customInstructions.trim();
     turnSystemPrompt = ci ? `${ci}\n\n---\n\n${basePrompt}` : basePrompt;
 
     // Smart context management: sliding window + optional summarization.
     // managedLen marks where new messages start after the turn - used to append to rawApiHistory.
+    // How much the request carries depends on the endpoint (historyBudget): the
+    // free gateway gets a smaller window and no summarising call.
     const { history: managedHistory, summarized } = await manageHistory(
       settings,
       apiHistory,
       {
-        maxChars: 60_000,
-        keepLastN: 10,
-        summarizeThreshold: 30_000,
+        ...historyBudget(settings),
         onStatus: (msg) => {
-          aiStatusHint = msg;
+          if (!disowned()) aiStatusHint = msg;
         },
       },
     );
+    if (disowned()) return;
     const managedLen = managedHistory.length;
     if (summarized) {
       apiHistory = managedHistory;
@@ -1729,15 +1776,24 @@
     const isFirstTurn =
       rawApiHistory.filter((m) => m.role === "user").length === 1;
     try {
-      await runAiTurn(0);
+      await runAiTurn(0, ctrl);
+      if (disowned()) return;
       // Append all messages added during this turn to the full uncompressed history
       rawApiHistory.push(...apiHistory.slice(managedLen));
       await persistCurrent();
       // Generate AI title after the first turn, in the background
       if (isFirstTurn) void generateAiTitle();
     } catch (e) {
-      if (/** @type {any} */ (e)?.name !== "AbortError") error = String(e);
+      if (/** @type {any} */ (e)?.name !== "AbortError" && !disowned()) error = String(e);
     } finally {
+      // Stop already finalised the screen, and a newer turn may own it now.
+      if (!disowned()) await finishTurn();
+    }
+  }
+
+  /** Close out the current turn's UI: the streamed reply kept, indicators gone. */
+  async function finishTurn() {
+    try {
       // Flush any rAF-buffered content before reading it
       flushStreamingContent();
       // Finalize any in-progress streaming item (abort or error mid-stream)
@@ -1764,12 +1820,14 @@
           (i) => i.kind !== "thinking" && i.kind !== "executing",
         );
       }
+    } finally {
+      // Whatever went wrong above, the spinner and Stop must not outlive the turn.
       abortController = null;
       loading = false;
       openResultId = null;
-      await tick();
-      inputRef?.focus();
     }
+    await tick();
+    inputRef?.focus();
   }
 
   /** Max rows fetched from DB per AI tool call - prevents OOM on large tables */
@@ -1793,19 +1851,23 @@
     return { sql: `${cleaned}\nLIMIT ${AI_ROW_LIMIT}`, capped: true };
   }
 
-  /** @param {number} depth */
-  async function runAiTurn(depth) {
+  /**
+   * @param {number} depth
+   * @param {AbortController} ctrl this turn's own controller. It used to read
+   *   the shared one, so a stopped turn that was still settling picked up the
+   *   NEXT turn's live controller and carried on as if nothing had happened.
+   */
+  async function runAiTurn(depth, ctrl) {
     if (depth > 40)
       throw new Error("Too many AI iterations, aborting runaway execution");
-    // A null controller means the turn was aborted or finalized - the chain can
-    // resume here after a declined confirm, so treat it the same as an abort.
-    if (!abortController || abortController.signal.aborted)
+    // The chain can resume here after a declined confirm, so check first.
+    if (ctrl.signal.aborted)
       throw Object.assign(new Error("Aborted"), { name: "AbortError" });
 
     // Space out follow-up turns after tool calls to avoid burst rate limits
     if (depth > 0) {
       await new Promise((r) => setTimeout(r, 300));
-      if (!abortController || abortController.signal.aborted)
+      if (ctrl.signal.aborted)
         throw Object.assign(new Error("Aborted"), { name: "AbortError" });
     }
 
@@ -1817,14 +1879,22 @@
 
     for await (const chunk of chatCompletionStream(
       settings,
-      [{ role: "system", content: turnSystemPrompt }, ...apiHistory],
+      [{ role: "system", content: turnSystemPrompt }, ...repairToolPairs(apiHistory)],
       turnTools,
-      abortController?.signal,
-      ({ attempt, waitMs }) => {
+      ctrl.signal,
+      ({ attempt, waitMs, status, model }) => {
+        if (ctrl.signal.aborted) return;
+        if (model) {
+          aiStatusHint = `Busy, trying ${modelDisplayName({ model }).split(",")[0]} instead…`;
+          return;
+        }
         const sec = Math.ceil(waitMs / 1000);
-        aiStatusHint = `Rate limited, retrying in ${sec}s (attempt ${attempt}/${MAX_AI_RETRIES})…`;
+        const why = status === 429 ? "Rate limited" : "The AI service is busy";
+        aiStatusHint = `${why}, retrying in ${sec}s (attempt ${attempt}/${MAX_AI_RETRIES})…`;
       },
     )) {
+      // A provider can keep streaming after Stop; nothing more reaches the screen.
+      if (ctrl.signal.aborted) break;
       if (chunk.textDelta) {
         aiStatusHint = "";
         fullContent += chunk.textDelta;
@@ -1850,7 +1920,7 @@
     }
 
     // Bail out immediately if the user stopped generation - stop() already finalized UI
-    if (!abortController || abortController.signal.aborted) {
+    if (ctrl.signal.aborted) {
       throw Object.assign(new Error("Aborted"), { name: "AbortError" });
     }
 
@@ -1884,14 +1954,16 @@
         tool_calls: toolCalls,
       });
       for (const call of toolCalls) {
-        await runToolCall(call);
+        await runToolCall(call, ctrl);
       }
+      if (ctrl.signal.aborted)
+        throw Object.assign(new Error("Aborted"), { name: "AbortError" });
       // The next turn is the model interpreting the tool output - show that as a
       // distinct phase instead of a generic "Thinking…". Cleared when it streams.
       aiStatusHint = "Reviewing results…";
       items.push(/** @type {ChatItem} */ ({ id: uid(), kind: "thinking" }));
       scrollBottomSoon();
-      await runAiTurn(depth + 1);
+      await runAiTurn(depth + 1, ctrl);
     } else if (fullContent) {
       apiHistory.push({ role: "assistant", content: fullContent });
       // Fallback: if no streaming item was created (non-streaming endpoint), add it now
@@ -1920,11 +1992,14 @@
     }
   }
 
-  /** @param {import('$lib/ai.js').ToolCall} call */
-  async function runToolCall(call) {
+  /**
+   * @param {import('$lib/ai.js').ToolCall} call
+   * @param {AbortController} ctrl the turn's own controller
+   */
+  async function runToolCall(call, ctrl) {
     // The tool loop can resume here after an abort resolves a pending confirm -
     // answer the call as cancelled instead of executing it for a dead turn.
-    if (!abortController || abortController.signal.aborted) {
+    if (ctrl.signal.aborted) {
       apiHistory.push({
         role: "tool",
         tool_call_id: call.id,
@@ -2288,9 +2363,12 @@
           columns: colObjs,
         });
       } else if (call.function.name === "render_chart") {
-        const chartSpec = args;
+        // Rows, whatever shape the model sent them in (a JSON string, the
+        // execute_sql result, arrays): a string used to pass this check on its
+        // length and crash the chart view.
+        const chartSpec = { ...args, data: chartRows(args.data, args) };
         const chartId = uid();
-        if (!chartSpec.data?.length) {
+        if (!chartSpec.data.length) {
           items.push(
             /** @type {ChatItem} */ ({
               id: chartId,
@@ -2302,7 +2380,7 @@
           );
           toolResult = JSON.stringify({
             error:
-              "No data provided. Execute a SQL query first and pass the results.",
+              "No usable data. Run execute_sql first and pass its `rows` array (row objects) as `data`.",
           });
         } else {
           items.push(
@@ -2524,6 +2602,10 @@
       if (!confirmed) return;
     }
     loading = true;
+    // Owned like a turn, so Stop frees the composer (the statement itself
+    // cannot be recalled once sent) and a later turn is not cleared by this
+    // one finishing.
+    const turn = ++turnSeq;
     const execId = uid();
     items.push(
       /** @type {ChatItem} */ ({
@@ -2571,7 +2653,7 @@
       autoOpenResult(sqlErrId);
       await scrollBottom();
     } finally {
-      loading = false;
+      if (turn === turnSeq) loading = false;
     }
   }
 
@@ -2887,14 +2969,18 @@
   <!-- Deliberately smaller than the app's default control size: this row sits
        under body copy as a footnote, so size-7 buttons and size-3.5 icons read
        as heavier than the message they belong to. -->
+  <!-- The time hugs the message's edge (the reply's first letter, the bubble's
+       end) and the buttons sit inward of it, so the row mirrors for your own
+       turns. h-6 holds the 24px buttons: a 20px row let them spill 2px into
+       the message above and below. -->
   <div
-    class="flex h-5 items-center gap-0.5 opacity-0 transition-opacity duration-100 group-hover/msg:opacity-100 focus-within:opacity-100 {align ===
+    class="flex h-6 items-center gap-0.5 opacity-0 transition-opacity duration-100 group-hover/msg:opacity-100 focus-within:opacity-100 {align ===
     'end'
-      ? 'justify-end'
-      : 'justify-start'}"
+      ? 'flex-row-reverse'
+      : ''}"
   >
     {#if ts}
-      <span class="px-1 text-ui-3xs tabular-nums text-muted-foreground"
+      <span class="text-ui-3xs tabular-nums text-muted-foreground {align === 'end' ? 'ms-1.5' : 'me-1.5'}"
         >{fmtMsgTime(ts)}</span
       >
     {/if}
@@ -3950,11 +4036,13 @@
 
                             // Build the full ECharts option so previews render immediately
                             const spec = item.spec;
-                            const keys = spec.data?.length
-                              ? Object.keys(spec.data[0] ?? {})
+                            // Saved chats can hold a spec from before data was normalised.
+                            const specRows = chartRows(spec.data, spec);
+                            const keys = specRows.length
+                              ? Object.keys(specRows[0] ?? {})
                               : [];
                             const cols = keys.map((k) => {
-                              const sample = spec.data.find(
+                              const sample = specRows.find(
                                 (r) => r[k] != null,
                               )?.[k];
                               const dt =
@@ -3966,10 +4054,9 @@
                                     : "text";
                               return { name: k, dataType: dt, data_type: dt };
                             });
-                            const rows =
-                              spec.data?.map((obj) =>
-                                keys.map((k) => obj[k]),
-                              ) ?? [];
+                            const rows = specRows.map((obj) =>
+                              keys.map((k) => obj[k]),
+                            );
                             let previewOption = {};
                             try {
                               previewOption = buildOption({
@@ -5126,16 +5213,19 @@
      conversation is set in one size rather than three. */
   .ai-composer-input,
   :global(.ai-user-bubble) {
+    font-family: var(--font-reading, var(--font-sans));
     font-size: var(--ai-chat-font-size, 0.9375rem);
     line-height: 1.6;
     letter-spacing: -0.011em;
   }
 
   :global(.prose-ai) {
-    /* Follow the app's font setting. This used to hardcode the Inter stack, so
-       picking another font changed the composer and the user's turns but left
-       every response in Inter - one conversation in two typefaces. */
-    font-family: var(--font-sans);
+    /* Follow the app's font setting through its reading face (the sans, or a
+       proportional face under the Mono preset). This used to hardcode the
+       Inter stack, so picking another font changed the composer and the
+       user's turns but left every response in Inter: one conversation in two
+       typefaces. */
+    font-family: var(--font-reading, var(--font-sans));
     font-size: var(--ai-chat-font-size, 0.9375rem);
     line-height: 1.65;
     color: var(--foreground);
@@ -5176,31 +5266,71 @@
     font-size: 1em;
   }
   :global(.prose-ai ul) {
-    padding-left: 1.35rem;
+    padding-inline-start: 1.35rem;
     list-style-type: disc;
     margin: 0.4rem 0;
   }
   :global(.prose-ai ol) {
-    padding-left: 1.35rem;
+    padding-inline-start: 1.35rem;
     list-style-type: decimal;
     margin: 0.4rem 0;
   }
   :global(.prose-ai li) {
     margin: 0.2rem 0;
   }
+  /* Bullets and numbers mark the structure; at full text colour they read as
+     loud as the words they introduce. */
+  :global(.prose-ai li::marker) {
+    color: var(--muted-foreground);
+  }
   :global(.prose-ai code) {
     /* The app's mono, not a hardcoded family: code and tables read in the same
        face as the grid and the SQL editor whatever font preset is on. */
     font-family: var(--font-mono);
-    font-size: 0.8125em;
-    font-weight: 500;
-    background: color-mix(in oklch, var(--muted) 90%, var(--foreground) 5%);
-    border: 1px solid color-mix(in oklch, var(--border) 70%, transparent);
-    border-radius: 5px;
-    padding: 0.18em 0.45em;
+    font-size: 0.85em;
+    /* A tint of the text colour, no border and the text's own weight: a table
+       name in a sentence is a word set in mono, not a control. The bordered,
+       500-weight chip read as a key cap, heavier than the bold around it.
+       Foreground-based so it shows on every theme's background, where --muted
+       sits too close to some of them to read without the border. */
+    background: color-mix(in oklch, var(--foreground) 7%, transparent);
+    border-radius: 0.3em;
+    padding: 0.1em 0.35em;
     color: var(--foreground);
-    /* Prevent inline chips from line-breaking */
+    /* Long inline code wraps like the sentence it is in. It used to be
+       nowrap, which pushed a backticked query past the message's edge; each
+       wrapped piece keeps its own padding and rounded ends. */
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+  }
+  :global(.prose-ai a code) {
+    color: inherit;
+  }
+  /* Keys, which the markdown renderer makes of a backticked shortcut. Sized in
+     em so they follow the chat's text size (the app-wide kbd is a fixed 20px
+     cap for menus), on the text baseline rather than centred, and selectable
+     so a copied sentence keeps its shortcut. The bottom edge is what tells a
+     key from the flat code tint beside it. */
+  :global(.prose-ai kbd) {
+    display: inline-block;
+    height: auto;
+    min-width: 1.6em;
+    padding: 0.05em 0.4em;
+    font-size: 0.8em;
+    line-height: 1.4;
+    text-align: center;
+    vertical-align: baseline;
+    color: var(--foreground);
+    border-radius: 0.3em;
+    box-shadow: inset 0 -1px 0 var(--border);
+    user-select: text;
+  }
+  :global(.prose-ai .ai-kbd-chord) {
     white-space: nowrap;
+    color: var(--muted-foreground);
+  }
+  :global(.prose-ai .ai-kbd-chord kbd) {
+    margin-inline: 0.125em;
   }
   :global(.prose-ai pre:not(.shiki)) {
     background: var(--muted);
@@ -5291,8 +5421,8 @@
     background: color-mix(in oklch, var(--muted) 35%, transparent);
   }
   :global(.prose-ai blockquote) {
-    border-left: 2px solid var(--border);
-    padding-left: 0.75rem;
+    border-inline-start: 2px solid var(--border);
+    padding-inline-start: 0.75rem;
     color: var(--muted-foreground);
     margin: 0.35rem 0;
   }

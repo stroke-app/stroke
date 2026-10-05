@@ -1,13 +1,12 @@
 <script>
   import { onMount, untrack } from "svelte";
-  import * as monaco from '$lib/monaco.js';
-  import { configureMonacoWorkers, editorFontFamily } from "$lib/monaco-env.js";
-  import {
-    defineStrokeMonacoThemes,
-    monacoThemeId,
-    readEditorFontOptions,
-  } from "$lib/monaco-themes.js";
-  import { normalizeThemeId } from "$lib/themes/registry.js";
+  import { Prec } from "@codemirror/state";
+  import { tooltips } from "@codemirror/view";
+  import { autocompletion, closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
+  import { indentRange } from "@codemirror/language";
+  import { keymap } from "@codemirror/view";
+  import CodeEditor from "./CodeEditor.svelte";
+  import { ormCompletionSource } from "$lib/cm-orm-complete.js";
   import { appVimMode } from "$lib/stores/settings.js";
   import { setVimSubMode } from "$lib/vim/vim.js";
   import Play from "@lucide/svelte/icons/play";
@@ -57,15 +56,9 @@
   } = $props();
 
   /** @type {HTMLElement | null} */
-  let container = $state(null);
-  /** @type {HTMLElement | null} */
   let consoleEl = $state(null);
-  /** @type {monaco.editor.IStandaloneCodeEditor | null} */
-  let editor = null;
-  /** Non-reactive editor come-alive flag for the Vim effect. */
-  let editorReady = $state(false);
-  /** Host element for the monaco-vim mode status strip. */
-  let vimStatusEl = $state(/** @type {HTMLElement | null} */ (null));
+  /** @type {CodeEditor | null} */
+  let editor = $state(null);
 
   const initialLayout = loadLayout();
   let editorHeight = $state(initialLayout.sqlEditorHeight);
@@ -105,9 +98,6 @@
     return clampSqlEditorHeight(height, consoleEl?.clientHeight ?? 0);
   }
 
-  function currentTheme() {
-    return normalizeThemeId(document.documentElement.dataset.theme);
-  }
 
   /** @param {'drizzle' | 'prisma'} newMode */
   function switchMode(newMode) {
@@ -118,26 +108,33 @@
     // If code is empty, the defaultCode $effect will fill it in
   }
 
-  /** @param {monaco.editor.IStandaloneCodeEditor} ed */
-  function registerShortcuts(ed) {
-    const { CtrlCmd, Shift, Alt } = monaco.KeyMod
-    const { Enter, KeyS, KeyI, KeyW, KeyN, KeyM, KeyT, KeyD, KeyE } = monaco.KeyCode
-    const run = (/** @type {(() => void) | undefined} */ fn) => fn?.()
-
-    // Editor-local
-    ed.addCommand(CtrlCmd | Enter, () => void handleRun())
-    ed.addCommand(CtrlCmd | KeyS,  () => { ed.getAction("editor.action.formatDocument")?.run() })
-
-    // Global app shortcuts
-    ed.addCommand(CtrlCmd | KeyI,         () => run(onmodi))
-    ed.addCommand(CtrlCmd | KeyW,         () => run(onmodw))
-    ed.addCommand(CtrlCmd | KeyN,         () => run(onmodn))
-    ed.addCommand(CtrlCmd | KeyM,         () => run(onmodm))
-    ed.addCommand(CtrlCmd | KeyT,         () => run(onmodt))
-    ed.addCommand(CtrlCmd | Shift | KeyD, () => run(onmodshiftd))
-    ed.addCommand(CtrlCmd | Alt | KeyD, () => run(onmodaltd))
-    ed.addCommand(CtrlCmd | Shift | KeyE, () => run(onmodshifte))
+  /** Re-indent the whole script by the language's rules (⌘S, as Format was). @param {import('@codemirror/view').EditorView} view */
+  function reindent(view) {
+    const changes = indentRange(view.state, 0, view.state.doc.length);
+    if (!changes.empty) view.dispatch({ changes, userEvent: "input.indent" });
+    return true;
   }
+
+  /** @param {(() => void) | undefined} fn */
+  const call = (fn) => { fn?.(); return true; };
+
+  /**
+   * The editor's own chords, and the app's: a handled chord stops at the
+   * editor, so the global shortcuts it shadows are passed on by hand.
+   * @type {import('@codemirror/view').KeyBinding[]}
+   */
+  const keys = [
+    { key: "Mod-Enter", run: () => { void handleRun(); return true; } },
+    { key: "Mod-s", run: reindent },
+    { key: "Mod-i", run: () => call(onmodi) },
+    { key: "Mod-w", run: () => call(onmodw) },
+    { key: "Mod-n", run: () => call(onmodn) },
+    { key: "Mod-m", run: () => call(onmodm) },
+    { key: "Mod-t", run: () => call(onmodt) },
+    { key: "Mod-Shift-d", run: () => call(onmodshiftd) },
+    { key: "Mod-Alt-d", run: () => call(onmodaltd) },
+    { key: "Mod-Shift-e", run: () => call(onmodshifte) },
+  ];
 
   // ── Valid JS identifier table names only ──────────────────────────────────
   /** @param {string} name */
@@ -188,180 +185,38 @@
     rowObjects.length > 0 ? JSON.stringify(rowObjects, null, 2) : "[]",
   );
 
-  // ── Monaco type declarations ──────────────────────────────────────────────
-
-  function buildDrizzleTypes(tableNames, columnsByTable) {
-    const lines = [
-      `interface DbCol { col: string; table: string; toString(): string; }`,
-      `interface SqlCond { __sql: string; }`,
-      `interface OrderSpec { __orderBy: { col: string; dir: string }; }`,
-      `interface QueryResult { sql: string; params: any[]; }`,
-      `interface SelectBuilder {`,
-      `  from(table: any): SelectBuilder;`,
-      `  where(cond: SqlCond | string): SelectBuilder;`,
-      `  orderBy(...args: (OrderSpec | SqlCond | string)[]): SelectBuilder;`,
-      `  groupBy(...cols: (DbCol | string)[]): SelectBuilder;`,
-      `  having(cond: SqlCond | string): SelectBuilder;`,
-      `  limit(n: number): SelectBuilder;`,
-      `  offset(n: number): SelectBuilder;`,
-      `  leftJoin(table: any, on: SqlCond | string): SelectBuilder;`,
-      `  innerJoin(table: any, on: SqlCond | string): SelectBuilder;`,
-      `  rightJoin(table: any, on: SqlCond | string): SelectBuilder;`,
-      `  fullJoin(table: any, on: SqlCond | string): SelectBuilder;`,
-      `  toSQL(): QueryResult;`,
-      `}`,
-      `interface InsertBuilder {`,
-      `  values(data: Record<string, any> | Record<string, any>[]): InsertBuilder;`,
-      `  returning(): InsertBuilder;`,
-      `  onConflictDoNothing(): InsertBuilder;`,
-      `  onConflictDoUpdate(opts: { target: DbCol | DbCol[]; set: Record<string, any> }): InsertBuilder;`,
-      `  toSQL(): QueryResult;`,
-      `}`,
-      `interface UpdateBuilder {`,
-      `  set(data: Record<string, any>): UpdateBuilder;`,
-      `  where(cond: SqlCond | string): UpdateBuilder;`,
-      `  returning(): UpdateBuilder;`,
-      `  toSQL(): QueryResult;`,
-      `}`,
-      `interface DeleteBuilder {`,
-      `  where(cond: SqlCond | string): DeleteBuilder;`,
-      `  returning(): DeleteBuilder;`,
-      `  toSQL(): QueryResult;`,
-      `}`,
-      `declare const db: {`,
-      `  select(cols?: Record<string, DbCol | SqlCond>): SelectBuilder;`,
-      `  insert(table: any): InsertBuilder;`,
-      `  update(table: any): UpdateBuilder;`,
-      `  delete(table: any): DeleteBuilder;`,
-      `};`,
-      `declare function eq(col: DbCol | string, val: any): SqlCond;`,
-      `declare function ne(col: DbCol | string, val: any): SqlCond;`,
-      `declare function gt(col: DbCol | string, val: any): SqlCond;`,
-      `declare function gte(col: DbCol | string, val: any): SqlCond;`,
-      `declare function lt(col: DbCol | string, val: any): SqlCond;`,
-      `declare function lte(col: DbCol | string, val: any): SqlCond;`,
-      `declare function like(col: DbCol | string, pattern: string): SqlCond;`,
-      `declare function ilike(col: DbCol | string, pattern: string): SqlCond;`,
-      `declare function notIlike(col: DbCol | string, pattern: string): SqlCond;`,
-      `declare function isNull(col: DbCol | string): SqlCond;`,
-      `declare function isNotNull(col: DbCol | string): SqlCond;`,
-      `declare function inArray(col: DbCol | string, vals: any[]): SqlCond;`,
-      `declare function notInArray(col: DbCol | string, vals: any[]): SqlCond;`,
-      `declare function between(col: DbCol | string, min: any, max: any): SqlCond;`,
-      `declare function notBetween(col: DbCol | string, min: any, max: any): SqlCond;`,
-      `declare function and(...conds: (SqlCond | undefined)[]): SqlCond;`,
-      `declare function or(...conds: (SqlCond | undefined)[]): SqlCond;`,
-      `declare function not(cond: SqlCond): SqlCond;`,
-      `declare function asc(col: DbCol | string): OrderSpec;`,
-      `declare function desc(col: DbCol | string): OrderSpec;`,
-      `declare function count(col?: DbCol | string): SqlCond;`,
-      `declare function sum(col: DbCol | string): SqlCond;`,
-      `declare function avg(col: DbCol | string): SqlCond;`,
-      `declare function max(col: DbCol | string): SqlCond;`,
-      `declare function min(col: DbCol | string): SqlCond;`,
-      `declare function sql(strings: TemplateStringsArray | string, ...vals: any[]): SqlCond;`,
-    ];
-    for (const name of tableNames) {
-      if (!isValidIdentifier(name)) continue;
-      const cols = /** @type {string[]} */ (columnsByTable?.[name] ?? []);
-      if (cols.length > 0) {
-        // No index signature - named properties give proper autocomplete in Monaco
-        lines.push(`declare const ${name}: { ${cols.map((c) => `${c}: DbCol`).join("; ")}; };`);
-      } else {
-        lines.push(`declare const ${name}: { [col: string]: DbCol; };`);
-      }
+  // ── Completion ────────────────────────────────────────────────────────────
+  /** Column names per table, from the hints (plain names or `{ name }` entries, short or schema-qualified keys). */
+  function columnsByName() {
+    /** @type {Record<string, string[]>} */
+    const out = {};
+    for (const [key, cols] of Object.entries(/** @type {any} */ (schemaHints)?.columnsByTable ?? {})) {
+      if (key === "__result__" || !Array.isArray(cols)) continue;
+      const short = key.includes(".") ? (key.split(".").pop() ?? key) : key;
+      out[short] ??= cols.map((c) => (typeof c === "string" ? c : c?.name)).filter(Boolean);
     }
-    return lines.join("\n");
+    return out;
   }
 
-  function buildPrismaTypes(tableNames, columnsByTable) {
-    const lines = [
-      `interface QueryResult { sql: string; params: any[]; }`,
-      `interface StringFilter { equals?: string; contains?: string; startsWith?: string; endsWith?: string; not?: string; in?: string[]; notIn?: string[]; }`,
-      `interface NumberFilter { equals?: number; gt?: number; gte?: number; lt?: number; lte?: number; not?: number; in?: number[]; notIn?: number[]; }`,
-      `interface OrderByClause { [field: string]: 'asc' | 'desc'; }`,
-      `interface AggregateArgs { _count?: true | Record<string, boolean>; _sum?: Record<string, boolean>; _avg?: Record<string, boolean>; _min?: Record<string, boolean>; _max?: Record<string, boolean>; where?: Record<string, any>; }`,
-      `interface GroupByArgs { by: string[]; _count?: true | Record<string, boolean>; _sum?: Record<string, boolean>; _avg?: Record<string, boolean>; _min?: Record<string, boolean>; _max?: Record<string, boolean>; where?: Record<string, any>; having?: Record<string, any>; orderBy?: OrderByClause | OrderByClause[]; take?: number; skip?: number; }`,
-      `interface PrismaModel {`,
-      `  findMany(args?: { where?: Record<string, any>; orderBy?: OrderByClause | OrderByClause[]; take?: number; skip?: number; select?: Record<string, boolean>; cursor?: Record<string, any> }): QueryResult;`,
-      `  findFirst(args?: { where?: Record<string, any>; orderBy?: OrderByClause | OrderByClause[]; select?: Record<string, boolean> }): QueryResult;`,
-      `  findFirstOrThrow(args?: { where?: Record<string, any>; select?: Record<string, boolean> }): QueryResult;`,
-      `  findUnique(args: { where: Record<string, any>; select?: Record<string, boolean> }): QueryResult;`,
-      `  findUniqueOrThrow(args: { where: Record<string, any>; select?: Record<string, boolean> }): QueryResult;`,
-      `  create(args: { data: Record<string, any>; select?: Record<string, boolean> }): QueryResult;`,
-      `  createMany(args: { data: Record<string, any>[]; skipDuplicates?: boolean }): QueryResult;`,
-      `  update(args: { data: Record<string, any>; where: Record<string, any>; select?: Record<string, boolean> }): QueryResult;`,
-      `  updateMany(args: { data: Record<string, any>; where?: Record<string, any> }): QueryResult;`,
-      `  delete(args: { where: Record<string, any>; select?: Record<string, boolean> }): QueryResult;`,
-      `  deleteMany(args?: { where?: Record<string, any> }): QueryResult;`,
-      `  count(args?: { where?: Record<string, any> }): QueryResult;`,
-      `  aggregate(args?: AggregateArgs): QueryResult;`,
-      `  groupBy(args: GroupByArgs): QueryResult;`,
-      `  upsert(args: { create: Record<string, any>; update: Record<string, any>; where?: Record<string, any> }): QueryResult;`,
-      `}`,
-    ];
-    // Per-model typed interface with column-aware where/select
-    for (const name of tableNames) {
-      if (!isValidIdentifier(name)) continue;
-      const cols = /** @type {string[]} */ ((columnsByTable ?? {})[name] ?? []);
-      if (cols.length > 0) {
-        const colFields = cols.map((c) => `${c}?: any`).join('; ');
-        const selectFields = cols.map((c) => `${c}?: boolean`).join('; ');
-        lines.push(
-          `interface ${name}Where { ${colFields}; AND?: ${name}Where[]; OR?: ${name}Where[]; NOT?: ${name}Where; }`,
-          `interface ${name}Select { ${selectFields}; }`,
-          `interface ${name}Model {`,
-          `  findMany(args?: { where?: ${name}Where; orderBy?: OrderByClause | OrderByClause[]; take?: number; skip?: number; select?: ${name}Select; cursor?: ${name}Where }): QueryResult;`,
-          `  findFirst(args?: { where?: ${name}Where; select?: ${name}Select }): QueryResult;`,
-          `  findFirstOrThrow(args?: { where?: ${name}Where; select?: ${name}Select }): QueryResult;`,
-          `  findUnique(args: { where: ${name}Where; select?: ${name}Select }): QueryResult;`,
-          `  findUniqueOrThrow(args: { where: ${name}Where; select?: ${name}Select }): QueryResult;`,
-          `  create(args: { data: Partial<${name}Where>; select?: ${name}Select }): QueryResult;`,
-          `  createMany(args: { data: Partial<${name}Where>[]; skipDuplicates?: boolean }): QueryResult;`,
-          `  update(args: { data: Partial<${name}Where>; where: ${name}Where; select?: ${name}Select }): QueryResult;`,
-          `  updateMany(args: { data: Partial<${name}Where>; where?: ${name}Where }): QueryResult;`,
-          `  delete(args: { where: ${name}Where; select?: ${name}Select }): QueryResult;`,
-          `  deleteMany(args?: { where?: ${name}Where }): QueryResult;`,
-          `  count(args?: { where?: ${name}Where }): QueryResult;`,
-          `  aggregate(args?: AggregateArgs): QueryResult;`,
-          `  groupBy(args: GroupByArgs): QueryResult;`,
-          `  upsert(args: { create: Partial<${name}Where>; update: Partial<${name}Where>; where?: ${name}Where }): QueryResult;`,
-          `}`,
-        );
-      }
-    }
-    if (tableNames.length > 0) {
-      lines.push(`declare const prisma: {`);
-      for (const name of tableNames) {
-        if (!isValidIdentifier(name)) continue;
-        const cols = /** @type {string[]} */ ((columnsByTable ?? {})[name] ?? []);
-        lines.push(`  ${name}: ${cols.length > 0 ? `${name}Model` : 'PrismaModel'};`);
-      }
-      lines.push(`};`);
-    } else {
-      lines.push(`declare const prisma: { [model: string]: PrismaModel; };`);
-    }
-    return lines.join("\n");
-  }
+  /** What the completion reads per query: the mode, the tables and their columns. */
+  const ormModel = () => ({
+    mode: mode === "drizzle" ? /** @type {const} */ ("drizzle") : /** @type {const} */ ("prisma"),
+    tables: getTableNames(),
+    columns: columnsByName(),
+    loadColumns: /** @type {any} */ (schemaHints)?.loadColumns,
+  });
 
-  /** @type {import('monaco-editor').IDisposable | null} */
-  let _extraLibDisposable = null
+  const completion = [
+    autocompletion({ override: [ormCompletionSource(ormModel)] }),
+    closeBrackets(),
+    keymap.of(closeBracketsKeymap),
+    // The list is drawn on <body>: the editor pane clips its overflow.
+    tooltips({ parent: document.body }),
+  ];
 
-  function updateMonacoTypes() {
-    const tableNames = getTableNames();
-    const columnsByTable =
-      /** @type {any} */ (schemaHints)?.columnsByTable ?? {};
-    const dts =
-      mode === "drizzle"
-        ? buildDrizzleTypes(tableNames, columnsByTable)
-        : buildPrismaTypes(tableNames, columnsByTable);
-    try {
-      if (_extraLibDisposable) { _extraLibDisposable.dispose(); _extraLibDisposable = null; }
-      _extraLibDisposable = monaco.languages.typescript.javascriptDefaults.addExtraLib(dts, "file:///orm-defs.d.ts");
-    } catch {
-      /* monaco not ready */
-    }
-  }
+  // Experimental Vim mode: @replit/codemirror-vim, loaded only while it is on.
+  let vimExtension = $state(/** @type {import('@codemirror/state').Extension | null} */ (null));
+  const editorExtensions = $derived([...(vimExtension ? [Prec.highest(vimExtension)] : []), ...completion]);
 
   // ── Parse / run ────────────────────────────────────────────────────────────
 
@@ -428,11 +283,6 @@
   }
 
   $effect(() => {
-    void schemaHints;
-    void mode;
-    updateMonacoTypes();
-  });
-  $effect(() => {
     codeByMode[mode] = code;
   });
 
@@ -442,9 +292,7 @@
     void mode;
     untrack(() => {
       if (!code.trim()) {
-        const next = defaultCode();
-        code = next;
-        if (editor && editor.getValue() !== next) editor.setValue(next);
+        code = defaultCode();
       }
     });
   });
@@ -456,112 +304,37 @@
   const mod = isMac ? "⌘" : "Ctrl";
 
   onMount(() => {
-    configureMonacoWorkers();
-    defineStrokeMonacoThemes();
-
     if (!code.trim()) code = defaultCode();
-
-    // JavaScript mode with type declaration injection gives correct ORM completions.
-    // TypeScript mode + noLib:false floods the suggestion list with DOM/WebGL types.
-    monaco.languages.typescript.javascriptDefaults.setCompilerOptions({
-      target: monaco.languages.typescript.ScriptTarget.ES2020,
-      allowNonTsExtensions: true,
-      noLib: false,
-      allowJs: true,
-      checkJs: false,
-    });
-    monaco.languages.typescript.javascriptDefaults.setDiagnosticsOptions({
-      noSemanticValidation: true,
-      noSyntaxValidation: false,
-    });
-    updateMonacoTypes();
-
-    if (!container) return;
-    const { fontSize, lineHeight } = readEditorFontOptions();
-
-    editor = monaco.editor.create(container, {
-      value: code,
-      language: "javascript",
-      theme: monacoThemeId(currentTheme()),
-      // automaticLayout:false - that option polls via setInterval(100ms) forever,
-      // even while this tab is hidden. ResizeObserver fires only on real resizes.
-      automaticLayout: false,
-      minimap: { enabled: false },
-      fontFamily: editorFontFamily(),
-      fontSize,
-      lineHeight,
-      fontLigatures: false,
-      fontWeight: "normal",
-      padding: { top: 12, bottom: 12 },
-      scrollBeyondLastLine: false,
-      wordWrap: "on",
-      renderLineHighlight: "line",
-      lineNumbers: "on",
-      lineNumbersMinChars: 3,
-      glyphMargin: false,
-      folding: false,
-      scrollbar: { verticalScrollbarSize: 8, horizontalScrollbarSize: 8 },
-      overviewRulerLanes: 0,
-      hideCursorInOverviewRuler: true,
-      overviewRulerBorder: false,
-      cursorBlinking: "smooth",
-      cursorSmoothCaretAnimation: "on",
-      smoothScrolling: true,
-      bracketPairColorization: { enabled: true },
-      suggest: { showWords: false },
-    });
-
-    registerShortcuts(editor);
-    editorReady = true;
-    const ro = new ResizeObserver(() => editor?.layout());
-    ro.observe(container);
-    editor.onDidChangeModelContent(() => {
-      const next = editor?.getValue() ?? "";
-      if (next !== code) code = next;
-    });
-
     return () => {
-      ro.disconnect();
-      editor?.dispose();
-      editor = null;
-      // Dispose the Monaco extra-lib - it lives on javascriptDefaults globally.
-      if (_extraLibDisposable) { _extraLibDisposable.dispose(); _extraLibDisposable = null; }
       if (copiedTimer) clearTimeout(copiedTimer);
     };
   });
 
-  // Experimental Vim mode - attach monaco-vim (lazy) while enabled.
   $effect(() => {
-    const on = $appVimMode;
-    const el = vimStatusEl;
-    if (!on || !editorReady || !editor || !el) return;
-    let disposed = false;
-    /** @type {{ dispose: () => void } | null} */
-    let inst = null;
-    /** @type {MutationObserver | null} */
-    let obs = null;
-    import("monaco-vim")
-      .then(({ initVimMode }) => {
-        if (disposed || !editor) return;
-        inst = initVimMode(editor, el);
-        obs = new MutationObserver(() => {
-          const t = el.textContent ?? "";
-          setVimSubMode(/INSERT/i.test(t) ? "insert" : /VISUAL/i.test(t) ? "visual" : "normal");
-        });
-        obs.observe(el, { childList: true, subtree: true, characterData: true });
-        setVimSubMode("normal");
-      })
+    if (!$appVimMode) { vimExtension = null; return; }
+    let cancelled = false;
+    import("@replit/codemirror-vim")
+      .then(({ vim }) => { if (!cancelled) vimExtension = vim({ status: true }); })
       .catch(() => {});
-    return () => {
-      disposed = true;
-      obs?.disconnect();
-      inst?.dispose();
-    };
+    return () => { cancelled = true; };
   });
 
+  // Mirror Vim's mode into the shared status-bar indicator.
   $effect(() => {
-    if (!editor) return;
-    if (editor.getValue() !== code) editor.setValue(code);
+    const ext = vimExtension;
+    const view = editor?.getView();
+    if (!ext || !view) return;
+    /** @type {any} */
+    let cm = null;
+    /** @param {{ mode: string }} e */
+    const onMode = (e) => setVimSubMode(e.mode === "insert" ? "insert" : e.mode === "visual" ? "visual" : "normal");
+    // A frame later: CodeEditor installs the extension in its own effect.
+    import("@replit/codemirror-vim").then(({ getCM }) => requestAnimationFrame(() => {
+      cm = getCM(view);
+      cm?.on("vim-mode-change", onMode);
+      setVimSubMode("normal");
+    }));
+    return () => cm?.off("vim-mode-change", onMode);
   });
 </script>
 
@@ -702,18 +475,21 @@
     </div>
   </div>
 
-  <!-- ── Monaco editor ─────────────────────────────────────────────────── -->
+  <!-- ── Editor ────────────────────────────────────────────────────────── -->
   <div
-    class="relative shrink-0 overflow-hidden border-b border-border bg-panel"
+    class="relative flex shrink-0 flex-col overflow-hidden border-b border-border bg-panel"
     style="height: {editorHeight}px"
+    data-vim-editor={$appVimMode ? '' : undefined}
   >
-    <div bind:this={container} class="absolute inset-0 h-full w-full overflow-hidden"></div>
-    {#if $appVimMode}
-      <div
-        bind:this={vimStatusEl}
-        class="absolute inset-x-0 bottom-0 z-10 border-t border-border/40 bg-panel/95 px-3 py-0.5 font-mono text-ui-2xs leading-5 text-muted-foreground"
-      ></div>
-    {/if}
+    <CodeEditor
+      bind:this={editor}
+      bind:value={code}
+      lang="javascript"
+      {keys}
+      extensions={editorExtensions}
+      folding={false}
+      ariaLabel="{mode === 'drizzle' ? 'Drizzle' : 'Prisma'} query"
+    />
   </div>
 
   <!-- Parse error, inline below editor -->
@@ -873,21 +649,3 @@
     {/if}
   </div>
 </div>
-
-<style>
-  div :global(.monaco-editor),
-  div :global(.monaco-editor .margin),
-  div :global(.monaco-editor-background) {
-    border-radius: inherit;
-  }
-
-  div :global(.monaco-editor .view-lines),
-  div :global(.monaco-editor .view-line) {
-    font-weight: 400 !important;
-  }
-
-  div :global(.monaco-editor .monaco-editor-background) {
-    outline: none !important;
-  }
-
-</style>

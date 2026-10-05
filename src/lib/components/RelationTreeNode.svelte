@@ -10,6 +10,7 @@
   import Repeat from '@lucide/svelte/icons/repeat'
   import Table2 from '@lucide/svelte/icons/table-2'
   import { formatTableRowCount } from '$lib/table-list.js'
+  import RelationTreeNode from './RelationTreeNode.svelte'
 
   /**
    * @typedef {{ name: string, dataType: string, isNullable: boolean,
@@ -52,19 +53,19 @@
   const nodeIn = $derived(inbound.get(tableName) ?? [])
   const hasMore = $derived(depth < 5 && (nodeOut.length > 0 || nodeIn.length > 0))
 
-  const expKey = `${path}:${depth}`
-  const colKey = `cols:${path}:${depth}`
+  const expKey = $derived(`${path}:${depth}`)
+  const colKey = $derived(`cols:${path}:${depth}`)
   const isOpen = $derived(expanded.has(expKey))
   const colsOpen = $derived(showCols.has(colKey))
-  const isOut = direction === 'out'
+  const isOut = $derived(direction === 'out')
 
   // Visited tables in the current path (to detect circular refs)
   const visited = $derived(new Set(path.split(/[><:]/g).filter(Boolean)))
 
   /** Each level steps in by the width of the chevron, so a child's chevron
    *  sits under its parent's table icon. */
-  const indent = 8 + (depth - 1) * 32
-  const childIndent = 8 + depth * 32
+  const indent = $derived(8 + (depth - 1) * 32)
+  const childIndent = $derived(8 + depth * 32)
 
   /** One column alone, or a single-column key, holds one row per value. */
   function isUnique(/** @type {string} */ table, /** @type {string} */ col) {
@@ -170,7 +171,7 @@
           {#each nodeOut as rel (rel.col)}
             {@const childPath = `${path}>${rel.refTable}:${rel.col}`}
             {#if !visited.has(rel.refTable) || depth < 3}
-              <svelte:self tableName={rel.refTable} parent={tableName} fromCol={rel.col} toCol={rel.refCol}
+              <RelationTreeNode tableName={rel.refTable} parent={tableName} fromCol={rel.col} toCol={rel.refCol}
                 direction="out" depth={depth + 1} path={childPath} {...shared} />
             {:else}
               <div class="flex h-9 items-center gap-2 font-mono text-ui-2xs text-muted-foreground" style="padding-left: {childIndent + 32}px">
@@ -188,7 +189,7 @@
           {#each nodeIn as rel (`${rel.fromTable}${rel.fromCol}`)}
             {@const childPath = `${path}<${rel.fromTable}:${rel.fromCol}`}
             {#if !visited.has(rel.fromTable) || depth < 3}
-              <svelte:self tableName={rel.fromTable} parent={tableName} fromCol={rel.fromCol} toCol={rel.refCol}
+              <RelationTreeNode tableName={rel.fromTable} parent={tableName} fromCol={rel.fromCol} toCol={rel.refCol}
                 direction="in" depth={depth + 1} path={childPath} {...shared} />
             {:else}
               <div class="flex h-9 items-center gap-2 font-mono text-ui-2xs text-muted-foreground" style="padding-left: {childIndent + 32}px">

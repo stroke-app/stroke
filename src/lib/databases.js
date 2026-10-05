@@ -21,7 +21,7 @@ import { engineFamily } from '$lib/stores/connections.js'
  * operation - and a Redis connection may carry a stale `provider` field from an
  * earlier edit, so it has to be ruled out before the provider check.
  * @param {Conn | null | undefined} conn
- * @returns {'provider' | 'postgres' | 'mysql' | 'd1' | null}
+ * @returns {'provider' | 'postgres' | 'mysql' | 'mssql' | 'clickhouse' | 'd1' | null}
  */
 export function dbSwitchKind(conn) {
   if (!conn) return null
@@ -30,6 +30,8 @@ export function dbSwitchKind(conn) {
   if (conn.provider) return 'provider'
   if (family === 'postgres') return 'postgres'
   if (family === 'mysql') return 'mysql'
+  if (family === 'mssql') return 'mssql'
+  if (family === 'clickhouse') return 'clickhouse'
   if (conn.type === 'd1') return conn.accountId ? 'd1' : null
   return null
 }
@@ -48,6 +50,9 @@ export function canSwitchDatabase(conn) {
 export function currentDatabaseKey(conn) {
   if (!conn) return ''
   if (conn.type === 'd1') return conn.databaseId ?? ''
+  // A blank database connects to the server's default, so that row is current.
+  if (conn.type === 'mssql') return conn.database || 'master'
+  if (conn.type === 'clickhouse') return conn.database || 'default'
   return conn.database ?? conn.filePath ?? ''
 }
 
@@ -98,6 +103,12 @@ export async function listDatabases(conn) {
     if (kind === 'mysql') {
       // pg_catalog does not exist here - MySQL/MariaDB list through SHOW.
       const result = await executeSql('SHOW DATABASES')
+      return sortByLabel(dedupeByKey((result?.rows ?? []).map((r) => ({ key: String(r[0]), label: String(r[0]) }))))
+    }
+    if (kind === 'mssql' || kind === 'clickhouse') {
+      const result = await executeSql(
+        kind === 'mssql' ? 'SELECT name FROM sys.databases ORDER BY name' : 'SELECT name FROM system.databases ORDER BY name',
+      )
       return sortByLabel(dedupeByKey((result?.rows ?? []).map((r) => ({ key: String(r[0]), label: String(r[0]) }))))
     }
     if (kind === 'd1' && conn.accountId) {

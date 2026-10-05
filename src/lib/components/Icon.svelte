@@ -9,7 +9,7 @@
   // are used across the app - so this is a drop-in replacement for a bare glyph.
   import { HugeiconsIcon } from '@hugeicons/svelte'
   import { iconFamily } from '$lib/icon-family.svelte.js'
-  import { ICON_MAP, PHOSPHOR_MAP } from '$lib/icon-registry.js'
+  import { ICON_MAP } from '$lib/icon-registry.js'
   import { cn } from '$lib/utils.js'
 
   let {
@@ -25,7 +25,8 @@
   // one per icon - see icon-family.svelte.js.
   const entry = $derived(ICON_MAP[name])
   const useHuge = $derived(iconFamily.set === 'hugeicons' && !!entry?.huge)
-  const Phosphor = $derived(iconFamily.set === 'phosphor' ? PHOSPHOR_MAP[name] : undefined)
+  // Phosphor loads only once it is the chosen set; until then the fallback below draws.
+  const Phosphor = $derived(iconFamily.set === 'phosphor' ? iconFamily.phosphor?.[name] : undefined)
   const Lucide = $derived(entry?.lucide)
 </script>
 

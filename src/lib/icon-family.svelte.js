@@ -15,13 +15,28 @@ import { appIconSet, appIconStyle } from '$lib/stores/settings.js'
 
 let set = $state('hugeicons')
 let style = $state('regular')
+/** The Phosphor components, once loaded: they are not in the startup bundle. @type {Record<string, any> | null} */
+let phosphorMap = $state(null)
+/** @type {Promise<void> | null} */
+let phosphorLoad = null
 
-appIconSet.subscribe((v) => { set = v })
+function loadPhosphor() {
+  phosphorLoad ??= import('$lib/icon-registry-phosphor.js')
+    .then((m) => { phosphorMap = m.PHOSPHOR_MAP })
+    .catch(() => { phosphorLoad = null })
+}
+
+appIconSet.subscribe((v) => {
+  set = v
+  if (v === 'phosphor') loadPhosphor()
+})
 appIconStyle.subscribe((v) => { style = v })
 
 export const iconFamily = {
   get set() { return set },
   get style() { return style },
+  /** Phosphor's components by icon name, or null until the set has loaded. */
+  get phosphor() { return phosphorMap },
   /** Phosphor carries weight in the glyph rather than a stroke width. */
   get phosphorWeight() {
     return style === 'light' ? 'light' : style === 'bold' ? 'bold' : 'regular'

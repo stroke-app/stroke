@@ -10,13 +10,31 @@
  */
 
 /** Keywords a table name follows. */
-const TABLE_KEYWORDS = new Set(['UPDATE', 'FROM', 'INTO', 'JOIN', 'TABLE'])
+const TABLE_KEYWORDS = new Set(['UPDATE', 'FROM', 'INTO', 'JOIN', 'TABLE', 'TRUNCATE', 'REFERENCES', 'DESCRIBE'])
+
+/** Functions whose `AS` is followed by a type, not an alias. */
+const CAST_FUNCTIONS = new Set(['CAST', 'TRY_CAST', 'SAFE_CAST'])
+/** SQL Server functions that take the type first: CONVERT(type, value). */
+const TYPE_FIRST_FUNCTIONS = new Set(['CONVERT', 'TRY_CONVERT'])
+/** Words that open a table constraint in a column list, not a column. */
+const TABLE_CONSTRAINT_WORDS = new Set(['CONSTRAINT', 'PRIMARY', 'FOREIGN', 'UNIQUE', 'CHECK', 'EXCLUDE', 'KEY', 'INDEX', 'LIKE', 'FULLTEXT', 'SPATIAL', 'PERIOD'])
+/** What a column list entry can start with besides a new column's name. */
+const DEFINITION_STARTS = ['CONSTRAINT', 'PRIMARY', 'FOREIGN', 'UNIQUE', 'CHECK']
+/** What follows a column's type. */
+const COLUMN_CONSTRAINTS = [
+  'NOT', 'NULL', 'DEFAULT', 'PRIMARY', 'KEY', 'UNIQUE', 'REFERENCES', 'CHECK', 'GENERATED', 'COLLATE', 'CONSTRAINT',
+  'AUTO_INCREMENT', 'AUTOINCREMENT', 'IDENTITY', 'UNSIGNED',
+]
+/** What ALTER TABLE name can do next. */
+const ALTER_ACTIONS = ['ADD', 'DROP', 'ALTER', 'RENAME', 'MODIFY', 'CHANGE', 'SET', 'OWNER']
+/** After ALTER COLUMN name: Postgres goes on with TYPE / SET / DROP, SQL Server with the type. */
+const ALTER_COLUMN_NEXT = ['TYPE', 'SET', 'DROP']
 
 /** Keywords that open a clause, i.e. decide what the next thing is. */
 const CLAUSES = new Set([
   'UPDATE', 'SET', 'WHERE', 'AND', 'OR', 'NOT', 'FROM', 'INTO', 'JOIN', 'ON', 'VALUES',
   'SELECT', 'DELETE', 'INSERT', 'RETURNING', 'ORDER', 'GROUP', 'BY', 'HAVING', 'LIMIT',
-  'TABLE', 'WITH',
+  'TABLE', 'WITH', 'TRUNCATE',
 ])
 
 /** Words that leave an expression unfinished: the next token continues it. */
@@ -46,7 +64,7 @@ const NEXT = /** @type {Record<string, string[]>} */ ({
 /**
  * @typedef {{ t: 'word' | 'qid' | 'str' | 'num' | 'punct', v: string }} Token
  * @typedef {{
- *   kind: 'statement' | 'tables' | 'columns' | 'keywords' | 'qualified',
+ *   kind: 'statement' | 'tables' | 'columns' | 'keywords' | 'qualified' | 'types' | 'ddl',
  *   from: number,
  *   prefix: string,
  *   quote: string | null,
@@ -58,11 +76,20 @@ const NEXT = /** @type {Record<string, string[]>} */ ({
  *   predicateColumn: ColumnRef | null,
  *   comparedColumn: (ColumnRef & { operator: string }) | null,
  *   verb: string,
+ *   rowTable: string | null,
+ *   routine: string | null,
  * }} SqlCompletionContext
  * `predicateColumn`: the column just written in a condition, a space behind
  * it (`WHERE price |`): an operator comes next. `comparedColumn`: the column
  * and operator before the caret (`WHERE price >= |`): a value comes next.
  * `verb`: the statement's first keyword (SELECT, UPDATE ...).
+ * `rowTable`: inside CREATE TRIGGER, the table it fires on - what NEW. and
+ * OLD. are rows of. `routine`: inside CREATE FUNCTION, its name (a Postgres
+ * trigger function's table is named by the CREATE TRIGGER that runs it).
+ * `types`: a data type goes here (a column definition, ALTER ... TYPE,
+ * CAST(x AS ...), x::...); `next` holds keywords that can stand there too.
+ * `ddl`: only keywords go here, `next` first (a new column's name, the action
+ * after ALTER TABLE name, a column's constraints); no names are offered.
  * @typedef {{ name: string, qualifier: string | null }} ColumnRef
  */
 
@@ -70,12 +97,14 @@ const NEXT = /** @type {Record<string, string[]>} */ ({
  * Tokens of the statement the text ends in, or where the text ends inside
  * something that is not SQL to complete.
  * @param {string} text
- * @returns {{ tokens: Token[], open: { quote: string, start: number } | null } | null}
+ * @returns {{ tokens: Token[], open: { quote: string, start: number } | null, head: Token[] | null } | null}
  *   null inside a string literal or a comment.
  */
 function scan(text) {
   /** @type {Token[]} */
   let tokens = []
+  /** The tokens before the first `;`: a trigger or routine's head, once its body has statements. @type {Token[] | null} */
+  let head = null
   const n = text.length
   let i = 0
   while (i < n) {
@@ -100,7 +129,7 @@ function scan(text) {
         const k = text.indexOf(c, j)
         if (k === -1) {
           if (c === "'") return null
-          return { tokens, open: { quote: c, start: i } }
+          return { tokens, open: { quote: c, start: i }, head }
         }
         if (text[k + 1] === c) { j = k + 2; continue }
         j = k
@@ -125,11 +154,11 @@ function scan(text) {
       i = j
       continue
     }
-    if (c === ';') tokens = []
+    if (c === ';') { head ??= tokens; tokens = [] }
     else tokens.push({ t: 'punct', v: c })
     i++
   }
-  return { tokens, open: null }
+  return { tokens, open: null, head }
 }
 
 /** @param {Token | undefined} tok */
@@ -165,17 +194,250 @@ function columnBefore(tokens, end) {
 
 /**
  * Tables the statement names, so their columns can be offered.
- * @param {Token[]} tokens
+ * @param {Token[]} tokens @param {boolean} indexOn CREATE INDEX: ON names the table
  */
-function referencedTables(tokens) {
+function referencedTables(tokens, indexOn) {
   const out = []
   for (let i = 0; i < tokens.length - 1; i++) {
-    if (!TABLE_KEYWORDS.has(kw(tokens[i])) || !isName(tokens[i + 1])) continue
+    const k = kw(tokens[i])
+    if (!(TABLE_KEYWORDS.has(k) || (indexOn && k === 'ON')) || !isName(tokens[i + 1])) continue
     // schema.table: the table is the last name.
     if (tokens[i + 2]?.v === '.' && isName(tokens[i + 3])) out.push(tokens[i + 3].v)
     else out.push(tokens[i + 1].v)
   }
   return out
+}
+
+/** @param {Token | undefined} tok */
+const punct = (tok) => (tok?.t === 'punct' ? tok.v : '')
+
+/**
+ * Index of the `(` that `tokens[end - 1]` sits inside, or -1 at the top level.
+ * @param {Token[]} tokens @param {number} end exclusive
+ */
+function openParen(tokens, end) {
+  let depth = 0
+  for (let i = end - 1; i >= 0; i--) {
+    const p = punct(tokens[i])
+    if (p === ')') depth++
+    else if (p === '(') { if (depth === 0) return i; depth-- }
+  }
+  return -1
+}
+
+/**
+ * The current entry of a comma-separated list starting at `from`: the tokens
+ * after its last comma at that level. `numeric(10, 2)` is one entry.
+ * @param {Token[]} tokens @param {number} from
+ */
+function listEntry(tokens, from) {
+  let start = from
+  let depth = 0
+  for (let i = from; i < tokens.length; i++) {
+    const p = punct(tokens[i])
+    if (p === '(') depth++
+    else if (p === ')') depth--
+    else if (p === ',' && depth === 0) start = i + 1
+  }
+  return tokens.slice(start)
+}
+
+/**
+ * Where `[schema.]name` starting at `i` ends (exclusive), or -1.
+ * @param {Token[]} tokens @param {number} i
+ */
+function nameEnd(tokens, i) {
+  if (!isName(tokens[i])) return -1
+  return punct(tokens[i + 1]) === '.' && isName(tokens[i + 2]) ? i + 3 : i + 1
+}
+
+/** `IF NOT EXISTS` / `IF EXISTS` at `i`: how many tokens it takes. @param {Token[]} tokens @param {number} i */
+function ifExists(tokens, i) {
+  if (kw(tokens[i]) !== 'IF') return 0
+  if (kw(tokens[i + 1]) === 'EXISTS') return 2
+  return kw(tokens[i + 1]) === 'NOT' && kw(tokens[i + 2]) === 'EXISTS' ? 3 : 0
+}
+
+/**
+ * The tokens end with TABLE / TRUNCATE [IF EXISTS] [schema.]name.
+ * @param {Token[]} tokens
+ */
+function endsWithTableName(tokens) {
+  for (let i = tokens.length - 1; i >= 0; i--) {
+    const k = kw(tokens[i])
+    if (k !== 'TABLE' && k !== 'TRUNCATE') continue
+    return nameEnd(tokens, i + 1 + ifExists(tokens, i + 1)) === tokens.length
+  }
+  return false
+}
+
+/**
+ * A data type goes right here, whatever the statement: x::|, CAST(x AS |,
+ * CONVERT(|, RETURNS |.
+ * @param {Token[]} tokens
+ */
+function typeGoesHere(tokens) {
+  const n = tokens.length
+  const last = tokens[n - 1]
+  if (punct(last) === ':' && punct(tokens[n - 2]) === ':') return true
+  if (kw(last) === 'AS') {
+    const open = openParen(tokens, n - 1)
+    if (open > 0 && CAST_FUNCTIONS.has(kw(tokens[open - 1]))) return true
+  }
+  if (punct(last) === '(' && TYPE_FIRST_FUNCTIONS.has(kw(tokens[n - 2]))) return true
+  return kw(last) === 'RETURNS'
+}
+
+/**
+ * One column definition (CREATE TABLE's list, ALTER TABLE ADD): a new name
+ * or a table constraint first, then the type, then the column's constraints.
+ * Null where the entry is something else (a constraint's column list, a
+ * DEFAULT value) and the general rules apply.
+ * @param {Token[]} entry the definition so far, the word being typed excluded
+ * @returns {{ kind: 'types' | 'ddl', next: string[] } | null}
+ */
+function columnDefinition(entry) {
+  if (!entry.length) return { kind: 'ddl', next: DEFINITION_STARTS }
+  if (TABLE_CONSTRAINT_WORDS.has(kw(entry[0]))) return null
+  if (entry.length === 1 && isName(entry[0])) return { kind: 'types', next: [] }
+  const k = kw(entry.at(-1))
+  if (k === 'DEFAULT' || k === 'CHECK' || k === 'AS') return null
+  return { kind: 'ddl', next: COLUMN_CONSTRAINTS }
+}
+
+/**
+ * Inside CREATE TABLE's column list: what the current entry wants.
+ * @param {Token[]} tokens
+ */
+function createTableEntry(tokens) {
+  if (kw(tokens[0]) !== 'CREATE') return null
+  const open = openParen(tokens, tokens.length)
+  if (open < 0) return null
+  // CREATE [OR REPLACE] [TEMP | UNLOGGED ...] TABLE [IF NOT EXISTS] name (
+  let t = 1
+  while (t < open && kw(tokens[t]) !== 'TABLE') t++
+  if (t >= open) return null
+  const at = t + 1 + ifExists(tokens, t + 1)
+  if (nameEnd(tokens, at) !== open) return null
+  return columnDefinition(listEntry(tokens, open + 1))
+}
+
+/**
+ * ALTER TABLE name ...: what the action being written wants.
+ * @param {Token[]} tokens
+ * @returns {{ kind: 'types' | 'ddl', next: string[] } | null}
+ */
+function alterTable(tokens) {
+  if (kw(tokens[0]) !== 'ALTER' || kw(tokens[1]) !== 'TABLE') return null
+  let i = 2 + ifExists(tokens, 2)
+  if (kw(tokens[i]) === 'ONLY') i++
+  const end = nameEnd(tokens, i)
+  if (end < 0) return null
+  // Postgres and MySQL take several actions, comma-separated.
+  const act = listEntry(tokens, end)
+  if (!act.length) return { kind: 'ddl', next: ALTER_ACTIONS }
+  const verb = kw(act[0])
+  let k = kw(act[1]) === 'COLUMN' ? 2 : 1
+  if (verb === 'ADD') {
+    if (act.length === 1) return { kind: 'ddl', next: ['COLUMN', ...DEFINITION_STARTS] }
+    k += ifExists(act, k)
+    // ADD COLUMN |: a new name, never a constraint.
+    if (k === act.length && k > 1) return { kind: 'ddl', next: k === 2 ? ['IF'] : [] }
+    return columnDefinition(act.slice(k))
+  }
+  const rest = act.slice(k)
+  if (!rest.length) return null // the column to change: its table's columns
+  if (verb === 'ALTER') {
+    if (rest.length === 1) return { kind: 'types', next: ALTER_COLUMN_NEXT }
+    const last = kw(rest.at(-1))
+    if (last === 'TYPE') return { kind: 'types', next: [] }
+    if (last === 'SET') return { kind: 'ddl', next: ['DEFAULT', 'NOT', 'DATA'] }
+    if (last === 'DROP') return { kind: 'ddl', next: ['DEFAULT', 'NOT'] }
+    if (last === 'NOT') return { kind: 'ddl', next: ['NULL'] }
+    return null
+  }
+  if (verb === 'MODIFY') return columnDefinition(rest)
+  // CHANGE old new type: the new name first.
+  if (verb === 'CHANGE') return rest.length === 1 ? { kind: 'ddl', next: [] } : columnDefinition(rest.slice(1))
+  return null
+}
+
+/** Trigger events. */
+const TRIGGER_EVENTS = ['INSERT', 'UPDATE', 'DELETE']
+/** What starts a trigger's body: past it the general rules apply. */
+const TRIGGER_BODY = new Set(['BEGIN', 'AS', 'EXECUTE', 'DO'])
+
+/**
+ * Index of TRIGGER in `CREATE [OR REPLACE] [TEMP] [CONSTRAINT] TRIGGER`, or -1.
+ * @param {Token[]} tokens
+ */
+function triggerKeyword(tokens) {
+  if (kw(tokens[0]) !== 'CREATE') return -1
+  for (let i = 1; i < Math.min(tokens.length, 6); i++) {
+    const k = kw(tokens[i])
+    if (k === 'TRIGGER') return i
+    if (!['OR', 'REPLACE', 'ALTER', 'TEMP', 'TEMPORARY', 'CONSTRAINT'].includes(k) && !k.startsWith('DEFINER')) return -1
+  }
+  return -1
+}
+
+/**
+ * The table a CREATE TRIGGER fires on: the name after its ON.
+ * @param {Token[]} tokens
+ */
+function triggerTable(tokens) {
+  const t = triggerKeyword(tokens)
+  if (t < 0) return null
+  for (let i = t + 1; i < tokens.length; i++) {
+    if (TRIGGER_BODY.has(kw(tokens[i]))) return null
+    if (kw(tokens[i]) !== 'ON' || !isName(tokens[i + 1])) continue
+    const end = nameEnd(tokens, i + 1)
+    return /** @type {Token} */ (tokens[end - 1]).v
+  }
+  return null
+}
+
+/**
+ * Inside a CREATE TRIGGER's head (before its body): what goes at the caret.
+ * @param {Token[]} tokens
+ * @returns {{ kind: 'tables' | 'ddl', next: string[] } | null}
+ */
+function triggerHead(tokens) {
+  const t = triggerKeyword(tokens)
+  if (t < 0 || tokens.slice(t).some((x) => TRIGGER_BODY.has(kw(x)))) return null
+  const last = tokens.at(-1)
+  const k = kw(last)
+  const at = t + 1 + ifExists(tokens, t + 1)
+  // CREATE TRIGGER |: its new name.
+  if (tokens.length <= at) return { kind: 'ddl', next: [] }
+  const nameEndAt = nameEnd(tokens, at)
+  if (tokens.length === nameEndAt) return { kind: 'ddl', next: ['BEFORE', 'AFTER', 'INSTEAD', 'ON'] }
+  if (k === 'ON') return { kind: 'tables', next: [] }
+  if (k === 'BEFORE' || k === 'AFTER') return { kind: 'ddl', next: TRIGGER_EVENTS }
+  if (k === 'INSTEAD') return { kind: 'ddl', next: ['OF'] }
+  if (k === 'OF' && kw(tokens.at(-2)) === 'INSTEAD') return { kind: 'ddl', next: TRIGGER_EVENTS }
+  if (k === 'OR') return { kind: 'ddl', next: TRIGGER_EVENTS }
+  if (TRIGGER_EVENTS.includes(k)) return { kind: 'ddl', next: k === 'UPDATE' ? ['ON', 'OR', 'OF'] : ['ON', 'OR'] }
+  if (k === 'FOR') return { kind: 'ddl', next: ['EACH'] }
+  if (k === 'EACH') return { kind: 'ddl', next: ['ROW', 'STATEMENT'] }
+  if (k === 'ROW' || k === 'STATEMENT') return { kind: 'ddl', next: ['BEGIN', 'WHEN', 'EXECUTE'] }
+  // CREATE TRIGGER t AFTER UPDATE ON table |
+  const on = tokens.findLastIndex((x) => kw(x) === 'ON')
+  if (on > t && nameEnd(tokens, on + 1) === tokens.length) {
+    return { kind: 'ddl', next: ['FOR', 'BEGIN', 'WHEN', 'EXECUTE', 'REFERENCING', 'AFTER', 'INSTEAD'] }
+  }
+  return null
+}
+
+/**
+ * The name of the CREATE FUNCTION being written, or null.
+ * @param {Token[]} tokens
+ */
+function routineName(tokens) {
+  if (kw(tokens[0]) !== 'CREATE') return null
+  const f = tokens.findIndex((x, i) => i < 5 && kw(x) === 'FUNCTION')
+  if (f < 0 || !isName(tokens[f + 1])) return null
+  return /** @type {Token} */ (tokens[nameEnd(tokens, f + 1) - 1]).v
 }
 
 /**
@@ -186,6 +448,9 @@ export function sqlCompletionContext(text) {
   const scanned = scan(text)
   if (!scanned) return null
   const { tokens, open } = scanned
+  // A body's statements end in `;`, which clears the tokens: the head the
+  // statement opened with (CREATE TRIGGER ... ON t) is kept apart.
+  const head = scanned.head ?? tokens
 
   let prefix = ''
   let from = text.length
@@ -216,16 +481,35 @@ export function sqlCompletionContext(text) {
   // ORDER BY / GROUP BY: the clause is the pair.
   if (clause === 'BY') clause = kw(tokens.findLast((t) => kw(t) === 'ORDER' || kw(t) === 'GROUP')) || 'BY'
 
+  const verb = kw(tokens[0])
+  // CREATE INDEX name ON table: ON names a table there, not a join condition.
+  const indexOn = verb === 'CREATE' && tokens.some((t) => kw(t) === 'INDEX')
+
   /** @type {SqlCompletionContext['kind']} */
   let kind
   let qualifier = null
+  /** Keywords for this position when the clause table does not know it (DDL). @type {string[] | null} */
+  let nextHere = null
+  /** @type {{ kind: 'types' | 'ddl' | 'tables', next: string[] } | null} */
+  let ddl = null
   if (last?.v === '.' && isName(tokens.at(-2))) {
     kind = 'qualified'
     qualifier = /** @type {Token} */ (tokens.at(-2)).v
   } else if (!tokens.length) {
     kind = 'statement'
-  } else if (TABLE_KEYWORDS.has(kw(last)) || (clause === 'FROM' && last?.v === ',')) {
+  } else if (!scanned.head && (ddl = triggerHead(tokens))) {
+    // CREATE TRIGGER's head: AFTER UPDATE | is an event list, ON | a table.
+    kind = ddl.kind
+    nextHere = ddl.next
+  } else if (TABLE_KEYWORDS.has(kw(last)) || (clause === 'FROM' && last?.v === ',') || (indexOn && kw(last) === 'ON')) {
     kind = 'tables'
+  } else if ((ddl = typeGoesHere(tokens) ? { kind: 'types', next: [] } : createTableEntry(tokens) ?? alterTable(tokens))) {
+    kind = ddl.kind
+    nextHere = ddl.next
+  } else if ((clause === 'TABLE' || clause === 'TRUNCATE') && endsWithTableName(tokens)) {
+    // DROP TABLE name |, CREATE TABLE name |: the statement's own words, not names.
+    kind = 'ddl'
+    nextHere = verb === 'CREATE' ? ['AS'] : verb === 'DROP' || verb === 'TRUNCATE' ? ['CASCADE', 'RESTRICT'] : []
   } else if (
     (clause === 'UPDATE' || clause === 'DELETE' || clause === 'INSERT') ||
     (clause === 'INTO' && (isName(last) || last?.v === ')')) ||
@@ -238,7 +522,7 @@ export function sqlCompletionContext(text) {
     kind = 'columns'
   }
   // A quote only ever holds a name.
-  if (quote && (kind === 'keywords' || kind === 'statement')) kind = 'columns'
+  if (quote && (kind === 'keywords' || kind === 'statement' || kind === 'types' || kind === 'ddl')) kind = 'columns'
 
   // Is the thing before the caret a finished value? Then the clause's next
   // word (FROM after `SELECT id`, WHERE after `SET a = 1`) is the likely one;
@@ -248,7 +532,6 @@ export function sqlCompletionContext(text) {
     last?.v === ')' || last?.v === '*' ||
     (last?.t === 'word' && !OPEN_WORDS.has(kw(last)))
 
-  const verb = kw(tokens[0])
   /** @type {SqlCompletionContext['predicateColumn']} */
   let predicateColumn = null
   /** @type {SqlCompletionContext['comparedColumn']} */
@@ -281,11 +564,13 @@ export function sqlCompletionContext(text) {
     qualifier,
     clause,
     // RETURNING only ends a write: after a SELECT's WHERE it is an error.
-    next: (NEXT[clause] ?? []).filter((k) => k !== 'RETURNING' || ['UPDATE', 'DELETE', 'INSERT'].includes(verb)),
+    next: nextHere ?? (NEXT[clause] ?? []).filter((k) => k !== 'RETURNING' || ['UPDATE', 'DELETE', 'INSERT'].includes(verb)),
     afterExpr,
-    tables: referencedTables(tokens),
+    tables: referencedTables(tokens, indexOn),
     predicateColumn,
     comparedColumn,
     verb,
+    rowTable: triggerTable(head),
+    routine: routineName(head),
   }
 }

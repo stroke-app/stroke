@@ -3,6 +3,8 @@ import { loadSettings, DEFAULT_MAX_QUERY_HISTORY } from '$lib/stores/settings.js
 
 const HISTORY_STORE = STORES.queryHistory
 const SAVED_STORE = STORES.savedQueries
+/** How far back a re-run looks for its earlier row before filing a new one. */
+const DEDUPE_WINDOW = 200
 
 /** How many history entries to keep per connection - configurable in Settings → Database. */
 function maxHistoryPerConnection() {
@@ -20,6 +22,8 @@ function maxHistoryPerConnection() {
  *   queryMs?: number
  *   runCount?: number
  *   favorite?: boolean
+ *   success?: boolean
+ *   error?: string
  * }} QueryHistoryEntry
  */
 
@@ -31,6 +35,7 @@ function maxHistoryPerConnection() {
  *   sql: string
  *   createdAt: number
  *   updatedAt: number
+ *   folderId?: string | null
  * }} SavedQuery
  */
 
@@ -47,7 +52,8 @@ export function queryTitle(sql) {
 /**
  * @param {string} connectionId
  * @param {string} sql
- * @param {{ queryMs?: number }} [meta]
+ * @param {{ queryMs?: number, success?: boolean, error?: string }} [meta] a failed run
+ *   is recorded too, with `success: false` and the database's message
  */
 export async function recordQueryExecution(connectionId, sql, meta = {}) {
   const trimmed = sql.trim()
@@ -55,30 +61,36 @@ export async function recordQueryExecution(connectionId, sql, meta = {}) {
 
   const db = await getStudioDb()
 
-  // Newest entry for this connection via a reverse cursor on the executedAt
-  // index - avoids loading + sorting the whole per-connection history (the cap
-  // is user-settable up to 100k) on every Run. The walk stops at the first
-  // match, i.e. after only the entries other connections recorded since this
-  // one last ran.
+  // The same query run again moves up and counts the run, instead of filing a
+  // second row: switching between two queries listed each once per switch.
+  // Newest first via a reverse cursor on the executedAt index, and only the
+  // connection's recent stretch, so a run never loads or walks a history the
+  // cap lets grow to 100k.
   /** @type {QueryHistoryEntry | null} */
-  let latest = null
+  let match = null
+  let seen = 0
   for (
     let cursor = await db.transaction(HISTORY_STORE).store.index('executedAt').openCursor(null, 'prev');
     cursor;
     cursor = await cursor.continue()
   ) {
-    if (cursor.value.connectionId === connectionId) {
-      latest = cursor.value
+    if (cursor.value.connectionId !== connectionId) continue
+    if (cursor.value.sql === trimmed) {
+      match = cursor.value
       break
     }
+    if (++seen >= DEDUPE_WINDOW) break
   }
 
-  if (latest?.sql === trimmed) {
+  if (match) {
+    // The last run's outcome wins: an error from an earlier failed run does not
+    // stick to a run that worked.
+    const { error: _earlier, ...prev } = match
     await db.put(HISTORY_STORE, {
-      ...latest,
+      ...prev,
       executedAt: Date.now(),
       title: queryTitle(trimmed),
-      runCount: (latest.runCount ?? 1) + 1,
+      runCount: (match.runCount ?? 1) + 1,
       ...meta,
     })
     return
@@ -129,32 +141,45 @@ export async function deleteQueryHistoryEntry(id) {
   await db.delete(HISTORY_STORE, id)
 }
 
-/** @param {string} connectionId */
-export async function clearQueryHistory(connectionId) {
+/**
+ * @param {string} connectionId
+ * @param {{ keepStarred?: boolean }} [opts] `keepStarred` spares the starred
+ *   entries: the Clear button in the list. Deleting the connection clears all.
+ */
+export async function clearQueryHistory(connectionId, { keepStarred = false } = {}) {
   if (!connectionId) return
   const db = await getStudioDb()
   const all = await db.getAllFromIndex(HISTORY_STORE, 'connectionId', connectionId)
-  await Promise.all(all.map((e) => db.delete(HISTORY_STORE, e.id)))
+  await Promise.all(all.filter((e) => !(keepStarred && e.favorite)).map((e) => db.delete(HISTORY_STORE, e.id)))
+}
+
+/** Put back a history entry removed a moment ago (Undo). @param {QueryHistoryEntry} entry */
+export async function restoreQueryHistoryEntry(entry) {
+  const db = await getStudioDb()
+  await db.put(HISTORY_STORE, entry)
 }
 
 /**
  * @param {string} connectionId
  * @param {string} name
  * @param {string} sql
+ * @param {{ folderId?: string | null, allowEmpty?: boolean }} [opts] `allowEmpty`:
+ *   a new query from the sidebar starts with no text and is filled on Save
  * @returns {Promise<SavedQuery>}
  */
-export async function createSavedQuery(connectionId, name, sql) {
+export async function createSavedQuery(connectionId, name, sql, { folderId = null, allowEmpty = false } = {}) {
   const trimmed = sql.trim()
-  if (!connectionId || !trimmed) throw new Error('Connection and SQL are required')
+  if (!connectionId || (!trimmed && !allowEmpty)) throw new Error('Connection and SQL are required')
 
   const now = Date.now()
   const saved = /** @type {SavedQuery} */ ({
     id: crypto.randomUUID(),
     connectionId,
-    name: name.trim() || queryTitle(trimmed),
+    name: name.trim() || queryTitle(trimmed) || 'Untitled query',
     sql: trimmed,
     createdAt: now,
     updatedAt: now,
+    ...(folderId ? { folderId } : {}),
   })
   const db = await getStudioDb()
   await db.put(SAVED_STORE, saved)
@@ -190,8 +215,38 @@ export async function listSavedQueries(connectionId) {
   return all.sort((a, b) => b.updatedAt - a.updatedAt)
 }
 
+/**
+ * Write new text, a new name, a folder, or several into a saved query,
+ * keeping its id: the Save of a tab that belongs to it, a rename, a move.
+ * @param {string} id
+ * @param {{ sql?: string, name?: string, folderId?: string | null }} patch
+ *   `folderId: null` moves it to the root
+ * @returns {Promise<SavedQuery | null>} null when it was deleted meanwhile
+ */
+export async function updateSavedQuery(id, patch) {
+  const db = await getStudioDb()
+  const current = /** @type {SavedQuery | undefined} */ (await db.get(SAVED_STORE, id))
+  if (!current) return null
+  const sql = patch.sql?.trim()
+  const name = patch.name?.trim()
+  /** @type {SavedQuery} */
+  const next = { ...current, ...(sql ? { sql } : {}), ...(name ? { name } : {}), updatedAt: Date.now() }
+  if (patch.folderId !== undefined) {
+    if (patch.folderId) next.folderId = patch.folderId
+    else delete next.folderId
+  }
+  await db.put(SAVED_STORE, next)
+  return next
+}
+
 /** @param {string} id */
 export async function deleteSavedQuery(id) {
   const db = await getStudioDb()
   await db.delete(SAVED_STORE, id)
+}
+
+/** Put back a saved query removed a moment ago (Undo). @param {SavedQuery} entry */
+export async function restoreSavedQuery(entry) {
+  const db = await getStudioDb()
+  await db.put(SAVED_STORE, entry)
 }

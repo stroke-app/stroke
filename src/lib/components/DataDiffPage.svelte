@@ -1,5 +1,4 @@
 <script>
-  import * as monaco from '$lib/monaco.js'
   import GitCompare from '@lucide/svelte/icons/git-compare'
   import RefreshCw from '@lucide/svelte/icons/refresh-cw'
   import Loader2 from '@lucide/svelte/icons/loader-2'
@@ -11,8 +10,7 @@
   import Search from '@lucide/svelte/icons/search'
   import { onMount, untrack } from 'svelte'
   import { cn } from '$lib/utils.js'
-  import { defineStrokeMonacoThemes, applyMonacoTheme } from '$lib/monaco-themes.js'
-  import { normalizeThemeId } from '$lib/themes/registry.js'
+  import CodeEditor from './CodeEditor.svelte'
   import {
     getTableRows,
     executeSql,
@@ -90,68 +88,6 @@
 
   /** @param {HTMLElement} node */
   function focusNode(node) { setTimeout(() => node.focus(), 0) }
-
-  // ── Monaco SQL editors ────────────────────────────────────────────────────────
-  /** @type {HTMLElement|null} */
-  let lSqlEl = $state(null)
-  /** @type {HTMLElement|null} */
-  let rSqlEl = $state(null)
-  /** The app theme these editors should paint in. */
-  function currentDiffTheme() {
-    return normalizeThemeId(document.documentElement.dataset.theme)
-  }
-
-  const MONACO_OPTS = /** @type {monaco.editor.IStandaloneEditorConstructionOptions} */ ({
-    language: 'sql',
-    // No hardcoded theme. `monaco.editor.setTheme` - and a `theme` in create
-    // options - is *global*: pinning this to 'vs-dark' re-tinted every other
-    // editor in the app the moment this page mounted, and left a stock VS Code
-    // dark editor sitting on a light app theme. The app theme is applied below.
-    minimap: { enabled: false },
-    lineNumbers: 'off',
-    scrollBeyondLastLine: false,
-    wordWrap: 'on',
-    fontSize: 12,
-    fontFamily: 'var(--font-mono, ui-monospace, monospace)',
-    overviewRulerLanes: 0,
-    hideCursorInOverviewRuler: true,
-    lineDecorationsWidth: 6,
-    lineNumbersMinChars: 0,
-    glyphMargin: false,
-    folding: false,
-    // automaticLayout:false - it polls via setInterval(100ms) per editor (two here)
-    // and never stops, even when this tab is hidden. ResizeObserver is event-driven.
-    automaticLayout: false,
-    scrollbar: { vertical: 'auto', horizontal: 'hidden', alwaysConsumeMouseWheel: false },
-    quickSuggestions: { other: true, comments: false, strings: true },
-    suggestOnTriggerCharacters: true,
-    tabCompletion: 'on',
-    padding: { top: 8, bottom: 8 },
-  })
-
-  $effect(() => {
-    const el = lSqlEl
-    if (!el) return
-    defineStrokeMonacoThemes()
-    const ed = monaco.editor.create(el, { ...MONACO_OPTS, value: untrack(() => L.sql) })
-    applyMonacoTheme(currentDiffTheme())
-    ed.onDidChangeModelContent(() => { L = { ...L, sql: ed.getValue() } })
-    const ro = new ResizeObserver(() => ed.layout())
-    ro.observe(el)
-    return () => { ro.disconnect(); ed.dispose() }
-  })
-
-  $effect(() => {
-    const el = rSqlEl
-    if (!el) return
-    defineStrokeMonacoThemes()
-    const ed = monaco.editor.create(el, { ...MONACO_OPTS, value: untrack(() => R.sql) })
-    applyMonacoTheme(currentDiffTheme())
-    ed.onDidChangeModelContent(() => { R = { ...R, sql: ed.getValue() } })
-    const ro = new ResizeObserver(() => ed.layout())
-    ro.observe(el)
-    return () => { ro.disconnect(); ed.dispose() }
-  })
 
   // ── Key columns ───────────────────────────────────────────────────────────────
   /** @type {string[]} */
@@ -664,7 +600,9 @@
             {@render SearchSelect({ id: 'L.schema', value: L.schema, options: L.schemas, loading: L.loadingSchemas, placeholder: 'schema', onchange: (v) => { L = { ...L, schema: v, table: '', tables: [] }; onSchemaChange('L') } })}
             {@render SearchSelect({ id: 'L.table', value: L.table, options: L.tables, loading: L.loadingTables, placeholder: 'table', onchange: (v) => { L = { ...L, table: v } } })}
           {:else}
-            <div bind:this={lSqlEl} class="min-h-[64px] flex-1 overflow-hidden rounded-md border border-border/40"></div>
+            <div class="flex min-h-[64px] flex-1 flex-col overflow-hidden rounded-md border border-border/40">
+              <CodeEditor value={L.sql} lang="sql" gutter={false} folding={false} onchange={(t) => { L = { ...L, sql: t } }} ariaLabel="Left query" />
+            </div>
           {/if}
         </div>
         {#if L.error}
@@ -699,7 +637,9 @@
             {@render SearchSelect({ id: 'R.schema', value: R.schema, options: R.schemas, loading: R.loadingSchemas, placeholder: 'schema', onchange: (v) => { R = { ...R, schema: v, table: '', tables: [] }; onSchemaChange('R') } })}
             {@render SearchSelect({ id: 'R.table', value: R.table, options: R.tables, loading: R.loadingTables, placeholder: 'table', onchange: (v) => { R = { ...R, table: v } } })}
           {:else}
-            <div bind:this={rSqlEl} class="min-h-[64px] flex-1 overflow-hidden rounded-md border border-border/40"></div>
+            <div class="flex min-h-[64px] flex-1 flex-col overflow-hidden rounded-md border border-border/40">
+              <CodeEditor value={R.sql} lang="sql" gutter={false} folding={false} onchange={(t) => { R = { ...R, sql: t } }} ariaLabel="Right query" />
+            </div>
           {/if}
         </div>
         {#if R.error}

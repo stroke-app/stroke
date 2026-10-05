@@ -52,17 +52,6 @@ export default defineConfig({
       // The ER diagram's layout engine, reached only through the lazily loaded
       // page; CommonJS, so it has to be pre-bundled before the page asks for it.
       'elkjs/lib/elk-api.js',
-      // src/lib/monaco.js composes the editor entry by hand out of subpaths, and it
-      // is itself only reached through a lazy import, so the same scan misses all of
-      // these. Keep this list in step with the imports at the top of that file.
-      'monaco-editor/esm/vs/editor/edcore.main.js',
-      'monaco-editor/esm/vs/basic-languages/sql/sql.contribution.js',
-      'monaco-editor/esm/vs/basic-languages/javascript/javascript.contribution.js',
-      'monaco-editor/esm/vs/basic-languages/typescript/typescript.contribution.js',
-      'monaco-editor/esm/vs/basic-languages/rust/rust.contribution.js',
-      'monaco-editor/esm/vs/basic-languages/markdown/markdown.contribution.js',
-      'monaco-editor/esm/vs/language/json/monaco.contribution.js',
-      'monaco-editor/esm/vs/language/typescript/monaco.contribution.js',
     ],
   },
   resolve: {

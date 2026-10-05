@@ -206,7 +206,8 @@ pub async fn list_tables(config: &ClickhouseConfig, schema: &str) -> Result<Vec<
             let engine = row.get(eng_i).and_then(|v| v.as_str()).unwrap_or("");
             let kind = if engine.contains("View") { "view" } else { "table" };
             let row_count = row.get(rows_i).and_then(json_to_i64).unwrap_or(-1);
-            Some(TableInfo { name, kind: kind.to_string(), row_count, rls_enabled: None })
+            // system.tables keeps a metadata change time, not a creation time.
+            Some(TableInfo { name, kind: kind.to_string(), row_count, rls_enabled: None, created_at: None, create_order: None })
         })
         .collect())
 }

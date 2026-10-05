@@ -10,6 +10,8 @@ import {
   duplicateDatabaseSql,
   dropDatabaseSql,
   terminateSessionsSql,
+  sessionCountSql,
+  canForceDrop,
   databaseInfoSql,
   databaseInfoRows,
 } from './database-admin.js'
@@ -23,12 +25,16 @@ describe('dbAdminKind', () => {
     expect(dbAdminKind({ ...pg, type: 'cockroachdb' })).toBe('postgres')
     expect(dbAdminKind(mysql)).toBe('mysql')
     expect(dbAdminKind({ ...mysql, type: 'mariadb' })).toBe('mysql')
+    expect(dbAdminKind({ ...pg, type: 'mssql' })).toBe('mssql')
+    expect(dbAdminKind({ ...pg, type: 'clickhouse' })).toBe('clickhouse')
   })
   it('rules out engines and providers with no server-level databases', () => {
     expect(dbAdminKind(null)).toBeNull()
     expect(dbAdminKind({ ...pg, type: 'sqlite' })).toBeNull()
     expect(dbAdminKind({ ...pg, type: 'd1' })).toBeNull()
+    expect(dbAdminKind({ ...pg, type: 'duckdb' })).toBeNull()
     expect(dbAdminKind({ ...pg, type: 'redis' })).toBeNull()
+    expect(dbAdminKind({ ...pg, type: 'posthog' })).toBeNull()
     // A Neon connection is postgres, but its sibling databases are API refs.
     expect(dbAdminKind({ ...pg, provider: 'neon' })).toBeNull()
   })
@@ -45,10 +51,29 @@ describe('dbActionBlocker', () => {
     expect(dbActionBlocker('drop', pg, { isCurrent: true })).toMatch(/connected to/)
     expect(dbActionBlocker('duplicate', pg, { isCurrent: true })).toMatch(/while a session is connected/)
   })
-  it('says what MySQL cannot express at all', () => {
+  it('says what MySQL cannot express at all, and copies the rest', () => {
     expect(dbActionBlocker('rename', mysql, { isCurrent: false })).toMatch(/no RENAME DATABASE/)
-    expect(dbActionBlocker('duplicate', mysql, { isCurrent: false })).toMatch(/cannot copy/)
+    expect(canDbAction('duplicate', mysql, { isCurrent: false })).toBe(true)
+    expect(canDbAction('duplicate', mysql, { isCurrent: true })).toBe(true)
     expect(canDbAction('drop', mysql, { isCurrent: false })).toBe(true)
+  })
+  it('copies and drops on SQL Server and ClickHouse, but never the connected database', () => {
+    for (const type of ['mssql', 'clickhouse']) {
+      const conn = /** @type {any} */ ({ type, database: 'app' })
+      for (const action of /** @type {const} */ (['rename', 'duplicate', 'drop'])) {
+        expect(canDbAction(action, conn, { isCurrent: false })).toBe(true)
+      }
+      expect(dbActionBlocker('drop', conn, { isCurrent: true })).toMatch(/connected to/)
+      expect(canDbAction('terminate', conn)).toBe(false)
+    }
+  })
+  it('knows where the engine or host has no such statement', () => {
+    const cockroach = /** @type {any} */ ({ type: 'cockroachdb', database: 'app' })
+    expect(dbActionBlocker('duplicate', cockroach)).toMatch(/no database templates/)
+    expect(canDbAction('drop', cockroach)).toBe(true)
+    const ps = /** @type {any} */ ({ type: 'mysql', host: 'aws.connect.psdb.cloud', database: 'app' })
+    expect(dbActionBlocker('drop', ps)).toMatch(/PlanetScale/)
+    expect(canDbAction('info', ps)).toBe(true)
   })
   it('blocks everything on a connection with no manageable databases', () => {
     expect(dbActionBlocker('drop', { ...pg, type: 'sqlite' })).toMatch(/no server-level databases/)
@@ -89,11 +114,35 @@ describe('statement builders', () => {
       .toBe('CREATE DATABASE `app` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci')
   })
 
-  it('renames and copies on Postgres, and refuses on MySQL', () => {
+  it('renames per dialect, and refuses on MySQL', () => {
     expect(renameDatabaseSql('postgres', 'old', 'new')).toBe('ALTER DATABASE "old" RENAME TO "new"')
-    expect(duplicateDatabaseSql('postgres', 'src', 'copy')).toBe('CREATE DATABASE "copy" WITH TEMPLATE "src"')
+    expect(renameDatabaseSql('mssql', 'old', 'new')).toBe('ALTER DATABASE [old] MODIFY NAME = [new]')
+    expect(renameDatabaseSql('clickhouse', 'old', 'new')).toBe('RENAME DATABASE `old` TO `new`')
     expect(() => renameDatabaseSql('mysql', 'old', 'new')).toThrow()
-    expect(() => duplicateDatabaseSql('mysql', 'src', 'copy')).toThrow()
+  })
+
+  it('previews a copy: one statement on Postgres, the outline elsewhere', () => {
+    expect(duplicateDatabaseSql('postgres', 'src', 'copy')).toBe('CREATE DATABASE "copy" WITH TEMPLATE "src"')
+    expect(duplicateDatabaseSql('mysql', 'src', 'copy')).toMatch(/^CREATE DATABASE `copy`[\s\S]*FROM `src`\.<table>/)
+    expect(duplicateDatabaseSql('clickhouse', 'src', 'copy')).toContain('CREATE TABLE `copy`.<table> AS `src`.<table>')
+    expect(duplicateDatabaseSql('mssql', 'src', 'copy')).toMatch(/^BACKUP DATABASE \[src\][\s\S]*RESTORE DATABASE \[copy\]/)
+  })
+
+  it('creates SQL Server and ClickHouse databases with the server defaults', () => {
+    expect(createDatabaseSql('mssql', { name: 'a]b' })).toBe('CREATE DATABASE [a]]b]')
+    expect(createDatabaseSql('clickhouse', { name: 'app' })).toBe('CREATE DATABASE `app`')
+  })
+
+  it('forces a drop on Postgres and SQL Server only', () => {
+    expect(dropDatabaseSql('mssql', 'app')).toBe('DROP DATABASE [app]')
+    expect(dropDatabaseSql('mssql', 'app', { force: true })).toBe('ALTER DATABASE [app] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;\nDROP DATABASE [app]')
+    expect(dropDatabaseSql('clickhouse', 'app', { force: true })).toBe('DROP DATABASE `app`')
+    expect(canForceDrop(pg)).toBe(true)
+    expect(canForceDrop({ ...pg, type: 'cockroachdb' })).toBe(false)
+    expect(canForceDrop({ ...pg, type: 'mssql' })).toBe(true)
+    expect(canForceDrop(mysql)).toBe(false)
+    expect(sessionCountSql('mssql', 'app')).toContain(`DB_ID('app')`)
+    expect(sessionCountSql('mysql', 'app')).toBe('')
   })
 
   it('drops with FORCE only where it exists and only when asked', () => {
@@ -127,5 +176,14 @@ describe('databaseInfoRows', () => {
     const rows = databaseInfoRows('mysql', { rows: [['app', 'utf8mb4', 'utf8mb4_unicode_ci', 12, 5_242_880]] })
     expect(rows.find((r) => r.label === 'Size')?.value).toBe('5 MB')
     expect(rows.find((r) => r.label === 'Tables')?.value).toBe('12')
+  })
+  it('labels the SQL Server and ClickHouse columns', () => {
+    const ms = databaseInfoRows('mssql', { rows: [['app', 'sa', 'SQL_Latin1_General_CP1_CI_AS', 'ONLINE', 'FULL', 160, '2026-10-05 10:00:00', 16_777_216, 2]] })
+    expect(ms.find((r) => r.label === 'Size on disk')?.value).toBe('16 MB')
+    expect(ms.find((r) => r.label === 'Recovery model')?.value).toBe('FULL')
+    // ClickHouse sends 64-bit counts as strings.
+    const ch = databaseInfoRows('clickhouse', { rows: [['app', 'Atomic', '', '3', '1200', '2048']] })
+    expect(ch.find((r) => r.label === 'Size')?.value).toBe('2 kB')
+    expect(ch.find((r) => r.label === 'Comment')?.value).toBe('-')
   })
 })
