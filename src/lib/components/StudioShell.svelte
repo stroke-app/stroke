@@ -3199,6 +3199,10 @@ let rowSearch = $state('')
    *  SQL tab runs the statement at the cursor; F5 re-runs the whole query. */
   async function handleModRefresh(opts = {}) {
     if (isFocusInRegion('sidebar')) {
+      // Opening a table from the sidebar leaves focus on its row, so this is
+      // where Mod+R lands right after - and it reloaded the list alone, leaving
+      // the open table's rows as they were. The open table first, then the list.
+      if (activeTab?.kind === 'table' && activeTable) await loadRows()
       await loadTables({ force: true })
       return
     }
