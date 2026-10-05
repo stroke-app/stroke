@@ -28,7 +28,7 @@
  *     editing chords, so the hotkey layer can never steal them from a focused
  *     field. Non-editing chords (Cmd+K, Cmd+F, …) are untouched and still fire.
  *
- * Monaco/CodeMirror editors are skipped - they ship their own editing model.
+ * CodeMirror editors are skipped - they ship their own editing model.
  * contenteditable is shielded from the hotkey layer but left to native editing.
  */
 
@@ -55,7 +55,7 @@ function inManagedEditor(/** @type {Element} */ el) {
   // CodeMirror manages its text surface (.cm-content), not the inputs in its
   // panels: matching all of .cm-editor left the find/replace fields with no
   // word delete, no undo and no shield from the global hotkeys.
-  return !!el.closest?.('.monaco-editor, .cm-content')
+  return !!el.closest?.('.cm-content')
 }
 
 /** @param {HTMLInputElement | HTMLTextAreaElement} el */

@@ -1,15 +1,7 @@
 <script>
   import { onMount } from 'svelte'
-  import * as monaco from '$lib/monaco.js'
-  import { configureMonacoWorkers, editorFontFamily } from '$lib/monaco-env.js'
-  import { registerMonacoSqlFormatter } from '$lib/format-sql.js'
-  import {
-    defineStrokeMonacoThemes,
-    applyMonacoTheme,
-    monacoThemeId,
-    readEditorFontOptions,
-  } from '$lib/monaco-themes.js'
-  import { normalizeThemeId } from '$lib/themes/registry.js'
+  import { completionStatus } from '@codemirror/autocomplete'
+  import CodeEditor from './CodeEditor.svelte'
   import X from '@lucide/svelte/icons/x'
   import RefreshCw from '@lucide/svelte/icons/refresh-cw'
   import Play from '@lucide/svelte/icons/play'
@@ -23,96 +15,24 @@
     onrun = () => {},
   } = $props()
 
-  /** @type {HTMLDivElement | null} */
-  let container = $state(null)
-  /** @type {monaco.editor.IStandaloneCodeEditor | null} */
-  let editor = null
+  /** @type {CodeEditor | null} */
+  let editor = $state(null)
 
-  function currentTheme() {
-    return normalizeThemeId(document.documentElement.dataset.theme)
-  }
+  /** ⌘↵ runs, Esc closes - unless the suggestion list is open, which Esc closes first. */
+  const keys = [
+    { key: 'Mod-Enter', run: () => { if (!running) onrun(); return true } },
+    {
+      key: 'Escape',
+      run: (/** @type {import('@codemirror/view').EditorView} */ view) => {
+        if (completionStatus(view.state)) return false
+        if (!running) onclose()
+        return true
+      },
+    },
+  ]
 
-  onMount(() => {
-    configureMonacoWorkers()
-    defineStrokeMonacoThemes()
-    registerMonacoSqlFormatter(monaco)
-    if (!container) return
-
-    const { fontSize, lineHeight } = readEditorFontOptions()
-
-    editor = monaco.editor.create(container, {
-      value: sql,
-      language: 'sql',
-      theme: monacoThemeId(currentTheme()),
-      automaticLayout: true,
-      minimap: { enabled: false },
-      fontFamily: editorFontFamily(),
-      fontSize,
-      lineHeight,
-      fontLigatures: false,
-      fontWeight: 'normal',
-      padding: { top: 12, bottom: 12 },
-      scrollBeyondLastLine: false,
-      wordWrap: 'on',
-      renderLineHighlight: 'line',
-      lineNumbers: 'on',
-      lineNumbersMinChars: 3,
-      glyphMargin: false,
-      folding: false,
-      scrollbar: { verticalScrollbarSize: 8, horizontalScrollbarSize: 8 },
-      overviewRulerLanes: 0,
-      hideCursorInOverviewRuler: true,
-      overviewRulerBorder: false,
-      cursorBlinking: 'smooth',
-      cursorSmoothCaretAnimation: 'on',
-      smoothScrolling: true,
-      quickSuggestions: { other: true, comments: false, strings: true },
-      suggestOnTriggerCharacters: true,
-      tabCompletion: 'on',
-      wordBasedSuggestions: 'off',
-      acceptSuggestionOnEnter: 'on',
-      snippetSuggestions: 'inline',
-      renderWhitespace: 'none',
-      bracketPairColorization: { enabled: true },
-    })
-
-    // Ctrl/Cmd+Enter → run
-    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
-      if (!running) onrun()
-    })
-    // Escape → close
-    editor.addCommand(monaco.KeyCode.Escape, () => {
-      if (!running) onclose()
-    })
-
-    editor.onDidChangeModelContent(() => {
-      const v = editor?.getValue() ?? ''
-      if (v !== sql) sql = v
-    })
-
-    const themeObs = new MutationObserver(() => {
-      applyMonacoTheme(currentTheme())
-    })
-    themeObs.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ['class', 'data-theme'],
-    })
-
-    // Focus the editor when the modal opens
-    editor.focus()
-
-    return () => {
-      editor?.dispose()
-      editor = null
-      themeObs.disconnect()
-    }
-  })
-
-  // Keep editor value in sync if sql prop changes externally
-  $effect(() => {
-    const s = sql
-    if (editor && editor.getValue() !== s) editor.setValue(s)
-  })
+  // Focus the editor when the modal opens.
+  onMount(() => editor?.focus())
 </script>
 
 <!-- Backdrop -->
@@ -146,9 +66,9 @@
       </button>
     </div>
 
-    <!-- Monaco editor fills the space -->
-    <div class="security-sql-modal min-h-0 flex-1 overflow-hidden">
-      <div bind:this={container} class="h-full w-full"></div>
+    <!-- The editor fills the space -->
+    <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <CodeEditor bind:this={editor} bind:value={sql} lang="sql" dialect="postgres" {keys} ariaLabel={title || 'SQL'} />
     </div>
 
     <!-- Footer -->
@@ -181,16 +101,3 @@
     </div>
   </div>
 </div>
-
-<style>
-  .security-sql-modal :global(.monaco-editor),
-  .security-sql-modal :global(.monaco-editor .margin),
-  .security-sql-modal :global(.monaco-editor-background) {
-    border-radius: 0 !important;
-  }
-
-  .security-sql-modal :global(.monaco-editor .view-lines),
-  .security-sql-modal :global(.monaco-editor .view-line) {
-    font-weight: 400 !important;
-  }
-</style>

@@ -28,7 +28,7 @@ export function setVimSubMode(m) {
 /**
  * True when `el` is a live text-entry target where Vim normal-mode keys must NOT
  * be swallowed: native inputs/textareas/selects, contenteditable, and anything
- * inside a Monaco editor (Monaco runs its own modal editing via monaco-vim).
+ * inside an editor that runs Vim itself (CodeMirror's vim, marked `data-vim-editor`).
  * @param {Element | EventTarget | null} el
  */
 export function isTextEntryTarget(el) {
@@ -36,7 +36,7 @@ export function isTextEntryTarget(el) {
   const tag = el.tagName
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true
   if (el instanceof HTMLElement && el.isContentEditable) return true
-  // Monaco owns its own vim modes - never intercept its keys at the app layer.
-  if (el.closest('.monaco-editor')) return true
+  // An editor with its own Vim owns its modes - never intercept its keys here.
+  if (el.closest('[data-vim-editor]')) return true
   return false
 }

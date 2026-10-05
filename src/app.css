@@ -82,7 +82,7 @@
   --editor-font-size: 16px;
   /* 1.5 ratio - matches VS Code / Cursor's default editor line height. */
   --editor-line-height: 24px;
-  /* Dedicated code font for Monaco editors, kept independent of the app's UI /
+  /* Dedicated code font for the code editors, kept independent of the app's UI /
      data-grid mono (`--font-mono`) - same separation VS Code makes between its
      "editor font" and everything else. JetBrains Mono is a true code typeface:
      heavier, even rhythm, designed ligatures. */
@@ -303,7 +303,6 @@ textarea:not(.no-focus-ring):not(.no-field-frame) {
   border: var(--field-border-width) solid var(--field-border);
 }
 .studio-data-table tbody td :is(input, textarea),
-.monaco-editor :is(input, textarea),
 .sql-editor-host :is(input, textarea) {
   border: 0;
   border-radius: 0;
@@ -552,7 +551,7 @@ html[data-os="linux"]   { --window-radius: 8px; }
     -webkit-user-select: text;
   }
 
-  #app :is(.sql-editor-host, .sql-editor-host *, .monaco-editor, .monaco-editor *) {
+  #app :is(.sql-editor-host, .sql-editor-host *) {
     user-select: text;
     -webkit-user-select: text;
   }

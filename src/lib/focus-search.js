@@ -75,16 +75,16 @@ export function pickSearchInput(candidates) {
  * Is the user typing? "/" and "?" are ordinary characters in a text field, so
  * neither may be stolen while one has focus.
  *
- * Monaco and CodeMirror are checked by container rather than by tag: both put a
- * real textarea behind the cursor, but so does a plain form, and the editors
- * also route keys through elements that are not textareas at all.
+ * CodeMirror is checked by container rather than by tag: its content is a
+ * contenteditable, and it routes keys through elements that are not text
+ * fields at all.
  *
  * @param {EventTarget | null} target
  * @returns {boolean}
  */
 export function isTypingTarget(target) {
   if (!(target instanceof HTMLElement)) return false
-  if (target.closest('.monaco-editor, .cm-editor')) return true
+  if (target.closest('.cm-editor')) return true
   if (target.isContentEditable) return true
   const tag = target.tagName
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'

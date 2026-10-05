@@ -173,13 +173,13 @@
       el.tagName === 'INPUT' ||
       el.tagName === 'TEXTAREA' ||
       el.isContentEditable ||
-      !!el.closest('.monaco-editor')
+      !!el.closest('.cm-editor')
     )
   }
 
   /**
    * Global shortcuts: ⌘D toggles the database switcher, ⌘⇧C the connection
-   * switcher. Skipped while typing (inputs, textareas, Monaco) so ⌘D keeps
+   * switcher. Skipped while typing (inputs, textareas, code editors) so ⌘D keeps
    * its editor meaning there.
    * @param {KeyboardEvent} e
    */

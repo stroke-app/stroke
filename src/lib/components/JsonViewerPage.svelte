@@ -2,11 +2,9 @@
   import JsonWrapToggle from './JsonWrapToggle.svelte'
   import JsonPathSuggest from './JsonPathSuggest.svelte'
   import { appJsonWordWrap } from '$lib/stores/settings.js'
-  import { onMount, tick, untrack } from 'svelte'
-  import * as monaco from '$lib/monaco.js'
-  import { configureMonacoWorkers, editorFontFamily } from '$lib/monaco-env.js'
-  import { defineStrokeMonacoThemes, applyMonacoTheme, monacoThemeId, readEditorFontOptions } from '$lib/monaco-themes.js'
-  import { normalizeThemeId } from '$lib/themes/registry.js'
+  import { onDestroy, tick, untrack } from 'svelte'
+  import CodeEditor from './CodeEditor.svelte'
+  import CodeTextView from './CodeTextView.svelte'
   import ResizeHandle from './ResizeHandle.svelte'
   import { loadLayout, saveLayout } from '$lib/stores/layout.js'
   import Copy from '@lucide/svelte/icons/copy'
@@ -33,11 +31,9 @@
   }
 
   // ── Editors ───────────────────────────────────────────────────────────────
-  /** @type {HTMLElement | null} */  let inputContainer = $state(null)
-  /** @type {HTMLElement | null} */  let resultContainer = $state(null)
-  /** @type {monaco.editor.IStandaloneCodeEditor | null} */  let inputEditor = null
-  /** @type {monaco.editor.IStandaloneCodeEditor | null} */  let resultEditor = null
-  let editorsReady = $state(false)
+  /** @type {CodeEditor | null} */  let inputEditor = $state(null)
+  /** The input's text as this page sets it (Format, Clear); typing comes back through `onInput`. */
+  let inputValue = $state('')
 
   // ── Raw JSON: split into "immediate" (for header) + "debounced" (for parse).
   //    JSON.parse() on every keystroke for large documents is the main CPU hog.
@@ -94,15 +90,6 @@
 
   $effect(() => {
     activeIdx = pathFocused && completionItems.length ? 0 : -1
-  })
-
-  // Track resultJson BEFORE the guard - Svelte only registers deps that are
-  // read during execution. Reading after an early-return skips registration.
-  $effect(() => {
-    const content = resultJson
-    if (!editorsReady || !resultEditor) return
-    const next = content ?? ''
-    if (resultEditor.getValue() !== next) resultEditor.setValue(next)
   })
 
   $effect(() => {
@@ -175,157 +162,40 @@
     })
   }
 
+  /** Put text in the input from here: a new document, parsed at once. @param {string} text */
+  function setInput(text) {
+    inputValue = text
+    if (parseDebounceTimer !== null) { clearTimeout(parseDebounceTimer); parseDebounceTimer = null }
+    rawJson = text
+    rawJsonDebounced = text
+  }
+
   function formatJson() {
-    if (!inputEditor || parsedJson === null) return
-    inputEditor.setValue(JSON.stringify(parsedJson, null, 2))
-    inputEditor.focus()
+    if (parsedJson === null) return
+    setInput(JSON.stringify(parsedJson, null, 2))
+    inputEditor?.focus()
   }
 
   function clearInput() {
-    inputEditor?.setValue('')
+    setInput('')
     jsonPath = ''
     inputEditor?.focus()
   }
 
-  function currentTheme() {
-    return normalizeThemeId(document.documentElement.dataset.theme)
+  /** Typing in the input: the header follows at once, the parse 250ms after it stops. @param {string} val */
+  function onInput(val) {
+    rawJson = val
+    // Debounce the expensive parse so it runs at most once per 250ms
+    // instead of on every single keystroke. For a 500kb JSON file this
+    // prevents multiple full parse passes per second.
+    if (parseDebounceTimer !== null) clearTimeout(parseDebounceTimer)
+    parseDebounceTimer = setTimeout(() => {
+      parseDebounceTimer = null
+      rawJsonDebounced = val
+    }, 250)
   }
 
-  // ── Monaco base config ────────────────────────────────────────────────────
-  const MONACO_BASE = {
-    language: 'json',
-    // automaticLayout: false - we use a single ResizeObserver instead.
-    // Monaco's automaticLayout uses setInterval(100ms) per editor instance,
-    // which means two continuous polling loops running the whole time the
-    // page is open. A ResizeObserver fires only when the size actually changes.
-    automaticLayout: false,
-    minimap: { enabled: false },
-    fontFamily: editorFontFamily(),
-    fontLigatures: false,
-    fontWeight: 'normal',
-    scrollBeyondLastLine: false,
-    wordWrap: $appJsonWordWrap ? 'on' : 'off',
-    lineNumbers: /** @type {'on'} */ ('on'),
-    // 4 (not 3) so the right-aligned numbers get a character of inset instead of
-    // sitting flush against the editor edge, and 6px (not Monaco's default 10)
-    // of decoration space on the other side - the two together make the gutter
-    // read as evenly padded rather than shoved left.
-    lineNumbersMinChars: 4,
-    lineDecorationsWidth: 6,
-    glyphMargin: false,
-    folding: true,
-    foldingHighlight: false,
-    scrollbar: { verticalScrollbarSize: 6, horizontalScrollbarSize: 6 },
-    overviewRulerLanes: 0,
-    hideCursorInOverviewRuler: true,
-    overviewRulerBorder: false,
-    // On by default now: this view is read by scrolling, and the animated
-    // offset is what makes a wheel notch land somewhere you can follow. The CPU
-    // cost it was turned off for is per scroll EVENT, not per frame, and it buys
-    // back more than it costs on a 120Hz panel where an unsmoothed notch jumps
-    // several lines between frames.
-    smoothScrolling: true,
-    // A wheel notch moves a predictable number of lines, and holding Alt gives a
-    // 5x jump for crossing a large document - Monaco's own fast-scroll gesture.
-    mouseWheelScrollSensitivity: 1,
-    fastScrollSensitivity: 5,
-    renderLineHighlight: /** @type {'none'} */ ('none'),
-    contextmenu: true,
-    selectionHighlight: false,
-    occurrencesHighlight: /** @type {'off'} */ ('off'),
-    codeLens: false,
-    renderValidationDecorations: /** @type {'off'} */ ('off'),
-    // Disable features that scan the document on every edit
-    hover: { enabled: false },
-    links: false,
-  }
-
-  onMount(() => {
-    configureMonacoWorkers()
-    defineStrokeMonacoThemes()
-    if (!inputContainer || !resultContainer) return
-
-    const { fontSize, lineHeight } = readEditorFontOptions()
-    const theme = monacoThemeId(currentTheme())
-
-    inputEditor = monaco.editor.create(inputContainer, {
-      ...MONACO_BASE,
-      value: '',
-      theme,
-      readOnly: false,
-      fontSize,
-      lineHeight,
-      padding: { top: 12, bottom: 12 },
-      cursorBlinking: 'blink',
-      bracketPairColorization: { enabled: true },
-      quickSuggestions: false,
-      suggest: { showWords: false },
-    })
-
-    resultEditor = monaco.editor.create(resultContainer, {
-      ...MONACO_BASE,
-      value: '',
-      theme,
-      readOnly: true,
-      fontSize,
-      lineHeight,
-      padding: { top: 12, bottom: 12 },
-      cursorStyle: /** @type {'line-thin'} */ ('line-thin'),
-    })
-
-    // Single ResizeObserver for both containers - much cheaper than two
-    // automaticLayout polling loops. Calls layout() only when size changes.
-    const ro = new ResizeObserver(() => {
-      inputEditor?.layout()
-      resultEditor?.layout()
-    })
-    ro.observe(inputContainer)
-    ro.observe(resultContainer)
-
-    inputEditor.onDidChangeModelContent(() => {
-      const val = inputEditor?.getValue() ?? ''
-      rawJson = val  // immediate: drives the header summary
-
-      // Debounce the expensive parse so it runs at most once per 250ms
-      // instead of on every single keystroke. For a 500kb JSON file this
-      // prevents multiple full parse passes per second.
-      if (parseDebounceTimer !== null) clearTimeout(parseDebounceTimer)
-      parseDebounceTimer = setTimeout(() => {
-        parseDebounceTimer = null
-        rawJsonDebounced = val
-      }, 250)
-    })
-
-    const themeObs = new MutationObserver(() => {
-      applyMonacoTheme(currentTheme())
-    })
-    themeObs.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ['class', 'data-theme'],
-    })
-
-    editorsReady = true
-
-    return () => {
-      ro.disconnect()
-      if (parseDebounceTimer !== null) clearTimeout(parseDebounceTimer)
-      inputEditor?.dispose(); resultEditor?.dispose()
-      inputEditor = null; resultEditor = null
-      themeObs.disconnect()
-    }
-  })
-
-  // Wrap is an app setting: a change made in Settings, or from any other JSON
-  // view, reflows this editor too rather than leaving it on whatever it was
-  // created with.
-  // Both editors, not `editor` - this page has two (input and output) and no
-  // variable by that name, so the effect threw on mount and took the whole view
-  // down with it. Pre-dates the rename that split them.
-  $effect(() => {
-    const wordWrap = $appJsonWordWrap ? 'on' : 'off'
-    inputEditor?.updateOptions({ wordWrap })
-    resultEditor?.updateOptions({ wordWrap })
-  })
+  onDestroy(() => { if (parseDebounceTimer !== null) clearTimeout(parseDebounceTimer) })
 </script>
 
 <div bind:this={pageEl} class="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -367,9 +237,9 @@
     </div>
   </div>
 
-  <!-- ── Input Monaco ──────────────────────────────────────────────────── -->
-  <div class="relative shrink-0 overflow-hidden" style="height: {inputHeight}px">
-    <div bind:this={inputContainer} class="absolute inset-0 h-full w-full"></div>
+  <!-- ── Input ─────────────────────────────────────────────────────────── -->
+  <div class="relative flex shrink-0 flex-col overflow-hidden" style="height: {inputHeight}px">
+    <CodeEditor bind:this={inputEditor} value={inputValue} lang="json" wrap={$appJsonWordWrap} onchange={onInput} ariaLabel="JSON input" />
     {#if !rawJson.trim()}
       <div class="pointer-events-none absolute inset-0 flex items-center justify-center">
         <p class="font-mono text-ui-sm text-muted-foreground">Paste or type JSON here</p>
@@ -433,9 +303,9 @@
     </div>
   </div>
 
-  <!-- ── Result Monaco ─────────────────────────────────────────────────── -->
-  <div class="relative min-h-0 flex-1 overflow-hidden">
-    <div bind:this={resultContainer} class="absolute inset-0 h-full w-full"></div>
+  <!-- ── Result ────────────────────────────────────────────────────────── -->
+  <div class="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+    <CodeTextView text={resultJson ?? ''} language="json" wordWrap={$appJsonWordWrap ? 'on' : 'off'} ariaLabel="JSONPath result" />
 
     {#if !rawJson.trim()}
       <div class="pointer-events-none absolute inset-0 flex items-center justify-center">
@@ -460,15 +330,3 @@
   </div>
 
 </div>
-
-<style>
-  :global(.monaco-editor),
-  :global(.monaco-editor .margin),
-  :global(.monaco-editor-background) {
-    border-radius: 0 !important;
-  }
-  :global(.monaco-editor .view-lines),
-  :global(.monaco-editor .view-line) {
-    font-weight: 400 !important;
-  }
-</style>

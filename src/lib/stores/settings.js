@@ -596,8 +596,8 @@ export const appMotion = writable(/** @type {MotionId} */ (DEFAULT_MOTION))
 /** Reactive app icon set / family (synced by applySettings). */
 export const appIconSet = writable(/** @type {IconSetId} */ (DEFAULT_ICON_SET))
 
-/** Reactive app zoom scale (synced by applySettings). Monaco editors subscribe
- *  to this to rescale their font/line-height in lockstep with the rest of the UI. */
+/** Reactive app zoom scale (synced by applySettings), for anything that has to
+ *  rescale in step with the rest of the UI. */
 export const appZoom = writable(DEFAULT_ZOOM)
 
 /** Reactive app theme id (synced by applySettings). */
@@ -902,8 +902,8 @@ export function saveSettings(settings) {
 // applySettings runs on EVERY updateSettings call (any toggle in the Settings
 // dialog). Unconditional root style/attribute writes fire the canvas table's
 // MutationObserver (colour-reader rebuild + font re-measure + full repaint) and
-// unconditional store.set() re-notifies every subscriber (Monaco updateOptions
-// on all editors) - that was the Settings-page lag. Guard every write so only
+// unconditional store.set() re-notifies every subscriber - that was the
+// Settings-page lag. Guard every write so only
 // values that actually changed touch the DOM or notify subscribers.
 /** @param {HTMLElement} el @param {string} prop @param {string} value */
 function setStyleVar(el, prop, value) {
@@ -987,10 +987,8 @@ export function applySettings(settings) {
     setStyleVar(root, `--lh-${step}`, `${lh}px`)
   }
 
-  // Monaco editors read --editor-font-size / --editor-line-height directly (Monaco
-  // takes pixel values, not CSS units, so it can't inherit --app-font-size). Scale
+  // The SQL editor reads --editor-font-size / --editor-line-height directly. Scale
   // them off the same base + zoom so the editor grows in lockstep with the UI.
-  // The appZoom subscription in monaco-env.js pushes these to live editor instances.
   setStyleVar(root, '--editor-font-size', `${rootPx}px`)
   setStyleVar(root, '--editor-line-height', `${Math.round(rootPx * 1.5)}px`)
   setStore(appZoom, zoom)

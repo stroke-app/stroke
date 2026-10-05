@@ -2,8 +2,7 @@
   import { onDestroy } from 'svelte'
   import Icon from './Icon.svelte'
   import { cn } from '$lib/utils.js'
-  import MonacoTextView from './MonacoTextView.svelte'
-  import { registerDelimitedLanguages, CSV_LANG, TSV_LANG } from '$lib/monaco-delimited.js'
+  import CodeTextView from './CodeTextView.svelte'
   import {
     rowsToCsv,
     rowsToTsv,
@@ -15,7 +14,7 @@
 
   /**
    * Text mode for the data table - CSV / TSV / Markdown / JSON Lines views of
-   * the current page, rendered through the shared read-only Monaco surface
+   * the current page, rendered through the shared read-only CodeMirror surface
    * (smooth virtualized scrolling, ⌘F find, full selection). CSV/TSV get
    * colored values via a tiny Monarch tokenizer; Markdown tables are
    * column-aligned and copy exactly what's displayed.
@@ -29,12 +28,11 @@
     tableName = null,
   } = $props()
 
-  registerDelimitedLanguages()
 
   /** @type {Array<{ id: 'csv' | 'tsv' | 'md' | 'jsonl', label: string, lang: string }>} */
   const FORMATS = [
-    { id: 'csv', label: 'CSV', lang: CSV_LANG },
-    { id: 'tsv', label: 'TSV', lang: TSV_LANG },
+    { id: 'csv', label: 'CSV', lang: 'csv' },
+    { id: 'tsv', label: 'TSV', lang: 'tsv' },
     { id: 'md', label: 'Markdown', lang: 'markdown' },
     { id: 'jsonl', label: 'JSON Lines', lang: 'json' },
   ]
@@ -67,9 +65,9 @@
   /**
    * How many rows the on-screen text is built from.
    *
-   * This view serialises the whole page into ONE string and hands it to Monaco,
+   * This view serialises the whole page into ONE string and hands it to the editor,
    * which then holds a second copy in its model - so a page of 200k rows costs
-   * the row array, a multi-megabyte string, and Monaco's own buffer, all built
+   * the row array, a multi-megabyte string, and the editor's own document, all built
    * synchronously on the main thread. Nobody reads 200k rows of CSV by eye; the
    * cap keeps the view instant and Copy/Download still use the full page, which
    * is what those are for.
@@ -185,7 +183,7 @@
     </div>
   </div>
 
-  <!-- Monaco text body (⌘F to search) -->
+  <!-- Text body (⌘F to search) -->
   {#if columns.length === 0}
     <div class="flex min-h-0 flex-1 items-center justify-center bg-panel">
       <p class="font-mono text-ui-sm text-muted-foreground">No data to display</p>
@@ -203,6 +201,6 @@
         {rows.length.toLocaleString()} rows. Copy and Download use all of them.
       </p>
     {/if}
-    <MonacoTextView {text} {language} />
+    <CodeTextView {text} {language} />
   {/if}
 </div>

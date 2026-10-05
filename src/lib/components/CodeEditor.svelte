@@ -18,7 +18,8 @@
    * @property {string} [placeholder]
    * @property {string} [ariaLabel]
    * @property {import('@codemirror/view').KeyBinding[]} [keys] Extra bindings, checked first.
-   * @property {'' | 'sql'} [lang] Force a language. Empty guesses from the text.
+   * @property {string} [lang] Force a language by id ('sql', 'json', 'typescript', 'csv',
+   *   'prisma', 'plaintext' ... - see cm-languages.js). Empty guesses JSON or markup from the text.
    * @property {string} [dialect] SQL dialect for `lang="sql"` (the app's Dialect ids).
    * @property {import('$lib/sql-complete-data.js').SqlSchemaHints} [sqlHints]
    *   Schemas, tables, columns, enums and functions for SQL completion.
@@ -41,6 +42,7 @@
   import { html } from '@codemirror/lang-html'
   import { sql } from '@codemirror/lang-sql'
   import { sqlDialectFor } from '$lib/cm-sql-dialects.js'
+  import { languageExtension } from '$lib/cm-languages.js'
   import {
     autocompletion, acceptCompletion, closeBrackets, closeBracketsKeymap, completionStatus, closeCompletion,
     snippetKeymap, nextSnippetField, prevSnippetField, clearSnippet, completionKeymap,
@@ -114,12 +116,13 @@
 
 
 
-  /** JSON by its first character, markup by an early tag; everything else plain. */
+  /** The language asked for; without one, JSON by its first character, markup by an early tag. */
   function languageFor(/** @type {string} */ text) {
     if (longestLine(text) > MAX_TOKENIZE_LINE) return []
     if (lang === 'sql') {
       return sql({ dialect: sqlDialectFor(dialect) })
     }
+    if (lang) return languageExtension(lang, dialect)
     if (/^\s*[[{]/.test(text)) return json()
     if (/<[A-Za-z!/]/.test(text.slice(0, 2000))) return html()
     return []
@@ -142,6 +145,10 @@
     { tag: t.operator, color: 'var(--muted-foreground)' },
     { tag: t.special(t.string), color: 'var(--foreground)' },
     { tag: t.lineComment, color: 'var(--json-null)', fontStyle: 'italic' },
+    // Script (the ORM runner) and schema files (Prisma): names, calls, attributes.
+    { tag: [t.function(t.variableName), t.function(t.propertyName)], color: 'var(--json-number)' },
+    { tag: [t.meta, t.annotation], color: 'var(--json-number)' },
+    { tag: [t.regexp, t.escape], color: 'var(--json-string)' },
   ])
 
   /*
@@ -896,9 +903,11 @@
   $effect(() => { const r = readOnly; view?.dispatch({ effects: readOnlyC.reconfigure(EditorState.readOnly.of(r)) }) })
   // A new dialect's keywords, without resetting the doc. Tables and columns
   // are read by the completion source on every query and need nothing here.
+  // Another language for the same editor (a view switching CSV to Markdown).
   $effect(() => {
     void dialect
-    if (lang === 'sql') view?.dispatch({ effects: langC.reconfigure(languageFor(view.state.doc.toString())) })
+    void lang
+    if (lang) view?.dispatch({ effects: langC.reconfigure(languageFor(view.state.doc.toString())) })
   })
 
   $effect(() => { const x = extensions; view?.dispatch({ effects: extraC.reconfigure(x) }) })

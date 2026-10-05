@@ -143,7 +143,7 @@
     </div>
   </div>
 
-  <!-- Monaco editor -->
+  <!-- SQL editor -->
   <div style="height:{editorHeight}px" class="relative w-full overflow-hidden">
     <SqlEditor
       value={content}

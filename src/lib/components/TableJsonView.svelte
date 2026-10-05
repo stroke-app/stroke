@@ -8,7 +8,7 @@
 <script>
   import { untrack } from 'svelte'
   import Icon from './Icon.svelte'
-  import MonacoTextView from './MonacoTextView.svelte'
+  import CodeTextView from './CodeTextView.svelte'
   import JsonWrapToggle from './JsonWrapToggle.svelte'
   import JsonPathSuggest from './JsonPathSuggest.svelte'
   import { appJsonWordWrap } from '$lib/stores/settings.js'
@@ -17,7 +17,7 @@
   import { evalJsonPath, getCompletionItems, applyCompletion, describeResult } from '$lib/jsonpath.js'
 
   /**
-   * JSON mode for the data table - a read-only Monaco surface (smooth
+   * JSON mode for the data table - a read-only CodeMirror surface (smooth
    * virtualized scrolling, ⌘F find, full selection) with adaptive large-doc
    * settings, plus a JSONPath bar evaluated against the live records so the
    * document is never re-parsed.
@@ -177,12 +177,12 @@
     {/if}
   </div>
 
-  <!-- Monaco JSON body (⌘F to search) -->
+  <!-- JSON body (⌘F to search) -->
   {#if columns.length === 0}
     <div class="flex min-h-0 flex-1 items-center justify-center bg-panel">
       <p class="font-mono text-ui-sm text-muted-foreground">No data to display</p>
     </div>
   {:else}
-    <MonacoTextView text={displayedJson} language="json" wordWrap={$appJsonWordWrap ? 'on' : 'off'} />
+    <CodeTextView text={displayedJson} language="json" wordWrap={$appJsonWordWrap ? 'on' : 'off'} />
   {/if}
 </div>

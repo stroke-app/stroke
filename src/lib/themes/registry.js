@@ -277,11 +277,6 @@ export function shikiThemeId(id) {
   return isDarkTheme(id) ? 'vitesse-dark' : 'vitesse-light'
 }
 
-/** @param {ThemeId} id */
-export function monacoThemeName(id) {
-  return `stroke-${id}`
-}
-
 /** @returns {readonly { id: ThemeGroup, label: string, themes: ThemeDefinition[] }[]} */
 export function themesByGroup() {
   return THEME_GROUP_ORDER.map((id) => ({
@@ -293,7 +288,6 @@ export function themesByGroup() {
   })).filter((g) => g.themes.length > 0)
 }
 
-export { MONACO_THEME_SPECS as MONACO_THEMES } from './monaco-presets.js'
 
 /**
  * The easter egg, and how it is found: click the version number in the status

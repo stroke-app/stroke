@@ -1,8 +1,8 @@
 <script>
   import DataTable from './DataTable.svelte'
   import ChartView from './ChartView.svelte'
-  // TableJsonView / TableTextView reach monaco-editor statically; importing them
-  // here would pull all of Monaco into the boot chunk. Loaded lazily below.
+  // TableJsonView / TableTextView reach the CodeMirror editor statically; importing
+  // them here would pull it into the boot chunk. Loaded lazily below.
   import TableRecordView from './TableRecordView.svelte'
   import ShikiBlock from './ShikiBlock.svelte'
   import Table2 from '@lucide/svelte/icons/table-2'

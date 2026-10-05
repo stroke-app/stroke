@@ -77,11 +77,13 @@
 
   // Total child count - cheap for arrays (.length). Avoids materializing a tuple
   // for every element of a huge array/object just to show a count.
+  // No JSDoc casts around a prop inside the expression: Svelte 5.55.10+ prints
+  // `Object.keys(/** @type */ (value)).length` as invalid JS.
   const totalCount = $derived(
     isArray
-      ? /** @type {unknown[]} */ (value).length
+      ? /** @type {unknown[]} */ (value)?.length ?? 0
       : isObject
-        ? Object.keys(/** @type {Record<string, unknown>} */ (value)).length
+        ? Object.keys(value ?? {}).length
         : 0,
   );
 

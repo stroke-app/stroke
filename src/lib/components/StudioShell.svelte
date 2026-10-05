@@ -52,8 +52,8 @@
   import ImportDataDialog from './ImportDataDialog.svelte'
   import DataTable from './DataTable.svelte'
   import RowDetailPanel from './RowDetailPanel.svelte'
-  // TableJsonView / TableTextView are NOT imported here: both reach monaco-editor
-  // statically, which would drag ~3.7 MB of Monaco (plus its CSS) into the boot
+  // TableJsonView / TableTextView are NOT imported here: both reach the CodeMirror
+  // editor and its languages statically, which would drag them into the boot
   // chunk even though neither view is on screen until the user picks that data
   // view mode. They load via {#await import()} at their (already guarded) call
   // sites below, exactly like MapPage / EntityRelationPage.
@@ -3415,7 +3415,7 @@ let rowSearch = $state('')
   function handleVimFocusIn() {
     if (!$appVimMode) return
     const el = document.activeElement
-    if (el?.closest?.('.monaco-editor, .sql-editor-host') || el?.closest?.('[data-canvas-table]')) return // owned by their own layers
+    if (el?.closest?.('[data-vim-editor], .sql-editor-host') || el?.closest?.('[data-canvas-table]')) return // owned by their own layers
     const isInput = el instanceof HTMLElement &&
       (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)
     setVimSubMode(isInput ? 'insert' : 'normal')
@@ -4360,9 +4360,11 @@ let rowSearch = $state('')
     }
     saveActiveTabState()
     dropWelcomeTabs()
-    const tableKind = tables.find((t) => t.name === table)?.kind ?? 'table'
+    // Cast on the variable, not in the object: Svelte 5.56+ prints
+    // `key: /** @type */ (key)` as an invalid shorthand property.
+    const tableKind = /** @type {any} */ (tables.find((t) => t.name === table)?.kind ?? 'table')
     if (persistConnectionId) {
-      pushRecentTab(persistConnectionId, { schema, table, tableKind: /** @type {any} */ (tableKind) })
+      pushRecentTab(persistConnectionId, { schema, table, tableKind })
       refreshRecentTabs()
     }
     const tab = createTableTab(schema, table, /** @type {any} */ (tableKind))
@@ -6508,23 +6510,23 @@ let rowSearch = $state('')
   // Warm the lazy page/panel chunks during browser idle time so the first
   // navigation to a tab is instant instead of paying a cold chunk fetch+parse.
   // We warm ONE per idle slot - never blocking interaction. Ordered by how
-  // commonly each is opened; the monaco-backed editors come first since they
+  // commonly each is opened; the editor-backed pages come first since they
   // dominate latency. If the user opens a page sooner, import() dedups to the
   // same promise and resolves immediately. Fire-and-forget; failures are harmless.
   //
   // Measured on a release build against the manifest's static import graph -
   // warming a chunk pulls its static imports, its own dynamic imports stay lazy.
   // The eager entry graph is 2.71MB/25 chunks; the full warm set adds 6.01MB/49.
-  // But 5.35MB of that is two entries: SqlConsole drags in monaco (3.78MB) and
-  // AiChat the markdown/highlight stack (1.57MB). The other 22 pages cost 0.66MB
-  // between them, 0.01-0.11MB each - so trimming that tail buys nothing and only
-  // costs first-open latency, which is why it is all still here.
+  // Most of that was two entries: SqlConsole with Monaco (3.78MB, since replaced
+  // by CodeMirror) and AiChat the markdown/highlight stack (1.57MB). The other 22
+  // pages cost 0.66MB between them, 0.01-0.11MB each - so trimming that tail buys
+  // nothing and only costs first-open latency, which is why it is all still here.
   //
   // What is worth skipping is whatever this engine cannot open at all. A warmed
   // chunk is never freed again (which already sits badly beside the idle-teardown
   // above), and on a Redis connection every relational page is unreachable UI -
-  // monaco included, so ~4.3MB of the 6.01MB was being pinned for tabs that do
-  // not exist. Hence the gate per entry, and hence waiting for a connection:
+  // the editors included, so most of the warm set was being pinned for tabs that
+  // do not exist. Hence the gate per entry, and hence waiting for a connection:
   // before one exists the engine is unknown and no tab can be opened anyway.
   //
   // Keep these specifiers identical to the {#await import('./X.svelte')} blocks
@@ -6536,12 +6538,12 @@ let rowSearch = $state('')
     /** @type {Array<[boolean, () => Promise<unknown>]>} */
     const candidates = [
       [isRedis,          () => import('./RedisKeyspacePage.svelte')], // the only page Redis has
-      [!isRedis,         () => import('./SqlConsole.svelte')],        // monaco
+      [!isRedis,         () => import('./SqlConsole.svelte')],        // editor
       [true,             () => import('./AiSidebar.svelte')],         // marked + shiki
       [true,             () => import('./AiChat.svelte')],            // marked + shiki
-      [!isRedis,         () => import('./OrmRunner.svelte')],         // monaco
-      [!isRedis,         () => import('./TableJsonView.svelte')],     // monaco - data view mode
-      [!isRedis,         () => import('./TableTextView.svelte')],     // monaco - data view mode
+      [!isRedis,         () => import('./OrmRunner.svelte')],         // editor
+      [!isRedis,         () => import('./TableJsonView.svelte')],     // editor - data view mode
+      [!isRedis,         () => import('./TableTextView.svelte')],     // editor - data view mode
       [!isRedis,         () => import('./StructureView.svelte')],
       [hasSchemaExplorer, () => import('./SchemaPage.svelte')],
       [!isRedis,         () => import('./ChartsPage.svelte')],        // echarts
@@ -6552,7 +6554,7 @@ let rowSearch = $state('')
       [!isRedis,         () => import('./ObjectsPage.svelte')],
       [!isRedis,         () => import('./DiagramsPage.svelte')],      // echarts
       [!isRedis,         () => import('./EntityRelationPage.svelte')],
-      [!isRedis,         () => import('./DataDiffPage.svelte')],      // monaco
+      [!isRedis,         () => import('./DataDiffPage.svelte')],      // editor
       [!isRedis,         () => import('./NotebookEditor.svelte')],
       [!isRedis,         () => import('./JsonViewerPage.svelte')],
       [!isRedis,         () => import('./ExtensionsPage.svelte')],
@@ -9128,7 +9130,9 @@ let rowSearch = $state('')
                   tableToolbar?.focusLastFilter?.()
                 }}
                 onfilterbyvalue={(colName, value, exclude) => {
-                  /** @type {string} */ let op
+                  // `any`, not a cast inside the object below: Svelte 5.56+
+                  // prints `op: /** @type */ (op)` as an invalid shorthand.
+                  /** @type {any} */ let op
                   let filterValue = ''
                   if (value === null || value === undefined) {
                     op = exclude ? 'is_not_null' : 'is_null'
@@ -9136,12 +9140,13 @@ let rowSearch = $state('')
                     op = exclude ? 'neq' : 'eq'
                     filterValue = String(value)
                   }
-                  const newFilter = { id: crypto.randomUUID(), column: colName, op: /** @type {any} */ (op), value: filterValue, conjunct: /** @type {any} */ ('and') }
+                  const newFilter = { id: crypto.randomUUID(), column: colName, op, value: filterValue, conjunct: /** @type {any} */ ('and') }
                   void handleRowFiltersChange([...rowFilters, newFilter])
                   filterBarOpen = true
                 }}
                 onquickfilter={(colName, op, value) => {
-                  const newFilter = { id: crypto.randomUUID(), column: colName, op: /** @type {any} */ (op), value: value ?? '', conjunct: /** @type {any} */ ('and') }
+                  const filterOp = /** @type {any} */ (op)
+                  const newFilter = { id: crypto.randomUUID(), column: colName, op: filterOp, value: value ?? '', conjunct: /** @type {any} */ ('and') }
                   void handleRowFiltersChange([...rowFilters, newFilter])
                   filterBarOpen = true
                 }}

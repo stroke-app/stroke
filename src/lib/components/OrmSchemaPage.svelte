@@ -7,7 +7,7 @@
   // and re-renders locally when you switch between Prisma and Drizzle, so the
   // toggle is instant even on a hundred-table schema.
   import { onDestroy } from 'svelte'
-  import MonacoTextView from './MonacoTextView.svelte'
+  import CodeTextView from './CodeTextView.svelte'
   import Icon from './Icon.svelte'
   import DbIcon from './DbIcon.svelte'
   import TabLoading from './TabLoading.svelte'
@@ -113,10 +113,8 @@
       : (model?.tables.length ?? 0),
   )
 
-  // Monaco has no Prisma grammar; its DSL is close enough to Rust's block syntax
-  // that the highlighter reads correctly, and far better than plaintext.
   const language = $derived(
-    target === 'sql' ? 'sql' : target === 'prisma' ? 'rust' : 'typescript',
+    target === 'sql' ? 'sql' : target === 'prisma' ? 'prisma' : 'typescript',
   )
 
   // Every schema, loaded only once the database scope is actually picked -
@@ -379,6 +377,6 @@
       <p class="text-ui-sm text-muted-foreground">No tables in <span class="font-mono">{schema}</span>.</p>
     </div>
   {:else}
-    <MonacoTextView text={code} {language} wordWrap="off" />
+    <CodeTextView text={code} {language} wordWrap="off" />
   {/if}
 </div>
