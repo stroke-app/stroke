@@ -69,6 +69,7 @@
     detectPromptTopics,
     toolsForTurn,
     titleFromMessage,
+    historyBudget,
   } from "$lib/ai.js";
   import {
     loadSkills,
@@ -83,6 +84,7 @@
     aiSettings,
     aiProfiles,
     activeProfileId,
+    modelDisplayName,
   } from "$lib/stores/ai-settings.js";
   import BrandIcon from "$lib/components/BrandIcon.svelte";
   import { hasBrand } from "$lib/brand-icons.js";
@@ -1704,19 +1706,21 @@
       sampleRows: sampledRows,
       webAccess: $appAgentWebAccess,
       topics,
+      // So "which model are you?" gets the real answer, not a guess.
+      modelLabel: modelDisplayName(settings),
     });
     const ci = $aiChatParams.customInstructions.trim();
     turnSystemPrompt = ci ? `${ci}\n\n---\n\n${basePrompt}` : basePrompt;
 
     // Smart context management: sliding window + optional summarization.
     // managedLen marks where new messages start after the turn - used to append to rawApiHistory.
+    // How much the request carries depends on the endpoint (historyBudget): the
+    // free gateway gets a smaller window and no summarising call.
     const { history: managedHistory, summarized } = await manageHistory(
       settings,
       apiHistory,
       {
-        maxChars: 60_000,
-        keepLastN: 10,
-        summarizeThreshold: 30_000,
+        ...historyBudget(settings),
         onStatus: (msg) => {
           aiStatusHint = msg;
         },
@@ -1824,9 +1828,14 @@
       [{ role: "system", content: turnSystemPrompt }, ...apiHistory],
       turnTools,
       abortController?.signal,
-      ({ attempt, waitMs }) => {
+      ({ attempt, waitMs, status, model }) => {
+        if (model) {
+          aiStatusHint = `Busy, trying ${modelDisplayName({ model }).split(",")[0]} instead…`;
+          return;
+        }
         const sec = Math.ceil(waitMs / 1000);
-        aiStatusHint = `Rate limited, retrying in ${sec}s (attempt ${attempt}/${MAX_AI_RETRIES})…`;
+        const why = status === 429 ? "Rate limited" : "The AI service is busy";
+        aiStatusHint = `${why}, retrying in ${sec}s (attempt ${attempt}/${MAX_AI_RETRIES})…`;
       },
     )) {
       if (chunk.textDelta) {

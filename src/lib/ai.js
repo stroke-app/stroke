@@ -549,8 +549,28 @@ export const AI_WEB_TOOLS = [
 
 export const MAX_AI_RETRIES = 2
 const INITIAL_BACKOFF_MS = 1000
-/** HTTP statuses we retry (transient overload / rate limits). */
-const RETRYABLE_STATUSES = new Set([429, 502, 503])
+/** HTTP statuses we retry (transient overload / rate limits / a gateway timing out). */
+const RETRYABLE_STATUSES = new Set([429, 502, 503, 504])
+
+/** The free gateway's two aliases: when one is overloaded the other often is not. */
+const FREE_FALLBACK = /** @type {Record<string, string>} */ ({ 'stroke-free': 'stroke-free-fast', 'stroke-free-fast': 'stroke-free' })
+
+/**
+ * How much conversation a request carries, by endpoint.
+ *
+ * The free gateway is rate-limited per device and serves small models, so its
+ * requests carry less (24k chars, the last 6 turns) and older turns slide out
+ * instead of being summarised: a summary is a second model call, which spent
+ * the same daily quota and tripped the same rate limit - long conversations
+ * were where "the free AI service is temporarily unavailable" turned up.
+ * @param {{ baseUrl?: string }} settings
+ * @returns {{ maxChars: number, keepLastN: number, summarizeThreshold: number }}
+ */
+export function historyBudget(settings) {
+  return isStrokeFreeEndpoint(settings.baseUrl ?? '')
+    ? { maxChars: 24_000, keepLastN: 6, summarizeThreshold: Infinity }
+    : { maxChars: 60_000, keepLastN: 10, summarizeThreshold: 30_000 }
+}
 
 /** @param {number} ms @param {AbortSignal} [signal] */
 function sleep(ms, signal) {
@@ -1029,6 +1049,7 @@ export async function* chatCompletionStream(settings, messages, tools = null, si
   // stream. The retry therefore lives here - and only while nothing has been
   // yielded yet, because restarting after the first token would duplicate the
   // answer on screen.
+  let fellBack = false
   for (let attempt = 0; ; attempt++) {
     let emitted = false
     try {
@@ -1039,16 +1060,21 @@ export async function* chatCompletionStream(settings, messages, tools = null, si
       return
     } catch (err) {
       const status = describeAiError(err).status
-      const canRetry =
-        !emitted &&
-        status != null &&
-        RETRYABLE_STATUSES.has(status) &&
-        attempt < MAX_AI_RETRIES &&
-        !signal?.aborted
-      if (!canRetry) throw err
-      const waitMs = backoffMs(attempt, null)
-      onRetry?.({ attempt: attempt + 1, waitMs, status })
-      await sleep(waitMs, signal)
+      const transient = !emitted && status != null && RETRYABLE_STATUSES.has(status) && !signal?.aborted
+      if (transient && attempt < MAX_AI_RETRIES) {
+        const waitMs = backoffMs(attempt, null)
+        onRetry?.({ attempt: attempt + 1, waitMs, status })
+        await sleep(waitMs, signal)
+        continue
+      }
+      // Retries spent on the free gateway: its other alias, once, before the
+      // error reaches the user.
+      const fallback = transient && !fellBack && isStrokeFreeEndpoint(base) ? FREE_FALLBACK[String(body.model)] : undefined
+      if (!fallback) throw err
+      fellBack = true
+      body.model = fallback
+      attempt = -1
+      onRetry?.({ attempt: 1, waitMs: 0, status, model: fallback })
     }
   }
 }
@@ -1910,7 +1936,7 @@ SELECT * FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() ORDER B
       : null,
   ].filter(Boolean).join('\n')
 
-  return `You are an expert ${DB_LABEL[dbType] ?? 'SQL'} database assistant embedded in Stroke, a database GUI. You help the user explore, query, analyse and visualise their database through tool calls and short, clear explanations.
+  return `You are Stroke's database assistant for ${DB_LABEL[dbType] ?? 'SQL'}, inside Stroke, a database GUI. You help the user explore, query, analyse and visualise their database through tool calls and short, clear explanations.${ctx.modelLabel ? ` You run on ${ctx.modelLabel}.` : ''}
 
 === DATABASE ===
 Engine: ${DB_LABEL[dbType] ?? dbType}
@@ -1931,7 +1957,8 @@ ${toolLines}
 1. Answer directly. No "Sure!", "Great!", "Here is…" openers.
 2. One format per answer: a chart or a diagram through its tool, an explanation as prose. Fenced code blocks always name their language (\`\`\`sql, \`\`\`json).
 3. Prose: at most 4 short paragraphs, **bold** for key terms.
-4. Greetings and small talk ("hi", "thanks", "what can you do"): one or two warm sentences and no tool call. Say who you are and offer two concrete things you could do with THIS database, naming real tables from the list above.
+4. Greetings and small talk ("hi", "thanks"): one short friendly sentence asking what they want to do, and no tool call. Do not introduce yourself, list tables or restate any of this. Only "what can you do" gets two concrete examples that name real tables from the list above.
+4b. Asked which model or AI you are: one sentence - ${ctx.modelLabel ? `Stroke's assistant running on ${ctx.modelLabel}` : "Stroke's assistant, running on the model selected in Settings → AI"}. No talk of architecture or training.
 5. A general question that needs no data ("what is an index?", "how do I write a join?") gets a direct answer and no tool call.
 6. A real request missing something you cannot infer: say "I don't have enough context for that. Please provide [what is needed]." Never say this to a greeting or a question about your abilities.
 7. A failed tool call: one plain sentence, then a corrected query or a question. Never repeat the raw error.

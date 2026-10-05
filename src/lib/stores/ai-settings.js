@@ -26,6 +26,21 @@ export const PROVIDERS = [
   { id: 'custom',     label: 'Custom',           url: '', keysUrl: null },
 ]
 
+/**
+ * The model a profile runs, as a person would name it: the picker's label where
+ * there is one ("Stroke Free", "Claude Haiku 4.5"), else the model id.
+ * @param {{ model?: string, baseUrl?: string }} settings
+ */
+export function modelDisplayName(settings) {
+  const id = settings.model ?? ''
+  if (!id) return ''
+  for (const list of Object.values(PROVIDER_MODELS)) {
+    const hit = list.find((m) => m.model === id)
+    if (hit) return id.startsWith('stroke-free') ? `${hit.label}, a free model Stroke's gateway picks per request` : hit.label
+  }
+  return id
+}
+
 /** @type {Record<string, { label: string, model: string, tag: string }[]>} */
 export const PROVIDER_MODELS = {
   // Aliases, not upstream model names: the gateway decides what actually serves

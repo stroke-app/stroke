@@ -1,4 +1,4 @@
-import { expect, test } from 'vitest'
+import { describe, expect, it, test } from 'vitest'
 import { buildSystemPrompt, compactToolHistory, detectPromptTopics, titleFromMessage, toolsForTurn } from './ai.js'
 
 const ctx = {
@@ -62,4 +62,34 @@ test('a title comes from the first message', () => {
   expect(titleFromMessage('  show me the top 10 customers by revenue this quarter please ')).toBe('Show me the top 10 customers by…')
   expect(titleFromMessage('hi')).toBe('Hi')
   expect(titleFromMessage('')).toBe('')
+})
+
+describe('the free tier carries less', () => {
+  it('budgets history by endpoint', async () => {
+    const { historyBudget } = await import('./ai.js')
+    expect(historyBudget({ baseUrl: 'https://stroke.click/api/ai' })).toMatchObject({ maxChars: 24_000, keepLastN: 6 })
+    expect(historyBudget({ baseUrl: 'https://api.openai.com/v1' })).toMatchObject({ maxChars: 60_000, keepLastN: 10 })
+  })
+
+  it('slides old turns out on the free tier instead of summarising them', async () => {
+    const { manageHistory, historyBudget } = await import('./ai.js')
+    const settings = { baseUrl: 'https://stroke.click/api/ai', model: 'stroke-free', apiKey: '' }
+    const long = 'x'.repeat(3000)
+    /** @type {any[]} */
+    const history = []
+    for (let i = 0; i < 20; i++) history.push({ role: 'user', content: `q${i} ${long}` }, { role: 'assistant', content: `a${i} ${long}` })
+    const { history: kept, summarized } = await manageHistory(/** @type {any} */ (settings), history, historyBudget(settings))
+    expect(summarized).toBe(false)
+    expect(kept.filter((m) => m.role === 'user')).toHaveLength(6)
+    expect(kept.some((m) => m.role === 'system')).toBe(false)
+  })
+})
+
+describe('identity and small talk', () => {
+  it('names the model it runs on and keeps greetings short', () => {
+    const prompt = buildSystemPrompt({ ...ctx, modelLabel: 'Claude Haiku 4.5' })
+    expect(prompt).toContain('You run on Claude Haiku 4.5.')
+    expect(prompt).toMatch(/Asked which model or AI you are: one sentence - Stroke's assistant running on Claude Haiku 4.5/)
+    expect(prompt).toMatch(/Do not introduce yourself, list tables or restate any of this/)
+  })
 })
