@@ -3,7 +3,8 @@
   import { fade } from 'svelte/transition'
   import { revealApp, isRevealed } from '$lib/app-reveal.js'
   import { setReadOnly } from '$lib/stores/read-only.js'
-  import { isWriteSql } from '$lib/sql-write.js'
+  import { isWriteSql, sqlRunEffects } from '$lib/sql-write.js'
+  import { bumpObjects } from '$lib/stores/sidebar-objects.svelte.js'
   import Logo from './Logo.svelte'
   import ConnectOverlay from './ConnectOverlay.svelte'
   import Database from '@lucide/svelte/icons/database'
@@ -30,17 +31,18 @@
   import { createHotkey } from '@tanstack/svelte-hotkeys'
   import { IS_MAC } from '$lib/shortcuts.js'
   import { findSearchInput, isTypingTarget } from '$lib/focus-search.js'
-  import { appFkAutoExpandJson, cycleTheme, restorePreviousTheme, isCurrentThemeDark, loadSettings, appPaginationMode, appVimMode, appAutoSaveQueries, appStreamResults, increaseZoom, decreaseZoom, resetZoom } from '$lib/stores/settings.js'
+  import { appFkAutoExpandJson, cycleTheme, restorePreviousTheme, isCurrentThemeDark, loadSettings, appPaginationMode, appVimMode, appAutoSaveQueries, appStreamResults, appSqlEditor, increaseZoom, decreaseZoom, resetZoom } from '$lib/stores/settings.js'
   import { requireUnlock } from '$lib/stores/app-lock.js'
   import { isTextEntryTarget, setVimSubMode } from '$lib/vim/vim.js'
   import { normalizeColumn, columnType } from '$lib/column.js'
   import {
     loadAiMode, saveAiMode, loadHiddenCols, saveHiddenCols,
-    loadQueryHistoryPref, saveQueryHistoryPref, loadInfiniteScroll, saveInfiniteScroll,
+    loadInfiniteScroll, saveInfiniteScroll,
   } from '$lib/stores/table-prefs.js'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
   import { startTelemetry, track } from '$lib/telemetry.js'
   import Sidebar from './Sidebar.svelte'
+  import SidebarQueries from './SidebarQueries.svelte'
   import TabBar from './TabBar.svelte'
   import PaneLayout from './PaneLayout.svelte'
   import PaneSnapshot from './PaneSnapshot.svelte'
@@ -71,7 +73,9 @@
   import { qualifiedTable } from '$lib/dml-preview.js'
   import { pluginState, pluginEnabledIn } from '$lib/stores/plugins.js'
   import { loadTableViews, saveTableViews } from '$lib/stores/table-views.js'
-  import { loadSqlDraft, saveSqlDraft } from '$lib/stores/sql-draft.js'
+  import { loadSqlDraft, saveSqlDraft, loadSqlTabs, saveSqlTabs } from '$lib/stores/sql-draft.js'
+  import { planSave, savedQueryFor, sqlTabsToStore } from '$lib/sql-saving.js'
+  import { nextUntitledName } from '$lib/query-folders.js'
   import { buildBatchUpdateSql } from '$lib/sql-batch-update.js'
   import { buildSearchQuery, searchOptionsSupported, supportedSearchOptions } from '$lib/search-options.js'
   import Onboarding from './Onboarding.svelte'
@@ -96,6 +100,8 @@
     createDatabaseSql,
     dropDatabaseSql,
     terminateSessionsSql,
+    sessionCountSql,
+    canForceDrop,
     databaseInfoSql,
     databaseInfoRows,
   } from '$lib/database-admin.js'
@@ -200,7 +206,6 @@
     createLicenseTab,
     findLicenseTab,
     findTableTab,
-    findSqlTab,
     findSchemaTab,
     findOrmTab,
     findSecurityTab,
@@ -294,6 +299,7 @@
     listSequences,
     truncateTable,
     dropTable,
+    cloneDatabase,
     initSampleDb,
     getTableDdl,
   } from '$lib/api.js'
@@ -308,6 +314,7 @@
     listSavedQueries,
     createSavedQuery,
     saveQueryOnce,
+    updateSavedQuery,
   } from '$lib/stores/query-history.js'
   import { recordActivity } from '$lib/stores/activity-log.js'
   import { loadRecentTabs, pushRecentTab, removeRecentTab, clearRecentTabs } from '$lib/stores/recent-tabs.js'
@@ -447,6 +454,8 @@
   /** The mounted per-table ERD pane, so the tab bar's Export menu can drive its
    *  diagram exports (PNG / copy PNG / SVG / Mermaid). */
   let erdPane = $state(/** @type {any} */ (null))
+  /** The schema diagram tab's page, for Ctrl/⌘F. */
+  let erdTabPage = $state(/** @type {any} */ (null))
   let chartPane = $state(/** @type {any} */ (null))
   let showCreateTableDialog = $state(false)
   let showCreateSchemaDialog = $state(false)
@@ -981,6 +990,9 @@
       sort: rowSort,
       limit: pageSize,
       engine: connection?.type ?? 'postgres',
+      // Settings → SQL editor → Quote object names, Qualify tables with their schema.
+      quote: get(appSqlEditor).quoteNames,
+      qualify: get(appSqlEditor).qualifySchema,
     })
     if (aiMode) exitAiMode()
     void (async () => {
@@ -1108,6 +1120,10 @@
   /** @type {Map<string, import('$lib/api.js').TxStatus>} tab id -> its status */
   let sqlTxStatuses = $state(new Map())
   let sqlTxBusy = $state(false)
+  /** Statements run inside each tab's open transaction. Nobody else sees them
+   *  until the commit, so that is when the sidebar and tables catch up.
+   *  @type {Map<string, string>} */
+  const _txSqlByTab = new Map()
 
   const activeTxSession = $derived(activeTabId ? sqlTxSessions.get(activeTabId) ?? null : null)
   const activeTxStatus = $derived(activeTabId ? sqlTxStatuses.get(activeTabId) ?? null : null)
@@ -1148,6 +1164,8 @@
       if (how === 'commit') {
         await txCommit(session)
         toast.success(applied > 0 ? `Committed — ${formatCompactCount(applied)} row(s) written` : 'Committed')
+        const ran = _txSqlByTab.get(tabId)
+        if (ran) void refreshAfterSql(sqlRunEffects(ran))
       } else {
         await txRollback(session)
         toast.info('Rolled back — the database is unchanged')
@@ -1158,6 +1176,7 @@
       const next = new Map(sqlTxSessions)
       next.delete(tabId)
       sqlTxSessions = next
+      _txSqlByTab.delete(tabId)
       setTxStatus(tabId, null)
     } catch (e) {
       toast.error(how === 'commit' ? 'Could not commit' : 'Could not roll back', {
@@ -1944,24 +1963,66 @@ let rowSearch = $state('')
   // restarting the app) restores where the user left off. Debounced so fast
   // typing doesn't hammer localStorage; gated on `sqlEverOpened` so the initial
   // "SELECT 1;" default can't clobber a real saved draft before the editor is used.
+  //
+  // Nothing is written for a connection until its editor tabs are on screen
+  // (`_sqlTabsRestoredFor`). Switching databases resets the buffer to
+  // "SELECT 1;", and that reset used to land as the draft of the database just
+  // switched to, before its editor was ever opened. A write still pending for
+  // the previous connection is left to finish.
+  /** The connection whose editor tabs are open; restoreSqlTabs sets it. */
+  let _sqlTabsRestoredFor = ''
   /** @type {ReturnType<typeof setTimeout> | null} */
   let _sqlDraftTimer = null
   $effect(() => {
     const text = sqlText
     const cid = persistConnectionId
-    if (!sqlEverOpened) return
+    if (!sqlEverOpened || !cid || _sqlTabsRestoredFor !== cid) return
     // A DDL viewer tab is a scratch buffer, not the user's query draft.
     if (/** @type {any} */ (activeTab)?.draft === false) return
     if (_sqlDraftTimer) clearTimeout(_sqlDraftTimer)
     _sqlDraftTimer = setTimeout(() => saveSqlDraft(cid, text), 400)
   })
 
+  // Every editor tab of the connection too, not only the one in front: title,
+  // text and the saved query it belongs to (sql-draft.js).
+  /** @type {ReturnType<typeof setTimeout> | null} */
+  let _sqlTabsTimer = null
+  /** @type {(() => void) | null} */
+  let _sqlTabsWrite = null
+  function flushSqlTabs() {
+    if (_sqlTabsTimer) clearTimeout(_sqlTabsTimer)
+    _sqlTabsTimer = null
+    const write = _sqlTabsWrite
+    _sqlTabsWrite = null
+    write?.()
+  }
+  /** What was last queued, so a table tab's row loads (they rewrite `tabs`) write nothing. */
+  let _sqlTabsQueued = ''
+  $effect(() => {
+    const list = sqlTabsToStore(tabs, activeTabId, sqlText)
+    const cid = persistConnectionId
+    if (!cid || _sqlTabsRestoredFor !== cid) return
+    const queued = `${cid}\n${JSON.stringify(list)}`
+    if (queued === _sqlTabsQueued) return
+    _sqlTabsQueued = queued
+    if (_sqlTabsTimer) clearTimeout(_sqlTabsTimer)
+    _sqlTabsWrite = () => saveSqlTabs(cid, list)
+    _sqlTabsTimer = setTimeout(flushSqlTabs, 400)
+  })
+  // Quitting inside the 400ms would drop the last keystrokes.
+  onMount(() => {
+    window.addEventListener('beforeunload', flushSqlTabs)
+    return () => window.removeEventListener('beforeunload', flushSqlTabs)
+  })
 
   /** @type {import('$lib/stores/query-history.js').QueryHistoryEntry[]} */
   let queryHistory = $state([])
   /** @type {import('$lib/stores/query-history.js').SavedQuery[]} */
   let savedQueries = $state([])
-  let queryHistoryVisible = $state(loadQueryHistoryPref())
+  /** A request to open the History list in the SQL console (it hands it back).
+   *  It was the open state of a side panel, kept across restarts; that
+   *  setting is no longer read, so an old "open" cannot pop the list up. */
+  let queryHistoryVisible = $state(false)
 
   function refreshRecentTabs() {
     recentTabs = persistConnectionId ? loadRecentTabs(persistConnectionId) : []
@@ -1980,10 +2041,6 @@ let rowSearch = $state('')
     queryHistory = history
     savedQueries = saved
   }
-
-  $effect(() => {
-    saveQueryHistoryPref(queryHistoryVisible)
-  })
 
   $effect(() => {
     if (commandOpen && persistConnectionId) void refreshQueryStores()
@@ -2417,8 +2474,12 @@ let rowSearch = $state('')
     // that is its own box. It used to mean nothing there at all.
     if (activeTab?.kind === 'objects') { e.preventDefault(); objectsFocusSearch?.(); return }
     if (activeTab?.kind === 'search') { e.preventDefault(); dbSearchFocusInput?.(); return }
+    // The schema diagram's own search, for whichever of its views is up. The
+    // sidebar's filter used to take the key on this page.
+    if (activeTab?.kind === 'erd') { e.preventDefault(); void erdTabPage?.focusSearch?.(); return }
     if (activeTab?.kind !== 'table' || !activeTable) return
     e.preventDefault()
+    if (dataViewMode === 'erd' && erdPane?.focusSearch) { void erdPane.focusSearch(); return }
     tableToolbar?.focusRowSearch?.()
   })
 
@@ -2440,7 +2501,9 @@ let rowSearch = $state('')
   createHotkey('Mod+Enter', (e) => {
     if (activeTab?.kind !== 'sql' || !connection) return
     e.preventDefault()
-    runSql()
+    // The console's Run, as the button does: variables and the LIMIT apply.
+    if (sqlConsoleRef?.runEditor) sqlConsoleRef.runEditor()
+    else runSql()
   })
 
   createHotkey('Mod+W', (e) => {
@@ -2641,6 +2704,13 @@ let rowSearch = $state('')
   // there being staged changes AND a table tab being active, so the SQL editor's
   // own ⌘S (save query) is untouched - the two never both apply.
   createHotkey('Mod+S', (e) => {
+    // A query editor in front saves its query from anywhere in the tab (the
+    // results, the lists); inside the editor its own Mod-S already has.
+    if (activeTab?.kind === 'sql' && /** @type {any} */ (activeTab).draft !== false) {
+      e.preventDefault()
+      void sqlConsoleRef?.saveQuery?.()
+      return
+    }
     if (activeTab?.kind !== 'table' || pendingEditCount === 0) return
     e.preventDefault()
     void applyEdits()
@@ -3136,6 +3206,9 @@ let rowSearch = $state('')
       // Mod+R in a SQL tab is "run the statement at the cursor" (Run ▾, the
       // shortcuts list), from wherever focus is in the tab.
       if (opts.statementOnly) sqlConsoleRef?.runStatementAtCursor?.()
+      // The console's Run, so variables and the LIMIT apply as they do on
+      // the Run button; the raw path is only a fallback before it mounts.
+      else if (sqlConsoleRef?.runEditor) sqlConsoleRef.runEditor()
       else await runSql()
       return
     }
@@ -3254,6 +3327,35 @@ let rowSearch = $state('')
     whenRefReady(() => aiSidebarRef, (r) => r.sendMessage(msg))
   }
 
+  /**
+   * A statement's Ask AI action in the SQL editor: the chat opens with the
+   * statement in its message box, the caret above it for the question.
+   * @param {string} sql
+   */
+  function askAiAboutSql(sql) {
+    if (!connection || !sql.trim()) return
+    if (!aiSidebarOpen) {
+      aiSidebarOpen = true
+      aiSidebarEverOpened = true
+      saveLayout({ aiSidebarOpen: true })
+    }
+    const block = `\n\n\`\`\`sql\n${sql.trim()}\n\`\`\``
+    whenRefReady(() => aiSidebarRef, (r) => (r.draftMessage ? r.draftMessage(block) : r.sendMessage(`Explain this SQL.${block}`)))
+  }
+
+  /**
+   * A statement's New tab action: a fresh editor tab holding it, run there.
+   * The console runs it, so its marks and variables start clean for the tab.
+   * @param {string} sql
+   */
+  async function runSqlInNewTab(sql) {
+    restoreSqlTabs()
+    const count = tabs.filter((t) => t.kind === 'sql').length
+    openSqlTabWith(sql, count === 0 ? 'Query Editor' : `Query Editor ${count + 1}`)
+    await tick()
+    whenRefReady(() => sqlConsoleRef, (r) => r.runEditor?.())
+  }
+
   /** Escalate a command-palette quick-ask into the full sidebar chat. */
   /** @param {string} q */
   function handleAskContinue(q) {
@@ -3328,6 +3430,10 @@ let rowSearch = $state('')
   })
 
   function resetTabs() {
+    // The editor tabs being closed are written first; the next connection
+    // restores its own when its editor opens.
+    flushSqlTabs()
+    _sqlTabsRestoredFor = ''
     tabs = []
     activeTabId = null
     // Every tab id in the map/MRU/stack just died with the tab list - drop them
@@ -3374,20 +3480,51 @@ let rowSearch = $state('')
     tabs = tabs.filter((t) => t.kind !== 'welcome')
   }
 
+  /**
+   * The connection's editor tabs from last time, opened the first time an
+   * editor opens for it (once per connection: after that, what is open is what
+   * is kept). Returns the tabs it added.
+   * @param {{ activate?: boolean }} [opts] bring forward the one that was in front
+   * @returns {StudioTab[]}
+   */
+  function restoreSqlTabs({ activate = false } = {}) {
+    const cid = persistConnectionId
+    if (!cid || _sqlTabsRestoredFor === cid) return []
+    _sqlTabsRestoredFor = cid
+    const kept = loadSqlTabs(cid)
+    if (!kept.length) return []
+    const added = kept.map((k) => {
+      const tab = createSqlTab(k.sql, k.title)
+      return k.savedQueryId ? { ...tab, savedQueryId: k.savedQueryId } : tab
+    })
+    tabs = [...tabs, ...added]
+    if (activate) {
+      const front = added[Math.max(0, kept.findIndex((k) => k.active))]
+      activeTabId = front.id
+      clearTableEditor()
+      applySqlSnapshot(cloneSqlTabState(/** @type {SqlTabState} */ (front.state)))
+    }
+    return added
+  }
+
   function openSqlTab() {
     saveActiveTabState()
     dropWelcomeTabs()
-    const existing = findSqlTab(tabs)
+    // A query editor, not a DDL viewer: those are SQL tabs too, but scratch.
+    const existing = tabs.find((t) => t.kind === 'sql' && /** @type {any} */ (t).draft !== false)
     if (existing) {
       void activateTab(existing.id)
       return
     }
-    // Seed a fresh Query Editor tab. If a SQL tab was already opened this session
-    // (keep-alive), reuse the live buffer so we don't clobber Q2/Q3/etc.;
-    // otherwise restore the last saved draft for this connection (survives tab
-    // close and app restart). Falls back to the default when there's no draft.
+    const fresh = _sqlTabsRestoredFor !== persistConnectionId
+    if (restoreSqlTabs({ activate: true }).length) return
+    // Seed a fresh Query Editor tab. If one was already open for this
+    // connection (keep-alive), reuse the live buffer so we don't clobber
+    // Q2/Q3/etc.; otherwise restore the last saved draft for this connection
+    // (survives tab close, app restart, and a switch to another database and
+    // back). Falls back to the default when there's no draft.
     const tab = createSqlTab(
-      sqlEverOpened ? sqlText : (loadSqlDraft(persistConnectionId) ?? undefined),
+      fresh ? (loadSqlDraft(persistConnectionId) ?? undefined) : sqlText,
     )
     tabs = [...tabs, tab]
     activeTabId = tab.id
@@ -3400,6 +3537,8 @@ let rowSearch = $state('')
   // "New SQL Editor" command so several query editors can be open at once;
   // the existing per-tab snapshot swap keeps each tab's buffer/results intact.
   function openNewSqlTab() {
+    // The kept tabs first, so the new one is numbered after them.
+    restoreSqlTabs()
     const count = tabs.filter((t) => t.kind === 'sql').length
     openSqlTabWith(undefined, count === 0 ? 'Query Editor' : `Query Editor ${count + 1}`)
   }
@@ -3413,12 +3552,36 @@ let rowSearch = $state('')
    */
   function openSqlTabWith(sql, title, { draft = true } = {}) {
     saveActiveTabState()
+    // The connection's kept editor tabs come back beside a new one. A DDL
+    // viewer alone leaves them where they are.
+    if (draft) restoreSqlTabs()
     dropWelcomeTabs()
     const tab = { ...createSqlTab(sql, title), draft }
     tabs = [...tabs, tab]
     activeTabId = tab.id
     clearTableEditor()
     applySqlSnapshot(cloneSqlTabState(/** @type {SqlTabState} */ (tab.state)))
+  }
+
+  /**
+   * SQL for a schema object from the sidebar, in a new editor tab: its
+   * definition, or a CREATE template whose placeholders turn into snippet
+   * fields (Tab walks them) once the editor holds the tab.
+   * @param {{ text: string, title: string, snippet?: string }} spec
+   */
+  function openObjectSql({ text, title, snippet }) {
+    if (aiMode) exitAiMode()
+    openSqlTabWith(text, title, { draft: false })
+    if (!snippet) return
+    const tabId = activeTabId
+    let tries = 0
+    const apply = () => {
+      if (activeTabId !== tabId) return
+      if (sqlConsoleRef?.applySnippet?.(snippet)) return
+      // The console mounts lazily on the first SQL tab.
+      if (++tries < 90) requestAnimationFrame(apply)
+    }
+    void tick().then(apply)
   }
 
   /**
@@ -4716,7 +4879,9 @@ let rowSearch = $state('')
   }
 
   /** @param {{ force?: boolean }} [opts] */
-  async function loadTables({ force = false } = {}) {
+  /** `quiet` re-lists without the loading state, so the sidebar keeps its rows,
+   *  scroll and focus while a refresh after a write lands. */
+  async function loadTables({ force = false, quiet = false } = {}) {
     if (!activeSchema) {
       tables = []
       loadingTables = false
@@ -4736,7 +4901,7 @@ let rowSearch = $state('')
         activeTable = tables[0]?.name ?? null
       }
     } else {
-      loadingTables = true
+      if (!quiet) loadingTables = true
       error = ''
       try {
         const list = await listTables(schemaAtCall)
@@ -4751,6 +4916,9 @@ let rowSearch = $state('')
             rowCount: normalizeTableRowCount(t.rowCount ?? t.row_count),
             kind: t.kind ?? 'table',
             rlsEnabled: t.rlsEnabled ?? null,
+            // For the sidebar's Created sort (see compareCreated).
+            createdAt: t.createdAt ?? null,
+            createOrder: t.createOrder ?? null,
           }))
           .filter((t) => t.name)
         _catalog.set(key, tables)
@@ -4793,13 +4961,15 @@ let rowSearch = $state('')
     // the completed counts away with the rest - which is why the sidebar sat on a
     // column of blanks. A chunk that fails now costs only its own tables.
     const CHUNK = 12
+    let landed = 0
     for (let i = 0; i < names.length; i += CHUNK) {
       // Stale guard: the user may have switched connection/schema meanwhile.
-      if (catalogKey(persistConnectionId, 'tables', activeSchema) !== key) return
+      if (catalogKey(persistConnectionId, 'tables', activeSchema) !== key) return landed
       try {
         const counts = await getTableRowCounts(schema, names.slice(i, i + CHUNK))
         if (!counts?.length) continue
-        if (catalogKey(persistConnectionId, 'tables', activeSchema) !== key) return
+        if (catalogKey(persistConnectionId, 'tables', activeSchema) !== key) return landed
+        landed += counts.length
         const byName = new Map(counts.map((c) => [c.name, normalizeTableRowCount(c.rowCount ?? c.row_count)]))
         tables = tables.map((t) => (byName.has(t.name) ? { ...t, rowCount: byName.get(t.name) ?? null } : t))
         // Patch the cached list in place. Re-setting stamps a new timestamp, which
@@ -4810,6 +4980,7 @@ let rowSearch = $state('')
         /* ignore this chunk - its counts fill in on the next refresh instead */
       }
     }
+    return landed
   }
 
   async function reloadTableFromQuery(resetPage = true) {
@@ -6085,8 +6256,10 @@ let rowSearch = $state('')
     // leaves before this finishes.
     patchSqlTab(runTabId, { sqlLoading: true, sqlError: '', sqlMessage: '', sqlColumns: [], sqlRows: [] })
     let ranMs = 0
+    let ranTotalMs = 0
     let ranError = ''
     let ranRowCount = 0
+    let changedSql = ''
     try {
       // A tab with an open transaction runs on that transaction's connection,
       // so its statements stay invisible until the user commits. Everything
@@ -6095,7 +6268,10 @@ let rowSearch = $state('')
       let results
       if (txSession) {
         results = [await txExecute(txSession, sqlRan)]
-        if (runTabId) setTxStatus(runTabId, await txStatus(txSession))
+        if (runTabId) {
+          _txSqlByTab.set(runTabId, `${_txSqlByTab.get(runTabId) ?? ''}${sqlRan};\n`)
+          setTxStatus(runTabId, await txStatus(txSession))
+        }
       } else {
         // Rows stream in (executeSqlStream), into the backend's result store
         // when that setting is on, otherwise into this window.
@@ -6141,9 +6317,24 @@ let rowSearch = $state('')
         // Each statement's outcome, for the editor marks. A single failed
         // statement is the run failing; in a script the others still ran.
         if (stillHere()) {
-          sqlRunOutcomes = results.map((r) => ({ sql: r.sql ?? '', error: r.error ?? null, position: r.errorPosition ?? null }))
+          sqlRunOutcomes = results.map((r) => {
+            const returned = Array.isArray(r.columns) && r.columns.length > 0
+            return {
+              sql: r.sql ?? '', error: r.error ?? null, position: r.errorPosition ?? null,
+              // Time and size, for the note the editor writes after the statement.
+              // rowCount is the rows a query returned, or the rows a write changed.
+              ms: r.queryMs ?? r.query_ms ?? null,
+              rows: returned ? (r.rowCount ?? r.rows?.length ?? null) : null,
+              affected: returned ? null : (r.rowCount ?? null),
+            }
+          })
         }
         if (results.length === 1 && results[0].error) throw new Error(results[0].error)
+        // What ran, for catching the sidebar and open tables up afterwards. A
+        // script reports each statement, and only the ones that succeeded count.
+        changedSql = results.length > 1 && results.every((r) => typeof r.sql === 'string')
+          ? results.filter((r) => !r.error).map((r) => r.sql).join(';\n')
+          : sqlRan
         const last = results.at(-1)
         if (view && results.length === 1 && last && !last.rows?.length) {
           // Store mode: the rows stay in the store; the view is the result.
@@ -6162,10 +6353,14 @@ let rowSearch = $state('')
       const cols = data.columns ?? []
       const rws = data.rows ?? []
       ranMs = data.query_ms ?? data.queryMs ?? 0
+      // A script's time is every statement's, not the last one's.
+      ranTotalMs = results.reduce((sum, r) => sum + Number(r?.query_ms ?? r?.queryMs ?? 0), 0) || ranMs
       ranRowCount = rws.length
       let msg = data.message ?? ''
-      if (!msg && data.row_count != null && cols.length === 0) {
-        msg = `${formatCompactCount(data.row_count)} row(s) affected`
+      // The reply is camelCase (`SqlResult` in query.rs); `row_count` was never sent.
+      const affected = data.rowCount ?? data.row_count
+      if (!msg && affected != null && cols.length === 0) {
+        msg = `${formatCompactCount(affected)} row(s) affected`
       }
       const stored = runTabId ? _sqlViewsByTab.has(runTabId) : false
       patchSqlTab(runTabId, { sqlColumns: cols, sqlRows: stored ? [] : rws, sqlQueryMs: ranMs, sqlMessage: msg, sqlError: '' })
@@ -6176,6 +6371,7 @@ let rowSearch = $state('')
         sqlQueryMs = ranMs
         sqlMessage = msg
       }
+      if (changedSql) void refreshAfterSql(sqlRunEffects(changedSql))
     } catch (e) {
       ranError = String(e)
       if (runTabId) forgetSqlResult(runTabId)
@@ -6192,15 +6388,16 @@ let rowSearch = $state('')
       patchSqlTab(runTabId, { sqlLoading: false })
       if (stillHere()) sqlLoading = false
       recordActivity({ type: 'sql_exec', title: sqlRan.trim().slice(0, 80) + (sqlRan.trim().length > 80 ? '…' : ''), detail: sqlRan, durationMs: ranMs, rowCount: ranRowCount || undefined, success: !ranError, error: ranError || undefined })
-      if (persistConnectionId && !ranError) {
-        await recordQueryExecution(persistConnectionId, sqlRan, {
-          success: true,
-          queryMs: ranMs,
-        })
+      // A failed run goes into history too, marked with its error, so the
+      // query you were fixing is still there to fix. A Stop is not a failure.
+      if (persistConnectionId && !/Query cancelled/i.test(ranError)) {
+        await recordQueryExecution(persistConnectionId, sqlRan, ranError
+          ? { success: false, error: ranError.replace(/^Error:\s*/, '').slice(0, 2000), queryMs: ranTotalMs || ranMs }
+          : { success: true, queryMs: ranTotalMs || ranMs })
         // Settings → Database → Auto-save executed queries. Only successful runs,
         // and deduplicated by SQL, so re-running the statement you're iterating on
         // doesn't push out the ones you saved deliberately.
-        if (get(appAutoSaveQueries)) {
+        if (!ranError && get(appAutoSaveQueries)) {
           await saveQueryOnce(persistConnectionId, sqlRan).catch(() => {})
         }
         await refreshQueryStores()
@@ -6239,6 +6436,11 @@ let rowSearch = $state('')
     // in its skeleton state, and let the catalog stream in below. This is what
     // makes reconnect feel instant - the overlay no longer waits on the
     // schema/table/row-count round trips.
+    // Editor tabs: write what is pending, and restore when an editor opens.
+    // Without the reset, reconnecting to the same database wrote its emptied
+    // tab list over the kept one.
+    flushSqlTabs()
+    _sqlTabsRestoredFor = ''
     tabs = []
     _liveRowsByTab.clear()
     _tabRowsMru = []
@@ -6644,17 +6846,26 @@ let rowSearch = $state('')
   async function runDbNameStatement({ sql, name }) {
     const mode = dbNameDialog?.mode
     const source = dbNameDialog?.source ?? ''
-    await executeDdl(sql)
-    toast.success(mode === 'rename' ? `Renamed "${source}" to "${name}"` : `Copied "${source}" to "${name}"`)
+    if (mode === 'rename') {
+      await executeDdl(sql)
+      toast.success(`Renamed "${source}" to "${name}"`)
+    } else {
+      // A copy is one statement on Postgres only; the backend rebuilds it
+      // elsewhere, so the dialog's SQL is a preview and this does the work.
+      const done = await cloneDatabase(source, name)
+      if (done.warnings.length) toast.warning(done.message, { description: `Not copied: ${done.warnings.join('; ')}` })
+      else toast.success(done.message)
+    }
     databasesRefreshKey++
   }
 
   /** Look up how many sessions are on a database, for the drop dialog's warning.
    *  Best effort: a failed count must not block the dialog. @param {string} name */
   async function countDbSessions(name) {
-    if (dbAdmin !== 'postgres') return ''
+    const sql = dbAdmin ? sessionCountSql(dbAdmin, name) : ''
+    if (!sql) return ''
     try {
-      const r = await executeSql(`SELECT count(*) FROM pg_stat_activity WHERE datname = '${name.replace(/'/g, "''")}'`)
+      const r = await executeSql(sql)
       const n = Number(r?.rows?.[0]?.[0] ?? 0)
       return n > 0 ? String(n) : ''
     } catch {
@@ -6947,6 +7158,7 @@ let rowSearch = $state('')
     const at = onTable ? (tableGetScroll?.() ?? { left: 0, top: 0 }) : null
     await loadSchemas()
     await loadTables({ force: true })
+    bumpObjects()
     if (onTable) {
       await loadRows({ keepScroll: true })
       // Reasserted rather than merely left alone: reloading the schema and table
@@ -6957,6 +7169,88 @@ let rowSearch = $state('')
       await tick()
       tableApplyScroll?.({ left: at?.left ?? 0, top: at?.top ?? 0 })
     }
+  }
+
+  /**
+   * Catch the sidebar and the open tables up with what the SQL editor just did,
+   * on every engine: the run never touched either before, so a CREATE, a DROP or
+   * an INSERT stayed invisible until a manual refresh.
+   * @param {import('$lib/sql-write.js').RunEffects} fx
+   */
+  async function refreshAfterSql(fx) {
+    if (!connection || (!fx.catalog && !fx.data)) return
+    // Functions, triggers, sequences... live in the sidebar's Objects groups.
+    if (fx.objects?.length) bumpObjects()
+    const connAtCall = persistConnectionId
+    markTablesStale(fx.tables)
+    if (fx.schemas) {
+      try { await loadSchemas() } catch { /* the table list below still refreshes */ }
+      if (connectionMoved(connAtCall)) return
+    }
+    if (fx.catalog) {
+      _sqlHintsLoadedFor = ''
+      await loadTables({ force: true })
+    } else {
+      // Rows only: the catalog stands and only counts moved. The tables the run
+      // named are re-counted in place; engines that count inline (SQLite and
+      // the like, where that call returns nothing) and runs whose target can't
+      // be read re-list quietly. Re-listing loudly put the loading dots in
+      // place of the list after every INSERT, and on MySQL re-counted every
+      // small table each time.
+      const key = catalogKey(persistConnectionId, 'tables', activeSchema)
+      const schemaLc = String(activeSchema).toLowerCase()
+      const touched = fx.tables
+        ? tables
+            .filter((t) => fx.tables.some((r) => r.name === t.name.toLowerCase() && (!r.schema || r.schema === schemaLc)))
+            .map((t) => t.name)
+        : []
+      const landed = touched.length ? await resolveRowCounts(key, activeSchema, touched) : 0
+      if (!landed && !connectionMoved(connAtCall)) {
+        _catalog.invalidate(key)
+        await loadTables({ quiet: true })
+      }
+    }
+  }
+
+  /**
+   * Make the table tabs a run wrote to fetch again. The one on screen and any
+   * shown in a split pane refetch now; the rest drop their cached rows, the way
+   * evictColdTabRows does, and refetch when next opened. A tab holding unsaved
+   * edits is left alone: refetching would throw them away.
+   * @param {import('$lib/sql-write.js').TableRef[] | null} targets null: any table
+   */
+  function markTablesStale(targets) {
+    /** @param {TableTabState} st */
+    const hit = (st) => {
+      if (!targets) return true
+      const name = String(st.table).toLowerCase()
+      const schema = String(st.schema ?? '').toLowerCase()
+      return targets.some((t) => t.name === name && (!t.schema || t.schema === schema))
+    }
+    const shown = new Set()
+    if (paneRoot) for (const g of PaneTree.allGroups(paneRoot)) if (g.activeTabId) shown.add(g.activeTabId)
+    /** @type {string[]} */
+    const refetch = []
+    let changed = false
+    let reloadActive = false
+    const next = tabs.map((t) => {
+      const st = /** @type {TableTabState} */ (t.state)
+      if (t.kind !== 'table' || !st?.table || !hit(st) || tabPendingCount(t) > 0) return t
+      if (t.id === activeTabId) {
+        // Started after `tabs = next` below: loadRows patches `tabs` at once
+        // (loadingRows), and the assignment would write that patch away.
+        if (!editingCell && !savingCell && !isTabBusy(t.id)) reloadActive = true
+        return t
+      }
+      if (shown.has(t.id)) { refetch.push(t.id); return t }
+      if (!st.columns?.length) return t
+      changed = true
+      _liveRowsByTab.delete(t.id)
+      return { ...t, state: { ...st, rows: [], columns: [], selected: new Set(), windowedHead: false, windowedLoaded: [], windowCount: 0, loadingRows: false } }
+    })
+    if (changed) tabs = next
+    if (reloadActive) void loadRows({ keepScroll: true })
+    for (const id of refetch) if (!isTabBusy(id)) void startTabFetch(id)
   }
 
   /** @param {string} tableName */
@@ -6973,18 +7267,27 @@ let rowSearch = $state('')
   /**
    * @param {string} tableName
    * @param {boolean} [cascade]
+   * @param {'table' | 'view' | 'materialized_view'} [kind]
    */
-  async function handleDropTable(tableName, cascade = false) {
+  async function handleDropTable(tableName, cascade = false, kind = 'table') {
+    const schema = activeSchema
     try {
-      await dropTable(activeSchema, tableName, cascade)
-      toast.success(`Dropped table "${tableName}"`)
-      await loadTables({ force: true })
-      if (activeTable === tableName) {
-        activeTable = null
-      }
+      await dropTable(schema, tableName, cascade, kind)
     } catch (err) {
       toast.error('Could not drop', { description: String(err) })
+      return
     }
+    toast.success(`Dropped ${kind === 'table' ? 'table' : 'view'} "${tableName}"`)
+    // Its tabs show something that no longer exists. Staged edits go with it,
+    // so closing does not stop to ask about saving them.
+    const key = `${schema}.${tableName}`
+    for (const t of tabs.filter((t) => tabTableKey(t) === key)) {
+      if (t.id === activeTabId) resetEdits()
+      clearPendingChanges(key)
+      await closeTab(t.id)
+    }
+    if (activeTable === tableName) activeTable = null
+    await loadTables({ force: true })
   }
 
   /** @param {string} tableName */
@@ -7321,11 +7624,18 @@ let rowSearch = $state('')
     }
   }
 
-  /** Write SQL into the SQL editor and focus it. */
-  /** @param {string} sql */
+  /**
+   * Write SQL into the SQL editor and focus it: the editor tab in front, else
+   * the first one. It went to the first editor tab every time, so loading from
+   * History in a second editor tab replaced the first tab's query.
+   * @param {string} sql
+   */
   async function openQueryInEditor(sql) {
     await focusSqlView()
     sqlText = sql
+    // Loading a saved query's text makes the tab that query's: Save writes
+    // into it. Any other text leaves the tab on its own again.
+    if (activeTabId) linkSqlTab(activeTabId, savedQueryFor(sql, savedQueries))
   }
 
   async function openQueryHistory() {
@@ -7333,12 +7643,121 @@ let rowSearch = $state('')
     queryHistoryVisible = true
   }
 
-  /** @param {string} name @param {string} sql */
+  /**
+   * Tie an editor tab to the saved query it holds (titled after it), or untie it.
+   * @param {string} tabId
+   * @param {import('$lib/stores/query-history.js').SavedQuery | null} saved
+   */
+  function linkSqlTab(tabId, saved) {
+    const i = tabs.findIndex((t) => t.id === tabId && t.kind === 'sql')
+    if (i === -1) return
+    const t = /** @type {StudioTab & { savedQueryId?: string }} */ (tabs[i])
+    if ((t.savedQueryId ?? null) === (saved?.id ?? null) && (!saved || t.title === saved.name)) return
+    const next = [...tabs]
+    if (saved) next[i] = { ...t, savedQueryId: saved.id, title: saved.name }
+    else {
+      const { savedQueryId: _gone, ...rest } = t
+      // The saved query's name no longer describes the tab.
+      next[i] = { ...rest, title: t.savedQueryId ? 'Query Editor' : t.title }
+    }
+    tabs = next
+  }
+
+  /**
+   * A saved query in its own editor tab: the tab already holding it comes
+   * forward, otherwise a new one opens tied to it.
+   * @param {import('$lib/stores/query-history.js').SavedQuery} q
+   */
+  async function openSavedQuery(q) {
+    // The connection's kept tabs first: one of them may be this query's.
+    restoreSqlTabs()
+    const open = tabs.find((t) => t.kind === 'sql' && /** @type {any} */ (t).savedQueryId === q.id)
+    if (open) {
+      await activateTab(open.id)
+      return
+    }
+    openSqlTabWith(q.sql, q.name)
+    if (activeTabId) linkSqlTab(activeTabId, q)
+  }
+
+  /** @param {import('$lib/stores/query-history.js').SavedQuery} q */
+  async function runSavedQuery(q) {
+    await openSavedQuery(q)
+    await tick()
+    if (!q.sql.trim()) return
+    // Through the console, like Run: it fills in variables, adds the LIMIT
+    // and resets the run marks. runSql() sent the raw text, `:id` and all.
+    whenRefReady(() => sqlConsoleRef, (r) => r.runEditor?.())
+  }
+
+  /**
+   * The sidebar's New query: a saved query named "Untitled query N" in that
+   * folder, and an editor tab tied to it, so the first Ctrl+S saves into it
+   * without asking for a name.
+   * @param {string | null} folderId
+   */
+  async function newSavedQuery(folderId) {
+    if (!persistConnectionId) return
+    const saved = await createSavedQuery(persistConnectionId, nextUntitledName(savedQueries), '', { folderId, allowEmpty: true })
+    await refreshQueryStores()
+    openSqlTabWith('', saved.name)
+    if (activeTabId) linkSqlTab(activeTabId, saved)
+  }
+
+  // A saved query renamed anywhere (the sidebar, Save as) renames its tabs.
+  $effect(() => {
+    const names = new Map(savedQueries.map((q) => [q.id, q.name]))
+    /** @param {any} t */
+    const stale = (t) => t.kind === 'sql' && t.savedQueryId && names.has(t.savedQueryId) && names.get(t.savedQueryId) !== t.title
+    if (!tabs.some(stale)) return
+    untrack(() => {
+      tabs = tabs.map((t) => (stale(t) ? { ...t, title: /** @type {string} */ (names.get(/** @type {any} */ (t).savedQueryId)) } : t))
+    })
+  })
+
+  /** The saved query the editor tab in front belongs to, if it still exists. */
+  const activeSavedQuery = $derived.by(() => {
+    const id = activeTab?.kind === 'sql' ? /** @type {any} */ (activeTab).savedQueryId : null
+    return id ? savedQueries.find((q) => q.id === id) ?? null : null
+  })
+
+  /** Save as: a new saved query, and the tab moves to it. @param {string} name @param {string} sql */
   async function handleSaveQuery(name, sql) {
     if (!persistConnectionId) return
-    await createSavedQuery(persistConnectionId, name, sql)
+    const tabId = activeTabId
+    const saved = await createSavedQuery(persistConnectionId, name, sql)
     await refreshQueryStores()
-    toast.success('Query saved')
+    if (tabId) linkSqlTab(tabId, saved)
+    toast.success('Query saved', { description: saved.name })
+  }
+
+  /**
+   * Ctrl/Cmd+S: into the saved query the tab belongs to, or onto the saved
+   * query that already holds this text. False sends the console to the name
+   * dialog. Saving used to file a new copy on every press.
+   * @param {string} sql
+   * @returns {Promise<boolean>}
+   */
+  async function handleSaveInPlace(sql) {
+    if (!persistConnectionId || !sql.trim()) return true
+    const tabId = activeTabId
+    const tab = tabs.find((t) => t.id === tabId && t.kind === 'sql')
+    if (!tab) return false
+    // Read fresh: a query deleted from another window must not be written back.
+    const saved = await listSavedQueries(persistConnectionId)
+    const plan = planSave(sql, /** @type {any} */ (tab).savedQueryId, saved)
+    if (plan.kind === 'ask') return false
+    if (plan.kind === 'update') {
+      const updated = await updateSavedQuery(plan.query.id, { sql })
+      if (!updated) return false
+      await refreshQueryStores()
+      if (tabId) linkSqlTab(tabId, updated)
+      toast.success('Saved', { description: updated.name })
+      return true
+    }
+    if (tabId) linkSqlTab(tabId, plan.query)
+    toast.message(plan.kind === 'link' ? 'Already saved' : 'No changes to save', { description: plan.query.name })
+    return true
   }
 
   async function handleAiWriteSql(sql) {
@@ -7346,7 +7765,9 @@ let rowSearch = $state('')
   }
 
   async function focusSqlView() {
-    const existing = findSqlTab(tabs)
+    // The query editor in front stays; DDL viewers are SQL tabs too, but scratch.
+    if (activeTab?.kind === 'sql' && /** @type {any} */ (activeTab).draft !== false) return
+    const existing = tabs.find((t) => t.kind === 'sql' && /** @type {any} */ (t).draft !== false)
     if (existing) {
       await activateTab(existing.id)
       return
@@ -7411,6 +7832,7 @@ let rowSearch = $state('')
 <DropDatabaseDialog
   bind:open={showDropDbDialog}
   kind={dbAdmin ?? 'postgres'}
+  forceable={canForceDrop(connection)}
   name={dropDbName}
   sessions={dropDbSessions}
   onconfirm={(args) => void commitDropDatabase(args)}
@@ -7698,12 +8120,13 @@ let rowSearch = $state('')
         onnewtable={() => (showCreateTableDialog = true)}
         onnewschema={() => (showCreateSchemaDialog = true)}
         ontruncatetable={handleTruncateTable}
-        ondroptable={(t, c) => void handleDropTable(t, c)}
+        ondroptable={(t, c, k) => void handleDropTable(t, c, k)}
         onviewddl={(t) => void handleViewDdl(t)}
         onviewstructure={(t) => void openTableStructure(t)}
         onexportsql={(t) => void handleExportSql(t)}
         onexportdata={(t) => void handleExportData(t)}
         onopeninconsole={handleOpenTableInConsole}
+        onopenobjectsql={openObjectSql}
         ongeneratesql={handleGenerateSql}
         onopentableerd={(t) => { if (aiMode) exitAiMode(); openErdTab(t) }}
         oncountrows={(t) => void handleCountRows(t)}
@@ -7727,7 +8150,20 @@ let rowSearch = $state('')
             refreshRecentTabs()
           }
         }}
-      />
+        queriesCount={savedQueries.length}
+      >
+        {#snippet queriesPanel()}
+          <SidebarQueries
+            connectionId={persistConnectionId}
+            queries={savedQueries}
+            activeId={activeSavedQuery?.id ?? null}
+            onopen={(q) => { if (aiMode) exitAiMode(); void openSavedQuery(q) }}
+            onrun={(q) => { if (aiMode) exitAiMode(); void runSavedQuery(q) }}
+            onnew={(folderId) => { if (aiMode) exitAiMode(); void newSavedQuery(folderId) }}
+            onrefresh={refreshQueryStores}
+          />
+        {/snippet}
+      </Sidebar>
       </svelte:boundary>
     </div>
     {/if}
@@ -8177,7 +8613,7 @@ let rowSearch = $state('')
         </div>
       {/if}
 
-      <!-- Data model tab -->
+      <!-- Schema diagram tab -->
       {#if erdEverOpened}
         <div
           class={activeTab?.kind === 'erd' ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}
@@ -8186,6 +8622,7 @@ let rowSearch = $state('')
           <svelte:boundary failed={tabError}>
             {#await import('./EntityRelationPage.svelte')}<TabLoading />{:then { default: EntityRelationPage }}
               <EntityRelationPage
+                bind:this={erdTabPage}
                 onopendiagrams={() => openDiagramsTab()}
                 schema={activeSchema}
                 {schemas}
@@ -8354,6 +8791,9 @@ let rowSearch = $state('')
             columns={sqlColumns}
             rows={sqlRows}
             runOutcomes={sqlRunOutcomes}
+            paramScope={`${persistConnectionId ?? ''}|${activeTab?.kind === 'sql' ? (/** @type {any} */ (activeTab).savedQueryId ?? activeTab.title) : ''}`}
+            onrunnewtab={(sql) => void runSqlInNewTab(sql)}
+            onaskai={askAiAboutSql}
             windowed={sqlWindowed}
             dataVersion={sqlDataVersion}
             windowStatus={sqlWindowStatus}
@@ -8383,8 +8823,10 @@ let rowSearch = $state('')
             onmodaltd={() => { if (connection) void focusDataView() }}
             onmodshifto={() => { if (connection) openOrmTab() }}
             onqueryrefresh={refreshQueryStores}
-            onhistoryselect={(sql) => void openQueryInEditor(sql)}
+            onhistoryselect={(sql) => openQueryInEditor(sql)}
             onsavequery={handleSaveQuery}
+            onsaveinplace={handleSaveInPlace}
+            savedQueryName={activeSavedQuery?.name ?? ''}
             onfixwithai={handleFixWithAi}
             onprorequired={() => (showProGate = true)}
           />
@@ -8936,7 +9378,7 @@ let rowSearch = $state('')
                 {@render jump(GitBranch, "Schema explorer", openSchemaTab)}
                 {@render jump(Gauge, "Instance insights", openInsightsTab)}
                 {@render jump(GitCompare, "Data diff", openDataDiffTab)}
-                {@render jump(Network, "Data model", () => openErdTab())}
+                {@render jump(Network, "Schema diagram", () => openErdTab())}
                 {@render jump(LayoutDashboard, "Dashboard", openDashboardTab)}
               </div>
             </div>

@@ -9,8 +9,12 @@
   import { dbAdminKind, dbActionBlocker } from "$lib/database-admin.js";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
   import DangerousActionDialog from "./DangerousActionDialog.svelte";
+  import { tableDialect } from "$lib/table-admin.js";
   import { readOnlyMode, guardWrite, READ_ONLY_HINT } from "$lib/stores/read-only.js";
-  import { appNativeScroll } from "$lib/stores/settings.js";
+  import { appNativeScroll, appSidebarComments } from "$lib/stores/settings.js";
+  import SidebarObjects from "./SidebarObjects.svelte";
+  import { objectsVersion } from "$lib/stores/sidebar-objects.svelte.js";
+  import { listObjectComments } from "$lib/api.js";
   import { smoothScroll } from "$lib/smooth-scroll.js";
   import * as Select from "$lib/components/ui/select/index.js";
   import * as ContextMenu from "$lib/components/ui/context-menu/index.js";
@@ -26,7 +30,7 @@
   import { t } from "$lib/i18n.js";
   import { visibleRowCount, soleMatch } from "$lib/sidebar-filter.js";
   import { splitSchemas, isSystemSchema } from "$lib/system-schemas.js";
-  import { formatTableRowCount } from "$lib/table-list.js";
+  import { formatTableRowCount, compareCreated } from "$lib/table-list.js";
   import {
     clampNavSidebarWidth,
     loadLayout,
@@ -77,7 +81,7 @@
     /** @type {import('$lib/stores/connections.js').SavedConnection | null} */
     connection = null,
     ontruncatetable = /** @type {(table: string) => void} */ (() => {}),
-    ondroptable = /** @type {(table: string, cascade: boolean) => void} */ (() => {}),
+    ondroptable = /** @type {(table: string, cascade: boolean, kind: import('$lib/table-admin.js').ObjectKind) => void} */ (() => {}),
     /** @type {import('$lib/stores/recent-tabs.js').RecentTab[]} */
     recentTabs = [],
     onrecentselect = /** @type {(schema: string, table: string) => void} */ (() => {}),
@@ -113,6 +117,9 @@
     onviewstructure = /** @type {(table: string) => void} */ (() => {}),
     /** Open a SELECT for the table in a SQL console tab. */
     onopeninconsole = /** @type {(table: string) => void} */ (() => {}),
+    /** Open SQL for a schema object in a new editor tab: its definition, or a
+     *  CREATE template with snippet fields. @type {(sql: { text: string, title: string, snippet?: string }) => void} */
+    onopenobjectsql = () => {},
     /** Open the Generate SQL dialog (statement skeletons) for the table. */
     ongeneratesql = /** @type {(table: string) => void} */ (() => {}),
     /** Open the ERD scoped to a table + its FK-connected neighbors. */
@@ -154,6 +161,11 @@
      * object is a guess with three ways to be wrong.
      */
     showTablesTab = $bindable(/** @type {() => void} */ (() => {})),
+    /** The Queries tab's panel (saved queries in folders), drawn by the shell
+     *  that owns the editor tabs. @type {import('svelte').Snippet | undefined} */
+    queriesPanel = undefined,
+    /** How many saved queries the connection has, for the tab's label. */
+    queriesCount = 0,
   } = $props();
 
   const openTableSet = $derived(new Set(openTables))
@@ -420,9 +432,11 @@
    * accordion was supposed to prevent. A tab strip costs one fixed row and the
    * list underneath always starts at the same place.
    *
-   * Materialized views ride in the Views tab - they are views, and splitting
-   * them out is what produced six sections in the first place.
-   * @typedef {'tables' | 'views' | 'recent' | 'databases' | 'search'} SidebarTab
+   * Views, materialized views and the schema's other objects (functions,
+   * procedures, triggers, sequences, types, events) share the Objects tab, one
+   * collapsible group per kind the engine has. It was the Views tab; a stored
+   * 'views' reads as 'objects'.
+   * @typedef {'tables' | 'objects' | 'recent' | 'databases' | 'queries' | 'search'} SidebarTab
    */
   const SIDEBAR_TAB_KEY = 'stroke:sidebar-tab'
   /** @type {{ id: SidebarTab, label: string, icon: string }[]} */
@@ -432,7 +446,9 @@
     // often as switching schema, and it was sitting behind three lists you visit
     // far less.
     { id: 'databases', label: 'Databases', icon: 'database' },
-    { id: 'views',     label: 'Views',     icon: 'table-view' },
+    // Saved queries, in folders: the SQL you keep is what you open next.
+    { id: 'queries',   label: 'Queries',   icon: 'file-code' },
+    { id: 'objects',   label: 'Objects',   icon: 'blocks' },
     { id: 'recent',    label: 'Recent',    icon: 'clock' },
     // Last, and not a list: find & replace is a tool that works on the table
     // you already have open, so it belongs where the other panels live rather
@@ -441,7 +457,8 @@
   ]
   function loadSidebarTab() {
     try {
-      const raw = localStorage.getItem(SIDEBAR_TAB_KEY)
+      const stored = localStorage.getItem(SIDEBAR_TAB_KEY)
+      const raw = stored === 'views' ? 'objects' : stored
       if (SIDEBAR_TABS.some((t) => t.id === raw)) return /** @type {SidebarTab} */ (raw)
     } catch {}
     return /** @type {SidebarTab} */ ('tables')
@@ -519,12 +536,13 @@
    */
   const TAB_EMPTY = {
     tables:    { icon: 'table-2',    title: 'No tables',    hint: 'Nothing in this schema yet.' },
-    views:     { icon: 'table-view', title: 'No views',     hint: 'Views and materialized views show up here.' },
+    objects:   { icon: 'blocks',     title: 'No objects',   hint: 'Views, functions, triggers and the like show up here.' },
     recent:    { icon: 'clock',      title: 'No recents',   hint: 'Tables you open appear here.' },
     databases: { icon: 'database',   title: 'No databases', hint: 'Nothing else on this server.' },
   }
   const tabIsEmpty = $derived(
-    sidebarTab !== 'search' && !loadingTables && !!connectionName && tabCounts[sidebarTab] === 0,
+    // Objects always draws its group headers: an empty group still has its +.
+    sidebarTab !== 'search' && sidebarTab !== 'queries' && sidebarTab !== 'objects' && !loadingTables && !!connectionName && tabCounts[sidebarTab] === 0,
   )
   /** True when the tab has rows but the filter hid all of them. */
   const tabEmptyFromFilter = $derived(
@@ -532,7 +550,7 @@
       !!debouncedFilter &&
       (sidebarTab === 'tables'
         ? regularTablesUnpinned.length + visiblePinnedTables.length > 0
-        : sidebarTab === 'views'
+        : sidebarTab === 'objects'
           ? views.length + matViews.length > 0
           : sidebarTab === 'databases'
             ? dbEntries.length > 0
@@ -544,19 +562,21 @@
     // Pinned rows render at the top of this tab, so they count towards it. Only
     // pins whose table still exists are counted, because only those draw a row.
     tables: regularTablesUnpinned.length + visiblePinnedTables.length,
-    views: views.length + matViews.length,
+    objects: objectsTotal,
     // The recents list is capped at 5 rows, so that is the denominator too.
     recent: Math.min(recentTabs.length, 5),
     databases: dbEntries.length,
+    queries: queriesCount,
     search: 0,
   })
 
   /** How many rows each tab holds, after the filter. @type {Record<SidebarTab, number>} */
   const tabCounts = $derived({
     tables: filteredRegularTables.length + filteredPinnedTables.length,
-    views: filteredViews.length + filteredMatViews.length,
+    objects: objectsShown,
     recent: Math.min(filteredRecent.length, 5),
     databases: filteredDbEntries.length,
+    queries: queriesCount,
     search: 0,
   })
   $effect(() => { try { localStorage.setItem(SIDEBAR_TAB_KEY, sidebarTab) } catch {} })
@@ -566,8 +586,6 @@
   // Keeping the names means the ~900 lines of list markup below did not have to
   // be rewritten to ask a different question.
   const showTables    = $derived(sidebarTab === 'tables')
-  const showViews     = $derived(sidebarTab === 'views')
-  const showMatViews  = $derived(sidebarTab === 'views')
   const showRecent    = $derived(sidebarTab === 'recent')
   // Pinned is a section of Tables, not a tab of its own. It was a fifth icon in
   // the strip that held, for most connections, nothing at all - and it split
@@ -577,7 +595,7 @@
   const showPins      = $derived(sidebarTab === 'tables')
   const showDatabases = $derived(sidebarTab === 'databases')
   // Nothing collapses any more, so every list in the open tab is open.
-  const recentOpen = true, tablesOpen = true, viewsOpen = true, matViewsOpen = true
+  const recentOpen = true, tablesOpen = true
   // The engine's own schemas (`pg_catalog`, `information_schema`, `sys`…) are
   // loaded like any other - they are browsable, and sometimes the thing you
   // actually need - but they are not where anyone keeps data, so the picker
@@ -601,7 +619,7 @@
   let showRowCount = $state(_dp.showRowCount ?? true)
   let hideEmpty = $state(_dp.hideEmpty ?? false)
   let hideSystem = $state(_dp.hideSystem ?? false)
-  /** @type {'name' | 'rowCount'} */
+  /** @type {'name' | 'rowCount' | 'created'} */
   let sortBy = $state(_dp.sortBy ?? 'name')
   /** @type {'asc' | 'desc'} */
   let sortDir = $state(_dp.sortDir ?? 'asc')
@@ -619,8 +637,6 @@
   // the per-row cost to a <button>, which is what makes an unwindowed list of a
   // few thousand tables affordable.
   let menuTable = $state('')
-  let menuView = $state('')
-  let menuMatView = $state('')
 
   // ── Selection state ───────────────────────────────────────────────────────
   /** @type {Set<string>} */
@@ -697,22 +713,29 @@
   /** @type {'drop' | 'truncate'} */
   let dangerAction = $state('drop')
   let dangerTable = $state('')
+  /** @type {import('$lib/table-admin.js').ObjectKind} */
+  let dangerObjectKind = $state('table')
   let dangerCascade = $state(false)
   let dangerOpen = $state(false)
+  /** How this engine spells DROP and TRUNCATE; null where it has neither
+   *  (Redis, PostHog), which hides the items instead of offering a failure. */
+  const tableDdl = $derived(tableDialect(connection?.type))
 
-  /** @param {'drop' | 'truncate'} kind @param {string} tableName */
-  function openDangerDialog(kind, tableName) {
+  /** @param {'drop' | 'truncate'} kind @param {string} tableName
+   *  @param {import('$lib/table-admin.js').ObjectKind} [objectKind] */
+  function openDangerDialog(kind, tableName, objectKind = 'table') {
     // The menu items are disabled in read-only mode, but the guard stays: a
     // keyboard-driven select on a disabled item is one bits-ui version away.
-    if (!guardWrite(kind === 'drop' ? 'drop this table' : 'truncate this table')) return
+    if (!guardWrite(kind === 'drop' ? `drop this ${objectKind === 'table' ? 'table' : 'view'}` : 'truncate this table')) return
     dangerAction = kind
     dangerTable = tableName
+    dangerObjectKind = objectKind
     dangerCascade = false
     dangerOpen = true
   }
 
   function confirmDanger(cascade) {
-    if (dangerAction === 'drop') ondroptable(dangerTable, cascade)
+    if (dangerAction === 'drop') ondroptable(dangerTable, cascade, dangerObjectKind)
     else ontruncatetable(dangerTable)
   }
 
@@ -786,6 +809,11 @@
     if (hideSystem) result = result.filter((t) => !isSystemTable(t.name))
     if (sortBy === 'rowCount') {
       result = [...result].sort((a, b) => (b.rowCount ?? 0) - (a.rowCount ?? 0))
+    } else if (sortBy === 'created') {
+      // Oldest first; `desc` (the default for this sort) puts the newest on top.
+      result = [...result].sort(compareCreated)
+      if (sortDir === 'desc') result.reverse()
+      return result
     }
     if (sortDir === 'desc' && sortBy === 'name') {
       result = [...result].reverse()
@@ -1138,9 +1166,38 @@
   // What makes rendering every row affordable is that a row is now just a <button>:
   // the per-row ContextMenu.Root + Trigger (two component instances each) were
   // hoisted to one shared menu per list. See the tables list markup below.
-  const viewsToRender = $derived(filteredViews)
-  const matViewsToRender = $derived(filteredMatViews)
   const dbEntriesToRender = $derived(filteredDbEntries)
+
+  // ── Objects tab ─────────────────────────────────────────────────────────
+  /** True while the Objects tab loads, for the bar's refresh spinner. */
+  let objectsLoading = $state(false)
+  /** @type {SidebarObjects | null} */
+  let objectsPanel = $state(null)
+  /** Rows in the Objects tree before and after the filter, for the tab strip. */
+  let objectsTotal = $state(0)
+  let objectsShown = $state(0)
+
+  /**
+   * Table and view comments for the schema on screen, read once per schema
+   * when the setting is on and again after anything bumps the objects.
+   * @type {Map<string, string>}
+   */
+  let comments = $state(new Map())
+  let commentsFor = ''
+  $effect(() => {
+    const key = $appSidebarComments && connectionName ? `${connection?.id ?? connectionName}\u0000${activeSchema}\u0000${$objectsVersion}` : ''
+    untrack(() => void loadComments(key))
+  })
+  /** @param {string} key */
+  async function loadComments(key) {
+    if (key === commentsFor) return
+    commentsFor = key
+    if (!key) { comments = new Map(); return }
+    try {
+      const list = await listObjectComments(activeSchema)
+      if (key === commentsFor) comments = new Map(list.map((c) => [c.name, c.comment]))
+    } catch { /* comments are extra: a failure leaves the rows as they were */ }
+  }
 
   /** Shared field chrome for schema select + table filter (aligned in sidebar grid) */
   const sidebarFieldClass =
@@ -1292,6 +1349,38 @@
             {/each}
           </div>
           <div class="ml-auto flex shrink-0 items-center gap-0.5">
+          {#if sidebarTab === 'objects'}
+            <!-- On Objects the bar's refresh and + act on objects, so the list
+                 needs no header row of its own. -->
+            <button
+              type="button"
+              class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40"
+              title="Refresh objects"
+              aria-label="Refresh objects"
+              disabled={!connectionName}
+              onclick={() => objectsPanel?.refreshAll()}
+            >
+              <Icon name="refresh-cw" class={cn("size-3.5", objectsLoading && "animate-spin")} />
+            </button>
+            <DropdownMenu.Root>
+              <DropdownMenu.Trigger
+                class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground data-[state=open]:bg-accent data-[state=open]:text-foreground disabled:pointer-events-none disabled:opacity-40"
+                title={$readOnlyMode ? READ_ONLY_HINT : 'New view, function, trigger…'}
+                aria-label="New object"
+                disabled={!connectionName || $readOnlyMode}
+              >
+                <Icon name="plus" class="size-3.5" />
+              </DropdownMenu.Trigger>
+              <DropdownMenu.Content align="end" class="min-w-44">
+                {#each objectsPanel?.newKinds() ?? [] as k (k.kind)}
+                  <DropdownMenu.Item onSelect={() => objectsPanel?.createKind(k.kind)}>
+                    <Icon name={k.icon} class="size-3.5 shrink-0 text-muted-foreground" />
+                    {k.label}
+                  </DropdownMenu.Item>
+                {/each}
+              </DropdownMenu.Content>
+            </DropdownMenu.Root>
+          {:else}
           <DropdownMenu.Root>
             <DropdownMenu.Trigger
               class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground data-[state=open]:bg-accent data-[state=open]:text-foreground disabled:pointer-events-none disabled:opacity-40"
@@ -1341,6 +1430,20 @@
                 Row count
                 {#if sortBy === 'rowCount'}
                   <span class="ml-auto font-mono text-ui-2xs text-muted-foreground">{sortDir === 'desc' ? '9→0' : '0→9'}</span>
+                {/if}
+              </DropdownMenu.Item>
+              <!-- Newest first on the first pick: "what did I just make" is the
+                   usual question. Engines that keep no creation time (Postgres,
+                   SQLite, DuckDB) sort by creation order instead. -->
+              <DropdownMenu.Item
+                closeOnSelect={false}
+                title="Click to flip direction. MySQL and SQL Server sort by creation time; other engines by the order tables were created in."
+                onSelect={() => { if (sortBy === 'created') sortDir = sortDir === 'asc' ? 'desc' : 'asc'; else { sortBy = 'created'; sortDir = 'desc' } }}
+              >
+                <Icon name="clock" class="text-muted-foreground" />
+                Created
+                {#if sortBy === 'created'}
+                  <span class="ml-auto font-mono text-ui-2xs text-muted-foreground">{sortDir === 'desc' ? 'New→Old' : 'Old→New'}</span>
                 {/if}
               </DropdownMenu.Item>
               <DropdownMenu.Separator />
@@ -1402,13 +1505,14 @@
               <Icon name="plus" class="size-3.5" />
             </button>
           {/if}
+          {/if}
           </div>
         </div>
 
-        <!-- The filter row belongs to the lists. Find & replace brings its own
-             fields, so leaving this here would be a second search box with
-             nothing to search. -->
-        {#if sidebarTab !== 'search'}
+        <!-- The filter row belongs to the lists. Find & replace and Queries
+             bring their own fields, so leaving this here would be a second
+             search box with nothing to search. -->
+        {#if sidebarTab !== 'search' && sidebarTab !== 'queries'}
         <!-- Filter row: the schema the list belongs to, and the filter itself. -->
         <div class="flex h-9 shrink-0 items-center gap-1.5 border-b border-sidebar-border px-2">
           <!-- Shown when the engine actually has schemas to pick between, which
@@ -1487,6 +1591,12 @@
               // row and hits Enter within 200ms is judged against the previous
               // term. Inert with nothing or several to open: a key that guesses
               // which of six rows was meant is worse than a key that does nothing.
+              if (e.key === 'Enter' && sidebarTab === 'objects') {
+                flushFilter()
+                flushSync()
+                if (objectsPanel?.openSole()) e.preventDefault()
+                return
+              }
               if (e.key === 'Enter') {
                 flushFilter()
                 // Commit the render too: `flushFilter` only sets state, and the
@@ -1509,6 +1619,10 @@
               }
               // Tab / ArrowDown from the filter → jump focus into the result list
               // so the user can keyboard-navigate the matched tables directly.
+              if (((e.key === 'Tab' && !e.shiftKey) || e.key === 'ArrowDown') && sidebarTab === 'objects') {
+                if (objectsPanel?.focusTree()) e.preventDefault()
+                return
+              }
               if ((e.key === 'Tab' && !e.shiftKey) || e.key === 'ArrowDown') {
                 // The FIRST result, not the row holding the tab stop: this is a
                 // search box, and the answer to what was typed starts at the top
@@ -1559,7 +1673,31 @@
         {/if}
       </div>
 
-      {#if sidebarTab === 'search'}
+      {#if sidebarTab === 'queries'}
+        {@render queriesPanel?.()}
+      {:else if sidebarTab === 'objects'}
+        {#if connectionName}
+          <SidebarObjects
+            bind:this={objectsPanel}
+            bind:busyLoading={objectsLoading}
+            {connection}
+            schema={activeSchema}
+            {views}
+            {matViews}
+            {activeTable}
+            filter={debouncedFilter}
+            {comments}
+            showComments={$appSidebarComments}
+            onopenview={(name) => ontableselect(name)}
+            onrefreshtables={onrefresh}
+            ondropview={(name, cascade, kind) => ondroptable(name, cascade, kind)}
+            onopensql={onopenobjectsql}
+            onexittop={() => { filterEl?.focus(); filterEl?.select() }}
+            bind:total={objectsTotal}
+            bind:shown={objectsShown}
+          />
+        {/if}
+      {:else if sidebarTab === 'search'}
         <FindReplacePanel
           bind:focusFind={focusFindField}
           columns={frColumns}
@@ -2058,7 +2196,7 @@
                         </ContextMenu.Item>
                         <ContextMenu.Item onSelect={() => onopentableerd(tableName)}>
                           <Icon name="git-branch" />
-                          Open in data model
+                          Open in schema diagram
                         </ContextMenu.Item>
                         <ContextMenu.Item onSelect={() => onviewddl(tableName)}>
                           <Icon name="code-2" />
@@ -2148,6 +2286,7 @@
                         else if (e.metaKey || e.ctrlKey) { e.preventDefault(); selectItem(table.name, false) }
                         else ontableselect(table.name)
                       }}
+                      title={comments.get(table.name) || undefined}
                     >
                       <span
                         class="relative size-3.5 shrink-0"
@@ -2187,6 +2326,9 @@
                       >
                         {#if table.rowCount != null}{formatTableRowCount(table.rowCount)}{/if}
                       </span>
+                      {/if}
+                      {#if comments.get(table.name)}
+                        <span class="col-span-2 col-start-2 truncate text-ui-2xs leading-4 text-muted-foreground">{comments.get(table.name)}</span>
                       {/if}
                     </button>
                     </li>
@@ -2290,6 +2432,7 @@
                 <Icon name="download" />
                 Export data
               </ContextMenu.Item>
+              {#if tableDdl}
               <ContextMenu.Separator />
               <ContextMenu.Item
                 disabled={$readOnlyMode}
@@ -2309,107 +2452,12 @@
                 Drop table
               </ContextMenu.Item>
               {/if}
+              {/if}
             </ContextMenu.Content>
               </ContextMenu.Root>
               </div>
             {/if}
             {/if}
-
-            <!-- ── Views ──────────────────────────────────────────── -->
-            {#if showViews && !tabIsEmpty && (views.length > 0 || filteredViews.length > 0)}
-              <div class="flex w-full items-center gap-1 px-2.5 pt-2 pb-1">
-                <span
-                  class="text-ui-2xs font-medium tracking-wider text-muted-foreground uppercase"
-                  >{$t('sidebar.views')}</span
-                >
-                {#if views.length > 0}
-                  {@render countBadge(filteredViews.length, views.length)}
-                {/if}
-              </div>
-              {#if viewsOpen}
-                <!-- One menu for the list - see the tables list above for why. -->
-                <ContextMenu.Root>
-                <ContextMenu.Trigger>
-                {#snippet child({ props })}
-                {@const openMenu = props.oncontextmenu}
-                <ul
-                  {...props}
-                  oncontextmenu={(e) => {
-                    const li = e.target instanceof Element ? e.target.closest('li[data-view]') : null
-                    if (!(li instanceof HTMLElement)) return
-                    menuView = li.dataset.view ?? ''
-                    openMenu?.(e)
-                  }}
-                  class="flex w-full min-w-full flex-col px-1.5 pb-1 [&>li]:pb-0.5"
-                >
-                  {#if filteredViews.length === 0}
-                    <!-- The tab-level empty state covers this. -->
-                  {:else}
-                    {#each viewsToRender as view (view.name)}
-                      {@const isSelected = selectedItems.has(view.name)}
-                      <li data-view={view.name}>
-                            <button
-                              type="button"
-                              tabindex="-1"
-                              data-sidebar-row="view:{view.name}"
-                              data-roving
-                              data-sidebar-current={activeTable === view.name ? '' : undefined}
-                              class={cn(
-                                "group grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 rounded-md px-2 py-1.5 text-left transition-colors",
-                                isSelected
-                                  ? "bg-primary/10 text-foreground"
-                                  : activeTable === view.name
-                                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                                    : "text-foreground/70 hover:bg-sidebar-accent/50 hover:text-foreground",
-                              )}
-                              onclick={() => ontableselect(view.name)}
-                            >
-                              <span
-                                class="relative size-3 shrink-0"
-                                onclick={(e) => { e.stopPropagation(); toggleSelect(view.name) }}
-                                onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); toggleSelect(view.name); } }}
-                                role="checkbox"
-                                aria-checked={isSelected}
-                                tabindex="-1"
-                              >
-                                {#if isSelected}
-                                  <Icon name="square-check" class="size-3 text-primary" />
-                                {:else}
-                                  <Icon name="table-view" class="absolute inset-0 size-3 opacity-50 group-hover:opacity-0" />
-                                  <Icon name="square" class="absolute inset-0 size-3 opacity-0 group-hover:opacity-40" />
-                                {/if}
-                              </span>
-                              <span class="min-w-0 truncate font-mono text-ui-sm leading-4">{view.name}</span>
-                              <!-- No row count: plain views have no entry in the row-statistics
-                                   source, so this only ever rendered a misleading 0. Materialized
-                                   views are physical tables and keep theirs. -->
-                            </button>
-                      </li>
-                    {/each}
-                  {/if}
-                </ul>
-                {/snippet}
-                </ContextMenu.Trigger>
-                <ContextMenu.Content class="min-w-44">
-                  <ContextMenu.Item onSelect={() => toggleSelect(menuView)}>
-                    {#if selectedItems.has(menuView)}
-                      <Icon name="square" />
-                      Deselect
-                    {:else}
-                      <Icon name="square-check" />
-                      Select
-                    {/if}
-                  </ContextMenu.Item>
-                  <ContextMenu.Separator />
-                  <ContextMenu.Item variant="destructive" disabled={$readOnlyMode} title={$readOnlyMode ? READ_ONLY_HINT : undefined} onSelect={() => openDangerDialog('drop', menuView)}>
-                    <Icon name="trash-2" />
-                    Drop view
-                  </ContextMenu.Item>
-                </ContextMenu.Content>
-                </ContextMenu.Root>
-              {/if}
-            {/if}
-
 
             <!-- ── Empty state, one per tab ──────────────────────── -->
             {#if tabIsEmpty}
@@ -2467,103 +2515,6 @@
               </div>
             {/if}
 
-            <!-- ── Materialized Views ─────────────────────────────── -->
-            {#if showMatViews && !tabIsEmpty && (matViews.length > 0 || filteredMatViews.length > 0)}
-              <div class="flex w-full items-center gap-1 px-2.5 pt-2 pb-1">
-                <span
-                  class="text-ui-2xs font-medium tracking-wider text-muted-foreground uppercase"
-                  >Materialized Views</span
-                >
-                {#if matViews.length > 0}
-                  {@render countBadge(filteredMatViews.length, matViews.length)}
-                {/if}
-              </div>
-              {#if matViewsOpen}
-                <!-- One menu for the list - see the tables list above for why. -->
-                <ContextMenu.Root>
-                <ContextMenu.Trigger>
-                {#snippet child({ props })}
-                {@const openMenu = props.oncontextmenu}
-                <ul
-                  {...props}
-                  oncontextmenu={(e) => {
-                    const li = e.target instanceof Element ? e.target.closest('li[data-matview]') : null
-                    if (!(li instanceof HTMLElement)) return
-                    menuMatView = li.dataset.matview ?? ''
-                    openMenu?.(e)
-                  }}
-                  class="flex w-full min-w-full flex-col px-1.5 pb-1 [&>li]:pb-0.5"
-                >
-                  {#if filteredMatViews.length === 0}
-                    <!-- The tab-level empty state covers this. -->
-                  {:else}
-                    {#each matViewsToRender as mv (mv.name)}
-                      {@const isSelected = selectedItems.has(mv.name)}
-                      <li data-matview={mv.name}>
-                            <button
-                              type="button"
-                              tabindex="-1"
-                              data-sidebar-row="mview:{mv.name}"
-                              data-roving
-                              data-sidebar-current={activeTable === mv.name ? '' : undefined}
-                              class={cn(
-                                "group grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 rounded-md px-2 py-1.5 text-left transition-colors",
-                                isSelected
-                                  ? "bg-primary/10 text-foreground"
-                                  : activeTable === mv.name
-                                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                                    : "text-foreground/70 hover:bg-sidebar-accent/50 hover:text-foreground",
-                              )}
-                              onclick={() => ontableselect(mv.name)}
-                            >
-                              <span
-                                class="relative size-3 shrink-0"
-                                onclick={(e) => { e.stopPropagation(); toggleSelect(mv.name) }}
-                                onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); toggleSelect(mv.name); } }}
-                                role="checkbox"
-                                aria-checked={isSelected}
-                                tabindex="-1"
-                              >
-                                {#if isSelected}
-                                  <Icon name="square-check" class="size-3 text-primary" />
-                                {:else}
-                                  <Icon name="layers" class="absolute inset-0 size-3 opacity-50 group-hover:opacity-0" />
-                                  <Icon name="square" class="absolute inset-0 size-3 opacity-0 group-hover:opacity-40" />
-                                {/if}
-                              </span>
-                              <span class="min-w-0 truncate font-mono text-ui-sm leading-4">{mv.name}</span>
-                              {#if showRowCount}
-                              <span class="shrink-0 text-right font-mono text-ui-xs leading-4 tabular-nums text-muted-foreground">
-                                {formatTableRowCount(mv.rowCount)}
-                              </span>
-                              {/if}
-                            </button>
-                      </li>
-                    {/each}
-                  {/if}
-                </ul>
-                {/snippet}
-                </ContextMenu.Trigger>
-                <ContextMenu.Content class="min-w-44">
-                  <ContextMenu.Item onSelect={() => toggleSelect(menuMatView)}>
-                    {#if selectedItems.has(menuMatView)}
-                      <Icon name="square" />
-                      Deselect
-                    {:else}
-                      <Icon name="square-check" />
-                      Select
-                    {/if}
-                  </ContextMenu.Item>
-                  <ContextMenu.Separator />
-                  <ContextMenu.Item variant="destructive" disabled={$readOnlyMode} title={$readOnlyMode ? READ_ONLY_HINT : undefined} onSelect={() => openDangerDialog('drop', menuMatView)}>
-                    <Icon name="trash-2" />
-                    Drop view
-                  </ContextMenu.Item>
-                </ContextMenu.Content>
-                </ContextMenu.Root>
-              {/if}
-            {/if}
-
 
           {/if}
 
@@ -2616,6 +2567,8 @@
 <DangerousActionDialog
   bind:open={dangerOpen}
   action={dangerAction}
+  objectKind={dangerObjectKind}
+  dialect={tableDdl ?? 'postgres'}
   schema={activeSchema}
   table={dangerTable}
   bind:cascade={dangerCascade}

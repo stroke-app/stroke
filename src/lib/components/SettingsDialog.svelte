@@ -395,7 +395,7 @@
     { id: 'record', label: 'Record', icon: 'layout-list' },
     { id: 'text',   label: 'Text',   icon: 'file-text' },
     { id: 'chart',  label: 'Chart',  icon: 'bar-chart-2' },
-    { id: 'erd',    label: 'Data model', icon: 'network' },
+    { id: 'erd',    label: 'Schema diagram', icon: 'network' },
   ];
   const defaultViewOption = $derived(
     DATA_VIEW_OPTIONS.find((o) => o.id === settings.defaultDataView) ?? DATA_VIEW_OPTIONS[0],
@@ -774,7 +774,7 @@
        selects just to show the Database tab is what made this pane feel slow, and
        these are settings you touch once. Search still reaches them - a query
        expands the section, because a setting you can't find may as well not exist. -->
-  <!-- SQL editor: six short rows, so unlike formatting it is not collapsed. -->
+  <!-- SQL editor: one short row each, so unlike formatting it is not collapsed. -->
   {@render secLabel('SQL editor')}
   {#each SQL_EDITOR_FIELDS as field (field.key)}
     {#if show(field.label, field.desc)}
@@ -786,7 +786,11 @@
             <p class="text-ui-sm font-medium text-foreground">{field.label}</p>
             <p class="mt-0.5 text-ui-xs leading-relaxed text-muted-foreground">{field.desc}</p>
           </div>
-          {@render segmented(field.label, SQL_EDITOR_TEXT_SIZES.map((o) => ({ value: o.id, label: o.label })), sqlEd.textSize, (v) => setSqlEditor('textSize', v))}
+          {#if field.kind === 'choice'}
+            {@render segmented(field.label, /** @type {any} */ (field).options, sqlEd[field.key], (v) => setSqlEditor(field.key, v))}
+          {:else}
+            {@render segmented(field.label, SQL_EDITOR_TEXT_SIZES.map((o) => ({ value: o.id, label: o.label })), sqlEd.textSize, (v) => setSqlEditor('textSize', v))}
+          {/if}
         </div>
       {/if}
     {/if}
@@ -1360,6 +1364,22 @@
         items={sidebarSideItems.map((i) => ({ ...i, keywords: [i.label] }))}
       />
     </div>
+  {/if}
+  {#if show('Comments in the sidebar', 'Table, view and routine comments as a second line under their names')}
+    {@render switchRow(
+      'Comments in the sidebar',
+      'Show the comment a table, view or routine carries in the catalog as a second line under its name. Read once per schema.',
+      settings.sidebarComments,
+      () => (settings = updateSettings({ sidebarComments: !settings.sidebarComments })),
+    )}
+  {/if}
+  {#if show('Remember open groups', 'The Objects tab reopens the groups you had open, per connection')}
+    {@render switchRow(
+      'Remember open groups',
+      'The Objects tab reopens the groups you left open, per connection. Off, Views and Functions start open and the rest folded.',
+      settings.sidebarRememberGroups,
+      () => (settings = updateSettings({ sidebarRememberGroups: !settings.sidebarRememberGroups })),
+    )}
   {/if}
   {#if show('Motion', 'How much the interface animates')}
     <div class={rowCls}>

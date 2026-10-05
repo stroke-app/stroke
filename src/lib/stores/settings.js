@@ -90,7 +90,7 @@ const markFontGeistDefaultApplied = () => {
 /** @typedef {'claude' | 'geist' | 'serif' | 'apple' | 'inter' | 'mono' | 'fira' | 'plex' | 'space' | 'source'} FontId */
 /** @typedef {'regular' | 'light' | 'bold'} IconStyleId */
 /** @typedef {'lucide' | 'hugeicons' | 'phosphor'} IconSetId */
-/** @typedef {{ theme: ThemeId, zoom: number, font: FontId, iconStyle: IconStyleId, iconSet: IconSetId, tableStyle: TableStyleId, jsonTheme: JsonThemeId, mcpAutoStart: boolean, launchAtLogin: boolean, autoReconnectOnStartup: boolean, previewDmlBeforeApply: boolean, defaultDataView: string, paginationMode: string, maxQueryHistory: number, connectTimeoutMs: number, socketTimeoutMs: number, maxAllowedPacket: number, sessionTimezone: string, vimMode: boolean, cmdkAiEnabled: boolean, liveModeEnabled: boolean, lazyWideColumns: boolean, nullSortOrder: string, agentChatFontSize: number, agentCodeFontSize: number, agentThinkingStyle: string, agentShowQueryCards: boolean, agentWebAccess: boolean, tableTextAlign: string, telemetry: boolean, jsonWordWrap: boolean, nativeScroll: boolean, rowSpacing: RowSpacingId, motion: MotionId, zebraRows: boolean, showRowNumbers: boolean, showMenuBar: boolean, numberGrouping: boolean, imagePreview: boolean, openUrlsOnClick: boolean, highlightActiveRow: boolean, fkAutoExpandJson: boolean, gridFontSize: number, autoSaveQueries: boolean, streamResults: boolean, sqlFormat: import('$lib/sql-format-options.js').SqlFormatOptions, sqlEditor: import('$lib/sql-editor-options.js').SqlEditorOptions }} AppSettings */
+/** @typedef {{ theme: ThemeId, zoom: number, font: FontId, iconStyle: IconStyleId, iconSet: IconSetId, tableStyle: TableStyleId, jsonTheme: JsonThemeId, mcpAutoStart: boolean, launchAtLogin: boolean, autoReconnectOnStartup: boolean, previewDmlBeforeApply: boolean, defaultDataView: string, paginationMode: string, maxQueryHistory: number, connectTimeoutMs: number, socketTimeoutMs: number, maxAllowedPacket: number, sessionTimezone: string, vimMode: boolean, cmdkAiEnabled: boolean, liveModeEnabled: boolean, lazyWideColumns: boolean, nullSortOrder: string, agentChatFontSize: number, agentCodeFontSize: number, agentThinkingStyle: string, agentShowQueryCards: boolean, agentWebAccess: boolean, tableTextAlign: string, telemetry: boolean, jsonWordWrap: boolean, nativeScroll: boolean, rowSpacing: RowSpacingId, motion: MotionId, zebraRows: boolean, showRowNumbers: boolean, showMenuBar: boolean, numberGrouping: boolean, imagePreview: boolean, openUrlsOnClick: boolean, highlightActiveRow: boolean, fkAutoExpandJson: boolean, gridFontSize: number, autoSaveQueries: boolean, streamResults: boolean, sidebarComments: boolean, sidebarRememberGroups: boolean, sqlFormat: import('$lib/sql-format-options.js').SqlFormatOptions, sqlEditor: import('$lib/sql-editor-options.js').SqlEditorOptions }} AppSettings */
 
 /**
  * UI type scale in design pixels: `[step, font-size, line-height?]`, matching
@@ -110,7 +110,9 @@ const DEFAULT_ZOOM = 1
  * installed, so an unavailable option degrades instead of breaking. `heading`
  * (optional) sets `--font-heading` for dialog titles; without it headings
  * follow the sans.
- * @type {Record<FontId, { label: string, description: string, sans: string, mono: string, heading?: string }>}
+ * `reading` (optional) sets `--reading-font` for long prose (the AI chat);
+ * without it prose follows the sans.
+ * @type {Record<FontId, { label: string, description: string, sans: string, mono: string, heading?: string, reading?: string }>}
  */
 export const FONT_PRESETS = {
   // The claude.ai look with open faces: its own Anthropic Sans/Serif are not
@@ -154,6 +156,9 @@ export const FONT_PRESETS = {
     description: 'All-monospace terminal feel',
     sans: '"JetBrains Mono Variable", ui-monospace, monospace',
     mono: '"JetBrains Mono Variable", ui-monospace, monospace',
+    // Chrome and data stay monospace; paragraphs of chat prose read badly
+    // set that way, so they take a proportional face.
+    reading: '"Inter Variable", ui-sans-serif, system-ui, sans-serif',
   },
   // The four below also ship with the app (fontsource imports in app.css).
   fira: {
@@ -550,6 +555,12 @@ export const DEFAULT_SETTINGS = {
   // and scrolling flat. Off: every row loads into the window (simpler, and
   // fine for results that fit comfortably).
   streamResults: true,
+  // Table, view and routine comments as a second line in the sidebar. Off by
+  // default: most schemas carry few, and the extra query is per schema.
+  sidebarComments: false,
+  // The Objects tab's open groups come back per connection. Off, Views and
+  // Functions start open and the rest folded.
+  sidebarRememberGroups: true,
   // On by default, and stated plainly in Settings. What it sends is a fixed
   // list of event names, the version and the OS - never a query, a table name
   // or anything about a connection. See src/lib/telemetry.js.
@@ -648,6 +659,11 @@ export const appAutoSaveQueries = writable(false)
 
 /** Reactive: console results stream into the backend's result store (see DEFAULT_SETTINGS). */
 export const appStreamResults = writable(true)
+
+/** Reactive: comments as a second line under sidebar rows. */
+export const appSidebarComments = writable(false)
+/** Reactive: the Objects tab remembers which groups were open, per connection. */
+export const appSidebarRememberGroups = writable(true)
 
 /** Reactive: use the OS's native scrolling instead of the app's eased scrolling
  *  (off by default). The grid and the sidebar both subscribe, so flipping it
@@ -849,6 +865,8 @@ export function loadSettings() {
     const gridFontSize = normalizeGridFontSize(parsed.gridFontSize)
     const autoSaveQueries = parsed.autoSaveQueries === true
     const streamResults = parsed.streamResults !== false
+    const sidebarComments = parsed.sidebarComments === true
+    const sidebarRememberGroups = parsed.sidebarRememberGroups !== false
     const liveModeEnabled = parsed.liveModeEnabled === true
     const lazyWideColumns = parsed.lazyWideColumns !== false
     const nullSortOrder = NULL_SORT_IDS.includes(parsed.nullSortOrder) ? parsed.nullSortOrder : DEFAULT_NULL_SORT
@@ -858,7 +876,7 @@ export function loadSettings() {
     const agentShowQueryCards = parsed.agentShowQueryCards !== false
     const agentWebAccess = parsed.agentWebAccess === true
     const tableTextAlign = TABLE_ALIGN_IDS.includes(parsed.tableTextAlign) ? parsed.tableTextAlign : DEFAULT_TABLE_ALIGN
-    _settingsCache = { theme, zoom, font, iconStyle, iconSet, tableStyle, jsonTheme, mcpAutoStart, launchAtLogin, autoReconnectOnStartup, previewDmlBeforeApply, defaultDataView, paginationMode, maxQueryHistory, connectTimeoutMs, socketTimeoutMs, maxAllowedPacket, sessionTimezone, vimMode, cmdkAiEnabled, liveModeEnabled, lazyWideColumns, nullSortOrder, agentChatFontSize, agentCodeFontSize, agentThinkingStyle, agentShowQueryCards, agentWebAccess, tableTextAlign, telemetry, jsonWordWrap, nativeScroll, rowSpacing, motion, zebraRows, showRowNumbers, showMenuBar, numberGrouping, imagePreview, openUrlsOnClick, highlightActiveRow, fkAutoExpandJson, gridFontSize, autoSaveQueries, streamResults, sqlFormat, sqlEditor }
+    _settingsCache = { theme, zoom, font, iconStyle, iconSet, tableStyle, jsonTheme, mcpAutoStart, launchAtLogin, autoReconnectOnStartup, previewDmlBeforeApply, defaultDataView, paginationMode, maxQueryHistory, connectTimeoutMs, socketTimeoutMs, maxAllowedPacket, sessionTimezone, vimMode, cmdkAiEnabled, liveModeEnabled, lazyWideColumns, nullSortOrder, agentChatFontSize, agentCodeFontSize, agentThinkingStyle, agentShowQueryCards, agentWebAccess, tableTextAlign, telemetry, jsonWordWrap, nativeScroll, rowSpacing, motion, zebraRows, showRowNumbers, showMenuBar, numberGrouping, imagePreview, openUrlsOnClick, highlightActiveRow, fkAutoExpandJson, gridFontSize, autoSaveQueries, streamResults, sidebarComments, sidebarRememberGroups, sqlFormat, sqlEditor }
     if (fontMigrated) {
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify(_settingsCache)) } catch {}
     }
@@ -984,6 +1002,7 @@ export function applySettings(settings) {
   setStyleVar(root, '--font-sans', FONT_PRESETS[font].sans)
   setStyleVar(root, '--font-mono', FONT_PRESETS[font].mono)
   setStyleVar(root, '--heading-font', FONT_PRESETS[font].heading ?? FONT_PRESETS[font].sans)
+  setStyleVar(root, '--reading-font', FONT_PRESETS[font].reading ?? FONT_PRESETS[font].sans)
   setStore(appFont, font)
 
   // AI/agent chat typography - consumed by the chat surfaces (AiMarkdown, code blocks).
@@ -1038,6 +1057,8 @@ export function applySettings(settings) {
   setStore(appGridFontSize, normalizeGridFontSize(settings.gridFontSize))
   setStore(appAutoSaveQueries, settings.autoSaveQueries === true)
   setStore(appStreamResults, settings.streamResults !== false)
+  setStore(appSidebarComments, settings.sidebarComments === true)
+  setStore(appSidebarRememberGroups, settings.sidebarRememberGroups !== false)
   setStore(appLiveMode, settings.liveModeEnabled === true)
   setStore(appAgentQueryCards, settings.agentShowQueryCards !== false)
   setStore(appAgentWebAccess, settings.agentWebAccess === true)
