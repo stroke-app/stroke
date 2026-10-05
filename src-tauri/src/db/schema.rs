@@ -14,6 +14,13 @@ pub struct TableInfo {
     pub kind: String,
     /// Row-level security enabled (PostgreSQL only; None for other backends)
     pub rls_enabled: Option<bool>,
+    /// When the table was created, where the engine records it (MySQL/MariaDB
+    /// CREATE_TIME, SQL Server create_date), as "YYYY-MM-DD HH:MM:SS".
+    pub created_at: Option<String>,
+    /// Creation order where no timestamp is kept: the Postgres OID, the rowid
+    /// of the SQLite catalog row, the DuckDB object id. Larger is newer. For
+    /// sorting only; the numbers mean nothing on their own.
+    pub create_order: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -101,7 +108,10 @@ const LIST_TABLES_SQL: &str = r#"
                 THEN GREATEST(COALESCE(s.n_live_tup, 0), c.reltuples::bigint)
             ELSE -1
         END AS row_count,
-        CASE WHEN c.relkind IN ('r', 'p') THEN c.relrowsecurity ELSE false END AS rls_enabled
+        CASE WHEN c.relkind IN ('r', 'p') THEN c.relrowsecurity ELSE false END AS rls_enabled,
+        -- Postgres keeps no creation time; OIDs are handed out in increasing
+        -- order, so they sort tables by when they were created.
+        c.oid::bigint AS create_order
     FROM pg_catalog.pg_class c
     JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
     LEFT JOIN pg_stat_user_tables s
@@ -298,6 +308,8 @@ async fn list_tables_pg(pool: &PgPool, schema: &str) -> Result<Vec<TableInfo>, S
                 kind: r.try_get::<String, _>(1).unwrap_or_else(|_| "table".to_string()),
                 row_count: r.try_get::<i64, _>(2).unwrap_or(-1),
                 rls_enabled: r.try_get::<bool, _>(3).ok(),
+                created_at: None,
+                create_order: r.try_get::<i64, _>(4).ok(),
             })
         })
         .collect();
@@ -341,8 +353,10 @@ async fn list_indexes_pg(pool: &PgPool, schema: &str) -> Result<Vec<IndexInfo>, 
 // ── SQLite / D1 ───────────────────────────────────────────────────────────────
 
 async fn list_tables_sqlite(pool: &sqlx::SqlitePool) -> Result<Vec<TableInfo>, String> {
+    // The catalog's rowid grows as objects are created, so it doubles as the
+    // creation order SQLite otherwise does not keep.
     let rows = sqlx::query(
-        "SELECT name, type FROM sqlite_master WHERE type IN ('table','view') ORDER BY name",
+        "SELECT name, type, rowid FROM sqlite_master WHERE type IN ('table','view') ORDER BY name",
     )
     .fetch_all(pool)
     .await
@@ -354,7 +368,8 @@ async fn list_tables_sqlite(pool: &sqlx::SqlitePool) -> Result<Vec<TableInfo>, S
             let name = r.try_get::<Option<String>, _>(0).ok().flatten()?;
             let ty = r.try_get::<Option<String>, _>(1).ok().flatten().unwrap_or_default();
             let kind = if ty == "view" { "view".to_string() } else { "table".to_string() };
-            Some(TableInfo { name, kind, row_count: -1, rls_enabled: None })
+            let create_order = r.try_get::<i64, _>(2).ok();
+            Some(TableInfo { name, kind, row_count: -1, rls_enabled: None, created_at: None, create_order })
         })
         .collect();
 
@@ -439,13 +454,14 @@ async fn list_indexes_sqlite(pool: &sqlx::SqlitePool) -> Result<Vec<IndexInfo>, 
 async fn list_tables_d1(cfg: &super::connection::D1Config) -> Result<Vec<TableInfo>, String> {
     let result = super::d1::query(
         cfg,
-        "SELECT name, type FROM sqlite_master WHERE type IN ('table','view') ORDER BY name",
+        "SELECT name, type, rowid AS seq FROM sqlite_master WHERE type IN ('table','view') ORDER BY name",
         vec![],
     )
     .await?;
 
     let name_idx = result.columns.iter().position(|c| c.name == "name").unwrap_or(0);
     let type_idx = result.columns.iter().position(|c| c.name == "type").unwrap_or(1);
+    let seq_idx = result.columns.iter().position(|c| c.name == "seq");
 
     let mut tables: Vec<TableInfo> = result
         .rows
@@ -459,7 +475,8 @@ async fn list_tables_d1(cfg: &super::connection::D1Config) -> Result<Vec<TableIn
             }
             let ty = r.get(type_idx).and_then(|v| v.as_str()).unwrap_or("table");
             let kind = if ty == "view" { "view".to_string() } else { "table".to_string() };
-            Some(TableInfo { name, kind, row_count: -1, rls_enabled: None })
+            let create_order = seq_idx.and_then(|i| r.get(i)).and_then(|v| v.as_i64());
+            Some(TableInfo { name, kind, row_count: -1, rls_enabled: None, created_at: None, create_order })
         })
         .collect();
 
@@ -544,16 +561,18 @@ async fn list_indexes_d1(cfg: &super::connection::D1Config) -> Result<Vec<IndexI
 async fn list_tables_libsql(cfg: &super::connection::LibSqlConfig) -> Result<Vec<TableInfo>, String> {
     let result = super::libsql::query(
         cfg,
-        "SELECT name, type FROM sqlite_master WHERE type IN ('table','view') AND name NOT LIKE 'sqlite_%' ORDER BY name",
+        "SELECT name, type, rowid AS seq FROM sqlite_master WHERE type IN ('table','view') AND name NOT LIKE 'sqlite_%' ORDER BY name",
         vec![],
     ).await?;
     let name_idx = result.columns.iter().position(|c| c.name == "name").unwrap_or(0);
     let type_idx = result.columns.iter().position(|c| c.name == "type").unwrap_or(1);
+    let seq_idx = result.columns.iter().position(|c| c.name == "seq");
     let mut tables: Vec<TableInfo> = result.rows.iter().filter_map(|r| {
         let name = r.get(name_idx)?.as_str()?.to_string();
         let ty = r.get(type_idx).and_then(|v| v.as_str()).unwrap_or("table");
         let kind = if ty == "view" { "view".to_string() } else { "table".to_string() };
-        Some(TableInfo { name, kind, row_count: -1, rls_enabled: None })
+        let create_order = seq_idx.and_then(|i| r.get(i)).and_then(|v| v.as_i64());
+        Some(TableInfo { name, kind, row_count: -1, rls_enabled: None, created_at: None, create_order })
     }).collect();
 
     // Batch counts into one round-trip per chunk (each libsql query is a remote
@@ -652,7 +671,8 @@ async fn mysql_exact_row_count(pool: &MySqlPool, schema: &str, table: &str) -> R
 
 async fn list_tables_mysql(pool: &MySqlPool, schema: &str) -> Result<Vec<TableInfo>, String> {
     let rows = sqlx::query(
-        "SELECT TABLE_NAME, TABLE_TYPE, COALESCE(TABLE_ROWS, 0) \
+        "SELECT TABLE_NAME, TABLE_TYPE, COALESCE(TABLE_ROWS, 0), \
+                DATE_FORMAT(CREATE_TIME, '%Y-%m-%d %H:%i:%s') \
          FROM information_schema.TABLES \
          WHERE TABLE_SCHEMA = ? \
          ORDER BY TABLE_NAME",
@@ -672,10 +692,20 @@ async fn list_tables_mysql(pool: &MySqlPool, schema: &str) -> Result<Vec<TableIn
             // table read 0. For InnoDB it is an estimate anyway, and frequently
             // 0 (or far off) until ANALYZE TABLE runs, so a 0 is treated as
             // unknown (-1) and resolved with an exact COUNT(*) below.
+            //
+            // A small estimate is not trusted either. MySQL 8 caches these
+            // statistics for `information_schema_stats_expiry` (86400s by
+            // default), so after an INSERT the sidebar kept the old number
+            // through every refresh: 3 rows listed for a table holding 24, on
+            // the stroke-test-mysql fixture. Below the Postgres threshold
+            // (ESTIMATE_THRESHOLD, 100k) an exact count is cheap, so it is
+            // always taken; above it the estimate stands.
             let est: i64 = my_int(r, 2).unwrap_or(0);
             let kind = if ty == "VIEW" { "view" } else { "table" }.to_string();
-            let row_count = if est > 0 { est } else { -1 };
-            Some(TableInfo { name, kind, row_count, rls_enabled: None })
+            let row_count = if est >= 100_000 { est } else { -1 };
+            // NULL for views; a real timestamp for tables.
+            let created_at = my_text(r, 3);
+            Some(TableInfo { name, kind, row_count, rls_enabled: None, created_at, create_order: None })
         })
         .collect();
 
@@ -1186,43 +1216,17 @@ pub async fn list_sequences(state: State<'_, DbState>, schema: String) -> Result
     }
 }
 
+// Both spell the statement per engine in `admin`; this used to know Postgres
+// and SQLite only and told every other engine it was unsupported.
 pub async fn truncate_table(state: State<'_, DbState>, schema: String, table: String) -> Result<(), String> {
-    validate_ident(&schema)?;
-    validate_ident(&table)?;
-    match require_conn(&state)? {
-        ActiveConnection::Postgres(pool) => {
-            let sql = format!(r#"TRUNCATE TABLE "{schema}"."{table}""#);
-            sqlx::query(&sql).execute(&pool).await
-                .map_err(|e| format!("Failed to truncate table: {e}"))?;
-        }
-        ActiveConnection::Sqlite(pool) => {
-            let sql = format!(r#"DELETE FROM "{table}""#);
-            sqlx::query(&sql).execute(&pool).await
-                .map_err(|e| format!("Failed to truncate table: {e}"))?;
-        }
-        _ => return Err("TRUNCATE not supported for this database type".to_string()),
-    }
-    Ok(())
+    let conn = require_conn(&state)?;
+    super::admin::truncate_table(&conn, &schema, &table).await
 }
 
-pub async fn drop_table(state: State<'_, DbState>, schema: String, table: String, cascade: bool) -> Result<(), String> {
-    validate_ident(&schema)?;
-    validate_ident(&table)?;
-    match require_conn(&state)? {
-        ActiveConnection::Postgres(pool) => {
-            let cascade_clause = if cascade { " CASCADE" } else { "" };
-            let sql = format!(r#"DROP TABLE "{schema}"."{table}"{cascade_clause}"#);
-            sqlx::query(&sql).execute(&pool).await
-                .map_err(|e| format!("Failed to drop table: {e}"))?;
-        }
-        ActiveConnection::Sqlite(pool) => {
-            let sql = format!(r#"DROP TABLE "{table}""#);
-            sqlx::query(&sql).execute(&pool).await
-                .map_err(|e| format!("Failed to drop table: {e}"))?;
-        }
-        _ => return Err("DROP TABLE not supported for this database type".to_string()),
-    }
-    Ok(())
+pub async fn drop_table(state: State<'_, DbState>, schema: String, table: String, cascade: bool, kind: Option<String>) -> Result<(), String> {
+    let kind = super::admin::ObjectKind::parse(kind.as_deref())?;
+    let conn = require_conn(&state)?;
+    super::admin::drop_object(&conn, &schema, &table, kind, cascade).await
 }
 
 pub async fn get_table_column_structure(
@@ -2369,6 +2373,23 @@ pub async fn get_table_ddl_on_conn(
 
 
 #[cfg(test)]
+mod create_order_tests {
+    /// SQLite keeps no creation time; the catalog's rowid stands in for it.
+    #[tokio::test]
+    async fn sqlite_tables_carry_their_creation_order() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        for sql in ["CREATE TABLE zeta (id INTEGER)", "CREATE TABLE alpha (id INTEGER)", "CREATE VIEW mid AS SELECT 1 AS x"] {
+            sqlx::query(sql).execute(&pool).await.unwrap();
+        }
+        let tables = super::list_tables_sqlite(&pool).await.unwrap();
+        let order = |n: &str| tables.iter().find(|t| t.name == n).and_then(|t| t.create_order).unwrap();
+        assert!(order("zeta") < order("alpha") && order("alpha") < order("mid"));
+        assert_eq!(tables.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), ["alpha", "mid", "zeta"]);
+        assert!(tables.iter().all(|t| t.created_at.is_none()));
+    }
+}
+
+#[cfg(test)]
 mod mysql_metadata_tests {
     /// information_schema hands back `TABLE_NAME` as VARBINARY, which is why
     /// every metadata decode here goes through `my_text`. Needs the local
@@ -2387,6 +2408,10 @@ mod mysql_metadata_tests {
             "expected the fixture's `products` table, got {:?}",
             tables.iter().map(|t| &t.name).collect::<Vec<_>>()
         );
+        // Base tables carry MySQL's CREATE_TIME, formatted for the sidebar's sort.
+        let products = tables.iter().find(|t| t.name == "products").unwrap();
+        let created = products.created_at.as_deref().expect("CREATE_TIME for a base table");
+        assert_eq!(created.len(), 19, "YYYY-MM-DD HH:MM:SS, got {created:?}");
         let ddl = super::get_ddl_mysql(&pool, "shop", "products").await.expect("ddl");
         assert!(ddl.contains("CREATE TABLE"), "SHOW CREATE TABLE returned {ddl:?}");
     }

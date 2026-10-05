@@ -226,8 +226,13 @@ pub async fn list_tables(handle: &DuckdbHandle) -> Result<Vec<TableInfo>, String
     run_blocking(h, move |conn| {
         let (_c, rows) = collect_rows(
             conn,
-            "SELECT table_name, table_type FROM information_schema.tables \
-             WHERE table_schema = 'main' ORDER BY table_name",
+            // DuckDB keeps no creation time; its object ids grow as objects are
+            // made, so they give the creation order.
+            "SELECT t.table_name, t.table_type, o.oid FROM information_schema.tables t \
+             LEFT JOIN (SELECT table_name AS n, table_oid AS oid FROM duckdb_tables() WHERE schema_name = 'main' \
+                        UNION ALL SELECT view_name, view_oid FROM duckdb_views() WHERE schema_name = 'main') o \
+               ON o.n = t.table_name \
+             WHERE t.table_schema = 'main' ORDER BY t.table_name",
             &[],
         )?;
         let mut tables = Vec::new();
@@ -240,7 +245,8 @@ pub async fn list_tables(handle: &DuckdbHandle) -> Result<Vec<TableInfo>, String
             let kind = if ttype.eq_ignore_ascii_case("VIEW") { "view" } else { "table" };
             // views → 0; base tables get -1 as a "needs count" sentinel, filled below.
             let row_count = if kind == "view" { 0 } else { -1 };
-            tables.push(TableInfo { name, kind: kind.to_string(), row_count, rls_enabled: None });
+            let create_order = row.get(2).and_then(|v| v.as_i64());
+            tables.push(TableInfo { name, kind: kind.to_string(), row_count, rls_enabled: None, created_at: None, create_order });
         }
 
         // Batch all COUNT(*)s into one UNION ALL statement per chunk instead of a
@@ -615,6 +621,20 @@ mod tests {
 
     fn handle() -> DuckdbHandle {
         Arc::new(Mutex::new(::duckdb::Connection::open_in_memory().unwrap()))
+    }
+
+    #[tokio::test]
+    async fn tables_carry_their_creation_order() {
+        let h = handle();
+        for sql in ["CREATE TABLE zeta (id INTEGER)", "CREATE TABLE alpha (id INTEGER)", "CREATE VIEW mid AS SELECT 1 AS x"] {
+            execute_sql(&h, sql).await.unwrap();
+        }
+        let tables = list_tables(&h).await.unwrap();
+        let order = |n: &str| tables.iter().find(|t| t.name == n).and_then(|t| t.create_order);
+        let (z, a, m) = (order("zeta").unwrap(), order("alpha").unwrap(), order("mid").unwrap());
+        // Listed by name, ordered by creation: zeta first, then alpha, then the view.
+        assert!(z < a && a < m, "zeta {z}, alpha {a}, mid {m}");
+        assert_eq!(tables.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), ["alpha", "mid", "zeta"]);
     }
 
     #[tokio::test]

@@ -265,13 +265,14 @@ pub async fn list_tables(handle: &MssqlHandle, schema: &str) -> Result<Vec<Table
     let rows = fetch_rows(
         handle,
         &format!(
-            "SELECT t.name, 'table' AS kind, ISNULL(SUM(p.rows), 0) AS row_count \
+            "SELECT t.name, 'table' AS kind, ISNULL(SUM(p.rows), 0) AS row_count, \
+                    CONVERT(varchar(19), t.create_date, 120) AS created \
              FROM sys.tables t \
              JOIN sys.schemas sc ON sc.schema_id = t.schema_id \
              LEFT JOIN sys.partitions p ON p.object_id = t.object_id AND p.index_id IN (0,1) \
-             WHERE sc.name = '{s}' GROUP BY t.name \
+             WHERE sc.name = '{s}' GROUP BY t.name, t.create_date \
              UNION ALL \
-             SELECT v.name, 'view' AS kind, 0 AS row_count \
+             SELECT v.name, 'view' AS kind, 0 AS row_count, CONVERT(varchar(19), v.create_date, 120) AS created \
              FROM sys.views v JOIN sys.schemas sc ON sc.schema_id = v.schema_id WHERE sc.name = '{s}' \
              ORDER BY 1"
         ),
@@ -283,7 +284,8 @@ pub async fn list_tables(handle: &MssqlHandle, schema: &str) -> Result<Vec<Table
             let name = r.try_get::<&str, _>(0).ok().flatten()?.to_string();
             let kind = r.try_get::<&str, _>(1).ok().flatten().unwrap_or("table").to_string();
             let row_count = r.try_get::<i64, _>(2).ok().flatten().unwrap_or(-1);
-            Some(TableInfo { name, kind, row_count, rls_enabled: None })
+            let created_at = r.try_get::<&str, _>(3).ok().flatten().map(str::to_string);
+            Some(TableInfo { name, kind, row_count, rls_enabled: None, created_at, create_order: None })
         })
         .collect())
 }
