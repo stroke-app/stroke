@@ -4,6 +4,8 @@
   import { appThemeId } from '$lib/stores/settings.js'
   import { highlightMarkdownHtml } from '$lib/markdown-highlight.js'
   import { cn } from '$lib/utils.js'
+  import { shortcutKeys } from '$lib/kbd-text.js'
+  import { escapeHtml } from '$lib/json-inspector.js'
 
   let {
     content = '',
@@ -25,6 +27,15 @@
     const label = text || title || url.split('/').pop()?.split('?')[0] || 'image'
     const escaped = url.replace(/"/g, '&quot;')
     return `<a href="${escaped}" target="_blank" rel="noopener noreferrer" class="prose-ai-img-link" title="${escaped}">${label}</a>`
+  }
+  // A shortcut in backticks renders as key caps; everything else stays code.
+  // The `+` stays as text between the caps so a copy reads `Ctrl+Shift+P`.
+  const codespan = renderer.codespan.bind(renderer)
+  renderer.codespan = (token) => {
+    const keys = shortcutKeys(token.text)
+    if (!keys) return codespan(token)
+    const caps = keys.map((k) => `<kbd>${escapeHtml(k)}</kbd>`).join('+')
+    return `<span class="ai-kbd-chord">${caps}</span>`
   }
   const markedOpts = /** @type {marked.MarkedOptions} */ ({ breaks: true, gfm: true, renderer })
 

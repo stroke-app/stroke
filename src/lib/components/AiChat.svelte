@@ -2904,14 +2904,18 @@
   <!-- Deliberately smaller than the app's default control size: this row sits
        under body copy as a footnote, so size-7 buttons and size-3.5 icons read
        as heavier than the message they belong to. -->
+  <!-- The time hugs the message's edge (the reply's first letter, the bubble's
+       end) and the buttons sit inward of it, so the row mirrors for your own
+       turns. h-6 holds the 24px buttons: a 20px row let them spill 2px into
+       the message above and below. -->
   <div
-    class="flex h-5 items-center gap-0.5 opacity-0 transition-opacity duration-100 group-hover/msg:opacity-100 focus-within:opacity-100 {align ===
+    class="flex h-6 items-center gap-0.5 opacity-0 transition-opacity duration-100 group-hover/msg:opacity-100 focus-within:opacity-100 {align ===
     'end'
-      ? 'justify-end'
-      : 'justify-start'}"
+      ? 'flex-row-reverse'
+      : ''}"
   >
     {#if ts}
-      <span class="px-1 text-ui-3xs tabular-nums text-muted-foreground"
+      <span class="text-ui-3xs tabular-nums text-muted-foreground {align === 'end' ? 'ms-1.5' : 'me-1.5'}"
         >{fmtMsgTime(ts)}</span
       >
     {/if}
@@ -5197,31 +5201,71 @@
     font-size: 1em;
   }
   :global(.prose-ai ul) {
-    padding-left: 1.35rem;
+    padding-inline-start: 1.35rem;
     list-style-type: disc;
     margin: 0.4rem 0;
   }
   :global(.prose-ai ol) {
-    padding-left: 1.35rem;
+    padding-inline-start: 1.35rem;
     list-style-type: decimal;
     margin: 0.4rem 0;
   }
   :global(.prose-ai li) {
     margin: 0.2rem 0;
   }
+  /* Bullets and numbers mark the structure; at full text colour they read as
+     loud as the words they introduce. */
+  :global(.prose-ai li::marker) {
+    color: var(--muted-foreground);
+  }
   :global(.prose-ai code) {
     /* The app's mono, not a hardcoded family: code and tables read in the same
        face as the grid and the SQL editor whatever font preset is on. */
     font-family: var(--font-mono);
-    font-size: 0.8125em;
-    font-weight: 500;
-    background: color-mix(in oklch, var(--muted) 90%, var(--foreground) 5%);
-    border: 1px solid color-mix(in oklch, var(--border) 70%, transparent);
-    border-radius: 5px;
-    padding: 0.18em 0.45em;
+    font-size: 0.85em;
+    /* A tint of the text colour, no border and the text's own weight: a table
+       name in a sentence is a word set in mono, not a control. The bordered,
+       500-weight chip read as a key cap, heavier than the bold around it.
+       Foreground-based so it shows on every theme's background, where --muted
+       sits too close to some of them to read without the border. */
+    background: color-mix(in oklch, var(--foreground) 7%, transparent);
+    border-radius: 0.3em;
+    padding: 0.1em 0.35em;
     color: var(--foreground);
-    /* Prevent inline chips from line-breaking */
+    /* Long inline code wraps like the sentence it is in. It used to be
+       nowrap, which pushed a backticked query past the message's edge; each
+       wrapped piece keeps its own padding and rounded ends. */
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+  }
+  :global(.prose-ai a code) {
+    color: inherit;
+  }
+  /* Keys, which the markdown renderer makes of a backticked shortcut. Sized in
+     em so they follow the chat's text size (the app-wide kbd is a fixed 20px
+     cap for menus), on the text baseline rather than centred, and selectable
+     so a copied sentence keeps its shortcut. The bottom edge is what tells a
+     key from the flat code tint beside it. */
+  :global(.prose-ai kbd) {
+    display: inline-block;
+    height: auto;
+    min-width: 1.6em;
+    padding: 0.05em 0.4em;
+    font-size: 0.8em;
+    line-height: 1.4;
+    text-align: center;
+    vertical-align: baseline;
+    color: var(--foreground);
+    border-radius: 0.3em;
+    box-shadow: inset 0 -1px 0 var(--border);
+    user-select: text;
+  }
+  :global(.prose-ai .ai-kbd-chord) {
     white-space: nowrap;
+    color: var(--muted-foreground);
+  }
+  :global(.prose-ai .ai-kbd-chord kbd) {
+    margin-inline: 0.125em;
   }
   :global(.prose-ai pre:not(.shiki)) {
     background: var(--muted);
@@ -5312,8 +5356,8 @@
     background: color-mix(in oklch, var(--muted) 35%, transparent);
   }
   :global(.prose-ai blockquote) {
-    border-left: 2px solid var(--border);
-    padding-left: 0.75rem;
+    border-inline-start: 2px solid var(--border);
+    padding-inline-start: 0.75rem;
     color: var(--muted-foreground);
     margin: 0.35rem 0;
   }
