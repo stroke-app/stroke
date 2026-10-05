@@ -14,8 +14,13 @@
    * have to change.
    */
   import { onMount } from 'svelte'
-  import { StateEffect, StateField, RangeSetBuilder, Prec } from '@codemirror/state'
-  import { EditorView, Decoration, ViewPlugin, GutterMarker, gutter, hoverTooltip } from '@codemirror/view'
+  import { StateEffect, StateField, RangeSetBuilder, Prec, EditorState } from '@codemirror/state'
+  import { EditorView, Decoration, ViewPlugin, GutterMarker, WidgetType, gutter, hoverTooltip, keymap, drawSelection, highlightWhitespace } from '@codemirror/view'
+  import { indentUnit } from '@codemirror/language'
+  import { insertNewlineKeepIndent } from '@codemirror/commands'
+  import { snippet, completionStatus, hasNextSnippetField, hasPrevSnippetField } from '@codemirror/autocomplete'
+  import { wantsTerminator } from '$lib/sql-terminator.js'
+  import { IS_MAC } from '$lib/shortcuts.js'
   import CodeEditor from './CodeEditor.svelte'
   import { AlertCircleIcon, Alert02Icon } from '@hugeicons/core-free-icons'
   import { hugeSvg } from '$lib/cm-huge-icon.js'
@@ -24,6 +29,8 @@
   import { statementsOf } from '$lib/cm-sql-statements.js'
   import { appVimMode, appSqlEditor, setSqlEditorOption } from '$lib/stores/settings.js'
   import { sqlEditorFontSize } from '$lib/sql-editor-options.js'
+  import { extractSqlParams } from '$lib/sql-params.js'
+  import { formatRunInfo } from '$lib/sql-run-info.js'
   import { setVimSubMode } from '$lib/vim/vim.js'
   import { cn } from '$lib/utils.js'
 
@@ -47,6 +54,8 @@
      */
     onrunstatement = undefined,
     onmods = undefined,
+    /** Ctrl/Cmd+Shift+S: save as a new query. Unwired, the key goes on to the app. */
+    onmodshifts = undefined,
     // Global app shortcuts - bound inside the editor so they work while it has focus
     onmodi = undefined,
     onmodw = undefined,
@@ -59,6 +68,13 @@
     onmodshifto = undefined,
     onmodj = undefined,
     onmodshiftb = undefined,
+    /**
+     * A statement action from the row above it (Settings → SQL editor →
+     * Statement actions). Unwired, there is no row: a notebook cell has its own
+     * run button. Select is handled here.
+     * @type {((action: 'run' | 'newtab' | 'json' | 'variables' | 'ai', sql: string) => void) | undefined}
+     */
+    onlens = undefined,
     /** @param {string} content */
     onchange = undefined,
     /** @type {(actions: { format: () => Promise<void> }) => void} */
@@ -148,10 +164,11 @@
   /**
    * The statements of the last run: running now, ran OK, or failed, each by its
    * range (the gutter mark sits on its first line), plus the text each failure
-   * is underlined at. A ✓ is for the text that ran, so any edit clears it. A
-   * running mark follows its statement until the run ends, and a ✗ with its
-   * underline stays until the failed statement itself is edited.
-   * @typedef {{ from: number, to: number, kind: 'running' | 'ok' | 'failed', title: string }} RunMark
+   * is underlined at. A ✓ or ✗ stays with its statement through edits elsewhere
+   * and goes when that statement itself is edited: it is about the text that
+   * ran. A running mark follows its statement until the run ends. `info` is
+   * the note written after the statement (`478ms · 12 rows`).
+   * @typedef {{ from: number, to: number, kind: 'running' | 'ok' | 'failed', title: string, info?: string }} RunMark
    * @typedef {{ from: number, to: number, stmtFrom: number, stmtTo: number, message: string }} RunError
    * @typedef {{ marks: RunMark[], errors: RunError[], at: number }} RunMarks
    */
@@ -164,7 +181,7 @@
       if (!tr.docChanged || (!run.marks.length && !run.errors.length)) return run
       const ch = tr.changes
       const marks = run.marks
-        .filter((m) => m.kind === 'running' || (m.kind === 'failed' && !ch.touchesRange(m.from, m.to)))
+        .filter((m) => m.kind === 'running' || !ch.touchesRange(m.from, m.to))
         .map((m) => ({ ...m, from: ch.mapPos(m.from, 1), to: ch.mapPos(m.to, -1) }))
       const errors = run.errors
         .filter((e) => !ch.touchesRange(e.stmtFrom, e.stmtTo))
@@ -173,13 +190,36 @@
     },
     provide: (f) => EditorView.decorations.from(f, (run) =>
       Decoration.set(
-        run.errors
-          .filter((e) => e.to > e.from)
-          .map((e) => Decoration.mark({ class: 'cm-sql-run-error' }).range(e.from, e.to)),
+        [
+          ...run.errors
+            .filter((e) => e.to > e.from)
+            .map((e) => Decoration.mark({ class: 'cm-sql-run-error' }).range(e.from, e.to)),
+          ...run.marks
+            .filter((m) => m.kind === 'ok' && m.info)
+            .map((m) => Decoration.widget({ widget: new RunInfoWidget(/** @type {string} */ (m.info)), side: 1 }).range(m.to)),
+        ],
         true,
       ),
     ),
   })
+
+  /** After a statement that ran: how long it took and what it returned. */
+  class RunInfoWidget extends WidgetType {
+    /** @param {string} text */
+    constructor(text) {
+      super()
+      this.text = text
+    }
+    /** @param {RunInfoWidget} other */
+    eq(other) { return other.text === this.text }
+    toDOM() {
+      const el = document.createElement('span')
+      el.className = 'cm-sql-run-info'
+      el.textContent = this.text
+      el.setAttribute('aria-hidden', 'true')
+      return el
+    }
+  }
 
   /** The database's message, on hover over the text it failed at. */
   const runErrorTooltip = hoverTooltip((view, pos) => {
@@ -213,20 +253,98 @@
   /** @param {import('@codemirror/state').EditorState} state */
   function lintFor(state) {
     const text = state.doc.toString()
-    const diags = readOnly || !$appSqlEditor.lint ? [] : lintSql(text)
+    const caret = state.selection.main.head
+    const caretLine = state.doc.lineAt(caret)
+    // The statement being typed, caret at its end, is not missing its `;` yet:
+    // the faint `;` after the caret already offers it, and a squiggle and a
+    // tooltip over the same words said it twice. Flagged again once the caret
+    // leaves the line.
+    const typing = (/** @type {import('$lib/sql-statements.js').SqlDiagnostic} */ d) =>
+      !!d.fix && d.fix.insert === ';' && d.fix.from === d.end &&
+      caret >= d.end && d.end >= caretLine.from && !text.slice(d.end, caret).trim()
+    const diags = readOnly || !$appSqlEditor.lint ? [] : lintSql(text).filter((d) => !typing(d))
     const deco = Decoration.set(
       diags
         .filter((d) => d.end > d.start)
         .map((d) =>
           Decoration.mark({
             class: d.severity === 'error' ? 'cm-sql-lint-error' : 'cm-sql-lint-warning',
-            attributes: { title: d.message },
           }).range(Math.min(d.start, text.length), Math.min(d.end, text.length)),
         ),
       true,
     )
     return { diags, deco }
   }
+
+  /**
+   * Apply a problem's fix and put the caret after it.
+   * @param {EditorView} view @param {import('$lib/sql-statements.js').SqlFix} fix
+   */
+  function applyFix(view, fix) {
+    view.dispatch({
+      changes: { from: fix.from, to: fix.to, insert: fix.insert },
+      selection: { anchor: fix.from + fix.insert.length },
+      userEvent: 'input',
+    })
+    view.focus()
+  }
+
+  /**
+   * The problem's message on hover over its squiggle, in the editor's own
+   * tooltip, with its fix as a button. The squiggle used to carry a native
+   * `title`, which the OS draws in its own style and nothing can restyle.
+   */
+  const lintTooltip = hoverTooltip((view, pos) => {
+    const hits = view.state.field(lintField).diags.filter((d) => pos >= d.start && pos <= d.end)
+    if (!hits.length) return null
+    return {
+      pos: Math.min(...hits.map((d) => d.start)),
+      end: Math.max(...hits.map((d) => d.end)),
+      // Below the squiggle: above, it covered the line just written.
+      above: false,
+      create() {
+        const dom = document.createElement('div')
+        dom.className = 'cm-sql-lint-tip'
+        for (const d of hits) {
+          const row = document.createElement('div')
+          row.className = 'cm-sql-lint-tip-row'
+          const dot = document.createElement('span')
+          dot.className = d.severity === 'error' ? 'cm-sql-lint-tip-dot is-error' : 'cm-sql-lint-tip-dot'
+          dot.setAttribute('aria-hidden', 'true')
+          const msg = document.createElement('span')
+          msg.className = 'cm-sql-lint-tip-msg'
+          msg.textContent = d.message
+          row.append(dot, msg)
+          const fix = d.fix
+          if (fix && !readOnly) {
+            const b = document.createElement('button')
+            b.type = 'button'
+            b.className = 'cm-sql-lint-tip-fix'
+            b.textContent = fix.label
+            b.title = `${fix.label} (${IS_MAC ? '⌘.' : 'Ctrl+.'})`
+            b.addEventListener('mousedown', (e) => e.preventDefault())
+            b.addEventListener('click', () => applyFix(view, fix))
+            row.append(b)
+          }
+          dom.append(row)
+        }
+        return { dom }
+      },
+    }
+  }, { hideOnChange: true })
+
+  /** Ctrl/⌘+. : the fix of the problem at the caret, as in VS Code. */
+  const quickFixKeys = Prec.high(keymap.of([{
+    key: 'Mod-.',
+    run: (view) => {
+      if (readOnly) return false
+      const pos = view.state.selection.main.head
+      const d = view.state.field(lintField).diags.find((x) => x.fix && pos >= x.start && pos <= x.end)
+      if (!d?.fix) return false
+      applyFix(view, d.fix)
+      return true
+    },
+  }]))
 
   // Lint 350ms after the last keystroke, the delay the Monaco editor used.
   const lintRunner = ViewPlugin.fromClass(
@@ -237,6 +355,7 @@
         this.live = true
         /** @type {ReturnType<typeof setTimeout> | null} */
         this.timer = null
+        this.line = view.state.doc.lineAt(view.state.selection.main.head).number
         // Not from the constructor itself: a plugin may not dispatch while the
         // view is still being built.
         queueMicrotask(() => this.run())
@@ -247,9 +366,15 @@
       }
       /** @param {import('@codemirror/view').ViewUpdate} u */
       update(u) {
-        if (!u.docChanged) return
+        // Also when the caret moves to another line: the statement it left
+        // may now owe its `;` (see `typing` in lintFor). Not on every move
+        // along a line, so a long script is not re-linted per keypress.
+        const line = u.state.doc.lineAt(u.state.selection.main.head).number
+        const movedLine = u.selectionSet && line !== this.line
+        this.line = line
+        if (!u.docChanged && !movedLine) return
         if (this.timer) clearTimeout(this.timer)
-        this.timer = setTimeout(() => this.run(), 350)
+        this.timer = setTimeout(() => this.run(), u.docChanged ? 350 : 120)
       }
       destroy() {
         this.live = false
@@ -286,14 +411,44 @@
   // It was a 2px bar on the gutter's edge, which with line numbers off sat
   // hard against the run marks.
 
+  // ── Settings the editor's own fields read ──────────────────────────────
+  // Pushed in as an effect when they change, so the fields below recompute
+  // without the editor being rebuilt.
+
+  /** @typedef {{ lens: 'off' | 'current' | 'all', highlight: boolean, variables: boolean, endHint: boolean }} EditorConfig */
+  const setConfig = StateEffect.define()
+  /** @returns {EditorConfig} */
+  function currentConfig() {
+    return {
+      lens: onlens && !readOnly ? $appSqlEditor.codeLens : 'off',
+      highlight: $appSqlEditor.highlightBlock,
+      variables: $appSqlEditor.variables,
+      endHint: $appSqlEditor.endHint && !readOnly,
+    }
+  }
+  const configField = StateField.define({
+    create: () => currentConfig(),
+    update(v, tr) {
+      for (const e of tr.effects) if (e.is(setConfig)) return /** @type {EditorConfig} */ (e.value)
+      return v
+    },
+  })
+  $effect(() => {
+    const next = currentConfig()
+    editorRef?.getView()?.dispatch({ effects: setConfig.of(next) })
+  })
+  /** @param {import('@codemirror/state').Transaction} tr */
+  const configChanged = (tr) => tr.effects.some((e) => e.is(setConfig))
+
   const activeLineDeco = Decoration.line({ class: 'cm-stmt-active' })
   const activeStatement = StateField.define({
     create: (state) => activeRanges(state),
-    update: (v, tr) => (tr.docChanged || tr.selection ? activeRanges(tr.state) : v),
+    update: (v, tr) => (tr.docChanged || tr.selection || configChanged(tr) ? activeRanges(tr.state) : v),
     provide: (f) => EditorView.decorations.from(f),
   })
   /** @param {import('@codemirror/state').EditorState} state */
   function activeRanges(state) {
+    if (!state.field(configField).highlight) return Decoration.none
     const stmts = statementsOf(state)
     const stmt = stmts.length > 1 ? statementAtOffset(stmts, state.selection.main.head) : null
     if (!stmt) return Decoration.none
@@ -306,6 +461,328 @@
     return builder.finish()
   }
 
+  // ── Statement actions: a row of text buttons above a statement ──────────
+  // A block widget at the start of the statement's first line, above the
+  // statement under the caret (or every statement). It changes only when the
+  // caret moves to another statement, never while typing in one: its widget
+  // compares equal and CodeMirror keeps the same DOM.
+
+  /** Whether a statement has variables, by its text: one scan per text. */
+  const varsByText = new Map()
+  /** @param {string} text */
+  function hasVariables(text) {
+    let v = varsByText.get(text)
+    if (v === undefined) {
+      v = extractSqlParams(text, { engine: dialect }).length > 0
+      if (varsByText.size > 500) varsByText.clear()
+      varsByText.set(text, v)
+    }
+    return v
+  }
+
+  /**
+   * The statement a row on `line` acts for: the one under the caret when it
+   * starts on that line, else the first that does.
+   * @param {import('@codemirror/state').EditorState} state @param {{ from: number, to: number }} line
+   */
+  function lensTarget(state, line) {
+    const stmts = statementsOf(state)
+    const caret = statementAtOffset(stmts, state.selection.main.head)
+    if (caret && caret.start >= line.from && caret.start <= line.to) return caret
+    return stmts.find((s) => s.start >= line.from && s.start <= line.to) ?? null
+  }
+
+  const LENS_ACTIONS = /** @type {const} */ ([
+    { id: 'run', label: 'Run', title: 'Run this statement (Ctrl+R)' },
+    { id: 'select', label: 'Select', title: 'Select this statement (Ctrl+L)' },
+    { id: 'newtab', label: 'New tab', title: 'Run this statement in a new editor tab' },
+    { id: 'json', label: 'JSON', title: 'Run this statement and show the result as JSON' },
+    { id: 'variables', label: 'Variables', title: 'Set the values of this statement\'s variables' },
+    { id: 'ai', label: 'Ask AI', title: 'Ask the AI chat about this statement' },
+  ])
+
+  class LensWidget extends WidgetType {
+    /**
+     * @param {boolean} vars
+     * @param {boolean} [float] pinned over the right end of the statement's
+     *   first line instead of a row of its own (the caret mode)
+     */
+    constructor(vars, float = false) {
+      super()
+      this.vars = vars
+      this.float = float
+    }
+    /** @param {LensWidget} other */
+    eq(other) { return other.vars === this.vars && other.float === this.float }
+    /** @param {EditorView} view */
+    toDOM(view) {
+      if (this.float) return this.floatDOM(view)
+      const row = document.createElement('div')
+      row.className = 'cm-sql-lens'
+      row.setAttribute('role', 'toolbar')
+      row.setAttribute('aria-label', 'Statement actions')
+      for (const a of LENS_ACTIONS) {
+        if (a.id === 'variables' && !this.vars) continue
+        if (row.childElementCount) {
+          const sep = document.createElement('span')
+          sep.className = 'cm-sql-lens-sep'
+          sep.setAttribute('aria-hidden', 'true')
+          row.append(sep)
+        }
+        const b = document.createElement('button')
+        b.type = 'button'
+        b.textContent = a.label
+        b.title = a.title
+        // The caret and the focus stay where they are.
+        b.addEventListener('mousedown', (e) => e.preventDefault())
+        b.addEventListener('click', () => lensAction(view, row, a.id))
+        row.append(b)
+      }
+      return row
+    }
+
+    /**
+     * The caret mode: `▶ Run ⋯` hanging from a zero-height block above the
+     * line, so it shares no position with the text (the caret and the
+     * completion list still measure the text) and adds no height. Compact,
+     * with the rest behind ⋯: the full row of words covered the end of a long
+     * first line. Lines keep a right margin as wide as this (lensRoom), so a
+     * long one wraps short of it rather than running underneath.
+     * @param {EditorView} view
+     */
+    floatDOM(view) {
+      const anchor = document.createElement('div')
+      anchor.className = 'cm-sql-lens-anchor'
+      const chip = document.createElement('span')
+      chip.className = 'cm-sql-lens cm-sql-lens-float'
+      chip.setAttribute('role', 'toolbar')
+      chip.setAttribute('aria-label', 'Statement actions')
+      anchor.append(chip)
+
+      const button = (/** @type {string} */ label, /** @type {string} */ title, /** @type {() => void} */ onclick, cls = '') => {
+        const b = document.createElement('button')
+        b.type = 'button'
+        b.className = cls
+        b.innerHTML = label
+        b.title = title
+        b.addEventListener('mousedown', (e) => e.preventDefault())
+        b.addEventListener('click', (e) => { e.stopPropagation(); onclick() })
+        return b
+      }
+      chip.append(button(
+        '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3.5v9l7-4.5z" fill="currentColor"/></svg>Run',
+        'Run this statement (Ctrl+R)',
+        () => lensAction(view, chip, 'run'),
+        'cm-sql-lens-run',
+      ))
+      const sep = document.createElement('span')
+      sep.className = 'cm-sql-lens-sep'
+      sep.setAttribute('aria-hidden', 'true')
+      chip.append(sep)
+
+      /** @type {HTMLElement | null} */
+      let menu = null
+      const close = () => {
+        menu?.remove()
+        menu = null
+        more.setAttribute('aria-expanded', 'false')
+        document.removeEventListener('mousedown', outside, true)
+        document.removeEventListener('keydown', onKey, true)
+      }
+      const outside = (/** @type {MouseEvent} */ e) => { if (!anchor.contains(/** @type {Node} */ (e.target))) close() }
+      const onKey = (/** @type {KeyboardEvent} */ e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); view.focus() } }
+      const more = button(
+        '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="3.5" cy="8" r="1.3" fill="currentColor"/><circle cx="8" cy="8" r="1.3" fill="currentColor"/><circle cx="12.5" cy="8" r="1.3" fill="currentColor"/></svg>',
+        'More actions',
+        () => {
+          if (menu) { close(); return }
+          menu = document.createElement('div')
+          menu.className = 'cm-sql-lens-menu'
+          menu.setAttribute('role', 'menu')
+          for (const a of LENS_ACTIONS) {
+            if (a.id === 'run' || (a.id === 'variables' && !this.vars)) continue
+            const item = button(a.label, a.title, () => { close(); lensAction(view, chip, a.id) })
+            item.setAttribute('role', 'menuitem')
+            menu.append(item)
+          }
+          anchor.append(menu)
+          more.setAttribute('aria-expanded', 'true')
+          document.addEventListener('mousedown', outside, true)
+          document.addEventListener('keydown', onKey, true)
+        },
+        'cm-sql-lens-more',
+      )
+      more.setAttribute('aria-haspopup', 'menu')
+      more.setAttribute('aria-expanded', 'false')
+      chip.append(more)
+      return anchor
+    }
+
+    /** @param {HTMLElement} dom */
+    destroy(dom) {
+      // A menu left open when the chip moves to another statement goes with it.
+      dom.querySelector('.cm-sql-lens-menu')?.remove()
+    }
+  }
+
+  /**
+   * @param {EditorView} view @param {HTMLElement} row
+   * @param {'run' | 'select' | 'newtab' | 'json' | 'variables' | 'ai'} action
+   */
+  function lensAction(view, row, action) {
+    const pos = view.posAtDOM(row)
+    const st = lensTarget(view.state, view.state.doc.lineAt(Math.min(pos, view.state.doc.length)))
+    if (!st) return
+    if (action === 'select') {
+      view.dispatch({ selection: { anchor: st.start, head: st.end }, scrollIntoView: true })
+      view.focus()
+      return
+    }
+    onlens?.(action, st.text)
+  }
+
+  /** @param {import('@codemirror/state').EditorState} state */
+  function lensRanges(state) {
+    const { lens, variables } = state.field(configField)
+    if (lens === 'off') return Decoration.none
+    const stmts = statementsOf(state)
+    if (!stmts.length) return Decoration.none
+    const doc = state.doc
+    const caret = statementAtOffset(stmts, state.selection.main.head)
+    const builder = new RangeSetBuilder()
+    /** @param {{ from: number }} line @param {{ text: string }} st */
+    const add = (line, st) => builder.add(line.from, line.from, Decoration.widget({
+      widget: new LensWidget(variables && hasVariables(st.text)),
+      block: true,
+      side: -1,
+    }))
+    if (lens === 'current') {
+      // Over the right end of the statement's first line, taking no space: a
+      // row of its own moved the whole text up and down each time the caret
+      // went to another statement. Not an inline widget at the line's end:
+      // there it sat where the caret does, and CodeMirror measured the caret
+      // (and placed the completion list) at the chip on the far right.
+      if (caret) {
+        const line = doc.lineAt(caret.start)
+        builder.add(line.from, line.from, Decoration.widget({ widget: new LensWidget(variables && hasVariables(caret.text), true), block: true, side: -1 }))
+      }
+      return builder.finish()
+    }
+    const caretLine = caret ? doc.lineAt(caret.start).number : -1
+    let last = -1
+    for (const st of stmts) {
+      const line = doc.lineAt(st.start)
+      // Two statements on one line share its row, and it acts for the one
+      // under the caret when that is one of them (lensTarget, on click).
+      if (line.number === last) continue
+      last = line.number
+      add(line, line.number === caretLine && caret ? caret : st)
+    }
+    return builder.finish()
+  }
+
+  const lensField = StateField.define({
+    create: (state) => lensRanges(state),
+    update: (v, tr) => (tr.docChanged || tr.selection || configChanged(tr) ? lensRanges(tr.state) : v),
+    provide: (f) => EditorView.decorations.from(f),
+  })
+
+  // ── The closing `;` ────────────────────────────────────────────────────────
+  // A faint `;` after the caret when the statement ending there reads finished
+  // (sql-terminator.js); Tab writes it. Not while the completion list is open
+  // or a snippet still has fields to visit: Tab belongs to those.
+
+  class SemicolonHint extends WidgetType {
+    eq() { return true }
+    toDOM() {
+      const el = document.createElement('span')
+      el.className = 'cm-semi-hint'
+      el.setAttribute('aria-hidden', 'true')
+      el.textContent = ';'
+      const key = document.createElement('span')
+      key.className = 'cm-semi-hint-key'
+      key.textContent = 'Tab'
+      el.append(key)
+      return el
+    }
+    ignoreEvent() { return false }
+  }
+  const semicolonHint = Decoration.widget({ widget: new SemicolonHint(), side: 1 })
+
+  /**
+   * Where the `;` would go, or -1: the caret, alone, at the end of a line that
+   * ends a statement which looks finished and has none.
+   * @param {import('@codemirror/state').EditorState} state
+   */
+  function semicolonAt(state) {
+    if (!state.field(configField).endHint) return -1
+    const sel = state.selection.main
+    if (!sel.empty || state.selection.ranges.length > 1) return -1
+    if (completionStatus(state) || hasNextSnippetField(state) || hasPrevSnippetField(state)) return -1
+    const pos = sel.head
+    const line = state.doc.lineAt(pos)
+    if (state.doc.sliceString(pos, line.to).trim()) return -1
+    const stmt = statementAtOffset(statementsOf(state), pos)
+    // The statement has to end here: more of it on a later line means it is
+    // still going. And on this line: a new blank line after a statement is
+    // where the next one starts, not where this one's `;` belongs.
+    if (!stmt || stmt.end > pos || stmt.start > pos) return -1
+    if (state.doc.lineAt(Math.max(stmt.start, stmt.end - 1)).number !== line.number) return -1
+    return wantsTerminator(state.doc.sliceString(stmt.start, pos)) ? pos : -1
+  }
+
+  const semicolonField = StateField.define({
+    create: () => Decoration.none,
+    update(_v, tr) {
+      const at = semicolonAt(tr.state)
+      return at < 0 ? Decoration.none : Decoration.set([semicolonHint.range(at)])
+    },
+    provide: (f) => EditorView.decorations.from(f),
+  })
+
+  const semicolonKeys = Prec.high(keymap.of([{
+    key: 'Tab',
+    run: (view) => {
+      const at = semicolonAt(view.state)
+      if (at < 0) return false
+      view.dispatch({ changes: { from: at, insert: ';' }, selection: { anchor: at + 1 }, userEvent: 'input.type' })
+      return true
+    },
+  }]))
+
+  // ── Editing basics (Settings → SQL editor) ─────────────────────────────────
+  // VS Code's behaviour by default. Rebuilt when a setting changes; the editor
+  // keeps its document and undo history across the swap.
+
+  /**
+   * The caret mode's chip floats over the right end of a line. Every line
+   * keeps that much room on its right, the same on every line, so a long one
+   * wraps short of the chip and moving the caret never re-wraps anything.
+   */
+  const lensRoom = EditorView.theme({ '.cm-content .cm-line': { paddingRight: '6.5em' } })
+
+  /** Theme bits that only exist to switch something off. */
+  const noActiveLine = EditorView.theme({ '.cm-activeLine': { backgroundColor: 'transparent' } })
+  const noAutoClose = EditorState.languageData.of(() => [{ closeBrackets: { brackets: [] } }])
+
+  /** @param {import('$lib/sql-editor-options.js').SqlEditorOptions} o */
+  function editingExtensions(o) {
+    return [
+      // Ahead of the editor's own tab size (2) and indent unit.
+      Prec.high(EditorState.tabSize.of(o.tabSize)),
+      Prec.high(indentUnit.of(o.indentTabs ? '\t' : ' '.repeat(o.tabSize))),
+      // Enter and Shift+Enter break the line the same way. Kept indentation is
+      // VS Code's: the SQL grammar's continuation indent pushed the line after
+      // a finished statement in by a level, which read as a stray indent.
+      ...(o.smartIndent ? [] : [Prec.high(keymap.of([{ key: 'Enter', run: insertNewlineKeepIndent, shift: insertNewlineKeepIndent }]))]),
+      ...(o.autoClose ? [] : [Prec.high(noAutoClose)]),
+      ...(o.activeLine ? [] : [noActiveLine]),
+      ...(o.whitespace ? [highlightWhitespace()] : []),
+      // drawSelection takes the lowest blink rate it is given: 0 holds it still.
+      ...(o.cursorBlink ? [] : [drawSelection({ cursorBlinkRate: 0 })]),
+    ]
+  }
+
   // ── Keys ───────────────────────────────────────────────────────────────────
   // A handler that is not wired returns false, so the key falls through to the
   // app's global hotkeys instead of being swallowed here.
@@ -315,7 +792,10 @@
 
   const keys = [
     { key: 'Mod-k', run: () => call(onmodk)() },
-    { key: 'Mod-s', run: () => call(onmods)(), preventDefault: true },
+    // No preventDefault: unwired (a notebook cell), Ctrl+S has to reach the
+    // notebook's own save; a wired handler returns true and claims it anyway.
+    { key: 'Mod-s', run: () => call(onmods)() },
+    { key: 'Mod-Shift-s', run: () => call(onmodshifts)() },
     { key: 'Mod-l', run: selectStatement, preventDefault: true },
     { key: 'Mod-r', run: runStatement, preventDefault: true },
     { key: 'Mod-i', run: () => call(onmodi)() },
@@ -390,6 +870,36 @@
       textDecoration: 'underline wavy color-mix(in oklch, var(--destructive) 85%, transparent)',
       textUnderlineOffset: '3px',
     },
+    // A problem on hover: its message, and its fix as a button, a little
+    // clear of the line it is about.
+    '.cm-tooltip-hover:has(> .cm-sql-lint-tip)': { marginTop: '4px' },
+    '.cm-sql-lint-tip': { display: 'flex', flexDirection: 'column', gap: '2px', padding: '4px', maxWidth: '30rem' },
+    '.cm-sql-lint-tip-row': {
+      display: 'flex',
+      alignItems: 'center',
+      gap: '8px',
+      padding: '3px 4px 3px 6px',
+      fontFamily: 'var(--font-sans)',
+      fontSize: 'var(--fs-2xs)',
+      lineHeight: '1.45',
+      color: 'var(--foreground)',
+    },
+    '.cm-sql-lint-tip-dot': { flex: 'none', width: '6px', height: '6px', borderRadius: '999px', backgroundColor: 'var(--warning)' },
+    '.cm-sql-lint-tip-dot.is-error': { backgroundColor: 'var(--destructive)' },
+    '.cm-sql-lint-tip-msg': { flex: '1', minWidth: '0' },
+    '.cm-sql-lint-tip-fix': {
+      flex: 'none',
+      height: '1.75em',
+      padding: '0 8px',
+      border: '1px solid color-mix(in oklch, var(--border) 90%, transparent)',
+      borderRadius: '6px',
+      background: 'color-mix(in oklch, var(--foreground) 6%, transparent)',
+      color: 'var(--foreground)',
+      font: 'inherit',
+      fontWeight: '500',
+      cursor: 'pointer',
+    },
+    '.cm-sql-lint-tip-fix:hover': { background: 'color-mix(in oklch, var(--foreground) 12%, transparent)' },
     '.cm-sql-run-error-tip': {
       maxWidth: '28rem',
       padding: '6px 10px',
@@ -437,6 +947,104 @@
     },
     // The statement Mod+R would run, when the buffer holds several.
     '.cm-line.cm-stmt-active': { backgroundColor: 'color-mix(in oklch, var(--foreground) 3.5%, transparent)' },
+    // Statement actions: dense chrome in the sans face, muted until pointed
+    // at. The first label lines up with the statement's text: a line's left
+    // padding (CodeEditor's 10px) less a button's own 6px.
+    '.cm-sql-lens': {
+      display: 'flex',
+      alignItems: 'center',
+      height: '1.7em',
+      paddingLeft: '4px',
+      fontFamily: 'var(--font-sans)',
+      fontSize: 'var(--fs-2xs)',
+      lineHeight: '1',
+      color: 'var(--muted-foreground)',
+      userSelect: 'none',
+    },
+    '.cm-sql-lens button': {
+      height: '1.45em',
+      padding: '0 6px',
+      border: 'none',
+      borderRadius: '4px',
+      background: 'none',
+      color: 'inherit',
+      font: 'inherit',
+      cursor: 'pointer',
+    },
+    '.cm-sql-lens button:hover': {
+      color: 'var(--foreground)',
+      backgroundColor: 'color-mix(in oklch, var(--foreground) 7%, transparent)',
+    },
+    '.cm-sql-lens-sep': { width: '1px', height: '0.9em', backgroundColor: 'var(--border)' },
+    // The suggested `;`: ghost text, with the key that writes it.
+    '.cm-semi-hint': { color: 'var(--muted-foreground)', opacity: '0.7', pointerEvents: 'none' },
+    '.cm-semi-hint-key': {
+      marginLeft: '1ch',
+      padding: '0 4px',
+      borderRadius: '3px',
+      border: '1px solid color-mix(in oklch, var(--border) 80%, transparent)',
+      fontFamily: 'var(--font-sans)',
+      fontSize: 'var(--fs-3xs)',
+      verticalAlign: '1px',
+    },
+    // The caret mode's lens floats: absolutely placed in its line, so it adds
+    // no height and no width, and a long first line runs under it rather than
+    // being pushed. A solid chip, because the editor is transparent over
+    // whatever surface holds it and a fade could not match every one.
+    '.cm-sql-lens-anchor': { position: 'relative', height: '0', overflow: 'visible' },
+    '.cm-sql-lens-float button': { display: 'inline-flex', alignItems: 'center', gap: '3px' },
+    '.cm-sql-lens-float svg': { width: '0.95em', height: '0.95em', flex: 'none' },
+    '.cm-sql-lens-run': { color: 'var(--foreground) !important' },
+    '.cm-sql-lens-run svg': { color: 'var(--success)' },
+    '.cm-sql-lens-more': { padding: '0 4px !important' },
+    '.cm-sql-lens-menu': {
+      position: 'absolute',
+      top: '1.75em',
+      right: '6px',
+      zIndex: '5',
+      display: 'flex',
+      flexDirection: 'column',
+      minWidth: '9rem',
+      padding: '4px',
+      borderRadius: '8px',
+      border: '1px solid color-mix(in oklch, var(--border) 80%, transparent)',
+      backgroundColor: 'var(--popover)',
+      boxShadow: '0 8px 24px rgba(0, 0, 0, 0.35), 0 1px 3px rgba(0, 0, 0, 0.2)',
+      fontFamily: 'var(--font-sans)',
+      fontSize: 'var(--fs-2xs)',
+    },
+    '.cm-sql-lens-menu button': {
+      height: '1.9em',
+      padding: '0 8px',
+      border: 'none',
+      borderRadius: '5px',
+      background: 'none',
+      color: 'var(--foreground)',
+      font: 'inherit',
+      textAlign: 'left',
+      cursor: 'pointer',
+    },
+    '.cm-sql-lens-menu button:hover': { backgroundColor: 'color-mix(in oklch, var(--foreground) 8%, transparent)' },
+    '.cm-sql-lens-float': {
+      position: 'absolute',
+      top: '0.1em',
+      right: '6px',
+      height: '1.5em',
+      padding: '0 2px',
+      borderRadius: '6px',
+      border: '1px solid color-mix(in oklch, var(--border) 80%, transparent)',
+      backgroundColor: 'var(--popover)',
+      zIndex: '1',
+    },
+    // After a statement that ran: its time and what came back.
+    '.cm-sql-run-info': {
+      marginLeft: '1.5ch',
+      fontFamily: 'var(--font-sans)',
+      fontSize: 'var(--fs-2xs)',
+      color: 'var(--success)',
+      userSelect: 'none',
+      pointerEvents: 'none',
+    },
     // Vim's mode / command line, where monaco-vim's status strip was.
     '.cm-vim-panel': {
       padding: '2px 12px',
@@ -451,18 +1059,28 @@
   })
 
   const baseExtensions = [
+    configField,
     Prec.high(glyphGutter),
     runMarksField,
     runErrorTooltip,
     lintField,
     lintRunner,
+    lintTooltip,
+    quickFixKeys,
     activeStatement,
+    lensField,
+    semicolonField,
+    semicolonKeys,
     consoleTheme,
   ]
 
   /** Loaded while Vim mode is on (lazily - it is only for the few who use it). */
   let vimExtension = $state(/** @type {import('@codemirror/state').Extension | null} */ (null))
-  const extensions = $derived(vimExtension ? [Prec.highest(vimExtension), ...baseExtensions] : baseExtensions)
+  const editing = $derived([
+    ...editingExtensions($appSqlEditor),
+    ...(onlens && !readOnly && $appSqlEditor.codeLens === 'current' ? [lensRoom] : []),
+  ])
+  const extensions = $derived([...(vimExtension ? [Prec.highest(vimExtension)] : []), ...baseExtensions, ...editing])
 
   $effect(() => {
     if (!$appVimMode) { vimExtension = null; return }
@@ -542,8 +1160,9 @@
    * Set the run marks for statement(s): the single statement that ran (⌘R), or
    * null for all of them (run all).
    * @param {'running' | 'ok'} kind @param {string | null} ranStatement
+   * @param {string} [info] the note after a statement that ran OK
    */
-  function markRun(kind, ranStatement) {
+  function markRun(kind, ranStatement, info = '') {
     const view = editorRef?.getView()
     if (!view) return
     const target = typeof ranStatement === 'string' ? sameText(ranStatement) : null
@@ -551,7 +1170,7 @@
     const marks = []
     for (const stmt of statementsOf(view.state)) {
       if (target !== null && sameText(stmt.text) !== target) continue
-      marks.push({ from: stmt.start, to: stmt.end, kind, title: kind === 'running' ? 'Running' : 'Ran successfully' })
+      marks.push({ from: stmt.start, to: stmt.end, kind, title: kind === 'running' ? 'Running' : 'Ran successfully', info: kind === 'ok' ? info : '' })
     }
     view.dispatch({ effects: setRunMarks.of({ marks, errors: [], at: Date.now() }) })
   }
@@ -559,8 +1178,11 @@
   /**
    * Marks from a finished run: a ✓ or ✗ beside each statement that ran,
    * matched to the editor's statements by text in order, and each failure
-   * underlined where the database says it failed.
-   * @param {Array<{ sql: string, error?: string | null, position?: number | null }>} outcomes
+   * underlined where the database says it failed. `sent` is the text that
+   * went to the database when it differs from the editor's (variables filled
+   * in, a LIMIT added), for placing the failure; `ms` and `rows` or `affected`
+   * make the note after a statement that ran.
+   * @param {Array<{ sql: string, sent?: string, error?: string | null, position?: number | null, ms?: number | null, rows?: number | null, affected?: number | null }>} outcomes
    */
   export function markOutcomes(outcomes) {
     const view = editorRef?.getView()
@@ -580,12 +1202,13 @@
       next = i + 1
       const st = stmts[i]
       if (!o.error) {
-        marks.push({ from: st.start, to: st.end, kind: 'ok', title: 'Ran successfully' })
+        const info = formatRunInfo({ ms: o.ms, rows: o.rows, affected: o.affected })
+        marks.push({ from: st.start, to: st.end, kind: 'ok', title: info ? `Ran successfully · ${info}` : 'Ran successfully', info })
         continue
       }
       const message = o.error.replace(/^Error:\s*/, '').replace(/^(Query|Statement \d+) failed:\s*(error returned from database:\s*)?/i, '')
       marks.push({ from: st.start, to: st.end, kind: 'failed', title: message })
-      errors.push({ ...failedRange(doc, st, o.sql ?? '', o.position ?? null), stmtFrom: st.start, stmtTo: st.end, message })
+      errors.push({ ...failedRange(doc, st, o.sent ?? o.sql ?? '', o.position ?? null), stmtFrom: st.start, stmtTo: st.end, message })
     }
     view.dispatch({ effects: setRunMarks.of({ marks, errors, at: Date.now() }) })
   }
@@ -621,9 +1244,13 @@
     markRun('running', ranStatement)
   }
 
-  /** ✓ in the glyph gutter for statement(s) that ran OK; the next edit clears it. @param {string | null} [ranStatement] */
-  export function markExecuted(ranStatement = null) {
-    markRun('ok', ranStatement)
+  /**
+   * ✓ in the glyph gutter for statement(s) that ran OK, with the note after
+   * them; an edit to the statement clears it.
+   * @param {string | null} [ranStatement] @param {{ ms?: number | null, rows?: number | null, affected?: number | null }} [run]
+   */
+  export function markExecuted(ranStatement = null, run = {}) {
+    markRun('ok', ranStatement, formatRunInfo(run))
   }
 
   /** Drop the run marks (the run failed or was stopped). */
@@ -632,6 +1259,11 @@
   }
 
   /** Focus the editor (called when the SQL tab becomes active). */
+  /** Fold every statement to its first line (the editor menu's Fold all). */
+  export function foldAll() { editorRef?.foldEverything?.() }
+  /** Open every folded statement. */
+  export function unfoldAll() { editorRef?.unfoldEverything?.() }
+
   export function focus() {
     editorRef?.focus()
   }
@@ -647,6 +1279,20 @@
     const view = editorRef?.getView()
     const sel = view?.state.selection.main
     return view && sel && !sel.empty ? view.state.sliceDoc(sel.from, sel.to).trim() : ''
+  }
+
+  /**
+   * Fill the editor with a template whose placeholders are snippet fields, so
+   * Tab walks them (the sidebar's "New function" and friends). False when the
+   * editor is not up yet.
+   * @param {string} template CodeMirror snippet syntax: `${1:name}`, `${0}`
+   */
+  export function insertSnippet(template) {
+    const view = editorRef?.getView()
+    if (!view) return false
+    snippet(template)(view, null, 0, view.state.doc.length)
+    view.focus()
+    return true
   }
 </script>
 
@@ -670,6 +1316,7 @@
     gutter={$appSqlEditor.lineNumbers}
     folding={$appSqlEditor.folding}
     suggestWhileTyping={$appSqlEditor.suggestWhileTyping}
+    acceptOnEnter={$appSqlEditor.acceptOnEnter}
     {onchange}
     {keys}
     {extensions}

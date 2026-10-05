@@ -1,3 +1,4 @@
+import { quoteName, tableRef } from './sql-ident.js'
 import { normalizeForeignKeys } from '$lib/foreign-key-nav.js'
 
 /** Sentinel used when the filter should match across every column. */
@@ -224,21 +225,22 @@ export function hasTableQuery(search, filters, sort) {
  * @param {TableSort | null} [opts.sort]
  * @param {number} [opts.limit]
  * @param {string} [opts.engine]                - connection type, for quoting/casing
+ * @param {import('./sql-ident.js').QuoteMode} [opts.quote] - quote names always, only where needed, or never
+ * @param {boolean} [opts.qualify]               - false leaves out the engine's default schema
  * @returns {string}
  */
-export function buildSelectSql({ schema, table, columns = [], filters = [], search = '', sort = null, limit = 100, engine = 'postgres' }) {
+export function buildSelectSql({ schema, table, columns = [], filters = [], search = '', sort = null, limit = 100, engine = 'postgres', quote = 'always', qualify = true }) {
   const mysql = engine === 'mysql' || engine === 'mariadb'
   const pg = !mysql // postgres/sqlite/etc. use double-quote identifiers + ILIKE-ish
-  /** quote identifier */
-  const q = (/** @type {string} */ id) =>
-    mysql ? '`' + id.replace(/`/g, '``') + '`' : '"' + id.replace(/"/g, '""') + '"'
+  /** quote identifier, per Settings → SQL editor → Quote object names */
+  const q = (/** @type {string} */ id) => quoteName(id, engine, quote)
   /** quote a string literal */
   const lit = (/** @type {string} */ v) => `'${String(v).replace(/'/g, "''")}'`
   const like = pg ? 'ILIKE' : 'LIKE'
   /** text-cast a column for substring search */
   const asText = (/** @type {string} */ col) => (engine === 'postgres' ? `${col}::text` : col)
 
-  const target = schema ? `${q(schema)}.${q(table)}` : q(table)
+  const target = tableRef({ schema, table, engine, mode: quote, qualify })
   // SELECT * keeps the generated query clean and avoids referencing virtual /
   // hidden columns. `columns` is still used below to expand the search clause.
   const cols = '*'

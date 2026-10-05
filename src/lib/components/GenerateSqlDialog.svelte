@@ -1,4 +1,5 @@
 <script>
+  import { appSqlEditor } from '$lib/stores/settings.js'
   import * as Dialog from '$lib/components/ui/dialog/index.js'
   import Icon from './Icon.svelte'
   import ShikiBlock from './ShikiBlock.svelte'
@@ -72,7 +73,8 @@
 
   const tabs = $derived.by(() => {
     if (!table || columns.length === 0) return []
-    const ctx = { dialect, schema, table, columns, primaryKey }
+    // Names follow Settings → SQL editor → Quote object names and Qualify tables.
+    const ctx = { dialect, schema, table, columns, primaryKey, quote: $appSqlEditor.quoteNames, qualify: $appSqlEditor.qualifySchema }
     /** @type {Array<{ id: string, label: string, sql: string }>} */
     const out = []
     if (ddl) out.push({ id: 'create', label: 'Create Table', sql: ddl })

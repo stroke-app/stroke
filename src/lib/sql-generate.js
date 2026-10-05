@@ -4,7 +4,8 @@
  * and schema qualification reuse the grid's DML rules (dml-preview.js) so the
  * generated SQL matches what the app itself would execute per engine.
  */
-import { quoteIdent, qualifiedTable } from './dml-preview.js'
+import { quoteIdent as dmlQuoteIdent, qualifiedTable as dmlQualifiedTable } from './dml-preview.js'
+import { quoteName, tableRef } from './sql-ident.js'
 
 /** @typedef {import('./dml-preview.js').Dialect} Dialect */
 /** @typedef {{ name: string, dataType?: string, nullable?: boolean }} GenColumn */
@@ -15,15 +16,35 @@ import { quoteIdent, qualifiedTable } from './dml-preview.js'
  *   table: string,
  *   columns: GenColumn[],
  *   primaryKey: string[],
+ *   quote?: import('./sql-ident.js').QuoteMode,
+ *   qualify?: boolean,
  * }} GenContext
+ * `quote` and `qualify` follow Settings → SQL editor (Quote object names,
+ * Qualify tables with their schema). Without `quote`, names are written the
+ * way the grid writes them when it saves.
  */
+
+/** @param {string} name @param {GenContext} ctx */
+const quoteIdent = (name, ctx) => (ctx.quote ? quoteName(name, ctx.dialect, ctx.quote) : dmlQuoteIdent(name, ctx.dialect))
+
+/**
+ * The table, qualified the grid's way: never for the engines whose grid
+ * writes take no schema (the SQLite family, DuckDB).
+ * @param {GenContext} ctx
+ */
+function qualifiedTable(ctx) {
+  if (!ctx.quote) return dmlQualifiedTable(ctx)
+  const gridQualifies = !!ctx.schema && dmlQualifiedTable(ctx) !== dmlQualifiedTable({ ...ctx, schema: '' })
+  const schema = gridQualifies ? ctx.schema : ''
+  return tableRef({ schema, table: ctx.table, engine: ctx.dialect, mode: ctx.quote, qualify: ctx.qualify !== false })
+}
 
 /** @param {string} name */
 const ph = (name) => `:${name}`
 
 /** @param {GenContext} ctx */
 const pkConditions = (ctx) =>
-  ctx.primaryKey.map((k) => `${quoteIdent(k, ctx.dialect)} = ${ph(k)}`).join('\n  AND ')
+  ctx.primaryKey.map((k) => `${quoteIdent(k, ctx)} = ${ph(k)}`).join('\n  AND ')
 
 /**
  * WHERE clause targeting the primary key - or the always-false `1 = 0` guard
@@ -42,7 +63,7 @@ export function genSelectStar(ctx) {
 /** @param {GenContext} ctx */
 export function genSelectFields(ctx) {
   const tbl = qualifiedTable(ctx)
-  const cols = ctx.columns.map((c) => `  ${quoteIdent(c.name, ctx.dialect)}`).join(',\n')
+  const cols = ctx.columns.map((c) => `  ${quoteIdent(c.name, ctx)}`).join(',\n')
   const tail = ctx.dialect === 'mssql' ? ';' : '\nLIMIT 100;'
   const head = ctx.dialect === 'mssql' ? 'SELECT TOP 100' : 'SELECT'
   return `${head}\n${cols}\nFROM ${tbl}${tail}`
@@ -51,7 +72,7 @@ export function genSelectFields(ctx) {
 /** @param {GenContext} ctx */
 export function genInsert(ctx) {
   const tbl = qualifiedTable(ctx)
-  const cols = ctx.columns.map((c) => `  ${quoteIdent(c.name, ctx.dialect)}`).join(',\n')
+  const cols = ctx.columns.map((c) => `  ${quoteIdent(c.name, ctx)}`).join(',\n')
   const vals = ctx.columns.map((c) => `  ${ph(c.name)}`).join(',\n')
   return `INSERT INTO ${tbl} (\n${cols}\n) VALUES (\n${vals}\n);`
 }
@@ -63,7 +84,7 @@ export function genUpdate(ctx) {
   // Non-PK columns go in SET; for pure-key tables (join tables) fall back to all.
   let setCols = ctx.columns.filter((c) => !pkSet.has(c.name))
   if (setCols.length === 0) setCols = ctx.columns
-  const sets = setCols.map((c) => `  ${quoteIdent(c.name, ctx.dialect)} = ${ph(c.name)}`).join(',\n')
+  const sets = setCols.map((c) => `  ${quoteIdent(c.name, ctx)} = ${ph(c.name)}`).join(',\n')
   const where = setCols === ctx.columns ? 'WHERE 1 = 0;' : whereClause(ctx)
   return `UPDATE ${tbl}\nSET\n${sets}\n${where}`
 }
@@ -81,7 +102,7 @@ export function genDelete(ctx) {
 export function genUpsert(ctx) {
   if (ctx.primaryKey.length === 0) return null
   const tbl = qualifiedTable(ctx)
-  const q = (/** @type {string} */ n) => quoteIdent(n, ctx.dialect)
+  const q = (/** @type {string} */ n) => quoteIdent(n, ctx)
   const cols = ctx.columns.map((c) => `  ${q(c.name)}`).join(',\n')
   const vals = ctx.columns.map((c) => `  ${ph(c.name)}`).join(',\n')
   const pkSet = new Set(ctx.primaryKey)

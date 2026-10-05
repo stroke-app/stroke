@@ -1,9 +1,13 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
+  PARAM_SCOPES_MAX,
+  clearStoredParamValues,
   dialectForEngine,
   extractSqlParams,
   formatParamLiteral,
+  loadScopedParamValues,
   missingSqlParams,
+  saveScopedParamValues,
   substituteSqlParams,
 } from "./sql-params.js";
 
@@ -129,5 +133,109 @@ describe("substituteSqlParams", () => {
     const values = { x: { value: "back\\slash", mode: /** @type {const} */ ("text") } };
     expect(substituteSqlParams("SELECT :x", values)).toBe("SELECT 'back\\slash'");
     expect(substituteSqlParams("SELECT :x", values, "backslash")).toBe("SELECT 'back\\\\slash'");
+  });
+});
+
+describe("$name and ${name} variables", () => {
+  it("finds both forms and records how each was written", () => {
+    const ps = extractSqlParams("SELECT $name, ${limit_n} FROM users WHERE id = :id");
+    expect(ps.map((p) => [p.name, p.sigil])).toEqual([["name", "$"], ["limit_n", "$"], ["id", ":"]]);
+    expect(ps[1].positions[0]).toEqual({ start: 14, end: 24 });
+  });
+
+  it("treats :id and $id as one variable", () => {
+    const [p, ...rest] = extractSqlParams("SELECT :id, $id, ${id}");
+    expect(rest).toEqual([]);
+    expect(p.positions).toHaveLength(3);
+    expect(p.sigil).toBe(":");
+  });
+
+  it("leaves positional parameters alone", () => {
+    expect(names("SELECT * FROM t WHERE a = $1 AND b = $2")).toEqual([]);
+  });
+
+  it("leaves dollar-quoted bodies alone", () => {
+    expect(names("CREATE FUNCTION f() RETURNS int AS $$ SELECT $x $$ LANGUAGE sql")).toEqual([]);
+    expect(names("DO $body$ BEGIN PERFORM $y; END $body$")).toEqual([]);
+    // A variable after the body still counts.
+    expect(names("SELECT $$ $nope $$, $yes")).toEqual(["yes"]);
+  });
+
+  it("leaves strings, quoted names and comments alone", () => {
+    expect(names("SELECT '$nope', \"$nope\", `$nope` -- $nope\n/* ${nope} */")).toEqual([]);
+  });
+
+  it("leaves a $ inside a name alone", () => {
+    expect(names("SELECT price$usd, t.col$2 FROM t")).toEqual([]);
+  });
+
+  it("does not take an unclosed brace", () => {
+    expect(names("SELECT ${name FROM t")).toEqual([]);
+  });
+
+  it("does not confuse a :: cast after a variable", () => {
+    expect(names("SELECT $when::date, :n::int")).toEqual(["when", "n"]);
+  });
+
+  it("leaves MySQL and SQL Server @variables alone", () => {
+    expect(names("SET @x = 1; SELECT @x, @@version")).toEqual([]);
+  });
+
+  it("keeps SQL Server's own $ words out on SQL Server only", () => {
+    const sql = "MERGE t USING s ON t.id = s.id WHEN MATCHED THEN DELETE OUTPUT $action, $identity;";
+    expect(extractSqlParams(sql, { engine: "mssql" })).toEqual([]);
+    expect(extractSqlParams(sql, { engine: "postgres" }).map((p) => p.name)).toEqual(["action", "identity"]);
+  });
+
+  it("substitutes every form, braces included", () => {
+    const values = { name: { value: "Ada", mode: /** @type {const} */ ("auto") }, n: { value: "5", mode: /** @type {const} */ ("auto") } };
+    expect(substituteSqlParams("SELECT * FROM u WHERE name = ${name} OR nick = $name LIMIT :n", values))
+      .toBe("SELECT * FROM u WHERE name = 'Ada' OR nick = 'Ada' LIMIT 5");
+  });
+
+  it("reports a missing $ variable", () => {
+    expect(missingSqlParams("SELECT $a, ${b}", { a: { value: "1", mode: "auto" } }).map((p) => p.name)).toEqual(["b"]);
+  });
+});
+
+describe("remembered values per scope", () => {
+  /** @type {Map<string, string>} */
+  let store;
+  beforeEach(() => {
+    store = new Map();
+    vi.stubGlobal("localStorage", {
+      getItem: (/** @type {string} */ k) => (store.has(k) ? store.get(k) : null),
+      setItem: (/** @type {string} */ k, /** @type {string} */ v) => void store.set(k, String(v)),
+      removeItem: (/** @type {string} */ k) => void store.delete(k),
+    });
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("keeps each scope's own values over the shared last-used ones", () => {
+    saveScopedParamValues("conn|Query Editor", { id: { value: "1", mode: "auto" } });
+    saveScopedParamValues("conn|Query Editor 2", { id: { value: "2", mode: "auto" } });
+    expect(loadScopedParamValues("conn|Query Editor").id.value).toBe("1");
+    expect(loadScopedParamValues("conn|Query Editor 2").id.value).toBe("2");
+    // A tab with nothing of its own starts from the last value written anywhere.
+    expect(loadScopedParamValues("conn|Query Editor 3").id.value).toBe("2");
+  });
+
+  it("drops the least recently written scopes past the cap", () => {
+    const now = vi.spyOn(Date, "now");
+    for (let i = 0; i <= PARAM_SCOPES_MAX; i++) {
+      now.mockReturnValue(1000 + i);
+      saveScopedParamValues(`s${i}`, { v: { value: String(i), mode: "auto" } });
+    }
+    now.mockRestore();
+    const kept = JSON.parse(/** @type {string} */ (store.get("stroke:sql-param-values:scopes")));
+    expect(Object.keys(kept)).toHaveLength(PARAM_SCOPES_MAX);
+    expect(kept.s0).toBeUndefined();
+    expect(kept[`s${PARAM_SCOPES_MAX}`]).toBeDefined();
+  });
+
+  it("forgets everything when cleared", () => {
+    saveScopedParamValues("a", { x: { value: "1", mode: "auto" } });
+    clearStoredParamValues();
+    expect(loadScopedParamValues("a")).toEqual({});
   });
 });

@@ -26,7 +26,7 @@
    *   own gutters, keymaps, lint). Reconfigured in place when the value changes.
    */
   import { onMount, onDestroy } from 'svelte'
-  import { EditorState, Compartment } from '@codemirror/state'
+  import { EditorState, Compartment, Prec } from '@codemirror/state'
   import {
     EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter,
     drawSelection, placeholder as placeholderExt, tooltips,
@@ -36,16 +36,16 @@
     SearchQuery, setSearchQuery, getSearchQuery, findNext, findPrevious, replaceNext, replaceAll as replaceAllMatches,
   } from '@codemirror/search'
   import { history, defaultKeymap, historyKeymap, insertTab } from '@codemirror/commands'
-  import { HighlightStyle, syntaxHighlighting, bracketMatching, foldGutter, codeFolding } from '@codemirror/language'
+  import { HighlightStyle, syntaxHighlighting, bracketMatching, foldGutter, codeFolding, foldKeymap, foldAll, unfoldAll } from '@codemirror/language'
   import { json } from '@codemirror/lang-json'
   import { html } from '@codemirror/lang-html'
   import { sql } from '@codemirror/lang-sql'
   import { sqlDialectFor } from '$lib/cm-sql-dialects.js'
   import {
     autocompletion, acceptCompletion, closeBrackets, closeBracketsKeymap, completionStatus, closeCompletion,
-    snippetKeymap, nextSnippetField, prevSnippetField, clearSnippet,
+    snippetKeymap, nextSnippetField, prevSnippetField, clearSnippet, completionKeymap,
   } from '@codemirror/autocomplete'
-  import { sqlCompletionSource } from '$lib/cm-sql-complete.js'
+  import { sqlCompletionSource, enterPastTypedWord } from '$lib/cm-sql-complete.js'
   import { ArrowDown01Icon, ArrowRight01Icon } from '@hugeicons/core-free-icons'
   import { hugeSvg } from '$lib/cm-huge-icon.js'
   import { tags as t } from '@lezer/highlight'
@@ -65,6 +65,8 @@
     folding = true,
     /** SQL: open the completion list while typing (Ctrl+Space works regardless). */
     suggestWhileTyping = true,
+    /** SQL: Enter takes the highlighted suggestion. Off, only Tab does. */
+    acceptOnEnter = true,
     /** Called with the new text on every edit (the same string `value` gets). */
     onchange = /** @type {((text: string) => void) | undefined} */ (undefined),
     extensions = [],
@@ -210,8 +212,8 @@
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
-      padding: '0 4px 0 0',
-      width: '16px',
+      padding: '0',
+      width: '12px',
       cursor: 'pointer',
       opacity: '0',
       transition: 'opacity 120ms',
@@ -710,15 +712,20 @@
    * A JSON cell has nothing worth suggesting. The list renders on <body> so
    * the dock's edge never clips it.
    */
-  /** @param {boolean} onTyping */
-  const completionConfig = (onTyping) =>
+  /** @param {boolean} onTyping @param {boolean} [enterAccepts] */
+  const completionConfig = (onTyping, enterAccepts = true) => [
     autocompletion({
       override: [sqlCompletionSource(() => sqlHints, () => dialect)],
       activateOnTyping: onTyping,
       icons: false,
       addToOptions: [kindDot],
       maxRenderedOptions: 50,
-    })
+      // Off, the list's keys are bound below without Enter, so Enter always
+      // breaks the line and Tab is the one way to take a suggestion.
+      defaultKeymap: enterAccepts,
+    }),
+    ...(enterAccepts ? [] : [Prec.highest(keymap.of(completionKeymap.filter((b) => b.key !== 'Enter')))]),
+  ]
 
   /**
    * Snippet keys. Tab with the list open takes the suggestion; otherwise it
@@ -739,7 +746,10 @@
   const sqlEditing = () =>
     lang === 'sql'
       ? [
-          completeC.of(completionConfig(suggestWhileTyping)),
+          // Ahead of the completion keymap (same precedence, listed first): Enter
+          // on a word already typed out breaks the line instead of re-inserting it.
+          Prec.highest(keymap.of([{ key: 'Enter', run: enterPastTypedWord }])),
+          completeC.of(completionConfig(suggestWhileTyping, acceptOnEnter)),
           closeBrackets(),
           keymap.of(closeBracketsKeymap),
           snippetKeymap.of(snippetKeys),
@@ -747,8 +757,13 @@
         ]
       : []
 
-  /** @param {boolean} numbers @param {boolean} fold */
-  const gutterExt = (numbers, fold) => [...(numbers ? [lineNumbers()] : []), ...(fold ? [foldMarkers] : [])]
+  /**
+   * Fold arrows only beside line numbers. Without numbers the arrow column
+   * was an empty 16px strip (the arrows show on hover only) between the run
+   * marks and the text; folding still works from the keyboard and the menu.
+   * @param {boolean} numbers @param {boolean} fold
+   */
+  const gutterExt = (numbers, fold) => [...(numbers ? [lineNumbers()] : []), ...(numbers && fold ? [foldMarkers] : [])]
 
   function freshState(/** @type {string} */ doc) {
     return EditorState.create({
@@ -782,6 +797,10 @@
           { key: 'Mod-Alt-f', run: openReplace, preventDefault: true },
           ...searchKeymap,
           ...historyKeymap,
+          // Fold the statement at the caret (Ctrl+Shift+[ / ]), or all of
+          // them (Ctrl+Alt+[ / ]). A multi-line statement folds to its first
+          // line; a block comment to its markers.
+          ...foldKeymap,
           ...defaultKeymap,
         ]),
         syntaxHighlighting(highlight),
@@ -839,7 +858,16 @@
       raf = requestAnimationFrame(remeasure)
     })
     ro.observe(probe)
-    return () => { cancelAnimationFrame(raf); ro.disconnect(); probe.remove() }
+    // A chord the editor acted on is the editor's. CodeMirror marks it handled
+    // (preventDefault) and lets it bubble, and the app's hotkeys on `document`
+    // do not look at that: Ctrl+/ commented the line and then opened the
+    // shortcuts panel, Ctrl+W closed two tabs, Ctrl+J and Ctrl+Shift+B toggled
+    // twice and so did nothing. Keys the editor passed on still reach the app.
+    const ownChord = (/** @type {KeyboardEvent} */ e) => {
+      if (e.defaultPrevented && (e.ctrlKey || e.metaKey || e.altKey)) e.stopPropagation()
+    }
+    view.dom.addEventListener('keydown', ownChord)
+    return () => { cancelAnimationFrame(raf); ro.disconnect(); probe.remove(); view?.dom.removeEventListener('keydown', ownChord) }
   })
   onDestroy(() => view?.destroy())
 
@@ -871,10 +899,16 @@
   $effect(() => { const x = extensions; view?.dispatch({ effects: extraC.reconfigure(x) }) })
   $effect(() => {
     const t = suggestWhileTyping
-    if (lang === 'sql') view?.dispatch({ effects: completeC.reconfigure(completionConfig(t)) })
+    const e = acceptOnEnter
+    if (lang === 'sql') view?.dispatch({ effects: completeC.reconfigure(completionConfig(t, e)) })
   })
 
   export function focus() { view?.focus() }
+
+  /** Fold every statement and block comment down to its first line. */
+  export function foldEverything() { if (view) foldAll(view) }
+  /** Open every fold. */
+  export function unfoldEverything() { if (view) unfoldAll(view) }
 
   /** The live view, for a surface that drives it (SqlEditor). */
   export function getView() { return view }
