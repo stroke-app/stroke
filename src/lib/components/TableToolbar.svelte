@@ -474,7 +474,7 @@
     { id: "text", icon: "file-text", label: "Text view", title: "Text view, CSV / TSV / Markdown / JSON Lines" },
     { id: "chart", icon: "bar-chart-2", label: "Chart view", title: "Chart view, visualize the loaded rows" },
     { id: "map", icon: "globe", label: "Map view", title: "Map view: plot this table's geometry" },
-    { id: "erd", icon: "network", label: "Data model", title: "Data model: this table and its related tables" },
+    { id: "erd", icon: "network", label: "Schema diagram", title: "Schema diagram: this table and its related tables" },
   ];
 
   /**

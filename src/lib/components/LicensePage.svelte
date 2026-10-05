@@ -75,7 +75,7 @@
     { icon: Code2, label: 'ORM runner' },
     { icon: LayoutTemplate, label: 'Schema explorer' },
     { icon: BarChart2, label: 'Charts & diagrams' },
-    { icon: Workflow, label: 'Data model' },
+    { icon: Workflow, label: 'Schema diagram' },
     { icon: DatabaseBackup, label: 'Backup & restore' },
     { icon: NotebookPen, label: 'SQL notebooks' },
   ]
