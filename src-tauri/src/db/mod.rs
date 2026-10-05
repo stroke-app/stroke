@@ -1,3 +1,4 @@
+pub mod admin;
 pub mod backup;
 pub mod clickhouse;
 pub mod posthog;
@@ -11,6 +12,7 @@ pub mod insights;
 pub mod libsql;
 pub mod live;
 pub mod mysql;
+pub mod objects;
 pub mod redis;
 #[cfg(test)]
 mod dialect_matrix;

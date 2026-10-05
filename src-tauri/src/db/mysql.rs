@@ -624,38 +624,12 @@ pub async fn execute_sql(
     let is_select = matches!(head.as_str(), "select" | "show" | "explain" | "describe" | "desc" | "with" | "call");
 
     if is_select {
-        let mut stream = sqlx::query(sql).fetch(&mut *conn);
-        // Convert each row to JSON as it streams in and drop the driver row
-        // immediately - retaining the full Vec<MySqlRow> alongside the JSON rows
-        // would double peak memory on a large result.
-        let mut columns: Vec<ColumnInfo> = Vec::new();
-        let mut data: Vec<Vec<Value>> = Vec::new();
-        let mut capped = false;
-
-        loop {
-            match stream.try_next().await {
-                Ok(Some(row)) => {
-                    if data.is_empty() {
-                        columns = row
-                            .columns()
-                            .iter()
-                            .map(|c| ColumnInfo::new(c.name(), c.type_info().name().to_lowercase()))
-                            .collect();
-                    }
-                    data.push((0..row.len()).map(|i| cell_to_json(&row, i)).collect());
-                    if data.len() >= EXECUTE_SQL_MAX_ROWS {
-                        capped = true;
-                        break;
-                    }
-                }
-                Ok(None) => break,
-                Err(e) => {
-                    drop(stream);
-                    return Err(format!("Query failed: {e}"));
-                }
-            }
+        let first = collect_result_rows(sqlx::query(sql).fetch(&mut *conn)).await;
+        let (columns, data, capped) = match first {
+            Err(e) if unsupported_in_prepared(&e) => collect_result_rows(sqlx::Executor::fetch(&mut *conn, sql)).await,
+            other => other,
         }
-        drop(stream);
+        .map_err(|e| format!("Query failed: {e}"))?;
 
         let row_count = data.len() as i64;
         return Ok(SqlResult {
@@ -672,7 +646,11 @@ pub async fn execute_sql(
         });
     }
 
-    let result = sqlx::query(sql).execute(&mut *conn).await.map_err(|e| format!("Statement failed: {e}"))?;
+    let result = match sqlx::query(sql).execute(&mut *conn).await {
+        Ok(r) => r,
+        Err(e) if unsupported_in_prepared(&e) => sqlx::Executor::execute(&mut *conn, sql).await.map_err(|e| format!("Statement failed: {e}"))?,
+        Err(e) => return Err(format!("Statement failed: {e}")),
+    };
     let affected = result.rows_affected() as i64;
     Ok(SqlResult {
         columns: vec![],
@@ -682,6 +660,40 @@ pub async fn execute_sql(
         query_ms: query_ms(),
         sql: sql.to_string(),
     })
+}
+
+/// MySQL refuses to prepare some statements: CREATE / DROP PROCEDURE,
+/// FUNCTION, TRIGGER and EVENT, SHOW CREATE TRIGGER and a few more (error
+/// 1295). `sqlx::query` always prepares, so those are run again as a bare
+/// `&str`, which sqlx sends over the text protocol.
+fn unsupported_in_prepared(e: &sqlx::Error) -> bool {
+    e.as_database_error()
+        .and_then(|d| d.try_downcast_ref::<sqlx::mysql::MySqlDatabaseError>())
+        .is_some_and(|m| m.number() == 1295)
+}
+
+/// Rows of a result as JSON, converted as they stream in so the driver rows
+/// are dropped at once (keeping the Vec<MySqlRow> beside the JSON would double
+/// peak memory on a large result). Stops at EXECUTE_SQL_MAX_ROWS.
+async fn collect_result_rows(
+    mut stream: futures::stream::BoxStream<'_, Result<sqlx::mysql::MySqlRow, sqlx::Error>>,
+) -> Result<(Vec<ColumnInfo>, Vec<Vec<Value>>, bool), sqlx::Error> {
+    let mut columns: Vec<ColumnInfo> = Vec::new();
+    let mut data: Vec<Vec<Value>> = Vec::new();
+    while let Some(row) = stream.try_next().await? {
+        if data.is_empty() {
+            columns = row
+                .columns()
+                .iter()
+                .map(|c| ColumnInfo::new(c.name(), c.type_info().name().to_lowercase()))
+                .collect();
+        }
+        data.push((0..row.len()).map(|i| cell_to_json(&row, i)).collect());
+        if data.len() >= EXECUTE_SQL_MAX_ROWS {
+            return Ok((columns, data, true));
+        }
+    }
+    Ok((columns, data, false))
 }
 
 pub async fn update_table_cell(

@@ -2103,6 +2103,8 @@ pub async fn count_table_rows(
     // than the one on screen.
     search_case_sensitive: bool,
     filters: Option<Vec<RowFilter>>,
+    // Skip the planner estimate and COUNT(*) a large table too.
+    exact: bool,
 ) -> Result<i64, String> {
     match require_conn(&state)? {
         ActiveConnection::Postgres(_) => {}
@@ -2126,7 +2128,7 @@ pub async fn count_table_rows(
     let table_ref = format!(r#""{schema}"."{table}""#);
 
     const ESTIMATE_THRESHOLD: i64 = 100_000;
-    if where_clause.sql.is_empty() {
+    if where_clause.sql.is_empty() && !exact {
         let estimate = sqlx::query_scalar::<_, i64>(
             "SELECT reltuples::bigint FROM pg_class WHERE oid = $1::regclass",
         )
@@ -2752,30 +2754,14 @@ pub(crate) fn is_row_returning_sql(sql: &str) -> bool {
     )
 }
 
-/// Execute a single DDL statement that must run outside a transaction (e.g. CREATE DATABASE).
-/// Only supported on PostgreSQL and MySQL; executes directly on the connection pool.
+/// Execute a single DDL statement that must run outside a transaction (e.g.
+/// CREATE DATABASE), directly on the connection, on any engine that has DDL.
 pub async fn execute_ddl(state: State<'_, DbState>, sql: String) -> Result<(), String> {
     let sql_str = sql.trim();
     if sql_str.is_empty() {
         return Err("Statement is empty".into());
     }
-    match require_conn(&state)? {
-        ActiveConnection::Postgres(pool) => {
-            sqlx::query(sql_str)
-                .execute(&pool)
-                .await
-                .map_err(|e| e.to_string())?;
-            Ok(())
-        }
-        ActiveConnection::Mysql(pool) => {
-            sqlx::query(sql_str)
-                .execute(&pool)
-                .await
-                .map_err(|e| e.to_string())?;
-            Ok(())
-        }
-        _ => Err("DDL execution outside a transaction is only supported for PostgreSQL and MySQL".into()),
-    }
+    super::admin::run_statement(&require_conn(&state)?, sql_str).await
 }
 
 pub async fn execute_sql(
@@ -3429,16 +3415,70 @@ fn sql_fragment_is_meaningful(s: &str) -> bool {
     false
 }
 
+/// Whether a statement, read up to its first BEGIN, CASE or END, defines a
+/// routine or trigger: a body of statements of its own (MySQL, SQLite, T-SQL,
+/// Postgres `BEGIN ATOMIC`), whose semicolons do not end it.
+fn compound_statement(head: &str) -> bool {
+    let b = head.as_bytes();
+    let mut i = 0;
+    loop {
+        while i < b.len() && b[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if head[i..].starts_with("--") {
+            i = head[i..].find('\n').map_or(b.len(), |p| i + p + 1);
+        } else if head[i..].starts_with("/*") {
+            i = head[i + 2..].find("*/").map_or(b.len(), |p| i + 2 + p + 2);
+        } else {
+            break;
+        }
+    }
+    let lower = head[i..].to_ascii_lowercase();
+    if !(lower.starts_with("create") || lower.starts_with("alter")) {
+        return false;
+    }
+    // Before the first `(`: `CREATE TABLE event (...)` is not an event.
+    lower
+        .split('(')
+        .next()
+        .unwrap_or("")
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .any(|w| matches!(w, "trigger" | "procedure" | "proc" | "function" | "event"))
+}
+
+/// The next word after `from` (skipping whitespace) and where it ends.
+fn next_word(sql: &str, from: usize) -> (&str, usize) {
+    let b = sql.as_bytes();
+    let mut i = from;
+    while i < b.len() && b[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    let start = i;
+    while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == b'_') {
+        i += 1;
+    }
+    (&sql[start..i], i)
+}
+
 /// Split a SQL script into individual statements on `;`, without splitting
 /// inside quoted strings (`'…'` with `''`/`\'` escapes, `"…"`, backticks),
-/// line/block comments, or Postgres dollar-quoted bodies (`$$…$$`, `$tag$…$tag$`).
-/// Comment-only fragments are dropped. Mirrors `src/lib/sql-statements.js`.
+/// line/block comments, Postgres dollar-quoted bodies (`$$…$$`, `$tag$…$tag$`),
+/// or the BEGIN … END body of a routine or trigger (`CREATE TRIGGER … BEGIN
+/// UPDATE …; END;` is one statement). Comment-only fragments are dropped.
+/// Mirrors `src/lib/sql-statements.js`.
 pub(crate) fn split_sql_statements(sql: &str) -> Vec<String> {
     let b = sql.as_bytes();
     let n = b.len();
     let mut out: Vec<String> = Vec::new();
     let mut i = 0usize;
     let mut start = 0usize;
+    // Open blocks inside a routine or trigger body. BEGIN and CASE open one,
+    // END closes one; END IF / END LOOP / END WHILE / END REPEAT close blocks
+    // this never counted, so they leave it alone.
+    let mut depth = 0usize;
+    // Whether the statement being read has a body, worked out at its first
+    // BEGIN, CASE or END and forgotten at the semicolon that ends it.
+    let mut compound: Option<bool> = None;
 
     fn flush(sql: &str, start: &mut usize, end: usize, out: &mut Vec<String>) {
         let frag = sql[*start..end].trim();
@@ -3497,7 +3537,40 @@ pub(crate) fn split_sql_statements(sql: &str) -> Vec<String> {
             }
             b';' => {
                 i += 1;
+                if depth > 0 {
+                    continue;
+                }
                 flush(sql, &mut start, i, &mut out);
+                compound = None;
+            }
+            c if (c.is_ascii_alphabetic() || c == b'_') && (i == 0 || !(b[i - 1].is_ascii_alphanumeric() || b[i - 1] == b'_')) => {
+                let (word, end) = next_word(sql, i);
+                let opens = word.eq_ignore_ascii_case("begin") || word.eq_ignore_ascii_case("case");
+                if opens || word.eq_ignore_ascii_case("end") {
+                    if *compound.get_or_insert_with(|| compound_statement(&sql[start..i])) {
+                        let (after, after_end) = next_word(sql, end);
+                        let after = after.to_ascii_uppercase();
+                        if word.eq_ignore_ascii_case("begin") {
+                            // BEGIN TRAN in a T-SQL body starts a transaction, not a block.
+                            if !matches!(after.as_str(), "TRAN" | "TRANSACTION" | "WORK" | "DISTRIBUTED") {
+                                depth += 1;
+                            }
+                        } else if opens {
+                            depth += 1;
+                        } else {
+                            match after.as_str() {
+                                "IF" | "LOOP" | "WHILE" | "REPEAT" => {}
+                                "CASE" => {
+                                    depth = depth.saturating_sub(1);
+                                    i = after_end;
+                                    continue;
+                                }
+                                _ => depth = depth.saturating_sub(1),
+                            }
+                        }
+                    }
+                }
+                i = end;
             }
             _ => i += 1,
         }
@@ -4607,6 +4680,42 @@ mod split_sql_tests {
     fn statement_without_trailing_semicolon() {
         let s = split_sql_statements("select 1;\nselect 2");
         assert_eq!(s, vec!["select 1;", "select 2"]);
+    }
+
+    #[test]
+    fn keeps_a_routine_or_trigger_body_whole() {
+        // SQLite: a trigger body is always BEGIN ... END with statements inside.
+        let s = split_sql_statements(
+            "CREATE TRIGGER t AFTER INSERT ON a BEGIN UPDATE b SET n = n + 1; INSERT INTO c VALUES (1); END; select 1;",
+        );
+        assert_eq!(s.len(), 2, "{s:?}");
+        assert!(s[0].ends_with("END;"));
+        assert_eq!(s[1], "select 1;");
+        // MySQL: nested blocks, IF / LOOP / CASE statements and a CASE expression.
+        let body = "CREATE DEFINER=`root`@`%` PROCEDURE p(IN x INT)\nBEGIN\n  DECLARE i INT DEFAULT 0;\n  \
+                    IF x > 0 THEN SET i = 1; END IF;\n  l: LOOP SET i = i + 1; IF i > 3 THEN LEAVE l; END IF; END LOOP l;\n  \
+                    CASE x WHEN 1 THEN SELECT 1; ELSE SELECT 2; END CASE;\n  SELECT CASE WHEN i > 2 THEN 'a' ELSE 'b' END;\n  \
+                    BEGIN SELECT i; END;\nEND;";
+        let s = split_sql_statements(&format!("{body}\nCALL p(1);"));
+        assert_eq!(s.len(), 2, "{s:?}");
+        assert_eq!(s[1], "CALL p(1);");
+        // T-SQL: BEGIN TRAN inside the body opens no block.
+        let s = split_sql_statements(
+            "CREATE OR ALTER PROCEDURE dbo.p AS BEGIN BEGIN TRAN; UPDATE t SET a = 1; COMMIT; END; SELECT 1;",
+        );
+        assert_eq!(s.len(), 2, "{s:?}");
+    }
+
+    #[test]
+    fn begin_end_outside_a_body_still_splits() {
+        // A transaction and CASE in an ordinary query are not bodies.
+        let s = split_sql_statements("BEGIN; UPDATE t SET a = CASE WHEN b THEN 1 ELSE 2 END; COMMIT;");
+        assert_eq!(s, vec!["BEGIN;", "UPDATE t SET a = CASE WHEN b THEN 1 ELSE 2 END;", "COMMIT;"]);
+        let s = split_sql_statements("CREATE TABLE event (id int, kind text); CREATE TABLE b (x int);");
+        assert_eq!(s.len(), 2);
+        // A Postgres body in dollar quotes is already one piece.
+        let s = split_sql_statements("CREATE FUNCTION f() RETURNS int LANGUAGE plpgsql AS $$ BEGIN RETURN 1; END $$; SELECT f();");
+        assert_eq!(s.len(), 2, "{s:?}");
     }
 }
 
