@@ -29,7 +29,7 @@ tauri-plugin-dialog = "2"
 tauri-plugin-autostart = "2"
 tauri-plugin-clipboard-manager = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net", "sync", "process"] }
-axum = { version = "0.7", features = ["json", "macros"] }
+axum = { version = "0.7", features = ["json", "macros", "ws"] }
 tower-http = { version = "0.5", features = ["cors"] }
 sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "sqlite", "mysql", "json", "chrono", "uuid", "rust_decimal"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-webpki-roots", "stream"] }
@@ -91,6 +91,8 @@ gdk = "0.18"
 # `start_paused` in #[tokio::test] - lets the connect-deadline test fire the
 # timeout on a virtual clock instead of waiting CONNECT_DEADLINE for real.
 tokio = { version = "1", features = ["test-util"] }
+# The terminal socket test connects the way the page does.
+tokio-tungstenite = "0.24"
 
 [profile.release]
 strip = true

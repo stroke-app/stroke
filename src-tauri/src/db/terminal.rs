@@ -15,9 +15,17 @@ lives here is the part a desktop app has to get right around it:
   holding a server connection (or an open transaction) behind the window.
 */
 
+use std::collections::HashMap;
+use std::io::{ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::time::Duration;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{mpsc, Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use portable_pty::{native_pty_system, Child, ChildKiller, CommandBuilder, MasterPty, PtySize};
+use serde::{Deserialize, Serialize};
+use tauri::State;
 
 use super::connection::{
     resolve_mysql_ssh, resolve_pg_ssh, AnyConnectionConfig, MssqlConfig, MysqlConfig, PgConfig,
@@ -483,10 +491,452 @@ fn home_dir() -> Option<PathBuf> {
     std::env::var_os(var).map(PathBuf::from).filter(|p| p.is_dir())
 }
 
+// ── Sessions ──────────────────────────────────────────────────────────────────
+//
+// A session's bytes travel over a WebSocket on 127.0.0.1, not over Tauri IPC.
+// On Linux every invoke and every Channel message goes through the GTK main
+// loop of the UI process (a custom-scheme request one way, a `webview.eval` the
+// other), so each keystroke queued behind that loop twice before its echo
+// showed, and typing lagged. WebKit runs a WebSocket in its network process,
+// beside the page, with no main-thread hop on either side. Each session has its
+// own random token in the URL, so no other local process can attach to it.
+
+/// What the reader and the waiter hand the socket.
+enum Out {
+    Data(Vec<u8>),
+    /// The client exited. All of its output was queued before this.
+    Exit(Option<u32>),
+}
+
+struct Session {
+    master: Box<dyn MasterPty + Send>,
+    killer: Box<dyn ChildKiller + Send + Sync>,
+    _tunnel: Option<SshTunnel>,
+}
+
+/// The socket's half of a session, waiting for the page to connect. Output the
+/// client prints before then (psql's banner, or a refused login) queues here.
+struct Attach {
+    token: String,
+    output: tokio::sync::mpsc::UnboundedReceiver<Out>,
+    /// Keystrokes for the writer thread. A queue rather than a write in place: a
+    /// client busy with a query stops reading its input, and a write into a full
+    /// PTY would block the socket and with it the client's output.
+    input: mpsc::Sender<Vec<u8>>,
+    created: Instant,
+}
+
+type Sessions = Arc<Mutex<HashMap<String, Session>>>;
+type Pending = Arc<Mutex<HashMap<String, Attach>>>;
+
+#[derive(Clone)]
+struct Shared {
+    sessions: Sessions,
+    pending: Pending,
+}
+
+#[derive(Default)]
+pub struct TerminalState {
+    sessions: Sessions,
+    pending: Pending,
+    /// The socket server's port. It starts with the first session.
+    port: tokio::sync::OnceCell<u16>,
+}
+
+impl TerminalState {
+    /// Kill every client. Run on app exit: a `psql` left behind keeps its server
+    /// connection, and any transaction it has open, until the server notices.
+    pub fn kill_all(&self) {
+        let sessions: Vec<Session> = match self.sessions.lock() {
+            Ok(mut map) => map.drain().map(|(_, s)| s).collect(),
+            Err(_) => return,
+        };
+        for mut session in sessions {
+            let _ = session.killer.kill();
+        }
+    }
+
+    fn shared(&self) -> Shared {
+        Shared { sessions: self.sessions.clone(), pending: self.pending.clone() }
+    }
+}
+
+static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+
+/// A page that never connects (it was closed while the client started) leaves
+/// its session waiting; the next open reaps it after this long.
+const ATTACH_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Output is coalesced into frames of at most this many bytes.
+const MAX_FRAME: usize = 256 * 1024;
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalClient {
+    /// `psql`, `mysql`, `mariadb` and so on. Empty when the engine has no shell.
+    pub name: String,
+    /// The binary that runs. `None` when the client is not installed.
+    pub path: Option<String>,
+    /// Its `--version` line, e.g. `psql (PostgreSQL) 17.2`.
+    pub version: Option<String>,
+    /// How to install the client, or why this engine has none.
+    pub hint: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalSession {
+    pub id: String,
+    /// `ws://127.0.0.1:<port>/terminal/<id>?token=<token>`. Output arrives as
+    /// binary frames and keystrokes go back as binary frames; text frames carry
+    /// control messages, `{"resize":[cols,rows]}` in and `{"exit":code}` out.
+    pub url: String,
+}
+
+// ── Commands ──────────────────────────────────────────────────────────────────
+
+/// Which client a connection gets, and whether it is installed.
+#[tauri::command]
+pub async fn terminal_client(config: AnyConnectionConfig) -> Result<TerminalClient, String> {
+    let client = match client_for(&config) {
+        Ok(client) => client,
+        Err(why) => {
+            return Ok(TerminalClient { name: String::new(), path: None, version: None, hint: why })
+        }
+    };
+    let Some(binary) = find_binary(client.binaries).await else {
+        return Ok(TerminalClient {
+            name: client.name.into(),
+            path: None,
+            version: None,
+            hint: install_hint(&client),
+        });
+    };
+    Ok(TerminalClient {
+        name: binary.file_stem().and_then(|s| s.to_str()).unwrap_or(client.name).to_string(),
+        version: client_version(&binary).await,
+        path: Some(binary.display().to_string()),
+        hint: install_hint(&client),
+    })
+}
+
+/// Start the connection's client in a `cols` x `rows` terminal, and return the
+/// socket the page talks to it over.
+#[tauri::command]
+pub async fn terminal_open(
+    state: State<'_, TerminalState>,
+    config: AnyConnectionConfig,
+    cols: u16,
+    rows: u16,
+) -> Result<TerminalSession, String> {
+    open_session(&state, config, cols, rows).await
+}
+
+/// Kill the client. A connected socket gets its exit message first.
+#[tauri::command]
+pub async fn terminal_close(state: State<'_, TerminalState>, id: String) -> Result<(), String> {
+    if let Ok(mut pending) = state.pending.lock() {
+        pending.remove(&id);
+    }
+    let session = state.sessions.lock().map_err(|e| e.to_string())?.remove(&id);
+    if let Some(mut session) = session {
+        let _ = session.killer.kill();
+    }
+    Ok(())
+}
+
+async fn open_session(
+    state: &TerminalState,
+    config: AnyConnectionConfig,
+    cols: u16,
+    rows: u16,
+) -> Result<TerminalSession, String> {
+    reap_unattached(state);
+    let client = client_for(&config)?;
+    let binary = find_binary(client.binaries)
+        .await
+        .ok_or_else(|| format!("{} is not installed. {}", client.name, install_hint(&client)))?;
+    let launch = match config {
+        AnyConnectionConfig::Postgres(c) => pg_launch(c).await?,
+        AnyConnectionConfig::Mysql(c) => {
+            let stem = binary.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
+            let mariadb = stem == "mariadb"
+                || client_version(&binary)
+                    .await
+                    .is_some_and(|v| v.to_ascii_lowercase().contains("mariadb"));
+            mysql_launch(c, mariadb).await?
+        }
+        AnyConnectionConfig::Sqlite(c) => sqlite_launch(&c, client_version(&binary).await.as_deref()),
+        AnyConnectionConfig::Mssql(c) => mssql_launch(&c),
+        AnyConnectionConfig::Redis(c) => redis_launch(&c),
+        _ => return Err("This connection has no terminal client.".into()),
+    };
+    let shared = state.shared();
+    let port = *state.port.get_or_try_init(|| serve(shared)).await?;
+
+    let Spawned { master, mut child, reader, writer } =
+        spawn_client(&binary, client.name, &launch, cols, rows).await?;
+
+    let id = format!("term-{}", NEXT_ID.fetch_add(1, Ordering::Relaxed));
+    let mut token = [0u8; 16];
+    getrandom::getrandom(&mut token).map_err(|e| e.to_string())?;
+    let token = hex::encode(token);
+    let (input, keystrokes) = mpsc::channel::<Vec<u8>>();
+    let (out_tx, output) = tokio::sync::mpsc::unbounded_channel::<Out>();
+    std::thread::spawn(move || write_loop(writer, keystrokes));
+    let reader_out = out_tx.clone();
+    let reader_thread = std::thread::spawn(move || read_loop(reader, reader_out));
+
+    // Both in their maps before the waiter starts, so a client that exits at
+    // once (a refused login) is still found and released by it.
+    let session = Session { master, killer: child.clone_killer(), _tunnel: launch.tunnel };
+    state.sessions.lock().map_err(|e| e.to_string())?.insert(id.clone(), session);
+    let attach = Attach { token: token.clone(), output, input, created: Instant::now() };
+    state.pending.lock().map_err(|e| e.to_string())?.insert(id.clone(), attach);
+
+    let sessions = state.sessions.clone();
+    let session_id = id.clone();
+    std::thread::spawn(move || {
+        let status = child.wait();
+        // ConPTY keeps its output pipe open after the client exits, until the
+        // pseudo console itself closes. Dropping the session closes it, which
+        // lets the reader drain the last bytes and finish before the exit.
+        let session = sessions.lock().ok().and_then(|mut map| map.remove(&session_id));
+        drop(session);
+        let _ = reader_thread.join();
+        let _ = out_tx.send(Out::Exit(status.ok().map(|s| s.exit_code())));
+    });
+
+    Ok(TerminalSession { url: format!("ws://127.0.0.1:{port}/terminal/{id}?token={token}"), id })
+}
+
+/// Kill the sessions whose page never connected.
+fn reap_unattached(state: &TerminalState) {
+    let stale: Vec<String> = match state.pending.lock() {
+        Ok(mut pending) => {
+            let ids: Vec<String> = pending
+                .iter()
+                .filter(|(_, a)| a.created.elapsed() > ATTACH_TIMEOUT)
+                .map(|(id, _)| id.clone())
+                .collect();
+            for id in &ids {
+                pending.remove(id);
+            }
+            ids
+        }
+        Err(_) => return,
+    };
+    if let Ok(mut sessions) = state.sessions.lock() {
+        for id in stale {
+            if let Some(mut session) = sessions.remove(&id) {
+                let _ = session.killer.kill();
+            }
+        }
+    }
+}
+
+// ── Socket ────────────────────────────────────────────────────────────────────
+
+async fn serve(shared: Shared) -> Result<u16, String> {
+    use axum::routing::get;
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .map_err(|e| format!("Could not open the terminal socket: {e}"))?;
+    let port = listener.local_addr().map_err(|e| e.to_string())?.port();
+    let app = axum::Router::new().route("/terminal/:id", get(socket_route)).with_state(shared);
+    tauri::async_runtime::spawn(async move {
+        if let Err(e) = axum::serve(listener, app).await {
+            log::error!("terminal socket server stopped: {e}");
+        }
+    });
+    Ok(port)
+}
+
+#[derive(Deserialize)]
+struct TokenQuery {
+    token: String,
+}
+
+async fn socket_route(
+    axum::extract::Path(id): axum::extract::Path<String>,
+    axum::extract::Query(query): axum::extract::Query<TokenQuery>,
+    axum::extract::State(shared): axum::extract::State<Shared>,
+    ws: axum::extract::ws::WebSocketUpgrade,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let attach = shared.pending.lock().ok().and_then(|mut pending| {
+        let matches = pending.get(&id).is_some_and(|a| a.token == query.token);
+        if matches { pending.remove(&id) } else { None }
+    });
+    let Some(attach) = attach else {
+        return axum::http::StatusCode::NOT_FOUND.into_response();
+    };
+    ws.on_upgrade(move |socket| pump(socket, id, attach, shared.sessions))
+}
+
+#[derive(Deserialize)]
+struct Control {
+    resize: Option<(u16, u16)>,
+    /// A line for the log: the page reports its keystroke-to-echo latency.
+    trace: Option<String>,
+}
+
+/// Move bytes both ways until the client exits or the page goes away.
+async fn pump(
+    mut socket: axum::extract::ws::WebSocket,
+    id: String,
+    attach: Attach,
+    sessions: Sessions,
+) {
+    use axum::extract::ws::Message;
+    let Attach { mut output, input, .. } = attach;
+    loop {
+        tokio::select! {
+            out = output.recv() => {
+                let Some(first) = out else { break };
+                // Whatever is already queued goes in the same frame: a large
+                // result is a handful of messages, not one per PTY read.
+                let mut data = Vec::new();
+                let mut exit = None;
+                let mut next = Some(first);
+                while let Some(item) = next.take() {
+                    match item {
+                        Out::Data(bytes) => data.extend_from_slice(&bytes),
+                        Out::Exit(code) => {
+                            exit = Some(code);
+                            break;
+                        }
+                    }
+                    if data.len() >= MAX_FRAME {
+                        break;
+                    }
+                    next = output.try_recv().ok();
+                }
+                if !data.is_empty() && socket.send(Message::Binary(data)).await.is_err() {
+                    break;
+                }
+                if let Some(code) = exit {
+                    let _ = socket.send(Message::Text(serde_json::json!({ "exit": code }).to_string())).await;
+                    break;
+                }
+            }
+            message = socket.recv() => match message {
+                Some(Ok(Message::Binary(bytes))) => {
+                    let _ = input.send(bytes);
+                }
+                Some(Ok(Message::Text(text))) => {
+                    let Ok(control) = serde_json::from_str::<Control>(&text) else { continue };
+                    if let Some((cols, rows)) = control.resize {
+                        let size = PtySize { rows: rows.max(2), cols: cols.max(2), pixel_width: 0, pixel_height: 0 };
+                        if let Some(session) = sessions.lock().ok().as_ref().and_then(|m| m.get(&id)) {
+                            let _ = session.master.resize(size);
+                        }
+                    }
+                    if let Some(trace) = control.trace {
+                        log::info!("terminal {id}: {}", trace.chars().take(300).collect::<String>());
+                    }
+                }
+                Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
+                Some(Ok(_)) => {}
+            }
+        }
+    }
+    let _ = socket.send(Message::Close(None)).await;
+    // The socket is the session's lifeline: a closed tab, a reloaded page and a
+    // closed window all end up here, and the client goes with them.
+    if let Some(mut session) = sessions.lock().ok().and_then(|mut map| map.remove(&id)) {
+        let _ = session.killer.kill();
+    }
+}
+
+/// A client started in a pseudo-terminal of its own.
+struct Spawned {
+    master: Box<dyn MasterPty + Send>,
+    child: Box<dyn Child + Send + Sync>,
+    reader: Box<dyn Read + Send>,
+    writer: Box<dyn Write + Send>,
+}
+
+async fn spawn_client(
+    binary: &Path,
+    name: &str,
+    launch: &Launch,
+    cols: u16,
+    rows: u16,
+) -> Result<Spawned, String> {
+    let size = PtySize { rows: rows.max(2), cols: cols.max(2), pixel_width: 0, pixel_height: 0 };
+    let pair = native_pty_system()
+        .openpty(size)
+        .map_err(|e| format!("Could not open a terminal: {e}"))?;
+    let mut cmd = CommandBuilder::new(binary);
+    cmd.args(&launch.args);
+    for key in launch.unset {
+        cmd.env_remove(key);
+    }
+    for (key, value) in &launch.env {
+        cmd.env(key, value);
+    }
+    cmd.env("TERM", "xterm-256color");
+    cmd.env("COLORTERM", "truecolor");
+    // What the client starts itself (psql's pager, `\!`) needs the same lookup.
+    cmd.env("PATH", crate::omniroute::user_path().await);
+    // A .app launched from Finder gets no locale at all, and psql then prints
+    // every non-ASCII character as `?`.
+    #[cfg(unix)]
+    if ["LC_ALL", "LC_CTYPE", "LANG"].iter().all(|k| std::env::var_os(k).is_none()) {
+        cmd.env("LANG", if cfg!(target_os = "macos") { "en_US.UTF-8" } else { "C.UTF-8" });
+    }
+    if let Some(home) = home_dir() {
+        cmd.cwd(home);
+    }
+
+    let mut child = pair
+        .slave
+        .spawn_command(cmd)
+        .map_err(|e| format!("Could not start {name}: {e}"))?;
+    // The client now holds the only slave handle, so its exit is what ends the reader.
+    drop(pair.slave);
+    let streams = pair
+        .master
+        .try_clone_reader()
+        .and_then(|reader| Ok((reader, pair.master.take_writer()?)));
+    match streams {
+        Ok((reader, writer)) => Ok(Spawned { master: pair.master, child, reader, writer }),
+        Err(e) => {
+            let _ = child.kill();
+            Err(format!("Could not attach to {name}: {e}"))
+        }
+    }
+}
+
+fn read_loop(mut reader: Box<dyn Read + Send>, out: tokio::sync::mpsc::UnboundedSender<Out>) {
+    let mut buf = vec![0u8; 64 * 1024];
+    loop {
+        match reader.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                if out.send(Out::Data(buf[..n].to_vec())).is_err() {
+                    break;
+                }
+            }
+            Err(e) if e.kind() == ErrorKind::Interrupted => continue,
+            // EIO is how Linux reports that the client closed its end.
+            Err(_) => break,
+        }
+    }
+}
+
+fn write_loop(mut writer: Box<dyn Write + Send>, keystrokes: mpsc::Receiver<Vec<u8>>) {
+    for bytes in keystrokes {
+        if writer.write_all(&bytes).and_then(|_| writer.flush()).is_err() {
+            break;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
 
     #[cfg(target_os = "linux")]
     #[test]
@@ -570,4 +1020,98 @@ mod tests {
         assert!(run(config("DISABLED"), true).contains(&"--skip-ssl".to_string()));
     }
 
+    /// The whole path a session takes: find the client, start it in a PTY,
+    /// type into it, read its output, see it exit. Skipped without sqlite3.
+    #[test]
+    fn sqlite3_round_trips_through_a_pty() {
+        let Some(binary) = tauri::async_runtime::block_on(find_binary(&["sqlite3"])) else {
+            return;
+        };
+        let db = std::env::temp_dir().join(format!("stroke-term-{}.db", std::process::id()));
+        let launch = sqlite_launch(&SqliteConfig { name: "t".into(), file_path: db.display().to_string() }, None);
+        let Spawned { mut child, mut reader, mut writer, master: _master } =
+            tauri::async_runtime::block_on(spawn_client(&binary, "sqlite3", &launch, 80, 24)).unwrap();
+        writer.write_all(b"select 6*7;\n.quit\n").unwrap();
+        writer.flush().unwrap();
+        let mut out = Vec::new();
+        let mut buf = [0u8; 4096];
+        while let Ok(n @ 1..) = reader.read(&mut buf) {
+            out.extend_from_slice(&buf[..n]);
+        }
+        let status = child.wait().unwrap();
+        let _ = std::fs::remove_file(&db);
+        assert!(String::from_utf8_lossy(&out).contains("42"), "{}", String::from_utf8_lossy(&out));
+        assert!(status.success());
+    }
+
+    /// The page's side of a session: open, connect to the socket, type, read
+    /// the echo, run a query, quit, get the exit. Skipped without sqlite3.
+    #[test]
+    fn sqlite3_round_trips_over_the_socket() {
+        use futures::{SinkExt, StreamExt};
+        use tokio_tungstenite::tungstenite::Message;
+        tauri::async_runtime::block_on(async {
+            if find_binary(&["sqlite3"]).await.is_none() {
+                return;
+            }
+            let state = TerminalState::default();
+            let db = std::env::temp_dir().join(format!("stroke-term-ws-{}.db", std::process::id()));
+            let config = AnyConnectionConfig::Sqlite(SqliteConfig {
+                name: "t".into(),
+                file_path: db.display().to_string(),
+            });
+            let session = open_session(&state, config, 80, 24).await.unwrap();
+
+            let wrong = session.url.replace("token=", "token=x");
+            assert!(tokio_tungstenite::connect_async(&wrong).await.is_err(), "a wrong token must not attach");
+
+            let (mut ws, _) = tokio_tungstenite::connect_async(&session.url).await.unwrap();
+            let mut seen = Vec::<u8>::new();
+            // Read frames until `want` shows up in the output.
+            async fn until(
+                ws: &mut (impl StreamExt<Item = Result<Message, tokio_tungstenite::tungstenite::Error>> + Unpin),
+                seen: &mut Vec<u8>,
+                want: &str,
+            ) -> Option<String> {
+                let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+                loop {
+                    if String::from_utf8_lossy(seen).contains(want) {
+                        return None;
+                    }
+                    match tokio::time::timeout_at(deadline, ws.next()).await.ok()?? .ok()? {
+                        Message::Binary(b) => seen.extend_from_slice(&b),
+                        Message::Text(t) => return Some(t),
+                        _ => {}
+                    }
+                }
+            }
+            until(&mut ws, &mut seen, "sqlite>").await;
+
+            let mut latencies = Vec::new();
+            for ch in "select 6*7;".chars() {
+                seen.clear();
+                let start = Instant::now();
+                ws.send(Message::Binary(ch.to_string().into_bytes())).await.unwrap();
+                until(&mut ws, &mut seen, &ch.to_string()).await;
+                latencies.push(start.elapsed());
+            }
+            ws.send(Message::Binary(b"\r".to_vec())).await.unwrap();
+            until(&mut ws, &mut seen, "42").await;
+            assert!(String::from_utf8_lossy(&seen).contains("42"));
+
+            ws.send(Message::Text(r#"{"resize":[120,40]}"#.into())).await.unwrap();
+            ws.send(Message::Binary(b".quit\r".to_vec())).await.unwrap();
+            let exit = until(&mut ws, &mut seen, "\u{0}never").await;
+            let _ = std::fs::remove_file(&db);
+            assert_eq!(exit.as_deref(), Some(r#"{"exit":0}"#));
+
+            latencies.sort();
+            println!(
+                "keystroke to echo over the socket: p50 {:?}, max {:?}",
+                latencies[latencies.len() / 2],
+                latencies.last().unwrap()
+            );
+            assert!(*latencies.last().unwrap() < Duration::from_millis(100));
+        });
+    }
 }
