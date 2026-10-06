@@ -1166,7 +1166,7 @@ pub async fn connect(
 
 /// Establish an SSH tunnel if `config.ssh` is set, return a direct config pointing
 /// at the local forwarded port. The tunnel's lifetime must outlive the connection.
-async fn resolve_pg_ssh(config: PgConfig) -> Result<(PgConfig, Option<SshTunnel>), String> {
+pub(crate) async fn resolve_pg_ssh(config: PgConfig) -> Result<(PgConfig, Option<SshTunnel>), String> {
     if let Some(ref ssh_cfg) = config.ssh {
         let tunnel = SshTunnel::establish(ssh_cfg, &config.host, config.port).await?;
         let local_port = tunnel.local_port;
@@ -1340,7 +1340,7 @@ pub async fn connect_mysql(
     Ok(())
 }
 
-async fn resolve_mysql_ssh(config: MysqlConfig) -> Result<(MysqlConfig, Option<SshTunnel>), String> {
+pub(crate) async fn resolve_mysql_ssh(config: MysqlConfig) -> Result<(MysqlConfig, Option<SshTunnel>), String> {
     if let Some(ref ssh_cfg) = config.ssh {
         let tunnel = SshTunnel::establish(ssh_cfg, &config.host, config.port).await?;
         let local_port = tunnel.local_port;
