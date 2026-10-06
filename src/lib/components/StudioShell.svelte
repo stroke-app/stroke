@@ -242,6 +242,7 @@
     MAX_PAGE_SIZE,
     fetchLimitFor,
     PAGE_SIZE_ALL,
+    pageWithInsertedRow,
     DEFAULT_PAGE_SIZE,
     saveDefaultPageSize,
     loadDefaultPageSize,
@@ -7677,10 +7678,7 @@ let rowSearch = $state('')
       const canSplice = !windowed && !infiniteScroll && rowComplete && !rowSort
 
       if (!hasActiveFilters && page === 1 && canSplice) {
-        rows = [row, ...rows]
-        if (rows.length > effectivePageSize) {
-          rows = rows.slice(0, effectivePageSize)
-        }
+        rows = pageWithInsertedRow(rows, row, pageSize, effectivePageSize)
         total += 1
         saveActiveTabState()
         toast.success('Row inserted')
