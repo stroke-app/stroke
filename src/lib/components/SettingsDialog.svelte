@@ -338,6 +338,10 @@
     settings = updateSettings({ streamResults: settings.streamResults === false });
   }
 
+  function toggleSqlUndo() {
+    settings = updateSettings({ sqlUndo: settings.sqlUndo === false });
+  }
+
   // ── SQL editor ────────────────────────────────────────────────────────────
   // Read through the normalizer for the same reason as sqlFmt below.
   const sqlEd = $derived(/** @type {any} */ (normalizeSqlEditor(settings.sqlEditor)));
@@ -774,6 +778,15 @@
       'Keep a result in a file on this machine and load only the rows you scroll to, so millions of rows scroll and switch tabs smoothly. Off loads every row into the window.',
       settings.streamResults !== false,
       toggleStreamResults,
+    )}
+  {/if}
+
+  {#if show('Revert console writes', 'Keep a copy of the rows an UPDATE, DELETE or INSERT changes so it can be reverted')}
+    {@render switchRow(
+      'Revert console writes',
+      'Keep a copy of the rows a single UPDATE, DELETE or INSERT changes, so its Revert button can put them back. Postgres, MySQL, MariaDB and SQLite, up to 10,000 rows, in memory only.',
+      settings.sqlUndo !== false,
+      toggleSqlUndo,
     )}
   {/if}
 
