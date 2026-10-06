@@ -1203,7 +1203,11 @@ pub(crate) async fn open_sqlite(config: &SqliteConfig) -> Result<SqlitePool, Str
     let opts: SqliteConnectOptions = sqlite_url(&config.file_path)
         .parse()
         .map_err(|e| format!("SQLite connection failed: {e}"))?;
-    let opts = opts.log_slow_statements(LevelFilter::Debug, Duration::from_secs(5));
+    // A path to a file that does not exist yet is how a new database is made
+    // (the form's "New file" picks one); create it rather than refuse.
+    let opts = opts
+        .create_if_missing(true)
+        .log_slow_statements(LevelFilter::Debug, Duration::from_secs(5));
 
     SqlitePoolOptions::new()
         .max_connections(1)
