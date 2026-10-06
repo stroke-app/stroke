@@ -1326,6 +1326,25 @@ export async function txStatus(sessionId) {
   return inv('tx_status', { sessionId })
 }
 
+/**
+ * A read for a console write's undo copy (sql-undo.js), outside any
+ * transaction. Not logged as a query of the user's, and stoppable through the
+ * run's own `queryId`.
+ * @param {string} sql @param {string} [queryId]
+ */
+export async function inspectSql(sql, queryId) {
+  return inv('pg_execute_sql', { sql, queryId: queryId ?? null })
+}
+
+/**
+ * txExecute for the undo copy's transaction: the same, without a query-log
+ * entry for each of its reads. The run itself is recorded in history as usual.
+ * @param {string} sessionId @param {string} sql
+ */
+export async function txExecuteQuiet(sessionId, sql) {
+  return inv('tx_execute', { sessionId, sql })
+}
+
 // ── Terminal ──────────────────────────────────────────────────────────────────
 // The connection's own CLI (psql, mysql, sqlite3, sqlcmd, redis-cli) in a
 // pseudo-terminal. See src-tauri/src/db/terminal.rs.
