@@ -1326,6 +1326,44 @@ export async function txStatus(sessionId) {
   return inv('tx_status', { sessionId })
 }
 
+// ── Terminal ──────────────────────────────────────────────────────────────────
+// The connection's own CLI (psql, mysql, sqlite3, sqlcmd, redis-cli) in a
+// pseudo-terminal. See src-tauri/src/db/terminal.rs.
+
+/**
+ * @typedef {object} TerminalClient
+ * @property {string} name `psql`, `mysql`, `mariadb`... '' when the engine has no shell
+ * @property {string | null} path the binary that runs; null when not installed
+ * @property {string | null} version its `--version` line
+ * @property {string} hint how to install it, or why the engine has none
+ */
+
+/**
+ * @param {Record<string, unknown>} config the saved connection, `type` set to its engine
+ * @returns {Promise<TerminalClient>}
+ */
+export async function terminalClient(config) {
+  return inv('terminal_client', { config })
+}
+
+/**
+ * Start the client. Its bytes travel over the returned WebSocket URL, not IPC:
+ * binary frames both ways, text frames for control (`{"resize":[c,r]}` in,
+ * `{"exit":code}` out).
+ * @param {Record<string, unknown>} config
+ * @param {number} cols
+ * @param {number} rows
+ * @returns {Promise<{ id: string, url: string }>}
+ */
+export async function terminalOpen(config, cols, rows) {
+  return inv('terminal_open', { config, cols, rows })
+}
+
+/** @param {string} id */
+export async function terminalClose(id) {
+  return inv('terminal_close', { id })
+}
+
 // ── Data import ───────────────────────────────────────────────────────────────
 
 /**
