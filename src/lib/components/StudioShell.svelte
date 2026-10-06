@@ -8025,6 +8025,7 @@ let rowSearch = $state('')
   onopenSchema={() => { if (aiMode) exitAiMode(); openSchemaTab() }}
   onopensecurity={() => { if (aiMode) exitAiMode(); openSecurityTab() }}
   onopenlogs={() => { if (aiMode) exitAiMode(); openLogsTab() }}
+  onopenterminal={() => { if (aiMode) exitAiMode(); openTerminalTab() }}
   onopeninsights={() => { if (aiMode) exitAiMode(); openInsightsTab() }}
   onopenadvisor={() => { if (aiMode) exitAiMode(); openAdvisorTab() }}
   onopenobjects={() => { if (aiMode) exitAiMode(); openObjectsTab() }}
