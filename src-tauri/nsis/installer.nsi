@@ -8,6 +8,10 @@
 ;      Pass /WIZARD on the command line to get the classic full wizard back.
 ;   2. .onInstSuccess launches the app after a fresh interactive install
 ;      (the wizard's "Run" checkbox is never shown in passive mode).
+;   3. An update the app applies as it quits (src-tauri/src/updates.rs) sets
+;      STROKE_UPDATE_ON_QUIT=1 in the environment the installer inherits.
+;      .onInit then runs it silently and .onInstSuccess skips the /R relaunch,
+;      because the person just closed the app.
 Unicode true
 ManifestDPIAware true
 ; Add in `dpiAwareness` `PerMonitorV2` to manifest for Windows 10 1607+ (note this should not affect lower versions since they should be able to ignore this and pick up `dpiAware` `true` set by `ManifestDPIAware true`)
@@ -76,6 +80,7 @@ ${StrLoc}
 
 Var PassiveMode
 Var UpdateMode
+Var QuitUpdate
 Var NoShortcutMode
 Var WixMode
 Var OldMainBinaryName
@@ -501,6 +506,15 @@ Function .onInit
     StrCpy $UpdateMode 1
   ${EndIf}
 
+  ; Stroke: an update applied as the app quits shows nothing and does not
+  ; reopen the app. Only honoured together with /UPDATE.
+  ReadEnvStr $R8 STROKE_UPDATE_ON_QUIT
+  ${If} $R8 == "1"
+  ${AndIf} $UpdateMode = 1
+    StrCpy $QuitUpdate 1
+    SetSilent silent
+  ${EndIf}
+
   !if "${DISPLAYLANGUAGESELECTOR}" == "true"
     !insertmacro MUI_LANGDLL_DISPLAY
   !endif
@@ -754,6 +768,10 @@ SectionEnd
 Function .onInstSuccess
   ; Check for `/R` flag only in silent and passive installers because
   ; GUI installer has a toggle for the user to (re)start the app
+  ; Stroke: an update applied on quit never relaunches the app.
+  ${If} $QuitUpdate = 1
+    Return
+  ${EndIf}
   ${If} $PassiveMode = 1
   ${OrIf} ${Silent}
     ${GetOptions} $CMDLINE "/R" $R0
