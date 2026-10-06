@@ -78,6 +78,12 @@ const NEXT = /** @type {Record<string, string[]>} */ ({
  *   verb: string,
  *   rowTable: string | null,
  *   routine: string | null,
+ *   phrases: Phrase[],
+ *   eager: boolean,
+ *   columnsOf: string | null,
+ *   names: 'schemas' | null,
+ *   typesFor: string[] | null,
+ *   lower: boolean,
  * }} SqlCompletionContext
  * `predicateColumn`: the column just written in a condition, a space behind
  * it (`WHERE price |`): an operator comes next. `comparedColumn`: the column
@@ -90,6 +96,11 @@ const NEXT = /** @type {Record<string, string[]>} */ ({
  * CAST(x AS ...), x::...); `next` holds keywords that can stand there too.
  * `ddl`: only keywords go here, `next` first (a new column's name, the action
  * after ALTER TABLE name, a column's constraints); no names are offered.
+ * `phrases`: what the grammar says follows (followAt), offered first;
+ * `eager`: the list opens after a space by itself, the next word being
+ * certain. `columnsOf`: only this table's columns are names here. `names`:
+ * schemas, not tables, are the names here. `lower`: the statement is written
+ * in lower case (its first keyword is), so phrases are too.
  * @typedef {{ name: string, qualifier: string | null }} ColumnRef
  */
 
@@ -159,6 +170,19 @@ function scan(text) {
     i++
   }
   return { tokens, open: null, head }
+}
+
+/** The last head scanned, and its tokens: never changed by readers. */
+let headText = /** @type {string | null} */ (null)
+let headScan = /** @type {ReturnType<typeof scan>} */ (null)
+
+/** scan() for the text before the word being typed, kept for the next keystroke. @param {string} text */
+function scanHead(text) {
+  if (text !== headText) {
+    headText = text
+    headScan = scan(text)
+  }
+  return headScan
 }
 
 /** @param {Token | undefined} tok */
@@ -429,6 +453,362 @@ function triggerHead(tokens) {
   return null
 }
 
+// ── Grammar: what can come next ──────────────────────────────────────────────
+// DataGrip-style: at each point of a statement, the words that grammatically
+// follow (whole phrases: IF EXISTS, ORDER BY, DO UPDATE SET), and which names.
+// Read from the statement's own tokens, mostly its last few, so it costs next
+// to nothing per keystroke.
+
+/**
+ * A phrase offered as one item. `only`: the engine families that have it.
+ * `reopen`: taking it writes a space and opens the list again (names follow).
+ * @typedef {{ text: string, only: string[] | null, reopen: boolean }} Phrase
+ * @typedef {{
+ *   phrases: Phrase[],
+ *   eager: boolean,
+ *   only: boolean,
+ *   kind?: SqlCompletionContext['kind'],
+ *   columnsOf?: string,
+ *   names?: 'schemas',
+ *   next?: string[],
+ *   typesFor?: string[],
+ * }} Follow
+ * `eager`: what comes next is certain, so the list opens after a space by
+ * itself. `only`: the phrases are all that fits here (no names, no other
+ * clauses). `columnsOf`: only this table's columns are names here. `next`:
+ * the single words that stand alone here, replacing the clause's. `typesFor`:
+ * the engines where a bare type goes here (SQL Server's ALTER COLUMN c int).
+ */
+
+/** @param {string} text @param {string} [only] space-separated families @param {boolean} [reopen] @returns {Phrase} */
+const P = (text, only, reopen = false) => ({ text, only: only ? only.split(' ') : null, reopen })
+
+const PG_LIKE = 'postgres duckdb'
+const DROP_OBJECTS = [
+  P('TABLE', '', true), P('VIEW', '', true), P('MATERIALIZED VIEW', 'postgres clickhouse', true), P('INDEX', '', true),
+  P('SCHEMA', 'postgres mysql mssql duckdb', true), P('SEQUENCE', 'postgres mssql duckdb', true),
+  P('FUNCTION', 'postgres mysql mssql duckdb'), P('PROCEDURE', 'postgres mysql mssql'), P('TRIGGER', 'postgres mysql sqlite mssql'),
+  P('TYPE', 'postgres mssql duckdb'), P('DATABASE', 'postgres mysql mssql clickhouse'), P('EXTENSION', 'postgres'),
+]
+const CREATE_OBJECTS = [
+  P('TABLE'), P('OR REPLACE', 'postgres mysql clickhouse duckdb'), P('OR ALTER', 'mssql'), P('VIEW'),
+  P('MATERIALIZED VIEW', 'postgres clickhouse'), P('INDEX'), P('UNIQUE INDEX', 'postgres mysql sqlite mssql duckdb'),
+  P('SCHEMA', 'postgres mysql mssql duckdb'), P('SEQUENCE', 'postgres mssql duckdb'), P('TYPE', 'postgres mssql duckdb'),
+  P('TRIGGER', 'postgres mysql sqlite mssql'), P('FUNCTION', 'postgres mysql mssql duckdb'), P('PROCEDURE', 'postgres mysql mssql'),
+  P('EXTENSION', 'postgres'), P('DATABASE', 'postgres mysql mssql clickhouse'), P('TEMPORARY TABLE', 'postgres mysql sqlite duckdb'),
+]
+const OR_REPLACE_OBJECTS = [P('VIEW'), P('FUNCTION', PG_LIKE), P('PROCEDURE', 'postgres mssql'), P('TRIGGER', 'postgres mssql'), P('MATERIALIZED VIEW', 'clickhouse')]
+const ALTER_OBJECTS = [
+  P('TABLE', '', true), P('VIEW', 'postgres mysql mssql'), P('INDEX', 'postgres mssql'), P('SEQUENCE', 'postgres mssql duckdb'),
+  P('SCHEMA', 'postgres mssql'), P('TYPE', 'postgres'), P('FUNCTION', 'postgres mysql mssql'), P('DATABASE', 'postgres mysql mssql'),
+  P('MATERIALIZED VIEW', 'postgres'),
+]
+/** ALTER TABLE name |: the actions, as their usual phrases. */
+const ALTER_TABLE_ACTIONS = [
+  P('ADD COLUMN', 'postgres mysql sqlite duckdb clickhouse'), P('DROP COLUMN', '', true), P('ALTER COLUMN', 'postgres mssql duckdb', true),
+  P('RENAME COLUMN', 'postgres mysql sqlite duckdb clickhouse', true), P('RENAME TO', 'postgres mysql sqlite duckdb clickhouse'),
+  P('ADD CONSTRAINT', 'postgres mysql mssql duckdb'), P('DROP CONSTRAINT', 'postgres mysql mssql duckdb'),
+  P('ADD PRIMARY KEY', 'postgres mysql mssql duckdb'), P('ADD FOREIGN KEY', 'postgres mysql mssql'),
+  P('MODIFY COLUMN', 'mysql clickhouse', true), P('CHANGE COLUMN', 'mysql', true), P('OWNER TO', 'postgres'),
+  P('SET SCHEMA', 'postgres duckdb'), P('ENABLE TRIGGER', 'postgres mssql'), P('DISABLE TRIGGER', 'postgres mssql'),
+]
+/** ALTER TABLE t ALTER COLUMN c |. */
+const ALTER_COLUMN_ACTIONS = [
+  P('TYPE', 'postgres duckdb'), P('SET DATA TYPE', 'postgres duckdb'), P('SET DEFAULT', 'postgres mysql duckdb'),
+  P('DROP DEFAULT', 'postgres mysql duckdb'), P('SET NOT NULL', 'postgres duckdb'), P('DROP NOT NULL', 'postgres duckdb'),
+]
+/** The engines with `IF [NOT] EXISTS` on a given statement. */
+const IF_EXISTS_DROP = '' // every engine
+const IF_NOT_EXISTS = {
+  TABLE: 'postgres mysql sqlite duckdb clickhouse', INDEX: 'postgres sqlite duckdb', SCHEMA: 'postgres mysql duckdb',
+  SEQUENCE: 'postgres duckdb', VIEW: 'sqlite duckdb clickhouse', 'MATERIALIZED VIEW': 'postgres clickhouse',
+  DATABASE: 'mysql clickhouse', EXTENSION: 'postgres', TRIGGER: 'mysql sqlite', TYPE: '',
+}
+/** What a DROP / CREATE / ALTER object word can be, MATERIALIZED VIEW read as one. */
+const OBJECT_WORDS = new Set(['TABLE', 'VIEW', 'INDEX', 'SCHEMA', 'SEQUENCE', 'FUNCTION', 'PROCEDURE', 'TRIGGER', 'TYPE', 'DATABASE', 'EXTENSION'])
+/** Objects whose names the hints list: tables (and views, the sidebar lists both), schemas. */
+const TABLE_LIKE = new Set(['TABLE', 'VIEW', 'MATERIALIZED VIEW'])
+
+/**
+ * The object word at `i` (MATERIALIZED VIEW as one), and where it ends.
+ * @param {Token[]} tokens @param {number} i
+ */
+function objectAt(tokens, i) {
+  if (kw(tokens[i]) === 'MATERIALIZED' && kw(tokens[i + 1]) === 'VIEW') return { type: 'MATERIALIZED VIEW', end: i + 2 }
+  const k = kw(tokens[i])
+  return OBJECT_WORDS.has(k) ? { type: k, end: i + 1 } : null
+}
+
+/** @param {Phrase[]} phrases @param {Partial<Follow>} [rest] @returns {Follow} */
+const forced = (phrases, rest = {}) => ({ phrases, eager: true, only: true, ...rest })
+/** @param {Phrase[]} phrases @param {Partial<Follow>} [rest] @returns {Follow} */
+const offered = (phrases, rest = {}) => ({ phrases, eager: false, only: false, ...rest })
+/** The last part of the name ending at `end` (exclusive). @param {Token[]} tokens @param {number} end */
+const lastName = (tokens, end) => /** @type {Token} */ (tokens[end - 1]).v
+
+/** DROP …  @param {Token[]} tokens @returns {Follow | null} */
+function dropFollow(tokens) {
+  const n = tokens.length
+  if (n === 1) return forced(DROP_OBJECTS)
+  const o = objectAt(tokens, 1)
+  if (!o) return null
+  const names = TABLE_LIKE.has(o.type) ? 'tables' : o.type === 'SCHEMA' ? 'schemas' : null
+  let i = o.end
+  if (o.type === 'INDEX' && kw(tokens[i]) === 'CONCURRENTLY') i++
+  if (n === i) {
+    const extra = o.type === 'INDEX' && i === o.end ? [P('CONCURRENTLY', 'postgres')] : []
+    return offered([P('IF EXISTS', IF_EXISTS_DROP, true), ...extra], names === 'schemas' ? { kind: 'ddl', names } : names ? { kind: 'tables' } : { kind: 'ddl' })
+  }
+  if (kw(tokens[i]) === 'IF') {
+    if (n === i + 1) return forced([P('EXISTS', '', true)])
+    if (kw(tokens[i + 1]) !== 'EXISTS') return null
+    i += 2
+    if (n === i) {
+      return names === 'schemas' ? { phrases: [], eager: true, only: false, kind: 'ddl', names }
+        : names ? { phrases: [], eager: true, only: false, kind: 'tables' } : null
+    }
+  }
+  // DROP TABLE a, b CASCADE: after the names.
+  let j = i
+  for (;;) {
+    const e = nameEnd(tokens, j)
+    if (e < 0) return null
+    if (e === n) break
+    if (punct(tokens[e]) !== ',') return null
+    j = e + 1
+    if (j === n) return names === 'tables' ? { phrases: [], eager: true, only: false, kind: 'tables' } : null
+  }
+  const after = o.type === 'INDEX' ? [P('ON', 'mysql mssql', true)] : []
+  return offered([P('CASCADE', 'postgres duckdb'), P('RESTRICT', 'postgres duckdb'), ...after], { kind: 'ddl' })
+}
+
+/** CREATE …  @param {Token[]} tokens @returns {Follow | null} */
+function createFollow(tokens) {
+  const n = tokens.length
+  if (n === 1) return forced(CREATE_OBJECTS)
+  let i = 1
+  if (kw(tokens[i]) === 'OR') {
+    if (n === 2) return forced([P('REPLACE', 'postgres mysql clickhouse duckdb'), P('ALTER', 'mssql')])
+    i = 3
+    if (n === 3) return forced(OR_REPLACE_OBJECTS)
+  }
+  while (['TEMP', 'TEMPORARY', 'UNLOGGED', 'GLOBAL', 'LOCAL'].includes(kw(tokens[i]))) {
+    i++
+    if (n === i) return forced([P('TABLE'), P('VIEW', 'postgres sqlite duckdb'), P('SEQUENCE', 'postgres')])
+  }
+  if (kw(tokens[i]) === 'UNIQUE') {
+    i++
+    if (n === i) return forced([P('INDEX')])
+  }
+  if (kw(tokens[i]) === 'MATERIALIZED' && n === i + 1) return forced([P('VIEW')])
+  const o = objectAt(tokens, i)
+  if (!o) return null
+  i = o.end
+  if (o.type === 'INDEX' && kw(tokens[i]) === 'CONCURRENTLY') i++
+  const ifNot = /** @type {Record<string, string>} */ (IF_NOT_EXISTS)[o.type]
+  if (n === i) {
+    // A new name goes here: no existing names, just the words that can come first.
+    const words = ifNot !== undefined ? [P('IF NOT EXISTS', ifNot)] : []
+    if (o.type === 'INDEX') words.push(P('CONCURRENTLY', 'postgres'), P('ON', 'postgres duckdb', true))
+    if (o.type === 'SCHEMA') words.push(P('AUTHORIZATION', 'postgres mssql'))
+    return { phrases: words, eager: false, only: true }
+  }
+  if (kw(tokens[i]) === 'IF') {
+    if (n === i + 1) return forced([P('NOT EXISTS')])
+    if (kw(tokens[i + 1]) === 'NOT' && n === i + 2) return forced([P('EXISTS')])
+    if (kw(tokens[i + 1]) === 'NOT' && kw(tokens[i + 2]) === 'EXISTS') {
+      i += 3
+      if (n === i) return { phrases: [], eager: false, only: true }
+    }
+  }
+  const e = nameEnd(tokens, i)
+  if (e !== n) return null
+  if (o.type === 'INDEX') return forced([P('ON', '', true)])
+  if (o.type === 'VIEW' || o.type === 'MATERIALIZED VIEW') return forced([P('AS')])
+  return null
+}
+
+/**
+ * ALTER …  (ALTER TABLE's own positions mostly come from alterTable(); this
+ * adds the phrases and which table's columns go where.)
+ * @param {Token[]} tokens @returns {Follow | null}
+ */
+function alterFollow(tokens) {
+  const n = tokens.length
+  if (n === 1) return forced(ALTER_OBJECTS)
+  if (kw(tokens[1]) !== 'TABLE') return null
+  let i = 2
+  if (n === 2) return offered([P('IF EXISTS', 'postgres mssql duckdb', true), P('ONLY', 'postgres', true)], { kind: 'tables' })
+  if (kw(tokens[i]) === 'IF') {
+    if (n === 3) return forced([P('EXISTS', '', true)])
+    if (kw(tokens[3]) !== 'EXISTS') return null
+    i = 4
+    if (n === 4) return { phrases: [P('ONLY', 'postgres', true)], eager: true, only: false, kind: 'tables' }
+  }
+  if (kw(tokens[i]) === 'ONLY') {
+    i++
+    if (n === i) return { phrases: [], eager: true, only: false, kind: 'tables' }
+  }
+  const end = nameEnd(tokens, i)
+  if (end < 0) return null
+  const table = lastName(tokens, end)
+  const act = listEntry(tokens, end)
+  // Bare ADD / DROP / ALTER / RENAME take a column straight after; OWNER,
+  // MODIFY and CHANGE only come as their phrases.
+  if (!act.length) return { phrases: ALTER_TABLE_ACTIONS, eager: true, only: false, next: ['ADD', 'DROP', 'ALTER', 'RENAME', 'SET'] }
+  const verb = kw(act[0])
+  const said = kw(act[1])
+  const cols = { kind: /** @type {const} */ ('columns'), columnsOf: table }
+  if (verb === 'ADD') {
+    if (act.length === 1) return offered([P('COLUMN'), P('CONSTRAINT'), P('PRIMARY KEY'), P('FOREIGN KEY'), P('UNIQUE'), P('CHECK')])
+    if (said === 'COLUMN' && act.length === 2) return offered([P('IF NOT EXISTS', 'postgres duckdb')])
+    if (said === 'COLUMN' && kw(act[2]) === 'IF') {
+      if (act.length === 3) return forced([P('NOT EXISTS')])
+      if (act.length === 4 && kw(act[3]) === 'NOT') return forced([P('EXISTS')])
+    }
+    return null
+  }
+  if (verb === 'DROP') {
+    if (act.length === 1) return { phrases: [P('COLUMN', '', true), P('CONSTRAINT'), P('IF EXISTS', 'postgres duckdb', true)], eager: true, only: false, ...cols }
+    let k = said === 'COLUMN' ? 2 : 1
+    if (kw(act[k]) === 'IF') {
+      if (act.length === k + 1) return forced([P('EXISTS', '', true)])
+      if (kw(act[k + 1]) !== 'EXISTS') return null
+      k += 2
+    }
+    if (said === 'CONSTRAINT') return act.length === 2 ? offered([P('IF EXISTS', 'postgres mssql duckdb')], { kind: 'ddl' }) : null
+    if (act.length === k) return { phrases: k === 2 && said === 'COLUMN' ? [P('IF EXISTS', 'postgres mssql duckdb', true)] : [], eager: true, only: false, ...cols }
+    if (act.length === k + 1 && isName(act[k])) return offered([P('CASCADE', 'postgres duckdb'), P('RESTRICT', 'postgres duckdb')], { kind: 'ddl' })
+    return null
+  }
+  if (verb === 'RENAME') {
+    if (act.length === 1) return { phrases: [P('TO'), P('COLUMN', '', true), P('CONSTRAINT', 'postgres')], eager: true, only: false, ...cols }
+    if (said === 'TO') return act.length === 2 ? { phrases: [], eager: false, only: true } : null
+    const k = said === 'COLUMN' ? 2 : 1
+    if (act.length === k) return { phrases: [], eager: true, only: false, ...cols }
+    if (act.length === k + 1 && isName(act[k])) return forced([P('TO')])
+    if (act.length === k + 2 && kw(act[k + 1]) === 'TO') return { phrases: [], eager: false, only: true }
+    return null
+  }
+  if (verb === 'ALTER' || verb === 'MODIFY' || verb === 'CHANGE') {
+    if (act.length === 1) return { phrases: [P('COLUMN', '', true)], eager: true, only: false, ...cols }
+    const k = said === 'COLUMN' ? 2 : 1
+    if (act.length === k) return { phrases: [], eager: true, only: false, ...cols }
+    if (verb !== 'ALTER') return null
+    if (act.length === k + 1) return { phrases: ALTER_COLUMN_ACTIONS, eager: true, only: false, next: ['TYPE'], typesFor: ['mssql'] }
+    const last = kw(act.at(-1))
+    const before = kw(act.at(-2))
+    if (act.length === k + 2 && last === 'SET') return forced([P('DEFAULT'), P('NOT NULL'), P('DATA TYPE')])
+    if (act.length === k + 2 && last === 'DROP') return forced([P('DEFAULT'), P('NOT NULL')])
+    if (last === 'NOT' && (before === 'SET' || before === 'DROP')) return forced([P('NULL')])
+    if (last === 'DATA' && before === 'SET') return forced([P('TYPE')])
+    return null
+  }
+  if (verb === 'OWNER' && act.length === 1) return forced([P('TO')])
+  if (verb === 'SET' && act.length === 1) return offered([P('SCHEMA', 'postgres duckdb'), P('TABLESPACE', 'postgres'), P('LOGGED', 'postgres'), P('UNLOGGED', 'postgres')], { kind: 'ddl' })
+  return null
+}
+
+/**
+ * The table an INSERT writes to, by its last name part, or null.
+ * @param {Token[]} tokens
+ */
+function insertTable(tokens) {
+  const into = tokens.findIndex((t) => kw(t) === 'INTO')
+  if (into < 0) return null
+  const e = nameEnd(tokens, into + 1)
+  return e < 0 ? null : lastName(tokens, e)
+}
+
+/**
+ * Queries and DML, read from the last few tokens: the pairs (ORDER BY,
+ * IS NOT NULL, LEFT JOIN, ON CONFLICT DO …) and an INSERT's column list.
+ * @param {Token[]} tokens @param {string} clause @param {string} verb
+ * @returns {Follow | null}
+ */
+function queryFollow(tokens, clause, verb) {
+  const n = tokens.length
+  const last = kw(tokens[n - 1])
+  const prev = kw(tokens[n - 2])
+  if (n === 1 && verb === 'INSERT') return { phrases: [P('INTO', '', true), P('IGNORE INTO', 'mysql', true), P('OR IGNORE INTO', 'sqlite', true), P('OR REPLACE INTO', 'sqlite', true)], eager: true, only: true }
+  if (n === 1 && verb === 'DELETE') return forced([P('FROM', '', true)])
+  if (n === 1 && verb === 'TRUNCATE') return offered([P('TABLE', 'postgres mysql mssql duckdb clickhouse', true)], { kind: 'tables' })
+  if (n === 1 && verb === 'WITH') return offered([P('RECURSIVE', 'postgres mysql sqlite duckdb')], { kind: 'ddl' })
+  if (verb === 'UPDATE') {
+    // UPDATE [ONLY] t |
+    const at = kw(tokens[1]) === 'ONLY' ? 2 : 1
+    const e = nameEnd(tokens, at)
+    if (e === n || (e > 0 && e + 1 === n && isName(tokens[e]) && !CLAUSES.has(kw(tokens[e])))) return { phrases: [P('SET', '', true)], eager: true, only: false }
+    if (last === 'SET' && clause === 'SET') return { phrases: [], eager: true, only: false }
+  }
+  if (verb === 'INSERT') {
+    const table = insertTable(tokens)
+    const into = tokens.findIndex((t) => kw(t) === 'INTO')
+    const e = into < 0 ? -1 : nameEnd(tokens, into + 1)
+    // INSERT INTO t |
+    if (e === n) return { phrases: [P('VALUES'), P('SELECT'), P('DEFAULT VALUES', 'postgres sqlite mssql duckdb')], eager: true, only: false }
+    // INSERT INTO t (a, |: only t's columns.
+    if (e > 0 && punct(tokens[e]) === '(' && openParen(tokens, n) === e && (punct(tokens[n - 1]) === '(' || punct(tokens[n - 1]) === ',') && table) {
+      return { phrases: [], eager: true, only: false, kind: 'columns', columnsOf: table }
+    }
+    // INSERT INTO t (a, b) |
+    if (e > 0 && punct(tokens[n - 1]) === ')' && openParen(tokens, n - 1) === e) return { phrases: [P('VALUES'), P('SELECT')], eager: true, only: false }
+    // … VALUES (…) ON |
+    if (last === 'ON' && tokens.some((t) => kw(t) === 'VALUES')) {
+      return forced([P('CONFLICT', 'postgres sqlite duckdb'), P('DUPLICATE KEY UPDATE', 'mysql', true)])
+    }
+    const conflict = tokens.findLastIndex((t) => kw(t) === 'CONFLICT')
+    if (conflict > 0 && kw(tokens[conflict - 1]) === 'ON') {
+      const doPhrases = [P('DO NOTHING'), P('DO UPDATE SET', '', true)]
+      if (n === conflict + 1) return forced([...doPhrases, P('ON CONSTRAINT', 'postgres')])
+      if (punct(tokens[n - 1]) === ')' && openParen(tokens, n - 1) === conflict + 1) return forced(doPhrases)
+      if (last === 'DO') return forced([P('NOTHING'), P('UPDATE SET', '', true)])
+      if (last === 'UPDATE' && prev === 'DO') return forced([P('SET', '', true)])
+      if (last === 'SET' && prev === 'UPDATE' && table) return { phrases: [], eager: true, only: false, kind: 'columns', columnsOf: table }
+    }
+    if (last === 'DUPLICATE' && prev === 'ON') return forced([P('KEY UPDATE', '', true)])
+    if (last === 'KEY' && prev === 'DUPLICATE') return forced([P('UPDATE', '', true)])
+    if (last === 'UPDATE' && prev === 'KEY' && table) return { phrases: [], eager: true, only: false, kind: 'columns', columnsOf: table }
+  }
+  if (last === 'ORDER' || last === 'GROUP' || last === 'PARTITION') return forced([P('BY', '', true)])
+  if (last === 'IS') return forced([P('NULL'), P('NOT NULL'), P('DISTINCT FROM'), P('TRUE'), P('FALSE')])
+  if (last === 'NOT' && prev === 'IS') return forced([P('NULL'), P('DISTINCT FROM'), P('TRUE'), P('FALSE')])
+  if (last === 'DISTINCT' && (prev === 'IS' || (prev === 'NOT' && kw(tokens[n - 3]) === 'IS'))) return forced([P('FROM')])
+  if (last === 'NULLS') return forced([P('FIRST'), P('LAST')])
+  if (last === 'UNION' || last === 'EXCEPT' || last === 'INTERSECT') return forced([P('ALL'), P('SELECT'), P('DISTINCT')])
+  if (last === 'NOT' && PREDICATE_CLAUSES.has(clause)) {
+    return offered([P('NULL'), P('IN'), P('LIKE'), P('ILIKE', 'postgres duckdb'), P('BETWEEN'), P('EXISTS')])
+  }
+  if (last === 'DISTINCT' && prev === 'SELECT') return offered([P('ON', 'postgres duckdb')])
+  if (clause === 'FROM' || clause === 'JOIN' || clause === 'ON' || clause === 'WHERE') {
+    if (last === 'LEFT' || last === 'RIGHT' || last === 'FULL') return forced([P('JOIN', '', true), P('OUTER JOIN', '', true)])
+    if (last === 'INNER' || last === 'CROSS' || last === 'NATURAL' || (last === 'OUTER' && ['LEFT', 'RIGHT', 'FULL'].includes(prev))) return forced([P('JOIN', '', true)])
+  }
+  if (clause === 'JOIN') {
+    // JOIN t [AS] [alias] |
+    const join = tokens.findLastIndex((t) => kw(t) === 'JOIN')
+    let e = nameEnd(tokens, join + 1)
+    if (e > 0 && kw(tokens[e]) === 'AS') e++
+    if (e > 0 && e < n && isName(tokens[e]) && !OPEN_WORDS.has(kw(tokens[e]))) e++
+    if (e === n) return offered([P('ON'), P('USING')], { kind: 'ddl' })
+  }
+  if (last === 'CASE') return offered([P('WHEN')])
+  return null
+}
+
+/**
+ * What can come next at the end of `tokens`, by the statement's grammar.
+ * @param {Token[]} tokens @param {string} clause @param {string} verb
+ * @returns {Follow | null}
+ */
+function followAt(tokens, clause, verb) {
+  if (!tokens.length) return null
+  if (verb === 'DROP') return dropFollow(tokens)
+  if (verb === 'CREATE') return createFollow(tokens)
+  if (verb === 'ALTER') return alterFollow(tokens)
+  return queryFollow(tokens, clause, verb)
+}
+
 /**
  * The name of the CREATE FUNCTION being written, or null.
  * @param {Token[]} tokens
@@ -445,9 +825,14 @@ function routineName(tokens) {
  * @returns {SqlCompletionContext | null} null where nothing should be offered
  */
 export function sqlCompletionContext(text) {
-  const scanned = scan(text)
+  // Typing a word changes only that word: the text before it scans the same,
+  // so a long statement is tokenized once per word, not once per keystroke.
+  const word = /[A-Za-z_][\w$]*$/.exec(text)?.[0] ?? ''
+  const wordy = word !== '' && !/[\w$]/.test(text[text.length - word.length - 1] ?? '')
+  const scanned = wordy ? scanHead(text.slice(0, text.length - word.length)) : scan(text)
   if (!scanned) return null
-  const { tokens, open } = scanned
+  const { open } = scanned
+  let tokens = scanned.tokens
   // A body's statements end in `;`, which clears the tokens: the head the
   // statement opened with (CREATE TRIGGER ... ON t) is kept apart.
   const head = scanned.head ?? tokens
@@ -460,12 +845,17 @@ export function sqlCompletionContext(text) {
     quote = open.quote
     from = open.start + 1
     prefix = text.slice(from)
+  } else if (wordy) {
+    // `1.e`: the word is the tail of a number.
+    if (tokens.at(-1)?.t === 'num' && text[text.length - word.length - 1] === '.') return null
+    prefix = word
+    from = text.length - word.length
   } else {
     const m = /[\w$]+$/.exec(text)
     if (m && tokens.at(-1)?.t === 'word') {
       prefix = m[0]
       from = text.length - prefix.length
-      tokens.pop()
+      tokens = tokens.slice(0, -1)
     } else if (m) {
       // A number being typed, e.g. `= 4`.
       return null
@@ -521,6 +911,13 @@ export function sqlCompletionContext(text) {
   } else {
     kind = 'columns'
   }
+  // The grammar's view of what follows: phrases, and sometimes a narrower kind.
+  /** @type {Follow | null} */
+  const follow = quote || kind === 'qualified' ? null : followAt(tokens, clause, verb)
+  if (follow?.kind) kind = follow.kind
+  if (follow?.next) nextHere = follow.next
+  if (follow?.only) { kind = 'ddl'; nextHere = [] }
+
   // A quote only ever holds a name.
   if (quote && (kind === 'keywords' || kind === 'statement' || kind === 'types' || kind === 'ddl')) kind = 'columns'
 
@@ -572,5 +969,11 @@ export function sqlCompletionContext(text) {
     verb,
     rowTable: triggerTable(head),
     routine: routineName(head),
+    phrases: follow?.phrases ?? [],
+    eager: follow?.eager ?? false,
+    columnsOf: follow?.columnsOf ?? null,
+    names: follow?.names ?? null,
+    typesFor: follow?.typesFor ?? null,
+    lower: tokens[0]?.t === 'word' && /[a-z]/.test(tokens[0].v) && tokens[0].v === tokens[0].v.toLowerCase(),
   }
 }

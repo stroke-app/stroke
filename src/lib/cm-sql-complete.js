@@ -10,6 +10,11 @@
  * sql-complete-context.js reads the caret position with a tokenizer, so names
  * complete inside quotes and nothing pops up inside strings or comments.
  *
+ * The grammar layer (followAt in sql-complete-context.js) adds what follows
+ * at each point as whole phrases: DROP TABLE | offers IF EXISTS, IF | offers
+ * EXISTS, ALTER TABLE t | its actions, ORDER | BY. Where the next word is
+ * certain the list opens after a space by itself.
+ *
  * Cost per keystroke: the candidates for a position are built once (analysis,
  * tiers, one object per option) and kept while only the word under the caret
  * changes; each keystroke then just filters and sorts them.
@@ -108,6 +113,25 @@ function applyName(view, c, from, to) {
   })
   if (c._reopen) setTimeout(() => startCompletion(view))
 }
+
+/**
+ * Take a phrase that names follow (IF EXISTS, DROP COLUMN, LEFT JOIN): write
+ * it with a space after it and open the list again at the names.
+ * @param {EditorView} view @param {Completion} c @param {number} from @param {number} to
+ */
+function applyPhrase(view, c, from, to) {
+  const spaced = view.state.sliceDoc(to, to + 1) === ' '
+  view.dispatch({
+    changes: { from, to, insert: spaced ? c.label : `${c.label} ` },
+    selection: { anchor: from + c.label.length + 1 },
+    annotations: pickedCompletion.of(c),
+    userEvent: 'input.complete',
+  })
+  setTimeout(() => startCompletion(view))
+}
+
+/** A phrase written in lower case when that is how the statement is typed. @param {string} prefix @param {boolean} statementLower */
+const phraseLower = (prefix, statementLower) => (prefix ? /[a-z]/.test(prefix) && prefix === prefix.toLowerCase() : statementLower)
 
 // ── Templates ────────────────────────────────────────────────────────────────
 
@@ -386,6 +410,21 @@ function buildCandidates(ctx, H, S, dialect, statement, rowTable) {
     }
   }
 
+  // What the grammar says comes next, first: whole phrases, in the case being typed.
+  const family = sqlFamily(dialect)
+  const lower = phraseLower(ctx.prefix, ctx.lower)
+  /** @type {Set<string>} */
+  const phraseWords = new Set()
+  /** First words of the phrases (IF of IF EXISTS): not offered alone unless they stand alone here. */
+  const phraseStarts = new Set()
+  for (const ph of ctx.phrases) {
+    if (ph.only && !ph.only.includes(family)) continue
+    const label = lower ? ph.text.toLowerCase() : ph.text
+    phraseWords.add(ph.text)
+    if (ph.text.includes(' ')) phraseStarts.add(ph.text.slice(0, ph.text.indexOf(' ')))
+    add(ph.reopen ? { label, type: 'keyword', apply: applyPhrase } : { label, type: 'keyword' }, NEXT_BOOST)
+  }
+
   const nextFirst = ctx.kind === 'keywords' || ctx.kind === 'statement' || ctx.kind === 'ddl' || ctx.kind === 'types' || ctx.afterExpr
   // DDL's own words (COLUMN, RENAME, TEMP ...) have no place in a query's clauses.
   const ddlWords = ctx.kind === 'statement' || ctx.kind === 'ddl' || ctx.kind === 'types'
@@ -397,6 +436,8 @@ function buildCandidates(ctx, H, S, dialect, statement, rowTable) {
   function keywords(tier, only, besideFunctions = false) {
     const next = new Set(nextFirst ? ctx.next : [])
     for (const k of S.keywords) {
+      if (phraseWords.has(k.label)) continue
+      if (phraseStarts.has(k.label) && !next.has(k.label) && !ctx.next.includes(k.label)) continue
       if (!ddlWords && DDL_KEYWORD_SET.has(k.label) && !next.has(k.label)) continue
       if (besideFunctions && S.functionNames.has(k.label.toLowerCase())) continue
       if (next.has(k.label)) { add(k, NEXT_BOOST); continue }
@@ -405,7 +446,15 @@ function buildCandidates(ctx, H, S, dialect, statement, rowTable) {
     }
   }
 
-  if (ctx.kind === 'qualified') {
+  if (ctx.columnsOf && ctx.kind !== 'qualified') {
+    // ALTER TABLE t DROP COLUMN |, INSERT INTO t (|: that table's columns only.
+    for (const c of wantColumnsOf(ctx.columnsOf.toLowerCase())) columnOption(c, 0)
+    if (typed && !ctx.quote) keywords(3, null)
+  } else if (ctx.names === 'schemas' && !ctx.quote) {
+    // DROP SCHEMA |: the schemas themselves.
+    for (const sc of H.schemas) add(/** @type {Completion} */ (name({ label: sc, type: 'schema', detail: 'schema' })), TIER[0])
+    if (typed) keywords(3, null)
+  } else if (ctx.kind === 'qualified') {
     // After a dot: schema → its tables, table or alias → its columns.
     const left = /** @type {string} */ (ctx.qualifier).toLowerCase()
     if (H.schemas.some((s) => s.toLowerCase() === left)) {
@@ -427,14 +476,18 @@ function buildCandidates(ctx, H, S, dialect, statement, rowTable) {
     for (const s of H.schemas) schemaOption(s, 1)
     if (typed) keywords(2, null) // `FROM (SEL` → SELECT
   } else if (ctx.kind === 'keywords') {
-    // Past the table name: the clause keywords.
-    keywords(0, typed ? null : TABLE_CTX_KWS)
-    for (const t of H.tables) tableOption(t, 7)
+    // Past the table name: the clause keywords. Opened by itself (the next
+    // word is certain), only what follows.
+    keywords(0, typed ? null : ctx.eager ? new Set() : TABLE_CTX_KWS)
+    if (typed || !ctx.eager) for (const t of H.tables) tableOption(t, 7)
   } else if (ctx.kind === 'types') {
     // A column definition, ALTER ... TYPE, CAST(x AS ...), x::...
     keywords(0, new Set(ctx.next))
-    for (const t of typedInCapitals(ctx.prefix) ? S.typesUpper : S.types) add(t.c, TIER[t.common ? 0 : 1])
-    if (sqlFamily(dialect) === 'postgres') for (const e of H.enumTypes) add(e, TIER[1])
+    // ALTER COLUMN c |: a bare type only on SQL Server; elsewhere TYPE comes first.
+    if (!ctx.typesFor || ctx.typesFor.includes(family)) {
+      for (const t of typedInCapitals(ctx.prefix) ? S.typesUpper : S.types) add(t.c, TIER[t.common ? 0 : 1])
+      if (family === 'postgres') for (const e of H.enumTypes) add(e, TIER[1])
+    }
   } else if (ctx.kind === 'ddl') {
     // Only the statement's own words go here: a new name is not one to pick.
     keywords(3, typed ? null : new Set(ctx.next))
@@ -508,7 +561,7 @@ export function sqlCompletionSource(getHints, getDialect) {
     // snippet field stays quiet until something is typed over it (`*` and
     // `100` are often kept as they are). Ctrl+Space always opens.
     const afterCast = ctx.kind === 'types' && state.sliceDoc(pos - 2, pos) === '::'
-    if (!context.explicit && !ctx.prefix && !ctx.quote && ctx.kind !== 'qualified' && !afterCast) return null
+    if (!context.explicit && !ctx.prefix && !ctx.quote && ctx.kind !== 'qualified' && !afterCast && !ctx.eager) return null
 
     const dialect = getDialect() || 'postgres'
     const S = staticTemplates(sqlFamily(dialect))
@@ -516,7 +569,8 @@ export function sqlCompletionSource(getHints, getDialect) {
     // What the candidates depend on: the statement minus the word being typed,
     // and the shape of the position. Same key → same candidates.
     const key = [
-      ctx.kind, ctx.quote, ctx.qualifier, ctx.afterExpr, ctx.prefix !== '', typedInCapitals(ctx.prefix), dialect,
+      ctx.kind, ctx.quote, ctx.qualifier, ctx.afterExpr, ctx.prefix !== '', typedInCapitals(ctx.prefix),
+      phraseLower(ctx.prefix, ctx.lower), dialect,
       state.sliceDoc(start, wordFrom), state.sliceDoc(to, end),
     ].join('\u0001')
 
@@ -566,6 +620,8 @@ export function completionIsTypedOut(state, c) {
     if (n._quote || n._suffix || needsQuote(c.label, n._dialect ?? 'postgres')) return false
     return word === c.label
   }
+  // A one-word phrase typed in full (FROM after DELETE): Enter breaks the line.
+  if (c.apply === applyPhrase) return !c.label.includes(' ') && word.toLowerCase() === c.label.toLowerCase()
   if (c.apply) return false
   // A keyword typed in another case: taking it would only change the case.
   return word.toLowerCase() === c.label.toLowerCase()

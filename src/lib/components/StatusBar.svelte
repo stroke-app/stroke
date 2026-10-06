@@ -40,6 +40,8 @@
     activeConnectionId = '',
     mcpRunning = false,
     hasUpdate = false,
+    /** The update is downloaded and waiting: the badge offers the restart. */
+    updateReady = false,
     onopenmcp = /** @type {() => void} */ (() => {}),
     onconnect = /** @type {() => void} */ (() => {}),
     onswitchtodb = /** @type {(db: string) => void} */ ((_db) => {}),
@@ -890,10 +892,10 @@
         type="button"
         class="flex items-center gap-1 rounded-md px-2 h-6 text-ui-2xs font-medium text-warning transition-colors hover:bg-muted/50 hover:text-warning"
         onclick={oncheckupdate}
-        title="Update available"
+        title={updateReady ? 'Update downloaded. It installs when you quit, or restart now.' : 'Update available'}
       >
-        <Icon name="arrow-up-circle" class="size-3 shrink-0" />
-        <span class="@max-[840px]/sb:hidden">Update</span>
+        <Icon name={updateReady ? 'refresh-cw' : 'arrow-up-circle'} class="size-3 shrink-0" />
+        <span class="@max-[840px]/sb:hidden">{updateReady ? 'Restart to update' : 'Update'}</span>
       </button>
       {@render sep()}
     {/if}

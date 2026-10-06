@@ -1326,6 +1326,63 @@ export async function txStatus(sessionId) {
   return inv('tx_status', { sessionId })
 }
 
+/**
+ * A read for a console write's undo copy (sql-undo.js), outside any
+ * transaction. Not logged as a query of the user's, and stoppable through the
+ * run's own `queryId`.
+ * @param {string} sql @param {string} [queryId]
+ */
+export async function inspectSql(sql, queryId) {
+  return inv('pg_execute_sql', { sql, queryId: queryId ?? null })
+}
+
+/**
+ * txExecute for the undo copy's transaction: the same, without a query-log
+ * entry for each of its reads. The run itself is recorded in history as usual.
+ * @param {string} sessionId @param {string} sql
+ */
+export async function txExecuteQuiet(sessionId, sql) {
+  return inv('tx_execute', { sessionId, sql })
+}
+
+// ── Terminal ──────────────────────────────────────────────────────────────────
+// The connection's own CLI (psql, mysql, sqlite3, sqlcmd, redis-cli) in a
+// pseudo-terminal. See src-tauri/src/db/terminal.rs.
+
+/**
+ * @typedef {object} TerminalClient
+ * @property {string} name `psql`, `mysql`, `mariadb`... '' when the engine has no shell
+ * @property {string | null} path the binary that runs; null when not installed
+ * @property {string | null} version its `--version` line
+ * @property {string} hint how to install it, or why the engine has none
+ */
+
+/**
+ * @param {Record<string, unknown>} config the saved connection, `type` set to its engine
+ * @returns {Promise<TerminalClient>}
+ */
+export async function terminalClient(config) {
+  return inv('terminal_client', { config })
+}
+
+/**
+ * Start the client. Its bytes travel over the returned WebSocket URL, not IPC:
+ * binary frames both ways, text frames for control (`{"resize":[c,r]}` in,
+ * `{"exit":code}` out).
+ * @param {Record<string, unknown>} config
+ * @param {number} cols
+ * @param {number} rows
+ * @returns {Promise<{ id: string, url: string }>}
+ */
+export async function terminalOpen(config, cols, rows) {
+  return inv('terminal_open', { config, cols, rows })
+}
+
+/** @param {string} id */
+export async function terminalClose(id) {
+  return inv('terminal_close', { id })
+}
+
 // ── Data import ───────────────────────────────────────────────────────────────
 
 /**
@@ -1488,4 +1545,44 @@ async function blobToBase64(blob) {
     binary += String.fromCharCode.apply(null, /** @type {any} */ (bytes.subarray(i, i + 0x8000)))
   }
   return btoa(binary)
+}
+
+// ── Updates ──────────────────────────────────────────────────────────────────
+// Rust stages the download on disk and installs it as the app quits where the
+// install can finish on its own (src-tauri/src/updates.rs).
+
+/**
+ * @typedef {{ version: string, currentVersion: string, notes: string, date: number | null, staged: boolean, applyOnQuit: boolean }} UpdateInfo
+ * @typedef {{ event: 'started', data: { contentLength: number | null } } | { event: 'progress', data: { downloaded: number } } | { event: 'finished' }} UpdateDownloadEvent
+ */
+
+/**
+ * Ask the release feed for a newer build. Returns the downloaded one when an
+ * update is already waiting, so a second check never downloads twice.
+ * @returns {Promise<UpdateInfo | null>}
+ */
+export async function updateCheck() {
+  return inv('update_check')
+}
+
+/**
+ * Download the update from the last check and stage it for install.
+ * @param {(event: UpdateDownloadEvent) => void} onEvent
+ * @returns {Promise<UpdateInfo>}
+ */
+export async function updateDownload(onEvent) {
+  return inv('update_download', { onEvent: new Channel(onEvent) })
+}
+
+/**
+ * The downloaded update waiting to install, if any.
+ * @returns {Promise<UpdateInfo | null>}
+ */
+export async function updateStatus() {
+  return inv('update_status')
+}
+
+/** Install the downloaded update now and relaunch. Does not return on success. */
+export async function updateRestart() {
+  return inv('update_restart')
 }

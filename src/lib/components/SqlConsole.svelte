@@ -125,6 +125,12 @@
     /** Called when user clicks "Fix with AI" - parent opens sidebar and sends the message */
     /** @param {{ error: string, sql: string }} detail */
     onfixwithai = /** @type {((detail: { error: string, sql: string }) => void) | undefined} */ (undefined),
+    /**
+     * Revert a run from its statement's lens (sql-undo.js). Resolves whether
+     * the revert ran, so the lens drops its button.
+     * @type {((undoId: string) => Promise<boolean>) | undefined}
+     */
+    onrevertrun = undefined,
     onprorequired = /** @type {() => void} */ (() => {}),
     /** The result lives in the backend's result store and `rows` is a sparse
      *  view of it (stored-result-view.js): the grid runs windowed, sorting
@@ -156,7 +162,7 @@
     onaskai = undefined,
   } = $props();
 
-  /** @type {{ focus: () => void, markRunning: (ranStatement?: string | null) => void, markExecuted: (ranStatement?: string | null, run?: { ms?: number | null, rows?: number | null }) => void, markOutcomes: (outcomes: Array<{ sql: string, sent?: string, error: string | null, position: number | null, ms?: number | null, rows?: number | null, affected?: number | null }>) => void, clearRunMarks: () => void, getStatementAtCursor: () => string, getSelectionText: () => string } | null} */
+  /** @type {{ focus: () => void, markRunning: (ranStatement?: string | null) => void, markExecuted: (ranStatement?: string | null, run?: { ms?: number | null, rows?: number | null }) => void, markOutcomes: (outcomes: Array<{ sql: string, sent?: string, error: string | null, position: number | null, ms?: number | null, rows?: number | null, affected?: number | null }>) => void, clearRunMarks: () => void, markReverted: (undoId: string) => void, replaceInFailed: (name: string, replacement: string) => boolean, getStatementAtCursor: () => string, getSelectionText: () => string } | null} */
   let sqlEditorRef = $state(null)
 
   /** Mod+R from outside the editor: the selection, else the statement at the cursor. */
@@ -676,6 +682,25 @@
   let saveDialogOpen = $state(false);
   let saveQueryName = $state('');
   let savingQuery = $state(false);
+
+  /** @param {string} undoId */
+  async function revertFromLens(undoId) {
+    if (await onrevertrun?.(undoId)) sqlEditorRef?.markReverted?.(undoId)
+  }
+
+  /**
+   * "Did you mean" in the error console: put the name in the failed statement.
+   * The editor refuses once that statement has been edited since the run, and
+   * then the name goes to the clipboard instead of nowhere.
+   * @param {string} name @param {string} replacement
+   */
+  async function applySuggestion(name, replacement) {
+    if (sqlEditorRef?.replaceInFailed?.(name, replacement)) return
+    try {
+      await navigator.clipboard.writeText(replacement)
+      toast.info(`Copied ${replacement}`, { description: 'The statement changed since it ran, so it was not edited.' })
+    } catch { /* clipboard unavailable - no-op */ }
+  }
 
   function fixWithAi() {
     const failedSql = activeSet?.error ? activeSet.sql : sql
@@ -1200,6 +1225,7 @@
       onmodj={toggleOutput}
       onmodshiftb={() => { toggleHistory(); onmodshiftb?.() }}
       onlens={onStatementAction}
+      onrevert={onrevertrun ? (id) => void revertFromLens(id) : undefined}
       onactionsready={(actions) => {
         formatSql = actions.format;
       }}
@@ -1441,22 +1467,17 @@
                 position={failedStatement.position}
                 queryMs={currentDisplay.queryMs}
                 dialect={engine}
+                hints={schemaHints}
                 copied={errorCopied}
                 oncopy={copyError}
                 onfixwithai={onfixwithai ? fixWithAi : undefined}
+                onsuggest={applySuggestion}
               >
                 {#if /statement timeout|canceling statement due to/i.test(shownError)}
-                  <p class="mt-2.5 text-ui-3xs leading-relaxed text-muted-foreground">
-                    The query timed out. If this table has large JSON/text columns, select just the
-                    columns you need instead of <code class="rounded bg-muted/60 px-1 py-px text-foreground/70">*</code>, or add a smaller
-                    <code class="rounded bg-muted/60 px-1 py-px text-foreground/70">LIMIT</code>.
-                  </p>
-                {:else if /relation "[^"]*" does not exist|column "[^"]*" does not exist/i.test(shownError)}
-                  <p class="mt-2.5 text-ui-3xs leading-relaxed text-muted-foreground">
-                    PostgreSQL folds unquoted names to lowercase, so a table like
-                    <code class="rounded bg-muted/60 px-1 py-px text-foreground/70">Products</code> only matches when quoted -
-                    <code class="rounded bg-muted/60 px-1 py-px text-foreground/70">SELECT * FROM "Products"</code>. Pick the table from
-                    autocomplete and it inserts the quoted form for you.
+                  <p class="text-ui-xs leading-relaxed text-muted-foreground">
+                    The query ran past the statement timeout. If the table has large JSON or text columns, select only
+                    the columns you need instead of <span class="font-mono text-foreground">*</span>, or add a smaller
+                    <span class="font-mono text-foreground">LIMIT</span>.
                   </p>
                 {/if}
               </SqlErrorConsole>

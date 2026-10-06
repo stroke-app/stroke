@@ -55,12 +55,14 @@
         : [],
   )
   const total = $derived(groups.reduce((n, g) => n + g.length, 0))
+  /** Keys that are a mark, not a letter: at keycap size a backtick is a speck. */
+  const MARKS = new Set(['`', '~', "'", '"', ',', '.', ';', ':'])
 </script>
 
 {#if total}
   <span class={cn('inline-flex items-center gap-1.5', wrap ? 'min-w-0 flex-wrap gap-y-1' : 'shrink-0', className)} {...rest}>
     {#each groups as group, g (g)}<span class={cn('inline-flex items-center gap-0.5', wrap ? 'min-w-0 flex-wrap gap-y-1' : 'shrink-0')}
-        >{#each group as cap, i (i)}<kbd data-size={size}>{cap}</kbd>{/each}</span
+        >{#each group as cap, i (i)}<kbd data-size={size} data-mark={MARKS.has(cap) || undefined}>{cap}</kbd>{/each}</span
       >{/each}
   </span>
 {/if}

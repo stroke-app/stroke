@@ -25,6 +25,7 @@ mod metrics;
 mod proc;
 mod providers;
 mod secrets;
+mod updates;
 mod web_search;
 
 use db::{ActiveConnection, DbState, TunnelState};
@@ -323,7 +324,9 @@ pub fn run() {
         .manage(omniroute::OmniRouteState::new())
         .manage(db::live::LiveState::default())
         .manage(db::tx::TxState::default())
+        .manage(db::terminal::TerminalState::default())
         .manage(db::result_store::ResultStore::default())
+        .manage(updates::UpdateState::default())
         .setup(move |app| {
             // Load or generate a stable MCP token from the app data directory.
             app.state::<McpState>().init_token(app.handle());
@@ -335,6 +338,7 @@ pub fn run() {
                 db::connection::set_data_dir(dir);
             }
             db::connection::register_active_conn(std::sync::Arc::clone(&db_conn_for_setup));
+            updates::clear_stale(app.handle());
 
             let mut window_builder = tauri::WebviewWindowBuilder::new(
                 app,
@@ -494,6 +498,10 @@ pub fn run() {
             commands::open_new_window,
             commands::reveal_window,
             commands::restart_app,
+            updates::update_check,
+            updates::update_download,
+            updates::update_status,
+            updates::update_restart,
             commands::toggle_devtools,
             commands::test_postgres_connection,
             commands::connect_postgres,
@@ -621,6 +629,9 @@ pub fn run() {
             db::tx::tx_commit,
             db::tx::tx_rollback,
             db::tx::tx_status,
+            db::terminal::terminal_client,
+            db::terminal::terminal_open,
+            db::terminal::terminal_close,
             commands::check_license_status,
             commands::activate_license,
             commands::deactivate_license,
@@ -642,11 +653,21 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
-        .run(|app, event| {
+        .run(|app, event| match event {
+            tauri::RunEvent::ExitRequested {
+                code: Some(tauri::RESTART_EXIT_CODE),
+                ..
+            } => updates::note_restart(app),
             // The last window closed, or the OS is shutting down. Reap the
             // OmniRoute proxy we spawned, or it survives every app quit.
-            if let tauri::RunEvent::Exit = event {
+            tauri::RunEvent::Exit => {
                 app.state::<omniroute::OmniRouteState>().kill_now();
+                // And every terminal tab's client, which would otherwise keep its
+                // server connection (and any open transaction) after the app.
+                app.state::<db::terminal::TerminalState>().kill_all();
+                // Last: on Windows a successful install ends the process here.
+                updates::apply_on_quit(app);
             }
+            _ => {}
         });
 }

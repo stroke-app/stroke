@@ -1166,7 +1166,7 @@ pub async fn connect(
 
 /// Establish an SSH tunnel if `config.ssh` is set, return a direct config pointing
 /// at the local forwarded port. The tunnel's lifetime must outlive the connection.
-async fn resolve_pg_ssh(config: PgConfig) -> Result<(PgConfig, Option<SshTunnel>), String> {
+pub(crate) async fn resolve_pg_ssh(config: PgConfig) -> Result<(PgConfig, Option<SshTunnel>), String> {
     if let Some(ref ssh_cfg) = config.ssh {
         let tunnel = SshTunnel::establish(ssh_cfg, &config.host, config.port).await?;
         let local_port = tunnel.local_port;
@@ -1182,6 +1182,8 @@ async fn resolve_pg_ssh(config: PgConfig) -> Result<(PgConfig, Option<SshTunnel>
 
 // ── SQLite connect / test ─────────────────────────────────────────────────────
 
+pub(crate) const NO_SQLITE_FILE: &str = "This SQLite connection has no database file. Choose one (or create a new one) in the connection's settings: without a file, SQLite keeps the data in a temporary file it deletes on disconnect, so nothing created would be kept.";
+
 fn sqlite_url(path: &str) -> String {
     if path == ":memory:" {
         "sqlite::memory:".to_string()
@@ -1191,10 +1193,21 @@ fn sqlite_url(path: &str) -> String {
 }
 
 pub(crate) async fn open_sqlite(config: &SqliteConfig) -> Result<SqlitePool, String> {
+    // An empty filename is not an error to SQLite: it opens a private temporary
+    // database and deletes it when the connection closes. A saved connection
+    // with no file therefore connected fine, and every table made in it was
+    // gone after the next disconnect.
+    if config.file_path.trim().is_empty() {
+        return Err(NO_SQLITE_FILE.into());
+    }
     let opts: SqliteConnectOptions = sqlite_url(&config.file_path)
         .parse()
         .map_err(|e| format!("SQLite connection failed: {e}"))?;
-    let opts = opts.log_slow_statements(LevelFilter::Debug, Duration::from_secs(5));
+    // A path to a file that does not exist yet is how a new database is made
+    // (the form's "New file" picks one); create it rather than refuse.
+    let opts = opts
+        .create_if_missing(true)
+        .log_slow_statements(LevelFilter::Debug, Duration::from_secs(5));
 
     SqlitePoolOptions::new()
         .max_connections(1)
@@ -1327,7 +1340,7 @@ pub async fn connect_mysql(
     Ok(())
 }
 
-async fn resolve_mysql_ssh(config: MysqlConfig) -> Result<(MysqlConfig, Option<SshTunnel>), String> {
+pub(crate) async fn resolve_mysql_ssh(config: MysqlConfig) -> Result<(MysqlConfig, Option<SshTunnel>), String> {
     if let Some(ref ssh_cfg) = config.ssh {
         let tunnel = SshTunnel::establish(ssh_cfg, &config.host, config.port).await?;
         let local_port = tunnel.local_port;
@@ -1417,8 +1430,14 @@ pub async fn connect_redis(state: State<'_, DbState>, config: RedisConfig) -> Re
 /// Open a DuckDB connection on a blocking thread (the driver is synchronous).
 pub(crate) async fn open_duckdb(config: &DuckdbConfig) -> Result<DuckdbHandle, String> {
     let path = config.file_path.clone();
+    // Same trap as SQLite's: an empty path opened an in-memory database, so a
+    // "Local DuckDB" saved without a file lost everything on disconnect.
+    // In-memory is `:memory:`, chosen on purpose.
+    if path.trim().is_empty() {
+        return Err("This DuckDB connection has no database file. Choose one (or create a new one) in the connection's settings: without a file, everything created would be lost on disconnect.".into());
+    }
     tokio::task::spawn_blocking(move || {
-        let conn = if path == ":memory:" || path.is_empty() {
+        let conn = if path == ":memory:" {
             duckdb::Connection::open_in_memory()
         } else {
             duckdb::Connection::open(&path)

@@ -10,6 +10,7 @@
   import ThemeSwatch from "$lib/components/ThemeSwatch.svelte";
   import SearchableMenu from "$lib/components/SearchableMenu.svelte";
   import SelectMenu from "$lib/components/SelectMenu.svelte";
+  import EditorThemePicker from "$lib/components/EditorThemePicker.svelte";
   import { getThemeDefinition, themesByGroup } from "$lib/themes/registry.js";
   import { sidebarSideStore, setSidebarSide } from "$lib/stores/layout.js";
   import { pluginState, isPluginEnabled, setPluginEnabled } from "$lib/stores/plugins.js";
@@ -181,6 +182,11 @@
     if (!id || id === settings.jsonTheme) return;
     settings = updateSettings({ jsonTheme: /** @type {any} */ (id) });
   }
+  /** @param {import('$lib/themes/editor-themes.js').EditorThemeId} id */
+  function setEditorTheme(id) {
+    if (id === settings.editorTheme) return;
+    settings = updateSettings({ editorTheme: id });
+  }
   // Theme-aware CSS previews (mirror how each preset renders on the canvas grid).
   const tableStylePreview = {
     lines:   "background-image:linear-gradient(var(--border) 1px,transparent 1px),linear-gradient(90deg,var(--border) 1px,transparent 1px);background-size:7px 7px;",
@@ -332,6 +338,10 @@
     settings = updateSettings({ streamResults: settings.streamResults === false });
   }
 
+  function toggleSqlUndo() {
+    settings = updateSettings({ sqlUndo: settings.sqlUndo === false });
+  }
+
   // ── SQL editor ────────────────────────────────────────────────────────────
   // Read through the normalizer for the same reason as sqlFmt below.
   const sqlEd = $derived(/** @type {any} */ (normalizeSqlEditor(settings.sqlEditor)));
@@ -451,6 +461,9 @@
   }
   function toggleAgentWebAccess() {
     settings = updateSettings({ agentWebAccess: !settings.agentWebAccess });
+  }
+  function toggleAutoUpdate() {
+    settings = updateSettings({ autoUpdate: !settings.autoUpdate });
   }
   function toggleTelemetry() {
     settings = updateSettings({ telemetry: !settings.telemetry });
@@ -771,6 +784,15 @@
     )}
   {/if}
 
+  {#if show('Revert console writes', 'Keep a copy of the rows an UPDATE, DELETE or INSERT changes so it can be reverted')}
+    {@render switchRow(
+      'Revert console writes',
+      'Keep a copy of the rows a single UPDATE, DELETE or INSERT changes, so its Revert button can put them back. Postgres, MySQL, MariaDB and SQLite, up to 10,000 rows, in memory only.',
+      settings.sqlUndo !== false,
+      toggleSqlUndo,
+    )}
+  {/if}
+
   <!-- SQL formatting: nine options, so it opens COLLAPSED. Mounting nine popover
        selects just to show the Database tab is what made this pane feel slow, and
        these are settings you touch once. Search still reaches them - a query
@@ -1048,6 +1070,16 @@
     {/if}
   {/if}
 
+  {@render secLabel('Updates')}
+  {#if show('Download updates in the background', 'Install new versions automatically when you quit')}
+    {@render switchRow(
+      'Download updates in the background',
+      'New versions download while you work and install when you quit Stroke. Off asks before each download.',
+      settings.autoUpdate,
+      toggleAutoUpdate,
+    )}
+  {/if}
+
   <!-- Privacy lives in General, not Agent: this switch covers the whole app, and
        under Agent it read as if it were about the AI features alone. -->
   {@render secLabel('Privacy')}
@@ -1230,6 +1262,18 @@
           </span>
         {/snippet}
       </SelectMenu>
+    </div>
+  {/if}
+  {#if show('Editor theme', 'Colours for the SQL editor and every code view: One Dark, GitHub, Dracula, Monokai, Nord, Solarized, Tokyo Night, Catppuccin, Rose Pine, Gruvbox')}
+    <!-- Not a rowCls row: the gallery needs the full width under its label. -->
+    <div class="border-t border-border/25 py-3.5">
+      <p class="text-ui-sm font-medium text-foreground">Editor theme</p>
+      <p class="mt-0.5 text-ui-xs leading-relaxed text-muted-foreground">
+        Colours for the SQL editor and every other code view. Match app theme uses the app theme and the JSON colours above.
+      </p>
+      <div class="mt-3">
+        <EditorThemePicker value={settings.editorTheme ?? 'app'} onpick={setEditorTheme} />
+      </div>
     </div>
   {/if}
   {#if show('Row spacing', 'Vertical space each row of the data grid takes')}

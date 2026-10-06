@@ -3,7 +3,8 @@
   import { fade } from 'svelte/transition'
   import { revealApp, isRevealed } from '$lib/app-reveal.js'
   import { setReadOnly } from '$lib/stores/read-only.js'
-  import { isWriteSql, sqlRunEffects } from '$lib/sql-write.js'
+  import { isWriteSql, sqlRunEffects, stripSqlComments } from '$lib/sql-write.js'
+  import { parseWrite, runWithUndo, undoDialect, keepUndo, getUndo, dropUndo, revertSummary } from '$lib/sql-undo.js'
   import { bumpObjects } from '$lib/stores/sidebar-objects.svelte.js'
   import Logo from './Logo.svelte'
   import ConnectOverlay from './ConnectOverlay.svelte'
@@ -11,10 +12,12 @@
   import Boxes from '@lucide/svelte/icons/boxes'
   import FileCode2 from '@lucide/svelte/icons/file-code-2'
   import Terminal from '@lucide/svelte/icons/terminal'
+  import SquareTerminal from '@lucide/svelte/icons/square-terminal'
   import Sparkles from '@lucide/svelte/icons/sparkles'
   import LayoutTemplate from '@lucide/svelte/icons/layout-template'
   import { cn } from '$lib/utils.js'
   import Command from '@lucide/svelte/icons/command'
+  import Keyboard from '@lucide/svelte/icons/keyboard'
   import Code2 from '@lucide/svelte/icons/code-2'
   import ShieldCheck from '@lucide/svelte/icons/shield-check'
   import ScrollText from '@lucide/svelte/icons/scroll-text'
@@ -31,7 +34,7 @@
   import { createHotkey } from '@tanstack/svelte-hotkeys'
   import { IS_MAC } from '$lib/shortcuts.js'
   import { findSearchInput, isTypingTarget } from '$lib/focus-search.js'
-  import { appFkAutoExpandJson, cycleTheme, restorePreviousTheme, isCurrentThemeDark, loadSettings, appPaginationMode, appVimMode, appAutoSaveQueries, appStreamResults, appSqlEditor, increaseZoom, decreaseZoom, resetZoom } from '$lib/stores/settings.js'
+  import { appFkAutoExpandJson, cycleTheme, restorePreviousTheme, isCurrentThemeDark, loadSettings, appPaginationMode, appVimMode, appAutoSaveQueries, appStreamResults, appSqlUndo, appSqlEditor, increaseZoom, decreaseZoom, resetZoom } from '$lib/stores/settings.js'
   import { requireUnlock } from '$lib/stores/app-lock.js'
   import { isTextEntryTarget, setVimSubMode } from '$lib/vim/vim.js'
   import { normalizeColumn, columnType } from '$lib/column.js'
@@ -85,6 +88,7 @@
   import AboutDialog from './AboutDialog.svelte'
   import ReportIssueDialog from './ReportIssueDialog.svelte'
   import UpdateDialog from './UpdateDialog.svelte'
+  import SqlRevertDialog from './SqlRevertDialog.svelte'
   import StatusBar from './StatusBar.svelte'
   import QueryLogConsole from './QueryLogConsole.svelte'
   import DisconnectDialog from './DisconnectDialog.svelte'
@@ -149,6 +153,8 @@
     txStatus,
     txCommit,
     txRollback,
+    inspectSql,
+    txExecuteQuiet,
     executeDdl,
     updateTableCell,
     fetchCellValue,
@@ -172,6 +178,7 @@
     findOrmSchemaTab,
     createSecurityTab,
     createLogsTab,
+    createTerminalTab,
     createInsightsTab,
     createAdvisorTab,
     createGolfTab,
@@ -210,6 +217,7 @@
     findOrmTab,
     findSecurityTab,
     findLogsTab,
+    findTerminalTab,
     findBackupTab,
     findJsonTab,
     findChartsTab,
@@ -234,6 +242,7 @@
     MAX_PAGE_SIZE,
     fetchLimitFor,
     PAGE_SIZE_ALL,
+    pageWithInsertedRow,
     DEFAULT_PAGE_SIZE,
     saveDefaultPageSize,
     loadDefaultPageSize,
@@ -277,7 +286,7 @@
     engineFamily,
   } from '$lib/stores/connections.js'
   import { hasPro, FREE_CONNECTION_LIMIT } from '$lib/stores/license.js'
-  import { engineSupports } from '$lib/db-capabilities.js'
+  import { engineSupports, engineLabel } from '$lib/db-capabilities.js'
   import * as Dialog from '$lib/components/ui/dialog/index.js'
   import KeyRound from '@lucide/svelte/icons/key-round'
   import {
@@ -503,6 +512,8 @@
   /** @type {import('./UpdateDialog.svelte').default | null} */
   let updateDialog = $state(null)
   let statusBarHasUpdate = $state(false)
+  /** The update is downloaded: the status bar offers the restart. */
+  let statusBarUpdateReady = $state(false)
   let sidebarOpen = $state(loadLayout().navSidebarOpen)
   /** The nav sidebar was open when a visual page took the width; put it back on leaving. */
   let _sidebarBeforeErd = false
@@ -736,6 +747,28 @@
   let ormEverOpened = $state(false)
   let securityEverOpened = $state(false)
   let logsEverOpened = $state(false)
+  /** The terminal page lives exactly as long as its tab, and its client with it. */
+  const hasTerminalTab = $derived(tabs.some((t) => t.kind === 'terminal'))
+  /** The welcome page's tiles: six when connected (two rows of three), four otherwise and for Redis. */
+  const welcomeTileCount = $derived(connection && !isRedis ? 6 : 4)
+  /** Welcome tile icon colours: theme tokens, written out whole so Tailwind sees them. */
+  const TILE_TONE = {
+    info: 'text-info',
+    success: 'text-success',
+    primary: 'text-primary',
+    warning: 'text-warning',
+  }
+  /** The welcome header: which database this tab is on, and where it lives. */
+  const welcomeTitle = $derived(connection ? String(connection.database || connection.name || 'Database') : '')
+  const welcomeWhere = $derived.by(() => {
+    if (!connection) return ''
+    const c = /** @type {any} */ (connection)
+    let where = ''
+    if (c.filePath) where = c.filePath === ':memory:' ? 'in memory' : String(c.filePath).split(/[\\/]/).pop() ?? ''
+    else if (c.url) { try { where = new URL(String(c.url).replace(/^libsql:/, 'https:')).host } catch { where = '' } }
+    else if (c.host) where = `${c.host}${c.port ? `:${c.port}` : ''}`
+    return [engineLabel(c.type), where].filter(Boolean).join(' · ')
+  })
   let insightsEverOpened = $state(false)
   let advisorEverOpened = $state(false)
   let golfEverOpened = $state(false)
@@ -2617,6 +2650,27 @@ let rowSearch = $state('')
     reopenLastClosedTab()
   })
 
+  // The connection's own CLI in a terminal tab. Ctrl+` on every platform, as in
+  // VS Code (on macOS Cmd+` belongs to the window switcher), and like VS Code it
+  // toggles: pressed in the terminal, it goes back to the tab it came from.
+  /** The last tab shown before the terminal, however the terminal was reached. */
+  let tabBeforeTerminal = /** @type {string | null} */ (null)
+  $effect(() => {
+    const tab = activeTab
+    if (tab && tab.kind !== 'terminal') untrack(() => { tabBeforeTerminal = tab.id })
+  })
+  createHotkey('Control+`', (e) => {
+    if (!connection) return
+    e.preventDefault()
+    if (activeTab?.kind === 'terminal') {
+      const back = tabs.find((t) => t.id === tabBeforeTerminal) ?? tabs.find((t) => t.kind !== 'terminal')
+      if (back) void activateTab(back.id)
+      return
+    }
+    if (aiMode) exitAiMode()
+    openTerminalTab()
+  })
+
   // Tab-bar visibility toggle moved here so Mod+Shift+T can reopen closed tabs.
   createHotkey('Alt+Shift+T', (e) => {
     e.preventDefault()
@@ -3697,6 +3751,19 @@ let rowSearch = $state('')
 
   function openObjectsTab() {
     openSingletonTab({ find: findObjectsTab, create: createObjectsTab })
+  }
+
+  /** The connection's own CLI in a real terminal. Not pro-gated: it is the
+   *  engine's free client, Stroke only hosts it. */
+  function openTerminalTab() {
+    const existing = findTerminalTab(tabs)
+    if (existing) { void activateTab(existing.id); return }
+    saveActiveTabState()
+    dropWelcomeTabs()
+    const tab = createTerminalTab()
+    tabs = [...tabs, tab]
+    activeTabId = tab.id
+    clearTableEditor()
   }
 
   /** The Redis keyspace workspace. NOT pro-gated - it's the primary (and only)
@@ -6254,6 +6321,101 @@ let rowSearch = $state('')
     }
   }
 
+  /**
+   * A single UPDATE / DELETE / INSERT keeps an undo copy for the Revert button
+   * on its lens (sql-undo.js), on a transaction of its own. Null, or a
+   * fallback, means it runs the ordinary way; a fallback's note says why it
+   * has no copy.
+   * @param {string} sql @param {string} queryId
+   * @returns {Promise<import('$lib/sql-undo.js').UndoOutcome | null>}
+   */
+  async function captureWrite(sql, queryId) {
+    if (!get(appSqlUndo)) return null
+    const dialect = undoDialect(dbType)
+    const plan = dialect ? parseWrite(sql) : null
+    if (!dialect || !plan) return null
+    const session = `undo-${queryId}`
+    const out = await runWithUndo(plan, dialect, {
+      inspect: (q) => inspectSql(q, queryId),
+      begin: () => txBegin(session),
+      exec: (q) => txExecuteQuiet(session, q),
+      run: (q) => txExecuteQuiet(session, q),
+      commit: () => txCommit(session),
+      rollback: () => txRollback(session),
+    })
+    if ('undo' in out && out.undo) keepUndo({ ...out.undo, connection: connectionId })
+    return out
+  }
+
+  /** The revert waiting on its confirm dialog. @type {import('$lib/sql-undo.js').UndoRecord | null} */
+  let revertAsk = $state(null)
+  /** @type {((ran: boolean) => void) | null} */
+  let revertDone = null
+
+  /**
+   * Revert from a statement's lens: confirm, then run the undo copy's
+   * statements in one transaction. Resolves whether it ran, so the lens can
+   * drop its button.
+   * @param {string} id
+   * @returns {Promise<boolean>}
+   */
+  async function revertSqlRun(id) {
+    const u = getUndo(id)
+    if (!u) {
+      toast.error('Nothing to revert', { description: 'The copy of this run is gone. Stroke keeps the last 30, until it closes.' })
+      return false
+    }
+    if (u.connection !== connectionId) {
+      toast.error('Connect to the database this ran on to revert it.')
+      return false
+    }
+    // A table about to be dropped says what it holds now, read as the dialog opens.
+    let shown = u
+    if (u.precheck) {
+      try {
+        const n = Number((await inspectSql(u.precheck.sql)).rows?.[0]?.[0] ?? 0)
+        if (n > 0) shown = { ...u, warnings: [u.precheck.says.replace('{rows}', `${n.toLocaleString()} ${n === 1 ? 'row' : 'rows'}`), ...u.warnings] }
+      } catch { /* gone already: the drop will say so */ }
+    }
+    revertDone?.(false)
+    revertAsk = shown
+    return new Promise((resolve) => { revertDone = resolve })
+  }
+
+  /** @param {boolean} ran */
+  function settleRevert(ran) {
+    revertAsk = null
+    revertDone?.(ran)
+    revertDone = null
+  }
+
+  async function confirmRevert() {
+    const u = revertAsk
+    if (!u) return
+    const session = `revert-${u.id}`
+    try {
+      await txBegin(session)
+      let affected = 0
+      try {
+        for (const stmt of u.statements) affected += Number((await txExecute(session, stmt))?.rowCount ?? 0)
+        await txCommit(session)
+      } catch (e) {
+        await txRollback(session).catch(() => {})
+        throw e
+      }
+      dropUndo(u.id)
+      const sum = revertSummary(u, affected)
+      if (sum.ok) toast.success(sum.title)
+      else toast.warning(sum.title, { description: sum.description })
+      // Every chunk names the same table: the first says what changed.
+      void refreshAfterSql(sqlRunEffects(u.statements[0] ?? ''))
+      settleRevert(true)
+    } catch (e) {
+      toast.error('Revert failed', { description: String(e).replace(/^Error:\s*/, '').replace(/^Query failed:\s*/, ''), code: true })
+      settleRevert(false)
+    }
+  }
+
   async function runSqlOnTab(overrideSql) {
     track('sql_run')
     const sqlRan = typeof overrideSql === 'string' && overrideSql.trim() ? overrideSql : sqlText
@@ -6288,6 +6450,8 @@ let rowSearch = $state('')
     let ranError = ''
     let ranRowCount = 0
     let changedSql = ''
+    /** @type {import('$lib/sql-undo.js').UndoOutcome | null} */
+    let captured = null
     try {
       // A tab with an open transaction runs on that transaction's connection,
       // so its statements stay invisible until the user commits. Everything
@@ -6300,6 +6464,17 @@ let rowSearch = $state('')
           _txSqlByTab.set(runTabId, `${_txSqlByTab.get(runTabId) ?? ''}${sqlRan};\n`)
           setTxStatus(runTabId, await txStatus(txSession))
         }
+      } else if ((captured = await captureWrite(sqlRan, queryId)) && 'result' in captured) {
+        results = [captured.result]
+        const undo = captured.undo
+        if (stillHere()) {
+          sqlRunOutcomes = [{
+            sql: sqlRan, error: null, position: null,
+            ms: captured.result.queryMs ?? null, rows: null, affected: captured.result.rowCount ?? null,
+            undo: undo ? { id: undo.id, kind: undo.kind } : null, undoNote: captured.note,
+          }]
+        }
+        changedSql = sqlRan
       } else {
         // Rows stream in (executeSqlStream), into the backend's result store
         // when that setting is on, otherwise into this window.
@@ -6345,15 +6520,23 @@ let rowSearch = $state('')
         // Each statement's outcome, for the editor marks. A single failed
         // statement is the run failing; in a script the others still ran.
         if (stillHere()) {
+          const note = captured && 'fallback' in captured ? captured.note : ''
           sqlRunOutcomes = results.map((r) => {
-            const returned = Array.isArray(r.columns) && r.columns.length > 0
+            // A streamed statement's columns arrive through the channel, not in
+            // the reply: a SELECT read as a write said "6 affected".
+            const returned = (Array.isArray(r.columns) && r.columns.length > 0)
+              || (results.length === 1 && streamedCols.length > 0)
+              || !isWriteSql(r.sql || sqlRan)
+            // A schema change has no rows to count: "0 affected" after CREATE TABLE said nothing.
+            const schema = /^\s*(create|alter|drop|comment|grant|revoke|truncate|vacuum|analyze|refresh|reindex|cluster)\b/i.test(stripSqlComments(r.sql || sqlRan))
             return {
               sql: r.sql ?? '', error: r.error ?? null, position: r.errorPosition ?? null,
               // Time and size, for the note the editor writes after the statement.
               // rowCount is the rows a query returned, or the rows a write changed.
               ms: r.queryMs ?? r.query_ms ?? null,
               rows: returned ? (r.rowCount ?? r.rows?.length ?? null) : null,
-              affected: returned ? null : (r.rowCount ?? null),
+              affected: returned || schema ? null : (r.rowCount ?? null),
+              undo: null, undoNote: results.length === 1 ? note : '',
             }
           })
         }
@@ -7483,18 +7666,19 @@ let rowSearch = $state('')
       //   the table holds.
       // A sort that isn't the default can also place the row elsewhere. In each
       // of these the page is reloaded instead: one query, always correct.
+      // - Infinite scroll: the grid's rows are rebuilt from `_infiniteRows` on
+      //   the next load-more, so a row spliced into `rows` alone vanished there,
+      //   and adding it to both would shift the next page's offset by one and
+      //   skip a row.
       const pkIdx = (primaryKey ?? []).map((k) => columns.findIndex((c) => c.name === k))
       const rowComplete =
         Array.isArray(row) &&
         row.length === columns.length &&
         pkIdx.every((i) => i >= 0 && row[i] !== null && row[i] !== undefined)
-      const canSplice = !windowed && rowComplete && !rowSort
+      const canSplice = !windowed && !infiniteScroll && rowComplete && !rowSort
 
       if (!hasActiveFilters && page === 1 && canSplice) {
-        rows = [row, ...rows]
-        if (rows.length > effectivePageSize) {
-          rows = rows.slice(0, effectivePageSize)
-        }
+        rows = pageWithInsertedRow(rows, row, pageSize, effectivePageSize)
         total += 1
         saveActiveTabState()
         toast.success('Row inserted')
@@ -7503,10 +7687,15 @@ let rowSearch = $state('')
         // active filter is the database's call), so the count has to be redone.
         invalidateRowCount()
         await loadRows()
+        // In the table's own order a new row comes last. A paged view shows it
+        // on the last page; one that holds every row (All, windowed) can go
+        // straight to it, which is where the user is looking for it.
+        const atEnd = !hasActiveFilters && !rowSort && (pageSize === PAGE_SIZE_ALL || windowed)
         toast.success('Row inserted', {
           description: hasActiveFilters
             ? 'Refresh filters or go to page 1 if the row is not visible'
-            : undefined,
+            : atEnd ? 'It is at the end of the table' : undefined,
+          ...(atEnd ? { action: { label: 'Show', onClick: () => scrollTableBottom?.() } } : {}),
         })
       }
     } catch (err) {
@@ -7966,7 +8155,14 @@ let rowSearch = $state('')
   </Dialog.Portal>
 </Dialog.Root>
 
-<UpdateDialog bind:this={updateDialog} onupdatefound={() => (statusBarHasUpdate = true)} />
+<SqlRevertDialog undo={revertAsk} dialect={dbType} onconfirm={() => void confirmRevert()} oncancel={() => settleRevert(false)} />
+<UpdateDialog
+  bind:this={updateDialog}
+  onupdatefound={(state) => {
+    statusBarHasUpdate = true
+    statusBarUpdateReady = state === 'ready'
+  }}
+/>
 
 
 <CommandPalette
@@ -8002,6 +8198,7 @@ let rowSearch = $state('')
   onopenSchema={() => { if (aiMode) exitAiMode(); openSchemaTab() }}
   onopensecurity={() => { if (aiMode) exitAiMode(); openSecurityTab() }}
   onopenlogs={() => { if (aiMode) exitAiMode(); openLogsTab() }}
+  onopenterminal={() => { if (aiMode) exitAiMode(); openTerminalTab() }}
   onopeninsights={() => { if (aiMode) exitAiMode(); openInsightsTab() }}
   onopenadvisor={() => { if (aiMode) exitAiMode(); openAdvisorTab() }}
   onopenobjects={() => { if (aiMode) exitAiMode(); openObjectsTab() }}
@@ -8454,6 +8651,21 @@ let rowSearch = $state('')
         </div>
       {/if}
 
+      <!-- Terminal tab - mounted only while the tab exists: closing the tab
+           unmounts the page, which kills its psql (and frees the connection). -->
+      {#if hasTerminalTab}
+        <div
+          class={activeTab?.kind === 'terminal' ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}
+          inert={activeTab?.kind !== 'terminal' || undefined}
+        >
+          <svelte:boundary failed={tabError}>
+            {#await import('./TerminalPage.svelte')}<TabLoading />{:then { default: TerminalPage }}
+              <TerminalPage active={activeTab?.kind === 'terminal'} {connection} {dbType} getHints={buildSqlHints} />
+            {/await}
+          </svelte:boundary>
+        </div>
+      {/if}
+
       <!-- Instance Insights tab - mount once, keep alive -->
       {#if insightsEverOpened}
         <div
@@ -8857,6 +9069,7 @@ let rowSearch = $state('')
             onsaveinplace={handleSaveInPlace}
             savedQueryName={activeSavedQuery?.name ?? ''}
             onfixwithai={handleFixWithAi}
+            onrevertrun={revertSqlRun}
             onprorequired={() => (showProGate = true)}
           />
           {/await}
@@ -9289,40 +9502,32 @@ let rowSearch = $state('')
           <Kbd {keys} wrap />
         {/snippet}
 
-        <!-- The tile grid, back to the shape it had: icon pinned top, label and
-             chord anchored bottom, every tile the same size. What changed is the
-             count - five actions instead of sixteen - so the grid is a shortlist
-             you take in at a glance rather than a wall you have to read. -->
-        {#snippet row(/** @type {any} */ Icon, /** @type {string} */ label, /** @type {string} */ _desc, /** @type {() => void} */ onclick, /** @type {{ pro?: boolean, keys?: string[] }} */ opts = {})}
+        <!-- A tile: one line, icon and label. Compact on purpose: the two-line
+             version with a description and printed chord was most of the page,
+             and in the monospace font its descriptions truncated anyway. The
+             description and the shortcut are in the tooltip. -->
+        {#snippet row(/** @type {any} */ Icon, /** @type {string} */ label, /** @type {string} */ desc, /** @type {() => void} */ onclick, /** @type {{ pro?: boolean, keys?: string[], tone?: 'info' | 'success' | 'primary' | 'warning' }} */ opts = {})}
           {@const locked = !!opts.pro && !$hasPro}
+          {@const chordText = opts.keys ? ` (${opts.keys.join(isMac ? '' : '+')})` : ''}
           <button
             type="button"
             {onclick}
-            title={locked ? `${label} - ${_desc} - Pro` : `${label} - ${_desc}`}
+            title={locked ? `${label} - ${desc} - Pro` : `${label} - ${desc}${chordText}`}
             class={cn(
-              // min-h, not h: a label that wraps to two lines in a narrow pane grows
-              // the tile instead of spilling out of it.
               // The focus ring is the app's own: `outline-2 outline-ring`, the
               // same one every Button draws. These tiles are the first thing Tab
-              // reaches on a fresh tab and they drew nothing at all.
-              "group flex min-h-[5.25rem] min-w-0 flex-col justify-between gap-2 overflow-hidden rounded-xl border p-2.5 text-left transition-[background-color,border-color,transform] duration-150 ease-[var(--ease-out)] outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
+              // reaches on a fresh tab.
+              "group flex h-10 min-w-0 items-center gap-2.5 rounded-lg border px-3 text-left outline-none transition-[background-color,border-color,scale] duration-150 ease-[var(--ease-out)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
               locked
                 ? "cursor-not-allowed border-border/40 bg-card/30 hover:border-warning/30 hover:bg-warning/[0.04]"
-                : "border-border/60 bg-card/50 hover:border-border hover:bg-accent/40 active:scale-[0.98]",
+                : "border-border/60 bg-card/50 hover:border-border hover:bg-accent/40 active:scale-[0.96]",
             )}
           >
-            <span class="flex w-full items-start justify-between gap-1.5">
-              <Icon class="size-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground" />
-              {#if locked}<Lock class="size-3 shrink-0 text-warning" aria-label="Pro feature" />{/if}
-            </span>
-            <span class="flex w-full min-w-0 flex-col gap-1">
-              <span class="truncate text-ui-2xs font-medium leading-[1.25] text-foreground">{label}</span>
-              <!-- The chord row is always present, empty or not, so every label in a
-                   row lands on the same baseline whether or not it wrapped. -->
-              <span class="flex min-h-[1em] min-w-0 flex-wrap items-center">
-                {#if opts.keys && !locked}{@render chord(opts.keys)}{/if}
-              </span>
-            </span>
+            <!-- Each action its own colour, from the theme's tokens, as the
+                 sidebar tree colours its kinds. -->
+            <Icon class={cn('size-4 shrink-0', locked ? 'text-muted-foreground' : TILE_TONE[opts.tone ?? 'info'])} />
+            <span class="min-w-0 flex-1 truncate text-ui-xs font-medium text-foreground">{label}</span>
+            {#if locked}<Lock class="size-3 shrink-0 text-warning" aria-label="Pro feature" />{/if}
           </button>
         {/snippet}
 
@@ -9352,40 +9557,45 @@ let rowSearch = $state('')
                footer now all start where the first tile starts. -->
           <div class="mx-auto flex min-h-full w-full max-w-xl flex-col justify-center gap-7 px-6 py-10 sm:gap-9 sm:py-12">
 
-          <!-- Header -->
-          <div class="flex flex-col items-start gap-3">
-            <div class="flex size-11 items-center justify-center rounded-lg border border-border bg-muted">
-              <Logo class="size-6" />
+          <!-- Header: what this tab is on. A lone logo said nothing; the name of
+               the database and where it lives is the one thing worth knowing
+               on a fresh tab. -->
+          <div class="flex min-w-0 items-center gap-3">
+            <div class="flex size-10 shrink-0 items-center justify-center rounded-lg border border-border bg-muted">
+              <Logo class="size-5" />
             </div>
+            {#if connection}
+              <div class="flex min-w-0 flex-col gap-0.5">
+                <span class="truncate text-ui-lg font-semibold text-foreground">{welcomeTitle}</span>
+                <span class="truncate text-ui-2xs text-muted-foreground">{welcomeWhere}</span>
+              </div>
+            {/if}
           </div>
-          <!-- Five tiles, not sixteen. Sixteen equal-weight tiles asked you to read
-               the whole grid to find the one you wanted; these five are what a tab
-               opens for. The rest are not gone - they sit in the quieter "Jump to"
-               list below, and in ⌘K. -->
-          <!-- Column count comes from the space available, not a fixed number: the
-                 pane narrows whenever the sidebar is dragged wider. At full width
-                 the five tiles resolve to one clean row. -->
-            <!-- Four columns, not five. At five the tiles came out ~96px wide and
-                 "Extensions" truncated to "Extensio…" - a launcher whose labels do
-                 not fit is not a launcher. The fifth tile was Shortcuts, which the
-                 footer below already offers, so dropping it cost nothing and left
-                 an exact row. -->
-          <!-- The label sits in the same gap-2 column as the tiles, exactly as
-               "Jump to" does with its list. In the header it was a full section
-               gap away from the tiles, so it read as a caption for the logo. -->
+          <!-- A shortlist of what a fresh tab is for, not every page: the rest
+               sit in "Jump to" below and in the command palette. Six tiles make
+               two even rows of three (Redis, with four, makes one row of four);
+               five tiles in four columns used to truncate "Extensions". -->
           <div class="flex w-full flex-col gap-2">
-            <p class="text-ui-3xs font-medium uppercase tracking-[0.1em] text-muted-foreground">Quick access</p>
-            <div class="grid w-full grid-cols-2 gap-2 sm:grid-cols-4">
+            <p class="text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground">Quick access</p>
+            <div class={cn('grid w-full grid-cols-2 gap-2', welcomeTileCount === 6 ? 'sm:grid-cols-3' : 'sm:grid-cols-4')}>
             {#if isRedis}
-              {@render row(KeyRound, "Keyspace", "Browse keys and values", openRedisTab, {})}
+              {@render row(KeyRound, "Keyspace", "Browse keys and values", openRedisTab, { tone: 'info' })}
             {:else}
               <!-- ⌘T opens the command palette on its tables page; the SQL view
                    is ⌘⇧S. The tile printed a chord that went somewhere else. -->
-              {@render row(Terminal, "SQL", "Write and run a query", openSqlTab, { keys: [mod, shiftKey, "S"] })}
-              {@render row(Sparkles, "AI", "Ask about this database", openAiTab, { pro: true, keys: [mod, shiftKey, "E"] })}
+              {@render row(Terminal, "SQL", "Write and run a query", openSqlTab, { keys: [mod, shiftKey, "S"], tone: 'info' })}
             {/if}
-            {@render row(Blocks, "Extensions", "Add and manage extensions", openExtensionsTab, { pro: true, keys: [mod, shiftKey, "X"] })}
-            {@render row(Database, "Connect", "Switch or add a connection", () => (showConnectionModal = true), { keys: [mod, shiftKey, "C"] })}
+            {#if connection}
+              {@render row(SquareTerminal, "Terminal", isRedis ? "redis-cli, in a tab" : "psql, mysql or sqlite3", () => { if (aiMode) exitAiMode(); openTerminalTab() }, { keys: ["Ctrl", "`"], tone: 'success' })}
+            {/if}
+            {#if !isRedis}
+              {@render row(Sparkles, "AI", "Ask about this database", openAiTab, { pro: true, keys: [mod, shiftKey, "E"], tone: 'primary' })}
+            {/if}
+            {#if connection && !isRedis}
+              {@render row(Search, "Search", "Find in database: search every table at once", openSearchTab, { keys: [mod, shiftKey, "G"], tone: 'warning' })}
+            {/if}
+            {@render row(Blocks, "Extensions", "Add and manage extensions", openExtensionsTab, { pro: true, keys: [mod, shiftKey, "X"], tone: 'info' })}
+            {@render row(Database, "Connect", "Switch or add a connection", () => (showConnectionModal = true), { keys: [mod, shiftKey, "C"], tone: 'success' })}
             </div>
           </div>
 
@@ -9399,13 +9609,13 @@ let rowSearch = $state('')
                  weight. Same max width as the grid above, so both blocks sit on
                  one alignment edge. -->
             <div class="flex w-full flex-col gap-2">
-              <p class="text-ui-3xs font-medium uppercase tracking-[0.1em] text-muted-foreground">Jump to</p>
+              <p class="text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground">Jump to</p>
               <!-- Two columns of four. Three columns left an orphan row of two
                    hanging under a full one, which is the shape that reads as
                    "unfinished" no matter how the items are ordered. -->
               <div class="grid grid-cols-1 gap-x-3 gap-y-0.5 sm:grid-cols-2">
                 {@render jump(Plus, "New query editor", openNewSqlTab)}
-                {@render jump(Search, "Find in database", openSearchTab)}
+                {@render jump(ShieldCheck, "Advisor", openAdvisorTab)}
                 {@render jump(Boxes, "Database objects", openObjectsTab)}
                 {@render jump(GitBranch, "Schema explorer", openSchemaTab)}
                 {@render jump(Gauge, "Instance insights", openInsightsTab)}
@@ -9424,7 +9634,7 @@ let rowSearch = $state('')
               onclick={() => showShortcutsModal = true}
               class="flex items-center gap-1.5 rounded-md px-1 py-0.5 transition-colors hover:text-foreground"
             >
-              <Command class="size-3 shrink-0" />
+              {#if isMac}<Command class="size-3 shrink-0" />{:else}<Keyboard class="size-3.5 shrink-0" />{/if}
               <span>Shortcuts</span>
             </button>
             <span class="text-muted-foreground">·</span>
@@ -9525,6 +9735,7 @@ let rowSearch = $state('')
   onswitchconnection={handleSwitchDatabase}
   {mcpRunning}
   hasUpdate={statusBarHasUpdate}
+  updateReady={statusBarUpdateReady}
   onopenmcp={() => (showMcpPanel = true)}
   onconnect={() => (showConnectionModal = true)}
   onswitchtodb={switchToDb}

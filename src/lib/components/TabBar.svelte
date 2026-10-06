@@ -98,6 +98,7 @@
   /** @param {StudioTab} tab */
   function tabIcon(tab) {
     if (tab.kind === 'sql') return 'terminal'
+    if (tab.kind === 'terminal') return 'square-terminal'
     if (tab.kind === 'table') {
       const entityKind = /** @type {any} */ (tab.state)?.tableKind
       if (entityKind === 'view' || entityKind === 'materialized_view') return 'eye'

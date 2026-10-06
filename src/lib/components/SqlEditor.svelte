@@ -16,7 +16,7 @@
   import { onMount } from 'svelte'
   import { StateEffect, StateField, RangeSetBuilder, Prec, EditorState } from '@codemirror/state'
   import { EditorView, Decoration, ViewPlugin, GutterMarker, WidgetType, gutter, hoverTooltip, keymap, drawSelection, highlightWhitespace } from '@codemirror/view'
-  import { indentUnit, foldGutter } from '@codemirror/language'
+  import { indentUnit, foldable, foldEffect, unfoldEffect, foldedRanges, syntaxTree } from '@codemirror/language'
   import { insertNewlineKeepIndent } from '@codemirror/commands'
   import { snippet, completionStatus, hasNextSnippetField, hasPrevSnippetField } from '@codemirror/autocomplete'
   import { wantsTerminator } from '$lib/sql-terminator.js'
@@ -76,6 +76,12 @@
      * @type {((action: 'run' | 'newtab' | 'json' | 'variables' | 'ai', sql: string) => void) | undefined}
      */
     onlens = undefined,
+    /**
+     * Revert a run from its statement's lens: the id of the undo copy the run
+     * kept (sql-undo.js). Shown only on a statement whose last run kept one.
+     * @type {((undoId: string) => void) | undefined}
+     */
+    onrevert = undefined,
     /** @param {string} content */
     onchange = undefined,
     /** @type {(actions: { format: () => Promise<void> }) => void} */
@@ -169,16 +175,30 @@
    * and goes when that statement itself is edited: it is about the text that
    * ran. A running mark follows its statement until the run ends. `info` is
    * the note written after the statement (`478ms · 12 rows`).
-   * @typedef {{ from: number, to: number, kind: 'running' | 'ok' | 'failed', title: string, info?: string }} RunMark
+   * `undo` is the run's undo copy, while it can still be reverted.
+   * @typedef {{ from: number, to: number, kind: 'running' | 'ok' | 'failed', title: string, info?: string, undo?: { id: string, kind: string } | null }} RunMark
    * @typedef {{ from: number, to: number, stmtFrom: number, stmtTo: number, message: string }} RunError
    * @typedef {{ marks: RunMark[], errors: RunError[], at: number }} RunMarks
    */
   const NO_RUN_MARKS = /** @type {RunMarks} */ ({ marks: [], errors: [], at: 0 })
   const setRunMarks = StateEffect.define()
+  /** A run's revert went through: its mark loses the button and says so. */
+  const markRevertedEffect = StateEffect.define()
   const runMarksField = StateField.define({
     create: () => NO_RUN_MARKS,
     update(run, tr) {
-      for (const e of tr.effects) if (e.is(setRunMarks)) return /** @type {RunMarks} */ (e.value)
+      for (const e of tr.effects) {
+        if (e.is(setRunMarks)) return /** @type {RunMarks} */ (e.value)
+        if (e.is(markRevertedEffect)) {
+          const id = /** @type {string} */ (e.value)
+          run = {
+            ...run,
+            marks: run.marks.map((m) => (m.undo?.id === id
+              ? { ...m, undo: null, title: 'Reverted', info: m.info ? `${m.info} · reverted` : 'reverted' }
+              : m)),
+          }
+        }
+      }
       if (!tr.docChanged || (!run.marks.length && !run.errors.length)) return run
       const ch = tr.changes
       const marks = run.marks
@@ -402,46 +422,105 @@
     },
   )
 
-  const glyphGutter = gutter({
-    class: 'cm-sql-glyphs',
-    markers(view) {
-      /** @type {Map<number, GlyphMarker>} */
-      const byLine = new Map()
-      const run = view.state.field(runMarksField)
-      const doc = view.state.doc
-      for (const m of run.marks) {
-        byLine.set(doc.lineAt(Math.min(m.from, doc.length)).from, new GlyphMarker(m.kind, m.title, run.at))
-      }
-      for (const d of view.state.field(lintField).diags) {
-        const from = view.state.doc.lineAt(Math.min(d.start, view.state.doc.length)).from
-        const prev = byLine.get(from)
-        if (prev?.kind === 'error' || prev?.kind === 'running' || prev?.kind === 'failed') continue
-        byLine.set(from, new GlyphMarker(d.severity === 'error' ? 'error' : 'warning', d.message))
-      }
-      const builder = new RangeSetBuilder()
-      for (const from of [...byLine.keys()].sort((a, b) => a - b)) builder.add(from, from, /** @type {GlyphMarker} */ (byLine.get(from)))
-      return builder.finish()
-    },
-    initialSpacer: () => new GlyphMarker('ok', ''),
-  })
+  /**
+   * Run and lint marks by line start. Rebuilt only when either changes: the
+   * gutter asks once per visible line.
+   */
+  let glyphMemo = { run: /** @type {RunMarks | null} */ (null), lint: /** @type {unknown} */ (null), map: new Map() }
+  /** @param {import('@codemirror/state').EditorState} state @returns {Map<number, GlyphMarker>} */
+  function glyphsOf(state) {
+    const run = state.field(runMarksField)
+    const lint = state.field(lintField)
+    if (glyphMemo.run === run && glyphMemo.lint === lint) return glyphMemo.map
+    /** @type {Map<number, GlyphMarker>} */
+    const map = new Map()
+    const doc = state.doc
+    for (const m of run.marks) map.set(doc.lineAt(Math.min(m.from, doc.length)).from, new GlyphMarker(m.kind, m.title, run.at))
+    for (const d of lint.diags) {
+      const from = doc.lineAt(Math.min(d.start, doc.length)).from
+      const prev = map.get(from)
+      if (prev?.kind === 'error' || prev?.kind === 'running' || prev?.kind === 'failed') continue
+      map.set(from, new GlyphMarker(d.severity === 'error' ? 'error' : 'warning', d.message))
+    }
+    glyphMemo = { run, lint, map }
+    return map
+  }
+
+  /** The fold sitting on `line`, if it is folded. @param {import('@codemirror/state').EditorState} state @param {{ from: number, to: number }} line */
+  function foldOn(state, line) {
+    /** @type {{ from: number, to: number } | null} */
+    let found = null
+    foldedRanges(state).between(line.from, line.to, (from, to) => { if (!found || found.from > from) found = { from, to } })
+    return found
+  }
 
   /**
-   * Fold arrows on the mark's side of the numbers, not between the numbers and
-   * the gutter line where CodeEditor puts them: there they were a strip that
-   * stays empty until hovered and made the gap before the line two and a half
-   * times the gap after it. Here the line has the numbers g before it and the
-   * text g after it, arrows or not. High precedence, after the marks' gutter,
-   * so the columns run mark, arrow, number.
+   * One cell per line for the run mark and the fold arrow, instead of a column
+   * each: they took a third of the gutter between them, mostly blank. The mark
+   * shows; while the pointer is over the gutter a foldable line shows its arrow
+   * in its place, and a folded statement keeps its arrow (it is the only sign
+   * the text is there).
    */
-  const foldColumn = Prec.high(foldGutter({
-    markerDOM(open) {
+  class StatusMarker extends GutterMarker {
+    /** @param {GlyphMarker | null} glyph @param {'open' | 'closed' | null} fold */
+    constructor(glyph, fold) {
+      super()
+      this.glyph = glyph
+      this.fold = fold
+    }
+    /** @param {StatusMarker} other */
+    eq(other) {
+      if (other.fold !== this.fold) return false
+      if (!other.glyph || !this.glyph) return other.glyph === this.glyph
+      return other.glyph.eq(this.glyph)
+    }
+    toDOM() {
       const el = document.createElement('span')
-      el.className = 'cm-fold-marker'
-      el.title = open ? 'Fold' : 'Unfold'
-      el.append(hugeSvg(open ? ArrowDown01Icon : ArrowRight01Icon))
+      el.className = this.fold ? `sql-cell sql-cell-fold sql-cell-${this.fold}` : 'sql-cell'
+      if (this.glyph) el.append(this.glyph.toDOM())
+      if (this.fold) {
+        const arrow = document.createElement('span')
+        arrow.className = 'cm-fold-marker'
+        arrow.append(hugeSvg(this.fold === 'open' ? ArrowDown01Icon : ArrowRight01Icon))
+        el.append(arrow)
+        el.title = [this.glyph?.title, this.fold === 'open' ? 'Fold' : 'Unfold'].filter(Boolean).join('\n')
+      }
       return el
+    }
+  }
+
+  const statusGutter = gutter({
+    class: 'cm-sql-glyphs',
+    lineMarker(view, line) {
+      const glyph = glyphsOf(view.state).get(line.from) ?? null
+      /** @type {'open' | 'closed' | null} */
+      let fold = null
+      if (view.state.field(configField).fold) {
+        if (foldOn(view.state, line)) fold = 'closed'
+        else if (foldable(view.state, line.from, line.to)) fold = 'open'
+      }
+      return glyph || fold ? new StatusMarker(glyph, fold) : null
     },
-  }))
+    lineMarkerChange: (u) => u.docChanged || u.viewportChanged
+      || u.transactions.some((tr) => tr.effects.some((e) => e.is(setRunMarks) || e.is(markRevertedEffect) || e.is(foldEffect) || e.is(unfoldEffect) || e.is(setConfig)))
+      || u.startState.field(lintField) !== u.state.field(lintField)
+      || syntaxTree(u.startState) !== syntaxTree(u.state),
+    initialSpacer: () => new StatusMarker(new GlyphMarker('ok', ''), null),
+    domEventHandlers: {
+      click(view, line) {
+        if (!view.state.field(configField).fold) return false
+        const folded = foldOn(view.state, line)
+        if (folded) {
+          view.dispatch({ effects: unfoldEffect.of(folded) })
+          return true
+        }
+        const range = foldable(view.state, line.from, line.to)
+        if (!range) return false
+        view.dispatch({ effects: foldEffect.of(range) })
+        return true
+      },
+    },
+  })
 
   // ── Active statement: a faint band behind the one under the caret ──────
   // Only when the buffer holds more than one, so a single query stays clean.
@@ -452,7 +531,7 @@
   // Pushed in as an effect when they change, so the fields below recompute
   // without the editor being rebuilt.
 
-  /** @typedef {{ lens: 'off' | 'current' | 'all', highlight: boolean, variables: boolean, endHint: boolean }} EditorConfig */
+  /** @typedef {{ lens: 'off' | 'current' | 'all', highlight: boolean, variables: boolean, endHint: boolean, fold: boolean }} EditorConfig */
   const setConfig = StateEffect.define()
   /** @returns {EditorConfig} */
   function currentConfig() {
@@ -461,6 +540,8 @@
       highlight: $appSqlEditor.highlightBlock,
       variables: $appSqlEditor.variables,
       endHint: $appSqlEditor.endHint && !readOnly,
+      // Beside the numbers only: a fold arrow with no numbers is a mark nothing explains.
+      fold: $appSqlEditor.lineNumbers && $appSqlEditor.folding,
     }
   }
   const configField = StateField.define({
@@ -544,13 +625,15 @@
      * @param {boolean} [float] pinned over the right end of the statement's
      *   first line instead of a row of its own (the caret mode)
      */
-    constructor(vars, float = false) {
+    constructor(vars, float = false, undo = '') {
       super()
       this.vars = vars
       this.float = float
+      /** The statement's last run kept an undo copy: offer Revert. */
+      this.undo = undo
     }
     /** @param {LensWidget} other */
-    eq(other) { return other.vars === this.vars && other.float === this.float }
+    eq(other) { return other.vars === this.vars && other.float === this.float && other.undo === this.undo }
     /** @param {EditorView} view */
     toDOM(view) {
       if (this.float) return this.floatDOM(view)
@@ -558,6 +641,17 @@
       row.className = 'cm-sql-lens'
       row.setAttribute('role', 'toolbar')
       row.setAttribute('aria-label', 'Statement actions')
+      if (this.undo) {
+        const b = document.createElement('button')
+        b.type = 'button'
+        b.className = 'cm-sql-lens-revert'
+        b.textContent = 'Revert'
+        b.title = 'Put back what the last run of this statement changed'
+        const undo = this.undo
+        b.addEventListener('mousedown', (e) => e.preventDefault())
+        b.addEventListener('click', () => onrevert?.(undo))
+        row.append(b)
+      }
       for (const a of LENS_ACTIONS) {
         if (a.id === 'variables' && !this.vars) continue
         if (row.childElementCount) {
@@ -605,6 +699,19 @@
         b.addEventListener('mousedown', (e) => e.preventDefault())
         b.addEventListener('click', (e) => { e.stopPropagation(); onclick() })
         return b
+      }
+      if (this.undo) {
+        const undo = this.undo
+        chip.append(button(
+          '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3.5 2.5 7 6 10.5M3 7h6.5a3.5 3.5 0 0 1 0 7H8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>Revert',
+          'Put back what the last run of this statement changed',
+          () => onrevert?.(undo),
+          'cm-sql-lens-revert',
+        ))
+        const gap = document.createElement('span')
+        gap.className = 'cm-sql-lens-sep'
+        gap.setAttribute('aria-hidden', 'true')
+        chip.append(gap)
       }
       chip.append(button(
         '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3.5v9l7-4.5z" fill="currentColor"/></svg>Run',
@@ -687,9 +794,12 @@
     const doc = state.doc
     const caret = statementAtOffset(stmts, state.selection.main.head)
     const builder = new RangeSetBuilder()
-    /** @param {{ from: number }} line @param {{ text: string }} st */
+    const runMarks = onrevert ? (state.field(runMarksField, false)?.marks ?? []) : []
+    /** The undo copy of the statement's last run, while it has one. @param {{ start: number, end: number }} st */
+    const undoOf = (st) => runMarks.find((m) => m.kind === 'ok' && m.undo && m.from < st.end && m.to > st.start)?.undo?.id ?? ''
+    /** @param {{ from: number }} line @param {{ text: string, start: number, end: number }} st */
     const add = (line, st) => builder.add(line.from, line.from, Decoration.widget({
-      widget: new LensWidget(variables && hasVariables(st.text)),
+      widget: new LensWidget(variables && hasVariables(st.text), false, undoOf(st)),
       block: true,
       side: -1,
     }))
@@ -701,7 +811,7 @@
       // (and placed the completion list) at the chip on the far right.
       if (caret) {
         const line = doc.lineAt(caret.start)
-        builder.add(line.from, line.from, Decoration.widget({ widget: new LensWidget(variables && hasVariables(caret.text), true), block: true, side: -1 }))
+        builder.add(line.from, line.from, Decoration.widget({ widget: new LensWidget(variables && hasVariables(caret.text), true, undoOf(caret)), block: true, side: -1 }))
       }
       return builder.finish()
     }
@@ -720,7 +830,9 @@
 
   const lensField = StateField.define({
     create: (state) => lensRanges(state),
-    update: (v, tr) => (tr.docChanged || tr.selection || configChanged(tr) ? lensRanges(tr.state) : v),
+    update: (v, tr) => (tr.docChanged || tr.selection || configChanged(tr) || tr.effects.some((e) => e.is(setRunMarks) || e.is(markRevertedEffect))
+      ? lensRanges(tr.state)
+      : v),
     provide: (f) => EditorView.decorations.from(f),
   })
 
@@ -871,22 +983,35 @@
 
   const consoleTheme = EditorView.theme({
     '.cm-content': { padding: '12px 0' },
-    // One gap, g = 0.5em, sets every step of the gutter: either side of the
-    // run mark, after the line numbers, and from the gutter's edge to the
-    // text - so the mark sits centred in its column and the edge line is as
-    // far from the mark as from the code, numbers or not. It was 0.55em before
-    // the mark, 0.4em after it and a fixed 10px before the text, and the 1em
-    // mark overflowed a 1.05em border-box cell. In em throughout: the text
-    // follows the app zoom (--cm-font-size is a type-scale step), so a px gap
-    // drifted against it.
+    // The gutter is two columns: the run mark (which the fold arrow shares)
+    // and the line numbers, then g = 0.5em to the text. The mark sits 0.45em
+    // from the edge and 0.3em from the numbers: tight, because a third column
+    // and a full g either side of the mark made the gutter ~100px at 125% zoom.
+    // In em throughout: the text follows the app zoom (--cm-font-size is a
+    // type-scale step), so a px gap drifted against it.
     '.cm-sql-glyphs .cm-gutterElement': {
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
       boxSizing: 'content-box',
       width: '1em',
-      padding: '0 0.5em',
+      padding: '0 0.3em 0 0.45em',
     },
+    // Mark and fold arrow share the cell: stacked, and swapped while the
+    // pointer is over the gutter (a folded line keeps its arrow).
+    '.sql-cell': { position: 'relative', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '1em', height: '1em' },
+    '.sql-cell-fold': { cursor: 'pointer' },
+    '.sql-cell .cm-fold-marker': {
+      position: 'absolute',
+      inset: '0',
+      alignItems: 'center',
+      justifyContent: 'center',
+      opacity: '0',
+      transition: 'opacity 120ms',
+    },
+    '.sql-cell .sql-glyph': { transition: 'opacity 120ms' },
+    '.cm-gutters:hover .sql-cell-fold .cm-fold-marker, .sql-cell-closed .cm-fold-marker': { opacity: '1' },
+    '.cm-gutters:hover .sql-cell-fold .sql-glyph, .sql-cell-closed .sql-glyph': { opacity: '0' },
     '.cm-content .cm-line': { paddingLeft: '0.5em' },
     '.sql-glyph': { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', cursor: 'default' },
     '.sql-glyph svg': { width: '1em', height: '1em' },
@@ -973,18 +1098,11 @@
     },
     '.sql-glyph-error': { color: 'var(--destructive)' },
     '.sql-glyph-warning': { color: 'var(--warning)' },
-    // Three digits reserved, not the cell dock's five: a query is rarely past
-    // line 999, and the reserve was the gap between the glyphs and the numbers.
-    // The mark's column already ends in g, so the numbers only need g after.
+    // Two digits reserved, not the cell dock's five: most consoles stay under
+    // line 100, and a reserve the numbers never use is just a blank strip. A
+    // longer script widens the column once, at line 100.
     '.cm-gutters .cm-lineNumbers .cm-gutterElement': {
-      minWidth: 'calc(3ch + 0.5em)',
-      padding: '0 0.5em 0 0',
-    },
-    // The fold arrow: as wide as itself plus g, in the editor's em like the
-    // mark, so mark, arrow and number step across at the same gap.
-    '.cm-gutters .cm-foldGutter .cm-gutterElement': {
-      boxSizing: 'content-box',
-      width: '0.85em',
+      minWidth: 'calc(2ch + 0.5em)',
       padding: '0 0.5em 0 0',
     },
     '.cm-gutters .cm-fold-marker svg': { width: '0.85em', height: '0.85em' },
@@ -1047,6 +1165,8 @@
     '.cm-sql-lens-float svg': { width: '0.95em', height: '0.95em', flex: 'none' },
     '.cm-sql-lens-run': { color: 'var(--foreground) !important' },
     '.cm-sql-lens-run svg': { color: 'var(--success)' },
+    '.cm-sql-lens-revert': { color: 'var(--foreground) !important' },
+    '.cm-sql-lens-revert svg': { color: 'var(--warning)' },
     '.cm-sql-lens-more': { padding: '0 4px !important' },
     '.cm-sql-lens-menu': {
       position: 'absolute',
@@ -1111,7 +1231,7 @@
 
   const baseExtensions = [
     configField,
-    Prec.high(glyphGutter),
+    Prec.high(statusGutter),
     runMarksField,
     runErrorTooltip,
     lintField,
@@ -1129,8 +1249,6 @@
   let vimExtension = $state(/** @type {import('@codemirror/state').Extension | null} */ (null))
   const editing = $derived([
     ...editingExtensions($appSqlEditor),
-    // Beside the numbers only: an arrow column with no numbers is a stripe nothing explains.
-    ...($appSqlEditor.lineNumbers && $appSqlEditor.folding ? [foldColumn] : []),
     ...(onlens && !readOnly && $appSqlEditor.codeLens === 'current' ? [lensRoom] : []),
   ])
   const extensions = $derived([...(vimExtension ? [Prec.highest(vimExtension)] : []), ...baseExtensions, ...editing])
@@ -1238,7 +1356,9 @@
    * went to the database when it differs from the editor's (variables filled
    * in, a LIMIT added), for placing the failure; `ms` and `rows` or `affected`
    * make the note after a statement that ran.
-   * @param {Array<{ sql: string, sent?: string, error?: string | null, position?: number | null, ms?: number | null, rows?: number | null, affected?: number | null }>} outcomes
+   * `undo` is the undo copy a write kept, for the lens's Revert; `undoNote`
+   * says why one that could have kept a copy did not.
+   * @param {Array<{ sql: string, sent?: string, error?: string | null, position?: number | null, ms?: number | null, rows?: number | null, affected?: number | null, undo?: { id: string, kind: string } | null, undoNote?: string }>} outcomes
    */
   export function markOutcomes(outcomes) {
     const view = editorRef?.getView()
@@ -1259,7 +1379,8 @@
       const st = stmts[i]
       if (!o.error) {
         const info = formatRunInfo({ ms: o.ms, rows: o.rows, affected: o.affected })
-        marks.push({ from: st.start, to: st.end, kind: 'ok', title: info ? `Ran successfully · ${info}` : 'Ran successfully', info })
+        const title = (info ? `Ran successfully · ${info}` : 'Ran successfully') + (o.undoNote ? `\nNo revert: ${o.undoNote}` : '')
+        marks.push({ from: st.start, to: st.end, kind: 'ok', title, info, undo: o.undo ?? null })
         continue
       }
       const message = o.error.replace(/^Error:\s*/, '').replace(/^(Query|Statement \d+) failed:\s*(error returned from database:\s*)?/i, '')
@@ -1309,9 +1430,56 @@
     markRun('ok', ranStatement, formatRunInfo(run))
   }
 
+  /** The run whose undo copy this is was reverted. @param {string} undoId */
+  export function markReverted(undoId) {
+    editorRef?.getView()?.dispatch({ effects: markRevertedEffect.of(undoId) })
+  }
+
   /** Drop the run marks (the run failed or was stopped). */
   export function clearRunMarks() {
     editorRef?.getView()?.dispatch({ effects: setRunMarks.of(NO_RUN_MARKS) })
+  }
+
+  /**
+   * The error console's "Did you mean": rewrite `name` inside the statement
+   * that failed, preferring the occurrence the database pointed at. Only while
+   * that statement is unedited since the run (its failure mark is still there),
+   * so it never rewrites text the error is no longer about.
+   * @param {string} name the bare name the error reported
+   * @param {string} replacement already quoted as the dialect needs
+   * @returns {boolean} whether anything was replaced
+   */
+  export function replaceInFailed(name, replacement) {
+    const view = editorRef?.getView()
+    if (!view || !name) return false
+    const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    // As written: bare in any case (the error reports the folded name), or quoted.
+    const re = new RegExp(`"${esc}"|\`${esc}\`|\\[${esc}\\]|(?<![\\w$"\`])${esc}(?![\\w$])`, 'gi')
+    for (const e of view.state.field(runMarksField).errors) {
+      const text = view.state.doc.sliceString(e.stmtFrom, e.stmtTo)
+      /** @type {{ from: number, to: number } | null} */
+      let hit = null
+      for (const m of text.matchAll(re)) {
+        const from = e.stmtFrom + (m.index ?? 0)
+        const to = from + m[0].length
+        const atError = from <= e.to && to >= e.from
+        if (!hit || atError) hit = { from, to }
+        if (atError) break
+      }
+      if (!hit) continue
+      // A keyword goes in the case the statement is written in.
+      const was = view.state.doc.sliceString(hit.from, hit.to)
+      const insert = /^[A-Z_]+$/.test(replacement) && was === was.toLowerCase() ? replacement.toLowerCase() : replacement
+      view.dispatch({
+        changes: { from: hit.from, to: hit.to, insert },
+        selection: { anchor: hit.from, head: hit.from + insert.length },
+        scrollIntoView: true,
+        userEvent: 'input.complete',
+      })
+      view.focus()
+      return true
+    }
+    return false
   }
 
   /** Focus the editor (called when the SQL tab becomes active). */

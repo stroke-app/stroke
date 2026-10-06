@@ -24,8 +24,12 @@
 	{...restProps}
 >
 	{#if heading}
+		<!-- Plain case, as every menu's group labels are (DESIGN_SYSTEM §7): the
+		     uppercase micro-label is for page and sidebar sections. px-2.5 puts
+		     the label on the row icons' edge (the list's px-1.5 plus the item's
+		     px-2.5), which is also where the search icon sits. -->
 		<CommandPrimitive.GroupHeading
-			class="px-3 py-1.5 text-ui-3xs font-semibold uppercase tracking-[0.07em] text-muted-foreground"
+			class="px-2.5 pt-2 pb-1 text-ui-2xs font-medium text-muted-foreground"
 		>
 			{heading}
 		</CommandPrimitive.GroupHeading>

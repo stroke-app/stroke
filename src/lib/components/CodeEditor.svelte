@@ -51,6 +51,9 @@
   import { ArrowDown01Icon, ArrowRight01Icon } from '@hugeicons/core-free-icons'
   import { hugeSvg } from '$lib/cm-huge-icon.js'
   import { tags as t } from '@lezer/highlight'
+  import { get } from 'svelte/store'
+  import { appEditorTheme } from '$lib/stores/settings.js'
+  import { editorThemeExtension } from '$lib/cm-editor-theme.js'
 
   let {
     value = $bindable(''),
@@ -86,6 +89,8 @@
   const extraC = new Compartment()
   const measureC = new Compartment()
   const completeC = new Compartment()
+  /** Colours: the app-token highlight below, or a preset's theme and highlight. */
+  const colorC = new Compartment()
   /** Two empty themes to flip between: see `remeasure`. */
   const MEASURE_FLIP = [EditorView.theme({}), EditorView.theme({})]
   let measureFlip = 0
@@ -150,6 +155,14 @@
     { tag: [t.meta, t.annotation], color: 'var(--json-number)' },
     { tag: [t.regexp, t.escape], color: 'var(--json-string)' },
   ])
+
+  /**
+   * The editor theme setting's extensions. Mounted ahead of `theme` so a
+   * preset's chrome wins over it at the same precedence (CodeMirror gives the
+   * earlier of two equal themes priority).
+   */
+  const colorsFor = (/** @type {import('$lib/themes/editor-themes.js').EditorThemeId} */ id) =>
+    editorThemeExtension(id) ?? syntaxHighlighting(highlight)
 
   /*
    * One type system for the whole surface: the gutter uses the code's font,
@@ -815,7 +828,7 @@
           ...foldKeymap,
           ...defaultKeymap,
         ]),
-        syntaxHighlighting(highlight),
+        colorC.of(colorsFor(get(appEditorTheme))),
         theme,
         sqlEditing(),
         placeholderExt(placeholder),
@@ -911,6 +924,7 @@
   })
 
   $effect(() => { const x = extensions; view?.dispatch({ effects: extraC.reconfigure(x) }) })
+  $effect(() => { const id = $appEditorTheme; view?.dispatch({ effects: colorC.reconfigure(colorsFor(id)) }) })
   $effect(() => {
     const t = suggestWhileTyping
     const e = acceptOnEnter
