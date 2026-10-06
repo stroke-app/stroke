@@ -1430,8 +1430,14 @@ pub async fn connect_redis(state: State<'_, DbState>, config: RedisConfig) -> Re
 /// Open a DuckDB connection on a blocking thread (the driver is synchronous).
 pub(crate) async fn open_duckdb(config: &DuckdbConfig) -> Result<DuckdbHandle, String> {
     let path = config.file_path.clone();
+    // Same trap as SQLite's: an empty path opened an in-memory database, so a
+    // "Local DuckDB" saved without a file lost everything on disconnect.
+    // In-memory is `:memory:`, chosen on purpose.
+    if path.trim().is_empty() {
+        return Err("This DuckDB connection has no database file. Choose one (or create a new one) in the connection's settings: without a file, everything created would be lost on disconnect.".into());
+    }
     tokio::task::spawn_blocking(move || {
-        let conn = if path == ":memory:" || path.is_empty() {
+        let conn = if path == ":memory:" {
             duckdb::Connection::open_in_memory()
         } else {
             duckdb::Connection::open(&path)
