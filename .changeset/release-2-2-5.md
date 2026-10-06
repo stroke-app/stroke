@@ -19,6 +19,7 @@
 
 ### Bug Fixes
 - A SQLite or DuckDB connection with no file no longer loses its tables on disconnect. It asks for a file, and New creates one
+- Duplicating or adding a row with page size All no longer drops the last row from the grid
 - A row added with infinite scroll on no longer vanishes when more rows load
 - A SELECT no longer shows its row count as rows affected
 
