@@ -8,6 +8,7 @@ import {
   createFilter,
   clampPageSize,
   fetchLimitFor,
+  pageWithInsertedRow,
   pageSizeLabel,
   readRowsResponse,
   ANY_COLUMN,
@@ -327,5 +328,22 @@ describe('fetchLimitFor', () => {
 
   it('never asks for more than the max page size', () => {
     expect(fetchLimitFor(PAGE_SIZE_ALL, MAX_PAGE_SIZE * 3, true)).toBe(MAX_PAGE_SIZE)
+  })
+})
+
+describe('pageWithInsertedRow', () => {
+  const page = [[1], [2], [3]]
+
+  it('keeps every row on "All", where the limit is the count from before the insert', () => {
+    // The limit for "All" is the row count (3); the insert makes 4.
+    expect(pageWithInsertedRow(page, [4], PAGE_SIZE_ALL, fetchLimitFor(PAGE_SIZE_ALL, 3, true))).toEqual([[4], [1], [2], [3]])
+  })
+
+  it('keeps a fixed-size page at its size, the last row moving to the next page', () => {
+    expect(pageWithInsertedRow(page, [4], 3, 3)).toEqual([[4], [1], [2]])
+  })
+
+  it('grows a page that is not full yet', () => {
+    expect(pageWithInsertedRow(page, [4], 50, 50)).toEqual([[4], [1], [2], [3]])
   })
 })

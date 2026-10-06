@@ -79,6 +79,26 @@ export function fetchLimitFor(pageSize, total, totalIsForThisView) {
   return totalIsForThisView && total > 0 ? Math.min(total, MAX_PAGE_SIZE) : MAX_PAGE_SIZE
 }
 
+/**
+ * The page after a row is added at its top, as the grid shows an insert.
+ *
+ * A page of a fixed size keeps its size: the last row moves on to the next
+ * page. "All" has no next page, so it grows by the row. It used to be cut to
+ * its fetch limit like any page, and with "All" that limit is the row count
+ * from before the insert: the new row went in at the top and the last row
+ * dropped off the bottom, so the grid no longer matched the table.
+ * @template T
+ * @param {T[]} rows the page as shown
+ * @param {T} row the inserted row
+ * @param {number} pageSize the chosen size, or PAGE_SIZE_ALL
+ * @param {number} limit the page's fetch limit (fetchLimitFor)
+ * @returns {T[]}
+ */
+export function pageWithInsertedRow(rows, row, pageSize, limit) {
+  const next = [row, ...rows]
+  return pageSize !== PAGE_SIZE_ALL && next.length > limit ? next.slice(0, limit) : next
+}
+
 /** Clamp an arbitrary input to a valid page size (or the "All" sentinel). */
 export function clampPageSize(/** @type {unknown} */ n) {
   const num = Number(n)
