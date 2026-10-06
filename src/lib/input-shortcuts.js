@@ -55,7 +55,11 @@ function inManagedEditor(/** @type {Element} */ el) {
   // CodeMirror manages its text surface (.cm-content), not the inputs in its
   // panels: matching all of .cm-editor left the find/replace fields with no
   // word delete, no undo and no shield from the global hotkeys.
-  return !!el.closest?.('.cm-content')
+  // xterm.js's hidden textarea is a terminal's keyboard, not a text field: its
+  // keys belong to the client in the terminal (psql does its own line editing).
+  // Managing it here swallowed Ctrl+Backspace, Ctrl+Z and the rest before
+  // xterm ever saw them.
+  return !!el.closest?.('.cm-content, .xterm')
 }
 
 /** @param {HTMLInputElement | HTMLTextAreaElement} el */
