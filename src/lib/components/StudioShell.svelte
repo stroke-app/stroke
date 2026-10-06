@@ -3,7 +3,8 @@
   import { fade } from 'svelte/transition'
   import { revealApp, isRevealed } from '$lib/app-reveal.js'
   import { setReadOnly } from '$lib/stores/read-only.js'
-  import { isWriteSql, sqlRunEffects } from '$lib/sql-write.js'
+  import { isWriteSql, sqlRunEffects, stripSqlComments } from '$lib/sql-write.js'
+  import { parseWrite, runWithUndo, undoDialect, keepUndo, getUndo, dropUndo, revertSummary } from '$lib/sql-undo.js'
   import { bumpObjects } from '$lib/stores/sidebar-objects.svelte.js'
   import Logo from './Logo.svelte'
   import ConnectOverlay from './ConnectOverlay.svelte'
@@ -32,7 +33,7 @@
   import { createHotkey } from '@tanstack/svelte-hotkeys'
   import { IS_MAC } from '$lib/shortcuts.js'
   import { findSearchInput, isTypingTarget } from '$lib/focus-search.js'
-  import { appFkAutoExpandJson, cycleTheme, restorePreviousTheme, isCurrentThemeDark, loadSettings, appPaginationMode, appVimMode, appAutoSaveQueries, appStreamResults, appSqlEditor, increaseZoom, decreaseZoom, resetZoom } from '$lib/stores/settings.js'
+  import { appFkAutoExpandJson, cycleTheme, restorePreviousTheme, isCurrentThemeDark, loadSettings, appPaginationMode, appVimMode, appAutoSaveQueries, appStreamResults, appSqlUndo, appSqlEditor, increaseZoom, decreaseZoom, resetZoom } from '$lib/stores/settings.js'
   import { requireUnlock } from '$lib/stores/app-lock.js'
   import { isTextEntryTarget, setVimSubMode } from '$lib/vim/vim.js'
   import { normalizeColumn, columnType } from '$lib/column.js'
@@ -86,6 +87,7 @@
   import AboutDialog from './AboutDialog.svelte'
   import ReportIssueDialog from './ReportIssueDialog.svelte'
   import UpdateDialog from './UpdateDialog.svelte'
+  import SqlRevertDialog from './SqlRevertDialog.svelte'
   import StatusBar from './StatusBar.svelte'
   import QueryLogConsole from './QueryLogConsole.svelte'
   import DisconnectDialog from './DisconnectDialog.svelte'
@@ -150,6 +152,8 @@
     txStatus,
     txCommit,
     txRollback,
+    inspectSql,
+    txExecuteQuiet,
     executeDdl,
     updateTableCell,
     fetchCellValue,
@@ -6298,6 +6302,101 @@ let rowSearch = $state('')
     }
   }
 
+  /**
+   * A single UPDATE / DELETE / INSERT keeps an undo copy for the Revert button
+   * on its lens (sql-undo.js), on a transaction of its own. Null, or a
+   * fallback, means it runs the ordinary way; a fallback's note says why it
+   * has no copy.
+   * @param {string} sql @param {string} queryId
+   * @returns {Promise<import('$lib/sql-undo.js').UndoOutcome | null>}
+   */
+  async function captureWrite(sql, queryId) {
+    if (!get(appSqlUndo)) return null
+    const dialect = undoDialect(dbType)
+    const plan = dialect ? parseWrite(sql) : null
+    if (!dialect || !plan) return null
+    const session = `undo-${queryId}`
+    const out = await runWithUndo(plan, dialect, {
+      inspect: (q) => inspectSql(q, queryId),
+      begin: () => txBegin(session),
+      exec: (q) => txExecuteQuiet(session, q),
+      run: (q) => txExecuteQuiet(session, q),
+      commit: () => txCommit(session),
+      rollback: () => txRollback(session),
+    })
+    if ('undo' in out && out.undo) keepUndo({ ...out.undo, connection: connectionId })
+    return out
+  }
+
+  /** The revert waiting on its confirm dialog. @type {import('$lib/sql-undo.js').UndoRecord | null} */
+  let revertAsk = $state(null)
+  /** @type {((ran: boolean) => void) | null} */
+  let revertDone = null
+
+  /**
+   * Revert from a statement's lens: confirm, then run the undo copy's
+   * statements in one transaction. Resolves whether it ran, so the lens can
+   * drop its button.
+   * @param {string} id
+   * @returns {Promise<boolean>}
+   */
+  async function revertSqlRun(id) {
+    const u = getUndo(id)
+    if (!u) {
+      toast.error('Nothing to revert', { description: 'The copy of this run is gone. Stroke keeps the last 30, until it closes.' })
+      return false
+    }
+    if (u.connection !== connectionId) {
+      toast.error('Connect to the database this ran on to revert it.')
+      return false
+    }
+    // A table about to be dropped says what it holds now, read as the dialog opens.
+    let shown = u
+    if (u.precheck) {
+      try {
+        const n = Number((await inspectSql(u.precheck.sql)).rows?.[0]?.[0] ?? 0)
+        if (n > 0) shown = { ...u, warnings: [u.precheck.says.replace('{rows}', `${n.toLocaleString()} ${n === 1 ? 'row' : 'rows'}`), ...u.warnings] }
+      } catch { /* gone already: the drop will say so */ }
+    }
+    revertDone?.(false)
+    revertAsk = shown
+    return new Promise((resolve) => { revertDone = resolve })
+  }
+
+  /** @param {boolean} ran */
+  function settleRevert(ran) {
+    revertAsk = null
+    revertDone?.(ran)
+    revertDone = null
+  }
+
+  async function confirmRevert() {
+    const u = revertAsk
+    if (!u) return
+    const session = `revert-${u.id}`
+    try {
+      await txBegin(session)
+      let affected = 0
+      try {
+        for (const stmt of u.statements) affected += Number((await txExecute(session, stmt))?.rowCount ?? 0)
+        await txCommit(session)
+      } catch (e) {
+        await txRollback(session).catch(() => {})
+        throw e
+      }
+      dropUndo(u.id)
+      const sum = revertSummary(u, affected)
+      if (sum.ok) toast.success(sum.title)
+      else toast.warning(sum.title, { description: sum.description })
+      // Every chunk names the same table: the first says what changed.
+      void refreshAfterSql(sqlRunEffects(u.statements[0] ?? ''))
+      settleRevert(true)
+    } catch (e) {
+      toast.error('Revert failed', { description: String(e).replace(/^Error:\s*/, '').replace(/^Query failed:\s*/, ''), code: true })
+      settleRevert(false)
+    }
+  }
+
   async function runSqlOnTab(overrideSql) {
     track('sql_run')
     const sqlRan = typeof overrideSql === 'string' && overrideSql.trim() ? overrideSql : sqlText
@@ -6332,6 +6431,8 @@ let rowSearch = $state('')
     let ranError = ''
     let ranRowCount = 0
     let changedSql = ''
+    /** @type {import('$lib/sql-undo.js').UndoOutcome | null} */
+    let captured = null
     try {
       // A tab with an open transaction runs on that transaction's connection,
       // so its statements stay invisible until the user commits. Everything
@@ -6344,6 +6445,17 @@ let rowSearch = $state('')
           _txSqlByTab.set(runTabId, `${_txSqlByTab.get(runTabId) ?? ''}${sqlRan};\n`)
           setTxStatus(runTabId, await txStatus(txSession))
         }
+      } else if ((captured = await captureWrite(sqlRan, queryId)) && 'result' in captured) {
+        results = [captured.result]
+        const undo = captured.undo
+        if (stillHere()) {
+          sqlRunOutcomes = [{
+            sql: sqlRan, error: null, position: null,
+            ms: captured.result.queryMs ?? null, rows: null, affected: captured.result.rowCount ?? null,
+            undo: undo ? { id: undo.id, kind: undo.kind } : null, undoNote: captured.note,
+          }]
+        }
+        changedSql = sqlRan
       } else {
         // Rows stream in (executeSqlStream), into the backend's result store
         // when that setting is on, otherwise into this window.
@@ -6389,15 +6501,23 @@ let rowSearch = $state('')
         // Each statement's outcome, for the editor marks. A single failed
         // statement is the run failing; in a script the others still ran.
         if (stillHere()) {
+          const note = captured && 'fallback' in captured ? captured.note : ''
           sqlRunOutcomes = results.map((r) => {
-            const returned = Array.isArray(r.columns) && r.columns.length > 0
+            // A streamed statement's columns arrive through the channel, not in
+            // the reply: a SELECT read as a write said "6 affected".
+            const returned = (Array.isArray(r.columns) && r.columns.length > 0)
+              || (results.length === 1 && streamedCols.length > 0)
+              || !isWriteSql(r.sql || sqlRan)
+            // A schema change has no rows to count: "0 affected" after CREATE TABLE said nothing.
+            const schema = /^\s*(create|alter|drop|comment|grant|revoke|truncate|vacuum|analyze|refresh|reindex|cluster)\b/i.test(stripSqlComments(r.sql || sqlRan))
             return {
               sql: r.sql ?? '', error: r.error ?? null, position: r.errorPosition ?? null,
               // Time and size, for the note the editor writes after the statement.
               // rowCount is the rows a query returned, or the rows a write changed.
               ms: r.queryMs ?? r.query_ms ?? null,
               rows: returned ? (r.rowCount ?? r.rows?.length ?? null) : null,
-              affected: returned ? null : (r.rowCount ?? null),
+              affected: returned || schema ? null : (r.rowCount ?? null),
+              undo: null, undoNote: results.length === 1 ? note : '',
             }
           })
         }
@@ -8906,6 +9026,7 @@ let rowSearch = $state('')
             onsaveinplace={handleSaveInPlace}
             savedQueryName={activeSavedQuery?.name ?? ''}
             onfixwithai={handleFixWithAi}
+            onrevertrun={revertSqlRun}
             onprorequired={() => (showProGate = true)}
           />
           {/await}
