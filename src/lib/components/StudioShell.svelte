@@ -9339,34 +9339,26 @@ let rowSearch = $state('')
              you take in at a glance rather than a wall you have to read. -->
         {#snippet row(/** @type {any} */ Icon, /** @type {string} */ label, /** @type {string} */ _desc, /** @type {() => void} */ onclick, /** @type {{ pro?: boolean, keys?: string[] }} */ opts = {})}
           {@const locked = !!opts.pro && !$hasPro}
+          {@const chordText = opts.keys ? ` (${opts.keys.join(isMac ? '' : '+')})` : ''}
           <button
             type="button"
             {onclick}
-            title={locked ? `${label} - ${_desc} - Pro` : `${label} - ${_desc}`}
+            title={locked ? `${label} - ${desc} - Pro` : `${label} - ${desc}${chordText}`}
             class={cn(
-              // min-h, not h: a label that wraps to two lines in a narrow pane grows
-              // the tile instead of spilling out of it.
               // The focus ring is the app's own: `outline-2 outline-ring`, the
               // same one every Button draws. These tiles are the first thing Tab
-              // reaches on a fresh tab and they drew nothing at all.
-              "group flex min-h-[5.25rem] min-w-0 flex-col justify-between gap-2 overflow-hidden rounded-xl border p-2.5 text-left transition-[background-color,border-color,transform] duration-150 ease-[var(--ease-out)] outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
+              // reaches on a fresh tab.
+              "group flex h-10 min-w-0 items-center gap-2.5 rounded-lg border px-3 text-left outline-none transition-[background-color,border-color,scale] duration-150 ease-[var(--ease-out)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
               locked
                 ? "cursor-not-allowed border-border/40 bg-card/30 hover:border-warning/30 hover:bg-warning/[0.04]"
-                : "border-border/60 bg-card/50 hover:border-border hover:bg-accent/40 active:scale-[0.98]",
+                : "border-border/60 bg-card/50 hover:border-border hover:bg-accent/40 active:scale-[0.96]",
             )}
           >
-            <span class="flex w-full items-start justify-between gap-1.5">
-              <Icon class="size-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground" />
-              {#if locked}<Lock class="size-3 shrink-0 text-warning" aria-label="Pro feature" />{/if}
-            </span>
-            <span class="flex w-full min-w-0 flex-col gap-1">
-              <span class="truncate text-ui-2xs font-medium leading-[1.25] text-foreground">{label}</span>
-              <!-- The chord row is always present, empty or not, so every label in a
-                   row lands on the same baseline whether or not it wrapped. -->
-              <span class="flex min-h-[1em] min-w-0 flex-wrap items-center">
-                {#if opts.keys && !locked}{@render chord(opts.keys)}{/if}
-              </span>
-            </span>
+            <!-- Each action its own colour, from the theme's tokens, as the
+                 sidebar tree colours its kinds. -->
+            <Icon class={cn('size-4 shrink-0', locked ? 'text-muted-foreground' : TILE_TONE[opts.tone ?? 'info'])} />
+            <span class="min-w-0 flex-1 truncate text-ui-xs font-medium text-foreground">{label}</span>
+            {#if locked}<Lock class="size-3 shrink-0 text-warning" aria-label="Pro feature" />{/if}
           </button>
         {/snippet}
 
@@ -9410,34 +9402,31 @@ let rowSearch = $state('')
               </div>
             {/if}
           </div>
-          <!-- Five tiles, not sixteen. Sixteen equal-weight tiles asked you to read
-               the whole grid to find the one you wanted; these five are what a tab
-               opens for. The rest are not gone - they sit in the quieter "Jump to"
-               list below, and in ⌘K. -->
-          <!-- Column count comes from the space available, not a fixed number: the
-                 pane narrows whenever the sidebar is dragged wider. At full width
-                 the five tiles resolve to one clean row. -->
-            <!-- Four columns, not five. At five the tiles came out ~96px wide and
-                 "Extensions" truncated to "Extensio…" - a launcher whose labels do
-                 not fit is not a launcher. The fifth tile was Shortcuts, which the
-                 footer below already offers, so dropping it cost nothing and left
-                 an exact row. -->
-          <!-- The label sits in the same gap-2 column as the tiles, exactly as
-               "Jump to" does with its list. In the header it was a full section
-               gap away from the tiles, so it read as a caption for the logo. -->
+          <!-- A shortlist of what a fresh tab is for, not every page: the rest
+               sit in "Jump to" below and in the command palette. Six tiles make
+               two even rows of three (Redis, with four, makes one row of four);
+               five tiles in four columns used to truncate "Extensions". -->
           <div class="flex w-full flex-col gap-2">
-            <p class="text-ui-3xs font-medium uppercase tracking-[0.1em] text-muted-foreground">Quick access</p>
-            <div class="grid w-full grid-cols-2 gap-2 sm:grid-cols-4">
+            <p class="text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground">Quick access</p>
+            <div class={cn('grid w-full grid-cols-2 gap-2', welcomeTileCount === 6 ? 'sm:grid-cols-3' : 'sm:grid-cols-4')}>
             {#if isRedis}
-              {@render row(KeyRound, "Keyspace", "Browse keys and values", openRedisTab, {})}
+              {@render row(KeyRound, "Keyspace", "Browse keys and values", openRedisTab, { tone: 'info' })}
             {:else}
               <!-- ⌘T opens the command palette on its tables page; the SQL view
                    is ⌘⇧S. The tile printed a chord that went somewhere else. -->
-              {@render row(Terminal, "SQL", "Write and run a query", openSqlTab, { keys: [mod, shiftKey, "S"] })}
-              {@render row(Sparkles, "AI", "Ask about this database", openAiTab, { pro: true, keys: [mod, shiftKey, "E"] })}
+              {@render row(Terminal, "SQL", "Write and run a query", openSqlTab, { keys: [mod, shiftKey, "S"], tone: 'info' })}
             {/if}
-            {@render row(Blocks, "Extensions", "Add and manage extensions", openExtensionsTab, { pro: true, keys: [mod, shiftKey, "X"] })}
-            {@render row(Database, "Connect", "Switch or add a connection", () => (showConnectionModal = true), { keys: [mod, shiftKey, "C"] })}
+            {#if connection}
+              {@render row(SquareTerminal, "Terminal", isRedis ? "redis-cli, in a tab" : "psql, mysql or sqlite3", () => { if (aiMode) exitAiMode(); openTerminalTab() }, { keys: ["Ctrl", "`"], tone: 'success' })}
+            {/if}
+            {#if !isRedis}
+              {@render row(Sparkles, "AI", "Ask about this database", openAiTab, { pro: true, keys: [mod, shiftKey, "E"], tone: 'primary' })}
+            {/if}
+            {#if connection && !isRedis}
+              {@render row(Search, "Search", "Find in database: search every table at once", openSearchTab, { keys: [mod, shiftKey, "G"], tone: 'warning' })}
+            {/if}
+            {@render row(Blocks, "Extensions", "Add and manage extensions", openExtensionsTab, { pro: true, keys: [mod, shiftKey, "X"], tone: 'info' })}
+            {@render row(Database, "Connect", "Switch or add a connection", () => (showConnectionModal = true), { keys: [mod, shiftKey, "C"], tone: 'success' })}
             </div>
           </div>
 
@@ -9451,13 +9440,13 @@ let rowSearch = $state('')
                  weight. Same max width as the grid above, so both blocks sit on
                  one alignment edge. -->
             <div class="flex w-full flex-col gap-2">
-              <p class="text-ui-3xs font-medium uppercase tracking-[0.1em] text-muted-foreground">Jump to</p>
+              <p class="text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground">Jump to</p>
               <!-- Two columns of four. Three columns left an orphan row of two
                    hanging under a full one, which is the shape that reads as
                    "unfinished" no matter how the items are ordered. -->
               <div class="grid grid-cols-1 gap-x-3 gap-y-0.5 sm:grid-cols-2">
                 {@render jump(Plus, "New query editor", openNewSqlTab)}
-                {@render jump(Search, "Find in database", openSearchTab)}
+                {@render jump(ShieldCheck, "Advisor", openAdvisorTab)}
                 {@render jump(Boxes, "Database objects", openObjectsTab)}
                 {@render jump(GitBranch, "Schema explorer", openSchemaTab)}
                 {@render jump(Gauge, "Instance insights", openInsightsTab)}
