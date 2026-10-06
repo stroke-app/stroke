@@ -7527,12 +7527,16 @@ let rowSearch = $state('')
       //   the table holds.
       // A sort that isn't the default can also place the row elsewhere. In each
       // of these the page is reloaded instead: one query, always correct.
+      // - Infinite scroll: the grid's rows are rebuilt from `_infiniteRows` on
+      //   the next load-more, so a row spliced into `rows` alone vanished there,
+      //   and adding it to both would shift the next page's offset by one and
+      //   skip a row.
       const pkIdx = (primaryKey ?? []).map((k) => columns.findIndex((c) => c.name === k))
       const rowComplete =
         Array.isArray(row) &&
         row.length === columns.length &&
         pkIdx.every((i) => i >= 0 && row[i] !== null && row[i] !== undefined)
-      const canSplice = !windowed && rowComplete && !rowSort
+      const canSplice = !windowed && !infiniteScroll && rowComplete && !rowSort
 
       if (!hasActiveFilters && page === 1 && canSplice) {
         rows = [row, ...rows]
