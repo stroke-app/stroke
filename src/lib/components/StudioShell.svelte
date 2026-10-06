@@ -15,6 +15,7 @@
   import LayoutTemplate from '@lucide/svelte/icons/layout-template'
   import { cn } from '$lib/utils.js'
   import Command from '@lucide/svelte/icons/command'
+  import Keyboard from '@lucide/svelte/icons/keyboard'
   import Code2 from '@lucide/svelte/icons/code-2'
   import ShieldCheck from '@lucide/svelte/icons/shield-check'
   import ScrollText from '@lucide/svelte/icons/scroll-text'
@@ -9465,7 +9466,7 @@ let rowSearch = $state('')
               onclick={() => showShortcutsModal = true}
               class="flex items-center gap-1.5 rounded-md px-1 py-0.5 transition-colors hover:text-foreground"
             >
-              <Command class="size-3 shrink-0" />
+              {#if isMac}<Command class="size-3 shrink-0" />{:else}<Keyboard class="size-3.5 shrink-0" />{/if}
               <span>Shortcuts</span>
             </button>
             <span class="text-muted-foreground">·</span>
