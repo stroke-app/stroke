@@ -651,6 +651,9 @@ pub fn run() {
             // OmniRoute proxy we spawned, or it survives every app quit.
             if let tauri::RunEvent::Exit = event {
                 app.state::<omniroute::OmniRouteState>().kill_now();
+                // And every terminal tab's client, which would otherwise keep its
+                // server connection (and any open transaction) after the app.
+                app.state::<db::terminal::TerminalState>().kill_all();
             }
         });
 }
