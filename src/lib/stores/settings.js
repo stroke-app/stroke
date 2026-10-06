@@ -20,6 +20,7 @@ import {
 } from '$lib/type-scale.js'
 import { SQL_FORMAT_DEFAULTS, normalizeSqlFormat, setSqlFormatOptions } from '$lib/sql-format-options.js'
 import { SQL_EDITOR_DEFAULTS, normalizeSqlEditor } from '$lib/sql-editor-options.js'
+import { DEFAULT_EDITOR_THEME, normalizeEditorTheme } from '$lib/themes/editor-themes.js'
 
 const STORAGE_KEY = 'stroke:settings'
 
@@ -90,7 +91,7 @@ const markFontGeistDefaultApplied = () => {
 /** @typedef {'claude' | 'geist' | 'serif' | 'apple' | 'inter' | 'mono' | 'fira' | 'plex' | 'space' | 'source'} FontId */
 /** @typedef {'regular' | 'light' | 'bold'} IconStyleId */
 /** @typedef {'lucide' | 'hugeicons' | 'phosphor'} IconSetId */
-/** @typedef {{ theme: ThemeId, zoom: number, font: FontId, iconStyle: IconStyleId, iconSet: IconSetId, tableStyle: TableStyleId, jsonTheme: JsonThemeId, mcpAutoStart: boolean, launchAtLogin: boolean, autoReconnectOnStartup: boolean, previewDmlBeforeApply: boolean, defaultDataView: string, paginationMode: string, maxQueryHistory: number, connectTimeoutMs: number, socketTimeoutMs: number, maxAllowedPacket: number, sessionTimezone: string, vimMode: boolean, cmdkAiEnabled: boolean, liveModeEnabled: boolean, lazyWideColumns: boolean, nullSortOrder: string, agentChatFontSize: number, agentCodeFontSize: number, agentThinkingStyle: string, agentShowQueryCards: boolean, agentWebAccess: boolean, tableTextAlign: string, telemetry: boolean, jsonWordWrap: boolean, nativeScroll: boolean, rowSpacing: RowSpacingId, motion: MotionId, zebraRows: boolean, showRowNumbers: boolean, showMenuBar: boolean, numberGrouping: boolean, imagePreview: boolean, openUrlsOnClick: boolean, highlightActiveRow: boolean, fkAutoExpandJson: boolean, gridFontSize: number, autoSaveQueries: boolean, streamResults: boolean, sidebarComments: boolean, sidebarRememberGroups: boolean, sqlFormat: import('$lib/sql-format-options.js').SqlFormatOptions, sqlEditor: import('$lib/sql-editor-options.js').SqlEditorOptions }} AppSettings */
+/** @typedef {{ theme: ThemeId, zoom: number, font: FontId, iconStyle: IconStyleId, iconSet: IconSetId, tableStyle: TableStyleId, jsonTheme: JsonThemeId, editorTheme: import('$lib/themes/editor-themes.js').EditorThemeId, mcpAutoStart: boolean, launchAtLogin: boolean, autoUpdate: boolean, autoReconnectOnStartup: boolean, previewDmlBeforeApply: boolean, defaultDataView: string, paginationMode: string, maxQueryHistory: number, connectTimeoutMs: number, socketTimeoutMs: number, maxAllowedPacket: number, sessionTimezone: string, vimMode: boolean, cmdkAiEnabled: boolean, liveModeEnabled: boolean, lazyWideColumns: boolean, nullSortOrder: string, agentChatFontSize: number, agentCodeFontSize: number, agentThinkingStyle: string, agentShowQueryCards: boolean, agentWebAccess: boolean, tableTextAlign: string, telemetry: boolean, jsonWordWrap: boolean, nativeScroll: boolean, rowSpacing: RowSpacingId, motion: MotionId, zebraRows: boolean, showRowNumbers: boolean, showMenuBar: boolean, numberGrouping: boolean, imagePreview: boolean, openUrlsOnClick: boolean, highlightActiveRow: boolean, fkAutoExpandJson: boolean, gridFontSize: number, autoSaveQueries: boolean, streamResults: boolean, sqlUndo: boolean, sidebarComments: boolean, sidebarRememberGroups: boolean, sqlFormat: import('$lib/sql-format-options.js').SqlFormatOptions, sqlEditor: import('$lib/sql-editor-options.js').SqlEditorOptions }} AppSettings */
 
 /**
  * UI type scale in design pixels: `[step, font-size, line-height?]`, matching
@@ -508,8 +509,13 @@ export const DEFAULT_SETTINGS = {
   iconSet: DEFAULT_ICON_SET,
   tableStyle: DEFAULT_TABLE_STYLE,
   jsonTheme: DEFAULT_JSON_THEME,
+  // Code editor colours: 'app' follows the app theme, as the editor always has.
+  editorTheme: DEFAULT_EDITOR_THEME,
   mcpAutoStart: false,
   launchAtLogin: false,
+  // Updates download while the app runs and install as it quits, where the
+  // install can finish on its own (see UpdateDialog.svelte). Off asks first.
+  autoUpdate: true,
   autoReconnectOnStartup: true,
   previewDmlBeforeApply: true,
   defaultDataView: DEFAULT_DATA_VIEW,
@@ -555,6 +561,10 @@ export const DEFAULT_SETTINGS = {
   // and scrolling flat. Off: every row loads into the window (simpler, and
   // fine for results that fit comfortably).
   streamResults: true,
+  // A single UPDATE / DELETE / INSERT run from the console keeps an in-memory
+  // copy of what it changed, so the statement's lens can offer Revert
+  // (sql-undo.js). Costs one catalog read and one SELECT of the touched rows.
+  sqlUndo: true,
   // Table, view and routine comments as a second line in the sidebar. Off by
   // default: most schemas carry few, and the extra query is per schema.
   sidebarComments: false,
@@ -660,6 +670,9 @@ export const appAutoSaveQueries = writable(false)
 /** Reactive: console results stream into the backend's result store (see DEFAULT_SETTINGS). */
 export const appStreamResults = writable(true)
 
+/** Reactive: console writes keep an undo copy (see DEFAULT_SETTINGS). */
+export const appSqlUndo = writable(true)
+
 /** Reactive: comments as a second line under sidebar rows. */
 export const appSidebarComments = writable(false)
 /** Reactive: the Objects tab remembers which groups were open, per connection. */
@@ -689,6 +702,8 @@ export const appPaginationMode = writable(/** @type {string} */ (DEFAULT_PAGINAT
  *  subscribes to repaint when it changes. */
 export const appTableStyle = writable(/** @type {TableStyleId} */ (DEFAULT_TABLE_STYLE))
 export const appJsonTheme = writable(/** @type {JsonThemeId} */ (DEFAULT_JSON_THEME))
+/** Reactive: the code editor's colour preset (CodeEditor reconfigures on change). */
+export const appEditorTheme = writable(DEFAULT_EDITOR_THEME)
 
 const LAST_DARK_KEY  = 'stroke:last-dark-theme'
 const LAST_LIGHT_KEY = 'stroke:last-light-theme'
@@ -791,6 +806,7 @@ export function loadSettings() {
     }
     const mcpAutoStart = parsed.mcpAutoStart === true
     const launchAtLogin = parsed.launchAtLogin === true
+    const autoUpdate = parsed.autoUpdate !== false
     const autoReconnectOnStartup = parsed.autoReconnectOnStartup !== false
     const previewDmlBeforeApply = parsed.previewDmlBeforeApply !== false
     let font = normalizeFont(parsed.font)
@@ -821,6 +837,7 @@ export function loadSettings() {
     const iconSet = normalizeIconSet(parsed.iconSet)
     const tableStyle = normalizeTableStyle(parsed.tableStyle)
     const jsonTheme = normalizeJsonTheme(parsed.jsonTheme)
+    const editorTheme = normalizeEditorTheme(parsed.editorTheme)
     const defaultDataView = DATA_VIEW_IDS.includes(parsed.defaultDataView) ? parsed.defaultDataView : DEFAULT_DATA_VIEW
     const paginationMode = PAGINATION_MODE_IDS.includes(parsed.paginationMode) ? parsed.paginationMode : DEFAULT_PAGINATION_MODE
     const maxQueryHistory = normalizeInt(parsed.maxQueryHistory, DEFAULT_MAX_QUERY_HISTORY, 1, 100000)
@@ -865,6 +882,7 @@ export function loadSettings() {
     const gridFontSize = normalizeGridFontSize(parsed.gridFontSize)
     const autoSaveQueries = parsed.autoSaveQueries === true
     const streamResults = parsed.streamResults !== false
+    const sqlUndo = parsed.sqlUndo !== false
     const sidebarComments = parsed.sidebarComments === true
     const sidebarRememberGroups = parsed.sidebarRememberGroups !== false
     const liveModeEnabled = parsed.liveModeEnabled === true
@@ -876,7 +894,7 @@ export function loadSettings() {
     const agentShowQueryCards = parsed.agentShowQueryCards !== false
     const agentWebAccess = parsed.agentWebAccess === true
     const tableTextAlign = TABLE_ALIGN_IDS.includes(parsed.tableTextAlign) ? parsed.tableTextAlign : DEFAULT_TABLE_ALIGN
-    _settingsCache = { theme, zoom, font, iconStyle, iconSet, tableStyle, jsonTheme, mcpAutoStart, launchAtLogin, autoReconnectOnStartup, previewDmlBeforeApply, defaultDataView, paginationMode, maxQueryHistory, connectTimeoutMs, socketTimeoutMs, maxAllowedPacket, sessionTimezone, vimMode, cmdkAiEnabled, liveModeEnabled, lazyWideColumns, nullSortOrder, agentChatFontSize, agentCodeFontSize, agentThinkingStyle, agentShowQueryCards, agentWebAccess, tableTextAlign, telemetry, jsonWordWrap, nativeScroll, rowSpacing, motion, zebraRows, showRowNumbers, showMenuBar, numberGrouping, imagePreview, openUrlsOnClick, highlightActiveRow, fkAutoExpandJson, gridFontSize, autoSaveQueries, streamResults, sidebarComments, sidebarRememberGroups, sqlFormat, sqlEditor }
+    _settingsCache = { theme, zoom, font, iconStyle, iconSet, tableStyle, jsonTheme, editorTheme, mcpAutoStart, launchAtLogin, autoUpdate, autoReconnectOnStartup, previewDmlBeforeApply, defaultDataView, paginationMode, maxQueryHistory, connectTimeoutMs, socketTimeoutMs, maxAllowedPacket, sessionTimezone, vimMode, cmdkAiEnabled, liveModeEnabled, lazyWideColumns, nullSortOrder, agentChatFontSize, agentCodeFontSize, agentThinkingStyle, agentShowQueryCards, agentWebAccess, tableTextAlign, telemetry, jsonWordWrap, nativeScroll, rowSpacing, motion, zebraRows, showRowNumbers, showMenuBar, numberGrouping, imagePreview, openUrlsOnClick, highlightActiveRow, fkAutoExpandJson, gridFontSize, autoSaveQueries, streamResults, sqlUndo, sidebarComments, sidebarRememberGroups, sqlFormat, sqlEditor }
     if (fontMigrated) {
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify(_settingsCache)) } catch {}
     }
@@ -1055,6 +1073,7 @@ export function applySettings(settings) {
   setStore(appGridFontSize, normalizeGridFontSize(settings.gridFontSize))
   setStore(appAutoSaveQueries, settings.autoSaveQueries === true)
   setStore(appStreamResults, settings.streamResults !== false)
+  setStore(appSqlUndo, settings.sqlUndo !== false)
   setStore(appSidebarComments, settings.sidebarComments === true)
   setStore(appSidebarRememberGroups, settings.sidebarRememberGroups !== false)
   setStore(appLiveMode, settings.liveModeEnabled === true)
@@ -1075,6 +1094,7 @@ export function applySettings(settings) {
   const jsonTheme = normalizeJsonTheme(settings.jsonTheme)
   setAttr(root, 'data-json-theme', jsonTheme)
   setStore(appJsonTheme, jsonTheme)
+  setStore(appEditorTheme, normalizeEditorTheme(settings.editorTheme))
 
   // Keep the canvas-table zoom in lockstep with the app zoom so Cmd +/-/0 (and
   // the zoom buttons) scale the grid alongside the rest of the UI. The canvas
