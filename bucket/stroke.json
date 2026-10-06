@@ -1,12 +1,12 @@
 {
-  "version": "2.2.4",
+  "version": "2.2.5",
   "description": "Fast desktop database client for PostgreSQL, MySQL, SQLite, and Cloudflare D1",
   "homepage": "https://github.com/stroke-app/stroke",
   "license": "Freeware",
   "architecture": {
     "64bit": {
-      "url": "https://github.com/stroke-app/stroke/releases/download/v2.2.4/stroke_2.2.4_x64-setup.exe#/dl.7z",
-      "hash": "1b5312fe1172f3ae41386afa75d5ef41084d092a766c62cc0b3e737defa5971f"
+      "url": "https://github.com/stroke-app/stroke/releases/download/v2.2.5/stroke_2.2.5_x64-setup.exe#/dl.7z",
+      "hash": "c830ff71261e8bcbf343cd1b5aef735acdbffdf956eb76f09013556aceb28fcd"
     }
   },
   "bin": "Stroke.exe",
