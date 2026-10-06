@@ -277,7 +277,7 @@
     engineFamily,
   } from '$lib/stores/connections.js'
   import { hasPro, FREE_CONNECTION_LIMIT } from '$lib/stores/license.js'
-  import { engineSupports } from '$lib/db-capabilities.js'
+  import { engineSupports, engineLabel } from '$lib/db-capabilities.js'
   import * as Dialog from '$lib/components/ui/dialog/index.js'
   import KeyRound from '@lucide/svelte/icons/key-round'
   import {
@@ -738,6 +738,26 @@
   let logsEverOpened = $state(false)
   /** The terminal page lives exactly as long as its tab, and its client with it. */
   const hasTerminalTab = $derived(tabs.some((t) => t.kind === 'terminal'))
+  /** The welcome page's tiles: six when connected (two rows of three), four otherwise and for Redis. */
+  const welcomeTileCount = $derived(connection && !isRedis ? 6 : 4)
+  /** Welcome tile icon colours: theme tokens, written out whole so Tailwind sees them. */
+  const TILE_TONE = {
+    info: 'text-info',
+    success: 'text-success',
+    primary: 'text-primary',
+    warning: 'text-warning',
+  }
+  /** The welcome header: which database this tab is on, and where it lives. */
+  const welcomeTitle = $derived(connection ? String(connection.database || connection.name || 'Database') : '')
+  const welcomeWhere = $derived.by(() => {
+    if (!connection) return ''
+    const c = /** @type {any} */ (connection)
+    let where = ''
+    if (c.filePath) where = c.filePath === ':memory:' ? 'in memory' : String(c.filePath).split(/[\\/]/).pop() ?? ''
+    else if (c.url) { try { where = new URL(String(c.url).replace(/^libsql:/, 'https:')).host } catch { where = '' } }
+    else if (c.host) where = `${c.host}${c.port ? `:${c.port}` : ''}`
+    return [engineLabel(c.type), where].filter(Boolean).join(' · ')
+  })
   let insightsEverOpened = $state(false)
   let advisorEverOpened = $state(false)
   let golfEverOpened = $state(false)
@@ -9376,11 +9396,19 @@ let rowSearch = $state('')
                footer now all start where the first tile starts. -->
           <div class="mx-auto flex min-h-full w-full max-w-xl flex-col justify-center gap-7 px-6 py-10 sm:gap-9 sm:py-12">
 
-          <!-- Header -->
-          <div class="flex flex-col items-start gap-3">
-            <div class="flex size-11 items-center justify-center rounded-lg border border-border bg-muted">
-              <Logo class="size-6" />
+          <!-- Header: what this tab is on. A lone logo said nothing; the name of
+               the database and where it lives is the one thing worth knowing
+               on a fresh tab. -->
+          <div class="flex min-w-0 items-center gap-3">
+            <div class="flex size-10 shrink-0 items-center justify-center rounded-lg border border-border bg-muted">
+              <Logo class="size-5" />
             </div>
+            {#if connection}
+              <div class="flex min-w-0 flex-col gap-0.5">
+                <span class="truncate text-ui-lg font-semibold text-foreground">{welcomeTitle}</span>
+                <span class="truncate text-ui-2xs text-muted-foreground">{welcomeWhere}</span>
+              </div>
+            {/if}
           </div>
           <!-- Five tiles, not sixteen. Sixteen equal-weight tiles asked you to read
                the whole grid to find the one you wanted; these five are what a tab
