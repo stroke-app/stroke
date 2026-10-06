@@ -27,6 +27,7 @@ pub mod local_scan;
 pub mod pg_ext_types;
 pub mod geo;
 pub mod import;
+pub mod terminal;
 pub mod tx;
 
 pub use connection::{
