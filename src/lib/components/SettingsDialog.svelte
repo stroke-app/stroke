@@ -462,6 +462,9 @@
   function toggleAgentWebAccess() {
     settings = updateSettings({ agentWebAccess: !settings.agentWebAccess });
   }
+  function toggleAutoUpdate() {
+    settings = updateSettings({ autoUpdate: !settings.autoUpdate });
+  }
   function toggleTelemetry() {
     settings = updateSettings({ telemetry: !settings.telemetry });
     // Takes effect immediately rather than at next launch: a privacy switch
@@ -1065,6 +1068,16 @@
     {#if show('Lock now', 'Lock Stroke immediately')}
       {@render actionRow('Lock now', 'Lock Stroke immediately, without waiting for the auto-lock.', 'Lock', () => { open = false; lockNow(); })}
     {/if}
+  {/if}
+
+  {@render secLabel('Updates')}
+  {#if show('Download updates in the background', 'Install new versions automatically when you quit')}
+    {@render switchRow(
+      'Download updates in the background',
+      'New versions download while you work and install when you quit Stroke. Off asks before each download.',
+      settings.autoUpdate,
+      toggleAutoUpdate,
+    )}
   {/if}
 
   <!-- Privacy lives in General, not Agent: this switch covers the whole app, and
