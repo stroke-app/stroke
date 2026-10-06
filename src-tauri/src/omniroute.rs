@@ -67,7 +67,7 @@ fn emit(app: &tauri::AppHandle, line: &str, kind: &str) {
 static USER_PATH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
 /// PATH to run tool lookups under. Resolved once per process.
-async fn user_path() -> String {
+pub(crate) async fn user_path() -> String {
     if let Some(p) = USER_PATH.get() {
         return p.clone();
     }
