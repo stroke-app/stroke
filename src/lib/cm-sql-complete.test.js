@@ -319,3 +319,103 @@ describe('completion in a trigger', () => {
     expect(state.selection.ranges.length).toBe(2)
   })
 })
+
+describe('grammar: what follows', () => {
+  it('offers IF EXISTS after DROP TABLE, then EXISTS, then the tables', () => {
+    expect(complete('DROP TABLE IF')?.labels[0]).toBe('IF EXISTS')
+    expect(complete('DROP TABLE I')?.labels[0]).toBe('IF EXISTS')
+    // A space after IF: the next word is certain, so the list opens by itself.
+    expect(complete('DROP TABLE IF ')?.labels).toEqual(['EXISTS'])
+    const names = complete('DROP TABLE IF EXISTS ')?.labels ?? []
+    expect(names[0]).toBe('users_table')
+    expect(names).toContain('posts')
+    const explicit = complete('DROP TABLE ', { explicit: true })?.labels ?? []
+    expect(explicit.slice(0, 2)).toEqual(['IF EXISTS', 'users_table'])
+  })
+
+  it('writes phrases in the case the statement is typed in', () => {
+    expect(complete('drop table i')?.labels[0]).toBe('if exists')
+    expect(complete('drop table if ')?.labels).toEqual(['exists'])
+    expect(complete('DROP TABLE If')?.labels[0]).toBe('IF EXISTS')
+  })
+
+  it('lists what DROP and CREATE make, per engine', () => {
+    const pg = complete('DROP ')?.labels ?? []
+    expect(pg).toEqual(expect.arrayContaining(['TABLE', 'VIEW', 'MATERIALIZED VIEW', 'INDEX', 'SCHEMA', 'FUNCTION', 'TYPE']))
+    const lite = completeOn('sqlite', 'DROP ')?.labels ?? []
+    expect(lite).toEqual(expect.arrayContaining(['TABLE', 'VIEW', 'INDEX', 'TRIGGER']))
+    expect(lite).not.toContain('MATERIALIZED VIEW')
+    expect(lite).not.toContain('SCHEMA')
+    expect(complete('CREATE ')?.labels).toEqual(expect.arrayContaining(['TABLE', 'OR REPLACE', 'UNIQUE INDEX', 'EXTENSION']))
+    expect(completeOn('mssql', 'CREATE ')?.labels).toContain('OR ALTER')
+    expect(complete('CREATE OR ')?.labels).toEqual(['REPLACE'])
+  })
+
+  it('offers IF NOT EXISTS for a new table, never existing tables', () => {
+    expect(complete('CREATE TABLE IF')?.labels[0]).toBe('IF NOT EXISTS')
+    expect(complete('CREATE TABLE IF ')?.labels).toEqual(['NOT EXISTS'])
+    expect(complete('CREATE TABLE IF NOT ')?.labels).toEqual(['EXISTS'])
+    expect(complete('CREATE TABLE ', { explicit: true })?.labels).toEqual(['IF NOT EXISTS'])
+    expect(completeOn('mssql', 'CREATE TABLE ', { explicit: true })).toBeNull()
+    expect(complete('CREATE INDEX idx_posts ')?.labels).toEqual(['ON'])
+    expect(complete('CREATE VIEW recent ')?.labels).toEqual(['AS'])
+  })
+
+  it('lists ALTER TABLE actions as phrases, and a column\'s changes', () => {
+    const acts = complete('ALTER TABLE users_table ')?.labels ?? []
+    expect(acts).toEqual(expect.arrayContaining(['ADD COLUMN', 'DROP COLUMN', 'ALTER COLUMN', 'RENAME TO', 'RENAME COLUMN', 'ADD CONSTRAINT', 'OWNER TO']))
+    expect(completeOn('sqlite', 'ALTER TABLE users_table ')?.labels).not.toContain('ALTER COLUMN')
+    const col = complete('ALTER TABLE users_table ALTER COLUMN name ')?.labels ?? []
+    expect(col.slice(0, 6)).toEqual(['TYPE', 'SET DATA TYPE', 'SET DEFAULT', 'DROP DEFAULT', 'SET NOT NULL', 'DROP NOT NULL'])
+    expect(complete('ALTER TABLE users_table ALTER COLUMN name SET ')?.labels).toEqual(['DEFAULT', 'NOT NULL', 'DATA TYPE'])
+    // A bare type follows only on SQL Server, and OWNER / MODIFY only as phrases.
+    expect(col).not.toContain('text')
+    expect(completeOn('mssql', 'ALTER TABLE users_table ALTER COLUMN name ')?.labels).toContain('int')
+    expect(acts).not.toContain('OWNER')
+    expect(acts).not.toContain('MODIFY')
+    expect(completeOn('mysql', 'ALTER TABLE users_table ')?.labels).toContain('MODIFY COLUMN')
+  })
+
+  it('offers only that table\'s columns where its columns go', () => {
+    const drop = complete('ALTER TABLE users_table DROP COLUMN ')?.labels ?? []
+    expect(drop).toEqual(['IF EXISTS', 'id', 'name', 'createdAt'])
+    expect(complete('ALTER TABLE users_table RENAME COLUMN ')?.labels).toEqual(['id', 'name', 'createdAt'])
+    expect(complete('ALTER TABLE users_table RENAME COLUMN name ')?.labels).toEqual(['TO'])
+    expect(complete('INSERT INTO users_table (')?.labels).toEqual(['id', 'name', 'createdAt'])
+    expect(complete('INSERT INTO users_table (id, ')?.labels).toEqual(['id', 'name', 'createdAt'])
+    expect(complete('INSERT INTO posts (id) VALUES (1) ON CONFLICT (id) DO UPDATE SET ')?.labels).toEqual(['id', 'title', 'author_id'])
+  })
+
+  it('reads the pairs of queries and writes', () => {
+    expect(complete('SELECT * FROM posts ORDER ')?.labels).toEqual(['BY'])
+    expect(complete('SELECT * FROM posts p LEFT ')?.labels).toEqual(['JOIN', 'OUTER JOIN'])
+    expect(complete('SELECT * FROM posts WHERE title IS ')?.labels).toEqual(['NULL', 'NOT NULL', 'DISTINCT FROM', 'TRUE', 'FALSE'])
+    expect(complete('SELECT * FROM posts WHERE title IS NOT ')?.labels).toEqual(['NULL', 'DISTINCT FROM', 'TRUE', 'FALSE'])
+    expect(complete('DELETE ')?.labels).toEqual(['FROM'])
+    expect(complete('INSERT ')?.labels).toEqual(['INTO'])
+    expect(completeOn('mysql', 'INSERT ')?.labels).toEqual(['INTO', 'IGNORE INTO'])
+    expect(complete('INSERT INTO posts (id) VALUES (1) ON ')?.labels).toEqual(['CONFLICT'])
+    expect(completeOn('mysql', 'INSERT INTO posts (id) VALUES (1) ON ')?.labels).toEqual(['DUPLICATE KEY UPDATE'])
+    expect(complete('INSERT INTO posts (id) VALUES (1) ON CONFLICT ')?.labels).toEqual(['DO NOTHING', 'DO UPDATE SET', 'ON CONSTRAINT'])
+    expect(complete('SELECT * FROM posts JOIN post_tags t ', { explicit: true })?.labels.slice(0, 2)).toEqual(['ON', 'USING'])
+    expect(complete('UPDATE users_table ')?.labels).toEqual(['SET'])
+  })
+
+  it('keeps quiet after a space where the next word is open', () => {
+    expect(complete('SELECT * FROM posts WHERE ')).toBeNull()
+    expect(complete('CREATE TABLE ')).toBeNull()
+    expect(complete('SELECT id ')).toBeNull()
+  })
+
+  it('writes a phrase that names follow with a space, ready for the names', () => {
+    const r = completeOn('postgres', 'DROP TABLE I')
+    expect(accept(r, 'IF EXISTS')).toBe('DROP TABLE IF EXISTS ')
+  })
+
+  it('lets Enter break the line on a one-word phrase typed out', () => {
+    const doc = 'DELETE FROM'
+    const state = EditorState.create({ doc, selection: { anchor: doc.length }, extensions: [sql({ dialect: PostgreSQL })] })
+    const from = complete(doc)?.options.find((o) => o.label === 'FROM')
+    expect(from && completionIsTypedOut(state, from)).toBe(true)
+  })
+})
