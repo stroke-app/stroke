@@ -2619,6 +2619,27 @@ let rowSearch = $state('')
     reopenLastClosedTab()
   })
 
+  // The connection's own CLI in a terminal tab. Ctrl+` on every platform, as in
+  // VS Code (on macOS Cmd+` belongs to the window switcher), and like VS Code it
+  // toggles: pressed in the terminal, it goes back to the tab it came from.
+  /** The last tab shown before the terminal, however the terminal was reached. */
+  let tabBeforeTerminal = /** @type {string | null} */ (null)
+  $effect(() => {
+    const tab = activeTab
+    if (tab && tab.kind !== 'terminal') untrack(() => { tabBeforeTerminal = tab.id })
+  })
+  createHotkey('Control+`', (e) => {
+    if (!connection) return
+    e.preventDefault()
+    if (activeTab?.kind === 'terminal') {
+      const back = tabs.find((t) => t.id === tabBeforeTerminal) ?? tabs.find((t) => t.kind !== 'terminal')
+      if (back) void activateTab(back.id)
+      return
+    }
+    if (aiMode) exitAiMode()
+    openTerminalTab()
+  })
+
   // Tab-bar visibility toggle moved here so Mod+Shift+T can reopen closed tabs.
   createHotkey('Alt+Shift+T', (e) => {
     e.preventDefault()

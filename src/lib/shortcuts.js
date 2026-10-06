@@ -123,6 +123,7 @@ export const SHORTCUT_GROUPS = [
       { combo: 'Mod+Shift+D', desc: 'Disconnect' },
       { combo: 'Mod+Shift+S', desc: 'SQL editor' },
       { combo: 'Mod+Shift+O', desc: 'ORM Runner' },
+      { combo: 'Control+`', desc: 'Terminal (psql, mysql, sqlite3...)' },
       { combo: 'Mod+Shift+X', desc: 'Extensions' },
       { combo: 'Mod+Shift+E', desc: 'Toggle AI panel' },
       { combo: 'Mod+I', desc: 'Toggle AI sidebar' },
