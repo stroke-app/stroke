@@ -785,6 +785,12 @@ html[data-os="linux"]   { --window-radius: 8px; }
     background: color-mix(in oklch, var(--muted) 65%, transparent);
   }
 
+  /* A punctuation key (` , . ;) drawn at the cap's text size is a speck; the
+     mark gets the body size, inside the same cap. */
+  kbd[data-mark] {
+    font-size: var(--fs-xs);
+  }
+
   /* kbd inside a primary-coloured surface (e.g. Save button) */
   kbd.kbd-on-primary {
     color: color-mix(in oklch, var(--primary-foreground) 80%, transparent);
