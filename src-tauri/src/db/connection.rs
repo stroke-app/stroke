@@ -1182,6 +1182,8 @@ async fn resolve_pg_ssh(config: PgConfig) -> Result<(PgConfig, Option<SshTunnel>
 
 // ── SQLite connect / test ─────────────────────────────────────────────────────
 
+pub(crate) const NO_SQLITE_FILE: &str = "This SQLite connection has no database file. Choose one (or create a new one) in the connection's settings: without a file, SQLite keeps the data in a temporary file it deletes on disconnect, so nothing created would be kept.";
+
 fn sqlite_url(path: &str) -> String {
     if path == ":memory:" {
         "sqlite::memory:".to_string()
@@ -1191,6 +1193,13 @@ fn sqlite_url(path: &str) -> String {
 }
 
 pub(crate) async fn open_sqlite(config: &SqliteConfig) -> Result<SqlitePool, String> {
+    // An empty filename is not an error to SQLite: it opens a private temporary
+    // database and deletes it when the connection closes. A saved connection
+    // with no file therefore connected fine, and every table made in it was
+    // gone after the next disconnect.
+    if config.file_path.trim().is_empty() {
+        return Err(NO_SQLITE_FILE.into());
+    }
     let opts: SqliteConnectOptions = sqlite_url(&config.file_path)
         .parse()
         .map_err(|e| format!("SQLite connection failed: {e}"))?;
