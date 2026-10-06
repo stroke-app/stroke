@@ -631,7 +631,7 @@
         <!-- Shared page-destination row (root "Views" + "Go to page" navigator) -->
         {#snippet pageRow(/** @type {typeof pageItems[number]} */ it)}
           <Command.Item value={it.value} onSelect={() => run(it.action)}>
-            <Icon name={it.icon} class="size-4 shrink-0 opacity-60" />
+            <Icon name={it.icon} class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
             <span data-slot="command-label" class="truncate">{it.label}</span>
             {#if it.keys}<Command.Shortcut keys={it.keys} />{/if}
           </Command.Item>
@@ -742,7 +742,7 @@
               <Command.Group heading="Schemas">
                 {#each schemas as schema (schema)}
                   <Command.Item value="schema {schema}" onSelect={() => run(() => onschemachange(schema))}>
-                    <Icon name="database" class="size-4 shrink-0 opacity-60" />
+                    <Icon name="database" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
                     <span data-slot="command-label" class="truncate font-mono">{schema}</span>
                     {#if schema === activeSchema}
                       <span data-slot="command-trailing" class="shrink-0 text-ui-xs text-muted-foreground">current</span>
@@ -756,14 +756,14 @@
               <Command.Group heading="Tables">
                 {#each regularTables.slice(0, 8) as table (table.name)}
                   <Command.Item value="table {activeSchema} {table.name}" onSelect={() => run(() => ontableselect(table.name))}>
-                    <Icon name="table-2" class="size-4 shrink-0 opacity-60" />
+                    <Icon name="table-2" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
                     <span data-slot="command-label" class="truncate font-mono">{table.name}</span>
                     <span data-slot="command-trailing" class="shrink-0 font-mono text-ui-xs tabular-nums text-muted-foreground">{formatTableRowCount(table.rowCount)}</span>
                   </Command.Item>
                 {/each}
                 {#each viewTables.slice(0, 4) as table (table.name)}
                   <Command.Item value="view {activeSchema} {table.name}" onSelect={() => run(() => ontableselect(table.name))}>
-                    <Icon name="eye" class="size-4 shrink-0 opacity-60" />
+                    <Icon name="eye" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
                     <span data-slot="command-label" class="truncate font-mono">{table.name}</span>
                     <span data-slot="command-trailing" class="shrink-0 text-ui-xs text-muted-foreground">view</span>
                   </Command.Item>
@@ -780,12 +780,12 @@
 
             <Command.Group heading="AI">
               <Command.Item value="ask ai assistant chat query" onSelect={() => run(onopenai)}>
-                <Icon name="bot" class="size-4 shrink-0 opacity-60" />
+                <Icon name="bot" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">Ask AI</span>
                 <Command.Shortcut keys="⌘⇧E" />
               </Command.Item>
               <Command.Item value="toggle ai sidebar inline assistant context" onSelect={() => run(onopenaisidebar)}>
-                <Icon name="sparkles" class="size-4 shrink-0 opacity-60" />
+                <Icon name="sparkles" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">AI sidebar</span>
                 <Command.Shortcut keys="⌘I" />
               </Command.Item>
@@ -793,14 +793,14 @@
                 value={aiMode ? "close ai panel hide assistant" : "open ai panel show assistant chat"}
                 onSelect={() => run(ontoggleaimode)}
               >
-                <Icon name="arrow-left-right" class="size-4 shrink-0 opacity-60" />
+                <Icon name="arrow-left-right" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">{aiMode ? 'Close AI panel' : 'Open AI panel'}</span>
               </Command.Item>
             </Command.Group>
 
             <Command.Group heading="Queries">
               <Command.Item value="open query history sql statements" onSelect={() => run(onopenqueryhistory)}>
-                <Icon name="history" class="size-4 shrink-0 opacity-60" />
+                <Icon name="history" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">Query history</span>
               </Command.Item>
             </Command.Group>
@@ -809,7 +809,7 @@
               <Command.Group heading="Saved queries">
                 {#each savedQueries as entry (entry.id)}
                   <Command.Item value="saved query {entry.name} {entry.sql}" onSelect={() => run(() => onqueryselect(entry.sql))}>
-                    <Icon name="bookmark" class="size-4 shrink-0 opacity-60" />
+                    <Icon name="bookmark" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
                     <span data-slot="command-label" class="min-w-0 truncate font-mono text-ui-xs">{entry.name}</span>
                   </Command.Item>
                 {/each}
@@ -820,7 +820,7 @@
               <Command.Group heading="Recent queries">
                 {#each queryHistory.slice(0, 20) as entry (entry.id)}
                   <Command.Item value="recent query {entry.title} {entry.sql}" onSelect={() => run(() => onqueryselect(entry.sql))}>
-                    <Icon name="history" class="size-4 shrink-0 opacity-60" />
+                    <Icon name="history" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
                     <span data-slot="command-label" class="min-w-0 truncate font-mono text-ui-xs">{entry.title}</span>
                   </Command.Item>
                 {/each}
@@ -829,42 +829,42 @@
 
             <Command.Group heading="Actions">
               <Command.Item value="refresh schema tables" onSelect={() => run(onrefresh)}>
-                <Icon name="refresh-cw" class="size-4 shrink-0 opacity-60" />
+                <Icon name="refresh-cw" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">Refresh tables</span>
               </Command.Item>
               <Command.Item value="read only read-only lock mode protect prevent edits writes inserts deletes writable" onSelect={() => run(onreadonlytoggle)}>
-                <Icon name={readonly ? 'lock-open' : 'lock'} class="size-4 shrink-0 opacity-60" />
+                <Icon name={readonly ? 'lock-open' : 'lock'} class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">{readonly ? 'Disable read-only mode' : 'Enable read-only mode'}</span>
               </Command.Item>
               <Command.Item value="open settings preferences" onSelect={() => run(onopensettings)}>
-                <Icon name="settings" class="size-4 shrink-0 opacity-60" />
+                <Icon name="settings" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">Settings</span>
               </Command.Item>
               {#if $pinEnabled}
                 <Command.Item value="lock app pin screen secure" onSelect={() => run(lockNow)}>
-                  <Icon name="lock" class="size-4 shrink-0 opacity-60" />
+                  <Icon name="lock" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
                   <span data-slot="command-label" class="truncate">Lock Stroke</span>
                 </Command.Item>
               {/if}
               <Command.Item value="keyboard shortcuts keybindings hotkeys help" onSelect={() => run(onopenshortcuts)}>
-                <Icon name="keyboard" class="size-4 shrink-0 opacity-60" />
+                <Icon name="keyboard" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">Keyboard shortcuts</span>
                 <Command.Shortcut keys="?" />
               </Command.Item>
               <Command.Item value="about license version info app" onSelect={() => run(onopenabout)}>
-                <Icon name="info" class="size-4 shrink-0 opacity-60" />
+                <Icon name="info" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">About Stroke</span>
               </Command.Item>
               <Command.Item value="report issue bug crash problem feedback github" onSelect={() => run(onopenreport)}>
-                <Icon name="bug" class="size-4 shrink-0 opacity-60" />
+                <Icon name="bug" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">Report an issue</span>
               </Command.Item>
               <Command.Item value="check for updates upgrade version" onSelect={() => run(oncheckupdate)}>
-                <Icon name="arrow-down-to-line" class="size-4 shrink-0 opacity-60" />
+                <Icon name="arrow-down-to-line" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">Check for updates</span>
               </Command.Item>
               <Command.Item value="disconnect database" onSelect={() => run(ondisconnect)}>
-                <Icon name="unplug" class="size-4 shrink-0 opacity-60" />
+                <Icon name="unplug" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">Disconnect</span>
               </Command.Item>
             </Command.Group>
@@ -879,7 +879,7 @@
                   value="switch database connection {conn.name} {connSubtitle(conn)} {conn.type}"
                   onSelect={() => run(() => onswitchdatabase(conn))}
                 >
-                  <Icon name={driverIcon(conn.type ?? 'postgres')} class="size-4 shrink-0 opacity-60" />
+                  <Icon name={driverIcon(conn.type ?? 'postgres')} class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
                   <div data-slot="command-label" class="flex min-w-0 flex-1 flex-col">
                     <span class="truncate">{conn.name}</span>
                     <span class="truncate font-mono text-ui-2xs text-muted-foreground">{connSubtitle(conn)}</span>
@@ -898,7 +898,7 @@
               value="connections switch database connect postgres mysql sqlite saved {savedConnections.map(c => c.name).join(' ')}"
               onSelect={() => navigate('connections')}
             >
-              <Icon name="database" class="size-4 shrink-0 opacity-60" />
+              <Icon name="database" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
               <span data-slot="command-label" class="truncate">Connections</span>
               {#if savedConnections.length > 0}
                 <span class="shrink-0 font-mono text-ui-xs text-muted-foreground">{savedConnections.length}</span>
@@ -910,7 +910,7 @@
           <!-- ── Drill-in: Docker ───────────────────────────────────── -->
           <Command.Group heading="Launch">
             <Command.Item value="docker containers postgresql mysql launch run" onSelect={() => navigate('docker')}>
-              <Icon name="package" class="size-4 shrink-0 opacity-60" />
+              <Icon name="package" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
               <span data-slot="command-label" class="truncate">Docker</span>
               <Icon name="chevron-right" class="size-3.5 shrink-0 text-muted-foreground" />
             </Command.Item>
@@ -922,7 +922,7 @@
             <Command.Group heading="Tables">
               {#each tablesPageRegular.items as table (table.name)}
                 <Command.Item value="table {activeSchema} {table.name} {table.name}" onSelect={() => run(() => ontableselect(table.name))}>
-                  <Icon name="table-2" class="size-4 shrink-0 opacity-60" />
+                  <Icon name="table-2" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
                   <span data-slot="command-label" class="truncate font-mono">{table.name}</span>
                   <span
                     data-slot="command-trailing"
@@ -942,7 +942,7 @@
             <Command.Group heading="Views">
               {#each tablesPageViews.items as table (table.name)}
                 <Command.Item value="view {activeSchema} {table.name} {table.name}" onSelect={() => run(() => ontableselect(table.name))}>
-                  <Icon name="eye" class="size-4 shrink-0 opacity-60" />
+                  <Icon name="eye" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
                   <span data-slot="command-label" class="truncate font-mono">{table.name}</span>
                 </Command.Item>
               {/each}
@@ -957,7 +957,7 @@
             <Command.Group heading="Materialized views">
               {#each tablesPageMatViews.items as table (table.name)}
                 <Command.Item value="materialized view {activeSchema} {table.name} {table.name}" onSelect={() => run(() => ontableselect(table.name))}>
-                  <Icon name="eye" class="size-4 shrink-0 opacity-60" />
+                  <Icon name="eye" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
                   <span data-slot="command-label" class="truncate font-mono">{table.name}</span>
                   <span
                     data-slot="command-trailing"
@@ -980,7 +980,7 @@
               value="launch postgresql postgres container pull run 5433"
               onSelect={() => run(() => ondockerlaunch('postgres'))}
             >
-              <Icon name="package" class="size-4 shrink-0 opacity-60" />
+              <Icon name="package" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
               <span data-slot="command-label" class="truncate">PostgreSQL container</span>
               <span data-slot="command-trailing" class="shrink-0 font-mono text-ui-2xs text-muted-foreground">:5433</span>
             </Command.Item>
@@ -988,7 +988,7 @@
               value="launch mysql container pull run 3307"
               onSelect={() => run(() => ondockerlaunch('mysql'))}
             >
-              <Icon name="package" class="size-4 shrink-0 opacity-60" />
+              <Icon name="package" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
               <span data-slot="command-label" class="truncate">MySQL container</span>
               <span data-slot="command-trailing" class="shrink-0 font-mono text-ui-2xs text-muted-foreground">:3307</span>
             </Command.Item>
@@ -1006,7 +1006,7 @@
                   onSelect={() => run(() => onswitchdatabase(conn))}
                   disabled={isActive}
                 >
-                  <Icon name={driverIconName} class="size-4 shrink-0 opacity-60" />
+                  <Icon name={driverIconName} class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
                   <div data-slot="command-label" class="flex min-w-0 flex-1 flex-col">
                     <span class="truncate">{conn.name}</span>
                     <span class="truncate font-mono text-ui-2xs text-muted-foreground">{connSubtitle(conn)}</span>
@@ -1020,7 +1020,7 @@
           {/if}
           <Command.Group heading="Add">
             <Command.Item value="new connection add connect database" onSelect={() => run(onopenconnection)}>
-              <Icon name="database" class="size-4 shrink-0 opacity-60" />
+              <Icon name="database" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
               <span data-slot="command-label" class="truncate">New connection…</span>
             </Command.Item>
           </Command.Group>
