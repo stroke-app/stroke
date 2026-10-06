@@ -13,7 +13,7 @@
 
 <!-- Icon on the left, clean border separator at the bottom, Raycast style -->
 <div data-slot="command-input-wrapper" class="flex items-center gap-3 border-b border-border/25 px-4 py-3">
-	<SearchIcon class="size-[15px] shrink-0 text-muted-foreground" />
+	<SearchIcon class="size-4 shrink-0 text-muted-foreground" />
 	<CommandPrimitive.Input
 		bind:value
 		data-slot="command-input"
