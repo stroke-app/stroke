@@ -7687,10 +7687,15 @@ let rowSearch = $state('')
         // active filter is the database's call), so the count has to be redone.
         invalidateRowCount()
         await loadRows()
+        // In the table's own order a new row comes last. A paged view shows it
+        // on the last page; one that holds every row (All, windowed) can go
+        // straight to it, which is where the user is looking for it.
+        const atEnd = !hasActiveFilters && !rowSort && (pageSize === PAGE_SIZE_ALL || windowed)
         toast.success('Row inserted', {
           description: hasActiveFilters
             ? 'Refresh filters or go to page 1 if the row is not visible'
-            : undefined,
+            : atEnd ? 'It is at the end of the table' : undefined,
+          ...(atEnd ? { action: { label: 'Show', onClick: () => scrollTableBottom?.() } } : {}),
         })
       }
     } catch (err) {
