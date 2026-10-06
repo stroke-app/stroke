@@ -2201,6 +2201,8 @@
     // target, and in connection-string mode that is what parses the URI into
     // fields. It reads state and allocates an object - nothing that can fail.
     const payload = formPayload();
+    const noFile = missingFileReason(payload);
+    if (noFile) { failWith(noFile); return; }
     // Only for a row that does not exist yet: connecting to a connection you
     // already have saved is not a filing decision, and being asked about it on
     // the way in is the wrong question at the wrong time.
