@@ -36,6 +36,7 @@ import ExternalLink from '@lucide/svelte/icons/external-link'
 import Database from '@lucide/svelte/icons/database'
 import Code2 from '@lucide/svelte/icons/code-2'
 import Terminal from '@lucide/svelte/icons/terminal'
+import SquareTerminal from '@lucide/svelte/icons/square-terminal'
 import BarChart2 from '@lucide/svelte/icons/bar-chart-2'
 import Sparkles from '@lucide/svelte/icons/sparkles'
 import GitBranch from '@lucide/svelte/icons/git-branch'
@@ -198,6 +199,7 @@ export const ICON_MAP = {
   'database':       { lucide: Database,      huge: Database01Icon },
   'code-2':         { lucide: Code2,         huge: SourceCodeIcon },
   'terminal':       { lucide: Terminal,      huge: TerminalIcon },
+  'square-terminal': { lucide: SquareTerminal },
   'bar-chart-2':    { lucide: BarChart2,     huge: ChartLineData02Icon },
   'sparkles':       { lucide: Sparkles,      huge: SparklesIcon },
   'git-branch':     { lucide: GitBranch,     huge: GitBranchIcon },
