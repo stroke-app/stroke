@@ -677,6 +677,11 @@
   let saveQueryName = $state('');
   let savingQuery = $state(false);
 
+  /** @param {string} undoId */
+  async function revertFromLens(undoId) {
+    if (await onrevertrun?.(undoId)) sqlEditorRef?.markReverted?.(undoId)
+  }
+
   function fixWithAi() {
     const failedSql = activeSet?.error ? activeSet.sql : sql
     if (!shownError || !failedSql.trim()) return
