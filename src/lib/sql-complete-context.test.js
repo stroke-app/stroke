@@ -139,3 +139,40 @@ describe('sqlCompletionContext in a trigger', () => {
     expect(ctx('CREATE OR REPLACE FUNCTION set_updated_at() RETURNS trigger AS $$ BEGIN NEW.')?.routine).toBe('set_updated_at')
   })
 })
+
+describe('sqlCompletionContext grammar', () => {
+  const texts = (/** @type {any} */ c) => c.phrases.map((/** @type {any} */ p) => p.text)
+
+  it('says what follows DROP, and when it is certain', () => {
+    expect(ctx('DROP ')).toMatchObject({ kind: 'ddl', eager: true })
+    expect(texts(ctx('DROP TABLE '))).toEqual(['IF EXISTS'])
+    expect(ctx('DROP TABLE ')).toMatchObject({ kind: 'tables', eager: false })
+    expect(ctx('DROP TABLE IF ')).toMatchObject({ kind: 'ddl', eager: true, next: [] })
+    expect(ctx('DROP TABLE IF EXISTS ')).toMatchObject({ kind: 'tables', eager: true })
+    expect(ctx('DROP SCHEMA IF EXISTS ')).toMatchObject({ kind: 'ddl', names: 'schemas' })
+    expect(texts(ctx('DROP TABLE users ')).slice(0, 2)).toEqual(['CASCADE', 'RESTRICT'])
+  })
+
+  it('treats a CREATE\'s name as new', () => {
+    expect(ctx('CREATE TABLE ')).toMatchObject({ kind: 'ddl', eager: false })
+    expect(texts(ctx('CREATE TABLE '))).toEqual(['IF NOT EXISTS'])
+    expect(ctx('CREATE TABLE IF NOT ')).toMatchObject({ eager: true })
+    expect(texts(ctx('CREATE UNIQUE INDEX i '))).toEqual(['ON'])
+  })
+
+  it('names the table whose columns go here', () => {
+    expect(ctx('ALTER TABLE app.users DROP COLUMN ')).toMatchObject({ kind: 'columns', columnsOf: 'users', eager: true })
+    expect(ctx('INSERT INTO "Orders" (')).toMatchObject({ kind: 'columns', columnsOf: 'Orders' })
+    expect(ctx('UPDATE t SET a = 1 WHERE b ')).toMatchObject({ columnsOf: null })
+  })
+
+  it('reads the case the statement is written in', () => {
+    expect(ctx('drop table ').lower).toBe(true)
+    expect(ctx('DROP TABLE ').lower).toBe(false)
+  })
+
+  it('leaves quotes and dotted names alone', () => {
+    expect(ctx('DROP TABLE "').phrases).toEqual([])
+    expect(ctx('DROP TABLE public.').phrases).toEqual([])
+  })
+})
