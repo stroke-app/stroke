@@ -2433,6 +2433,36 @@
     }
   }
 
+  /**
+   * Where a new database file goes. The connection then creates it on first
+   * open; leaving the path empty used to "work" against a temporary database
+   * that the engine deletes on disconnect.
+   * @param {'sqlite' | 'duckdb'} kind
+   */
+  async function newDatabaseFile(kind) {
+    try {
+      const { save } = await import("@tauri-apps/plugin-dialog");
+      const path = await save({
+        title: kind === "sqlite" ? "New SQLite database" : "New DuckDB database",
+        defaultPath: kind === "sqlite" ? "database.db" : "database.duckdb",
+        filters: kind === "sqlite"
+          ? [{ name: "SQLite", extensions: ["db", "sqlite", "sqlite3"] }]
+          : [{ name: "DuckDB", extensions: ["duckdb", "ddb", "db"] }],
+      });
+      if (typeof path === "string" && path) filePath = path;
+    } catch {
+      /* browser/non-Tauri env */
+    }
+  }
+
+  /** A file-backed connection with no file: the reason it cannot connect, or null. @param {any} conn */
+  function missingFileReason(conn) {
+    if ((conn?.type === "sqlite" || conn?.type === "duckdb") && !String(conn.filePath ?? "").trim()) {
+      return "Choose a database file, or create a new one. Without a file nothing would be kept: the database would be thrown away on disconnect.";
+    }
+    return null;
+  }
+
   async function pickDuckdbFile() {
     try {
       const { open } = await import("@tauri-apps/plugin-dialog");
@@ -3956,7 +3986,18 @@
                                   <Icon name="folder-open" class="size-3" />
                                   Browse
                                 </button>
+                                <button
+                                  type="button"
+                                  onclick={() => void newDatabaseFile("sqlite")}
+                                  class="field-surface inline-flex h-8 shrink-0 items-center gap-1 px-2.5 text-ui-2xs text-muted-foreground transition-[color,background-color,border-color,transform] duration-150 ease-out hover:bg-muted/40 hover:text-foreground active:scale-[0.97]"
+                                >
+                                  <Icon name="plus" class="size-3" />
+                                  New
+                                </button>
                               </div>
+                              <p class="mt-1 text-ui-3xs text-muted-foreground">
+                                {filePath.trim() ? "A new file is created if it doesn't exist." : "Pick a database file, or create a new one."}
+                              </p>
                             </div>
 
                             <!-- ── In-Memory ─────────────────────────────── -->
@@ -4117,11 +4158,19 @@
                                   <Icon name="folder-open" class="size-3" />
                                   Browse
                                 </button>
+                                <button
+                                  type="button"
+                                  onclick={() => void newDatabaseFile("duckdb")}
+                                  class="field-surface inline-flex h-8 shrink-0 items-center gap-1 px-2.5 text-ui-2xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
+                                >
+                                  <Icon name="plus" class="size-3" />
+                                  New
+                                </button>
                               </div>
                               <p
                                 class="mt-1 text-ui-3xs text-muted-foreground"
                               >
-                                A new file is created if it doesn't exist.
+                                {filePath.trim() ? "A new file is created if it doesn't exist." : "Pick a database file, or create a new one."}
                               </p>
                             </div>
 
