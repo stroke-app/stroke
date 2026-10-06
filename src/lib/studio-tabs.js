@@ -1,4 +1,4 @@
-/** @typedef {'table' | 'sql' | 'ddl' | 'welcome' | 'ai' | 'schema' | 'orm' | 'security' | 'logs' | 'extensions' | 'extension-detail' | 'backup' | 'json' | 'charts' | 'dashboard' | 'erd' | 'reltree' | 'diagrams' | 'search' | 'notebook' | 'schema-timeline' | 'data-diff' | 'insights' | 'objects' | 'redis' | 'license' | 'orm-schema' | 'map' | 'advisor' | 'golf'} StudioTabKind */
+/** @typedef {'table' | 'sql' | 'ddl' | 'welcome' | 'ai' | 'schema' | 'orm' | 'security' | 'logs' | 'extensions' | 'extension-detail' | 'backup' | 'json' | 'charts' | 'dashboard' | 'erd' | 'reltree' | 'diagrams' | 'search' | 'notebook' | 'schema-timeline' | 'data-diff' | 'insights' | 'objects' | 'redis' | 'license' | 'orm-schema' | 'map' | 'advisor' | 'golf' | 'terminal'} StudioTabKind */
 
 import { loadDefaultPageSize } from '$lib/table-query.js'
 
@@ -231,6 +231,7 @@ const SINGLETON_TAB_TITLES = {
   'schema-timeline': 'Schema Timeline',
   'data-diff': 'Data Diff',
   golf: 'VACUUM',
+  terminal: 'Terminal',
 }
 
 /** @param {StudioTabKind} kind */
@@ -273,6 +274,8 @@ export const createLicenseTab = () => createKindTab('license')
 export const createSearchTab = () => createKindTab('search')
 export const createSchemaTimelineTab = () => createKindTab('schema-timeline')
 export const createDataDiffTab = () => createKindTab('data-diff')
+/** The connection's own CLI (psql, mysql, sqlite3...) in a real terminal. */
+export const createTerminalTab = () => createKindTab('terminal')
 
 /** @type {(tabs: StudioTab[]) => StudioTab | null} */
 export const findAiTab = (tabs) => findTabByKind(tabs, 'ai')
@@ -286,6 +289,8 @@ export const findOrmSchemaTab = (tabs) => findTabByKind(tabs, 'orm-schema')
 export const findSecurityTab = (tabs) => findTabByKind(tabs, 'security')
 /** @type {(tabs: StudioTab[]) => StudioTab | null} */
 export const findLogsTab = (tabs) => findTabByKind(tabs, 'logs')
+/** @type {(tabs: StudioTab[]) => StudioTab | null} */
+export const findTerminalTab = (tabs) => findTabByKind(tabs, 'terminal')
 /** @type {(tabs: StudioTab[]) => StudioTab | null} */
 export const findInsightsTab = (tabs) => findTabByKind(tabs, 'insights')
 /** @type {(tabs: StudioTab[]) => StudioTab | null} */
