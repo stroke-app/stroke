@@ -12,6 +12,7 @@
   import Boxes from '@lucide/svelte/icons/boxes'
   import FileCode2 from '@lucide/svelte/icons/file-code-2'
   import Terminal from '@lucide/svelte/icons/terminal'
+  import SquareTerminal from '@lucide/svelte/icons/square-terminal'
   import Sparkles from '@lucide/svelte/icons/sparkles'
   import LayoutTemplate from '@lucide/svelte/icons/layout-template'
   import { cn } from '$lib/utils.js'
@@ -177,6 +178,7 @@
     findOrmSchemaTab,
     createSecurityTab,
     createLogsTab,
+    createTerminalTab,
     createInsightsTab,
     createAdvisorTab,
     createGolfTab,
@@ -215,6 +217,7 @@
     findOrmTab,
     findSecurityTab,
     findLogsTab,
+    findTerminalTab,
     findBackupTab,
     findJsonTab,
     findChartsTab,
@@ -508,6 +511,8 @@
   /** @type {import('./UpdateDialog.svelte').default | null} */
   let updateDialog = $state(null)
   let statusBarHasUpdate = $state(false)
+  /** The update is downloaded: the status bar offers the restart. */
+  let statusBarUpdateReady = $state(false)
   let sidebarOpen = $state(loadLayout().navSidebarOpen)
   /** The nav sidebar was open when a visual page took the width; put it back on leaving. */
   let _sidebarBeforeErd = false
@@ -3745,6 +3750,19 @@ let rowSearch = $state('')
 
   function openObjectsTab() {
     openSingletonTab({ find: findObjectsTab, create: createObjectsTab })
+  }
+
+  /** The connection's own CLI in a real terminal. Not pro-gated: it is the
+   *  engine's free client, Stroke only hosts it. */
+  function openTerminalTab() {
+    const existing = findTerminalTab(tabs)
+    if (existing) { void activateTab(existing.id); return }
+    saveActiveTabState()
+    dropWelcomeTabs()
+    const tab = createTerminalTab()
+    tabs = [...tabs, tab]
+    activeTabId = tab.id
+    clearTableEditor()
   }
 
   /** The Redis keyspace workspace. NOT pro-gated - it's the primary (and only)
@@ -8134,7 +8152,14 @@ let rowSearch = $state('')
   </Dialog.Portal>
 </Dialog.Root>
 
-<UpdateDialog bind:this={updateDialog} onupdatefound={() => (statusBarHasUpdate = true)} />
+<SqlRevertDialog undo={revertAsk} dialect={dbType} onconfirm={() => void confirmRevert()} oncancel={() => settleRevert(false)} />
+<UpdateDialog
+  bind:this={updateDialog}
+  onupdatefound={(state) => {
+    statusBarHasUpdate = true
+    statusBarUpdateReady = state === 'ready'
+  }}
+/>
 
 
 <CommandPalette
@@ -8618,6 +8643,21 @@ let rowSearch = $state('')
           <svelte:boundary failed={tabError}>
             {#await import('./LogsPage.svelte')}<TabLoading />{:then { default: LogsPage }}
               <LogsPage active={activeTab?.kind === 'logs'} />
+            {/await}
+          </svelte:boundary>
+        </div>
+      {/if}
+
+      <!-- Terminal tab - mounted only while the tab exists: closing the tab
+           unmounts the page, which kills its psql (and frees the connection). -->
+      {#if hasTerminalTab}
+        <div
+          class={activeTab?.kind === 'terminal' ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}
+          inert={activeTab?.kind !== 'terminal' || undefined}
+        >
+          <svelte:boundary failed={tabError}>
+            {#await import('./TerminalPage.svelte')}<TabLoading />{:then { default: TerminalPage }}
+              <TerminalPage active={activeTab?.kind === 'terminal'} {connection} {dbType} getHints={buildSqlHints} />
             {/await}
           </svelte:boundary>
         </div>
@@ -9459,11 +9499,11 @@ let rowSearch = $state('')
           <Kbd {keys} wrap />
         {/snippet}
 
-        <!-- The tile grid, back to the shape it had: icon pinned top, label and
-             chord anchored bottom, every tile the same size. What changed is the
-             count - five actions instead of sixteen - so the grid is a shortlist
-             you take in at a glance rather than a wall you have to read. -->
-        {#snippet row(/** @type {any} */ Icon, /** @type {string} */ label, /** @type {string} */ _desc, /** @type {() => void} */ onclick, /** @type {{ pro?: boolean, keys?: string[] }} */ opts = {})}
+        <!-- A tile: one line, icon and label. Compact on purpose: the two-line
+             version with a description and printed chord was most of the page,
+             and in the monospace font its descriptions truncated anyway. The
+             description and the shortcut are in the tooltip. -->
+        {#snippet row(/** @type {any} */ Icon, /** @type {string} */ label, /** @type {string} */ desc, /** @type {() => void} */ onclick, /** @type {{ pro?: boolean, keys?: string[], tone?: 'info' | 'success' | 'primary' | 'warning' }} */ opts = {})}
           {@const locked = !!opts.pro && !$hasPro}
           {@const chordText = opts.keys ? ` (${opts.keys.join(isMac ? '' : '+')})` : ''}
           <button
@@ -9692,6 +9732,7 @@ let rowSearch = $state('')
   onswitchconnection={handleSwitchDatabase}
   {mcpRunning}
   hasUpdate={statusBarHasUpdate}
+  updateReady={statusBarUpdateReady}
   onopenmcp={() => (showMcpPanel = true)}
   onconnect={() => (showConnectionModal = true)}
   onswitchtodb={switchToDb}
