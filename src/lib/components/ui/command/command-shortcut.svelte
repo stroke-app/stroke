@@ -1,6 +1,7 @@
 <script>
 	import { cn } from "$lib/utils.js";
 	import Kbd from "$lib/components/Kbd.svelte";
+	import { keycaps } from "$lib/shortcuts.js";
 	let {
 		ref = $bindable(null),
 		class: className,
@@ -11,10 +12,17 @@
 
 	// Split on "+" separators ("Ctrl+Shift+B") or spread Unicode codepoints ("⌘⇧B").
 	// Unicode spread handles symbols correctly: [...'⌘⇧B'] = ['⌘','⇧','B'].
+	// Rows write their chords as macOS glyphs (`⌘⇧S`, `⌃\``). Printed as written,
+	// Linux and Windows showed ⌘ and ⌃ for keys they call Ctrl. Read the glyphs
+	// as names and let `keycaps` print each platform's own spelling.
+	const GLYPH_NAME = { '⌘': 'Mod', '⇧': 'Shift', '⌥': 'Alt', '⌃': 'Ctrl', '↵': 'Enter' };
 	const tokens = $derived(
 		!keys ? [] :
-		keys.includes('+') ? keys.split('+').filter(Boolean) :
-		[...keys]
+		keycaps(
+			keys.includes('+')
+				? keys
+				: [...keys].map((k) => GLYPH_NAME[k] ?? k.toUpperCase()).join('+')
+		)
 	);
 </script>
 
