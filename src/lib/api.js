@@ -1546,3 +1546,43 @@ async function blobToBase64(blob) {
   }
   return btoa(binary)
 }
+
+// ── Updates ──────────────────────────────────────────────────────────────────
+// Rust stages the download on disk and installs it as the app quits where the
+// install can finish on its own (src-tauri/src/updates.rs).
+
+/**
+ * @typedef {{ version: string, currentVersion: string, notes: string, date: number | null, staged: boolean, applyOnQuit: boolean }} UpdateInfo
+ * @typedef {{ event: 'started', data: { contentLength: number | null } } | { event: 'progress', data: { downloaded: number } } | { event: 'finished' }} UpdateDownloadEvent
+ */
+
+/**
+ * Ask the release feed for a newer build. Returns the downloaded one when an
+ * update is already waiting, so a second check never downloads twice.
+ * @returns {Promise<UpdateInfo | null>}
+ */
+export async function updateCheck() {
+  return inv('update_check')
+}
+
+/**
+ * Download the update from the last check and stage it for install.
+ * @param {(event: UpdateDownloadEvent) => void} onEvent
+ * @returns {Promise<UpdateInfo>}
+ */
+export async function updateDownload(onEvent) {
+  return inv('update_download', { onEvent: new Channel(onEvent) })
+}
+
+/**
+ * The downloaded update waiting to install, if any.
+ * @returns {Promise<UpdateInfo | null>}
+ */
+export async function updateStatus() {
+  return inv('update_status')
+}
+
+/** Install the downloaded update now and relaunch. Does not return on success. */
+export async function updateRestart() {
+  return inv('update_restart')
+}
