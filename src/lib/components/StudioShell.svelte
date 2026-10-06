@@ -736,6 +736,8 @@
   let ormEverOpened = $state(false)
   let securityEverOpened = $state(false)
   let logsEverOpened = $state(false)
+  /** The terminal page lives exactly as long as its tab, and its client with it. */
+  const hasTerminalTab = $derived(tabs.some((t) => t.kind === 'terminal'))
   let insightsEverOpened = $state(false)
   let advisorEverOpened = $state(false)
   let golfEverOpened = $state(false)
