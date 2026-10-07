@@ -1323,7 +1323,7 @@
     const view = editorRef?.getView()
     if (!view) return
     const text = view.state.doc.toString()
-    const formatted = formatSql(text)
+    const formatted = formatSql(text, undefined, dialect)
     if (formatted !== text) view.dispatch({ changes: { from: 0, to: text.length, insert: formatted } })
   }
 

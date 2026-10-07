@@ -8938,7 +8938,7 @@ let rowSearch = $state('')
         >
           <svelte:boundary failed={tabError}>
             {#await import('./DdlView.svelte')}<TabLoading />{:then { default: DdlView }}
-              <DdlView ddl={ddlState.ddlText} objectName={ddlTab.title.replace(/^DDL · /, '')} />
+              <DdlView ddl={ddlState.ddlText} objectName={ddlTab.title.replace(/^DDL · /, '')} engine={connection?.type ?? ''} />
             {/await}
           </svelte:boundary>
         </div>
