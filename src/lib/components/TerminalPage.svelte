@@ -632,6 +632,9 @@
   /** Clients that edit their line with readline or editline, which know the Meta word keys. */
   const READLINE_CLIENTS = new Set(['psql', 'mysql', 'mariadb', 'sqlite3'])
 
+  /** Cmd+Left, Cmd+Right and Cmd+Backspace, as in a macOS text field: start and end of the line, delete back to its start. */
+  const MAC_COMMAND_KEYS = /** @type {Record<string, string>} */ ({ ArrowLeft: '\x01', ArrowRight: '\x05', Backspace: '\x15' })
+
   /**
    * The editing keys people bring from an editor, spelled the way the client's
    * line editor understands them. xterm sends Ctrl+Backspace as ^H (one
@@ -643,12 +646,15 @@
    * @returns {string | null} null leaves the key to xterm; '' drops it
    */
   function editorKeystrokes(e) {
-    if (e.metaKey || e.shiftKey) return null
+    if (e.shiftKey) return null
+    if (e.metaKey) return IS_MAC && !e.ctrlKey && !e.altKey ? MAC_COMMAND_KEYS[e.key] ?? null : null
     if (lineEditor === 'console') return consoleKeystrokes(e)
     const word = READLINE_CLIENTS.has(client?.name ?? '')
     const mod = e.ctrlKey || e.altKey
     switch (e.key) {
-      case 'Backspace': return e.ctrlKey ? '\x17' : e.altKey && word ? '\x1b\x7f' : null
+      // On macOS these clients usually link editline, where ^W cuts back to
+      // the start of the line; ESC DEL deletes a word there and in readline alike.
+      case 'Backspace': return e.ctrlKey ? (IS_MAC && word ? '\x1b\x7f' : '\x17') : e.altKey && word ? '\x1b\x7f' : null
       case 'Delete': return mod && word ? '\x1bd' : null
       case 'ArrowLeft': return mod && word ? '\x1bb' : null
       case 'ArrowRight': return mod && word ? '\x1bf' : null
