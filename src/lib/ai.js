@@ -1166,6 +1166,72 @@ export function normalizeToolArgs(raw) {
 }
 
 /**
+ * Tool calls a model wrote into its reply as text instead of making them.
+ *
+ * Small models (the free gateway's fast alias among them) sometimes answer
+ * with `{"name": "render_chart", "parameters": {...}}` in prose, Llama's own
+ * tool-call format, and the user got five blocks of raw JSON and no chart.
+ * Each such object naming one of this turn's tools becomes a real call and
+ * leaves the text; anything else stays where it was.
+ * @param {string} text
+ * @param {string[]} toolNames the tools this turn offered
+ * @returns {{ text: string, toolCalls: ToolCall[] }}
+ */
+export function extractTextToolCalls(text, toolNames) {
+  const names = new Set(toolNames)
+  /** @type {ToolCall[]} */
+  const toolCalls = []
+  /** @type {Array<[number, number]>} */
+  const cut = []
+  const START = /\{\s*"(?:name|type)"\s*:/g
+  let m
+  while ((m = START.exec(text)) !== null) {
+    const end = balancedObjectEnd(text, m.index)
+    if (end === -1) continue
+    /** @type {any} */
+    let obj
+    try { obj = JSON.parse(text.slice(m.index, end)) } catch { continue }
+    const name = obj?.name ?? obj?.function?.name
+    const args = obj?.parameters ?? obj?.arguments ?? obj?.function?.arguments ?? obj?.function?.parameters ?? {}
+    if (typeof name !== 'string' || !names.has(name)) continue
+    toolCalls.push({
+      id: `call_text_${toolCalls.length}_${Math.random().toString(36).slice(2, 7)}`,
+      type: 'function',
+      function: { name, arguments: typeof args === 'string' ? normalizeToolArgs(args) : JSON.stringify(args) },
+    })
+    cut.push([m.index, end])
+    START.lastIndex = end
+  }
+  if (!toolCalls.length) return { text, toolCalls }
+  let rest = text
+  for (const [a, b] of cut.reverse()) rest = rest.slice(0, a) + rest.slice(b)
+  rest = rest
+    .replace(/<\/?tool_call>/g, '')
+    .replace(/```\w*\s*```/g, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+  return { text: rest, toolCalls }
+}
+
+/** Index just past the `}` closing the object that opens at `start`, or -1. @param {string} text @param {number} start */
+function balancedObjectEnd(text, start) {
+  let depth = 0, inString = false, escaped = false
+  for (let i = start; i < text.length; i++) {
+    const c = text[i]
+    if (inString) {
+      if (escaped) escaped = false
+      else if (c === '\\') escaped = true
+      else if (c === '"') inString = false
+      continue
+    }
+    if (c === '"') inString = true
+    else if (c === '{') depth++
+    else if (c === '}' && --depth === 0) return i + 1
+  }
+  return -1
+}
+
+/**
  * One attempt at an SSE chat completion: yields `{ textDelta }` per token and a
  * final `{ toolCalls }`. Throws on transport failure - the caller decides
  * whether that is worth another try.
