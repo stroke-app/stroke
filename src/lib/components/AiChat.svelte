@@ -71,6 +71,7 @@
     titleFromMessage,
     historyBudget,
     repairToolPairs,
+    extractTextToolCalls,
   } from "$lib/ai.js";
   import { chartRows } from "$lib/ai-chart-data.js";
   import {
@@ -1922,6 +1923,18 @@
     // Bail out immediately if the user stopped generation - stop() already finalized UI
     if (ctrl.signal.aborted) {
       throw Object.assign(new Error("Aborted"), { name: "AbortError" });
+    }
+
+    // A tool call written into the reply as JSON instead of made: make it, and
+    // keep the JSON out of the transcript.
+    if (!toolCalls.length && fullContent && turnTools?.length) {
+      const names = turnTools.map((t) => /** @type {any} */ (t)?.function?.name).filter(Boolean);
+      const found = extractTextToolCalls(fullContent, names);
+      if (found.toolCalls.length) {
+        fullContent = found.text;
+        toolCalls = found.toolCalls;
+        scheduleStreamingUpdate(fullContent);
+      }
     }
 
     // Flush any buffered streaming content before finalizing

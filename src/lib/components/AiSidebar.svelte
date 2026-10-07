@@ -43,6 +43,7 @@
     AI_TOOLS,
     isDestructiveSql,
     parseAssistantMessage,
+    extractTextToolCalls,
     buildSystemPrompt,
     classifyDbError,
     filterSchemaForQuery,
@@ -678,6 +679,11 @@
       if (chunk.toolCalls) toolCalls = chunk.toolCalls
     }
     if (!abortController || abortController.signal.aborted) throw Object.assign(new Error('Aborted'), { name: 'AbortError' })
+    // A tool call written into the reply as JSON instead of made (see AiChat).
+    if (!toolCalls.length && fullContent) {
+      const found = extractTextToolCalls(fullContent, AI_TOOLS.map((t) => /** @type {any} */ (t).function?.name).filter(Boolean))
+      if (found.toolCalls.length) { fullContent = found.text; toolCalls = found.toolCalls; scheduleStreamingUpdate(fullContent) }
+    }
     flushStreamingContent()
     if (itemId && streamingId) {
       streamingId = null; streamingContent = ''; _pendingStreamContent = ''
