@@ -753,6 +753,20 @@
   /** True when user has manually scrolled away from bottom during streaming */
   let userScrolledUp = $state(false);
 
+  /**
+   * Items that draw nothing: a query card the Agent setting hides, or an
+   * assistant turn with no text (it only called tools, or only thought). Each
+   * still left its wrapper behind, and content-visibility gives an empty
+   * wrapper a 120px placeholder, so nine hidden query cards were a thousand
+   * pixels of blank transcript with a lone timestamp row in the middle.
+   * @param {ChatItem} item
+   */
+  function drawsNothing(item) {
+    if (item.kind === "result") return !$appAgentQueryCards && !item.error;
+    if (item.kind === "assistant") return !item.parts?.some((p) => p.type !== "text" || p.content.trim());
+    return false;
+  }
+
   /** Sentinel pinned to the end of the transcript; see the observer below. */
   let bottomSentinel = $state(/** @type {HTMLElement | null} */ (null))
 
@@ -3453,6 +3467,7 @@
                apart. The footer IS the breathing room. -->
           <div bind:this={msgListEl} class="flex flex-col gap-2 py-5" data-studio-selectable="text">
             {#each items as item (item.id)}
+              {#if !drawsNothing(item)}
               <!-- content-visibility:auto lets the browser skip layout/paint for
                    off-screen messages (markdown, code, mermaid, charts), so scrolling
                    a long conversation stays smooth. `auto` intrinsic-size remembers each
@@ -4220,6 +4235,7 @@
                 </div>
               {/if}
               </div>
+              {/if}
             {/each}
 
             {#if showWorking}
