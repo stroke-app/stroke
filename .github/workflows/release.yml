@@ -460,7 +460,10 @@ jobs:
             version: VERSION,
             description: 'Fast desktop database client for PostgreSQL, MySQL, SQLite, and Cloudflare D1',
             homepage: 'https://github.com/stroke-app/stroke',
-            license: 'Freeware',
+            license: {
+              identifier: 'Shareware',
+              url: 'https://github.com/stroke-app/stroke/blob/master/LICENSE',
+            },
             architecture: {
               '64bit': {
                 url: `https://github.com/stroke-app/stroke/releases/download/v${VERSION}/stroke_${VERSION}_x64-setup.exe#/dl.7z`,

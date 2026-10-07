@@ -1,79 +1,97 @@
-Stroke Sustainable Use License
-Version 1.0
+# Stroke License
 
-Copyright (c) 2026 Nischal Dahal and Stroke contributors
+Copyright (c) 2026 Nischal Dahal
 
--------------------------------------------------------------------------------
+You may do whatever you want with the Stroke source code and other source
+files (from here on referred to as the "Stroke Source"), with the following
+restrictions:
 
-Plain-English summary (not legally binding — the terms below govern):
+- If you publish any work derived from the Stroke Source, you must make it
+  apparent in some way that it is derived from Stroke.
+- If you have created an executable program (from here on called "Your
+  Program") compiled from some source code and/or other source files (from
+  here on called "Your Source"), and if Your Source includes files or source
+  code copied or derived from the Stroke Source, then you may only publish
+  Your Program under the following conditions:
+	- Your Program does not contain any malware or hidden malicious content.
+	- You may not charge users money for Your Program, and Your Source must
+	  contain the monetization systems present in the Stroke Source,
+	  including the license-key activation, trial period tracking, and
+	  payment system, without any alterations. All of these systems must be
+	  active and working as intended in Your Program, and payments made
+	  through them must go to the original author of Stroke. That is unless
+	  Your Source features substantial improvements or additions to the
+	  Stroke Source, such that Your Source should be considered its own,
+	  derivative work, separate from the Stroke Source. Removing, bypassing,
+	  or replacing the monetization systems, renaming or restyling the app,
+	  or other cosmetic changes do not by themselves count as substantial
+	  improvements or additions.
+	- Your Program is not published under the name "Stroke", or under a name
+	  or icon so similar to Stroke's that users could mistake Your Program
+	  for Stroke.
 
-  - You CAN use Stroke for free — personally, in your company, in schools,
-    anywhere — and you can read, modify, and build the entire source code,
-    including the Pro features.
-  - You CANNOT sell Stroke, charge money for it, rebrand it as your own
-    product, or offer it to others as a paid product or hosted service.
-  - Pro features are key-gated in official builds. The source is public so you
-    can audit and contribute to it, but removing or bypassing the license-key
-    checks in builds you distribute is not permitted.
-  - Official builds and updates come from this repository and stroke.click.
+THE STROKE SOURCE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE STROKE SOURCE OR THE USE OR OTHER DEALINGS IN
+THE STROKE SOURCE.
 
--------------------------------------------------------------------------------
+---
 
-Terms
+# Notes on the Stroke License
 
-1. Grant. Subject to the conditions below, you are granted a worldwide,
-   royalty-free, non-exclusive, non-transferable license to use, copy, modify,
-   and create derivative works of this software, and to distribute copies of
-   it, in source or compiled form, for any Permitted Purpose.
+The Stroke License is based on the MMF License, which Noah Nuebling wrote for
+Mac Mouse Fix (https://github.com/noah-nuebling/mac-mouse-fix/blob/master/License).
+The MMF License is itself based on the MIT and DBAD licenses.
 
-2. Permitted Purposes. A Permitted Purpose is any use EXCEPT:
+I wrote it with two goals in mind:
 
-   a. selling the software, charging any fee for it, or including it in a
-      product or bundle that is sold or licensed for a fee;
+1. To stop people from publishing apps built from Stroke that contain malware,
+   or that look just like Stroke except that when you buy a license, someone
+   other than me gets paid.
+2. To let everyone else do anything they like with the Stroke source code.
+   That includes reusing it in their own free and paid projects, publishing
+   bug fixes and improvements to Stroke, and building something substantially
+   better on top of Stroke and charging for it.
 
-   b. providing the software to third parties as a hosted, managed, or
-      embedded service, whether paid or as part of a paid offering;
+There are no restrictions on how you use the source code. You can read it,
+change it, build it, and run it yourself. The restrictions only apply to
+publishing apps compiled from it.
 
-   c. distributing the software, modified or unmodified, under a different
-      name or brand, or in a way that suggests it is your own product;
+Stroke is source-available, not open source. The Open Source Definition from
+the Open Source Initiative does not allow conditions like the ones above, so
+this is not an OSI-approved open source license.
 
-   d. removing, disabling, modifying, or circumventing the license-key
-      functionality that gates Pro features, in any copy you distribute or
-      provide to others. (You may study and modify that code — including for
-      local development, testing, and contribution — but builds you give to
-      anyone else must leave the key gating intact.)
+Stroke is a paid app with a free trial. Buying Stroke Pro at
+https://stroke.click buys a license key for the Stroke app. It does not change
+these terms, and you do not need one to use the source code.
 
-3. Conditions. Any copy or substantial portion you distribute must retain this
-   license text, the copyright notice above, and a link to the official
-   repository. Modified copies must be clearly marked as modified.
+## Earlier contributions under the MIT License
 
-4. Pro features and updates. Activation of Pro features in official builds
-   requires a valid license from stroke.click. Official releases and updates
-   are distributed only through the official repository and stroke.click;
-   this license grants no right to operate a competing update or distribution
-   channel for the software.
+Some code in Stroke was contributed while the project was licensed under the
+MIT License. That code is included in the Stroke Source under the terms of the
+MIT License, and the following notice applies to it:
 
-5. Trademarks. This license grants no rights to the "Stroke" name, logo, or
-   other trademarks of the copyright holder.
+    MIT License
 
-6. Contributions. Unless you and the copyright holder agree otherwise in
-   writing, contributions you submit to the official repository are governed
-   by the project's Contributor License Agreement (.github/cla/cla.md) and may
-   be distributed under this license.
+    Copyright (c) 2024 Stroke Contributors
 
-7. Termination. Your rights under this license end automatically if you
-   breach it. Rights are reinstated if the breach is fully cured within 30
-   days of you becoming aware of it, unless the copyright holder notifies you
-   otherwise.
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
 
-8. Warranty and liability. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY
-   OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE
-   WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-   NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
-   LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
-   CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
-   SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
 
-For uses outside these terms (reselling, OEM bundling, managed hosting, or
-anything you are unsure about), contact the copyright holder via
-https://stroke.click.
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
