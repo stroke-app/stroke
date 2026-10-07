@@ -270,8 +270,13 @@ pub async fn read_file(path: String) -> Result<String, String> {
 /// The chrome is built to match the main window exactly: frameless everywhere,
 /// macOS keeping its native traffic lights, and the dark base colour painted
 /// before the first frame so no white flash escapes while the frontend boots.
+///
+/// Async on purpose. A synchronous command runs on the main thread, and
+/// building a WebView2 window there deadlocks on Windows (tauri-apps/wry#583):
+/// the window never appeared, and every other window froze with it, so the
+/// app could not even be closed.
 #[tauri::command]
-pub fn open_new_window(app: tauri::AppHandle) -> Result<(), String> {
+pub async fn open_new_window(app: tauri::AppHandle) -> Result<(), String> {
     // Labels must be unique and stable-ish; the counter restarts with the app,
     // and a closed label is free to reuse, so probe for the first gap.
     let label = (2..64)
@@ -290,7 +295,12 @@ pub fn open_new_window(app: tauri::AppHandle) -> Result<(), String> {
     .resizable(true)
     // Hidden until its page reveals itself, same as the main window.
     .visible(false)
-    .background_color(tauri::window::Color(8, 8, 8, 255));
+    .background_color(tauri::window::Color(8, 8, 8, 255))
+    // The rest of the main window's settings (lib.rs): inspector in debug
+    // builds only, no injected zoom polyfill, no navigating away from the app.
+    .devtools(cfg!(debug_assertions))
+    .zoom_hotkeys_enabled(false)
+    .on_navigation(crate::navigation_allowed);
 
     #[cfg(target_os = "macos")]
     {
@@ -304,6 +314,10 @@ pub fn open_new_window(app: tauri::AppHandle) -> Result<(), String> {
     }
 
     let window = builder.build().map_err(|e| e.to_string())?;
+    // The surface on the OS's side of light and dark before the first frame.
+    let surface = crate::surface_for_theme(window.theme().unwrap_or(tauri::Theme::Dark));
+    let _ = window.set_background_color(Some(surface));
+    crate::set_webview_backdrop(&window, surface);
     crate::arm_reveal_failsafe(&window);
     Ok(())
 }
