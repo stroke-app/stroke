@@ -295,7 +295,12 @@ pub async fn open_new_window(app: tauri::AppHandle) -> Result<(), String> {
     .resizable(true)
     // Hidden until its page reveals itself, same as the main window.
     .visible(false)
-    .background_color(tauri::window::Color(8, 8, 8, 255));
+    .background_color(tauri::window::Color(8, 8, 8, 255))
+    // The rest of the main window's settings (lib.rs): inspector in debug
+    // builds only, no injected zoom polyfill, no navigating away from the app.
+    .devtools(cfg!(debug_assertions))
+    .zoom_hotkeys_enabled(false)
+    .on_navigation(crate::navigation_allowed);
 
     #[cfg(target_os = "macos")]
     {
@@ -309,6 +314,10 @@ pub async fn open_new_window(app: tauri::AppHandle) -> Result<(), String> {
     }
 
     let window = builder.build().map_err(|e| e.to_string())?;
+    // The surface on the OS's side of light and dark before the first frame.
+    let surface = crate::surface_for_theme(window.theme().unwrap_or(tauri::Theme::Dark));
+    let _ = window.set_background_color(Some(surface));
+    crate::set_webview_backdrop(&window, surface);
     crate::arm_reveal_failsafe(&window);
     Ok(())
 }
