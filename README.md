@@ -90,7 +90,7 @@ On Arch, `npm run tauri:build:arch` avoids an AppImage linker issue. `npm run ta
 
 ## License
 
-Stroke is source-available under the [Stroke License](LICENSE), modelled on the license Mac Mouse Fix uses. You can do anything you like with the source code, including reusing it in your own free or paid projects. If you publish a work derived from it, say that it comes from Stroke. If you publish a compiled app built from it, it must not contain malware, must not be called Stroke or look like it, and must keep Stroke's trial and license-key payments intact and free to users, unless it is a substantial improvement in its own right. Stroke is not open source by the OSI definition. A [Stroke Pro](https://stroke.click/pricing) license buys a key for the app and funds development.
+Stroke is source-available under the [Stroke License](LICENSE). You can do anything you like with the source code, including reusing it in your own free or paid projects. If you publish a work derived from it, say that it comes from Stroke. If you publish a compiled app built from it, it must not contain malware, must not be called Stroke or look like it, and must keep Stroke's trial and license-key payments intact and free to users, unless it is a substantial improvement in its own right. Stroke is not open source by the OSI definition. A [Stroke Pro](https://stroke.click/pricing) license buys a key for the app and funds development.
 
 ## Contributing
 

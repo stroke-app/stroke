@@ -42,11 +42,7 @@ THE STROKE SOURCE.
 
 # Notes on the Stroke License
 
-The Stroke License is based on the MMF License, which Noah Nuebling wrote for
-Mac Mouse Fix (https://github.com/noah-nuebling/mac-mouse-fix/blob/master/License).
-The MMF License is itself based on the MIT and DBAD licenses.
-
-I wrote it with two goals in mind:
+I wrote the Stroke License with two goals in mind:
 
 1. To stop people from publishing apps built from Stroke that contain malware,
    or that look just like Stroke except that when you buy a license, someone
