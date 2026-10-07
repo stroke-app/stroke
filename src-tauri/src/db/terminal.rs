@@ -317,6 +317,21 @@ const PSQL_PROMPT1: &str =
     "%[%033]133;A%007%]%[%033[1;34m%]%/%[%033[0m%]%R%[%033[33m%]%x%[%033[0m%]%# %[%033]133;B%007%]";
 const PSQL_PROMPT2: &str = "%[%033]133;A;k=s%007%]%[%033[2m%]%/%R%x%#%[%033[0m%] %[%033]133;B%007%]";
 
+/// Table borders and the NULL marker. Unicode borders and `∅` everywhere but
+/// Windows: psql writes those borders as UTF-8 whatever its client encoding,
+/// and the Windows console reads its output in the ANSI code page (1252), so
+/// every `│` came out as `â”‚`; `∅` reached it through a 1252 argv as `?`. There
+/// psql keeps its own ASCII borders, and NULL shows as `(null)`, which read
+/// the same in any code page.
+fn psql_display_args(windows: bool) -> Vec<String> {
+    if windows {
+        vec!["--pset=null=(null)".to_string()]
+    } else {
+        // NULL apart from the empty string.
+        vec!["--pset=linestyle=unicode".to_string(), "--pset=null=\u{2205}".to_string()]
+    }
+}
+
 async fn pg_launch(config: PgConfig) -> Result<Launch, String> {
     let (c, tunnel) = resolve_pg_ssh(config).await?;
     let mut env = vec![
@@ -355,10 +370,10 @@ async fn pg_launch(config: PgConfig) -> Result<Launch, String> {
             // and narrow results stay plain tables. (`format=wrapped` was tried
             // and dropped: it squeezes columns and breaks names mid-word.)
             "--pset=expanded=auto".to_string(),
-            "--pset=linestyle=unicode".to_string(),
-            // NULL apart from the empty string.
-            "--pset=null=\u{2205}".to_string(),
-        ],
+        ]
+        .into_iter()
+        .chain(psql_display_args(cfg!(windows)))
+        .collect(),
         env,
         unset: &["PGSERVICE", "PGPASSWORD", "PGSSLMODE", "PGSSLROOTCERT", "PGTZ", "PGOPTIONS"],
         tunnel,
@@ -983,6 +998,15 @@ mod tests {
         assert_eq!(env["PGSSLROOTCERT"], "/ca.pem");
         assert_eq!(env["PGPORT"], "5433");
         assert!(!env.contains_key("PGTZ"));
+    }
+
+    #[test]
+    fn psql_keeps_ascii_borders_on_windows() {
+        let unix = psql_display_args(false);
+        assert!(unix.contains(&"--pset=linestyle=unicode".to_string()));
+        let windows = psql_display_args(true);
+        assert!(windows.iter().all(|a| a.is_ascii() && !a.contains("linestyle")), "{windows:?}");
+        assert!(windows.contains(&"--pset=null=(null)".to_string()));
     }
 
     #[test]
