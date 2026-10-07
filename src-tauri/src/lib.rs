@@ -43,7 +43,7 @@ use tauri::Manager;
 const DARK_SURFACE: tauri::window::Color = tauri::window::Color(8, 8, 8, 255);
 const LIGHT_SURFACE: tauri::window::Color = tauri::window::Color(247, 247, 247, 255);
 
-fn surface_for_theme(theme: tauri::Theme) -> tauri::window::Color {
+pub(crate) fn surface_for_theme(theme: tauri::Theme) -> tauri::window::Color {
     match theme {
         tauri::Theme::Light => LIGHT_SURFACE,
         _ => DARK_SURFACE,
@@ -57,6 +57,16 @@ fn surface_for_theme(theme: tauri::Theme) -> tauri::window::Color {
 /// one covers the case where no JS runs at all (a broken bundle, a webview that
 /// never loads), which would otherwise leave a live process with no window.
 const REVEAL_FAILSAFE: std::time::Duration = std::time::Duration::from_secs(4);
+
+/// Whether a window may navigate to `url`: only the app's own pages. A link
+/// to anywhere else opens in the browser instead of replacing the app.
+pub(crate) fn navigation_allowed(url: &tauri::Url) -> bool {
+    if matches!(url.scheme(), "tauri" | "ipc") {
+        return true;
+    }
+    let host = url.host_str().unwrap_or("");
+    host == "localhost" || host == "tauri.localhost" || host == "127.0.0.1"
+}
 
 pub(crate) fn arm_reveal_failsafe(window: &tauri::WebviewWindow) {
     let window = window.clone();
@@ -82,7 +92,7 @@ pub(crate) fn arm_reveal_failsafe(window: &tauri::WebviewWindow) {
 ///   - WKWebView (macOS):    `underPageBackgroundColor`
 ///   - WebView2 (Windows):   `ICoreWebView2Controller2::DefaultBackgroundColor`
 ///   - WebKitGTK (Linux):    `webkit_web_view_set_background_color`
-fn set_webview_backdrop(window: &tauri::WebviewWindow, color: tauri::window::Color) {
+pub(crate) fn set_webview_backdrop(window: &tauri::WebviewWindow, color: tauri::window::Color) {
     #[cfg(target_os = "macos")]
     set_macos_webview_backdrop(window, color);
     #[cfg(target_os = "windows")]
@@ -397,14 +407,7 @@ pub fn run() {
             // a stray trackpad pinch near a column resize handle would then page-zoom
             // the whole webview (devicePixelRatio jumps, canvas renders blurry).
             .zoom_hotkeys_enabled(false)
-            .on_navigation(|url| {
-                let scheme = url.scheme();
-                if matches!(scheme, "tauri" | "ipc") {
-                    return true;
-                }
-                let host = url.host_str().unwrap_or("");
-                host == "localhost" || host == "tauri.localhost" || host == "127.0.0.1"
-            })
+            .on_navigation(navigation_allowed)
             .build()?;
 
             // Match the surface to the OS appearance before the first frame. Both
