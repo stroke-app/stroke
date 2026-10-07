@@ -73,6 +73,13 @@ describe('suggest', () => {
     expect(keystrokesFor(suggest({ client: 'psql', line: 'clear' }).items[0], '')).toBe('\x05\x15\x0c')
   })
 
+  it('clears the Windows console by running cls, where the client can', () => {
+    const r = suggest({ client: 'psql', line: 'cls', editor: 'console' })
+    expect(r.items[0]).toMatchObject({ label: '\\! cls', run: true })
+    expect(keystrokesFor(r.items[0], '', 'console')).toBe('\x1b[F\x1b[1;5H\\! cls\r')
+    expect(suggest({ client: 'mysql', line: 'clear', editor: 'console' }).items).toEqual([])
+  })
+
   it('quotes names that need it', () => {
     expect(suggest({ client: 'psql', line: 'select * from Or', hints }).items[0].insert).toBe('"Orders"')
     expect(suggest({ client: 'mysql', line: 'select * from Or', hints }).items[0].insert).toBe('`Orders`')
@@ -95,5 +102,6 @@ describe('keystrokesFor', () => {
     expect(keystrokesFor({ label: 'users', insert: 'users', kind: 'table' }, 'us')).toBe('ers')
     expect(keystrokesFor({ label: 'SELECT', insert: 'SELECT', kind: 'keyword' }, 'sel')).toBe('\x7f\x7f\x7fSELECT')
     expect(keystrokesFor({ label: '\\l', insert: '\\l', kind: 'translate', replaceLine: true, run: true }, '')).toBe('\x05\x15\\l\r')
+    expect(keystrokesFor({ label: '\\l', insert: '\\l', kind: 'translate', replaceLine: true, run: true }, '', 'console')).toBe('\x1b[F\x1b[1;5H\\l\r')
   })
 })
