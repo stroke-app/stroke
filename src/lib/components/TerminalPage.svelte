@@ -100,6 +100,7 @@
     return `${user}${host}${db}`
   })
 
+  const IS_WINDOWS = detectOs() === 'windows'
   /** How the client edits its line, which decides how the page's edits are spelled (terminal-keys.js). */
   const lineEditor = $derived(lineEditorFor(client, detectOs()))
 
@@ -390,6 +391,8 @@
 
   /** Prompts of the clients that cannot be given marks, to find the input after them. */
   const PROMPT_RE = /** @type {Record<string, RegExp>} */ ({
+    // psql where its marks are not read (Windows): the prompts db/terminal.rs sets, `db=> ` and `db-> `.
+    psql: /^[^\s=^!]+?[=^!\-'"($*][*!?]?[#>] /,
     // MariaDB's client names the server it is on: `MySQL [db]> ` against MySQL.
     mysql: /^(?:mysql|(?:MariaDB|MySQL) \[[^\]]*\])> |^\s+-> /,
     mariadb: /^(?:mysql|(?:MariaDB|MySQL) \[[^\]]*\])> |^\s+-> /,
@@ -401,6 +404,7 @@
 
   /** The same clients' continuation prompts: a statement is still open. */
   const CONTINUATION_RE = /** @type {Record<string, RegExp>} */ ({
+    psql: /^[^\s=^!]+?[-'"($*][*!?]?[#>] /,
     mysql: /^\s*(?:->|'>|">|`>|\/\*>) /,
     mariadb: /^\s*(?:->|'>|">|`>|\/\*>) /,
     sqlite3: /^\s*\.\.\.> /,
@@ -826,9 +830,12 @@
     }
     term.attachCustomKeyEventHandler(handleKey)
     // psql's prompt marks (OSC 133, set in db/terminal.rs): A starts a prompt,
-    // `A;k=s` a continuation one, B is where typing starts.
+    // `A;k=s` a continuation one, B is where typing starts. Not on Windows:
+    // ConPTY redraws the client's output from a screen buffer of its own, and
+    // whether the marks survive that, and where among the text, depends on the
+    // Windows build. There the prompt is found by its pattern (PROMPT_RE).
     term.parser.registerOscHandler(133, (data) => {
-      if (!term) return true
+      if (!term || IS_WINDOWS) return true
       const [mark, ...params] = data.split(';')
       const buf = term.buffer.active
       if (mark === 'A') {
