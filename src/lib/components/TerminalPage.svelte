@@ -41,7 +41,7 @@
   import { terminalTheme, terminalFont } from '$lib/terminal-theme.js'
   import { createHighlighter } from '$lib/terminal-highlight.js'
   import { suggest, keystrokesFor } from '$lib/terminal-complete.js'
-  import { lineEditorFor, clearLineKeys, consoleKeystrokes, consoleInput } from '$lib/terminal-keys.js'
+  import { lineEditorFor, clearLineKeys, consoleKeystrokes, consoleInput, consoleClearCommand } from '$lib/terminal-keys.js'
   import { wantsTerminator } from '$lib/sql-terminator.js'
   import ArrowDownToLine from '@lucide/svelte/icons/arrow-down-to-line'
 
@@ -685,11 +685,20 @@
    */
   function selectAll() {
     if (!term) return
+    const typed = typedLine()
+    if (!typed?.text) { term.selectAll(); return }
+    term.select(typed.start.col, typed.start.row, typed.text.length)
+    inputSelected = true
+  }
+
+  /**
+   * The whole typed line, not just up to the cursor: from the prompt to the
+   * end of the last row it wraps onto. null when the cursor is not at a prompt.
+   */
+  function typedLine() {
     const typed = currentInput()
-    if (typed === null) { term.selectAll(); return }
+    if (typed === null || !term) return null
     const buf = term.buffer.active
-    // The whole typed line, not just up to the cursor: from the prompt to the
-    // end of the last row it wraps onto.
     const start = inputStart ?? { row: buf.baseY + buf.cursorY, col: buf.cursorX - typed.length }
     let text = ''
     for (let r = start.row; ; r++) {
@@ -697,10 +706,22 @@
       if (!line || (r > start.row && !line.isWrapped)) break
       text += line.translateToString(false, r === start.row ? start.col : 0)
     }
-    const length = text.trimEnd().length
-    if (!length) { term.selectAll(); return }
-    term.select(start.col, start.row, length)
-    inputSelected = true
+    return { start, text: text.trimEnd() }
+  }
+
+  /**
+   * Ctrl+L at the Windows console, which has no clear-screen key: the client
+   * runs `cls` instead, when no typed line would be lost to it.
+   */
+  function clearConsole() {
+    const cls = consoleClearCommand(client?.name ?? '')
+    if (cls && !continuing && typedLine()?.text === '') send(`${cls}\r`)
+  }
+
+  /** Tab at the Windows console, which completes nothing: the suggestions open, and a lone one is typed at once. */
+  function completeAtCursor() {
+    updateSuggest(true)
+    if (suggestItems.length === 1 && !suggestItems[0].run) acceptSuggestion(0)
   }
 
   function handleKey(/** @type {KeyboardEvent} */ e) {
@@ -731,8 +752,16 @@
         selectAll()
         return true
       }
+      if (lineEditor === 'console' && e.ctrlKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'l') {
+        clearConsole()
+        return true
+      }
     }
     if (suggestItems.length && !e.ctrlKey && !e.altKey && !e.metaKey && suggestKey(e)) return true
+    if (e.key === 'Tab' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && phase === 'running' && lineEditor === 'console') {
+      completeAtCursor()
+      return true
+    }
     if (e.key === 'Enter' && !e.ctrlKey && !e.altKey && !e.metaKey && phase === 'running' && pressEnter(e.shiftKey)) return true
     // Ctrl+Space asks for suggestions right where the cursor is.
     if (e.ctrlKey && e.code === 'Space') {
