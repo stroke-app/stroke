@@ -1136,9 +1136,19 @@
         {/snippet}
       </SearchableMenu>
 
-      <!-- Virtual columns and open-in-SQL moved into the ⋯ menu below: both are
-           once-a-session actions and neither earned a permanent slot on a bar
-           you scan every time you open a table. -->
+      <!-- Open in SQL editor: the view (search, filters, sort, columns) as a
+           SELECT. Here and in the ⋯ menu. Virtual columns stay in the menu
+           only, a once-a-session action. -->
+      <button
+        type="button"
+        class={cn(iconBtn, "shrink-0 @max-[540px]/tb:hidden")}
+        title="Open in SQL editor"
+        aria-label="Open in SQL editor"
+        disabled={loading || columns.length === 0}
+        onclick={onopeninsql}
+      >
+        <Icon name="terminal" class="size-3.5" />
+      </button>
 
       <!-- Reset everything, only appears when something is non-default -->
       {#if canResetView}
