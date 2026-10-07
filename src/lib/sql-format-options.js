@@ -31,9 +31,9 @@ export const SQL_FORMAT_DEFAULTS = {
   logicalOperatorNewline: 'before',
   expressionWidth: 50,
   linesBetweenQueries: 1,
-  // Not sql-formatter options: format-sql.js applies these after it, because the
-  // library always gives a clause's body its own line - `SELECT`, `  *`, `FROM`,
-  // `  users` for a one-line query.
+  // Not sql-formatter options: format-sql.js lays its output out again with
+  // these, because the library always gives a clause's body its own line -
+  // `SELECT`, `  *`, `FROM`, `  users` for a one-line query.
   compactClauses: true,
   lineWidth: 80,
 }
@@ -56,8 +56,8 @@ export const SQL_FORMAT_FIELDS = [
   { key: 'logicalOperatorNewline', label: 'Logical operator newline', desc: 'Put AND / OR before or after the line break.', kind: 'operatorNewline' },
   { key: 'expressionWidth', label: 'Expression width', desc: 'Characters allowed inside parentheses before wrapping.', kind: 'number', min: 20, max: 200, step: 10 },
   { key: 'linesBetweenQueries', label: 'Lines between queries', desc: 'Blank lines between separate statements.', kind: 'number', min: 0, max: 5, step: 1 },
-  { key: 'compactClauses', label: 'Compact clauses', desc: 'Keep a clause on its keyword\'s line when it fits - SELECT * / FROM users, not four lines.', kind: 'bool' },
-  { key: 'lineWidth', label: 'Line width', desc: 'Longest line a compact clause may make before it wraps.', kind: 'number', min: 40, max: 200, step: 10 },
+  { key: 'compactClauses', label: 'Compact layout', desc: 'Keep a statement, a clause or a bracket on one line when it fits: SELECT * FROM users, not four lines. Off, every clause keyword gets a line of its own.', kind: 'bool' },
+  { key: 'lineWidth', label: 'Line width', desc: 'Longest line the compact layout may make before it breaks a statement into clauses.', kind: 'number', min: 40, max: 200, step: 10 },
 ]
 
 const CASES = SQL_CASE_OPTIONS.map((c) => c.id)

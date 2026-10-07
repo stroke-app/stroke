@@ -41,6 +41,7 @@
   import { terminalTheme, terminalFont } from '$lib/terminal-theme.js'
   import { createHighlighter } from '$lib/terminal-highlight.js'
   import { suggest, keystrokesFor } from '$lib/terminal-complete.js'
+  import { lineEditorFor, clearLineKeys, consoleKeystrokes, consoleInput, consoleClearCommand } from '$lib/terminal-keys.js'
   import { wantsTerminator } from '$lib/sql-terminator.js'
   import ArrowDownToLine from '@lucide/svelte/icons/arrow-down-to-line'
 
@@ -99,10 +100,13 @@
     return `${user}${host}${db}`
   })
 
+  const IS_WINDOWS = detectOs() === 'windows'
+  /** How the client edits its line, which decides how the page's edits are spelled (terminal-keys.js). */
+  const lineEditor = $derived(lineEditorFor(client, detectOs()))
+
   /**
    * One-click commands for the footer, per client: each types its command at
-   * the prompt and runs it. Ctrl+U first clears whatever is half-typed there
-   * (every client here edits its line with readline, editline or linenoise).
+   * the prompt and runs it, after emptying whatever is half-typed there.
    * @type {Record<string, Array<{ cmd: string, label: string }>>}
    */
   const QUICK = {
@@ -147,7 +151,7 @@
   /** @param {string} cmd */
   function runQuick(cmd) {
     if (!sessionId) return
-    send(`\x15${cmd}\r`)
+    send(`${clearLineKeys(lineEditor)}${cmd}\r`)
     term?.focus()
   }
 
@@ -344,13 +348,17 @@
       return
     }
     if (!sessionId) return
+    if (lineEditor === 'console') {
+      data = consoleInput(data)
+      if (!data) return
+    }
     if (inputSelected) {
-      // Ctrl+A selected the typed line: typing replaces it, Backspace or Delete
-      // clears it (go to its end, kill it back to the prompt).
+      // Ctrl+A selected the typed line: typing replaces it, Backspace or Delete clears it.
       inputSelected = false
       term?.clearSelection()
-      if (data === '\x7f' || data === '\x1b[3~') { send('\x05\x15'); return }
-      if (/^[^\x00-\x1f\x7f]+$/.test(data)) data = `\x05\x15${data}`
+      const clear = clearLineKeys(lineEditor)
+      if (data === '\x7f' || data === '\x1b[3~') { send(clear); return }
+      if (/^[^\x00-\x1f\x7f]+$/.test(data)) data = clear + data
     }
     if (data === '\r') {
       hideSuggest()
@@ -383,6 +391,8 @@
 
   /** Prompts of the clients that cannot be given marks, to find the input after them. */
   const PROMPT_RE = /** @type {Record<string, RegExp>} */ ({
+    // psql where its marks are not read (Windows): the prompts db/terminal.rs sets, `db=> ` and `db-> `.
+    psql: /^[^\s=^!]+?[=^!\-'"($*][*!?]?[#>] /,
     // MariaDB's client names the server it is on: `MySQL [db]> ` against MySQL.
     mysql: /^(?:mysql|(?:MariaDB|MySQL) \[[^\]]*\])> |^\s+-> /,
     mariadb: /^(?:mysql|(?:MariaDB|MySQL) \[[^\]]*\])> |^\s+-> /,
@@ -394,6 +404,7 @@
 
   /** The same clients' continuation prompts: a statement is still open. */
   const CONTINUATION_RE = /** @type {Record<string, RegExp>} */ ({
+    psql: /^[^\s=^!]+?[-'"($*][*!?]?[#>] /,
     mysql: /^\s*(?:->|'>|">|`>|\/\*>) /,
     mariadb: /^\s*(?:->|'>|">|`>|\/\*>) /,
     sqlite3: /^\s*\.\.\.> /,
@@ -502,7 +513,7 @@
     if (!force && performance.now() - lastTypedAt > 800) return hideSuggest()
     const line = currentInput()
     if (line === null) return hideSuggest()
-    const { items, token } = suggest({ client: client.name, line, statement: statementLines.join('\n'), hints: schemaHints() })
+    const { items, token } = suggest({ client: client.name, line, statement: statementLines.join('\n'), hints: schemaHints(), editor: lineEditor })
     if (!items.length) return hideSuggest()
     suggestToken = token
     suggestItems = items
@@ -539,7 +550,7 @@
     if (!item) return
     hideSuggest()
     lastTypedAt = 0
-    send(keystrokesFor(item, suggestToken))
+    send(keystrokesFor(item, suggestToken, lineEditor))
     term?.focus()
   }
 
@@ -621,21 +632,29 @@
   /** Clients that edit their line with readline or editline, which know the Meta word keys. */
   const READLINE_CLIENTS = new Set(['psql', 'mysql', 'mariadb', 'sqlite3'])
 
+  /** Cmd+Left, Cmd+Right and Cmd+Backspace, as in a macOS text field: start and end of the line, delete back to its start. */
+  const MAC_COMMAND_KEYS = /** @type {Record<string, string>} */ ({ ArrowLeft: '\x01', ArrowRight: '\x05', Backspace: '\x15' })
+
   /**
    * The editing keys people bring from an editor, spelled the way the client's
    * line editor understands them. xterm sends Ctrl+Backspace as ^H (one
    * character) and Ctrl+Left as a sequence readline may not be bound to, so
    * they did nothing useful; these are the same keystrokes VS Code's terminal
    * sends. Ctrl+Z is undo here, not suspend: a suspended psql would hang the tab.
+   * The Windows console takes its own keys (terminal-keys.js).
    * @param {KeyboardEvent} e
-   * @returns {string | null}
+   * @returns {string | null} null leaves the key to xterm; '' drops it
    */
   function editorKeystrokes(e) {
-    if (e.metaKey || e.shiftKey) return null
+    if (e.shiftKey) return null
+    if (e.metaKey) return IS_MAC && !e.ctrlKey && !e.altKey ? MAC_COMMAND_KEYS[e.key] ?? null : null
+    if (lineEditor === 'console') return consoleKeystrokes(e)
     const word = READLINE_CLIENTS.has(client?.name ?? '')
     const mod = e.ctrlKey || e.altKey
     switch (e.key) {
-      case 'Backspace': return e.ctrlKey ? '\x17' : e.altKey && word ? '\x1b\x7f' : null
+      // On macOS these clients usually link editline, where ^W cuts back to
+      // the start of the line; ESC DEL deletes a word there and in readline alike.
+      case 'Backspace': return e.ctrlKey ? (IS_MAC && word ? '\x1b\x7f' : '\x17') : e.altKey && word ? '\x1b\x7f' : null
       case 'Delete': return mod && word ? '\x1bd' : null
       case 'ArrowLeft': return mod && word ? '\x1bb' : null
       case 'ArrowRight': return mod && word ? '\x1bf' : null
@@ -672,11 +691,20 @@
    */
   function selectAll() {
     if (!term) return
+    const typed = typedLine()
+    if (!typed?.text) { term.selectAll(); return }
+    term.select(typed.start.col, typed.start.row, typed.text.length)
+    inputSelected = true
+  }
+
+  /**
+   * The whole typed line, not just up to the cursor: from the prompt to the
+   * end of the last row it wraps onto. null when the cursor is not at a prompt.
+   */
+  function typedLine() {
     const typed = currentInput()
-    if (typed === null) { term.selectAll(); return }
+    if (typed === null || !term) return null
     const buf = term.buffer.active
-    // The whole typed line, not just up to the cursor: from the prompt to the
-    // end of the last row it wraps onto.
     const start = inputStart ?? { row: buf.baseY + buf.cursorY, col: buf.cursorX - typed.length }
     let text = ''
     for (let r = start.row; ; r++) {
@@ -684,10 +712,22 @@
       if (!line || (r > start.row && !line.isWrapped)) break
       text += line.translateToString(false, r === start.row ? start.col : 0)
     }
-    const length = text.trimEnd().length
-    if (!length) { term.selectAll(); return }
-    term.select(start.col, start.row, length)
-    inputSelected = true
+    return { start, text: text.trimEnd() }
+  }
+
+  /**
+   * Ctrl+L at the Windows console, which has no clear-screen key: the client
+   * runs `cls` instead, when no typed line would be lost to it.
+   */
+  function clearConsole() {
+    const cls = consoleClearCommand(client?.name ?? '')
+    if (cls && !continuing && typedLine()?.text === '') send(`${cls}\r`)
+  }
+
+  /** Tab at the Windows console, which completes nothing: the suggestions open, and a lone one is typed at once. */
+  function completeAtCursor() {
+    updateSuggest(true)
+    if (suggestItems.length === 1 && !suggestItems[0].run) acceptSuggestion(0)
   }
 
   function handleKey(/** @type {KeyboardEvent} */ e) {
@@ -708,18 +748,26 @@
   function consumeKey(e) {
     if (phase === 'running') {
       const keys = editorKeystrokes(e)
-      if (keys) {
+      if (keys !== null) {
         if (inputSelected) { inputSelected = false; term?.clearSelection() }
         hideSuggest()
-        send(keys)
+        if (keys) send(keys)
         return true
       }
       if (!IS_MAC && e.ctrlKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'a') {
         selectAll()
         return true
       }
+      if (lineEditor === 'console' && e.ctrlKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'l') {
+        clearConsole()
+        return true
+      }
     }
     if (suggestItems.length && !e.ctrlKey && !e.altKey && !e.metaKey && suggestKey(e)) return true
+    if (e.key === 'Tab' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && phase === 'running' && lineEditor === 'console') {
+      completeAtCursor()
+      return true
+    }
     if (e.key === 'Enter' && !e.ctrlKey && !e.altKey && !e.metaKey && phase === 'running' && pressEnter(e.shiftKey)) return true
     // Ctrl+Space asks for suggestions right where the cursor is.
     if (e.ctrlKey && e.code === 'Space') {
@@ -817,9 +865,12 @@
     }
     term.attachCustomKeyEventHandler(handleKey)
     // psql's prompt marks (OSC 133, set in db/terminal.rs): A starts a prompt,
-    // `A;k=s` a continuation one, B is where typing starts.
+    // `A;k=s` a continuation one, B is where typing starts. Not on Windows:
+    // ConPTY redraws the client's output from a screen buffer of its own, and
+    // whether the marks survive that, and where among the text, depends on the
+    // Windows build. There the prompt is found by its pattern (PROMPT_RE).
     term.parser.registerOscHandler(133, (data) => {
-      if (!term) return true
+      if (!term || IS_WINDOWS) return true
       const [mark, ...params] = data.split(';')
       const buf = term.buffer.active
       if (mark === 'A') {

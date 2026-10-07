@@ -178,11 +178,11 @@ describe('readRowsResponse', () => {
 describe('buildSelectSql, shape & quoting', () => {
   it('builds a minimal SELECT with schema quoting and default limit', () => {
     expect(buildSelectSql({ schema: 'public', table: 'users', engine: 'postgres', limit: 100 }))
-      .toBe('SELECT *\nFROM "public"."users"\nLIMIT 100;')
+      .toBe('SELECT * FROM "public"."users" LIMIT 100;')
   })
 
   it('omits the schema prefix when none is given', () => {
-    expect(buildSelectSql({ table: 'users', engine: 'postgres' })).toBe('SELECT *\nFROM "users"\nLIMIT 100;')
+    expect(buildSelectSql({ table: 'users', engine: 'postgres' })).toBe('SELECT * FROM "users" LIMIT 100;')
   })
 
   it('escapes single quotes in values', () => {
@@ -296,7 +296,7 @@ describe('buildSelectSql, WHERE assembly', () => {
 
 describe('buildSelectSql, LIMIT handling', () => {
   it('emits an explicit limit', () => {
-    expect(buildSelectSql({ table: 't', engine: 'postgres', limit: 250 })).toContain('\nLIMIT 250;')
+    expect(buildSelectSql({ table: 't', engine: 'postgres', limit: 250 })).toContain(' LIMIT 250;')
   })
   it('omits LIMIT for the "all rows" sentinels and the max page size', () => {
     expect(buildSelectSql({ table: 't', engine: 'postgres', limit: PAGE_SIZE_ALL })).not.toContain('LIMIT')

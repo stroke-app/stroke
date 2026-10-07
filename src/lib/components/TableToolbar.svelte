@@ -98,7 +98,7 @@
     /** @type {(kind: 'png' | 'copy-png' | 'svg') => void | Promise<void>} */
     onexportchart = () => {},
     onaddrow = () => {},
-    onopeninsql = () => {},
+    onopeninsql = /** @type {(opts?: { run?: boolean }) => void} */ (() => {}),
     onmagicword = /** @type {(w: 'golf' | 'crash') => void} */ (() => {}),
     /** @type {Set<string>} */
     hiddenColumns = new Set(),
@@ -1136,9 +1136,19 @@
         {/snippet}
       </SearchableMenu>
 
-      <!-- Virtual columns and open-in-SQL moved into the ⋯ menu below: both are
-           once-a-session actions and neither earned a permanent slot on a bar
-           you scan every time you open a table. -->
+      <!-- Open in SQL editor: the view (search, filters, sort, columns) as a
+           SELECT; Ctrl/Cmd+click runs it there as well. Here and in the ⋯
+           menu. Virtual columns stay in the menu only, a once-a-session action. -->
+      <button
+        type="button"
+        class={cn(iconBtn, "shrink-0 @max-[540px]/tb:hidden")}
+        title="Open in SQL editor ({IS_MAC ? '⌘' : 'Ctrl'}+click to run it)"
+        aria-label="Open in SQL editor"
+        disabled={loading || columns.length === 0}
+        onclick={(e) => onopeninsql({ run: e.ctrlKey || e.metaKey })}
+      >
+        <Icon name="terminal" class="size-3.5" />
+      </button>
 
       <!-- Reset everything, only appears when something is non-default -->
       {#if canResetView}
@@ -1507,7 +1517,7 @@
               <span class="ml-auto font-mono text-ui-2xs tabular-nums text-primary">{virtualColCount}</span>
             {/if}
           </DropdownMenu.Item>
-          <DropdownMenu.Item disabled={loading || columns.length === 0} onSelect={onopeninsql}>
+          <DropdownMenu.Item disabled={loading || columns.length === 0} onSelect={() => onopeninsql()}>
             <Icon name="terminal" class="size-3.5" />
             Open in SQL editor
           </DropdownMenu.Item>

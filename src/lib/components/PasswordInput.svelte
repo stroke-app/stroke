@@ -24,7 +24,7 @@
     bind:value
     type={revealed ? 'text' : 'password'}
     {disabled}
-    class={cn('pr-8', className)}
+    class={cn(className, 'pr-8')}
     {...rest}
   />
   <button

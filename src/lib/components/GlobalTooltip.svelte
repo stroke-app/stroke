@@ -44,8 +44,16 @@
       el.removeAttribute('title')
       return title.trim()
     }
-    return ''
+    return el.getAttribute('data-stroke-title')?.trim() ?? ''
   }
+
+  /**
+   * Elements with a tooltip, the stashed `title` included: the pointer moving
+   * from a button onto its own icon fires pointerover again, and with only
+   * `[title]` that found nothing (the title was stripped), read it as leaving,
+   * put the title back, and the native tooltip showed instead of this one.
+   */
+  const TIP_SELECTOR = '[title], [data-tip], [data-stroke-title]'
 
   /** Give an element its native `title` back once we're done with it. */
   function restoreTitle(/** @type {Element | null} */ el) {
@@ -93,7 +101,7 @@
 
   function onPointerOver(/** @type {PointerEvent} */ e) {
     const target = /** @type {Element | null} */ (e.target)
-    const el = target?.closest?.('[title], [data-tip]')
+    const el = target?.closest?.(TIP_SELECTOR)
     if (el === currentEl) return
     if (currentEl) hide()
     if (!el || el.hasAttribute('data-no-tip')) return

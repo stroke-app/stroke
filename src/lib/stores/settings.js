@@ -87,6 +87,20 @@ const markFontGeistDefaultApplied = () => {
   try { localStorage.setItem(FONT_DEFAULT_GEIST_KEY, '1') } catch {}
 }
 
+/**
+ * One-shot marker for leaving the default schema out of generated SQL
+ * (`SELECT * FROM campaigns`, not `public.campaigns`). The stored blob carries
+ * `qualifySchema: true` whether or not anyone chose it, so, as with the font,
+ * it is flipped once per install and never again.
+ */
+const QUALIFY_DEFAULT_KEY = 'stroke:qualify-schema-default-off'
+const qualifyDefaultApplied = () => {
+  try { return localStorage.getItem(QUALIFY_DEFAULT_KEY) === '1' } catch { return true }
+}
+const markQualifyDefaultApplied = () => {
+  try { localStorage.setItem(QUALIFY_DEFAULT_KEY, '1') } catch {}
+}
+
 /** @typedef {import('$lib/themes/registry.js').ThemeId} ThemeId */
 /** @typedef {'claude' | 'geist' | 'serif' | 'apple' | 'inter' | 'mono' | 'fira' | 'plex' | 'space' | 'source'} FontId */
 /** @typedef {'regular' | 'light' | 'bold'} IconStyleId */
@@ -780,6 +794,7 @@ export function loadSettings() {
       markFontDefaultApplied()
       markFontClaudeDefaultApplied()
       markFontGeistDefaultApplied()
+      markQualifyDefaultApplied()
       _settingsCache = {
         ...DEFAULT_SETTINGS,
         theme: systemPreferredTheme(),
@@ -868,6 +883,10 @@ export function loadSettings() {
     const motion = normalizeMotion(parsed.motion)
     const sqlFormat = normalizeSqlFormat(parsed.sqlFormat)
     const sqlEditor = normalizeSqlEditor(parsed.sqlEditor)
+    if (!qualifyDefaultApplied()) {
+      sqlEditor.qualifySchema = false
+      markQualifyDefaultApplied()
+    }
     const zebraRows = parsed.zebraRows === true
     const showRowNumbers = parsed.showRowNumbers === true
     const showMenuBar = parsed.showMenuBar !== false

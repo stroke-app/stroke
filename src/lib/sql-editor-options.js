@@ -57,7 +57,9 @@ export const SQL_EDITOR_DEFAULTS = {
   // opted into, never put in the way.
   autoLimit: 0,
   quoteNames: 'auto',
-  qualifySchema: true,
+  // Off: the default schema (public, dbo, main) is left out of SQL the app
+  // writes, as people type it; any other schema is kept.
+  qualifySchema: false,
 }
 
 export const SQL_CODE_LENS_OPTIONS = [

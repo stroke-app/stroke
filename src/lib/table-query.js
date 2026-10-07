@@ -308,15 +308,16 @@ export function buildSelectSql({ schema, table, columns = [], filters = [], sear
     where.push(i === 0 && where.length === 0 ? c : `${(f.conjunct ?? 'and').toUpperCase()} ${c}`)
   })
 
-  let sql = `SELECT ${cols}\nFROM ${target}`
+  // One line, the way it would be typed: `SELECT * FROM "public"."users" LIMIT 100;`.
+  let sql = `SELECT ${cols} FROM ${target}`
   if (where.length) {
     // First clause has no leading AND/OR; the search group (if present) leads.
-    sql += `\nWHERE ${where[0].replace(/^(AND|OR)\s+/, '')}`
+    sql += ` WHERE ${where[0].replace(/^(AND|OR)\s+/, '')}`
     for (let i = 1; i < where.length; i++) {
-      sql += /^(AND|OR)\s/.test(where[i]) ? `\n  ${where[i]}` : `\n  AND ${where[i]}`
+      sql += /^(AND|OR)\s/.test(where[i]) ? ` ${where[i]}` : ` AND ${where[i]}`
     }
   }
-  if (sort?.column) sql += `\nORDER BY ${q(sort.column)} ${sort.direction === 'desc' ? 'DESC' : 'ASC'}`
-  if (limit && limit > 0 && limit !== MAX_PAGE_SIZE) sql += `\nLIMIT ${limit}`
+  if (sort?.column) sql += ` ORDER BY ${q(sort.column)} ${sort.direction === 'desc' ? 'DESC' : 'ASC'}`
+  if (limit && limit > 0 && limit !== MAX_PAGE_SIZE) sql += ` LIMIT ${limit}`
   return sql + ';'
 }
