@@ -270,8 +270,13 @@ pub async fn read_file(path: String) -> Result<String, String> {
 /// The chrome is built to match the main window exactly: frameless everywhere,
 /// macOS keeping its native traffic lights, and the dark base colour painted
 /// before the first frame so no white flash escapes while the frontend boots.
+///
+/// Async on purpose. A synchronous command runs on the main thread, and
+/// building a WebView2 window there deadlocks on Windows (tauri-apps/wry#583):
+/// the window never appeared, and every other window froze with it, so the
+/// app could not even be closed.
 #[tauri::command]
-pub fn open_new_window(app: tauri::AppHandle) -> Result<(), String> {
+pub async fn open_new_window(app: tauri::AppHandle) -> Result<(), String> {
     // Labels must be unique and stable-ish; the counter restarts with the app,
     // and a closed label is free to reuse, so probe for the first gap.
     let label = (2..64)
