@@ -1011,8 +1011,12 @@
     }
   }
 
-  /** "Open in SQL editor" - generate a SELECT reflecting the current table view and open it in the SQL editor. */
-  function openTableInSqlEditor() {
+  /**
+   * "Open in SQL editor" - generate a SELECT reflecting the current table view and open it in the SQL editor.
+   * @param {{ run?: boolean }} [opts] run: run it there too (Ctrl+click on the toolbar button)
+   */
+  function openTableInSqlEditor(opts) {
+    const run = opts?.run === true
     if (!activeTable) return
     const sql = buildSelectSql({
       schema: activeSchema,
@@ -1030,7 +1034,11 @@
     if (aiMode) exitAiMode()
     void (async () => {
       await focusSqlView()
-      whenRefReady(() => sqlConsoleRef, (r) => r.openQuery?.(sql))
+      whenRefReady(() => sqlConsoleRef, (r) => {
+        r.openQuery?.(sql)
+        // After the bound sqlText has the new query, so Run reads it.
+        if (run) void tick().then(() => r.runEditor?.())
+      })
     })()
   }
 
