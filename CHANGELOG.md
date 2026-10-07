@@ -4,6 +4,13 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.2.7] - 2026-10-07
+
+### Bug Fixes
+- On Windows, File > New window no longer freezes Stroke. The window opens, and the app closes normally
+- On Windows, psql tables in the Terminal tab no longer show garbled borders like `â”‚`, and NULL shows as `(null)`
+
+
 ## [2.2.6] - 2026-10-07
 
 ### Bug Fixes
