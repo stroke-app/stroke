@@ -107,13 +107,15 @@ Your first PR requires signing the project CLA
 with instructions. In short: you keep your copyright, and you grant the
 project the right to distribute (and re-license) your contribution. This is
 what allows the project to ship official builds under the
-[Sustainable Use License](LICENSE) and a commercial Pro license side by side.
+[Stroke License](LICENSE) and sell Stroke Pro license keys side by side.
 
 ## License
 
-Stroke is source-available under the
-[Stroke Sustainable Use License](LICENSE): free to use anywhere, including
-commercially inside your organization, but it may not be sold, rebranded, or
-offered as a hosted service, and distributed builds must leave the Pro
-license-key gating intact. All of the source — Pro features included — is in
+Stroke is source-available under the [Stroke License](LICENSE), modelled on
+the MMF License from Mac Mouse Fix. You can do anything you like with the
+source code. Published derived works must say they come from Stroke. Published
+compiled apps must contain no malware, must not use the Stroke name or a
+look-alike name or icon, and must leave the trial, license-key and payment
+systems intact and paying the original author, unless the app is a substantial
+improvement in its own right. All of the source, Pro features included, is in
 this repository and open to contribution.
