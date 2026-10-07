@@ -4,7 +4,8 @@
  *
  * The client keeps its own line editing (and psql its own Tab completion); this
  * only reads what has been typed and proposes the rest, and the page types the
- * accepted text into the client like a user would. Three sources:
+ * accepted text into the client like a user would, in the keys its line editor
+ * takes (terminal-keys.js). Three sources:
  *
  * - the client's own commands, with what each does (`\dt` List tables,
  *   `.schema`, redis commands);
@@ -19,6 +20,7 @@
  * Pure: no DOM, no client. The page passes the line and the schema hints.
  */
 import { PG_KEYWORDS, PG_FUNCTIONS, DIALECT_KEYWORDS, analyzeQuery } from '$lib/sql-complete-data.js'
+import { clearLineKeys, consoleClearCommand } from '$lib/terminal-keys.js'
 
 /**
  * @typedef {object} Suggestion
@@ -239,12 +241,12 @@ function columnsOf(hints, table) {
 
 /**
  * What to suggest for `line`, the text typed so far on the prompt's line.
- * @param {{ client: string, line: string, statement?: string, hints?: SchemaHints }} input
+ * @param {{ client: string, line: string, statement?: string, hints?: SchemaHints, editor?: import('$lib/terminal-keys.js').LineEditor }} input
  *   `statement` is the earlier lines of a statement that is still open.
  * @returns {{ items: Suggestion[], token: string }} `token` is the typed text
  *   the accepted item replaces (the end of `line`).
  */
-export function suggest({ client, line, statement = '', hints = {} }) {
+export function suggest({ client, line, statement = '', hints = {}, editor = 'readline' }) {
   const family = familyOf(client)
   const trimmed = line.trimStart()
   const none = { items: [], token: '' }
@@ -255,6 +257,12 @@ export function suggest({ client, line, statement = '', hints = {} }) {
     for (const [re, to, why, keys] of TRANSLATIONS[family] ?? []) {
       const m = trimmed.match(re)
       if (!m) continue
+      // The Windows console has no Ctrl+L: the client runs `cls` instead, if it can.
+      if (keys === CLEAR_KEYS && editor === 'console') {
+        const cls = consoleClearCommand(client)
+        if (!cls) continue
+        return { items: [{ label: cls, insert: cls, detail: why, kind: 'translate', replaceLine: true, run: true }], token: '' }
+      }
       const insert = to.replace('$1', m[1] ?? '')
       return { items: [{ label: insert, insert, detail: why, kind: 'translate', replaceLine: true, run: true, keys }], token: '' }
     }
@@ -373,15 +381,15 @@ export function suggest({ client, line, statement = '', hints = {} }) {
 /**
  * The keystrokes that turn the typed `token` into `item`: the rest of the word
  * when it only extends what was typed, otherwise erase the word and type it
- * whole. A whole-line replacement goes to the end of the line, clears it
- * (Ctrl+E, Ctrl+U: readline, editline and linenoise all know both) and types
- * the new line.
+ * whole. A whole-line replacement empties the line in the keys the client's
+ * line editor takes and types the new line.
  * @param {Suggestion} item
  * @param {string} token
+ * @param {import('$lib/terminal-keys.js').LineEditor} [editor]
  */
-export function keystrokesFor(item, token) {
+export function keystrokesFor(item, token, editor = 'readline') {
   if (item.keys) return item.keys
-  if (item.replaceLine) return `\x05\x15${item.insert}${item.run ? '\r' : ''}`
+  if (item.replaceLine) return `${clearLineKeys(editor)}${item.insert}${item.run ? '\r' : ''}`
   if (item.insert.startsWith(token)) return item.insert.slice(token.length)
   return '\x7f'.repeat(token.length) + item.insert
 }
