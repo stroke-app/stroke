@@ -41,6 +41,7 @@
   import { terminalTheme, terminalFont } from '$lib/terminal-theme.js'
   import { createHighlighter } from '$lib/terminal-highlight.js'
   import { suggest, keystrokesFor } from '$lib/terminal-complete.js'
+  import { lineEditorFor, clearLineKeys, consoleKeystrokes, consoleInput } from '$lib/terminal-keys.js'
   import { wantsTerminator } from '$lib/sql-terminator.js'
   import ArrowDownToLine from '@lucide/svelte/icons/arrow-down-to-line'
 
@@ -99,10 +100,12 @@
     return `${user}${host}${db}`
   })
 
+  /** How the client edits its line, which decides how the page's edits are spelled (terminal-keys.js). */
+  const lineEditor = $derived(lineEditorFor(client, detectOs()))
+
   /**
    * One-click commands for the footer, per client: each types its command at
-   * the prompt and runs it. Ctrl+U first clears whatever is half-typed there
-   * (every client here edits its line with readline, editline or linenoise).
+   * the prompt and runs it, after emptying whatever is half-typed there.
    * @type {Record<string, Array<{ cmd: string, label: string }>>}
    */
   const QUICK = {
@@ -147,7 +150,7 @@
   /** @param {string} cmd */
   function runQuick(cmd) {
     if (!sessionId) return
-    send(`\x15${cmd}\r`)
+    send(`${clearLineKeys(lineEditor)}${cmd}\r`)
     term?.focus()
   }
 
@@ -344,13 +347,17 @@
       return
     }
     if (!sessionId) return
+    if (lineEditor === 'console') {
+      data = consoleInput(data)
+      if (!data) return
+    }
     if (inputSelected) {
-      // Ctrl+A selected the typed line: typing replaces it, Backspace or Delete
-      // clears it (go to its end, kill it back to the prompt).
+      // Ctrl+A selected the typed line: typing replaces it, Backspace or Delete clears it.
       inputSelected = false
       term?.clearSelection()
-      if (data === '\x7f' || data === '\x1b[3~') { send('\x05\x15'); return }
-      if (/^[^\x00-\x1f\x7f]+$/.test(data)) data = `\x05\x15${data}`
+      const clear = clearLineKeys(lineEditor)
+      if (data === '\x7f' || data === '\x1b[3~') { send(clear); return }
+      if (/^[^\x00-\x1f\x7f]+$/.test(data)) data = clear + data
     }
     if (data === '\r') {
       hideSuggest()
@@ -502,7 +509,7 @@
     if (!force && performance.now() - lastTypedAt > 800) return hideSuggest()
     const line = currentInput()
     if (line === null) return hideSuggest()
-    const { items, token } = suggest({ client: client.name, line, statement: statementLines.join('\n'), hints: schemaHints() })
+    const { items, token } = suggest({ client: client.name, line, statement: statementLines.join('\n'), hints: schemaHints(), editor: lineEditor })
     if (!items.length) return hideSuggest()
     suggestToken = token
     suggestItems = items
@@ -539,7 +546,7 @@
     if (!item) return
     hideSuggest()
     lastTypedAt = 0
-    send(keystrokesFor(item, suggestToken))
+    send(keystrokesFor(item, suggestToken, lineEditor))
     term?.focus()
   }
 
@@ -627,11 +634,13 @@
    * character) and Ctrl+Left as a sequence readline may not be bound to, so
    * they did nothing useful; these are the same keystrokes VS Code's terminal
    * sends. Ctrl+Z is undo here, not suspend: a suspended psql would hang the tab.
+   * The Windows console takes its own keys (terminal-keys.js).
    * @param {KeyboardEvent} e
-   * @returns {string | null}
+   * @returns {string | null} null leaves the key to xterm; '' drops it
    */
   function editorKeystrokes(e) {
     if (e.metaKey || e.shiftKey) return null
+    if (lineEditor === 'console') return consoleKeystrokes(e)
     const word = READLINE_CLIENTS.has(client?.name ?? '')
     const mod = e.ctrlKey || e.altKey
     switch (e.key) {
@@ -708,10 +717,10 @@
   function consumeKey(e) {
     if (phase === 'running') {
       const keys = editorKeystrokes(e)
-      if (keys) {
+      if (keys !== null) {
         if (inputSelected) { inputSelected = false; term?.clearSelection() }
         hideSuggest()
-        send(keys)
+        if (keys) send(keys)
         return true
       }
       if (!IS_MAC && e.ctrlKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'a') {
