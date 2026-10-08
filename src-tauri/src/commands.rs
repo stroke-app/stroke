@@ -318,6 +318,7 @@ pub async fn open_new_window(app: tauri::AppHandle) -> Result<(), String> {
     let surface = crate::surface_for_theme(window.theme().unwrap_or(tauri::Theme::Dark));
     let _ = window.set_background_color(Some(surface));
     crate::set_webview_backdrop(&window, surface);
+    crate::guard_webview(&window);
     crate::arm_reveal_failsafe(&window);
     Ok(())
 }

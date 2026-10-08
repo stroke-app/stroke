@@ -134,6 +134,71 @@ fn set_windows_webview_backdrop(window: &tauri::WebviewWindow, color: tauri::win
     });
 }
 
+/// Keep the webview alive through F6.
+///
+/// Only WebView2 needs this. WebKitGTK and WKWebView bind nothing to F6, so
+/// there the key goes to the page and nowhere else.
+pub(crate) fn guard_webview(window: &tauri::WebviewWindow) {
+    #[cfg(target_os = "windows")]
+    guard_windows_webview(window);
+    #[cfg(not(target_os = "windows"))]
+    let _ = window;
+}
+
+/// F6 is Chromium's "focus next pane". WebView2 154.0.4258.62 runs it into a
+/// null dereference in the browser process (`MultiContentsView::
+/// GetActiveContentsContainerView`, under `chrome::FocusNextPane`), and the
+/// whole WebView2 process tree exits. The page goes with it, leaving the bare
+/// window surface on screen, and with it TitleBar.svelte's close button: Windows
+/// gets no native decorations, so the window looked frozen and could not be
+/// closed. Same crash, same fix: NeuralNomadsAI/CodeNomad#875 and #881.
+///
+/// Only the browser's own action is switched off, per key press, through
+/// `ICoreWebView2AcceleratorKeyPressedEventArgs2`. F6 still reaches the page
+/// (the Terminal tab sends it on to psql and friends) and every other browser
+/// accelerator is untouched. A runtime too old to carry that interface
+/// swallows F6 instead.
+#[cfg(target_os = "windows")]
+fn guard_windows_webview(window: &tauri::WebviewWindow) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::{
+        ICoreWebView2AcceleratorKeyPressedEventArgs2, COREWEBVIEW2_KEY_EVENT_KIND,
+        COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN, COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN,
+    };
+    use webview2_com::AcceleratorKeyPressedEventHandler;
+    use windows_core::Interface;
+
+    const VK_F6: u32 = 0x75;
+
+    let _ = window.with_webview(|webview| unsafe {
+        let controller = webview.controller();
+        let mut token = 0;
+
+        let on_key = AcceleratorKeyPressedEventHandler::create(Box::new(|_, args| {
+            let Some(args) = args else { return Ok(()) };
+            let mut kind = COREWEBVIEW2_KEY_EVENT_KIND::default();
+            args.KeyEventKind(&mut kind)?;
+            // Alt+F6 arrives as a system key.
+            if kind != COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN
+                && kind != COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN
+            {
+                return Ok(());
+            }
+            let mut key = 0;
+            args.VirtualKey(&mut key)?;
+            if key != VK_F6 {
+                return Ok(());
+            }
+            match args.cast::<ICoreWebView2AcceleratorKeyPressedEventArgs2>() {
+                Ok(args) => args.SetIsBrowserAcceleratorKeyEnabled(false),
+                Err(_) => args.SetHandled(true),
+            }
+        }));
+        if let Err(e) = controller.add_AcceleratorKeyPressed(&on_key, &mut token) {
+            log::warn!("webview2: F6 guard not installed: {e}");
+        }
+    });
+}
+
 /// WebKitGTK's pre-paint colour.
 #[cfg(target_os = "linux")]
 fn set_linux_webview_backdrop(window: &tauri::WebviewWindow, color: tauri::window::Color) {
@@ -418,6 +483,7 @@ pub fn run() {
             let surface = surface_for_theme(window_theme);
             let _ = window.set_background_color(Some(surface));
             set_webview_backdrop(&window, surface);
+            guard_webview(&window);
             arm_reveal_failsafe(&window);
 
             #[cfg(target_os = "macos")]
