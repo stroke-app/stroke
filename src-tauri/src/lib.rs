@@ -134,7 +134,7 @@ fn set_windows_webview_backdrop(window: &tauri::WebviewWindow, color: tauri::win
     });
 }
 
-/// Keep the webview alive through F6.
+/// Keep the webview alive through F6, and the window closable if it dies anyway.
 ///
 /// Only WebView2 needs this. WebKitGTK and WKWebView bind nothing to F6, so
 /// there the key goes to the page and nowhere else.
@@ -158,18 +158,23 @@ pub(crate) fn guard_webview(window: &tauri::WebviewWindow) {
 /// (the Terminal tab sends it on to psql and friends) and every other browser
 /// accelerator is untouched. A runtime too old to carry that interface
 /// swallows F6 instead.
+///
+/// If the browser process exits for any other reason, the native frame comes
+/// back so the window can still be moved and closed.
 #[cfg(target_os = "windows")]
 fn guard_windows_webview(window: &tauri::WebviewWindow) {
     use webview2_com::Microsoft::Web::WebView2::Win32::{
         ICoreWebView2AcceleratorKeyPressedEventArgs2, COREWEBVIEW2_KEY_EVENT_KIND,
         COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN, COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN,
+        COREWEBVIEW2_PROCESS_FAILED_KIND, COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED,
     };
-    use webview2_com::AcceleratorKeyPressedEventHandler;
+    use webview2_com::{AcceleratorKeyPressedEventHandler, ProcessFailedEventHandler};
     use windows_core::Interface;
 
     const VK_F6: u32 = 0x75;
 
-    let _ = window.with_webview(|webview| unsafe {
+    let host = window.clone();
+    let _ = window.with_webview(move |webview| unsafe {
         let controller = webview.controller();
         let mut token = 0;
 
@@ -195,6 +200,31 @@ fn guard_windows_webview(window: &tauri::WebviewWindow) {
         }));
         if let Err(e) = controller.add_AcceleratorKeyPressed(&on_key, &mut token) {
             log::warn!("webview2: F6 guard not installed: {e}");
+        }
+
+        let core = match controller.CoreWebView2() {
+            Ok(core) => core,
+            Err(e) => {
+                log::warn!("webview2: crash guard not installed: {e}");
+                return;
+            }
+        };
+        let on_failed = ProcessFailedEventHandler::create(Box::new(move |_, args| {
+            let Some(args) = args else { return Ok(()) };
+            let mut kind = COREWEBVIEW2_PROCESS_FAILED_KIND::default();
+            args.ProcessFailedKind(&mut kind)?;
+            if kind == COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED {
+                log::error!("webview2: browser process exited, restoring the native frame");
+                // Through the event loop, not from inside this COM callback.
+                let host = host.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = host.set_decorations(true);
+                });
+            }
+            Ok(())
+        }));
+        if let Err(e) = core.add_ProcessFailed(&on_failed, &mut token) {
+            log::warn!("webview2: crash guard not installed: {e}");
         }
     });
 }
