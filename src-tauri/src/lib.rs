@@ -134,10 +134,11 @@ fn set_windows_webview_backdrop(window: &tauri::WebviewWindow, color: tauri::win
     });
 }
 
-/// Keep the webview alive through F6, and the window closable if it dies anyway.
+/// Keep browser-only keys away from the webview, and the window closable if it
+/// dies anyway.
 ///
-/// Only WebView2 needs this. WebKitGTK and WKWebView bind nothing to F6, so
-/// there the key goes to the page and nowhere else.
+/// Only WebView2 needs this. WebKitGTK and WKWebView bind none of these keys,
+/// so there they go to the page and nowhere else.
 pub(crate) fn guard_webview(window: &tauri::WebviewWindow) {
     #[cfg(target_os = "windows")]
     guard_windows_webview(window);
@@ -153,11 +154,22 @@ pub(crate) fn guard_webview(window: &tauri::WebviewWindow) {
 /// gets no native decorations, so the window looked frozen and could not be
 /// closed. Same crash, same fix: NeuralNomadsAI/CodeNomad#875 and #881.
 ///
+/// F6 is the worst of a set of keys WebView2 acts on whenever the page leaves
+/// them unhandled, and hotkeys leave plenty: plain keys are skipped in text
+/// fields and modifiers have to match exactly. So:
+///   - F5 in any text field (the SQL editor too), Shift+F5, Ctrl+F5, and Ctrl+R
+///     with a dialog open reloaded the whole app, dropping the connection and
+///     any staged edits
+///   - F7 asked to turn on caret browsing
+///   - F3 and Ctrl+G opened the browser's find bar, Ctrl+S its Save As dialog
+///   - F10, Ctrl+L, Ctrl+E and Alt+D are Chromium's other focus commands, aimed
+///     at browser chrome an embedded page doesn't have
+///
 /// Only the browser's own action is switched off, per key press, through
-/// `ICoreWebView2AcceleratorKeyPressedEventArgs2`. F6 still reaches the page
-/// (the Terminal tab sends it on to psql and friends) and every other browser
-/// accelerator is untouched. A runtime too old to carry that interface
-/// swallows F6 instead.
+/// `ICoreWebView2AcceleratorKeyPressedEventArgs2`. Every key still reaches the
+/// page, so Stroke's own F5, Ctrl+R and Ctrl+S keep working and the Terminal
+/// tab still gets its function keys. A runtime too old to carry that interface
+/// swallows F6 alone instead: swallowing takes the key from the page too.
 ///
 /// If the browser process exits for any other reason, the native frame comes
 /// back so the window can still be moved and closed.
@@ -171,7 +183,17 @@ fn guard_windows_webview(window: &tauri::WebviewWindow) {
     use webview2_com::{AcceleratorKeyPressedEventHandler, ProcessFailedEventHandler};
     use windows_core::Interface;
 
+    const VK_F3: u32 = 0x72;
+    const VK_F5: u32 = 0x74;
     const VK_F6: u32 = 0x75;
+    const VK_F7: u32 = 0x76;
+    const VK_F10: u32 = 0x79;
+    /// A letter's virtual-key code is its capital, and a letter only reaches the
+    /// handler with Ctrl or Alt held, so `R` here is Ctrl+R or Alt+R, never typing.
+    const BROWSER_ONLY: &[u32] = &[
+        VK_F3, VK_F5, VK_F6, VK_F7, VK_F10,
+        b'D' as u32, b'E' as u32, b'G' as u32, b'L' as u32, b'R' as u32, b'S' as u32,
+    ];
 
     let host = window.clone();
     let _ = window.with_webview(move |webview| unsafe {
@@ -182,7 +204,7 @@ fn guard_windows_webview(window: &tauri::WebviewWindow) {
             let Some(args) = args else { return Ok(()) };
             let mut kind = COREWEBVIEW2_KEY_EVENT_KIND::default();
             args.KeyEventKind(&mut kind)?;
-            // Alt+F6 arrives as a system key.
+            // Anything with Alt arrives as a system key.
             if kind != COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN
                 && kind != COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN
             {
@@ -190,16 +212,17 @@ fn guard_windows_webview(window: &tauri::WebviewWindow) {
             }
             let mut key = 0;
             args.VirtualKey(&mut key)?;
-            if key != VK_F6 {
+            if !BROWSER_ONLY.contains(&key) {
                 return Ok(());
             }
             match args.cast::<ICoreWebView2AcceleratorKeyPressedEventArgs2>() {
                 Ok(args) => args.SetIsBrowserAcceleratorKeyEnabled(false),
-                Err(_) => args.SetHandled(true),
+                Err(_) if key == VK_F6 => args.SetHandled(true),
+                Err(_) => Ok(()),
             }
         }));
         if let Err(e) = controller.add_AcceleratorKeyPressed(&on_key, &mut token) {
-            log::warn!("webview2: F6 guard not installed: {e}");
+            log::warn!("webview2: key guard not installed: {e}");
         }
 
         let core = match controller.CoreWebView2() {
