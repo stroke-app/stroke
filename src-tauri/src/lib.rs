@@ -134,6 +134,124 @@ fn set_windows_webview_backdrop(window: &tauri::WebviewWindow, color: tauri::win
     });
 }
 
+/// Keep browser-only keys away from the webview, and the window closable if it
+/// dies anyway.
+///
+/// Only WebView2 needs this. WebKitGTK and WKWebView bind none of these keys,
+/// so there they go to the page and nowhere else.
+pub(crate) fn guard_webview(window: &tauri::WebviewWindow) {
+    #[cfg(target_os = "windows")]
+    guard_windows_webview(window);
+    #[cfg(not(target_os = "windows"))]
+    let _ = window;
+}
+
+/// F6 is Chromium's "focus next pane". WebView2 154.0.4258.62 runs it into a
+/// null dereference in the browser process (`MultiContentsView::
+/// GetActiveContentsContainerView`, under `chrome::FocusNextPane`), and the
+/// whole WebView2 process tree exits. The page goes with it, leaving the bare
+/// window surface on screen, and with it TitleBar.svelte's close button: Windows
+/// gets no native decorations, so the window looked frozen and could not be
+/// closed. Same crash, same fix: NeuralNomadsAI/CodeNomad#875 and #881.
+///
+/// F6 is the worst of a set of keys WebView2 acts on whenever the page leaves
+/// them unhandled, and hotkeys leave plenty: plain keys are skipped in text
+/// fields and modifiers have to match exactly. So:
+///   - F5 in any text field (the SQL editor too), Shift+F5, Ctrl+F5, and Ctrl+R
+///     with a dialog open reloaded the whole app, dropping the connection and
+///     any staged edits
+///   - F7 asked to turn on caret browsing
+///   - F3 and Ctrl+G opened the browser's find bar, Ctrl+S its Save As dialog
+///   - F10, Ctrl+L, Ctrl+E and Alt+D are Chromium's other focus commands, aimed
+///     at browser chrome an embedded page doesn't have
+///
+/// Only the browser's own action is switched off, per key press, through
+/// `ICoreWebView2AcceleratorKeyPressedEventArgs2`. Every key still reaches the
+/// page, so Stroke's own F5, Ctrl+R and Ctrl+S keep working and the Terminal
+/// tab still gets its function keys. A runtime too old to carry that interface
+/// swallows F6 alone instead: swallowing takes the key from the page too.
+///
+/// If the browser process exits for any other reason, the native frame comes
+/// back so the window can still be moved and closed.
+#[cfg(target_os = "windows")]
+fn guard_windows_webview(window: &tauri::WebviewWindow) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::{
+        ICoreWebView2AcceleratorKeyPressedEventArgs2, COREWEBVIEW2_KEY_EVENT_KIND,
+        COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN, COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN,
+        COREWEBVIEW2_PROCESS_FAILED_KIND, COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED,
+    };
+    use webview2_com::{AcceleratorKeyPressedEventHandler, ProcessFailedEventHandler};
+    use windows_core::Interface;
+
+    const VK_F3: u32 = 0x72;
+    const VK_F5: u32 = 0x74;
+    const VK_F6: u32 = 0x75;
+    const VK_F7: u32 = 0x76;
+    const VK_F10: u32 = 0x79;
+    /// A letter's virtual-key code is its capital, and a letter only reaches the
+    /// handler with Ctrl or Alt held, so `R` here is Ctrl+R or Alt+R, never typing.
+    const BROWSER_ONLY: &[u32] = &[
+        VK_F3, VK_F5, VK_F6, VK_F7, VK_F10,
+        b'D' as u32, b'E' as u32, b'G' as u32, b'L' as u32, b'R' as u32, b'S' as u32,
+    ];
+
+    let host = window.clone();
+    let _ = window.with_webview(move |webview| unsafe {
+        let controller = webview.controller();
+        let mut token = 0;
+
+        let on_key = AcceleratorKeyPressedEventHandler::create(Box::new(|_, args| {
+            let Some(args) = args else { return Ok(()) };
+            let mut kind = COREWEBVIEW2_KEY_EVENT_KIND::default();
+            args.KeyEventKind(&mut kind)?;
+            // Anything with Alt arrives as a system key.
+            if kind != COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN
+                && kind != COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN
+            {
+                return Ok(());
+            }
+            let mut key = 0;
+            args.VirtualKey(&mut key)?;
+            if !BROWSER_ONLY.contains(&key) {
+                return Ok(());
+            }
+            match args.cast::<ICoreWebView2AcceleratorKeyPressedEventArgs2>() {
+                Ok(args) => args.SetIsBrowserAcceleratorKeyEnabled(false),
+                Err(_) if key == VK_F6 => args.SetHandled(true),
+                Err(_) => Ok(()),
+            }
+        }));
+        if let Err(e) = controller.add_AcceleratorKeyPressed(&on_key, &mut token) {
+            log::warn!("webview2: key guard not installed: {e}");
+        }
+
+        let core = match controller.CoreWebView2() {
+            Ok(core) => core,
+            Err(e) => {
+                log::warn!("webview2: crash guard not installed: {e}");
+                return;
+            }
+        };
+        let on_failed = ProcessFailedEventHandler::create(Box::new(move |_, args| {
+            let Some(args) = args else { return Ok(()) };
+            let mut kind = COREWEBVIEW2_PROCESS_FAILED_KIND::default();
+            args.ProcessFailedKind(&mut kind)?;
+            if kind == COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED {
+                log::error!("webview2: browser process exited, restoring the native frame");
+                // Through the event loop, not from inside this COM callback.
+                let host = host.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = host.set_decorations(true);
+                });
+            }
+            Ok(())
+        }));
+        if let Err(e) = core.add_ProcessFailed(&on_failed, &mut token) {
+            log::warn!("webview2: crash guard not installed: {e}");
+        }
+    });
+}
+
 /// WebKitGTK's pre-paint colour.
 #[cfg(target_os = "linux")]
 fn set_linux_webview_backdrop(window: &tauri::WebviewWindow, color: tauri::window::Color) {
@@ -418,6 +536,7 @@ pub fn run() {
             let surface = surface_for_theme(window_theme);
             let _ = window.set_background_color(Some(surface));
             set_webview_backdrop(&window, surface);
+            guard_webview(&window);
             arm_reveal_failsafe(&window);
 
             #[cfg(target_os = "macos")]
