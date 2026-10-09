@@ -2,67 +2,69 @@
 
 Copyright (c) 2026 Nischal Dahal
 
-You may do whatever you want with the Stroke source code and other source
-files (from here on referred to as the "Stroke Source"), with the following
-restrictions:
+This license covers the source code, assets and other files in this
+repository, together called "Stroke" below.
 
-- If you publish any work derived from the Stroke Source, you must make it
-  apparent in some way that it is derived from Stroke.
-- If you have created an executable program (from here on called "Your
-  Program") compiled from some source code and/or other source files (from
-  here on called "Your Source"), and if Your Source includes files or source
-  code copied or derived from the Stroke Source, then you may only publish
-  Your Program under the following conditions:
-	- Your Program does not contain any malware or hidden malicious content.
-	- You may not charge users money for Your Program, and Your Source must
-	  contain the monetization systems present in the Stroke Source,
-	  including the license-key activation, trial period tracking, and
-	  payment system, without any alterations. All of these systems must be
-	  active and working as intended in Your Program, and payments made
-	  through them must go to the original author of Stroke. That is unless
-	  Your Source features substantial improvements or additions to the
-	  Stroke Source, such that Your Source should be considered its own,
-	  derivative work, separate from the Stroke Source. Removing, bypassing,
-	  or replacing the monetization systems, renaming or restyling the app,
-	  or other cosmetic changes do not by themselves count as substantial
-	  improvements or additions.
-	- Your Program is not published under the name "Stroke", or under a name
-	  or icon so similar to Stroke's that users could mistake Your Program
-	  for Stroke.
+1. Using the code. You are free to read, copy, modify, build, run and reuse
+   Stroke, in whole or in part, for any purpose. The only conditions are the
+   ones in sections 2 and 3.
 
-THE STROKE SOURCE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE STROKE SOURCE OR THE USE OR OTHER DEALINGS IN
-THE STROKE SOURCE.
+2. Credit. If you publish anything based on Stroke, you must say clearly,
+   somewhere people will see it, that it is based on Stroke.
+
+3. Published apps. If you publish a compiled app that includes code or files
+   taken or adapted from Stroke (a "Published App"), all of the following
+   apply:
+
+   a. No malware. The Published App must not contain malware or any hidden
+      harmful behavior.
+
+   b. Payments stay with Stroke. The Published App must be free for its
+      users. Stroke's trial, license-key activation and payment systems must
+      stay in it unchanged, switched on, working as designed, and paying the
+      author of Stroke. This condition does not apply if the Published App
+      adds so much new work, or changes Stroke so substantially, that it is a
+      distinct product in its own right. Removing, bypassing or replacing
+      those systems, renaming or restyling the app, and other surface-level
+      changes never count toward that on their own.
+
+   c. A different name. The Published App must not be called "Stroke", and
+      its name and icon must not be close enough to Stroke's that users could
+      take it for Stroke.
+
+4. No warranty. STROKE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+   EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+   NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+   DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+   OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH STROKE OR THE USE OR
+   OTHER DEALINGS IN STROKE.
 
 ---
 
 # Notes on the Stroke License
 
-I wrote the Stroke License with two goals in mind:
+Stroke is a paid app, and all of its source is public. I want that openness
+to be useful to people without making it easy to turn Stroke against its
+users or its author. The license has two aims:
 
-1. To stop people from publishing apps built from Stroke that contain malware,
-   or that look just like Stroke except that when you buy a license, someone
-   other than me gets paid.
-2. To let everyone else do anything they like with the Stroke source code.
-   That includes reusing it in their own free and paid projects, publishing
-   bug fixes and improvements to Stroke, and building something substantially
-   better on top of Stroke and charging for it.
+1. Keep out bad copies. That means apps built from Stroke that hide malware,
+   or that pass themselves off as Stroke while sending license payments to
+   someone else.
+2. Keep everything else open. That means learning from the code, fixing bugs,
+   contributing back, reusing parts of it in your own free or paid projects,
+   and building a substantially new product on top of it.
 
-There are no restrictions on how you use the source code. You can read it,
-change it, build it, and run it yourself. The restrictions only apply to
-publishing apps compiled from it.
+The conditions only apply when you publish something. Using, changing,
+building and running the code yourself is unrestricted.
 
 Stroke is source-available, not open source. The Open Source Definition from
 the Open Source Initiative does not allow conditions like the ones above, so
 this is not an OSI-approved open source license.
 
-Stroke is a paid app with a free trial. Buying Stroke Pro at
-https://stroke.click buys a license key for the Stroke app. It does not change
-these terms, and you do not need one to use the source code.
+Stroke has a free trial, and Stroke Pro is sold at https://stroke.click.
+Buying it buys a license key for the Stroke app. It does not change these
+terms, and you do not need one to use the source code.
 
 ## Earlier contributions under the MIT License
 
