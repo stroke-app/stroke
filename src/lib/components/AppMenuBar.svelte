@@ -80,7 +80,7 @@
         <Menubar.Separator class={sepCls} />
         {@render item("settings", "Settings…", "openSettings", "Mod+,")}
         {@render item("x", "Close tab", "closeTab", "Mod+W")}
-        {@render item("trash-2", "Close all tabs", "closeAllTabs", "Mod+Shift+W")}
+        {@render item("x", "Close all tabs", "closeAllTabs", "Mod+Shift+W")}
       </Menubar.Content>
     </Menubar.Portal>
   </Menubar.Menu>
