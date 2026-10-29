@@ -6067,11 +6067,13 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   })
   /** Paint holding. A table switch empties `columns` the moment it starts, and
    *  drawing that frame blanked the grid for the whole round trip - the old
-   *  table, then nothing, then the new one. For the same grace window as the
-   *  spinner the canvas keeps the last table's pixels and the swap lands as one
-   *  frame. Never on a surface that holds nothing yet: a fresh or just-resized
-   *  canvas is blank (or black in WebKit) and has to be painted. */
-  const holdPaint = $derived(loading && columns.length === 0 && !loadingVisible)
+   *  table, then nothing, then the new one. The canvas keeps the last table's
+   *  pixels until the new one lands; past the grace window the loading overlay
+   *  dims them. It used to hold only for the grace window, so a load just over
+   *  it strobed: old table, ~70ms of empty grid, new table. Never on a surface
+   *  that holds nothing yet: a fresh or just-resized canvas is blank (or black
+   *  in WebKit) and has to be painted. */
+  const holdPaint = $derived(loading && columns.length === 0)
   let _surfaceHasFrame = false
   /** Reactivity budget: the pill re-reads at most this often, not per frame. */
   const SPAN_PUBLISH_MS = 150
@@ -8656,8 +8658,11 @@ import FilterX from "@lucide/svelte/icons/filter-x";
                  place of it: swapping the grid out destroyed the canvas on every
                  table open, and a load that landed a frame later flashed a
                  spinner plus a brand-new compositor layer. -->
+            <!-- Over the held frame of the previous table, dimmed, and with no
+                 fade: a 300ms fade-in on a state that often lives under 150ms
+                 was itself the flash. -->
             {#if loadingVisible}
-              <div class="pointer-events-none absolute inset-0 z-[3] flex flex-col animate-in fade-in duration-300">
+              <div class="pointer-events-none absolute inset-0 z-[3] flex flex-col bg-panel/70">
                 <TableLoading {embedded} />
               </div>
             {/if}
