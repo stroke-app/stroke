@@ -4998,6 +4998,9 @@ let rowSearch = $state('')
   /** @param {{ force?: boolean }} [opts] */
   /** `quiet` re-lists without the loading state, so the sidebar keeps its rows,
    *  scroll and focus while a refresh after a write lands. */
+  /** Catalog key of the list in `tables`, so a refresh can tell it is re-reading the same one. */
+  let _tablesKey = ''
+
   async function loadTables({ force = false, quiet = false } = {}) {
     if (!activeSchema) {
       tables = []
@@ -5009,16 +5012,24 @@ let rowSearch = $state('')
     const schemaAtCall = activeSchema
     const connAtCall = persistConnectionId
     const key = catalogKey(persistConnectionId, 'tables', schemaAtCall)
+    // Re-reading the list already on screen (a refresh) keeps it up and keeps the
+    // counts it knows. Swapping it for loading dots reset the sidebar's scroll
+    // and blanked every count until the recount waves came back.
+    const sameList = tables.length > 0 && _tablesKey === key
+    const prevCounts = sameList ? new Map(tables.map((t) => [t.name, t.rowCount])) : null
+    /** Tables whose count the reply left unknown: recounted even when a known one is kept. */
+    let replyUnknown = /** @type {string[] | null} */ (null)
     if (force) invalidateCatalog()
     const cached = force ? undefined : /** @type {any[] | undefined} */ (_catalog.get(key, TABLE_LIST_TTL_MS))
     if (cached) {
       tables = cached
+      _tablesKey = key
       loadingTables = false
       if (activeTable && !tables.find((t) => t.name === activeTable)) {
         activeTable = tables[0]?.name ?? null
       }
     } else {
-      if (!quiet) loadingTables = true
+      if (!quiet && !sameList) loadingTables = true
       error = ''
       try {
         const list = await listTables(schemaAtCall)
@@ -5027,17 +5038,24 @@ let rowSearch = $state('')
         // _catalog.set below would file them under whichever connection id is
         // current - poisoning that connection's cache for the whole TTL.
         if (connectionMoved(connAtCall)) return
+        replyUnknown = []
         tables = list
-          .map((t) => ({
-            name: t.name ?? t.table_name ?? '',
-            rowCount: normalizeTableRowCount(t.rowCount ?? t.row_count),
-            kind: t.kind ?? 'table',
-            rlsEnabled: t.rlsEnabled ?? null,
-            // For the sidebar's Created sort (see compareCreated).
-            createdAt: t.createdAt ?? null,
-            createOrder: t.createOrder ?? null,
-          }))
+          .map((t) => {
+            const name = t.name ?? t.table_name ?? ''
+            const fresh = normalizeTableRowCount(t.rowCount ?? t.row_count)
+            if (fresh === null) replyUnknown?.push(name)
+            return {
+              name,
+              rowCount: fresh ?? prevCounts?.get(name) ?? null,
+              kind: t.kind ?? 'table',
+              rlsEnabled: t.rlsEnabled ?? null,
+              // For the sidebar's Created sort (see compareCreated).
+              createdAt: t.createdAt ?? null,
+              createOrder: t.createOrder ?? null,
+            }
+          })
           .filter((t) => t.name)
+        _tablesKey = key
         _catalog.set(key, tables)
         if (activeTable && !tables.find((t) => t.name === activeTable)) {
           activeTable = tables[0]?.name ?? null
@@ -5055,7 +5073,7 @@ let rowSearch = $state('')
     // The list arrives with unknown (null) counts so it renders immediately;
     // resolve them with exact COUNT(*)s in the background and patch them in.
     // Covers the cached path too - a list cached mid-resolve may still hold nulls.
-    const unresolved = tables.filter((t) => t.rowCount === null).map((t) => t.name)
+    const unresolved = replyUnknown ?? tables.filter((t) => t.rowCount === null).map((t) => t.name)
     if (unresolved.length > 0) void resolveRowCounts(key, schemaAtCall, unresolved)
     // The schema-level catalog rides the same cache, so returning to a schema
     // costs nothing. A forced reload has already invalidated it above.
