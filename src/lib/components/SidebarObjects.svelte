@@ -487,7 +487,7 @@
     <!-- Nothing at all in the schema: one place to start from. -->
     <div class="flex flex-col items-center gap-3 px-6 py-14 text-center">
       <div class="flex size-10 items-center justify-center rounded-lg border border-border bg-muted/30">
-        <Icon name="blocks" class="size-5 text-muted-foreground" />
+        <Icon name="shapes" class="size-5 text-muted-foreground" />
       </div>
       <p class="max-w-[16rem] text-ui-xs font-medium text-foreground">No views or routines in “{schema}”</p>
       {#if family}{@render newMenu('empty')}{/if}

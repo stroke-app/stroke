@@ -452,7 +452,7 @@
     { id: 'databases', label: 'Databases', icon: 'database' },
     // Saved queries, in folders: the SQL you keep is what you open next.
     { id: 'queries',   label: 'Queries',   icon: 'file-code' },
-    { id: 'objects',   label: 'Objects',   icon: 'blocks' },
+    { id: 'objects',   label: 'Objects',   icon: 'shapes' },
     { id: 'recent',    label: 'Recent',    icon: 'clock' },
     // Last, and not a list: find & replace is a tool that works on the table
     // you already have open, so it belongs where the other panels live rather
@@ -540,7 +540,7 @@
    */
   const TAB_EMPTY = {
     tables:    { icon: 'table-2',    title: 'No tables',    hint: 'Nothing in this schema yet.' },
-    objects:   { icon: 'blocks',     title: 'No objects',   hint: 'Views, functions, triggers and the like show up here.' },
+    objects:   { icon: 'shapes',     title: 'No objects',   hint: 'Views, functions, triggers and the like show up here.' },
     recent:    { icon: 'clock',      title: 'No recents',   hint: 'Tables you open appear here.' },
     databases: { icon: 'database',   title: 'No databases', hint: 'Nothing else on this server.' },
   }
