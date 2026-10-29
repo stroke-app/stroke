@@ -4049,6 +4049,27 @@ let rowSearch = $state('')
     return true
   }
 
+  /**
+   * The batch version of confirmDiscardTabChanges: one confirm covers every
+   * unsaved change in the tabs about to close, and a yes discards them all.
+   * @param {any[]} closing
+   */
+  async function confirmDiscardManyTabChanges(closing) {
+    const count = closing.reduce((n, t) => n + tabPendingCount(t), 0)
+    if (count === 0) return true
+    const ok = await askConfirm(
+      `Closing these tabs discards ${count} unsaved change${count === 1 ? '' : 's'}. Close and discard?`,
+      'Close & discard',
+    )
+    if (!ok) return false
+    for (const t of closing) {
+      if (t.id === activeTabId) resetEdits()
+      const key = tabTableKey(t)
+      if (key) clearPendingChanges(key)
+    }
+    return true
+  }
+
   /** @param {string} id */
   async function closeTab(id) {
     const idx = tabs.findIndex((t) => t.id === id)
@@ -4124,12 +4145,14 @@ let rowSearch = $state('')
   async function closeOtherTabs(id) {
     const keep = tabs.find((t) => t.id === id)
     if (!keep) return
+    if (!(await confirmDiscardManyTabChanges(tabs.filter((t) => t.id !== id && !t.pinned)))) return
     for (const t of tabs) if (t.id !== id && !t.pinned) rememberClosedTab(t)
     tabs = tabs.filter((t) => t.id === id || t.pinned)
     await activateTab(keep.id)
   }
 
   async function closeAllTabs() {
+    if (!(await confirmDiscardManyTabChanges(tabs.filter((t) => !t.pinned)))) return
     const pinned = tabs.filter((t) => t.pinned)
     for (const t of tabs) if (!t.pinned) rememberClosedTab(t)
     if (pinned.length === 0) {
@@ -4152,18 +4175,7 @@ let rowSearch = $state('')
     const idSet = new Set(ids)
     const toClose = tabs.filter((t) => idSet.has(t.id) && !t.pinned)
     if (toClose.length === 0) return
-    const pending = toClose.reduce((n, t) => n + tabPendingCount(t), 0)
-    if (pending > 0) {
-      const ok = await askConfirm(
-        `Closing these tabs discards ${pending} unsaved change${pending === 1 ? '' : 's'}. Close and discard?`,
-        'Close & discard',
-      )
-      if (!ok) return
-      for (const t of toClose) {
-        const key = tabTableKey(t)
-        if (key) clearPendingChanges(key)
-      }
-    }
+    if (!(await confirmDiscardManyTabChanges(toClose))) return
     const closeSet = new Set(toClose.map((t) => t.id))
     for (const t of toClose) rememberClosedTab(t)
     const wasActiveClosed = activeTabId !== null && closeSet.has(activeTabId)
