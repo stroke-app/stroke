@@ -5131,6 +5131,20 @@ let rowSearch = $state('')
     }, SEARCH_DEBOUNCE_MS)
   }
 
+  /** Drop the row search and every filter at once (the grid's "Clear filters"). */
+  function clearRowFilters() {
+    if (searchDebounceTimer) clearTimeout(searchDebounceTimer)
+    if (filterDebounceTimer) clearTimeout(filterDebounceTimer)
+    searchDebounceTimer = null
+    filterDebounceTimer = null
+    rowSearch = ''
+    rowFilters = []
+    page = 1
+    rawOffset = null
+    _keysetCursor = null
+    void loadRows()
+  }
+
   /** @param {TableSort[]} sorts full ordered sort-key list ([] clears; [primary, …secondary]) */
   async function handleRowSortChange(sorts) {
     const list = Array.isArray(sorts) ? sorts.filter((s) => s?.column) : (sorts ? [sorts] : [])
@@ -9338,6 +9352,8 @@ let rowSearch = $state('')
                 {loadingMore}
                 {infiniteScroll}
                 endOfResults={infiniteScroll && !windowed && total > 0 && rows.length >= total}
+                filtered={rowSearch.trim() !== '' || activeFilters(rowFilters).length > 0}
+                onclearfilters={clearRowFilters}
                 onloadmore={handleLoadMore}
                 saving={savingCell || deletingRows || insertingRow}
                 bind:selected

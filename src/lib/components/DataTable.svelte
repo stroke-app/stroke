@@ -17,6 +17,7 @@
   import { toast } from "$lib/components/ui/sonner/toast.svelte.js";
   import * as ContextMenu from "$lib/components/ui/context-menu/index.js";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
+  import { Button } from "$lib/components/ui/button/index.js";
   import ArrowUpDown from "@lucide/svelte/icons/arrow-up-down";
   import ArrowUp from "@lucide/svelte/icons/arrow-up";
   import ArrowDown from "@lucide/svelte/icons/arrow-down";
@@ -376,6 +377,11 @@ import FilterX from "@lucide/svelte/icons/filter-x";
      *  treat as roaming. */
     /** True when every row has been loaded in infinite scroll mode (no more pages). */
     endOfResults = false,
+    /** True when a row search or filter is narrowing the result, so an empty
+     *  grid means "nothing matched", not "the table is empty". */
+    filtered = false,
+    /** Clears the row search and every filter (the filtered empty state's button). */
+    onclearfilters = /** @type {(() => void) | null} */ (null),
     /** Active row-search query (toolbar search). Matched substrings are
      *  highlighted in the drawn cell text. */
     searchQuery = '',
@@ -8666,6 +8672,14 @@ import FilterX from "@lucide/svelte/icons/filter-x";
                       <Loader class="size-5 animate-spin text-muted-foreground" />
                       <p class="text-ui-sm text-muted-foreground">Loading rows…</p>
                     </div>
+                  {/if}
+                {:else if filtered}
+                  <FilterX class="size-8 text-muted-foreground" />
+                  <p class="text-ui-sm text-muted-foreground">No rows match these filters</p>
+                  {#if onclearfilters}
+                    <Button type="button" variant="outline" size="sm" class="pointer-events-auto mt-1" onclick={() => onclearfilters?.()}>
+                      Clear filters
+                    </Button>
                   {/if}
                 {:else}
                   <Table2 class="size-8 text-muted-foreground" />
