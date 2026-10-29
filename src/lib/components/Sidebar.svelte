@@ -1326,10 +1326,11 @@
                   kbdNav = true
                   const i = SIDEBAR_TABS.findIndex((t) => t.id === sidebarTab)
                   const next = (i + (e.key === "ArrowRight" ? 1 : -1) + SIDEBAR_TABS.length) % SIDEBAR_TABS.length
+                  // Read before assigning: a statement starting with `(` here was
+                  // parsed as a call on the line above, so arrows threw and never moved.
+                  const btn = e.currentTarget.parentElement?.children[next]
                   sidebarTab = SIDEBAR_TABS[next].id
-                  /** @type {HTMLElement | null} */ (
-                    e.currentTarget.parentElement?.children[next] ?? null
-                  )?.focus()
+                  if (btn instanceof HTMLElement) btn.focus()
                 }}
               >
                 <!-- The pill is a child, not the button's own background: the
