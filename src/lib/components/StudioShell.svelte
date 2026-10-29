@@ -6963,19 +6963,30 @@ let rowSearch = $state('')
     if (connectionLost) await reconnectPool()
     activeSchema = schema
     setLastSchema(persistConnectionId, schema)
-    activeTable = null
     page = 1
     tableFilter = ''
-    columns = []
-    rows = []
+    // The open table stays on screen while the new schema's list loads, then
+    // swaps in one step under the grid's held frame. Blanking it first showed
+    // the "select a table" screen, then the old toolbar over an empty grid.
     await loadTables()
-    if (activeTab?.kind === 'table') {
-      if (tables.length) {
-        activeTable = tables[0].name
-        await loadRows()
-      } else {
-        saveActiveTabState()
-      }
+    if (activeTab?.kind === 'table' && tables.length) {
+      activeTable = tables[0].name
+      // The old table's search, filters and sort mean nothing on this one.
+      rowSearch = ''
+      rowFilters = []
+      rowSort = null
+      rowSortMore = []
+      filterBarOpen = false
+      columns = []
+      rows = []
+      total = -1
+      saveActiveTabState()
+      await loadRows()
+    } else {
+      activeTable = null
+      columns = []
+      rows = []
+      if (activeTab?.kind === 'table') saveActiveTabState()
     }
   }
 

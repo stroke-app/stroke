@@ -1638,7 +1638,9 @@
   </header>
 
   <!-- Inline filter bar -->
-  {#if filterBarOpen && columns.length > 0 && tableViewMode !== "structure"}
+  <!-- Kept up while a reload empties `columns`: dropping and remounting it
+       moved the grid 82px each way around every load. -->
+  {#if filterBarOpen && (columns.length > 0 || loading) && tableViewMode !== "structure"}
     <div class="studio-filter-bar border-b border-border/50 bg-panel">
       {#each rowFilters as filter, i (filter.id)}
         {@const colKind = getColKind(filter.column)}
