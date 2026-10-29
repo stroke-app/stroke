@@ -8318,9 +8318,12 @@ let rowSearch = $state('')
     <!-- The ring and the label wait before they appear (ConnectOverlay's
          `delay`). A warm reconnect lands in a few hundred ms, and showing them
          at once flashed "Reconnecting" over the shell on a cold start. -->
+    <!-- The hold-back is for the startup reconnect only. A switch you asked for
+         unmounts the shell at once, so held back it was ~350ms of bare black. -->
     <ConnectOverlay
       verb={autoConnectVerb}
       name={autoConnectName ? shortConnLabel(autoConnectName) : ''}
+      delay={autoConnectVerb === 'Reconnecting' ? 350 : 0}
       oncancel={() => void cancelAutoConnect()}
     />
   </div>
