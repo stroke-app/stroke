@@ -90,6 +90,7 @@ import PhFadersHorizontal from 'phosphor-svelte/lib/FadersHorizontal'
 import PhSquaresFour from 'phosphor-svelte/lib/SquaresFour'
 import PhStack from 'phosphor-svelte/lib/Stack'
 import PhPuzzlePiece from 'phosphor-svelte/lib/PuzzlePiece'
+import PhShapes from 'phosphor-svelte/lib/Shapes'
 import PhWifiHigh from 'phosphor-svelte/lib/WifiHigh'
 import PhWifiSlash from 'phosphor-svelte/lib/WifiSlash'
 import PhColumns from 'phosphor-svelte/lib/Columns'
@@ -187,6 +188,7 @@ export const PHOSPHOR_MAP = {
   'panel-left-open': PhSidebar,
   'layers': PhStack,
   'blocks': PhPuzzlePiece,
+  'shapes': PhShapes,
   'globe': PhGlobe,
   'wifi': PhWifiHigh,
   'wifi-off': PhWifiSlash,
