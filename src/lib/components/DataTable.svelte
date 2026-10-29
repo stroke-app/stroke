@@ -2080,6 +2080,8 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     const entries = [...pendingEdits.values()].filter((e) => !pendingDeletes.has(e.rowIdx));
     /** @type {typeof entries} */
     const failed = [];
+    /** @type {string[]} */
+    const failReasons = [];
     let okCount = 0;
     for (const edit of entries) {
       try {
@@ -2087,7 +2089,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
         okCount++;
       } catch (err) {
         failed.push(edit);
-        toast.error("Could not save", { description: String(err) });
+        failReasons.push(`${columns[edit.colIdx]?.name ?? "?"}: ${String(err)}`);
       }
     }
 
@@ -2098,8 +2100,8 @@ import FilterX from "@lucide/svelte/icons/filter-x";
         await ondelete({ rowIndices: deleteIndices });
         deletedCount = deleteIndices.length;
         pendingDeletes = new Set();
-      } catch (err) {
-        toast.error("Could not delete", { description: String(err) });
+      } catch {
+        // error toast already shown by ondelete
       }
     }
 
@@ -2126,11 +2128,20 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     futureEdits = [];
     // Sync the cross-unmount cache to the post-apply state (clears it when empty).
     savePendingChanges(_persistKey, pendingEdits, pendingDeletes);
+    // One toast for every failed edit, not one per edit, and it says where the
+    // edits went. A few distinct reasons are enough to act on.
+    if (failed.length > 0) {
+      const n = failed.length;
+      const title = deletedCount > 0
+        ? (n === 1 ? "1 edit wasn't saved and was discarded" : `${n} edits weren't saved and were discarded`)
+        : `Couldn't save ${n} edit${n === 1 ? "" : "s"}. ${n === 1 ? "It's" : "They're"} still staged`;
+      toast.error(title, { description: [...new Set(failReasons)].slice(0, 3).join("\n"), code: true, duration: 10000 });
+    }
     if (okCount > 0 || deletedCount > 0) {
       const parts = [];
       if (okCount > 0) parts.push(`${okCount} cell${okCount === 1 ? "" : "s"} updated`);
       if (deletedCount > 0) parts.push(`${deletedCount} row${deletedCount === 1 ? "" : "s"} deleted`);
-      toast.success("Changes applied", { description: parts.join(", ") });
+      toast.success(failed.length > 0 ? "Some changes applied" : "Changes applied", { description: parts.join(", ") });
     }
   }
 
