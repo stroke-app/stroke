@@ -1400,7 +1400,9 @@
           <div class="ml-auto flex shrink-0 items-center gap-0.5">
           {#if sidebarTab === 'objects'}
             <!-- On Objects the bar's refresh and + act on objects, so the list
-                 needs no header row of its own. -->
+                 needs no header row of its own. The spacer holds the display
+                 options' slot, so the group keeps its width across tabs. -->
+            <span class="invisible size-7 shrink-0" aria-hidden="true"></span>
             <button
               type="button"
               class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40"
@@ -1430,6 +1432,10 @@
               </DropdownMenu.Content>
             </DropdownMenu.Root>
           {:else}
+          <!-- These act on the table list only. On Queries and Find & replace
+               they did nothing for the panel below, so they keep their space
+               there (no shift between tabs) but are not shown or reachable. -->
+          <div class={cn("flex items-center gap-0.5", (sidebarTab === 'queries' || sidebarTab === 'search') && "invisible")}>
           <DropdownMenu.Root>
             <DropdownMenu.Trigger
               class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground data-[state=open]:bg-accent data-[state=open]:text-foreground disabled:pointer-events-none disabled:opacity-40"
@@ -1554,6 +1560,7 @@
               <Icon name="plus" class="size-3.5" />
             </button>
           {/if}
+          </div>
           {/if}
           </div>
         </div>
