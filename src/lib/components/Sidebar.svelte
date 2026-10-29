@@ -558,11 +558,16 @@
     recent:    { icon: 'clock',      title: 'No recents',   hint: 'Tables you open appear here.' },
     databases: { icon: 'database',   title: 'No databases', hint: 'Nothing else on this server.' },
   }
+  /** No databases listed yet, but a fetch is owed, running or failed: the
+   *  section shows its dots or its error, never "No databases". */
+  const dbHeld = $derived(
+    canSwitchDb && dbEntries.length === 0 && (dbEntriesLoading || !dbEntriesLoaded || !!dbEntriesError),
+  )
   /** @param {SidebarTab} t */
   const isTabEmpty = (t) =>
     // Objects always draws its group headers: an empty group still has its +.
     t !== 'search' && t !== 'queries' && t !== 'objects' && !loadingTables && !!connectionName &&
-    tabCounts[t] === 0
+    tabCounts[t] === 0 && !(t === 'databases' && dbHeld)
   /** True when the tab has rows but the filter hid all of them. @param {SidebarTab} t */
   const isTabEmptyFromFilter = (t) =>
     isTabEmpty(t) &&
