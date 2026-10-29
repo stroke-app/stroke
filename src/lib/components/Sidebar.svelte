@@ -1310,7 +1310,9 @@
                   // row's own bottom edge. It was a 28px pill with the rail pushed
                   // 7px below it, so the rail floated in the gap between the pill and
                   // the border, attached to neither.
-                  "group/tab relative inline-flex h-9 w-8 shrink-0 items-center justify-center transition-colors disabled:pointer-events-none disabled:opacity-40",
+                  // No colour transition: the rail snaps on the switch, so a fading
+                  // pill and icon left two tabs half-lit for 150ms on every change.
+                  "group/tab relative inline-flex h-9 w-8 shrink-0 items-center justify-center disabled:pointer-events-none disabled:opacity-40",
                   // Two cues, not one. Colour alone does not separate four line icons
                   // at this size, so the selected tab also carries a filled surface and
                   // an accent rail - the same "which panel am I in" signal the VS Code
@@ -1338,7 +1340,7 @@
                      the shape you see stays 28px and centred. -->
                 <span
                   class={cn(
-                    "pointer-events-none absolute inset-x-0.5 inset-y-1 rounded-md transition-colors",
+                    "pointer-events-none absolute inset-x-0.5 inset-y-1 rounded-md",
                     active ? "bg-sidebar-accent" : "group-hover/tab:bg-sidebar-accent/50",
                   )}
                   aria-hidden="true"
