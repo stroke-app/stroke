@@ -473,7 +473,7 @@
   // Rebuilding one on every switch threw its DOM and scroll away, and the
   // rebuild was the flash between tabs. Find & replace still mounts per visit:
   // it previews matches against the open table's rows, which a hidden copy
-  // would keep recomputing.
+  // would keep recomputing (its typed text lives here, so it survives).
   const activePanel = $derived(sidebarTab)
   let seenPanels = $state(new Set([untrack(() => sidebarTab)]))
   $effect(() => {
@@ -482,6 +482,12 @@
   })
   /** @param {string} p */
   const panelMounted = (p) => activePanel === p || seenPanels.has(p)
+  // Find & replace's inputs, held here because the panel itself remounts.
+  let frFind = $state('')
+  let frReplace = $state('')
+  let frRegex = $state(false)
+  let frWhole = $state(false)
+  let frCase = $state(false)
 
   $effect(() => {
     openFindReplace = () => {
@@ -1763,6 +1769,11 @@
       {#if activePanel === 'search'}
         <FindReplacePanel
           bind:focusFind={focusFindField}
+          bind:findText={frFind}
+          bind:replaceText={frReplace}
+          bind:useRegex={frRegex}
+          bind:wholeValue={frWhole}
+          bind:caseSensitive={frCase}
           columns={frColumns}
           rows={frRows}
           primaryKey={frPrimaryKey}

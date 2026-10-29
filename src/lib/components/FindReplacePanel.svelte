@@ -46,6 +46,13 @@
     onreveal = /** @type {(rowIdx: number, colIdx: number) => void} */ (() => {}),
     /** Assigned here; the shell calls it to focus the Find field. */
     focusFind = $bindable(/** @type {() => void} */ (() => {})),
+    // What was typed and how it matches. Bindable so the sidebar can hold them:
+    // the panel remounts on every visit, and local state came back empty.
+    findText = $bindable(''),
+    replaceText = $bindable(''),
+    useRegex = $bindable(false),
+    wholeValue = $bindable(false),
+    caseSensitive = $bindable(false),
   } = $props()
 
   /**
@@ -58,19 +65,12 @@
    */
   const ANY_COLUMN = -2
   let colIdx = $state(-1)
-  /**
-   * The three matching options are independent, the way they are in an editor's
-   * find widget. They were two booleans and a three-way `mode`, so "whole
-   * value" and "regular expression" were the same field and turning one on
-   * turned the other off - only ever two of the three lit up, and the pair that
-   * combines most usefully (a pattern that has to match the whole cell) could
-   * not be expressed at all.
-   */
-  let useRegex = $state(false)
-  let wholeValue = $state(false)
-  let caseSensitive = $state(false)
-  let findText = $state('')
-  let replaceText = $state('')
+  // The three matching options (useRegex, wholeValue, caseSensitive, props
+  // above) are independent, the way they are in an editor's find widget. They
+  // were two booleans and a three-way `mode`, so "whole value" and "regular
+  // expression" were the same field and turning one on turned the other off -
+  // only ever two of the three lit up, and the pair that combines most usefully
+  // (a pattern that has to match the whole cell) could not be expressed at all.
   let applying = $state(false)
   /** @type {HTMLInputElement | null} */
   let findEl = $state(null)
