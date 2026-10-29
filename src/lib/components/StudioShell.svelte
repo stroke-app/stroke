@@ -5461,6 +5461,9 @@ let rowSearch = $state('')
             if (tabId === activeTabId) {
               total = n
               _totalSig = predicateSig(apiSearch(s.rowSearch), s.rowFilters ?? [])
+              // Recorded like refreshRowCount does, or the first page change
+              // after opening counted again and flashed "…" while it did.
+              _countedView = rowCountKey(s.schema, s.table, _totalSig)
             }
           }
         } catch { /* best-effort */ }
@@ -6080,7 +6083,11 @@ let rowSearch = $state('')
         // would blank the total and force the COUNT(*) the skip below exists to
         // avoid, and the footer would flicker through "counting" on each page.
         const incoming = Number(data.total ?? 0)
-        total = incoming >= 0 ? incoming : (_countedView === viewKey ? total : incoming)
+        // A recount of the same table under the same predicate (a refresh, or
+        // coming back to a tab) shows the last number until the new one lands,
+        // not "…": `total` and `_totalSig` here are this tab's, restored with it.
+        const sameView = _countedView === viewKey || (total > 0 && _totalSig === ownerSig)
+        total = incoming >= 0 ? incoming : (sameView ? total : incoming)
         _totalSig = ownerSig
       }
       queryMs = ranMs
