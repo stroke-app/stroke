@@ -995,11 +995,11 @@
         type="button"
         class={cn(
           iconBtn,
-          "shrink-0",
-          filterCount > 0 ? "gap-1 !w-auto px-2" : "",
+          "relative shrink-0",
           (filterCount > 0 || filterBarOpen) && "bg-accent text-foreground",
         )}
         title="Filter rows ({KEY.filter})"
+        aria-label={filterCount > 0 ? `Filter rows, ${filterCount} active` : "Filter rows"}
         disabled={loading || columns.length === 0}
         onclick={() => {
           if (filterBarOpen) filterBarOpen = false;
@@ -1007,8 +1007,10 @@
         }}
       >
         <Icon name="list-filter" class="size-3.5" />
+        <!-- A corner badge, not inline text: widening the button moved the five
+             buttons after it 14px every time a filter was typed or cleared. -->
         {#if filterCount > 0}
-          <span class="tabular-nums text-ui-2xs font-medium text-primary" aria-hidden="true">{formatCompactCount(filterCount)}</span>
+          <span class="pointer-events-none absolute -top-0.5 -right-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-primary px-0.5 text-ui-3xs font-medium tabular-nums text-primary-foreground" aria-hidden="true">{formatCompactCount(filterCount)}</span>
         {/if}
       </button>
 
