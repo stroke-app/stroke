@@ -469,6 +469,20 @@
   }
   let sidebarTab = $state(loadSidebarTab())
 
+  // Panels mount on first visit and then stay, hidden while another tab is up.
+  // Rebuilding one on every switch threw its DOM and scroll away, and the
+  // rebuild was the flash between tabs. Find & replace still mounts per visit:
+  // it previews matches against the open table's rows, which a hidden copy
+  // would keep recomputing.
+  const activePanel = $derived(sidebarTab)
+  let seenPanels = $state(new Set([untrack(() => sidebarTab)]))
+  $effect(() => {
+    const p = activePanel
+    if (!untrack(() => seenPanels.has(p))) seenPanels = new Set([...untrack(() => seenPanels), p])
+  })
+  /** @param {string} p */
+  const panelMounted = (p) => activePanel === p || seenPanels.has(p)
+
   $effect(() => {
     openFindReplace = () => {
       sidebarTab = 'search'
@@ -544,22 +558,22 @@
     recent:    { icon: 'clock',      title: 'No recents',   hint: 'Tables you open appear here.' },
     databases: { icon: 'database',   title: 'No databases', hint: 'Nothing else on this server.' },
   }
-  const tabIsEmpty = $derived(
+  /** @param {SidebarTab} t */
+  const isTabEmpty = (t) =>
     // Objects always draws its group headers: an empty group still has its +.
-    sidebarTab !== 'search' && sidebarTab !== 'queries' && sidebarTab !== 'objects' && !loadingTables && !!connectionName && tabCounts[sidebarTab] === 0,
-  )
-  /** True when the tab has rows but the filter hid all of them. */
-  const tabEmptyFromFilter = $derived(
-    tabIsEmpty &&
-      !!debouncedFilter &&
-      (sidebarTab === 'tables'
-        ? regularTablesUnpinned.length + visiblePinnedTables.length > 0
-        : sidebarTab === 'objects'
-          ? views.length + matViews.length > 0
-          : sidebarTab === 'databases'
-            ? dbEntries.length > 0
-            : recentTables.length > 0),
-  )
+    t !== 'search' && t !== 'queries' && t !== 'objects' && !loadingTables && !!connectionName &&
+    tabCounts[t] === 0
+  /** True when the tab has rows but the filter hid all of them. @param {SidebarTab} t */
+  const isTabEmptyFromFilter = (t) =>
+    isTabEmpty(t) &&
+    !!debouncedFilter &&
+    (t === 'tables'
+      ? regularTablesUnpinned.length + visiblePinnedTables.length > 0
+      : t === 'objects'
+        ? views.length + matViews.length > 0
+        : t === 'databases'
+          ? dbEntries.length > 0
+          : recentTables.length > 0)
 
   /** How many rows each tab holds BEFORE the filter. @type {Record<SidebarTab, number>} */
   const tabTotals = $derived({
@@ -586,18 +600,16 @@
   $effect(() => { try { localStorage.setItem(SIDEBAR_TAB_KEY, sidebarTab) } catch {} })
 
 
-  // The old per-section visibility flags are now just "is this the open tab".
-  // Keeping the names means the ~900 lines of list markup below did not have to
-  // be rewritten to ask a different question.
-  const showTables    = $derived(sidebarTab === 'tables')
-  const showRecent    = $derived(sidebarTab === 'recent')
+  // Each list tab renders its own panel (see `listPanel` in the markup), which
+  // asks `t === 'tables'` where the shared panel asked "is this the open tab".
   // Pinned is a section of Tables, not a tab of its own. It was a fifth icon in
   // the strip that held, for most connections, nothing at all - and it split
   // "the tables in this schema" across two places you had to switch between to
   // see. It renders above the Tables header, which is where the pins already
   // sorted in `selectableOrder`.
-  const showPins      = $derived(sidebarTab === 'tables')
-  const showDatabases = $derived(sidebarTab === 'databases')
+  /** @typedef {'tables' | 'databases' | 'recent'} ListTab */
+  /** @type {ListTab[]} */
+  const LIST_TABS = ['tables', 'databases', 'recent']
   // Nothing collapses any more, so every list in the open tab is open.
   const recentOpen = true, tablesOpen = true
   // The engine's own schemas (`pg_catalog`, `information_schema`, `sys`…) are
@@ -1151,8 +1163,33 @@
     sortDir = 'asc';
   }
   // ── Lists (tables, views, materialized views, databases) ─────────────────
-  /** @type {HTMLElement | null} */
-  let scrollContainerEl = $state(null)
+  /** Each list tab's scroller. @type {Record<ListTab, HTMLElement | null>} */
+  let listScrollers = $state({ tables: null, databases: null, recent: null })
+  /** The open list tab's scroller, null on the other tabs: every row query
+   *  (listRowButtons, the pin anchor) stays inside what is on screen. */
+  const scrollContainerEl = $derived(
+    /** @type {Record<string, HTMLElement | null>} */ (listScrollers)[activePanel] ?? null,
+  )
+
+  // A display:none scroller loses its offset, so each list puts its own back.
+  // Below the declarations on purpose: $effect.pre runs the moment it is
+  // created, so above them the reads hit the TDZ and threw on mount.
+  /** @type {Record<string, number>} */
+  const listScroll = {}
+  let lastPanel = untrack(() => activePanel)
+  $effect.pre(() => {
+    const p = activePanel
+    untrack(() => {
+      const el = /** @type {Record<string, HTMLElement | null>} */ (listScrollers)[lastPanel]
+      if (lastPanel !== p && el) listScroll[lastPanel] = el.scrollTop
+      lastPanel = p
+    })
+  })
+  $effect(() => {
+    const el = scrollContainerEl
+    const at = untrack(() => listScroll[activePanel])
+    if (el && at && el.scrollTop !== at) el.scrollTop = at
+  })
 
   // No windowing, and no `content-visibility` either. The sidebar renders every
   // row, plainly.
@@ -1680,13 +1717,19 @@
         {/if}
       </div>
 
-      {#if sidebarTab === 'queries'}
-        {@render queriesPanel?.()}
-      {:else if sidebarTab === 'objects'}
-        {#if connectionName}
+      <!-- `contents` keeps each wrapper out of the flex layout, so a panel sits
+           in the column exactly as it did unwrapped; `hidden` parks it. -->
+      {#if panelMounted('queries')}
+        <div class={activePanel === 'queries' ? 'contents' : 'hidden'}>
+          {@render queriesPanel?.()}
+        </div>
+      {/if}
+      {#if connectionName && panelMounted('objects')}
+        <div class={activePanel === 'objects' ? 'contents' : 'hidden'}>
           <SidebarObjects
             bind:this={objectsPanel}
             bind:busyLoading={objectsLoading}
+            panelActive={activePanel === 'objects'}
             {connection}
             schema={activeSchema}
             {views}
@@ -1703,8 +1746,9 @@
             bind:total={objectsTotal}
             bind:shown={objectsShown}
           />
-        {/if}
-      {:else if sidebarTab === 'search'}
+        </div>
+      {/if}
+      {#if activePanel === 'search'}
         <FindReplacePanel
           bind:focusFind={focusFindField}
           columns={frColumns}
@@ -1715,10 +1759,12 @@
           onapply={onfindreplaceapply}
           onreveal={onrevealcell}
         />
-      {:else}
-      <div class="flex min-h-0 flex-1 flex-col">
+      {/if}
+      <!-- One mounted panel per list tab, each with its own scroller: a shared
+           one re-rendered every row on each return to Tables. -->
+      {#snippet listPanel(/** @type {ListTab} */ lt)}
         <div
-          bind:this={scrollContainerEl}
+          bind:this={listScrollers[lt]}
           class="app-scroll min-h-0 w-full flex-1 overflow-y-auto overscroll-y-contain [will-change:scroll-position]"
           role="none"
           use:smoothScroll={{ enabled: !$appNativeScroll }}
@@ -1811,12 +1857,12 @@
                  Other databases on the same server. Collapsed by default and
                  only fetched once expanded - see loadDatabases(). Engines that
                  cannot switch in place (SQLite, Redis) never render it. -->
-            <!-- `!tabIsEmpty`: with nothing to list, the tab-level empty state
+            <!-- `!isTabEmpty(lt)`: with nothing to list, the tab-level empty state
                  below already says so in the middle of the panel. Rendering the
                  section as well put a second, quieter "No other databases" at the
                  top-left of the same empty panel - two answers to one question,
                  in two different places and two different type sizes. -->
-            {#if showDatabases && canSwitchDb && connectionName && !tabIsEmpty}
+            {#if lt === 'databases' && canSwitchDb && connectionName && !isTabEmpty(lt)}
               <div class="flex w-full items-center gap-1 px-2.5 pt-2 pb-1">
                 <span class="text-ui-2xs font-medium tracking-wider text-muted-foreground uppercase">Databases</span>
                 {#if dbEntries.length > 0}
@@ -1848,7 +1894,7 @@
                   </button>
                 </div>
               </div>
-              {#if databasesOpen}
+              {#if lt === 'databases'}
                 {#if dbEntriesLoading && dbEntries.length === 0}
                   {@render listLoading('Loading databases')}
                 {:else if dbEntriesError && dbEntries.length === 0}
@@ -1946,7 +1992,7 @@
             {/if}
 
             <!-- ── Recent ─────────────────────────────────────────── -->
-            {#if showRecent && filteredRecent.length > 0 && connectionName}
+            {#if lt === 'recent' && filteredRecent.length > 0 && connectionName}
               <div class="flex w-full items-center gap-1 px-2.5 pt-2 pb-1">
                 <span class="text-ui-2xs font-medium tracking-wider text-muted-foreground uppercase">Recent</span>
                 {@render countBadge(Math.min(filteredRecent.length, 5), Math.min(recentTabs.length, 5))}
@@ -2025,7 +2071,7 @@
             {/if}
 
             <!-- ── Pinned ─────────────────────────────────────────── -->
-            {#if showPins && filteredPinnedTables.length > 0 && connectionName}
+            {#if lt === 'tables' && filteredPinnedTables.length > 0 && connectionName}
               <!-- `pb-1.5`, because the action row is 20px tall now and 4px of
                    air put it on top of the first pin. -->
               <div class="flex w-full items-center gap-1.5 px-2.5 pt-2 pb-1.5">
@@ -2226,10 +2272,10 @@
             {/if}
 
             <!-- ── Tables ─────────────────────────────────────────── -->
-            <!-- `!tabIsEmpty` here and on Views / Materialized views, for the
+            <!-- `!isTabEmpty(lt)` here and on Views / Materialized views, for the
                  reason given on Databases above: an empty tab gets exactly one
                  empty state, the tab-level one below. -->
-            {#if showTables && !tabIsEmpty}
+            {#if lt === 'tables' && !isTabEmpty(lt)}
               <!-- Outside `tablesOpen`, like every other section header: a
                    collapsed list still has to say what it is and how much it is
                    hiding. `regularTablesUnpinned` is the denominator because
@@ -2467,32 +2513,32 @@
             {/if}
 
             <!-- ── Empty state, one per tab ──────────────────────── -->
-            {#if tabIsEmpty}
-              {@const empty = TAB_EMPTY[sidebarTab]}
+            {#if isTabEmpty(lt)}
+              {@const empty = TAB_EMPTY[lt]}
               <div class="flex flex-1 flex-col items-center justify-center gap-3 px-6 py-16 text-center">
                 <div class="flex size-10 items-center justify-center rounded-lg border border-border bg-muted/30">
-                  <Icon name={tabEmptyFromFilter ? 'search' : empty.icon} class="size-5 text-muted-foreground" />
+                  <Icon name={isTabEmptyFromFilter(lt) ? 'search' : empty.icon} class="size-5 text-muted-foreground" />
                 </div>
                 <div class="max-w-[16rem]">
                   <p class="text-ui-xs font-medium text-foreground">
-                    {tabEmptyFromFilter ? 'No matches' : empty.title}
+                    {isTabEmptyFromFilter(lt) ? 'No matches' : empty.title}
                   </p>
                   <p class="mt-1 text-ui-2xs leading-relaxed text-muted-foreground">
-                    {#if tabEmptyFromFilter}
+                    {#if isTabEmptyFromFilter(lt)}
                       Nothing here matches “{debouncedFilter}”.
-                    {:else if sidebarTab === 'tables' && activeSchema}
+                    {:else if lt === 'tables' && activeSchema}
                       Nothing in “{activeSchema}” yet.
                     {:else}
                       {empty.hint}
                     {/if}
                   </p>
                 </div>
-                {#if tabEmptyFromFilter}
+                {#if isTabEmptyFromFilter(lt)}
                   <Button variant="outline" size="sm" onclick={() => handleFilterInput('')}>
                     <Icon name="x" class="size-3.5" />
                     Clear filter
                   </Button>
-                {:else if sidebarTab === 'databases'}
+                {:else if lt === 'databases'}
                   <!-- The section header is not rendered in this state, so its
                        two actions live here instead of being unreachable. -->
                   <div class="flex items-center gap-2">
@@ -2513,7 +2559,7 @@
                       </Button>
                     {/if}
                   </div>
-                {:else if sidebarTab === 'tables'}
+                {:else if lt === 'tables'}
                   <Button variant="outline" size="sm" onclick={onrefresh}>
                     <Icon name="refresh-cw" class="size-3.5" />
                     Refresh
@@ -2526,8 +2572,14 @@
           {/if}
 
         </div>
-      </div>
-      {/if}
+      {/snippet}
+      {#each LIST_TABS as lt (lt)}
+        {#if panelMounted(lt)}
+          <div class={activePanel === lt ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}>
+            {@render listPanel(lt)}
+          </div>
+        {/if}
+      {/each}
     </div>
     {:else if navSidebarPanel === "connections"}
       <ConnectionsSidebarPanel

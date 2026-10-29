@@ -74,6 +74,9 @@
     shown = $bindable(0),
     /** True while a listing loads, for the sidebar bar's refresh spinner. */
     busyLoading = $bindable(false),
+    /** False while another sidebar tab is up: the panel stays mounted, hidden,
+     *  and reads nothing until it is shown again. */
+    panelActive = true,
   } = $props()
 
   const family = $derived(objectFamily(connection?.type))
@@ -103,6 +106,7 @@
   $effect(() => {
     const key = placeKey
     const version = $objectsVersion
+    if (!panelActive) return
     untrack(() => void load(key, version))
   })
 
@@ -198,7 +202,9 @@
     const measure = () => {
       const h = probe?.getBoundingClientRect().height
       if (h && h > 0) rowH = h
-      if (scroller) viewH = scroller.clientHeight
+      // Hidden (another tab is up) measures 0: keep the last real height, or
+      // the window would render a handful of rows and fill in after the switch.
+      if (scroller && scroller.clientHeight > 0) viewH = scroller.clientHeight
     }
     measure()
     const ro = new ResizeObserver(measure)
@@ -213,6 +219,16 @@
     return () => {
       ro.disconnect()
       if (scrollFrame) cancelAnimationFrame(scrollFrame)
+    }
+  })
+
+  // Shown again after another tab: display:none dropped the scroll offset.
+  $effect(() => {
+    if (!panelActive || !scroller) return
+    const at = untrack(() => scrolled.get(placeKey))
+    if (at && scroller.scrollTop !== at) {
+      scroller.scrollTop = at
+      scrollTop = scroller.scrollTop
     }
   })
 
