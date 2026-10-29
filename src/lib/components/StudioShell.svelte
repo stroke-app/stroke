@@ -2426,9 +2426,10 @@ let rowSearch = $state('')
         activeSchema = raw.schema
         await loadTables()
       }
-      if (raw.columns.length === 0) {
+      if (raw.columns.length === 0 || raw.evicted) {
         // No cached data - apply lightweight snapshot (no need to clone rows)
         if (windowed) resetWindowing()
+        if (raw.evicted) patchTableTab(tab.id, { evicted: false })
         applyTableSnapshot(raw, tab.id)
         // A fetch this tab already has in flight (including a windowed loadRows
         // it started before you left) keeps running and lands here on its own -
@@ -4017,7 +4018,10 @@ let rowSearch = $state('')
       const st = /** @type {TableTabState} */ (t.state)
       // windowedHead cleared too: with the array gone the tab has to refetch, and
       // the restore path must not look for a cache that no longer exists.
-      return { ...t, state: { ...st, rows: [], columns: [], selected: new Set(), windowedHead: false, windowedLoaded: [], windowCount: 0, loadingRows: false } }
+      // Only the rows go. Columns and total stay, so coming back draws the header
+      // and the toolbar at once and refetches the body, instead of a cold load
+      // that collapsed the pager and covered the grid.
+      return { ...t, state: { ...st, rows: [], selected: new Set(), windowedHead: false, windowedLoaded: [], windowCount: 0, loadingRows: false, evicted: true } }
     })
   }
 
@@ -5419,6 +5423,11 @@ let rowSearch = $state('')
           }
         } catch { /* keep the empty result; the grid shows its empty state */ }
       }
+
+      // A tab that already knew its count (evicted while cold, or restored) keeps
+      // it until the background count lands, rather than flashing "…". The state
+      // saves total and filters together, so the number is for this predicate.
+      if (result.total < 0 && s.total > 0) result.total = s.total
 
       // Persist result to tab - one tabs write
       patchTab(result)
