@@ -632,14 +632,14 @@
           <button type="button" class={iconBtn} onclick={onscrolltablebottom} title={`Go to bottom (${comboTitle('Mod+Down')})`} aria-label="Scroll to bottom">
             <Icon name="chevrons-down" class="size-3.5" />
           </button>
-          {#if canScrollTableHorizontally}
-            <button type="button" class={iconBtn} onclick={onscrolltableleft} title={`Go to first column (${comboTitle('Mod+Alt+Left')})`} aria-label="Scroll to leftmost column">
-              <Icon name="chevrons-left" class="size-3.5" />
-            </button>
-            <button type="button" class={iconBtn} onclick={onscrolltableright} title={`Go to last column (${comboTitle('Mod+Alt+Right')})`} aria-label="Scroll to rightmost column">
-              <Icon name="chevrons-right" class="size-3.5" />
-            </button>
-          {/if}
+          <!-- Disabled rather than removed when the grid fits: dropping them
+               shifted everything to their right on every table open. -->
+          <button type="button" class={cn(iconBtn, 'disabled:pointer-events-none disabled:opacity-40')} disabled={!canScrollTableHorizontally} onclick={onscrolltableleft} title={`Go to first column (${comboTitle('Mod+Alt+Left')})`} aria-label="Scroll to leftmost column">
+            <Icon name="chevrons-left" class="size-3.5" />
+          </button>
+          <button type="button" class={cn(iconBtn, 'disabled:pointer-events-none disabled:opacity-40')} disabled={!canScrollTableHorizontally} onclick={onscrolltableright} title={`Go to last column (${comboTitle('Mod+Alt+Right')})`} aria-label="Scroll to rightmost column">
+            <Icon name="chevrons-right" class="size-3.5" />
+          </button>
         </div>
       {/if}
 
@@ -669,12 +669,14 @@
       {/if}
 
       <!-- Last fetch timing, updates on every table load / refresh / query -->
-      {#if queryMs > 0}
+      {#if showTableNav || queryMs > 0}
         {@render sep()}
+        <!-- A fixed slot on table tabs: it held its place only while a time was
+             known, so it vanished and came back around every table open. -->
         <span
-          class="shrink-0 px-1 font-mono text-ui-2xs tabular-nums text-muted-foreground"
-          title="Last data fetch took {queryMs.toLocaleString('en-US')}ms"
-        >{queryMsLabel}</span>
+          class="min-w-[6ch] shrink-0 px-1 font-mono text-ui-2xs tabular-nums text-muted-foreground"
+          title={queryMs > 0 ? `Last data fetch took ${queryMs.toLocaleString('en-US')}ms` : undefined}
+        >{queryMs > 0 ? queryMsLabel : ''}</span>
       {/if}
 
       <!-- Selected row count, sits to the right of the fetch timing -->
