@@ -4504,8 +4504,10 @@ let rowSearch = $state('')
     primaryKey = []
     foreignKeys = []
     rows = []
-    total = 0
-    queryMs = 0
+    // -1 is "counting": the toolbar keeps its pager shape from the first frame
+    // instead of collapsing while the rows load. queryMs keeps the last fetch's
+    // time until this one lands, so the status bar doesn't drop an item.
+    total = -1
     error = ''
     selected = new Set()
     focusedRow = null
@@ -9253,6 +9255,7 @@ let rowSearch = $state('')
             {pageSize}
             offset={currentOffset}
             {total}
+            loaded={rows.length}
             {columns}
             {rowSearch}
             {rowSort}

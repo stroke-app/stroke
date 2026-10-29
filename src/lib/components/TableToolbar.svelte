@@ -61,6 +61,8 @@
     page = 1,
     pageSize = 50,
     total = 0,
+    /** Rows currently loaded, for the range readout under page size All. */
+    loaded = 0,
     loading = false,
     selectedCount = 0,
     hasPrimaryKey = false,
@@ -215,7 +217,7 @@
    */
   const searchHintCaps = $derived(keycaps('Mod+F'));
   const searchHint = $derived(
-    tableViewMode !== 'structure' && !searchFocused && !localSearch && columns.length > 0,
+    tableViewMode !== 'structure' && !searchFocused && !localSearch,
   );
   /**
    * The toggles sit in the field's trailing corner, and only once there is
@@ -285,8 +287,15 @@
   // row data has already loaded). Show "…" for the unknown total and keep Next
   // enabled so navigation isn't blocked during the brief counting window.
   const counting = $derived(total < 0);
+  const isAll = $derived(pageSize === PAGE_SIZE_ALL);
   const from = $derived(total === 0 ? 0 : offset + 1);
-  const to = $derived(counting ? offset + _effectivePageSize : Math.min(offset + _effectivePageSize, total));
+  // Under All the page is whatever has loaded; the page size is 1 until the
+  // count lands, which read as "1-1 of …".
+  const to = $derived(
+    counting
+      ? offset + (isAll ? Math.max(1, loaded) : _effectivePageSize)
+      : Math.min(offset + _effectivePageSize, total),
+  );
   const pageCount = $derived(Math.max(1, Math.ceil(total / _effectivePageSize) || 1));
   const canPrev = $derived(page > 1);
   const canNext = $derived(keysetMode ? keysetHasMore : (counting || page * _effectivePageSize < total));
@@ -1212,8 +1221,11 @@
         {/if}
       {:else}
         {#if total > 0 || counting}
+          <!-- A min-width box with the text held to its left: "…" becoming
+               "18,234" grows into the box instead of shoving the pager sideways
+               or sliding the range readout along with it. -->
           <span
-            class="flex shrink-0 items-center gap-1 font-mono text-ui-xs tabular-nums @max-[600px]/tb:hidden"
+            class="flex min-w-[18ch] shrink-0 items-center gap-1 font-mono text-ui-xs tabular-nums @max-[600px]/tb:hidden"
             title="{from.toLocaleString('en-US')}-{to.toLocaleString('en-US')} of {counting ? 'counting…' : total.toLocaleString('en-US') + ' rows'}{queryMs > 0 ? ` · ${queryMs}ms` : ''}"
           >
             <span class="text-foreground/65">{from.toLocaleString("en-US")}-{to.toLocaleString("en-US")}</span>
@@ -1273,12 +1285,15 @@
           >
             <Icon name="chevron-right" class="size-3.5" />
           </button>
-        {:else if counting || pageCount > 1}
+        {:else if !isAll}
+          <!-- Always present outside All, disabled on a single page: appearing
+               only for multi-page results moved the page-size select 179px
+               between tables. All never paginates, so it never shows. -->
           <Select.Root
             type="single"
             value={String(page)}
             onValueChange={(v) => { if (v) onpagechange(Number(v)); }}
-            disabled={loading || total === 0}
+            disabled={loading || total === 0 || (!counting && pageCount <= 1)}
           >
             <Select.Trigger size="sm" class={pageSelectTrigger} title="Go to page" aria-label="Go to page">
               {page}
@@ -1291,7 +1306,7 @@
           </Select.Root>
 
           <span
-            class="shrink-0 text-ui-xs text-muted-foreground tabular-nums @max-[500px]/tb:hidden"
+            class="min-w-[6ch] shrink-0 text-ui-xs text-muted-foreground tabular-nums @max-[500px]/tb:hidden"
             title={counting ? "counting…" : pageCount.toLocaleString("en-US")}
           >of {counting ? "…" : formatCompactCount(pageCount)}</span>
 
