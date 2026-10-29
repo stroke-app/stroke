@@ -5524,27 +5524,38 @@ import FilterX from "@lucide/svelte/icons/filter-x";
 
   /** The measuring half of truncText - only reached on a cache miss. */
   function _truncMeasure(ctx, text, maxW, len) {
+    // Only the head of a long value can ever be on screen, so only the head is
+    // measured. measureText shapes every character it is given, and a long cell
+    // (a 2,000-character Devanagari or markdown chunk) paid a whole-string
+    // HarfBuzz pass per cell scrolled into view to show its first 60. Four times
+    // the monospace estimate covers narrow fallback glyphs and zero-width
+    // combining marks; a head that still fits falls back to the whole string.
+    let lim = len
+    if (_glyphW > 0) {
+      const cap = Math.ceil(maxW / _glyphW) * 4 + 16
+      if (cap < len && ctx.measureText(text.slice(0, cap)).width > maxW) lim = cap
+    }
     // For truncation, always measure accurately - the monospace estimate can
     // over-count for non-ASCII characters (Arabic, CJK, etc.) that fall back
     // to a narrower font, leaving an apparent gap after the ellipsis.
-    if (ctx.measureText(text).width <= maxW) return text
+    if (lim === len && ctx.measureText(text).width <= maxW) return text
     // Monospace fast path: the slice length is plain arithmetic, verified with a
     // couple of real measurements (non-ASCII glyphs fall back to narrower fonts,
     // so a failed verify drops to the exact binary search below). This replaces
     // ~10 measureText binary-search probes per truncated cell per frame with 2-3.
     if (_glyphW > 0) {
-      let k = Math.max(0, Math.min(len - 1, Math.floor(maxW / _glyphW) - 1))
+      let k = Math.max(0, Math.min(lim - 1, Math.floor(maxW / _glyphW) - 1))
       if (ctx.measureText(text.slice(0, k) + '…').width <= maxW) {
         // Grow greedily while it still fits (covers narrow fallback glyphs);
         // bounded so the worst case stays O(1).
-        for (let step = 0; step < 4 && k < len - 1; step++) {
+        for (let step = 0; step < 4 && k < lim - 1; step++) {
           if (ctx.measureText(text.slice(0, k + 1) + '…').width <= maxW) k++
           else break
         }
         return text.slice(0, k) + '…'
       }
     }
-    let lo = 0, hi = len
+    let lo = 0, hi = lim
     while (lo < hi) {
       const mid = (lo + hi + 1) >> 1
       if (ctx.measureText(text.slice(0, mid) + '…').width <= maxW) lo = mid
