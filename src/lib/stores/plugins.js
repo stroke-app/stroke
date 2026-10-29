@@ -48,9 +48,10 @@ if (typeof window !== 'undefined') {
 /**
  * Extensions that ship enabled. Workflow features (saved views, find &
  * replace) are core-adjacent - off-by-default would just hide them; the
- * Extensions page stays the place to switch them off.
+ * Extensions page stays the place to switch them off. Nullish markers are on
+ * because without them a real NULL and the text 'NULL' differ only by colour.
  */
-const DEFAULT_ON = new Set(['saved-views', 'find-replace'])
+const DEFAULT_ON = new Set(['saved-views', 'find-replace', 'nullish-values'])
 
 /**
  * Enabled check against an explicit state snapshot (for reactive `$pluginState`
