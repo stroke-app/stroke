@@ -2426,9 +2426,10 @@ let rowSearch = $state('')
         activeSchema = raw.schema
         await loadTables()
       }
-      if (raw.columns.length === 0) {
+      if (raw.columns.length === 0 || raw.evicted) {
         // No cached data - apply lightweight snapshot (no need to clone rows)
         if (windowed) resetWindowing()
+        if (raw.evicted) patchTableTab(tab.id, { evicted: false })
         applyTableSnapshot(raw, tab.id)
         // A fetch this tab already has in flight (including a windowed loadRows
         // it started before you left) keeps running and lands here on its own -
@@ -4017,7 +4018,10 @@ let rowSearch = $state('')
       const st = /** @type {TableTabState} */ (t.state)
       // windowedHead cleared too: with the array gone the tab has to refetch, and
       // the restore path must not look for a cache that no longer exists.
-      return { ...t, state: { ...st, rows: [], columns: [], selected: new Set(), windowedHead: false, windowedLoaded: [], windowCount: 0, loadingRows: false } }
+      // Only the rows go. Columns and total stay, so coming back draws the header
+      // and the toolbar at once and refetches the body, instead of a cold load
+      // that collapsed the pager and covered the grid.
+      return { ...t, state: { ...st, rows: [], selected: new Set(), windowedHead: false, windowedLoaded: [], windowCount: 0, loadingRows: false, evicted: true } }
     })
   }
 
@@ -4046,6 +4050,27 @@ let rowSearch = $state('')
     if (closing.id === activeTabId) resetEdits()
     const key = tabTableKey(closing)
     if (key) clearPendingChanges(key)
+    return true
+  }
+
+  /**
+   * The batch version of confirmDiscardTabChanges: one confirm covers every
+   * unsaved change in the tabs about to close, and a yes discards them all.
+   * @param {any[]} closing
+   */
+  async function confirmDiscardManyTabChanges(closing) {
+    const count = closing.reduce((n, t) => n + tabPendingCount(t), 0)
+    if (count === 0) return true
+    const ok = await askConfirm(
+      `Closing these tabs discards ${count} unsaved change${count === 1 ? '' : 's'}. Close and discard?`,
+      'Close & discard',
+    )
+    if (!ok) return false
+    for (const t of closing) {
+      if (t.id === activeTabId) resetEdits()
+      const key = tabTableKey(t)
+      if (key) clearPendingChanges(key)
+    }
     return true
   }
 
@@ -4124,12 +4149,14 @@ let rowSearch = $state('')
   async function closeOtherTabs(id) {
     const keep = tabs.find((t) => t.id === id)
     if (!keep) return
+    if (!(await confirmDiscardManyTabChanges(tabs.filter((t) => t.id !== id && !t.pinned)))) return
     for (const t of tabs) if (t.id !== id && !t.pinned) rememberClosedTab(t)
     tabs = tabs.filter((t) => t.id === id || t.pinned)
     await activateTab(keep.id)
   }
 
   async function closeAllTabs() {
+    if (!(await confirmDiscardManyTabChanges(tabs.filter((t) => !t.pinned)))) return
     const pinned = tabs.filter((t) => t.pinned)
     for (const t of tabs) if (!t.pinned) rememberClosedTab(t)
     if (pinned.length === 0) {
@@ -4152,18 +4179,7 @@ let rowSearch = $state('')
     const idSet = new Set(ids)
     const toClose = tabs.filter((t) => idSet.has(t.id) && !t.pinned)
     if (toClose.length === 0) return
-    const pending = toClose.reduce((n, t) => n + tabPendingCount(t), 0)
-    if (pending > 0) {
-      const ok = await askConfirm(
-        `Closing these tabs discards ${pending} unsaved change${pending === 1 ? '' : 's'}. Close and discard?`,
-        'Close & discard',
-      )
-      if (!ok) return
-      for (const t of toClose) {
-        const key = tabTableKey(t)
-        if (key) clearPendingChanges(key)
-      }
-    }
+    if (!(await confirmDiscardManyTabChanges(toClose))) return
     const closeSet = new Set(toClose.map((t) => t.id))
     for (const t of toClose) rememberClosedTab(t)
     const wasActiveClosed = activeTabId !== null && closeSet.has(activeTabId)
@@ -4492,8 +4508,10 @@ let rowSearch = $state('')
     primaryKey = []
     foreignKeys = []
     rows = []
-    total = 0
-    queryMs = 0
+    // -1 is "counting": the toolbar keeps its pager shape from the first frame
+    // instead of collapsing while the rows load. queryMs keeps the last fetch's
+    // time until this one lands, so the status bar doesn't drop an item.
+    total = -1
     error = ''
     selected = new Set()
     focusedRow = null
@@ -4984,6 +5002,9 @@ let rowSearch = $state('')
   /** @param {{ force?: boolean }} [opts] */
   /** `quiet` re-lists without the loading state, so the sidebar keeps its rows,
    *  scroll and focus while a refresh after a write lands. */
+  /** Catalog key of the list in `tables`, so a refresh can tell it is re-reading the same one. */
+  let _tablesKey = ''
+
   async function loadTables({ force = false, quiet = false } = {}) {
     if (!activeSchema) {
       tables = []
@@ -4995,16 +5016,24 @@ let rowSearch = $state('')
     const schemaAtCall = activeSchema
     const connAtCall = persistConnectionId
     const key = catalogKey(persistConnectionId, 'tables', schemaAtCall)
+    // Re-reading the list already on screen (a refresh) keeps it up and keeps the
+    // counts it knows. Swapping it for loading dots reset the sidebar's scroll
+    // and blanked every count until the recount waves came back.
+    const sameList = tables.length > 0 && _tablesKey === key
+    const prevCounts = sameList ? new Map(tables.map((t) => [t.name, t.rowCount])) : null
+    /** Tables whose count the reply left unknown: recounted even when a known one is kept. */
+    let replyUnknown = /** @type {string[] | null} */ (null)
     if (force) invalidateCatalog()
     const cached = force ? undefined : /** @type {any[] | undefined} */ (_catalog.get(key, TABLE_LIST_TTL_MS))
     if (cached) {
       tables = cached
+      _tablesKey = key
       loadingTables = false
       if (activeTable && !tables.find((t) => t.name === activeTable)) {
         activeTable = tables[0]?.name ?? null
       }
     } else {
-      if (!quiet) loadingTables = true
+      if (!quiet && !sameList) loadingTables = true
       error = ''
       try {
         const list = await listTables(schemaAtCall)
@@ -5013,17 +5042,24 @@ let rowSearch = $state('')
         // _catalog.set below would file them under whichever connection id is
         // current - poisoning that connection's cache for the whole TTL.
         if (connectionMoved(connAtCall)) return
+        replyUnknown = []
         tables = list
-          .map((t) => ({
-            name: t.name ?? t.table_name ?? '',
-            rowCount: normalizeTableRowCount(t.rowCount ?? t.row_count),
-            kind: t.kind ?? 'table',
-            rlsEnabled: t.rlsEnabled ?? null,
-            // For the sidebar's Created sort (see compareCreated).
-            createdAt: t.createdAt ?? null,
-            createOrder: t.createOrder ?? null,
-          }))
+          .map((t) => {
+            const name = t.name ?? t.table_name ?? ''
+            const fresh = normalizeTableRowCount(t.rowCount ?? t.row_count)
+            if (fresh === null) replyUnknown?.push(name)
+            return {
+              name,
+              rowCount: fresh ?? prevCounts?.get(name) ?? null,
+              kind: t.kind ?? 'table',
+              rlsEnabled: t.rlsEnabled ?? null,
+              // For the sidebar's Created sort (see compareCreated).
+              createdAt: t.createdAt ?? null,
+              createOrder: t.createOrder ?? null,
+            }
+          })
           .filter((t) => t.name)
+        _tablesKey = key
         _catalog.set(key, tables)
         if (activeTable && !tables.find((t) => t.name === activeTable)) {
           activeTable = tables[0]?.name ?? null
@@ -5041,7 +5077,7 @@ let rowSearch = $state('')
     // The list arrives with unknown (null) counts so it renders immediately;
     // resolve them with exact COUNT(*)s in the background and patch them in.
     // Covers the cached path too - a list cached mid-resolve may still hold nulls.
-    const unresolved = tables.filter((t) => t.rowCount === null).map((t) => t.name)
+    const unresolved = replyUnknown ?? tables.filter((t) => t.rowCount === null).map((t) => t.name)
     if (unresolved.length > 0) void resolveRowCounts(key, schemaAtCall, unresolved)
     // The schema-level catalog rides the same cache, so returning to a schema
     // costs nothing. A forced reload has already invalidated it above.
@@ -5129,6 +5165,20 @@ let rowSearch = $state('')
       filterDebounceTimer = null
       void loadRows()
     }, SEARCH_DEBOUNCE_MS)
+  }
+
+  /** Drop the row search and every filter at once (the grid's "Clear filters"). */
+  function clearRowFilters() {
+    if (searchDebounceTimer) clearTimeout(searchDebounceTimer)
+    if (filterDebounceTimer) clearTimeout(filterDebounceTimer)
+    searchDebounceTimer = null
+    filterDebounceTimer = null
+    rowSearch = ''
+    rowFilters = []
+    page = 1
+    rawOffset = null
+    _keysetCursor = null
+    void loadRows()
   }
 
   /** @param {TableSort[]} sorts full ordered sort-key list ([] clears; [primary, …secondary]) */
@@ -5374,6 +5424,11 @@ let rowSearch = $state('')
         } catch { /* keep the empty result; the grid shows its empty state */ }
       }
 
+      // A tab that already knew its count (evicted while cold, or restored) keeps
+      // it until the background count lands, rather than flashing "…". The state
+      // saves total and filters together, so the number is for this predicate.
+      if (result.total < 0 && s.total > 0) result.total = s.total
+
       // Persist result to tab - one tabs write
       patchTab(result)
 
@@ -5415,6 +5470,9 @@ let rowSearch = $state('')
             if (tabId === activeTabId) {
               total = n
               _totalSig = predicateSig(apiSearch(s.rowSearch), s.rowFilters ?? [])
+              // Recorded like refreshRowCount does, or the first page change
+              // after opening counted again and flashed "…" while it did.
+              _countedView = rowCountKey(s.schema, s.table, _totalSig)
             }
           }
         } catch { /* best-effort */ }
@@ -6034,7 +6092,11 @@ let rowSearch = $state('')
         // would blank the total and force the COUNT(*) the skip below exists to
         // avoid, and the footer would flicker through "counting" on each page.
         const incoming = Number(data.total ?? 0)
-        total = incoming >= 0 ? incoming : (_countedView === viewKey ? total : incoming)
+        // A recount of the same table under the same predicate (a refresh, or
+        // coming back to a tab) shows the last number until the new one lands,
+        // not "…": `total` and `_totalSig` here are this tab's, restored with it.
+        const sameView = _countedView === viewKey || (total > 0 && _totalSig === ownerSig)
+        total = incoming >= 0 ? incoming : (sameView ? total : incoming)
         _totalSig = ownerSig
       }
       queryMs = ranMs
@@ -6910,19 +6972,30 @@ let rowSearch = $state('')
     if (connectionLost) await reconnectPool()
     activeSchema = schema
     setLastSchema(persistConnectionId, schema)
-    activeTable = null
     page = 1
     tableFilter = ''
-    columns = []
-    rows = []
+    // The open table stays on screen while the new schema's list loads, then
+    // swaps in one step under the grid's held frame. Blanking it first showed
+    // the "select a table" screen, then the old toolbar over an empty grid.
     await loadTables()
-    if (activeTab?.kind === 'table') {
-      if (tables.length) {
-        activeTable = tables[0].name
-        await loadRows()
-      } else {
-        saveActiveTabState()
-      }
+    if (activeTab?.kind === 'table' && tables.length) {
+      activeTable = tables[0].name
+      // The old table's search, filters and sort mean nothing on this one.
+      rowSearch = ''
+      rowFilters = []
+      rowSort = null
+      rowSortMore = []
+      filterBarOpen = false
+      columns = []
+      rows = []
+      total = -1
+      saveActiveTabState()
+      await loadRows()
+    } else {
+      activeTable = null
+      columns = []
+      rows = []
+      if (activeTab?.kind === 'table') saveActiveTabState()
     }
   }
 
@@ -8254,9 +8327,12 @@ let rowSearch = $state('')
     <!-- The ring and the label wait before they appear (ConnectOverlay's
          `delay`). A warm reconnect lands in a few hundred ms, and showing them
          at once flashed "Reconnecting" over the shell on a cold start. -->
+    <!-- The hold-back is for the startup reconnect only. A switch you asked for
+         unmounts the shell at once, so held back it was ~350ms of bare black. -->
     <ConnectOverlay
       verb={autoConnectVerb}
       name={autoConnectName ? shortConnLabel(autoConnectName) : ''}
+      delay={autoConnectVerb === 'Reconnecting' ? 350 : 0}
       oncancel={() => void cancelAutoConnect()}
     />
   </div>
@@ -9227,6 +9303,7 @@ let rowSearch = $state('')
             {pageSize}
             offset={currentOffset}
             {total}
+            loaded={rows.length}
             {columns}
             {rowSearch}
             {rowSort}
@@ -9338,6 +9415,8 @@ let rowSearch = $state('')
                 {loadingMore}
                 {infiniteScroll}
                 endOfResults={infiniteScroll && !windowed && total > 0 && rows.length >= total}
+                filtered={rowSearch.trim() !== '' || activeFilters(rowFilters).length > 0}
+                onclearfilters={clearRowFilters}
                 onloadmore={handleLoadMore}
                 saving={savingCell || deletingRows || insertingRow}
                 bind:selected

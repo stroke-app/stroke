@@ -45,6 +45,7 @@ import { loadDefaultPageSize } from '$lib/table-query.js'
  * @property {number} [windowBase] - absolute row offset the windowed view starts at
  * @property {number} [windowCount] - rows the windowed view covers
  * @property {number} [windowBytesPerRow] - measured payload per row
+ * @property {boolean} [evicted] - rows were dropped while the tab sat cold; columns and total were kept, so it refetches rows only
  * @property {{ sortColumn: string, sortDirection: string, sorts: Array<{column:string,direction:string}> } | null} [windowOrder] - the one total order every window of this view slices
  */
 

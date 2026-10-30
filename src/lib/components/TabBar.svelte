@@ -265,8 +265,8 @@
             <ContextMenu.Shortcut combo="Mod+Shift+T" />
           </ContextMenu.Item>
           <ContextMenu.Separator />
-          <ContextMenu.Item variant="destructive" onSelect={oncloseall}>
-            <Icon name="trash-2" class="size-3.5" />
+          <ContextMenu.Item onSelect={oncloseall}>
+            <Icon name="x" class="size-3.5" />
             Close All Tabs
             <ContextMenu.Shortcut combo="Mod+Shift+W" />
           </ContextMenu.Item>

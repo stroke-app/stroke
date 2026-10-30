@@ -452,7 +452,7 @@
     { id: 'databases', label: 'Databases', icon: 'database' },
     // Saved queries, in folders: the SQL you keep is what you open next.
     { id: 'queries',   label: 'Queries',   icon: 'file-code' },
-    { id: 'objects',   label: 'Objects',   icon: 'blocks' },
+    { id: 'objects',   label: 'Objects',   icon: 'shapes' },
     { id: 'recent',    label: 'Recent',    icon: 'clock' },
     // Last, and not a list: find & replace is a tool that works on the table
     // you already have open, so it belongs where the other panels live rather
@@ -468,6 +468,26 @@
     return /** @type {SidebarTab} */ ('tables')
   }
   let sidebarTab = $state(loadSidebarTab())
+
+  // Panels mount on first visit and then stay, hidden while another tab is up.
+  // Rebuilding one on every switch threw its DOM and scroll away, and the
+  // rebuild was the flash between tabs. Find & replace still mounts per visit:
+  // it previews matches against the open table's rows, which a hidden copy
+  // would keep recomputing (its typed text lives here, so it survives).
+  const activePanel = $derived(sidebarTab)
+  let seenPanels = $state(new Set([untrack(() => sidebarTab)]))
+  $effect(() => {
+    const p = activePanel
+    if (!untrack(() => seenPanels.has(p))) seenPanels = new Set([...untrack(() => seenPanels), p])
+  })
+  /** @param {string} p */
+  const panelMounted = (p) => activePanel === p || seenPanels.has(p)
+  // Find & replace's inputs, held here because the panel itself remounts.
+  let frFind = $state('')
+  let frReplace = $state('')
+  let frRegex = $state(false)
+  let frWhole = $state(false)
+  let frCase = $state(false)
 
   $effect(() => {
     openFindReplace = () => {
@@ -540,26 +560,31 @@
    */
   const TAB_EMPTY = {
     tables:    { icon: 'table-2',    title: 'No tables',    hint: 'Nothing in this schema yet.' },
-    objects:   { icon: 'blocks',     title: 'No objects',   hint: 'Views, functions, triggers and the like show up here.' },
+    objects:   { icon: 'shapes',     title: 'No objects',   hint: 'Views, functions, triggers and the like show up here.' },
     recent:    { icon: 'clock',      title: 'No recents',   hint: 'Tables you open appear here.' },
     databases: { icon: 'database',   title: 'No databases', hint: 'Nothing else on this server.' },
   }
-  const tabIsEmpty = $derived(
+  /** No databases listed yet, but a fetch is owed, running or failed: the
+   *  section shows its dots or its error, never "No databases". */
+  const dbHeld = $derived(
+    canSwitchDb && dbEntries.length === 0 && (dbEntriesLoading || !dbEntriesLoaded || !!dbEntriesError),
+  )
+  /** @param {SidebarTab} t */
+  const isTabEmpty = (t) =>
     // Objects always draws its group headers: an empty group still has its +.
-    sidebarTab !== 'search' && sidebarTab !== 'queries' && sidebarTab !== 'objects' && !loadingTables && !!connectionName && tabCounts[sidebarTab] === 0,
-  )
-  /** True when the tab has rows but the filter hid all of them. */
-  const tabEmptyFromFilter = $derived(
-    tabIsEmpty &&
-      !!debouncedFilter &&
-      (sidebarTab === 'tables'
-        ? regularTablesUnpinned.length + visiblePinnedTables.length > 0
-        : sidebarTab === 'objects'
-          ? views.length + matViews.length > 0
-          : sidebarTab === 'databases'
-            ? dbEntries.length > 0
-            : recentTables.length > 0),
-  )
+    t !== 'search' && t !== 'queries' && t !== 'objects' && !loadingTables && !!connectionName &&
+    tabCounts[t] === 0 && !(t === 'databases' && dbHeld)
+  /** True when the tab has rows but the filter hid all of them. @param {SidebarTab} t */
+  const isTabEmptyFromFilter = (t) =>
+    isTabEmpty(t) &&
+    !!debouncedFilter &&
+    (t === 'tables'
+      ? regularTablesUnpinned.length + visiblePinnedTables.length > 0
+      : t === 'objects'
+        ? views.length + matViews.length > 0
+        : t === 'databases'
+          ? dbEntries.length > 0
+          : recentTables.length > 0)
 
   /** How many rows each tab holds BEFORE the filter. @type {Record<SidebarTab, number>} */
   const tabTotals = $derived({
@@ -586,18 +611,16 @@
   $effect(() => { try { localStorage.setItem(SIDEBAR_TAB_KEY, sidebarTab) } catch {} })
 
 
-  // The old per-section visibility flags are now just "is this the open tab".
-  // Keeping the names means the ~900 lines of list markup below did not have to
-  // be rewritten to ask a different question.
-  const showTables    = $derived(sidebarTab === 'tables')
-  const showRecent    = $derived(sidebarTab === 'recent')
+  // Each list tab renders its own panel (see `listPanel` in the markup), which
+  // asks `t === 'tables'` where the shared panel asked "is this the open tab".
   // Pinned is a section of Tables, not a tab of its own. It was a fifth icon in
   // the strip that held, for most connections, nothing at all - and it split
   // "the tables in this schema" across two places you had to switch between to
   // see. It renders above the Tables header, which is where the pins already
   // sorted in `selectableOrder`.
-  const showPins      = $derived(sidebarTab === 'tables')
-  const showDatabases = $derived(sidebarTab === 'databases')
+  /** @typedef {'tables' | 'databases' | 'recent'} ListTab */
+  /** @type {ListTab[]} */
+  const LIST_TABS = ['tables', 'databases', 'recent']
   // Nothing collapses any more, so every list in the open tab is open.
   const recentOpen = true, tablesOpen = true
   // The engine's own schemas (`pg_catalog`, `information_schema`, `sys`…) are
@@ -1151,8 +1174,33 @@
     sortDir = 'asc';
   }
   // ── Lists (tables, views, materialized views, databases) ─────────────────
-  /** @type {HTMLElement | null} */
-  let scrollContainerEl = $state(null)
+  /** Each list tab's scroller. @type {Record<ListTab, HTMLElement | null>} */
+  let listScrollers = $state({ tables: null, databases: null, recent: null })
+  /** The open list tab's scroller, null on the other tabs: every row query
+   *  (listRowButtons, the pin anchor) stays inside what is on screen. */
+  const scrollContainerEl = $derived(
+    /** @type {Record<string, HTMLElement | null>} */ (listScrollers)[activePanel] ?? null,
+  )
+
+  // A display:none scroller loses its offset, so each list puts its own back.
+  // Below the declarations on purpose: $effect.pre runs the moment it is
+  // created, so above them the reads hit the TDZ and threw on mount.
+  /** @type {Record<string, number>} */
+  const listScroll = {}
+  let lastPanel = untrack(() => activePanel)
+  $effect.pre(() => {
+    const p = activePanel
+    untrack(() => {
+      const el = /** @type {Record<string, HTMLElement | null>} */ (listScrollers)[lastPanel]
+      if (lastPanel !== p && el) listScroll[lastPanel] = el.scrollTop
+      lastPanel = p
+    })
+  })
+  $effect(() => {
+    const el = scrollContainerEl
+    const at = untrack(() => listScroll[activePanel])
+    if (el && at && el.scrollTop !== at) el.scrollTop = at
+  })
 
   // No windowing, and no `content-visibility` either. The sidebar renders every
   // row, plainly.
@@ -1310,7 +1358,9 @@
                   // row's own bottom edge. It was a 28px pill with the rail pushed
                   // 7px below it, so the rail floated in the gap between the pill and
                   // the border, attached to neither.
-                  "group/tab relative inline-flex h-9 w-8 shrink-0 items-center justify-center transition-colors disabled:pointer-events-none disabled:opacity-40",
+                  // No colour transition: the rail snaps on the switch, so a fading
+                  // pill and icon left two tabs half-lit for 150ms on every change.
+                  "group/tab relative inline-flex h-9 w-8 shrink-0 items-center justify-center disabled:pointer-events-none disabled:opacity-40",
                   // Two cues, not one. Colour alone does not separate four line icons
                   // at this size, so the selected tab also carries a filled surface and
                   // an accent rail - the same "which panel am I in" signal the VS Code
@@ -1326,10 +1376,11 @@
                   kbdNav = true
                   const i = SIDEBAR_TABS.findIndex((t) => t.id === sidebarTab)
                   const next = (i + (e.key === "ArrowRight" ? 1 : -1) + SIDEBAR_TABS.length) % SIDEBAR_TABS.length
+                  // Read before assigning: a statement starting with `(` here was
+                  // parsed as a call on the line above, so arrows threw and never moved.
+                  const btn = e.currentTarget.parentElement?.children[next]
                   sidebarTab = SIDEBAR_TABS[next].id
-                  /** @type {HTMLElement | null} */ (
-                    e.currentTarget.parentElement?.children[next] ?? null
-                  )?.focus()
+                  if (btn instanceof HTMLElement) btn.focus()
                 }}
               >
                 <!-- The pill is a child, not the button's own background: the
@@ -1337,7 +1388,7 @@
                      the shape you see stays 28px and centred. -->
                 <span
                   class={cn(
-                    "pointer-events-none absolute inset-x-0.5 inset-y-1 rounded-md transition-colors",
+                    "pointer-events-none absolute inset-x-0.5 inset-y-1 rounded-md",
                     active ? "bg-sidebar-accent" : "group-hover/tab:bg-sidebar-accent/50",
                   )}
                   aria-hidden="true"
@@ -1355,7 +1406,9 @@
           <div class="ml-auto flex shrink-0 items-center gap-0.5">
           {#if sidebarTab === 'objects'}
             <!-- On Objects the bar's refresh and + act on objects, so the list
-                 needs no header row of its own. -->
+                 needs no header row of its own. The spacer holds the display
+                 options' slot, so the group keeps its width across tabs. -->
+            <span class="invisible size-7 shrink-0" aria-hidden="true"></span>
             <button
               type="button"
               class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40"
@@ -1385,6 +1438,10 @@
               </DropdownMenu.Content>
             </DropdownMenu.Root>
           {:else}
+          <!-- These act on the table list only. On Queries and Find & replace
+               they did nothing for the panel below, so they keep their space
+               there (no shift between tabs) but are not shown or reachable. -->
+          <div class={cn("flex items-center gap-0.5", (sidebarTab === 'queries' || sidebarTab === 'search') && "invisible")}>
           <DropdownMenu.Root>
             <DropdownMenu.Trigger
               class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground data-[state=open]:bg-accent data-[state=open]:text-foreground disabled:pointer-events-none disabled:opacity-40"
@@ -1509,6 +1566,7 @@
               <Icon name="plus" class="size-3.5" />
             </button>
           {/if}
+          </div>
           {/if}
           </div>
         </div>
@@ -1677,13 +1735,19 @@
         {/if}
       </div>
 
-      {#if sidebarTab === 'queries'}
-        {@render queriesPanel?.()}
-      {:else if sidebarTab === 'objects'}
-        {#if connectionName}
+      <!-- `contents` keeps each wrapper out of the flex layout, so a panel sits
+           in the column exactly as it did unwrapped; `hidden` parks it. -->
+      {#if panelMounted('queries')}
+        <div class={activePanel === 'queries' ? 'contents' : 'hidden'}>
+          {@render queriesPanel?.()}
+        </div>
+      {/if}
+      {#if connectionName && panelMounted('objects')}
+        <div class={activePanel === 'objects' ? 'contents' : 'hidden'}>
           <SidebarObjects
             bind:this={objectsPanel}
             bind:busyLoading={objectsLoading}
+            panelActive={activePanel === 'objects'}
             {connection}
             schema={activeSchema}
             {views}
@@ -1700,10 +1764,16 @@
             bind:total={objectsTotal}
             bind:shown={objectsShown}
           />
-        {/if}
-      {:else if sidebarTab === 'search'}
+        </div>
+      {/if}
+      {#if activePanel === 'search'}
         <FindReplacePanel
           bind:focusFind={focusFindField}
+          bind:findText={frFind}
+          bind:replaceText={frReplace}
+          bind:useRegex={frRegex}
+          bind:wholeValue={frWhole}
+          bind:caseSensitive={frCase}
           columns={frColumns}
           rows={frRows}
           primaryKey={frPrimaryKey}
@@ -1712,10 +1782,12 @@
           onapply={onfindreplaceapply}
           onreveal={onrevealcell}
         />
-      {:else}
-      <div class="flex min-h-0 flex-1 flex-col">
+      {/if}
+      <!-- One mounted panel per list tab, each with its own scroller: a shared
+           one re-rendered every row on each return to Tables. -->
+      {#snippet listPanel(/** @type {ListTab} */ lt)}
         <div
-          bind:this={scrollContainerEl}
+          bind:this={listScrollers[lt]}
           class="app-scroll min-h-0 w-full flex-1 overflow-y-auto overscroll-y-contain [will-change:scroll-position]"
           role="none"
           use:smoothScroll={{ enabled: !$appNativeScroll }}
@@ -1808,12 +1880,12 @@
                  Other databases on the same server. Collapsed by default and
                  only fetched once expanded - see loadDatabases(). Engines that
                  cannot switch in place (SQLite, Redis) never render it. -->
-            <!-- `!tabIsEmpty`: with nothing to list, the tab-level empty state
+            <!-- `!isTabEmpty(lt)`: with nothing to list, the tab-level empty state
                  below already says so in the middle of the panel. Rendering the
                  section as well put a second, quieter "No other databases" at the
                  top-left of the same empty panel - two answers to one question,
                  in two different places and two different type sizes. -->
-            {#if showDatabases && canSwitchDb && connectionName && !tabIsEmpty}
+            {#if lt === 'databases' && canSwitchDb && connectionName && !isTabEmpty(lt)}
               <div class="flex w-full items-center gap-1 px-2.5 pt-2 pb-1">
                 <span class="text-ui-2xs font-medium tracking-wider text-muted-foreground uppercase">Databases</span>
                 {#if dbEntries.length > 0}
@@ -1845,7 +1917,7 @@
                   </button>
                 </div>
               </div>
-              {#if databasesOpen}
+              {#if lt === 'databases'}
                 {#if dbEntriesLoading && dbEntries.length === 0}
                   {@render listLoading('Loading databases')}
                 {:else if dbEntriesError && dbEntries.length === 0}
@@ -1943,7 +2015,7 @@
             {/if}
 
             <!-- ── Recent ─────────────────────────────────────────── -->
-            {#if showRecent && filteredRecent.length > 0 && connectionName}
+            {#if lt === 'recent' && filteredRecent.length > 0 && connectionName}
               <div class="flex w-full items-center gap-1 px-2.5 pt-2 pb-1">
                 <span class="text-ui-2xs font-medium tracking-wider text-muted-foreground uppercase">Recent</span>
                 {@render countBadge(Math.min(filteredRecent.length, 5), Math.min(recentTabs.length, 5))}
@@ -2022,7 +2094,7 @@
             {/if}
 
             <!-- ── Pinned ─────────────────────────────────────────── -->
-            {#if showPins && filteredPinnedTables.length > 0 && connectionName}
+            {#if lt === 'tables' && filteredPinnedTables.length > 0 && connectionName}
               <!-- `pb-1.5`, because the action row is 20px tall now and 4px of
                    air put it on top of the first pin. -->
               <div class="flex w-full items-center gap-1.5 px-2.5 pt-2 pb-1.5">
@@ -2223,10 +2295,10 @@
             {/if}
 
             <!-- ── Tables ─────────────────────────────────────────── -->
-            <!-- `!tabIsEmpty` here and on Views / Materialized views, for the
+            <!-- `!isTabEmpty(lt)` here and on Views / Materialized views, for the
                  reason given on Databases above: an empty tab gets exactly one
                  empty state, the tab-level one below. -->
-            {#if showTables && !tabIsEmpty}
+            {#if lt === 'tables' && !isTabEmpty(lt)}
               <!-- Outside `tablesOpen`, like every other section header: a
                    collapsed list still has to say what it is and how much it is
                    hiding. `regularTablesUnpinned` is the denominator because
@@ -2464,32 +2536,32 @@
             {/if}
 
             <!-- ── Empty state, one per tab ──────────────────────── -->
-            {#if tabIsEmpty}
-              {@const empty = TAB_EMPTY[sidebarTab]}
+            {#if isTabEmpty(lt)}
+              {@const empty = TAB_EMPTY[lt]}
               <div class="flex flex-1 flex-col items-center justify-center gap-3 px-6 py-16 text-center">
                 <div class="flex size-10 items-center justify-center rounded-lg border border-border bg-muted/30">
-                  <Icon name={tabEmptyFromFilter ? 'search' : empty.icon} class="size-5 text-muted-foreground" />
+                  <Icon name={isTabEmptyFromFilter(lt) ? 'search' : empty.icon} class="size-5 text-muted-foreground" />
                 </div>
                 <div class="max-w-[16rem]">
                   <p class="text-ui-xs font-medium text-foreground">
-                    {tabEmptyFromFilter ? 'No matches' : empty.title}
+                    {isTabEmptyFromFilter(lt) ? 'No matches' : empty.title}
                   </p>
                   <p class="mt-1 text-ui-2xs leading-relaxed text-muted-foreground">
-                    {#if tabEmptyFromFilter}
+                    {#if isTabEmptyFromFilter(lt)}
                       Nothing here matches “{debouncedFilter}”.
-                    {:else if sidebarTab === 'tables' && activeSchema}
+                    {:else if lt === 'tables' && activeSchema}
                       Nothing in “{activeSchema}” yet.
                     {:else}
                       {empty.hint}
                     {/if}
                   </p>
                 </div>
-                {#if tabEmptyFromFilter}
+                {#if isTabEmptyFromFilter(lt)}
                   <Button variant="outline" size="sm" onclick={() => handleFilterInput('')}>
                     <Icon name="x" class="size-3.5" />
                     Clear filter
                   </Button>
-                {:else if sidebarTab === 'databases'}
+                {:else if lt === 'databases'}
                   <!-- The section header is not rendered in this state, so its
                        two actions live here instead of being unreachable. -->
                   <div class="flex items-center gap-2">
@@ -2510,7 +2582,7 @@
                       </Button>
                     {/if}
                   </div>
-                {:else if sidebarTab === 'tables'}
+                {:else if lt === 'tables'}
                   <Button variant="outline" size="sm" onclick={onrefresh}>
                     <Icon name="refresh-cw" class="size-3.5" />
                     Refresh
@@ -2523,8 +2595,14 @@
           {/if}
 
         </div>
-      </div>
-      {/if}
+      {/snippet}
+      {#each LIST_TABS as lt (lt)}
+        {#if panelMounted(lt)}
+          <div class={activePanel === lt ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}>
+            {@render listPanel(lt)}
+          </div>
+        {/if}
+      {/each}
     </div>
     {:else if navSidebarPanel === "connections"}
       <ConnectionsSidebarPanel

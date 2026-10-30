@@ -121,6 +121,7 @@ import Hash from '@lucide/svelte/icons/hash'
 import Infinity from '@lucide/svelte/icons/infinity'
 import Keyboard from '@lucide/svelte/icons/keyboard'
 import Layers from '@lucide/svelte/icons/layers'
+import Shapes from '@lucide/svelte/icons/shapes'
 import LayoutList from '@lucide/svelte/icons/layout-list'
 import PanelLeftClose from '@lucide/svelte/icons/panel-left-close'
 import PanelLeftOpen from '@lucide/svelte/icons/panel-left-open'
@@ -169,6 +170,7 @@ import {
   LayoutThreeColumnIcon,
   SidebarLeftIcon, SidebarLeft01Icon,
   TextWrapIcon, LeftToRightListNumberIcon, FileDiffIcon,
+  Shapes01Icon, SearchReplaceIcon,
 } from '@hugeicons/core-free-icons'
 
 /** @type {Record<string, { lucide: any, huge?: any }>} */
@@ -254,6 +256,8 @@ export const ICON_MAP = {
   'share-2':        { lucide: Share2,        huge: Share08Icon },
   'git-compare':    { lucide: GitCompare,    huge: GitCompareIcon },
   'blocks':         { lucide: Blocks,        huge: PuzzleIcon },
+  // Database objects (views, routines, types): not 'blocks', which is Extensions.
+  'shapes':         { lucide: Shapes,        huge: Shapes01Icon },
   'globe':          { lucide: Globe,         huge: GlobalIcon },
   'plug':           { lucide: Plug,          huge: PlugSocketIcon },
   'notebook-pen':   { lucide: NotebookPen,   huge: NoteEditIcon },
@@ -266,7 +270,7 @@ export const ICON_MAP = {
   'arrow-down-to-line':{ lucide: ArrowDownToLine, huge: Download04Icon },
   'arrow-left-to-line':{ lucide: ArrowLeftToLine, huge: ArrowLeftDoubleIcon },
   'arrow-right-to-line':{ lucide: ArrowRightToLine, huge: ArrowRightDoubleIcon },
-  'replace':        { lucide: ReplaceLucide },
+  'replace':        { lucide: ReplaceLucide, huge: SearchReplaceIcon },
   'bookmark':       { lucide: Bookmark,       huge: Bookmark01Icon },
   'box':            { lucide: Box,            huge: PackageIcon },
   'bug':            { lucide: Bug,            huge: BugIcon },

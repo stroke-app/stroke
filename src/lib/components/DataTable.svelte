@@ -17,6 +17,7 @@
   import { toast } from "$lib/components/ui/sonner/toast.svelte.js";
   import * as ContextMenu from "$lib/components/ui/context-menu/index.js";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
+  import { Button } from "$lib/components/ui/button/index.js";
   import ArrowUpDown from "@lucide/svelte/icons/arrow-up-down";
   import ArrowUp from "@lucide/svelte/icons/arrow-up";
   import ArrowDown from "@lucide/svelte/icons/arrow-down";
@@ -376,6 +377,11 @@ import FilterX from "@lucide/svelte/icons/filter-x";
      *  treat as roaming. */
     /** True when every row has been loaded in infinite scroll mode (no more pages). */
     endOfResults = false,
+    /** True when a row search or filter is narrowing the result, so an empty
+     *  grid means "nothing matched", not "the table is empty". */
+    filtered = false,
+    /** Clears the row search and every filter (the filtered empty state's button). */
+    onclearfilters = /** @type {(() => void) | null} */ (null),
     /** Active row-search query (toolbar search). Matched substrings are
      *  highlighted in the drawn cell text. */
     searchQuery = '',
@@ -2080,6 +2086,8 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     const entries = [...pendingEdits.values()].filter((e) => !pendingDeletes.has(e.rowIdx));
     /** @type {typeof entries} */
     const failed = [];
+    /** @type {string[]} */
+    const failReasons = [];
     let okCount = 0;
     for (const edit of entries) {
       try {
@@ -2087,7 +2095,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
         okCount++;
       } catch (err) {
         failed.push(edit);
-        toast.error("Could not save", { description: String(err) });
+        failReasons.push(`${columns[edit.colIdx]?.name ?? "?"}: ${String(err)}`);
       }
     }
 
@@ -2098,8 +2106,8 @@ import FilterX from "@lucide/svelte/icons/filter-x";
         await ondelete({ rowIndices: deleteIndices });
         deletedCount = deleteIndices.length;
         pendingDeletes = new Set();
-      } catch (err) {
-        toast.error("Could not delete", { description: String(err) });
+      } catch {
+        // error toast already shown by ondelete
       }
     }
 
@@ -2126,11 +2134,20 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     futureEdits = [];
     // Sync the cross-unmount cache to the post-apply state (clears it when empty).
     savePendingChanges(_persistKey, pendingEdits, pendingDeletes);
+    // One toast for every failed edit, not one per edit, and it says where the
+    // edits went. A few distinct reasons are enough to act on.
+    if (failed.length > 0) {
+      const n = failed.length;
+      const title = deletedCount > 0
+        ? (n === 1 ? "1 edit wasn't saved and was discarded" : `${n} edits weren't saved and were discarded`)
+        : `Couldn't save ${n} edit${n === 1 ? "" : "s"}. ${n === 1 ? "It's" : "They're"} still staged`;
+      toast.error(title, { description: [...new Set(failReasons)].slice(0, 3).join("\n"), code: true, duration: 10000 });
+    }
     if (okCount > 0 || deletedCount > 0) {
       const parts = [];
       if (okCount > 0) parts.push(`${okCount} cell${okCount === 1 ? "" : "s"} updated`);
       if (deletedCount > 0) parts.push(`${deletedCount} row${deletedCount === 1 ? "" : "s"} deleted`);
-      toast.success("Changes applied", { description: parts.join(", ") });
+      toast.success(failed.length > 0 ? "Some changes applied" : "Changes applied", { description: parts.join(", ") });
     }
   }
 
@@ -5507,27 +5524,38 @@ import FilterX from "@lucide/svelte/icons/filter-x";
 
   /** The measuring half of truncText - only reached on a cache miss. */
   function _truncMeasure(ctx, text, maxW, len) {
+    // Only the head of a long value can ever be on screen, so only the head is
+    // measured. measureText shapes every character it is given, and a long cell
+    // (a 2,000-character Devanagari or markdown chunk) paid a whole-string
+    // HarfBuzz pass per cell scrolled into view to show its first 60. Four times
+    // the monospace estimate covers narrow fallback glyphs and zero-width
+    // combining marks; a head that still fits falls back to the whole string.
+    let lim = len
+    if (_glyphW > 0) {
+      const cap = Math.ceil(maxW / _glyphW) * 4 + 16
+      if (cap < len && ctx.measureText(text.slice(0, cap)).width > maxW) lim = cap
+    }
     // For truncation, always measure accurately - the monospace estimate can
     // over-count for non-ASCII characters (Arabic, CJK, etc.) that fall back
     // to a narrower font, leaving an apparent gap after the ellipsis.
-    if (ctx.measureText(text).width <= maxW) return text
+    if (lim === len && ctx.measureText(text).width <= maxW) return text
     // Monospace fast path: the slice length is plain arithmetic, verified with a
     // couple of real measurements (non-ASCII glyphs fall back to narrower fonts,
     // so a failed verify drops to the exact binary search below). This replaces
     // ~10 measureText binary-search probes per truncated cell per frame with 2-3.
     if (_glyphW > 0) {
-      let k = Math.max(0, Math.min(len - 1, Math.floor(maxW / _glyphW) - 1))
+      let k = Math.max(0, Math.min(lim - 1, Math.floor(maxW / _glyphW) - 1))
       if (ctx.measureText(text.slice(0, k) + '…').width <= maxW) {
         // Grow greedily while it still fits (covers narrow fallback glyphs);
         // bounded so the worst case stays O(1).
-        for (let step = 0; step < 4 && k < len - 1; step++) {
+        for (let step = 0; step < 4 && k < lim - 1; step++) {
           if (ctx.measureText(text.slice(0, k + 1) + '…').width <= maxW) k++
           else break
         }
         return text.slice(0, k) + '…'
       }
     }
-    let lo = 0, hi = len
+    let lo = 0, hi = lim
     while (lo < hi) {
       const mid = (lo + hi + 1) >> 1
       if (ctx.measureText(text.slice(0, mid) + '…').width <= maxW) lo = mid
@@ -6039,11 +6067,13 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   })
   /** Paint holding. A table switch empties `columns` the moment it starts, and
    *  drawing that frame blanked the grid for the whole round trip - the old
-   *  table, then nothing, then the new one. For the same grace window as the
-   *  spinner the canvas keeps the last table's pixels and the swap lands as one
-   *  frame. Never on a surface that holds nothing yet: a fresh or just-resized
-   *  canvas is blank (or black in WebKit) and has to be painted. */
-  const holdPaint = $derived(loading && columns.length === 0 && !loadingVisible)
+   *  table, then nothing, then the new one. The canvas keeps the last table's
+   *  pixels until the new one lands; past the grace window the loading overlay
+   *  dims them. It used to hold only for the grace window, so a load just over
+   *  it strobed: old table, ~70ms of empty grid, new table. Never on a surface
+   *  that holds nothing yet: a fresh or just-resized canvas is blank (or black
+   *  in WebKit) and has to be painted. */
+  const holdPaint = $derived(loading && columns.length === 0)
   let _surfaceHasFrame = false
   /** Reactivity budget: the pill re-reads at most this often, not per frame. */
   const SPAN_PUBLISH_MS = 150
@@ -8628,8 +8658,11 @@ import FilterX from "@lucide/svelte/icons/filter-x";
                  place of it: swapping the grid out destroyed the canvas on every
                  table open, and a load that landed a frame later flashed a
                  spinner plus a brand-new compositor layer. -->
+            <!-- Over the held frame of the previous table, dimmed, and with no
+                 fade: a 300ms fade-in on a state that often lives under 150ms
+                 was itself the flash. -->
             {#if loadingVisible}
-              <div class="pointer-events-none absolute inset-0 z-[3] flex flex-col animate-in fade-in duration-300">
+              <div class="pointer-events-none absolute inset-0 z-[3] flex flex-col bg-panel/70">
                 <TableLoading {embedded} />
               </div>
             {/if}
@@ -8655,6 +8688,14 @@ import FilterX from "@lucide/svelte/icons/filter-x";
                       <Loader class="size-5 animate-spin text-muted-foreground" />
                       <p class="text-ui-sm text-muted-foreground">Loading rows…</p>
                     </div>
+                  {/if}
+                {:else if filtered}
+                  <FilterX class="size-8 text-muted-foreground" />
+                  <p class="text-ui-sm text-muted-foreground">No rows match these filters</p>
+                  {#if onclearfilters}
+                    <Button type="button" variant="outline" size="sm" class="pointer-events-auto mt-1" onclick={() => onclearfilters?.()}>
+                      Clear filters
+                    </Button>
                   {/if}
                 {:else}
                   <Table2 class="size-8 text-muted-foreground" />
