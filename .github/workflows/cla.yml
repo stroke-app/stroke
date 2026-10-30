@@ -35,4 +35,4 @@ jobs:
           custom-pr-sign-comment: >
             I have read the CLA Document and I hereby sign the CLA
           # Allowlist — bots and the repo owner don't need to sign.
-          allowlist: broisnischal,*[bot],bot*
+          allowlist: broisnischal,broisnees,*[bot],bot*
