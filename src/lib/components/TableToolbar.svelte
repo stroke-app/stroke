@@ -1223,11 +1223,12 @@
         {/if}
       {:else}
         {#if total > 0 || counting}
-          <!-- A min-width box with the text held to its left: "…" becoming
-               "18,234" grows into the box instead of shoving the pager sideways
-               or sliding the range readout along with it. -->
+          <!-- A min-width box, so "…" becoming "18,234" grows into it instead of
+               shoving the pager sideways. The text is held to its right: held
+               left, a short readout ("1-14 of 14") left the spare width as an
+               unexplained gap between it and the page-size menu. -->
           <span
-            class="flex min-w-[18ch] shrink-0 items-center gap-1 font-mono text-ui-xs tabular-nums @max-[600px]/tb:hidden"
+            class="flex min-w-[18ch] shrink-0 items-center justify-end gap-1 font-mono text-ui-xs tabular-nums @max-[600px]/tb:hidden"
             title="{from.toLocaleString('en-US')}-{to.toLocaleString('en-US')} of {counting ? 'counting…' : total.toLocaleString('en-US') + ' rows'}{queryMs > 0 ? ` · ${queryMs}ms` : ''}"
           >
             <span class="text-foreground/65">{from.toLocaleString("en-US")}-{to.toLocaleString("en-US")}</span>
