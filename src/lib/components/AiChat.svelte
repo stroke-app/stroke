@@ -2,6 +2,7 @@
   import { tick, onMount, onDestroy } from "svelte";
   import Sparkles from "@lucide/svelte/icons/sparkles";
   import ArrowUp from "@lucide/svelte/icons/arrow-up";
+  import CornerDownRight from "@lucide/svelte/icons/corner-down-right";
   import Reply from "@lucide/svelte/icons/reply";
   import Square from "@lucide/svelte/icons/square";
   import Settings2 from "@lucide/svelte/icons/settings-2";
@@ -435,6 +436,7 @@
     const conv = convList.find((c) => c.id === id);
     if (!conv) return;
     activeConvId = id;
+    queued = [];
     stopAgentSession();
     agentNative = /** @type {any} */ (conv).agentNative ?? null;
     // Restore - filter out ephemeral items (including any stuck streaming items)
@@ -462,6 +464,7 @@
     abortCurrentRequest();
     await persistCurrent();
     activeConvId = null;
+    queued = [];
     stopAgentSession();
     agentNative = null;
     items = [];
@@ -1706,9 +1709,39 @@
     return schema ? `${q(schema)}.${q(table)}` : q(table);
   }
 
+  /**
+   * Messages sent while a turn runs. They wait above the composer and go out
+   * one at a time as turns end, instead of Enter doing nothing mid-turn.
+   * Stop leaves them waiting; switching chats drops them.
+   */
+  let queued = $state(/** @type {{ id: string, text: string }[]} */ ([]));
+
+  /** Send the next queued message, once nothing is running. */
+  function drainQueue() {
+    if (loading || hasPendingConfirm || queued.length === 0) return;
+    const [next, ...rest] = queued;
+    queued = rest;
+    void send([next.text]);
+  }
+
+  /** @param {string} id */
+  function unqueue(id) {
+    queued = queued.filter((q) => q.id !== id);
+  }
+
   async function send(/** @type {string} */ [overrideText] = []) {
     const text = (overrideText ?? inputText).trim();
-    if (!text || loading || hasPendingConfirm) return;
+    if (!text || hasPendingConfirm) return;
+    if (loading) {
+      // Typed while the agent works: hold it for when the turn ends.
+      if (overrideText === undefined) {
+        queued = [...queued, { id: uid(), text }];
+        inputText = "";
+        resetInputHeight();
+        resetHistory();
+      }
+      return;
+    }
     error = "";
     aiStatusHint = "";
     if (!overrideText) {
@@ -1899,6 +1932,7 @@
     }
     await tick();
     inputRef?.focus();
+    drainQueue();
   }
 
   // ── Local agent CLIs ──────────────────────────────────────────────────────
@@ -4795,6 +4829,27 @@
             hasPendingConfirm && "opacity-50",
           )}
         >
+          {#if queued.length}
+            <!-- Waiting to be sent, in order; each goes out as a turn ends. -->
+            <ul class="flex flex-col gap-1 border-b border-border/40 px-2 pt-2 pb-1.5" aria-label="Queued messages">
+              {#each queued as q, qi (q.id)}
+                <li class="ai-enter group/q flex min-w-0 items-center gap-2 rounded-lg bg-muted/40 py-1 pr-1 pl-2.5">
+                  <CornerDownRight class="size-3.5 shrink-0 text-muted-foreground" />
+                  <span class="min-w-0 flex-1 truncate text-ui-xs text-foreground/90" title={q.text}>{q.text}</span>
+                  <span class="shrink-0 text-ui-3xs text-muted-foreground">{qi === 0 ? (loading ? "Next" : "Queued") : `#${qi + 1}`}</span>
+                  <button
+                    type="button"
+                    class="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                    title="Remove from queue"
+                    aria-label="Remove from queue"
+                    onclick={() => unqueue(q.id)}
+                  >
+                    <X class="size-3.5" />
+                  </button>
+                </li>
+              {/each}
+            </ul>
+          {/if}
           <!-- Textarea row. Font size comes from the same var as the transcript
                (--ai-chat-font-size, Settings → Appearance), so what you type is
                set at the size you'll read it back at. -->
@@ -4862,7 +4917,9 @@
 
             <!-- Shortcut hint only while the empty composer holds focus: it is
                  guidance for someone about to type, not a permanent label. -->
-            {#if inputFocused && !inputText.trim() && !loading}
+            {#if loading && inputText.trim()}
+              <span class="hidden shrink-0 text-ui-2xs text-muted-foreground sm:block">↵ to queue</span>
+            {:else if inputFocused && !inputText.trim() && !loading}
               <span
                 class="hidden shrink-0 text-ui-2xs text-muted-foreground sm:block"
               >
