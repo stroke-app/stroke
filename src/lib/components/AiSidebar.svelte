@@ -246,14 +246,14 @@
   let slashIdx = $state(0)
 
   const SLASH_COMMANDS = [
-    { cmd: 'explain',  label: 'Explain',    desc: 'Explain the current table or SQL',    prompt: 'Explain the currently open table (or the SQL in the editor if one is open): its purpose, key columns, and relationships. Be concise.', send: true },
-    { cmd: 'optimize', label: 'Optimize',   desc: 'Suggest query optimizations',         prompt: 'Review the SQL currently in the editor and suggest concrete optimizations (indexes, rewrites, avoiding scans). Return improved SQL in a ```sql block.', send: true },
-    { cmd: 'fix',      label: 'Fix',        desc: 'Find and fix issues in the SQL',       prompt: 'Find problems in the SQL currently in the editor and return corrected SQL in a ```sql block with a brief explanation.', send: true },
-    { cmd: 'index',    label: 'Indexes',    desc: 'Suggest indexes for the active table', prompt: "Based on the active table's columns, primary key, and foreign keys, suggest useful indexes and give the CREATE INDEX statements in a ```sql block.", send: true },
-    { cmd: 'chart',    label: 'Chart',      desc: 'Visualize data as a chart',           prompt: 'Chart ', send: false },
-    { cmd: 'erd',      label: 'Diagram',    desc: 'Draw an ERD of the schema',           prompt: 'Draw an entity-relationship diagram of this schema as a mermaid erDiagram inside a ```mermaid code block, with the main tables, key columns, and relationships.', send: true },
-    { cmd: 'summary',  label: 'Summary',    desc: 'Summarize the whole schema',          prompt: 'Give a concise overview of this database: the main tables, how they relate, and what the schema is for.', send: true },
-    { cmd: 'count',    label: 'Row counts', desc: 'Count rows across every table',        prompt: 'Show the row count of every table in the current schema, ordered by count descending. Run the query and report the results.', send: true },
+    { cmd: 'explain',  label: 'Explain',    desc: 'Explain the current table or SQL',    prompt: 'Explain the currently open table (or the SQL in the editor if one is open): its purpose, key columns, and relationships. Be concise.' },
+    { cmd: 'optimize', label: 'Optimize',   desc: 'Suggest query optimizations',         prompt: 'Review the SQL currently in the editor and suggest concrete optimizations (indexes, rewrites, avoiding scans). Return improved SQL in a ```sql block.' },
+    { cmd: 'fix',      label: 'Fix',        desc: 'Find and fix issues in the SQL',       prompt: 'Find problems in the SQL currently in the editor and return corrected SQL in a ```sql block with a brief explanation.' },
+    { cmd: 'index',    label: 'Indexes',    desc: 'Suggest indexes for the active table', prompt: "Based on the active table's columns, primary key, and foreign keys, suggest useful indexes and give the CREATE INDEX statements in a ```sql block." },
+    { cmd: 'chart',    label: 'Chart',      desc: 'Visualize data as a chart',           prompt: 'Chart ' },
+    { cmd: 'erd',      label: 'Diagram',    desc: 'Draw an ERD of the schema',           prompt: 'Draw an entity-relationship diagram of this schema as a mermaid erDiagram inside a ```mermaid code block, with the main tables, key columns, and relationships.' },
+    { cmd: 'summary',  label: 'Summary',    desc: 'Summarize the whole schema',          prompt: 'Give a concise overview of this database: the main tables, how they relate, and what the schema is for.' },
+    { cmd: 'count',    label: 'Row counts', desc: 'Count rows across every table',        prompt: 'Show the row count of every table in the current schema, ordered by count descending. Run the query and report the results.' },
   ]
 
   const slashItems = $derived.by(() => {
@@ -266,14 +266,16 @@
   /** @param {typeof SLASH_COMMANDS[number]} command */
   function runSlash(command) {
     slashOpen = false
-    if (command.send) {
-      inputText = ''
-      resetInputHeight()
-      void send([command.prompt])
-    } else {
-      inputText = command.prompt
-      void tick().then(() => { resizeInput(); inputRef?.focus() })
-    }
+    // Never sent on pick: the prompt goes into the box to read and edit, and
+    // Enter sends it. Sending straight away gave no chance to add the detail
+    // that makes the answer useful ("explain this, focusing on the joins").
+    inputText = command.prompt
+    void tick().then(() => {
+      resizeInput()
+      inputRef?.focus()
+      const end = inputText.length
+      inputRef?.setSelectionRange?.(end, end)
+    })
   }
 
   // ── Scroll helpers ────────────────────────────────────────────────────────
