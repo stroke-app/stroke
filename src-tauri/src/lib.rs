@@ -9,6 +9,7 @@
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+mod agents;
 mod app_lock;
 mod cloudflare;
 mod commands;
@@ -448,6 +449,7 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .manage(db_state)
         .manage(mcp_state)
+        .manage(agents::AgentsState::default())
         .manage(TunnelState::new())
         .manage(omniroute::OmniRouteState::new())
         .manage(db::live::LiveState::default())
@@ -703,6 +705,11 @@ pub fn run() {
             mcp::mcp_status,
             mcp::mcp_update_connections,
             mcp::mcp_set_readonly,
+            agents::agent_list,
+            agents::agent_start,
+            agents::agent_send,
+            agents::agent_interrupt,
+            agents::agent_stop,
             db::connection::prewarm_dns,
             omniroute::omniroute_env,
             omniroute::omniroute_install,
