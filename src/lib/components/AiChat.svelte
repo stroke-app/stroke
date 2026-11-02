@@ -2,6 +2,7 @@
   import { tick, onMount, onDestroy } from "svelte";
   import Sparkles from "@lucide/svelte/icons/sparkles";
   import ArrowUp from "@lucide/svelte/icons/arrow-up";
+  import ArrowDown from "@lucide/svelte/icons/arrow-down";
   import CornerDownRight from "@lucide/svelte/icons/corner-down-right";
   import Reply from "@lucide/svelte/icons/reply";
   import Square from "@lucide/svelte/icons/square";
@@ -3384,22 +3385,10 @@
      both the in-flow "thinking" placeholder and the bottom "working" state so they
      are pixel-identical and never visually drift or double up. -->
 {#snippet agentIndicator()}
-  {@const Icon = loadingIcon}
-  <div class="flex items-center gap-2.5 px-3.5" role="status" aria-live="polite">
-    <!-- The provider's own mark while it works, so which model is answering is
-         visible without opening the picker. Phase icon when it has no mark. -->
-    <div class="flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/10 ring-1 ring-inset ring-primary/15">
-      {#if activeAiProfile && hasBrand(activeAiProfile.provider)}
-        <BrandIcon
-          name={activeAiProfile.provider}
-          class="size-3 text-primary transition-opacity duration-200 {thinkingVisible
-            ? 'opacity-100'
-            : 'opacity-40'}"
-        />
-      {:else}
-        <Icon class="size-3 text-primary transition-opacity duration-200 {thinkingVisible ? 'opacity-100' : 'opacity-40'}" />
-      {/if}
-    </div>
+  <div class="flex h-7 items-center gap-2 px-3.5" role="status" aria-live="polite">
+    <!-- A quiet spinner and the label, as T3 shows work in progress. The tinted
+         badge that sat here was a third signal competing with the two. -->
+    <LoaderCircle class="size-3.5 shrink-0 animate-spin text-muted-foreground" />
     <!-- The label's own shimmer carries the "working" signal; a trailing row of
          bouncing dots on top of it was a second animation saying the same thing. -->
     <span
@@ -4799,15 +4788,17 @@
 
     <!-- Jump-to-bottom button: shown whenever user has scrolled away from bottom -->
     {#if userScrolledUp}
-      <div
-        class="pointer-events-none absolute inset-x-0 bottom-24 z-10 flex justify-center"
-      >
+      <!-- A round arrow centred over the composer, as T3 and ChatGPT do; the
+           labelled pill read as one more message lying across the text. -->
+      <div class="pointer-events-none absolute inset-x-0 bottom-28 z-10 flex justify-center">
         <button
           type="button"
           onclick={jumpToBottom}
-          class="pointer-events-auto flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-ui-xs font-medium text-foreground elevate-2-rim transition-all hover:bg-accent"
+          class="ai-enter pointer-events-auto flex size-8 items-center justify-center rounded-full border border-border/70 bg-popover text-muted-foreground elevate-2-rim transition-colors hover:bg-accent hover:text-foreground"
+          title="Jump to bottom"
+          aria-label="Jump to bottom"
         >
-          <ChevronDown class="size-3.5" />Jump to bottom
+          <ArrowDown class="size-4" />
         </button>
       </div>
     {/if}
@@ -4859,7 +4850,7 @@
             style="height:auto;min-height:60px;max-height:200px;overflow-y:auto;font-family:inherit"
             placeholder={hasPendingConfirm
               ? "Confirm or cancel the operation above…"
-              : "Ask anything about your database…"}
+              : "Ask about your data, or send a follow-up…"}
             rows={1}
             value={inputText}
             oninput={(e) => {
@@ -4879,7 +4870,7 @@
           <!-- Bottom toolbar row: the controls that change what the next turn
                does sit together on the left, separated by hairlines; the send
                affordance stays alone on the right. -->
-          <div class="flex items-center gap-1 px-2 pb-1.5">
+          <div class="flex items-center gap-1 px-2 pb-2">
             <AiModelPicker onopenSettings={onopenmodelsettings} />
             {#if profileAgent($aiSettings)}
               <AgentComposerChips agent={profileAgent($aiSettings) ?? ""} />
@@ -4892,7 +4883,7 @@
               ></span>
               <button
                 type="button"
-                class="inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 font-mono text-ui-2xs text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground select-none"
+                class="inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 font-mono text-ui-2xs text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground select-none"
                 onclick={() => {
                   settingsOpen = true;
                   settingsTab = "context";
@@ -4938,7 +4929,7 @@
                 ></span>
                 <button
                   type="button"
-                  class="flex size-6 items-center justify-center rounded-full bg-destructive/90 text-destructive-foreground transition-colors hover:bg-destructive active:scale-95"
+                  class="flex size-7 items-center justify-center rounded-full bg-destructive/90 text-destructive-foreground transition-colors hover:bg-destructive active:scale-95"
                   onclick={stop}
                   aria-label="Stop"
                   title="Stop (Esc)"
@@ -4951,17 +4942,17 @@
               <button
                 type="button"
                 class={cn(
-                  "flex size-6 shrink-0 items-center justify-center rounded-full transition-all duration-150 active:scale-95",
+                  "flex size-7 shrink-0 items-center justify-center rounded-full transition-[background-color,opacity,transform] duration-150 active:scale-95",
                   canSend
                     ? "bg-primary text-primary-foreground hover:opacity-85"
-                    : "text-muted-foreground cursor-not-allowed",
+                    : "bg-muted text-muted-foreground cursor-not-allowed",
                 )}
                 disabled={!canSend}
                 onclick={() => void send()}
                 aria-label="Send"
                 title="Send (↵)"
               >
-                <ArrowUp class="size-3" strokeWidth={2.5} />
+                <ArrowUp class="size-3.5" strokeWidth={2.5} />
               </button>
             {/if}
           </div>
