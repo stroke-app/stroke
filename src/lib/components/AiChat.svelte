@@ -118,8 +118,11 @@
   import Save from "@lucide/svelte/icons/save";
   import Check from "@lucide/svelte/icons/check";
   import Search from "@lucide/svelte/icons/search";
-  import TrendingUp from "@lucide/svelte/icons/trending-up";
   import Layers from "@lucide/svelte/icons/layers";
+  import Hash from "@lucide/svelte/icons/hash";
+  import Clock from "@lucide/svelte/icons/clock";
+  import HardDrive from "@lucide/svelte/icons/hard-drive";
+  import Link2 from "@lucide/svelte/icons/link-2";
   import LoaderCircle from "@lucide/svelte/icons/loader-circle";
   import GitBranch from "@lucide/svelte/icons/git-branch";
   import Brain from "@lucide/svelte/icons/brain";
@@ -1959,6 +1962,25 @@
     return texts.length ? conversationTitle(texts, conv.createdAt) : conv.title || "New chat";
   }
 
+  /**
+   * An icon that says what a suggestion does. They used to be handed out by
+   * position, so "Schema overview" wore a bar chart and duplicates a book.
+   * @param {string} label
+   */
+  function suggestionIcon(label) {
+    const l = label.toLowerCase();
+    if (/duplicate/.test(l)) return Copy;
+    if (/foreign|relationship/.test(l)) return Link2;
+    if (/size/.test(l)) return HardDrive;
+    if (/count/.test(l)) return Hash;
+    if (/recent|activity|updated/.test(l)) return Clock;
+    if (/group|distribution|breakdown/.test(l)) return BarChart2;
+    if (/schema|overview/.test(l)) return Layers;
+    if (/browse|explore|rows/.test(l)) return Table2;
+    if (/find|search/.test(l)) return Search;
+    return Sparkles;
+  }
+
   /** Folds the user opened. */
   let openWork = $state(/** @type {Set<string>} */ (new Set()));
 
@@ -3766,81 +3788,52 @@
       <div
         class={mode === "full"
           ? items.length === 0
-            ? "mx-auto w-full max-w-2xl h-full"
+            ? "mx-auto w-full max-w-3xl h-full"
             : "mx-auto w-full max-w-3xl"
           : ""}
       >
         {#if items.length === 0}
           {#if mode === "full"}
-            <!-- ── Full-mode landing ── -->
-            <div class="flex h-full flex-col items-center justify-center gap-8">
-              <!-- Hero text -->
-              <div class="flex flex-col items-center gap-4 text-center">
+            <!-- ── Full-mode landing ──
+                 Sits low, at the composer's width, so the suggestions are a
+                 short reach from where you type; each card shows the prompt it
+                 sends, so picking one is not a guess. -->
+            <div class="flex h-full flex-col justify-end gap-6 pb-6 pt-14">
+              <div class="flex flex-col gap-1.5 px-1">
+                <h1 class="text-ui-2xl font-semibold tracking-[-0.02em] text-foreground">
+                  What do you want to know?
+                </h1>
                 {#if schemaContext.activeTable || schemaContext.tables?.length}
-                  <div
-                    class="inline-flex items-center gap-1.5 rounded-full border border-border/40 bg-muted/30 px-3.5 py-1.5 font-mono text-ui-xs text-muted-foreground transition-colors hover:border-border/60 hover:text-muted-foreground"
-                  >
-                    <Database
-                      class="size-3 shrink-0 text-muted-foreground"
-                    />
-                    {#if schemaContext.activeTable}
-                      {schemaContext.activeSchema}.{schemaContext.activeTable}
-                    {:else}
-                      {schemaContext.activeSchema} · {schemaContext.tables
-                        .length} tables
-                    {/if}
-                  </div>
-                {/if}
-
-                <div class="space-y-2.5">
-                  <h1
-                    class="text-ui-3xl font-semibold leading-[1.2] tracking-[-0.025em] text-foreground"
-                  >
-                    What would you like<br />to explore?
-                  </h1>
-                  <p
-                    class="mx-auto max-w-sm text-ui-sm leading-relaxed text-muted-foreground"
-                  >
-                    Write queries, build charts, explore your schema, just
-                    describe what you need.
+                  <p class="flex items-center gap-1.5 text-ui-xs text-muted-foreground">
+                    <Database class="size-3.5 shrink-0" />
+                    <span class="truncate font-mono">
+                      {#if schemaContext.activeTable}
+                        {schemaContext.activeSchema}.{schemaContext.activeTable}
+                      {:else}
+                        {schemaContext.activeSchema} · {schemaContext.tables.length} tables
+                      {/if}
+                    </span>
                   </p>
-                </div>
+                {/if}
               </div>
 
-              <!-- Suggestions -->
               {#if suggestions.length > 0}
-                <div
-                  class="w-full overflow-hidden rounded-lg border border-border/40"
-                >
-                  <div class="grid grid-cols-2 gap-px bg-border/30">
-                    {#each suggestions.slice(0, 8) as s, i (s.label)}
-                      {@const icons = [
-                        Database,
-                        BarChart2,
-                        Search,
-                        TrendingUp,
-                        Zap,
-                        BookOpen,
-                        Layers,
-                        Table2,
-                      ]}
-                      {@const SugIcon = icons[i % icons.length]}
-                      <button
-                        type="button"
-                        class="group flex items-center gap-3 bg-background px-4 py-3 text-left transition-colors duration-100 hover:bg-muted/25 disabled:opacity-40"
-                        disabled={loading}
-                        onclick={() => void send([s.prompt])}
-                      >
-                        <SugIcon
-                          class="size-3.5 shrink-0 text-muted-foreground transition-colors group-hover:text-muted-foreground"
-                        />
-                        <span
-                          class="min-w-0 flex-1 text-ui-xs text-muted-foreground transition-colors group-hover:text-foreground/80"
-                          >{s.label}</span
-                        >
-                      </button>
-                    {/each}
-                  </div>
+                <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  {#each suggestions.slice(0, 6) as s (s.label)}
+                    {@const SugIcon = suggestionIcon(s.label)}
+                    <button
+                      type="button"
+                      class="group flex min-w-0 items-start gap-3 rounded-xl border border-border/50 bg-card/40 px-3.5 py-3 text-left transition-colors duration-150 hover:border-border hover:bg-accent/40 disabled:opacity-40"
+                      disabled={loading}
+                      onclick={() => void send([s.prompt])}
+                    >
+                      <SugIcon class="mt-0.5 size-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground" />
+                      <span class="flex min-w-0 flex-col gap-0.5">
+                        <span class="truncate text-ui-sm font-medium text-foreground">{s.label}</span>
+                        <span class="truncate text-ui-2xs text-muted-foreground">{s.prompt}</span>
+                      </span>
+                    </button>
+                  {/each}
                 </div>
               {/if}
             </div>
