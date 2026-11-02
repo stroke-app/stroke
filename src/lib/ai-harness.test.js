@@ -113,3 +113,16 @@ test('tool arguments streamed as {} then the real object parse as the real objec
   expect(normalizeToolArgs('')).toBe('{}')
   expect(normalizeToolArgs('{"sql": "SELECT')).toBe('{"sql": "SELECT')
 })
+
+import { isSmallTalk, conversationTitle, isPlaceholderTitle } from './ai.js'
+
+test('small talk does not name a conversation', () => {
+  expect(isSmallTalk('hi')).toBe(true)
+  expect(isSmallTalk('hi hi hi')).toBe(true)
+  expect(isSmallTalk('Hey there!')).toBe(true)
+  expect(isSmallTalk('what can i do')).toBe(false)
+  expect(conversationTitle(['hi', 'hi', 'which tables are in public?'])).toBe('Which tables are in public?')
+  expect(conversationTitle(['hi', 'thanks'], new Date(2026, 10, 2, 14, 41).getTime())).toMatch(/^Chat · /)
+  expect(isPlaceholderTitle('Hi')).toBe(true)
+  expect(isPlaceholderTitle('Campaign status breakdown')).toBe(false)
+})

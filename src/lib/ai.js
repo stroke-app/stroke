@@ -334,6 +334,43 @@ export function titleFromMessage(text) {
   return cut ? `${title}…` : title
 }
 
+/** Words that say nothing about what a chat is for: greetings, thanks, "ok", "test". */
+const SMALL_TALK_WORDS = new Set([
+  'hi', 'hii', 'hiii', 'hey', 'heya', 'hello', 'helo', 'yo', 'sup', 'hola', 'namaste', 'howdy', 'there', 'bro',
+  'good', 'morning', 'afternoon', 'evening', 'thanks', 'thank', 'you', 'thx', 'ty',
+  'ok', 'okay', 'k', 'cool', 'nice', 'great', 'test', 'testing', 'ping', 'yes', 'no', 'yep', 'nope', 'sure',
+])
+
+/**
+ * True for a message made only of small talk ("hi", "hi hi hi", "thanks!").
+ * @param {string} text
+ */
+export function isSmallTalk(text) {
+  const words = String(text ?? '').toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').split(/\s+/).filter(Boolean)
+  return words.length === 0 || words.every((w) => SMALL_TALK_WORDS.has(w))
+}
+
+/**
+ * A conversation's title: its first user message that says what it is about.
+ * Titling from the very first message named every chat that opened with a
+ * greeting "hi". A chat of nothing but small talk gets its time instead, so
+ * the list at least tells them apart.
+ * @param {string[]} userTexts the user's messages, in order
+ * @param {number} [startedAt]
+ */
+export function conversationTitle(userTexts, startedAt) {
+  const real = userTexts.find((t) => !isSmallTalk(t))
+  if (real) return titleFromMessage(real)
+  if (!startedAt) return 'New chat'
+  return `Chat · ${new Date(startedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
+}
+
+/** A title that a later message should replace. @param {string} title */
+export function isPlaceholderTitle(title) {
+  const t = String(title ?? '').replace(/…$/, '')
+  return isSmallTalk(t) || /^Chat · /.test(t) || t === 'New chat' || t === 'Conversation'
+}
+
 /** OpenAI-compatible tool definitions - work with Mistral, OpenAI, recent Ollama models. */
 export const AI_TOOLS = [
   {
