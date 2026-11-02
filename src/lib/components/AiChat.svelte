@@ -30,6 +30,8 @@
   import Cpu from "@lucide/svelte/icons/cpu";
   import Maximize2 from "@lucide/svelte/icons/maximize-2";
   import Minimize2 from "@lucide/svelte/icons/minimize-2";
+  import ResizeHandle from "$lib/components/ResizeHandle.svelte";
+  import { getAppScale } from "$lib/app-zoom.js";
   import ArrowDownToLine from "@lucide/svelte/icons/arrow-down-to-line";
   import ZoomIn from "@lucide/svelte/icons/zoom-in";
   import ZoomOut from "@lucide/svelte/icons/zoom-out";
@@ -1458,6 +1460,33 @@
 
   // ── AI sidebar visibility (persisted) ─────────────────────────────────────
   const AI_SIDEBAR_KEY = "stroke:ai-sidebar-open";
+
+  // ── Chat list width ───────────────────────────────────────────────────────
+  const AI_SIDEBAR_W_KEY = "stroke:ai-sidebar-width";
+  const SIDEBAR_MIN_W = 160;
+  const SIDEBAR_MAX_W = 420;
+  const SIDEBAR_DEFAULT_W = 208;
+
+  function loadSidebarWidth() {
+    try {
+      const w = Number(localStorage.getItem(AI_SIDEBAR_W_KEY) || SIDEBAR_DEFAULT_W);
+      return Math.min(SIDEBAR_MAX_W, Math.max(SIDEBAR_MIN_W, w || SIDEBAR_DEFAULT_W));
+    } catch {
+      return SIDEBAR_DEFAULT_W;
+    }
+  }
+
+  let sidebarWidth = $state(loadSidebarWidth());
+  let sidebarResizeStart = 0;
+  let sidebarResizeScale = 1;
+
+  function saveSidebarWidth() {
+    try {
+      localStorage.setItem(AI_SIDEBAR_W_KEY, String(Math.round(sidebarWidth)));
+    } catch {
+      /* ignore */
+    }
+  }
 
   function loadSidebarPref() {
     try {
@@ -3485,7 +3514,10 @@
 <div class="flex h-full min-h-0 overflow-hidden bg-background">
   <!-- ── Conversation sidebar ───────────────────────────────────────── -->
   {#if sidebarVisible}
-    <aside class="flex w-52 shrink-0 flex-col border-r border-border bg-panel">
+    <aside
+      class="flex shrink-0 flex-col border-r border-border bg-panel"
+      style="width: calc({sidebarWidth}px * var(--app-scale, 1))"
+    >
       <!-- Sidebar header: collapse + new chat -->
       <div
         class="flex shrink-0 items-center gap-1 border-b border-border/50 px-2 py-2"
@@ -3627,6 +3659,16 @@
         {/if}
       </div>
     </aside>
+    <!-- Drag, or arrow keys when focused, to widen the chat list; double-click resets. -->
+    <div class="-ml-1 flex" ondblclick={() => { sidebarWidth = SIDEBAR_DEFAULT_W; saveSidebarWidth(); }} role="presentation">
+      <ResizeHandle
+        axis="x"
+        edge="end"
+        onresizestart={() => { sidebarResizeStart = sidebarWidth; sidebarResizeScale = getAppScale(); }}
+        onresize={(dx) => { sidebarWidth = Math.min(SIDEBAR_MAX_W, Math.max(SIDEBAR_MIN_W, sidebarResizeStart + dx / sidebarResizeScale)); }}
+        onresizeend={saveSidebarWidth}
+      />
+    </div>
   {/if}
 
   <!-- ── Main chat area ─────────────────────────────────────────────── -->
