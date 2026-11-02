@@ -132,7 +132,7 @@ pub async fn mcp_start(mcp: State<'_, McpState>) -> Result<McpStatus, String> {
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
     let token_clone = token.clone();
     tokio::spawn(async move {
-        server::run(port, token_clone, conn, connections, active_conn_id, read_only, shutdown_rx).await;
+        server::run(port, token_clone, conn, connections, active_conn_id, read_only, None, shutdown_rx).await;
     });
 
     *mcp.port.lock().map_err(|e| e.to_string())? = port;
