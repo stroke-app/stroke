@@ -109,7 +109,7 @@ export const PROVIDER_MODELS = {
  * }} ModelProfile
  */
 
-/** @typedef {{ baseUrl: string, apiKey: string, model: string }} AiSettings */
+/** @typedef {{ baseUrl: string, apiKey: string, model: string, provider?: string }} AiSettings */
 
 // ── Storage keys ─────────────────────────────────────────────────────────────
 
@@ -144,13 +144,44 @@ function makeDefaultProfile() {
 
 // ── Persistence helpers ───────────────────────────────────────────────────────
 
+/**
+ * Two profiles the picker can't tell apart: same name, endpoint and model.
+ * @param {ModelProfile} p
+ */
+function profileKey(p) {
+  return [p.name, p.provider, p.baseUrl, p.model].join('\u0000')
+}
+
+/**
+ * Drop repeats of the same profile, keeping the first (or the active one).
+ * Saving the same model twice used to append a copy each time, so the picker
+ * filled up with identical "stroke-free-fast" rows.
+ * @param {ModelProfile[]} profiles
+ * @param {string | null} keepId
+ */
+export function dedupeProfiles(profiles, keepId = null) {
+  /** @type {Map<string, ModelProfile>} */
+  const byKey = new Map()
+  for (const p of profiles) {
+    const k = profileKey(p)
+    const seen = byKey.get(k)
+    if (!seen || p.id === keepId) byKey.set(k, p)
+  }
+  const kept = new Set(byKey.values())
+  return profiles.filter((p) => kept.has(p))
+}
+
 /** @returns {ModelProfile[]} */
 function loadProfiles() {
   try {
     const raw = localStorage.getItem(PROFILES_KEY)
     if (raw) {
       const parsed = JSON.parse(raw)
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        const unique = dedupeProfiles(parsed, loadActiveId())
+        if (unique.length !== parsed.length) saveProfiles(unique)
+        return unique
+      }
     }
     // Migrate from legacy single-setting format
     const legacy = localStorage.getItem(LEGACY_KEY)
@@ -249,7 +280,26 @@ export async function refreshActiveSettings() {
   const profile = profiles.find((p) => p.id === activeId) ?? profiles[0]
   if (!profile) return
   const apiKey = await loadKeyForProfile(profile.id)
-  aiSettings.set({ baseUrl: profile.baseUrl, apiKey, model: profile.model })
+  aiSettings.set({ baseUrl: profile.baseUrl, apiKey, model: profile.model, provider: profile.provider })
+}
+
+/**
+ * Switch to a local agent CLI. Each agent keeps one profile (`agent:claude`)
+ * whose model follows the last pick, so the list does not grow a row per model.
+ * @param {string} agent
+ * @param {string} agentName
+ * @param {{ id: string, label: string } | null} model
+ */
+export async function useAgentProfile(agent, agentName, model) {
+  const id = `agent:${agent}`
+  await saveProfile({
+    id,
+    name: model ? `${agentName} · ${model.label}` : agentName,
+    provider: id,
+    baseUrl: '',
+    model: model?.id ?? '',
+  })
+  await setActiveProfile(id)
 }
 
 // Bootstrap after the first paint, not during module evaluation. This is the
@@ -274,12 +324,19 @@ if (typeof requestAnimationFrame === 'function') {
 // ── Actions ───────────────────────────────────────────────────────────────────
 
 /**
- * Save a profile (create or update) and optionally store its API key.
+ * Save a profile (create or update) and optionally store its API key. A new
+ * profile identical to an existing one updates that one instead of adding a
+ * copy. Returns the id it was saved under.
  * @param {ModelProfile} profile
  * @param {string} [apiKey]
+ * @returns {Promise<string>}
  */
 export async function saveProfile(profile, apiKey) {
   const profiles = get(aiProfiles)
+  if (!profiles.some((p) => p.id === profile.id)) {
+    const twin = profiles.find((p) => profileKey(p) === profileKey(profile))
+    if (twin) profile = { ...profile, id: twin.id }
+  }
   const idx = profiles.findIndex((p) => p.id === profile.id)
   const next = idx >= 0
     ? profiles.map((p) => p.id === profile.id ? profile : p)
@@ -290,6 +347,7 @@ export async function saveProfile(profile, apiKey) {
   if (apiKey !== undefined) {
     try { await invoke('ai_store_key', { profileId: profile.id, apiKey }) } catch { /* ignore in dev */ }
   }
+  return profile.id
 }
 
 /** @param {string} id */
@@ -325,6 +383,8 @@ export async function setActiveProfile(id) {
 /** True when the given settings can reach a provider without further setup. */
 export function isAiConfigured(s) {
   return Boolean(s.apiKey) ||
+    // A local agent CLI signs in on its own.
+    String(s.provider ?? '').startsWith('agent:') ||
     /localhost|127\.0\.0\.1/.test(s.baseUrl) ||
     // The free tier authenticates with the device id, so "no key" is configured.
     (s.baseUrl ?? '').includes('stroke.click') ||

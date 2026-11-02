@@ -2,6 +2,8 @@
   import { tick, onMount, onDestroy } from "svelte";
   import Sparkles from "@lucide/svelte/icons/sparkles";
   import ArrowUp from "@lucide/svelte/icons/arrow-up";
+  import ArrowDown from "@lucide/svelte/icons/arrow-down";
+  import CornerDownRight from "@lucide/svelte/icons/corner-down-right";
   import Reply from "@lucide/svelte/icons/reply";
   import Square from "@lucide/svelte/icons/square";
   import Settings2 from "@lucide/svelte/icons/settings-2";
@@ -28,6 +30,8 @@
   import Cpu from "@lucide/svelte/icons/cpu";
   import Maximize2 from "@lucide/svelte/icons/maximize-2";
   import Minimize2 from "@lucide/svelte/icons/minimize-2";
+  import ResizeHandle from "$lib/components/ResizeHandle.svelte";
+  import { getAppScale } from "$lib/app-zoom.js";
   import ArrowDownToLine from "@lucide/svelte/icons/arrow-down-to-line";
   import ZoomIn from "@lucide/svelte/icons/zoom-in";
   import ZoomOut from "@lucide/svelte/icons/zoom-out";
@@ -36,7 +40,19 @@
   import { Input } from "$lib/components/ui/input/index.js";
   import { Label } from "$lib/components/ui/label/index.js";
   import { cn } from "$lib/utils.js";
-  import { executeSql, aiWebSearch, aiFetchPage, saveExportAs } from "$lib/api.js";
+  import { executeSql, aiWebSearch, aiFetchPage, saveExportAs, agentStart, agentSend, agentInterrupt, agentStop } from "$lib/api.js";
+  import {
+    profileAgent,
+    strokeToolName,
+    toolOutputText,
+    parseSqlResult,
+    agentSystemPrompt,
+    agentPrefs,
+    AGENTS_WITH_EFFORT,
+    stepLabel,
+    cleanToolError,
+  } from "$lib/local-agents.js";
+  import AgentComposerChips from "$lib/components/AgentComposerChips.svelte";
   import { isReadOnly, guardWrite } from "$lib/stores/read-only.js";
   import { isWriteSql, stripSqlComments } from "$lib/sql-write.js";
   import {
@@ -68,7 +84,8 @@
     filterSchemaForQuery,
     detectPromptTopics,
     toolsForTurn,
-    titleFromMessage,
+    conversationTitle,
+    isPlaceholderTitle,
     historyBudget,
     repairToolPairs,
     extractTextToolCalls,
@@ -103,8 +120,12 @@
   import Save from "@lucide/svelte/icons/save";
   import Check from "@lucide/svelte/icons/check";
   import Search from "@lucide/svelte/icons/search";
-  import TrendingUp from "@lucide/svelte/icons/trending-up";
   import Layers from "@lucide/svelte/icons/layers";
+  import Hash from "@lucide/svelte/icons/hash";
+  import Clock from "@lucide/svelte/icons/clock";
+  import HardDrive from "@lucide/svelte/icons/hard-drive";
+  import Link2 from "@lucide/svelte/icons/link-2";
+  import LoaderCircle from "@lucide/svelte/icons/loader-circle";
   import GitBranch from "@lucide/svelte/icons/git-branch";
   import Brain from "@lucide/svelte/icons/brain";
   import AiModelPicker from "./AiModelPicker.svelte";
@@ -131,7 +152,14 @@
    *   | { id: string, kind: 'executing', sql: string, op: 'query' | 'schema' | 'describe' | 'run' | 'diagram' }
    *   | { id: string, kind: 'diagram', code: string, title: string }
    *   | { id: string, kind: 'web', mode: 'search'|'fetch', label: string, hits: {title:string,url:string,snippet:string}[], error: string|null, loading: boolean }
+   *   | { id: string, kind: 'work', startedAt: number, endedAt: number|null, steps: WorkStep[] }
    * } ChatItem
+   */
+
+  /**
+   * One step of a local agent's turn, folded under "Worked for 4s": a tool
+   * call, or a `note` (what the agent said between calls).
+   * @typedef {{ id: string, tool: string, op: 'query' | 'schema' | 'describe' | 'note', detail: string, status: 'running' | 'done' | 'error', error?: string }} WorkStep
    */
 
   /**
@@ -414,6 +442,11 @@
     const conv = convList.find((c) => c.id === id);
     if (!conv) return;
     activeConvId = id;
+    clearAnchor();
+    queued = [];
+    enterFrom = Number.MAX_SAFE_INTEGER;
+    stopAgentSession();
+    agentNative = /** @type {any} */ (conv).agentNative ?? null;
     // Restore - filter out ephemeral items (including any stuck streaming items)
     items = /** @type {ChatItem[]} */ (
       (conv.items ?? []).filter(
@@ -431,6 +464,7 @@
       conv.apiHistory ?? []
     );
     syncSeq(items);
+    enterFrom = items.length;
     error = "";
     await scrollBottom();
   }
@@ -439,7 +473,12 @@
     abortCurrentRequest();
     await persistCurrent();
     activeConvId = null;
+    clearAnchor();
+    queued = [];
+    stopAgentSession();
+    agentNative = null;
     items = [];
+    enterFrom = 0;
     apiHistory = [];
     rawApiHistory = [];
     error = "";
@@ -463,6 +502,9 @@
     }
     if (activeConvId === id) {
       activeConvId = null;
+      clearAnchor();
+      stopAgentSession();
+      agentNative = null;
       items = [];
       apiHistory = [];
       rawApiHistory = [];
@@ -511,6 +553,7 @@
       await updateConversation(activeConvId, {
         items: plainItems,
         apiHistory: plainHistory,
+        agentNative: agentNative ? { ...agentNative } : null,
       });
     } else {
       const conv = await createConversation({
@@ -519,6 +562,7 @@
         connectionId,
         items: plainItems,
         apiHistory: plainHistory,
+        agentNative: agentNative ? { ...agentNative } : null,
       });
       activeConvId = conv.id;
       // Prepend new conversation at the top (it is the newest)
@@ -530,13 +574,17 @@
   /** Generate a short title from the conversation and update the stored title. */
   async function generateAiTitle() {
     if (!activeConvId) return;
-    const userMsg = rawApiHistory.find((m) => m.role === "user");
-    if (!userMsg) return;
-    // From the first message, not from a second model call: on the free tier
-    // that extra request per turn is what tripped the rate limit and the
-    // retry wait that followed.
-    const title = titleFromMessage(String(userMsg.content ?? ""));
-    if (title.length < 3) return;
+    const conv = convList.find((c) => c.id === activeConvId);
+    // A real title stays: one the user typed, or one already taken from a
+    // message with content. Only a placeholder ("hi") is replaced.
+    if (conv?.title && !isPlaceholderTitle(conv.title)) return;
+    const userTexts = rawApiHistory.filter((m) => m.role === "user").map((m) => String(m.content ?? ""));
+    if (!userTexts.length) return;
+    // From the messages, not from a second model call: on the free tier that
+    // extra request per turn is what tripped the rate limit and the retry wait
+    // that followed.
+    const title = conversationTitle(userTexts, conv?.createdAt);
+    if (title.length < 3 || title === conv?.title) return;
     try {
       await updateConversation(activeConvId, { title });
       convList = convList.map((c) =>
@@ -790,7 +838,7 @@
 
   /** Scroll to bottom on the next animation frame (throttled; skipped if user scrolled up). */
   function scrollBottomSoon() {
-    if (userScrolledUp) return;
+    if (userScrolledUp || anchorId) return;
     if (rafId !== null) return;
     rafId = requestAnimationFrame(() => {
       rafId = null;
@@ -816,6 +864,59 @@
     pinToBottom();
   }
 
+  // ── Anchored turn ─────────────────────────────────────────────────────────
+  // On send, the user's message moves to the top of the view and the answer
+  // grows beneath it, as in T3 and ChatGPT, instead of the view chasing the
+  // bottom on every token. A spacer under the turn gives it room until the
+  // answer is tall enough to fill the view on its own.
+  /** The user message the latest turn is pinned under. */
+  let anchorId = $state(/** @type {string | null} */ (null));
+  /** Room under the anchored turn, in px. */
+  let tailSpace = $state(0);
+
+  /**
+   * Size the spacer from measurements, not guesses: just enough for the
+   * message to scroll up to its stop (its scroll-margin under the floating
+   * buttons). A guessed constant overshot, so a one-turn chat that fit on
+   * screen still got a scrollbar.
+   */
+  function measureTail() {
+    if (!anchorId || !scrollEl || !msgListEl) return;
+    const anchor = msgListEl.querySelector(`[data-item-id="${anchorId}"]`);
+    if (!(anchor instanceof HTMLElement)) return;
+    const box = scrollEl.getBoundingClientRect();
+    const anchorTop = anchor.getBoundingClientRect().top - box.top + scrollEl.scrollTop;
+    const margin = parseFloat(getComputedStyle(anchor).scrollMarginTop) || 0;
+    const needed = anchorTop - margin + scrollEl.clientHeight;
+    const withoutSpacer = scrollEl.scrollHeight - tailSpace;
+    const next = Math.max(0, Math.floor(needed - withoutSpacer));
+    if (next !== tailSpace) tailSpace = next;
+  }
+
+  $effect(() => {
+    if (!anchorId || !msgListEl || typeof ResizeObserver !== "function") return;
+    const ro = new ResizeObserver(() => measureTail());
+    ro.observe(msgListEl);
+    return () => ro.disconnect();
+  });
+
+  /** @param {string} id */
+  async function anchorTurn(id) {
+    anchorId = id;
+    userScrolledUp = false;
+    await tick();
+    measureTail();
+    await tick();
+    const anchor = msgListEl?.querySelector(`[data-item-id="${id}"]`);
+    const still = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+    anchor?.scrollIntoView({ block: "start", behavior: still ? "auto" : "smooth" });
+  }
+
+  function clearAnchor() {
+    anchorId = null;
+    tailSpace = 0;
+  }
+
   /**
    * End the running turn on screen, now, whatever it is waiting on.
    *
@@ -827,6 +928,7 @@
    */
   function stop() {
     if (!loading && !abortController) return;
+    interruptAgentTurn();
     turnSeq++;
     const ctrl = abortController;
     abortController = null;
@@ -874,6 +976,7 @@
     for (const i of items.filter((i) => i.kind === "confirm")) {
       i.resolve(false);
     }
+    interruptAgentTurn();
     turnSeq++;
     if (abortController) {
       abortController.abort();
@@ -1223,7 +1326,8 @@
     const content = msgListEl;
     if (!content) return;
     const ro = new ResizeObserver(() => {
-      if (!userScrolledUp) pinToBottom();
+      // An anchored turn keeps its place; the answer grows below it.
+      if (!userScrolledUp && !anchorId) pinToBottom();
     });
     ro.observe(content);
     return () => ro.disconnect();
@@ -1347,7 +1451,9 @@
         (i) =>
           i.kind === "thinking" ||
           i.kind === "streaming" ||
-          i.kind === "executing",
+          i.kind === "executing" ||
+          // A local agent's fold already says it is working.
+          (i.kind === "work" && i.endedAt === null),
       ),
   );
 
@@ -1414,6 +1520,33 @@
 
   // ── AI sidebar visibility (persisted) ─────────────────────────────────────
   const AI_SIDEBAR_KEY = "stroke:ai-sidebar-open";
+
+  // ── Chat list width ───────────────────────────────────────────────────────
+  const AI_SIDEBAR_W_KEY = "stroke:ai-sidebar-width";
+  const SIDEBAR_MIN_W = 160;
+  const SIDEBAR_MAX_W = 420;
+  const SIDEBAR_DEFAULT_W = 208;
+
+  function loadSidebarWidth() {
+    try {
+      const w = Number(localStorage.getItem(AI_SIDEBAR_W_KEY) || SIDEBAR_DEFAULT_W);
+      return Math.min(SIDEBAR_MAX_W, Math.max(SIDEBAR_MIN_W, w || SIDEBAR_DEFAULT_W));
+    } catch {
+      return SIDEBAR_DEFAULT_W;
+    }
+  }
+
+  let sidebarWidth = $state(loadSidebarWidth());
+  let sidebarResizeStart = 0;
+  let sidebarResizeScale = 1;
+
+  function saveSidebarWidth() {
+    try {
+      localStorage.setItem(AI_SIDEBAR_W_KEY, String(Math.round(sidebarWidth)));
+    } catch {
+      /* ignore */
+    }
+  }
 
   function loadSidebarPref() {
     try {
@@ -1489,6 +1622,8 @@
 
   async function scrollBottom() {
     await tick();
+    // An anchored turn stays where it is; the answer grows into the space below.
+    if (anchorId) return;
     userScrolledUp = false;
     pinToBottom();
   }
@@ -1669,9 +1804,39 @@
     return schema ? `${q(schema)}.${q(table)}` : q(table);
   }
 
+  /**
+   * Messages sent while a turn runs. They wait above the composer and go out
+   * one at a time as turns end, instead of Enter doing nothing mid-turn.
+   * Stop leaves them waiting; switching chats drops them.
+   */
+  let queued = $state(/** @type {{ id: string, text: string }[]} */ ([]));
+
+  /** Send the next queued message, once nothing is running. */
+  function drainQueue() {
+    if (loading || hasPendingConfirm || queued.length === 0) return;
+    const [next, ...rest] = queued;
+    queued = rest;
+    void send([next.text]);
+  }
+
+  /** @param {string} id */
+  function unqueue(id) {
+    queued = queued.filter((q) => q.id !== id);
+  }
+
   async function send(/** @type {string} */ [overrideText] = []) {
     const text = (overrideText ?? inputText).trim();
-    if (!text || loading || hasPendingConfirm) return;
+    if (!text || hasPendingConfirm) return;
+    if (loading) {
+      // Typed while the agent works: hold it for when the turn ends.
+      if (overrideText === undefined) {
+        queued = [...queued, { id: uid(), text }];
+        inputText = "";
+        resetInputHeight();
+        resetHistory();
+      }
+      return;
+    }
     error = "";
     aiStatusHint = "";
     if (!overrideText) {
@@ -1680,12 +1845,13 @@
       resetHistory();
     }
 
+    const userItemId = uid();
     items.push(
-      /** @type {ChatItem} */ ({ id: uid(), kind: "user", text, ts: Date.now() }),
+      /** @type {ChatItem} */ ({ id: userItemId, kind: "user", text, ts: Date.now() }),
     );
     apiHistory.push({ role: "user", content: text });
     rawApiHistory.push({ role: "user", content: text });
-    await scrollBottom();
+    await anchorTurn(userItemId);
 
     const thinkingId = uid();
     items.push(/** @type {ChatItem} */ ({ id: thinkingId, kind: "thinking" }));
@@ -1699,6 +1865,27 @@
     const disowned = () => turn !== turnSeq;
     executedCalls = new Set();
     failureTracker = new Map();
+
+    // A local agent CLI reads the schema through its own tools, so none of the
+    // prompt building below applies to it.
+    const agent = profileAgent($aiSettings);
+    if (agent) {
+      try {
+        const reply = await runAgentTurn(agent, $aiSettings.model ?? "", text, disowned);
+        if (disowned()) return;
+        if (reply) {
+          apiHistory.push({ role: "assistant", content: reply });
+          rawApiHistory.push({ role: "assistant", content: reply });
+        }
+        await persistCurrent();
+        void generateAiTitle();
+      } catch (e) {
+        if (!disowned()) error = String(/** @type {any} */ (e)?.message ?? e);
+      } finally {
+        if (!disowned()) await finishTurn();
+      }
+      return;
+    }
 
     // Proactively fetch column definitions for all tables into session cache
     // only when the query looks like it's asking about data (not a trivial message).
@@ -1788,8 +1975,6 @@
       apiHistory = managedHistory;
     }
 
-    const isFirstTurn =
-      rawApiHistory.filter((m) => m.role === "user").length === 1;
     try {
       await runAiTurn(0, ctrl);
       if (disowned()) return;
@@ -1797,7 +1982,7 @@
       rawApiHistory.push(...apiHistory.slice(managedLen));
       await persistCurrent();
       // Generate AI title after the first turn, in the background
-      if (isFirstTurn) void generateAiTitle();
+      void generateAiTitle();
     } catch (e) {
       if (/** @type {any} */ (e)?.name !== "AbortError" && !disowned()) error = String(e);
     } finally {
@@ -1843,6 +2028,367 @@
     }
     await tick();
     inputRef?.focus();
+    drainQueue();
+  }
+
+  // ── Local agent CLIs ──────────────────────────────────────────────────────
+  /** Wall clock for a live "Working for 12s"; ticks only while a turn runs. */
+  let nowMs = $state(Date.now());
+  $effect(() => {
+    if (!loading) return;
+    nowMs = Date.now();
+    const timer = setInterval(() => (nowMs = Date.now()), 1000);
+    return () => clearInterval(timer);
+  });
+  /**
+   * What the list shows for a chat. Chats saved before titles skipped small
+   * talk are all called "hi"; they get a title from their messages here,
+   * without rewriting what is stored.
+   * @param {{ title?: string, createdAt?: number, items?: unknown[] }} conv
+   */
+  function displayTitle(conv) {
+    if (conv.title && !isPlaceholderTitle(conv.title)) return conv.title;
+    const texts = (conv.items ?? [])
+      .filter((/** @type {any} */ i) => i?.kind === "user")
+      .map((/** @type {any} */ i) => String(i.text ?? ""));
+    return texts.length ? conversationTitle(texts, conv.createdAt) : conv.title || "New chat";
+  }
+
+  /**
+   * An icon that says what a suggestion does. They used to be handed out by
+   * position, so "Schema overview" wore a bar chart and duplicates a book.
+   * @param {string} label
+   */
+  function suggestionIcon(label) {
+    const l = label.toLowerCase();
+    if (/duplicate/.test(l)) return Copy;
+    if (/foreign|relationship/.test(l)) return Link2;
+    if (/size/.test(l)) return HardDrive;
+    if (/count/.test(l)) return Hash;
+    if (/recent|activity|updated/.test(l)) return Clock;
+    if (/group|distribution|breakdown/.test(l)) return BarChart2;
+    if (/schema|overview/.test(l)) return Layers;
+    if (/browse|explore|rows/.test(l)) return Table2;
+    if (/find|search/.test(l)) return Search;
+    return Sparkles;
+  }
+
+  /** Docked chats keep a tab strip; full mode lists chats in its sidebar. */
+  const showTabBar = $derived(mode !== "full" && (openTabs.length > 0 || !activeConvId));
+
+  /**
+   * Items from this index on arrived during this visit and slide in; the ones
+   * a saved conversation opened with appear at once, so switching chats does
+   * not replay forty entrances.
+   */
+  let enterFrom = $state(0);
+
+  /** Folds the user opened. */
+  let openWork = $state(/** @type {Set<string>} */ (new Set()));
+
+  /** @param {string} id */
+  function toggleWork(id) {
+    const next = new Set(openWork);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    openWork = next;
+  }
+
+  /** @param {number} ms */
+  function formatElapsed(ms) {
+    const s = Math.max(1, Math.round(ms / 1000));
+    return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
+  }
+
+  /** "2 queries · 1 schema read". @param {WorkStep[]} steps */
+  function workSummary(steps) {
+    const queries = steps.filter((s) => s.op === "query").length;
+    const reads = steps.filter((s) => s.op !== "query" && s.op !== "note").length;
+    return [
+      queries ? `${queries} ${queries === 1 ? "query" : "queries"}` : "",
+      reads ? `${reads} schema ${reads === 1 ? "read" : "reads"}` : "",
+    ].filter(Boolean).join(" · ");
+  }
+
+  /** The agent session behind this chat: its backend key and what started it. */
+  let agentSession = /** @type {{ key: string, agent: string, model: string, effort: string, access: string, ready: Promise<void> } | null} */ (null);
+  /** The CLI's own session id for the open conversation, to resume it later. */
+  let agentNative = /** @type {{ agent: string, id: string } | null} */ (null);
+  /** Receives the running turn's events; null between turns. */
+  let agentOnEvent = /** @type {((ev: any) => void) | null} */ (null);
+  /** Ends the running turn early (Stop, or a switch of conversation). */
+  let agentSettle = /** @type {(() => void) | null} */ (null);
+
+  function stopAgentSession() {
+    if (agentSession) void agentStop(agentSession.key).catch(() => {});
+    agentSession = null;
+  }
+
+  function interruptAgentTurn() {
+    if (agentSession && agentOnEvent) void agentInterrupt(agentSession.key).catch(() => {});
+    agentOnEvent = null;
+    agentSettle?.();
+    agentSettle = null;
+  }
+
+  /**
+   * The session to send to, started when there is none or the agent or model
+   * changed. A restart resumes the CLI's own session, so the agent keeps the
+   * conversation it had.
+   * @param {string} agent @param {string} model
+   */
+  async function ensureAgentSession(agent, model) {
+    const effort = AGENTS_WITH_EFFORT.has(agent) ? $agentPrefs.effort : "";
+    // A connection opened read-only stays read-only for the agent too.
+    /** @type {import('$lib/local-agents.js').AgentAccess} */
+    const access = isReadOnly() ? "read" : $agentPrefs.access;
+    const s = agentSession;
+    if (s?.agent === agent && s.model === model && s.effort === effort && s.access === access) {
+      // Started already, or still starting from the composer's focus: wait for
+      // that start rather than racing it with a second one.
+      await s.ready;
+      return s.key;
+    }
+    stopAgentSession();
+    const key = activeConvId ?? `draft-${uid()}`;
+    /** @type {(v?: unknown) => void} */
+    let started = () => {};
+    /** @type {(e: unknown) => void} */
+    let failed = () => {};
+    /** @type {Promise<void>} */
+    const ready = new Promise((res, rej) => { started = res; failed = rej; });
+    // A failed start is reported by the send that awaits it, not as unhandled.
+    ready.catch(() => {});
+    const session = { key, agent, model, effort, access, ready };
+    agentSession = session;
+    const tables = (schemaContext.tables ?? [])
+      .map((/** @type {any} */ t) => (typeof t === "string" ? t : t?.name))
+      .filter(Boolean);
+    try {
+      await agentStart(
+        {
+          conversationId: key,
+          agent,
+          model,
+          systemPrompt: agentSystemPrompt({
+            dbType: schemaContext.dbType,
+            activeSchema: schemaContext.activeSchema,
+            activeTable: schemaContext.activeTable,
+            tables,
+            access,
+          }),
+          resume: agentNative?.agent === agent ? agentNative.id : null,
+          effort: effort || null,
+          access,
+        },
+        (ev) => {
+          if (agentSession !== session) return;
+          const native = ev.Started?.native_session_id;
+          if (native) agentNative = { agent, id: native };
+          if (ev.Fatal) agentSession = null;
+          agentOnEvent?.(ev);
+        },
+      );
+      started();
+    } catch (e) {
+      if (agentSession === session) agentSession = null;
+      failed(e);
+      throw e;
+    }
+    return key;
+  }
+
+  /**
+   * Start the agent while the user is still typing, as T3 and deck do: the
+   * CLI's boot (a second or two for Claude Code) is paid before Send, not after.
+   */
+  function prewarmAgent() {
+    const agent = profileAgent($aiSettings);
+    if (!agent || loading) return;
+    ensureAgentSession(agent, $aiSettings.model ?? "").catch(() => {});
+  }
+
+  /**
+   * One turn with a local agent, drawn with the same items as the HTTP path:
+   * streamed text, a query card per Stroke tool call, result tables.
+   * Resolves with the reply's text.
+   * @param {string} agent @param {string} model @param {string} text
+   * @param {() => boolean} disowned
+   * @returns {Promise<string>}
+   */
+  async function runAgentTurn(agent, model, text, disowned) {
+    const key = await ensureAgentSession(agent, model);
+    let content = "";
+    let reply = "";
+    let itemId = /** @type {string | null} */ (null);
+    /** The turn's one "Worked for" fold, made at its first tool call or note. */
+    let workId = /** @type {string | null} */ (null);
+    /** @type {Map<string, { workId: string, name: string, detail: string }>} */
+    const tools = new Map();
+    /** @param {string} id @param {(w: any) => any} fn */
+    const patchWork = (id, fn) => {
+      items = items.map((i) => (i.id === id && i.kind === "work" ? fn(i) : i));
+    };
+    /** Stop the fold's clock while the agent writes; the next call resumes it. */
+    const closeWork = () => {
+      if (!workId) return;
+      patchWork(workId, (w) => (w.endedAt === null ? { ...w, endedAt: Date.now() } : w));
+    };
+    const dropThinking = () => {
+      const i = items.findIndex((x) => x.kind === "thinking");
+      if (i >= 0) items.splice(i, 1);
+    };
+    /** Finish the streamed text so a tool card can follow it. */
+    const closeText = () => {
+      closeWork();
+      if (!itemId) return;
+      flushStreamingContent();
+      const id = itemId;
+      const parts = parseAssistantMessage(content);
+      items = items.map((i) =>
+        i.id === id ? /** @type {ChatItem} */ ({ id, kind: "assistant", parts, ts: Date.now() }) : i,
+      );
+      reply += (reply ? "\n\n" : "") + content;
+      itemId = null;
+      streamingId = null;
+      streamingContent = "";
+      _pendingStreamContent = "";
+      content = "";
+    };
+    /**
+     * Text written before a tool call was narration ("I'll check the schema"),
+     * not the answer: it moves into the fold, so only the reply that ends the
+     * turn stays in the transcript, as T3 does.
+     */
+    const foldText = () => {
+      if (!itemId) return;
+      flushStreamingContent();
+      const id = itemId;
+      const note = content.trim();
+      itemId = null;
+      streamingId = null;
+      streamingContent = "";
+      _pendingStreamContent = "";
+      content = "";
+      if (!workId) {
+        // The fold takes the narration's place in the transcript.
+        const wid = uid();
+        workId = wid;
+        items = items.map((i) =>
+          i.id === id ? /** @type {ChatItem} */ ({ id: wid, kind: "work", startedAt: Date.now(), endedAt: null, steps: [] }) : i,
+        );
+      } else {
+        items = items.filter((i) => i.id !== id);
+      }
+      if (note) {
+        /** @type {WorkStep} */
+        const step = { id: uid(), tool: "note", op: "note", detail: note, status: "done" };
+        patchWork(workId, (w) => ({ ...w, steps: [...w.steps, step] }));
+      }
+    };
+    /** @param {any} call */
+    const onToolCall = (call) => {
+      const tool = strokeToolName(String(call.name ?? ""));
+      const input = call.input ?? {};
+      /** @type {WorkStep['op']} */
+      const op = tool === "execute_sql" || tool === "explain_query" ? "query"
+        : tool === "describe_table" ? "describe" : "schema";
+      const detail = op === "query" ? String(input.sql ?? "")
+        : op === "describe" ? String(input.table ?? "") : tool.replace(/_/g, " ");
+      const known = tools.get(call.id);
+      if (known) {
+        // The same call again with its full input.
+        known.detail = detail || known.detail;
+        patchWork(known.workId, (w) => ({
+          ...w,
+          steps: w.steps.map((/** @type {WorkStep} */ s) => (s.id === call.id ? { ...s, detail: known.detail } : s)),
+        }));
+        return;
+      }
+      foldText();
+      dropThinking();
+      if (!workId) {
+        workId = uid();
+        items.push(/** @type {ChatItem} */ ({ id: workId, kind: "work", startedAt: Date.now(), endedAt: null, steps: [] }));
+      } else {
+        // Working again after a note: the clock runs on from where it paused.
+        patchWork(workId, (w) => (w.endedAt === null ? w : { ...w, startedAt: w.startedAt + (Date.now() - w.endedAt), endedAt: null }));
+      }
+      const wid = workId;
+      tools.set(call.id, { workId: wid, name: tool, detail });
+      /** @type {WorkStep} */
+      const step = { id: String(call.id), tool, op, detail, status: "running" };
+      patchWork(wid, (w) => ({ ...w, steps: [...w.steps, step] }));
+      scrollBottomSoon();
+    };
+    /** @param {any} res */
+    const onToolResult = (res) => {
+      const t = tools.get(res.id);
+      if (!t) return;
+      const out = toolOutputText(res.output);
+      patchWork(t.workId, (w) => ({
+        ...w,
+        steps: w.steps.map((/** @type {WorkStep} */ s) =>
+          s.id === String(res.id)
+            ? { ...s, status: res.is_error ? "error" : "done", ...(res.is_error ? { error: cleanToolError(out).slice(0, 400) } : {}) }
+            : s,
+        ),
+      }));
+      const parsed = t.name === "execute_sql" && !res.is_error ? parseSqlResult(out) : null;
+      // Rows still get their table; a failure is already shown in the fold.
+      if (parsed && parsed.total > 0) {
+        const id = uid();
+        items.push(/** @type {ChatItem} */ ({ id, kind: "result", sql: t.detail, columns: parsed.columns, rows: parsed.rows.slice(0, AI_DISPLAY_ROWS), total: parsed.total, error: null }));
+        autoOpenResult(id);
+      }
+    };
+
+    await new Promise((resolve, reject) => {
+      const settle = (/** @type {Error | null} */ err) => {
+        agentOnEvent = null;
+        agentSettle = null;
+        if (err) reject(err);
+        else resolve(undefined);
+      };
+      agentSettle = () => settle(null);
+      agentOnEvent = (ev) => {
+        if (disowned()) return settle(null);
+        if (ev.Text) {
+          aiStatusHint = "";
+          content += ev.Text.delta;
+          if (!itemId) {
+            closeWork();
+            dropThinking();
+            itemId = uid();
+            streamingId = itemId;
+            items.push(/** @type {ChatItem} */ ({ id: itemId, kind: "streaming" }));
+          }
+          scheduleStreamingUpdate(content);
+        } else if (ev.ToolCall) onToolCall(ev.ToolCall);
+        else if (ev.ToolResult) onToolResult(ev.ToolResult);
+        else if (ev.TurnFailed) error = ev.TurnFailed.message;
+        else if (ev.TurnEnd) {
+          closeText();
+          closeWork();
+          settle(null);
+        } else if (ev.Fatal) {
+          closeText();
+          closeWork();
+          settle(new Error(ev.Fatal.message));
+        }
+      };
+      agentSend(key, text).catch(async (e) => {
+        if (String(e) !== "NO_SESSION") return settle(e instanceof Error ? e : new Error(String(e)));
+        // The CLI exited between turns: start it again, resuming, and resend.
+        agentSession = null;
+        try {
+          await agentSend(await ensureAgentSession(agent, model), text);
+        } catch (e2) {
+          settle(e2 instanceof Error ? e2 : new Error(String(e2)));
+        }
+      });
+    });
+    return reply + (content ? (reply ? "\n\n" : "") + content : "");
   }
 
   /** Max rows fetched from DB per AI tool call - prevents OOM on large tables */
@@ -2934,15 +3480,32 @@
     loadConvList();
   });
 
+  /**
+   * Ctrl+B hides and shows the chat list while the chat is on screen. The app
+   * binds it to its own sidebar, so this listens in the capture phase and
+   * keeps the key from reaching that binding.
+   * @param {KeyboardEvent} e
+   */
+  function onChatListKey(e) {
+    if (!(isActive || mode === "full")) return;
+    if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== "b") return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    toggleAiSidebar();
+  }
+
   onMount(() => {
     void tick().then(() => inputRef?.focus());
     document.addEventListener("keydown", handleGlobalKey);
+    window.addEventListener("keydown", onChatListKey, true);
     // Pre-warm schema cache so the first message doesn't pay the fetch cost
     if (schemaContext.tables?.length) void ensureFullSchemaCache();
   });
 
   onDestroy(() => {
     document.removeEventListener("keydown", handleGlobalKey);
+    window.removeEventListener("keydown", onChatListKey, true);
+    stopAgentSession();
     // Cancel any pending rAF handles to avoid callbacks on destroyed DOM
     if (rafId !== null) {
       cancelAnimationFrame(rafId);
@@ -2963,22 +3526,10 @@
      both the in-flow "thinking" placeholder and the bottom "working" state so they
      are pixel-identical and never visually drift or double up. -->
 {#snippet agentIndicator()}
-  {@const Icon = loadingIcon}
-  <div class="flex items-center gap-2.5 px-3.5" role="status" aria-live="polite">
-    <!-- The provider's own mark while it works, so which model is answering is
-         visible without opening the picker. Phase icon when it has no mark. -->
-    <div class="flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/10 ring-1 ring-inset ring-primary/15">
-      {#if activeAiProfile && hasBrand(activeAiProfile.provider)}
-        <BrandIcon
-          name={activeAiProfile.provider}
-          class="size-3 text-primary transition-opacity duration-200 {thinkingVisible
-            ? 'opacity-100'
-            : 'opacity-40'}"
-        />
-      {:else}
-        <Icon class="size-3 text-primary transition-opacity duration-200 {thinkingVisible ? 'opacity-100' : 'opacity-40'}" />
-      {/if}
-    </div>
+  <div class="flex h-7 items-center gap-2 px-3.5" role="status" aria-live="polite">
+    <!-- A quiet spinner and the label, as T3 shows work in progress. The tinted
+         badge that sat here was a third signal competing with the two. -->
+    <LoaderCircle class="size-3.5 shrink-0 animate-spin text-muted-foreground" />
     <!-- The label's own shimmer carries the "working" signal; a trailing row of
          bouncing dots on top of it was a second animation saying the same thing. -->
     <span
@@ -3053,7 +3604,10 @@
 <div class="flex h-full min-h-0 overflow-hidden bg-background">
   <!-- ── Conversation sidebar ───────────────────────────────────────── -->
   {#if sidebarVisible}
-    <aside class="flex w-52 shrink-0 flex-col border-r border-border bg-panel">
+    <aside
+      class="flex shrink-0 flex-col border-r border-border bg-panel"
+      style="width: calc({sidebarWidth}px * var(--app-scale, 1))"
+    >
       <!-- Sidebar header: collapse + new chat -->
       <div
         class="flex shrink-0 items-center gap-1 border-b border-border/50 px-2 py-2"
@@ -3061,7 +3615,7 @@
         <button
           type="button"
           class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          title="Hide chats ({modKey}⇧B)"
+          title="Hide chats ({modKey}B)"
           onclick={toggleAiSidebar}
         >
           <PanelLeft class="size-3.5" />
@@ -3145,7 +3699,7 @@
                   ></span>
                 {/if}
                 <span class="truncate text-ui-xs font-medium leading-snug"
-                  >{conv.title}</span
+                  >{displayTitle(conv)}</span
                 >
                 <span class="mt-0.5 text-ui-3xs text-muted-foreground"
                   >{relativeTime(conv.updatedAt)}</span
@@ -3194,71 +3748,103 @@
           </div>
         {/if}
       </div>
+      {#if onexit}
+        <!-- The way back to the data, where the eye lands after the chat list. -->
+        <div class="shrink-0 border-t border-border/60 p-1.5">
+          <button
+            type="button"
+            class="flex h-8 w-full items-center gap-2 rounded-md px-2 text-ui-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            onclick={onexit}
+          >
+            <Minimize2 class="size-3.5 shrink-0" />
+            <span class="min-w-0 flex-1 truncate text-left">Exit AI mode</span>
+            <kbd class="shrink-0 font-mono text-ui-3xs text-muted-foreground/80">{modKey}⇧E</kbd>
+          </button>
+        </div>
+      {/if}
     </aside>
+    <!-- Drag, or arrow keys when focused, to widen the chat list; double-click resets. -->
+    <div class="-ml-1 flex" ondblclick={() => { sidebarWidth = SIDEBAR_DEFAULT_W; saveSidebarWidth(); }} role="presentation">
+      <ResizeHandle
+        axis="x"
+        edge="end"
+        onresizestart={() => { sidebarResizeStart = sidebarWidth; sidebarResizeScale = getAppScale(); }}
+        onresize={(dx) => { sidebarWidth = Math.min(SIDEBAR_MAX_W, Math.max(SIDEBAR_MIN_W, sidebarResizeStart + dx / sidebarResizeScale)); }}
+        onresizeend={saveSidebarWidth}
+      />
+    </div>
   {/if}
 
   <!-- ── Main chat area ─────────────────────────────────────────────── -->
   <div class="relative flex min-h-0 min-w-0 flex-1 flex-col">
-    <!-- Header: single clean row -->
-    <div
-      class="studio-chrome flex shrink-0 items-center border-b border-border/50 px-2 py-2"
-      data-studio-chrome
-    >
-      <!-- Left: sidebar toggle + new chat (when sidebar hidden) -->
-      <div class="flex items-center gap-0.5">
+    <!-- No header row: its four buttons cost a 48px band above the transcript.
+         In full mode they float over the transcript's top corners; docked, they
+         sit at the ends of the conversation tab bar that is there anyway. -->
+    {#snippet chatListButton()}
+      <button
+        type="button"
+        class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        title={sidebarVisible ? `Hide chats (${modKey}B)` : `Show chats (${modKey}B)`}
+        aria-label={sidebarVisible ? "Hide chats" : "Show chats"}
+        onclick={toggleAiSidebar}
+      >
+        <PanelLeft class="size-3.5" />
+      </button>
+    {/snippet}
+    {#snippet chromeRight()}
+      <button
+        type="button"
+        class={cn(
+          "inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground",
+          settingsOpen && "bg-accent text-foreground",
+        )}
+        title="Settings ({modKey}⇧,)"
+        aria-label="Settings"
+        onclick={() => {
+          settingsOpen = !settingsOpen;
+          settingsTab = "model";
+        }}
+      >
+        <Settings2 class="size-3.5" />
+      </button>
+      {#if onexit}
         <button
           type="button"
-          class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          title={sidebarVisible
-            ? `Hide chats (${modKey}⇧B)`
-            : `Show chats (${modKey}⇧B)`}
-          onclick={toggleAiSidebar}
+          class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          title="Exit AI mode ({modKey}⇧E)"
+          aria-label="Exit AI mode"
+          onclick={onexit}
         >
-          <PanelLeft class="size-3.5" />
+          <!-- Not an X: the window's close sits right above this corner, and two
+               stacked X's read as the same button. This one leaves AI mode. -->
+          <Minimize2 class="size-3.5" />
         </button>
-        {#if !sidebarVisible}
-          <button
-            type="button"
-            class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            title="New chat ({newChatShortcut})"
-            onclick={() => void newConversation()}
-          >
-            <Plus class="size-3.5" />
-          </button>
-        {/if}
-      </div>
+      {/if}
+    {/snippet}
 
-      <!-- Center: spacer -->
-      <div class="flex-1"></div>
-
-      <!-- Right: settings + close -->
-      <div class="flex items-center gap-0.5">
-        <button
-          type="button"
-          class={cn(
-            "inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground",
-            settingsOpen && "bg-accent text-foreground",
-          )}
-          title="Settings ({modKey}⇧,)"
-          onclick={() => {
-            settingsOpen = !settingsOpen;
-            settingsTab = "model";
-          }}
-        >
-          <Settings2 class="size-3.5" />
-        </button>
-        {#if onexit}
-          <button
-            type="button"
-            class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            title="Close AI panel (⌘⇧E)"
-            onclick={onexit}
-          >
-            <X class="size-3.5" />
-          </button>
-        {/if}
+    {#if !showTabBar}
+      <div class="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between p-2">
+        <div class="pointer-events-auto flex items-center gap-0.5 rounded-lg bg-background/90 p-0.5">
+          {@render chatListButton()}
+          {#if !sidebarVisible}
+            <button
+              type="button"
+              class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              title="New chat ({newChatShortcut})"
+              aria-label="New chat"
+              onclick={() => void newConversation()}
+            >
+              <Plus class="size-3.5" />
+            </button>
+          {/if}
+        </div>
+        <div class="pointer-events-auto flex items-center gap-0.5 rounded-lg bg-background/90 p-0.5">
+          {@render chromeRight()}
+        </div>
       </div>
-    </div>
+      <!-- Text scrolling up fades out under the buttons instead of running into them. -->
+      <div class="pointer-events-none absolute inset-x-0 top-0 z-10 h-10 bg-gradient-to-b from-background to-transparent" aria-hidden="true"></div>
+    {/if}
 
     <!-- ── Conversation tab bar ─────────────────────────────────────────
          Not in full AI mode: there the conversation sidebar already lists every
@@ -3266,9 +3852,11 @@
          switcher for the same thing, eating a row of vertical space above the
          messages. The docked panel keeps it (it is narrow enough that the
          sidebar is usually collapsed there). -->
-    {#if mode !== "full" && (openTabs.length > 0 || !activeConvId)}
+    {#if showTabBar}
+      <div class="flex shrink-0 items-center gap-1 border-b border-border bg-panel px-1.5 py-1">
+      {@render chatListButton()}
       <div
-        class="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-border bg-panel px-1.5 py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        class="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       >
         {#if !activeConvId}
           <!-- Unsaved draft tab: always active, never closeable -->
@@ -3292,10 +3880,10 @@
             <button
               type="button"
               class="max-w-[9rem] truncate text-left"
-              title={tab.title}
+              title={displayTitle(tab)}
               onclick={() => void selectConversation(tab.id)}
             >
-              {tab.title}
+              {displayTitle(tab)}
             </button>
             <button
               type="button"
@@ -3318,6 +3906,8 @@
         >
           <Plus class="size-3.5" />
         </button>
+      </div>
+      {@render chromeRight()}
       </div>
     {/if}
 
@@ -3356,81 +3946,52 @@
       <div
         class={mode === "full"
           ? items.length === 0
-            ? "mx-auto w-full max-w-2xl h-full"
+            ? "mx-auto w-full max-w-3xl h-full"
             : "mx-auto w-full max-w-3xl"
           : ""}
       >
         {#if items.length === 0}
           {#if mode === "full"}
-            <!-- ── Full-mode landing ── -->
-            <div class="flex h-full flex-col items-center justify-center gap-8">
-              <!-- Hero text -->
-              <div class="flex flex-col items-center gap-4 text-center">
+            <!-- ── Full-mode landing ──
+                 Sits low, at the composer's width, so the suggestions are a
+                 short reach from where you type; each card shows the prompt it
+                 sends, so picking one is not a guess. -->
+            <div class="flex h-full flex-col justify-end gap-6 pb-6 pt-14">
+              <div class="flex flex-col gap-1.5 px-1">
+                <h1 class="text-ui-2xl font-semibold tracking-[-0.02em] text-foreground">
+                  What do you want to know?
+                </h1>
                 {#if schemaContext.activeTable || schemaContext.tables?.length}
-                  <div
-                    class="inline-flex items-center gap-1.5 rounded-full border border-border/40 bg-muted/30 px-3.5 py-1.5 font-mono text-ui-xs text-muted-foreground transition-colors hover:border-border/60 hover:text-muted-foreground"
-                  >
-                    <Database
-                      class="size-3 shrink-0 text-muted-foreground"
-                    />
-                    {#if schemaContext.activeTable}
-                      {schemaContext.activeSchema}.{schemaContext.activeTable}
-                    {:else}
-                      {schemaContext.activeSchema} · {schemaContext.tables
-                        .length} tables
-                    {/if}
-                  </div>
-                {/if}
-
-                <div class="space-y-2.5">
-                  <h1
-                    class="text-ui-3xl font-semibold leading-[1.2] tracking-[-0.025em] text-foreground"
-                  >
-                    What would you like<br />to explore?
-                  </h1>
-                  <p
-                    class="mx-auto max-w-sm text-ui-sm leading-relaxed text-muted-foreground"
-                  >
-                    Write queries, build charts, explore your schema, just
-                    describe what you need.
+                  <p class="flex items-center gap-1.5 text-ui-xs text-muted-foreground">
+                    <Database class="size-3.5 shrink-0" />
+                    <span class="truncate font-mono">
+                      {#if schemaContext.activeTable}
+                        {schemaContext.activeSchema}.{schemaContext.activeTable}
+                      {:else}
+                        {schemaContext.activeSchema} · {schemaContext.tables.length} tables
+                      {/if}
+                    </span>
                   </p>
-                </div>
+                {/if}
               </div>
 
-              <!-- Suggestions -->
               {#if suggestions.length > 0}
-                <div
-                  class="w-full overflow-hidden rounded-lg border border-border/40"
-                >
-                  <div class="grid grid-cols-2 gap-px bg-border/30">
-                    {#each suggestions.slice(0, 8) as s, i (s.label)}
-                      {@const icons = [
-                        Database,
-                        BarChart2,
-                        Search,
-                        TrendingUp,
-                        Zap,
-                        BookOpen,
-                        Layers,
-                        Table2,
-                      ]}
-                      {@const SugIcon = icons[i % icons.length]}
-                      <button
-                        type="button"
-                        class="group flex items-center gap-3 bg-background px-4 py-3 text-left transition-colors duration-100 hover:bg-muted/25 disabled:opacity-40"
-                        disabled={loading}
-                        onclick={() => void send([s.prompt])}
-                      >
-                        <SugIcon
-                          class="size-3.5 shrink-0 text-muted-foreground transition-colors group-hover:text-muted-foreground"
-                        />
-                        <span
-                          class="min-w-0 flex-1 text-ui-xs text-muted-foreground transition-colors group-hover:text-foreground/80"
-                          >{s.label}</span
-                        >
-                      </button>
-                    {/each}
-                  </div>
+                <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  {#each suggestions.slice(0, 6) as s (s.label)}
+                    {@const SugIcon = suggestionIcon(s.label)}
+                    <button
+                      type="button"
+                      class="group flex min-w-0 items-start gap-3 rounded-xl border border-border/50 bg-card/40 px-3.5 py-3 text-left transition-colors duration-150 hover:border-border hover:bg-accent/40 disabled:opacity-40"
+                      disabled={loading}
+                      onclick={() => void send([s.prompt])}
+                    >
+                      <SugIcon class="mt-0.5 size-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground" />
+                      <span class="flex min-w-0 flex-col gap-0.5">
+                        <span class="truncate text-ui-sm font-medium text-foreground">{s.label}</span>
+                        <span class="truncate text-ui-2xs text-muted-foreground">{s.prompt}</span>
+                      </span>
+                    </button>
+                  {/each}
                 </div>
               {/if}
             </div>
@@ -3465,8 +4026,8 @@
                until hover) actions footer, so a large gap on top of it was paying
                for the same separation twice and left paragraphs stranded ~75px
                apart. The footer IS the breathing room. -->
-          <div bind:this={msgListEl} class="flex flex-col gap-2 py-5" data-studio-selectable="text">
-            {#each items as item (item.id)}
+          <div bind:this={msgListEl} class={cn("relative flex flex-col gap-2 py-5", !showTabBar && "pt-12")} data-studio-selectable="text">
+            {#each items as item, idx (item.id)}
               {#if !drawsNothing(item)}
               <!-- content-visibility:auto lets the browser skip layout/paint for
                    off-screen messages (markdown, code, mermaid, charts), so scrolling
@@ -3475,12 +4036,12 @@
                    Skipped for the transient thinking/executing/streaming rows: they're
                    always at the bottom (visible) and their ping/bounce animations would
                    be clipped by the paint containment cv:auto adds. -->
-              <div class={item.kind === "thinking" || item.kind === "executing" || item.kind === "streaming" ? "" : "[content-visibility:auto] [contain-intrinsic-size:auto_120px]"}>
+              <div data-item-id={item.id} class={cn(showTabBar ? "scroll-mt-3" : "scroll-mt-12", idx >= enterFrom && "ai-enter", item.kind === "thinking" || item.kind === "executing" || item.kind === "streaming" || item.id === anchorId ? "" : "[content-visibility:auto] [contain-intrinsic-size:auto_120px]")}>
               <!-- ── User message ───────────────────────── -->
               {#if item.kind === "user"}
-                <div class="group/msg flex flex-col items-end px-3.5">
+                <div class="group/msg flex flex-col items-end px-3.5 pt-4">
                   <div
-                    class="ai-user-bubble max-w-[80%] rounded-lg bg-accent px-3.5 py-2 whitespace-pre-wrap break-words text-accent-foreground"
+                    class="ai-user-bubble max-w-[80%] rounded-2xl border border-border/50 bg-card px-4 py-2.5 whitespace-pre-wrap break-words text-foreground"
                   >
                     {item.text}
                   </div>
@@ -3529,6 +4090,74 @@
                   <span class="min-w-0 flex-1 truncate font-mono text-ui-3xs text-muted-foreground">
                     {#if item.op === "query" || item.op === "run"}{item.sql.trim().slice(0, 120)}{:else}{meta.detail}{/if}
                   </span>
+                </div>
+
+                <!-- ── A local agent's tool steps, folded ─── -->
+              {:else if item.kind === "work"}
+                {@const running = item.endedAt === null && loading}
+                {@const isOpen = openWork.has(item.id)}
+                {@const failed = item.steps.filter((s) => s.status === "error").length}
+                {@const summary = workSummary(item.steps)}
+                <div class="min-w-0 px-3.5">
+                  <div class="border-b border-border/40 pb-1">
+                  <button
+                    type="button"
+                    class="inline-flex h-7 max-w-full items-center gap-1.5 rounded-md text-ui-xs text-muted-foreground transition-colors hover:text-foreground"
+                    aria-expanded={isOpen}
+                    onclick={() => toggleWork(item.id)}
+                  >
+                    {#if running}
+                      <LoaderCircle class="size-3.5 shrink-0 animate-spin" />
+                    {/if}
+                    <span class="shrink-0 tabular-nums">{running ? "Working for" : "Worked for"} {formatElapsed((item.endedAt ?? (running ? nowMs : item.startedAt)) - item.startedAt)}</span>
+                    {#if summary}
+                      <span class="truncate text-muted-foreground/70">· {summary}</span>
+                    {/if}
+                    {#if failed}
+                      <span class="shrink-0 text-destructive">· {failed} failed</span>
+                    {/if}
+                    <ChevronRight class={cn("size-3.5 shrink-0 transition-transform duration-150", isOpen && "rotate-90")} />
+                  </button>
+                  </div>
+                  <!-- Height eases open and shut (grid rows 0fr to 1fr) instead of
+                       the steps snapping in and out. -->
+                  <div
+                    class="grid transition-[grid-template-rows,opacity] duration-200 ease-out {isOpen ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}"
+                    inert={!isOpen}
+                  >
+                    <div class="min-h-0 overflow-hidden">
+                    <ol class="mt-2 mb-1 ml-1.5 flex flex-col gap-2 border-l border-border/60 pl-3">
+                      {#each item.steps as step (step.id)}
+                        {@const meta = stepLabel(step)}
+                        {#if step.op === "note"}
+                          <li class="text-ui-2xs leading-relaxed whitespace-pre-wrap break-words text-muted-foreground">{step.detail}</li>
+                        {:else}
+                        <li class="flex min-w-0 flex-col gap-1">
+                          <div class="flex min-w-0 items-center gap-2">
+                            {#if step.status === "running"}
+                              <LoaderCircle class="size-3.5 shrink-0 animate-spin text-muted-foreground" />
+                            {:else if step.op === "query"}
+                              <Database class={cn("size-3.5 shrink-0", step.status === "error" ? "text-destructive" : "text-muted-foreground")} />
+                            {:else}
+                              <Layers class={cn("size-3.5 shrink-0", step.status === "error" ? "text-destructive" : "text-muted-foreground")} />
+                            {/if}
+                            <span class="shrink-0 text-ui-2xs font-medium text-foreground/80">{meta.label}</span>
+                            {#if meta.detail}
+                              <span class="min-w-0 flex-1 truncate font-mono text-ui-3xs text-muted-foreground">{meta.detail}</span>
+                            {/if}
+                          </div>
+                          {#if step.op === "query" && step.detail.trim()}
+                            <pre class="max-h-40 overflow-auto rounded-md bg-muted/30 px-2.5 py-1.5 font-mono text-ui-3xs whitespace-pre-wrap break-words text-muted-foreground">{step.detail.trim()}</pre>
+                          {/if}
+                          {#if step.error}
+                            <p class="text-ui-3xs break-words text-destructive">{cleanToolError(step.error)}</p>
+                          {/if}
+                        </li>
+                        {/if}
+                      {/each}
+                    </ol>
+                    </div>
+                  </div>
                 </div>
 
                 <!-- ── Assistant message ──────────────────── -->
@@ -4246,6 +4875,9 @@
                  pinned to the bottom. A zero-height element is enough, and it
                  costs nothing per frame. -->
             <div bind:this={bottomSentinel} aria-hidden="true" class="h-px w-full shrink-0"></div>
+            {#if tailSpace > 0}
+              <div aria-hidden="true" class="w-full shrink-0" style="height:{tailSpace}px"></div>
+            {/if}
           </div>
         {/if}
       </div>
@@ -4310,15 +4942,17 @@
 
     <!-- Jump-to-bottom button: shown whenever user has scrolled away from bottom -->
     {#if userScrolledUp}
-      <div
-        class="pointer-events-none absolute inset-x-0 bottom-24 z-10 flex justify-center"
-      >
+      <!-- A round arrow centred over the composer, as T3 and ChatGPT do; the
+           labelled pill read as one more message lying across the text. -->
+      <div class="pointer-events-none absolute inset-x-0 bottom-28 z-10 flex justify-center">
         <button
           type="button"
           onclick={jumpToBottom}
-          class="pointer-events-auto flex items-center gap-1.5 rounded-full border border-border bg-background px-3 py-1.5 text-ui-xs font-medium text-foreground elevate-2-rim transition-all hover:bg-accent"
+          class="ai-enter pointer-events-auto flex size-8 items-center justify-center rounded-full border border-border/70 bg-popover text-muted-foreground elevate-2-rim transition-colors hover:bg-accent hover:text-foreground"
+          title="Jump to bottom"
+          aria-label="Jump to bottom"
         >
-          <ChevronDown class="size-3.5" />Jump to bottom
+          <ArrowDown class="size-4" />
         </button>
       </div>
     {/if}
@@ -4340,6 +4974,27 @@
             hasPendingConfirm && "opacity-50",
           )}
         >
+          {#if queued.length}
+            <!-- Waiting to be sent, in order; each goes out as a turn ends. -->
+            <ul class="flex flex-col gap-1 border-b border-border/40 px-2 pt-2 pb-1.5" aria-label="Queued messages">
+              {#each queued as q, qi (q.id)}
+                <li class="ai-enter group/q flex min-w-0 items-center gap-2 rounded-lg bg-muted/40 py-1 pr-1 pl-2.5">
+                  <CornerDownRight class="size-3.5 shrink-0 text-muted-foreground" />
+                  <span class="min-w-0 flex-1 truncate text-ui-xs text-foreground/90" title={q.text}>{q.text}</span>
+                  <span class="shrink-0 text-ui-3xs text-muted-foreground">{qi === 0 ? (loading ? "Next" : "Queued") : `#${qi + 1}`}</span>
+                  <button
+                    type="button"
+                    class="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                    title="Remove from queue"
+                    aria-label="Remove from queue"
+                    onclick={() => unqueue(q.id)}
+                  >
+                    <X class="size-3.5" />
+                  </button>
+                </li>
+              {/each}
+            </ul>
+          {/if}
           <!-- Textarea row. Font size comes from the same var as the transcript
                (--ai-chat-font-size, Settings → Appearance), so what you type is
                set at the size you'll read it back at. -->
@@ -4349,7 +5004,7 @@
             style="height:auto;min-height:60px;max-height:200px;overflow-y:auto;font-family:inherit"
             placeholder={hasPendingConfirm
               ? "Confirm or cancel the operation above…"
-              : "Ask anything about your database…"}
+              : "Ask about your data, or send a follow-up…"}
             rows={1}
             value={inputText}
             oninput={(e) => {
@@ -4358,7 +5013,10 @@
               pushHistory(inputText);
             }}
             onkeydown={handleKeydown}
-            onfocus={() => (inputFocused = true)}
+            onfocus={() => {
+              inputFocused = true;
+              prewarmAgent();
+            }}
             onblur={() => (inputFocused = false)}
             disabled={hasPendingConfirm}
           ></textarea>
@@ -4366,8 +5024,11 @@
           <!-- Bottom toolbar row: the controls that change what the next turn
                does sit together on the left, separated by hairlines; the send
                affordance stays alone on the right. -->
-          <div class="flex items-center gap-1 px-2 pb-1.5">
+          <div class="flex items-center gap-1 px-2 pb-2">
             <AiModelPicker onopenSettings={onopenmodelsettings} />
+            {#if profileAgent($aiSettings)}
+              <AgentComposerChips agent={profileAgent($aiSettings) ?? ""} />
+            {/if}
 
             {#if contextStats.messages > 0}
               <span
@@ -4376,7 +5037,7 @@
               ></span>
               <button
                 type="button"
-                class="inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 font-mono text-ui-2xs text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground select-none"
+                class="inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 font-mono text-ui-2xs text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground select-none"
                 onclick={() => {
                   settingsOpen = true;
                   settingsTab = "context";
@@ -4401,7 +5062,9 @@
 
             <!-- Shortcut hint only while the empty composer holds focus: it is
                  guidance for someone about to type, not a permanent label. -->
-            {#if inputFocused && !inputText.trim() && !loading}
+            {#if loading && inputText.trim()}
+              <span class="hidden shrink-0 text-ui-2xs text-muted-foreground sm:block">↵ to queue</span>
+            {:else if inputFocused && !inputText.trim() && !loading}
               <span
                 class="hidden shrink-0 text-ui-2xs text-muted-foreground sm:block"
               >
@@ -4420,7 +5083,7 @@
                 ></span>
                 <button
                   type="button"
-                  class="flex size-6 items-center justify-center rounded-full bg-destructive/90 text-destructive-foreground transition-colors hover:bg-destructive active:scale-95"
+                  class="flex size-7 items-center justify-center rounded-full bg-destructive/90 text-destructive-foreground transition-colors hover:bg-destructive active:scale-95"
                   onclick={stop}
                   aria-label="Stop"
                   title="Stop (Esc)"
@@ -4433,17 +5096,17 @@
               <button
                 type="button"
                 class={cn(
-                  "flex size-6 shrink-0 items-center justify-center rounded-full transition-all duration-150 active:scale-95",
+                  "flex size-7 shrink-0 items-center justify-center rounded-full transition-[background-color,opacity,transform] duration-150 active:scale-95",
                   canSend
                     ? "bg-primary text-primary-foreground hover:opacity-85"
-                    : "text-muted-foreground cursor-not-allowed",
+                    : "bg-muted text-muted-foreground cursor-not-allowed",
                 )}
                 disabled={!canSend}
                 onclick={() => void send()}
                 aria-label="Send"
                 title="Send (↵)"
               >
-                <ArrowUp class="size-3" strokeWidth={2.5} />
+                <ArrowUp class="size-3.5" strokeWidth={2.5} />
               </button>
             {/if}
           </div>
@@ -5238,6 +5901,22 @@
     :global([data-thinking-style]) .agent-think-label { animation: none; }
   }
 
+  /* New turns ease in: a short rise and fade, so a reply, a fold or a result
+     arrives instead of appearing. The app's motion setting switches it off. */
+  @keyframes ai-enter {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  :global(.ai-enter) {
+    animation: ai-enter 220ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  }
+
   /* The composer and the user's own turns read at the transcript's size, so one
      conversation is set in one size rather than three. */
   .ai-composer-input,
@@ -5405,11 +6084,13 @@
     border: 1px solid var(--border);
     border-radius: 8px;
     margin: 0.6rem 0;
+    /* Hug the table: a three-row answer should not stretch the full column. */
+    width: fit-content;
+    max-width: 100%;
   }
   :global(.prose-ai table) {
     border-collapse: collapse;
     width: max-content;
-    min-width: 100%;
     font-size: 0.875em;
   }
   :global(.prose-ai th) {
@@ -5418,15 +6099,12 @@
     z-index: 1;
     border-bottom: 1px solid var(--border);
     border-right: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
-    padding: 0.45rem 1rem;
+    padding: 0.35rem 0.85rem;
     background: color-mix(in oklch, var(--muted) 50%, transparent);
-    font-weight: 600;
+    font-weight: 500;
     text-align: left;
     white-space: nowrap;
     color: var(--muted-foreground);
-    font-size: 0.8em;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
   }
   :global(.prose-ai th:last-child) {
     border-right: none;
@@ -5434,7 +6112,7 @@
   :global(.prose-ai td) {
     border-bottom: 1px solid color-mix(in oklch, var(--border) 45%, transparent);
     border-right: 1px solid color-mix(in oklch, var(--border) 40%, transparent);
-    padding: 0.4rem 1rem;
+    padding: 0.3rem 0.85rem;
     font-family: var(--font-mono);
     font-size: 1em;
     white-space: nowrap;

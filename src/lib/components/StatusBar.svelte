@@ -470,6 +470,14 @@
                 <Icon name="wifi-off" class="size-3.5 shrink-0 text-muted-foreground" />
                 Manage connections…
               </button>
+              <button
+                type="button"
+                class="flex w-full items-center gap-2 rounded-lg px-2 h-6.5 text-ui-xs text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                onclick={() => { connOpen = false; ondisconnect() }}
+              >
+                <Icon name="unplug" class="size-3.5 shrink-0" />
+                Disconnect
+              </button>
             </div>
           {/snippet}
         </SearchableMenu>
@@ -483,6 +491,19 @@
         >
           {@render connTriggerInner(false)}
         </button>
+        {#if connection}
+          <!-- Beside the connection it ends, not beside Settings where a near
+               miss on one meant the other. -->
+          <button
+            type="button"
+            class="{iconBtn} hover:text-destructive!"
+            onclick={ondisconnect}
+            title="Disconnect"
+            aria-label="Disconnect"
+          >
+            <Icon name="unplug" class="size-3.5" />
+          </button>
+        {/if}
       {/if}
 
       {@render sep()}
@@ -621,6 +642,34 @@
           </button>
         {/if}
       </div>
+
+      <!-- Read-only is a fact about this connection, so it sits with it and says
+           so in words; it used to be an orange lock among the tool icons. -->
+      {#if connection}
+        {#if readonly}
+          <button
+            type="button"
+            class="ml-1 flex h-6 shrink-0 items-center gap-1 rounded-md bg-warning/12 px-2 text-ui-2xs font-medium text-warning transition-colors hover:bg-warning/20"
+            title="Read-only: changes are blocked. Click to allow editing."
+            aria-pressed="true"
+            onclick={() => (readonly = false)}
+          >
+            <Icon name="lock" class="size-3 shrink-0" />
+            Read-only
+          </button>
+        {:else}
+          <button
+            type="button"
+            class="{iconBtn} ml-0.5"
+            title="Editable. Click to make this connection read-only."
+            aria-label="Make read-only"
+            aria-pressed="false"
+            onclick={() => (readonly = true)}
+          >
+            <Icon name="lock-open" class="size-3.5" />
+          </button>
+        {/if}
+      {/if}
 
       <!-- Table scroll nav -->
       {#if showTableNav}
@@ -819,35 +868,26 @@
       class={cn(iconBtn, aiMode ? 'text-primary! hover:text-primary!' : '')}
       onclick={onopenaimode}
       title={`${aiMode ? 'Close' : 'Open'} AI (${comboTitle('Mod+Shift+E')})`}
+      aria-label={aiMode ? 'Close AI' : 'Open AI'}
+      aria-pressed={aiMode}
     >
       <Icon name="bot" class="size-3.5" />
     </button>
 
     <!-- Command palette -->
-    <button type="button" class={iconBtn} onclick={onopencommand} title={`Command menu (${comboTitle('Mod+K')})`}>
+    <button type="button" class={iconBtn} onclick={onopencommand} title={`Command menu (${comboTitle('Mod+K')})`} aria-label="Command menu">
       <Icon name="command" class="size-3.5" />
     </button>
 
-    <!-- Read-only toggle -->
-    <button
-      type="button"
-      class={cn(iconBtn, readonly && 'text-warning! hover:text-warning!')}
-      title={readonly ? 'Read-only mode, click to enable editing' : 'Read-write mode, click to lock'}
-      aria-pressed={readonly}
-      onclick={() => (readonly = !readonly)}
-    >
-      {#if readonly}
-        <Icon name="lock" class="size-3.5" />
-      {:else}
-        <Icon name="lock-open" class="size-3.5" />
-      {/if}
-    </button>
+    <!-- Tools to get somewhere, then how the app looks: two groups, not one run. -->
+    {@render sep()}
 
     <!-- Theme toggle -->
     <button
       type="button"
       class={iconBtn}
       title={`Switch to ${$isCurrentThemeDark ? 'light' : 'dark'} (${comboTitle('Mod+M')})`}
+      aria-label={`Switch to ${$isCurrentThemeDark ? 'light' : 'dark'} theme`}
       onclick={() => toggleLightDark()}
     >
       {#if $isCurrentThemeDark}
@@ -870,21 +910,9 @@
     />
 
     <!-- Settings -->
-    <button type="button" class={iconBtn} onclick={onopensettings} title={`Settings (${comboTitle('Mod+,')})`}>
+    <button type="button" class={iconBtn} onclick={onopensettings} title={`Settings (${comboTitle('Mod+,')})`} aria-label="Settings">
       <Icon name="settings" class="size-3.5" />
     </button>
-
-    <!-- Disconnect -->
-    {#if connection}
-      <button
-        type="button"
-        class="{iconBtn} hover:text-destructive!"
-        onclick={ondisconnect}
-        title="Disconnect"
-      >
-        <Icon name="unplug" class="size-3.5" />
-      </button>
-    {/if}
 
     {@render sep()}
 

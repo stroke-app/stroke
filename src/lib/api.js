@@ -1586,3 +1586,40 @@ export async function updateStatus() {
 export async function updateRestart() {
   return inv('update_restart')
 }
+
+// ── Local agent CLIs (Claude Code, Codex, OpenCode) ─────────────────────────
+
+/**
+ * @typedef {{ id: string, label: string, note: string }} AgentModel
+ * @typedef {{ id: string, name: string, status: 'ready' | 'needs_auth' | 'missing', version: string | null, hint: string | null, setup: { verb: string, command: string } | null, models: AgentModel[] }} AgentInfo
+ */
+
+/** Which agent CLIs are installed. @returns {Promise<AgentInfo[]>} */
+export function agentList() {
+  return invoke('agent_list')
+}
+
+/**
+ * Start (or restart) the agent session behind a conversation. Its events,
+ * deck's `AgentEvent` serialized as `{ Variant: payload }`, go to `onEvent`.
+ * @param {{ conversationId: string, agent: string, model?: string, systemPrompt: string, resume?: string | null, effort?: string | null, access?: string }} opts
+ * @param {(ev: any) => void} onEvent
+ */
+export function agentStart(opts, onEvent) {
+  return invoke('agent_start', { ...opts, onEvent: new Channel(onEvent) })
+}
+
+/** Rejects with `NO_SESSION` once the agent has exited. @param {string} conversationId @param {string} text */
+export function agentSend(conversationId, text) {
+  return invoke('agent_send', { conversationId, text })
+}
+
+/** @param {string} conversationId */
+export function agentInterrupt(conversationId) {
+  return invoke('agent_interrupt', { conversationId })
+}
+
+/** @param {string} conversationId */
+export function agentStop(conversationId) {
+  return invoke('agent_stop', { conversationId })
+}

@@ -251,13 +251,16 @@
      first column starts, and the frozen gutter continues down the left as a
      filled strip (matching the grid's row-number column) so its right edge reads
      as the gutter rule - not a hairline floating in empty space. -->
-<div class="relative border-y border-border/40 bg-card">
+<!-- The tone is mixed from the theme's muted and background colours rather than
+     taken from --card, which several themes set to the grid's own background,
+     so the panel reads as set into the grid in every theme. -->
+<div class="relative border-y border-border/50 bg-[color-mix(in_oklch,var(--muted)_32%,var(--background))]">
   {#if indent > 0}
     <div class="pointer-events-none absolute inset-y-0 left-0 border-r border-border/40 bg-muted/20" style="width:{indent}px"></div>
   {/if}
   <div style={indent > 0 ? `padding-left:${indent}px` : undefined}>
   <!-- Toolbar -->
-  <div class="flex items-center gap-2 border-b border-border/20 bg-muted/20 px-3 py-1">
+  <div class="flex items-center gap-2 border-b border-border/40 px-3 py-1">
     {#if rowLabel}
       <span class="font-mono text-ui-xs text-muted-foreground select-none">{rowLabel}</span>
       <span class="text-border/40 select-none text-ui-xs">·</span>

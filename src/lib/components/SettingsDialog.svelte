@@ -524,7 +524,7 @@
 </script>
 
 <Dialog.Root bind:open onOpenChange={handleOpenChange}>
-  <Dialog.Content class="flex h-[min(40rem,88vh)] flex-col gap-0 overflow-hidden p-0 sm:max-w-[56rem]">
+  <Dialog.Content motion="fade" class="flex h-[min(40rem,88vh)] flex-col gap-0 overflow-hidden p-0 sm:max-w-[56rem]">
     <Dialog.Title class="sr-only">Settings</Dialog.Title>
     <Dialog.Description class="sr-only">Appearance, behavior, and integrations</Dialog.Description>
 
@@ -1572,19 +1572,19 @@
 {/snippet}
 
 <style>
-  /* Section/search switch: opacity + subtle lift, ease-out, <250ms */
+  /* Section/search switch: a short fade. The 4px lift it had meant moving
+     the whole pane, which the software renderer on Linux repaints each frame,
+     and on open it ran on top of the dialog's own entrance. */
   .settings-pane {
-    animation: settings-pane-in 200ms cubic-bezier(0.23, 1, 0.32, 1) both;
+    animation: settings-pane-in 120ms ease-out both;
   }
 
   @keyframes settings-pane-in {
     from {
       opacity: 0;
-      transform: translateY(4px);
     }
     to {
       opacity: 1;
-      transform: translateY(0);
     }
   }
 

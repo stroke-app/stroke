@@ -1,5 +1,6 @@
 pub mod server;
 pub mod tools;
+pub mod access;
 
 use std::sync::{Arc, Mutex};
 use tokio::sync::oneshot;
@@ -131,7 +132,7 @@ pub async fn mcp_start(mcp: State<'_, McpState>) -> Result<McpStatus, String> {
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
     let token_clone = token.clone();
     tokio::spawn(async move {
-        server::run(port, token_clone, conn, connections, active_conn_id, read_only, shutdown_rx).await;
+        server::run(port, token_clone, conn, connections, active_conn_id, read_only, None, shutdown_rx).await;
     });
 
     *mcp.port.lock().map_err(|e| e.to_string())? = port;
@@ -190,7 +191,7 @@ pub fn mcp_set_readonly(readonly: bool, mcp: State<'_, McpState>) -> Result<(), 
     Ok(())
 }
 
-async fn find_free_port(preferred: u16) -> Result<u16, String> {
+pub(crate) async fn find_free_port(preferred: u16) -> Result<u16, String> {
     for port in preferred..preferred + 20 {
         if tokio::net::TcpListener::bind(format!("127.0.0.1:{port}"))
             .await
@@ -202,7 +203,7 @@ async fn find_free_port(preferred: u16) -> Result<u16, String> {
     Err(format!("No free port found starting at {preferred}"))
 }
 
-fn generate_token() -> String {
+pub(crate) fn generate_token() -> String {
     // Use OS-provided randomness (getrandom syscall on Linux/macOS, BCryptGenRandom
     // on Windows) for a 128-bit token - far stronger than PID+nanos (~32 bits).
     let mut bytes = [0u8; 16];

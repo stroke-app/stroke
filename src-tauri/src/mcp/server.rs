@@ -20,6 +20,9 @@ struct AppState {
     active_conn_id: Arc<Mutex<Option<String>>>,
     token: String,
     read_only: Arc<Mutex<bool>>,
+    /// An agent session's access level (see `access`); None for the public
+    /// server, which only knows read-only on or off.
+    max_level: Option<u8>,
 }
 
 #[derive(Deserialize)]
@@ -77,9 +80,10 @@ pub async fn run(
     connections: Arc<Mutex<Vec<ConnMeta>>>,
     active_conn_id: Arc<Mutex<Option<String>>>,
     read_only: Arc<Mutex<bool>>,
+    max_level: Option<u8>,
     shutdown_rx: oneshot::Receiver<()>,
 ) {
-    let state = AppState { conn, connections, active_conn_id, token, read_only };
+    let state = AppState { conn, connections, active_conn_id, token, read_only, max_level };
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
@@ -183,6 +187,19 @@ async fn dispatch(
                          Disable read-only mode in Stroke's MCP settings to run write operations."
                             .to_string(),
                     );
+                }
+            }
+
+            if let (Some(max), "execute_sql") = (state.max_level, name) {
+                let needs = super::access::script_level(args["sql"].as_str().unwrap_or(""));
+                if needs > max {
+                    return Err(format!(
+                        "Refused: this needs \"{}\" access and the chat is set to \"{}\". \
+                         Do not retry it. Give the user the SQL in a ```sql block to review and run, \
+                         or ask them to raise the access level in Stroke's composer.",
+                        super::access::level_name(needs),
+                        super::access::level_name(max),
+                    ));
                 }
             }
 

@@ -13,6 +13,8 @@
   import Table2 from "@lucide/svelte/icons/table-2";
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
+  import Database from "@lucide/svelte/icons/database";
+  import Layers from "@lucide/svelte/icons/layers";
   import X from "@lucide/svelte/icons/x";
   import History from "@lucide/svelte/icons/history";
   import Trash2 from "@lucide/svelte/icons/trash-2";
@@ -52,6 +54,8 @@
     aiSettings,
     isAiConfigured,
   } from "$lib/stores/ai-settings.js";
+  import { profileAgent, parseSqlResult, stepLabel } from "$lib/local-agents.js";
+  import { createAgentChat } from "$lib/agent-session.js";
   import { loadSkills } from "$lib/stores/ai-skills.js";
   import {
     clampAiSidebarWidth,
@@ -77,7 +81,14 @@
    *   | { id: string, kind: 'confirm', sql: string, resolve: (ok: boolean) => void }
    *   | { id: string, kind: 'thinking' }
    *   | { id: string, kind: 'executing', sql: string }
+   *   | { id: string, kind: 'work', startedAt: number, endedAt: number|null, steps: WorkStep[] }
    * } ChatItem
+   */
+
+  /**
+   * One step of a local agent's turn, folded under "Worked for 4s" as in the
+   * full chat: a tool call, or a note (what the agent said between calls).
+   * @typedef {{ id: string, tool: string, op: string, detail: string, status: 'running' | 'done' | 'error', error?: string }} WorkStep
    */
 
   let {
@@ -103,6 +114,8 @@
   } = $props();
 
   const uid = () => crypto.randomUUID();
+  /** The local agent CLI behind this panel, when the active model is one. */
+  const agentChat = createAgentChat();
   const configured = $derived(isAiConfigured($aiSettings));
 
   // ── Chat state ───────────────────────────────────────────────────────────
@@ -246,14 +259,14 @@
   let slashIdx = $state(0)
 
   const SLASH_COMMANDS = [
-    { cmd: 'explain',  label: 'Explain',    desc: 'Explain the current table or SQL',    prompt: 'Explain the currently open table (or the SQL in the editor if one is open): its purpose, key columns, and relationships. Be concise.', send: true },
-    { cmd: 'optimize', label: 'Optimize',   desc: 'Suggest query optimizations',         prompt: 'Review the SQL currently in the editor and suggest concrete optimizations (indexes, rewrites, avoiding scans). Return improved SQL in a ```sql block.', send: true },
-    { cmd: 'fix',      label: 'Fix',        desc: 'Find and fix issues in the SQL',       prompt: 'Find problems in the SQL currently in the editor and return corrected SQL in a ```sql block with a brief explanation.', send: true },
-    { cmd: 'index',    label: 'Indexes',    desc: 'Suggest indexes for the active table', prompt: "Based on the active table's columns, primary key, and foreign keys, suggest useful indexes and give the CREATE INDEX statements in a ```sql block.", send: true },
-    { cmd: 'chart',    label: 'Chart',      desc: 'Visualize data as a chart',           prompt: 'Chart ', send: false },
-    { cmd: 'erd',      label: 'Diagram',    desc: 'Draw an ERD of the schema',           prompt: 'Draw an entity-relationship diagram of this schema as a mermaid erDiagram inside a ```mermaid code block, with the main tables, key columns, and relationships.', send: true },
-    { cmd: 'summary',  label: 'Summary',    desc: 'Summarize the whole schema',          prompt: 'Give a concise overview of this database: the main tables, how they relate, and what the schema is for.', send: true },
-    { cmd: 'count',    label: 'Row counts', desc: 'Count rows across every table',        prompt: 'Show the row count of every table in the current schema, ordered by count descending. Run the query and report the results.', send: true },
+    { cmd: 'explain',  label: 'Explain',    desc: 'Explain the current table or SQL',    prompt: 'Explain the currently open table (or the SQL in the editor if one is open): its purpose, key columns, and relationships. Be concise.' },
+    { cmd: 'optimize', label: 'Optimize',   desc: 'Suggest query optimizations',         prompt: 'Review the SQL currently in the editor and suggest concrete optimizations (indexes, rewrites, avoiding scans). Return improved SQL in a ```sql block.' },
+    { cmd: 'fix',      label: 'Fix',        desc: 'Find and fix issues in the SQL',       prompt: 'Find problems in the SQL currently in the editor and return corrected SQL in a ```sql block with a brief explanation.' },
+    { cmd: 'index',    label: 'Indexes',    desc: 'Suggest indexes for the active table', prompt: "Based on the active table's columns, primary key, and foreign keys, suggest useful indexes and give the CREATE INDEX statements in a ```sql block." },
+    { cmd: 'chart',    label: 'Chart',      desc: 'Visualize data as a chart',           prompt: 'Chart ' },
+    { cmd: 'erd',      label: 'Diagram',    desc: 'Draw an ERD of the schema',           prompt: 'Draw an entity-relationship diagram of this schema as a mermaid erDiagram inside a ```mermaid code block, with the main tables, key columns, and relationships.' },
+    { cmd: 'summary',  label: 'Summary',    desc: 'Summarize the whole schema',          prompt: 'Give a concise overview of this database: the main tables, how they relate, and what the schema is for.' },
+    { cmd: 'count',    label: 'Row counts', desc: 'Count rows across every table',        prompt: 'Show the row count of every table in the current schema, ordered by count descending. Run the query and report the results.' },
   ]
 
   const slashItems = $derived.by(() => {
@@ -266,14 +279,16 @@
   /** @param {typeof SLASH_COMMANDS[number]} command */
   function runSlash(command) {
     slashOpen = false
-    if (command.send) {
-      inputText = ''
-      resetInputHeight()
-      void send([command.prompt])
-    } else {
-      inputText = command.prompt
-      void tick().then(() => { resizeInput(); inputRef?.focus() })
-    }
+    // Never sent on pick: the prompt goes into the box to read and edit, and
+    // Enter sends it. Sending straight away gave no chance to add the detail
+    // that makes the answer useful ("explain this, focusing on the joins").
+    inputText = command.prompt
+    void tick().then(() => {
+      resizeInput()
+      inputRef?.focus()
+      const end = inputText.length
+      inputRef?.setSelectionRange?.(end, end)
+    })
   }
 
   // ── Scroll helpers ────────────────────────────────────────────────────────
@@ -323,7 +338,7 @@
     const latest = convList[0]
     activeConvId = latest.id
     items = /** @type {ChatItem[]} */ ((latest.items ?? []).filter(
-      (i) => ['user','assistant','result','chart'].includes(/** @type {any} */ (i).kind)
+      (i) => ['user','assistant','result','chart','work'].includes(/** @type {any} */ (i).kind)
     ))
     apiHistory = /** @type {import('$lib/ai.js').ApiMessage[]} */ (latest.apiHistory ?? [])
     rawApiHistory = /** @type {import('$lib/ai.js').ApiMessage[]} */ (latest.apiHistory ?? [])
@@ -332,7 +347,7 @@
   }
 
   async function persistCurrent() {
-    const saveable = items.filter(i => ['user','assistant','result','chart'].includes(i.kind))
+    const saveable = items.filter(i => ['user','assistant','result','chart','work'].includes(i.kind))
     if (saveable.length === 0) return
     const firstUser = saveable.find(i => i.kind === 'user')
     const title = firstUser?.kind === 'user' ? firstUser.text.slice(0, 60) + (firstUser.text.length > 60 ? '…' : '') : 'Conversation'
@@ -350,11 +365,13 @@
 
   async function selectConversation(/** @type {string} */ id) {
     if (id === activeConvId) { historyOpen = false; return }
+    // Another conversation: its own agent session, not this one carried over.
+    agentChat.reset()
     abortCurrentRequest(); await persistCurrent()
     const conv = convList.find(c => c.id === id)
     if (!conv) return
     activeConvId = id
-    items = /** @type {ChatItem[]} */ ((conv.items ?? []).filter(i => ['user','assistant','result','chart'].includes(/** @type {any} */ (i).kind)))
+    items = /** @type {ChatItem[]} */ ((conv.items ?? []).filter(i => ['user','assistant','result','chart','work'].includes(/** @type {any} */ (i).kind)))
     apiHistory = /** @type {import('$lib/ai.js').ApiMessage[]} */ (conv.apiHistory ?? [])
     rawApiHistory = /** @type {import('$lib/ai.js').ApiMessage[]} */ (conv.apiHistory ?? [])
     error = ''; historyOpen = false
@@ -410,6 +427,7 @@
   onMount(() => { void restoreLatest() })
   let rafId = /** @type {number | null} */ (null)
   onDestroy(() => {
+    agentChat.stop()
     void persistCurrent()
     if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null }
     if (_streamTimer !== null) { clearTimeout(_streamTimer); _streamTimer = null }
@@ -435,6 +453,7 @@
 
   async function newChat() {
     abortCurrentRequest(); await persistCurrent()
+    agentChat.reset()
     activeConvId = null; items = []; apiHistory = []; rawApiHistory = []; error = ''; aiStatusHint = ''; inputText = ''; historyOpen = false
     await tick(); inputRef?.focus()
   }
@@ -444,7 +463,7 @@
     for (const i of items.filter((i) => i.kind === 'confirm')) i.resolve(false)
     abortController?.abort(); abortController = null; loading = false
   }
-  function stop() { flushStreamingContent(); abortController?.abort() }
+  function stop() { flushStreamingContent(); abortController?.abort(); agentChat.interrupt() }
   async function copyText(text) { await navigator.clipboard.writeText(text).catch(() => {}) }
 
   /** @param {number} ts */
@@ -556,6 +575,24 @@
 
     loading = true; abortController = new AbortController(); executedCalls = new Set(); failureTracker = new Map()
 
+    // A local agent CLI has no HTTP endpoint: it reads the schema through
+    // Stroke's MCP tools, so none of the prompt building below applies.
+    const agent = profileAgent($aiSettings)
+    if (agent) {
+      try {
+        const reply = await runAgentTurn(agent, content + ctxNote)
+        if (reply) {
+          apiHistory.push({ role: 'assistant', content: reply })
+          rawApiHistory.push({ role: 'assistant', content: reply })
+        }
+      } catch (e) {
+        error = String(/** @type {any} */ (e)?.message ?? e)
+      } finally {
+        finishAgentTurn()
+      }
+      return
+    }
+
     const looksLikeDataQuery = text.length > 4 || /select|from|show|list|count|table|schema|column|insert|update|delete/i.test(text)
     if (looksLikeDataQuery) await ensureFullSchemaCache()
 
@@ -585,6 +622,133 @@
       void persistCurrent()
       await tick(); inputRef?.focus()
     }
+  }
+
+  /**
+   * One turn with a local agent, drawn with this panel's items: streamed
+   * text, a running-query row per Stroke tool call, a result table for rows.
+   * @param {string} agent @param {string} text
+   * @returns {Promise<string>} the reply's text
+   */
+  async function runAgentTurn(agent, text) {
+    let content = ''
+    let reply = ''
+    let itemId = /** @type {string | null} */ (null)
+    /** The turn's one "Worked for" fold, made at its first tool call or note. */
+    let workId = /** @type {string | null} */ (null)
+    /** @type {Map<string, string>} tool call id -> SQL or detail, for its result card */
+    const details = new Map()
+    /** @param {(w: any) => any} fn */
+    const patchWork = (fn) => { const id = workId; if (id) items = items.map(i => i.id === id && i.kind === 'work' ? fn(i) : i) }
+    const pauseWork = () => patchWork(w => w.endedAt === null ? { ...w, endedAt: Date.now() } : w)
+    const ensureWork = (/** @type {string | null} */ replaceId = null) => {
+      if (workId) {
+        // Working again after a note: the clock runs on from where it paused.
+        patchWork(w => w.endedAt === null ? w : { ...w, startedAt: w.startedAt + (Date.now() - w.endedAt), endedAt: null })
+        return
+      }
+      const wid = uid(); workId = wid
+      const fold = /** @type {ChatItem} */ ({ id: wid, kind: 'work', startedAt: Date.now(), endedAt: null, steps: [] })
+      const at = replaceId ? items.findIndex(i => i.id === replaceId) : -1
+      if (at >= 0) items.splice(at, 1, fold); else items.push(fold)
+    }
+    /** Text before a tool call was narration, not the answer: it goes into the fold. */
+    const foldText = () => {
+      if (!itemId) return
+      flushStreamingContent()
+      const id = itemId; const note = content.trim()
+      itemId = null; streamingId = null; streamingContent = ''; _pendingStreamContent = ''; content = ''
+      const had = !!workId
+      ensureWork(had ? null : id)
+      if (had) items = items.filter(i => i.id !== id)
+      if (note) patchWork(w => ({ ...w, steps: [...w.steps, { id: uid(), tool: 'note', op: 'note', detail: note, status: 'done' }] }))
+    }
+    const dropThinking = () => { const i = items.findIndex(x => x.kind === 'thinking'); if (i >= 0) items.splice(i, 1) }
+    const closeText = () => {
+      pauseWork()
+      if (!itemId) return
+      flushStreamingContent()
+      const id = itemId
+      items = items.map(i => i.id === id ? /** @type {ChatItem} */ ({ id, kind: 'assistant', parts: parseAssistantMessage(content) }) : i)
+      reply += (reply ? '\n\n' : '') + content
+      itemId = null; streamingId = null; streamingContent = ''; _pendingStreamContent = ''; content = ''
+    }
+    const tables = (schemaContext.tables ?? []).map((/** @type {any} */ t) => (typeof t === 'string' ? t : t?.name)).filter(Boolean)
+    await agentChat.runTurn({
+      agent,
+      model: $aiSettings.model ?? '',
+      text,
+      ctx: { dbType: schemaContext.dbType, activeSchema: schemaContext.activeSchema, activeTable: schemaContext.activeTable, tables, extra: buildViewContext() },
+      on: {
+        text: (delta) => {
+          aiStatusHint = ''
+          content += delta
+          if (!itemId) {
+            pauseWork()
+            dropThinking()
+            itemId = uid(); streamingId = itemId
+            items.push(/** @type {ChatItem} */ ({ id: itemId, kind: 'streaming' }))
+          }
+          scheduleStreamingUpdate(content); scrollBottomSoon()
+        },
+        toolCall: ({ id, tool, input }) => {
+          foldText(); dropThinking(); ensureWork()
+          const op = tool === 'execute_sql' || tool === 'explain_query' ? 'query' : tool === 'describe_table' ? 'describe' : 'schema'
+          const detail = op === 'query' ? String(input?.sql ?? '') : op === 'describe' ? String(input?.table ?? '') : ''
+          details.set(id, detail)
+          patchWork(w => ({ ...w, steps: [...w.steps, { id, tool, op, detail, status: 'running' }] }))
+          scrollBottomSoon()
+        },
+        toolResult: ({ id, tool, text: out, isError }) => {
+          patchWork(w => ({ ...w, steps: w.steps.map((/** @type {WorkStep} */ st) => st.id === id ? { ...st, status: isError ? 'error' : 'done', ...(isError ? { error: out.slice(0, 400) } : {}) } : st) }))
+          // Rows still get their table; a failure is already shown in the fold.
+          const parsed = tool === 'execute_sql' && !isError ? parseSqlResult(out) : null
+          if (parsed && parsed.total > 0) {
+            items.push(/** @type {ChatItem} */ ({ id: uid(), kind: 'result', sql: details.get(id) ?? '', columns: parsed.columns, rows: parsed.rows.slice(0, AI_DISPLAY_ROWS), total: parsed.total, error: null }))
+            scrollBottomSoon()
+          }
+        },
+        failed: (message) => { error = message },
+      },
+    })
+    closeText()
+    pauseWork()
+    return reply
+  }
+
+  /** Folds the user opened. */
+  let openWork = $state(/** @type {Set<string>} */ (new Set()))
+  /** @param {string} id */
+  function toggleWork(id) {
+    const next = new Set(openWork)
+    if (next.has(id)) next.delete(id); else next.add(id)
+    openWork = next
+  }
+  /** @param {number} ms */
+  function formatElapsed(ms) {
+    const sec = Math.max(1, Math.round(ms / 1000))
+    return sec < 60 ? `${sec}s` : `${Math.floor(sec / 60)}m ${sec % 60}s`
+  }
+  /** @param {WorkStep[]} steps */
+  function workSummary(steps) {
+    const q = steps.filter(x => x.op === 'query').length
+    const r = steps.filter(x => x.op !== 'query' && x.op !== 'note').length
+    return [q ? `${q} ${q === 1 ? 'query' : 'queries'}` : '', r ? `${r} schema ${r === 1 ? 'read' : 'reads'}` : ''].filter(Boolean).join(' · ')
+  }
+
+  /** Close out an agent turn on screen: text kept, indicators gone. */
+  function finishAgentTurn() {
+    flushStreamingContent()
+    if (streamingId) {
+      const partial = streamingContent.trim(); const sid = streamingId
+      items = items.filter(i => i.kind !== 'thinking' && i.kind !== 'executing').map(i => i.id === sid ? /** @type {ChatItem} */ ({ id: sid, kind: 'assistant', parts: parseAssistantMessage(partial || '…') }) : i)
+      streamingId = null; streamingContent = ''; _pendingStreamContent = ''
+    } else {
+      items = items.filter(i => i.kind !== 'thinking' && i.kind !== 'executing')
+    }
+    abortController = null; loading = false; openResultId = null; aiStatusHint = ''
+    void persistCurrent()
+    void tick().then(() => inputRef?.focus())
   }
 
   /**
@@ -994,24 +1158,26 @@
           {#if item.kind === 'user'}
             <!-- Prose stays prose; SQL, attached or fenced in an older chat,
                  shows as code inside the bubble instead of backticks. -->
-            <div class="flex justify-end">
-              <div class="flex max-w-[88%] min-w-0 flex-col gap-1.5 rounded-xl rounded-tr-md bg-primary px-3 py-2 text-ui-xs leading-relaxed text-primary-foreground">
+            <!-- A quiet card, as in the full chat: a solid accent bubble was the
+                 loudest thing in the panel and outshone the answers. -->
+            <div class="flex justify-end pt-1">
+              <div class="flex max-w-[88%] min-w-0 flex-col gap-1.5 rounded-2xl border border-border/50 bg-card px-3 py-2 text-ui-xs leading-relaxed text-foreground">
                 {#each splitFences(item.text) as part, pi (pi)}
                   {#if part.code}
-                    <pre class="max-h-40 overflow-auto rounded-md bg-primary-foreground/12 px-2 py-1.5 font-mono text-ui-2xs leading-snug whitespace-pre-wrap">{part.content}</pre>
+                    <pre class="max-h-40 overflow-auto rounded-md border border-border/40 bg-muted/40 px-2 py-1.5 font-mono text-ui-2xs leading-snug whitespace-pre-wrap text-foreground/85">{part.content}</pre>
                   {:else}
                     <p class="font-reading whitespace-pre-wrap break-words">{part.content}</p>
                   {/if}
                 {/each}
                 {#if item.sql}
-                  <pre class="max-h-40 overflow-auto rounded-md bg-primary-foreground/12 px-2 py-1.5 font-mono text-ui-2xs leading-snug whitespace-pre-wrap">{item.sql}</pre>
+                  <pre class="max-h-40 overflow-auto rounded-md border border-border/40 bg-muted/40 px-2 py-1.5 font-mono text-ui-2xs leading-snug whitespace-pre-wrap text-foreground/85">{item.sql}</pre>
                 {/if}
               </div>
             </div>
 
           {:else if item.kind === 'thinking'}
-            <div class="flex items-center gap-2.5">
-              <Sparkles class="size-3 shrink-0 animate-pulse text-primary" />
+            <div class="flex h-6 items-center gap-2">
+              <Loader2 class="size-3.5 shrink-0 animate-spin text-muted-foreground" />
               <span class="agent-think-label text-ui-xs text-muted-foreground transition-opacity duration-200 {thinkingVisible ? 'opacity-100' : 'opacity-0'}">{aiStatusHint || thinkingPhrase}</span>
             </div>
 
@@ -1083,10 +1249,59 @@
             </div>
 
           {:else if item.kind === 'executing'}
-            <div class="flex items-center gap-2.5">
-              <Loader2 class="size-3 shrink-0 animate-spin text-muted-foreground" />
-              <span class="shrink-0 rounded bg-warning/10 px-1.5 py-0.5 font-mono text-ui-3xs font-medium text-warning">SQL</span>
-              <span class="min-w-0 truncate text-ui-xs text-muted-foreground">{item.sql}</span>
+            <div class="flex h-6 items-center gap-2">
+              <Loader2 class="size-3.5 shrink-0 animate-spin text-muted-foreground" />
+              <span class="min-w-0 truncate font-mono text-ui-2xs text-muted-foreground">{item.sql}</span>
+            </div>
+
+          {:else if item.kind === 'work'}
+            {@const running = item.endedAt === null && loading}
+            {@const isOpen = openWork.has(item.id)}
+            {@const failed = item.steps.filter((x) => x.status === 'error').length}
+            {@const summary = workSummary(item.steps)}
+            <div class="min-w-0 border-b border-border/40 pb-1">
+              <button
+                type="button"
+                class="inline-flex h-6 max-w-full items-center gap-1.5 text-ui-2xs text-muted-foreground transition-colors hover:text-foreground"
+                aria-expanded={isOpen}
+                onclick={() => toggleWork(item.id)}
+              >
+                {#if running}<Loader2 class="size-3 shrink-0 animate-spin" />{/if}
+                <span class="shrink-0">{running ? 'Working' : `Worked for ${formatElapsed((item.endedAt ?? item.startedAt) - item.startedAt)}`}</span>
+                {#if summary}<span class="truncate text-muted-foreground/70">· {summary}</span>{/if}
+                {#if failed}<span class="shrink-0 text-destructive">· {failed} failed</span>{/if}
+                <ChevronRight class={cn('size-3 shrink-0 transition-transform duration-150', isOpen && 'rotate-90')} />
+              </button>
+              <div class="grid transition-[grid-template-rows,opacity] duration-200 ease-out {isOpen ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}" inert={!isOpen}>
+                <div class="min-h-0 overflow-hidden">
+                  <ol class="mt-1.5 mb-1 ml-1 flex flex-col gap-1.5 border-l border-border/60 pl-2.5">
+                    {#each item.steps as st (st.id)}
+                      {#if st.op === 'note'}
+                        <li class="text-ui-2xs leading-relaxed whitespace-pre-wrap break-words text-muted-foreground">{st.detail}</li>
+                      {:else}
+                        {@const meta = stepLabel(st)}
+                        <li class="flex min-w-0 flex-col gap-1">
+                          <div class="flex min-w-0 items-center gap-1.5">
+                            {#if st.status === 'running'}
+                              <Loader2 class="size-3 shrink-0 animate-spin text-muted-foreground" />
+                            {:else if st.op === 'query'}
+                              <Database class={cn('size-3 shrink-0', st.status === 'error' ? 'text-destructive' : 'text-muted-foreground')} />
+                            {:else}
+                              <Layers class={cn('size-3 shrink-0', st.status === 'error' ? 'text-destructive' : 'text-muted-foreground')} />
+                            {/if}
+                            <span class="shrink-0 text-ui-2xs font-medium text-foreground/80">{meta.label}</span>
+                            {#if meta.detail}<span class="min-w-0 truncate font-mono text-ui-3xs text-muted-foreground">{meta.detail}</span>{/if}
+                          </div>
+                          {#if st.op === 'query' && st.detail.trim()}
+                            <pre class="max-h-32 overflow-auto rounded-md bg-muted/30 px-2 py-1 font-mono text-ui-3xs whitespace-pre-wrap break-words text-muted-foreground">{st.detail.trim()}</pre>
+                          {/if}
+                          {#if st.error}<p class="text-ui-3xs break-words text-destructive">{st.error}</p>{/if}
+                        </li>
+                      {/if}
+                    {/each}
+                  </ol>
+                </div>
+              </div>
             </div>
 
           {:else if item.kind === 'result'}
@@ -1206,15 +1421,20 @@
     {#if slashOpen && slashItems.length > 0}
       <div class="absolute bottom-full left-2.5 right-2.5 z-50 mb-1.5 overflow-hidden rounded-[10px] border border-border/60 bg-popover elevate-2-rim">
         <div class="app-scroll max-h-56 overflow-y-auto p-1">
+          <!-- The command in full and what it does. A fixed name column cut
+               "/explain" to "/expla…" while a title beside it repeated the
+               name, and hover painted a second highlight next to the
+               keyboard's: hovering now moves the one highlight. -->
           {#each slashItems as item, idx (item.cmd)}
             {@const active = idx === slashIdx}
             <button type="button"
-              class={cn('flex w-full items-center gap-2 rounded-md px-2 py-1 text-left transition-colors', active ? 'bg-accent' : 'hover:bg-accent/40')}
+              class={cn('flex h-7 w-full min-w-0 items-center gap-2.5 rounded-md px-2 text-left', active && 'bg-accent')}
+              onmouseenter={() => (slashIdx = idx)}
               onmousedown={(e) => { e.preventDefault(); runSlash(item) }}
             >
-              <span class={cn('w-14 shrink-0 truncate font-mono text-ui-2xs', active ? 'text-primary' : 'text-muted-foreground')}>/{item.cmd}</span>
-              <span class="shrink-0 text-ui-2xs font-medium text-foreground/85">{item.label}</span>
-              <span class="min-w-0 flex-1 truncate text-right text-ui-3xs text-muted-foreground">{item.desc}</span>
+              <!-- min-w, not w: the descriptions line up, and a longer command grows past it instead of being cut. -->
+              <span class={cn('min-w-[10ch] shrink-0 font-mono text-ui-xs', active ? 'text-foreground' : 'text-foreground/80')}>/{item.cmd}</span>
+              <span class="min-w-0 flex-1 truncate text-ui-2xs text-muted-foreground" title={item.desc}>{item.desc}</span>
             </button>
           {/each}
         </div>
@@ -1232,10 +1452,12 @@
                so two or three fit on a line instead of one chip per line. -->
           {#each contextTables as t (t)}
             {@const short = t.startsWith(`${schemaContext.activeSchema}.`) ? t.slice(schemaContext.activeSchema.length + 1) : t}
-            <span class="inline-flex h-6 max-w-full min-w-0 items-center gap-1 rounded-md bg-primary/10 pl-1.5 pr-0.5 text-primary" title={t}>
-              <Table2 class="size-3 shrink-0" />
+            <!-- Neutral like the Editor SQL chip beside it: an accent fill made
+                 a mentioned table the loudest thing in the composer. -->
+            <span class="inline-flex h-6 max-w-full min-w-0 items-center gap-1 rounded-md bg-foreground/[0.06] pl-1.5 pr-0.5 text-foreground/85" title={t}>
+              <Table2 class="size-3 shrink-0 text-muted-foreground" />
               <span class="min-w-0 truncate font-mono text-ui-2xs">{short}</span>
-              <button type="button" class="inline-flex size-5 shrink-0 items-center justify-center rounded text-primary/80 transition-colors hover:bg-primary/15 hover:text-primary" title="Remove {t}" aria-label="Remove {t}" onclick={() => (contextTables = contextTables.filter((x) => x !== t))}>
+              <button type="button" class="inline-flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground" title="Remove {t}" aria-label="Remove {t}" onclick={() => (contextTables = contextTables.filter((x) => x !== t))}>
                 <X class="size-3" />
               </button>
             </span>

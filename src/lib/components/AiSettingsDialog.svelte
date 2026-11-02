@@ -1,4 +1,5 @@
 <script>
+  import { profileAgent } from "$lib/local-agents.js";
   import { onDestroy } from "svelte";
   import { fetchOllamaRegistry, formatModelSize } from "$lib/ollama-registry.js";
   import Check from "@lucide/svelte/icons/check";
@@ -384,10 +385,9 @@
     if (!formModel.trim()) return;
     saving = true;
     try {
-      const id = editingId ?? crypto.randomUUID();
       const name = formName.trim() || modelShortName(formModel);
       const isNew = !editingId;
-      await saveProfile({ id, name, provider: formProvider, baseUrl: formBaseUrl.trim() || (provider?.url ?? ""), model: formModel.trim() }, formApiKey);
+      const id = await saveProfile({ id: editingId ?? crypto.randomUUID(), name, provider: formProvider, baseUrl: formBaseUrl.trim() || (provider?.url ?? ""), model: formModel.trim() }, formApiKey);
       await setActiveProfile(id);
       view = "list";
       // Adding a model is a finished errand - the new model is already active,
@@ -423,6 +423,9 @@
 
   /** @param {string} model */
   function modelShortName(model) { return model.split("/").pop()?.split(":")[0] ?? model; }
+
+  // Local agents are picked from the model menu and have nothing to edit here.
+  const listedProfiles = $derived($aiProfiles.filter((p) => !profileAgent(p)));
 </script>
 
 <!-- Selected mark: a filled badge reads as a deliberate state, where a bare tick
@@ -507,11 +510,11 @@
       </div>
 
       <div class="app-scroll max-h-[min(60vh,26rem)] overflow-y-auto px-2 py-1.5">
-        {#if $aiProfiles.length === 0}
+        {#if listedProfiles.length === 0}
           <p class="py-6 text-center text-ui-xs text-muted-foreground">No models configured.</p>
         {:else}
           <div class="flex flex-col">
-            {#each $aiProfiles as profile (profile.id)}
+            {#each listedProfiles as profile (profile.id)}
               {@const isActive = profile.id === $activeProfileId}
               <ContextMenu.Root>
                 <ContextMenu.Trigger>

@@ -230,7 +230,7 @@ export const SHORTCUT_GROUPS = [
     shortcuts: [
       { combo: 'Enter', desc: 'Send message' },
       { combo: 'Shift+Enter', desc: 'New line' },
-      { combo: 'Mod+Shift+B', desc: 'Toggle conversation list' },
+      { combo: 'Mod+B', desc: 'Toggle conversation list' },
       { combo: 'Mod+Shift+T', desc: 'New conversation' },
     ],
   },

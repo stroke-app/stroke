@@ -853,7 +853,7 @@
               </Command.Item>
               <Command.Item value="about license version info app" onSelect={() => run(onopenabout)}>
                 <Icon name="info" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
-                <span data-slot="command-label" class="truncate">About Stroke</span>
+                <span data-slot="command-label" class="truncate">About and license</span>
               </Command.Item>
               <Command.Item value="report issue bug crash problem feedback github" onSelect={() => run(onopenreport)}>
                 <Icon name="bug" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
