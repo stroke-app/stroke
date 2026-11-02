@@ -6,6 +6,13 @@
 		ref = $bindable(null),
 		portalProps,
 		class: className,
+		/**
+		 * bits-ui locks body scroll by default: it reads computed styles on
+		 * <html> and <body>, then rewrites <body>'s overflow and padding, which
+		 * restyles the whole app on open and again on close. Stroke's page never
+		 * scrolls (html is overflow-hidden), so the lock guards nothing.
+		 */
+		preventScroll = false,
 		...restProps
 	} = $props();
 </script>
@@ -13,6 +20,7 @@
 <ContextMenuPortal {...portalProps}>
 	<ContextMenuPrimitive.Content
 		bind:ref
+		{preventScroll}
 		data-slot="context-menu-content"
 		class={cn(
 			// Fade only, and fast - the same call the submenu makes, for the same

@@ -12,6 +12,13 @@
 		portalProps,
 		children,
 		showCloseButton = true,
+		/**
+		 * bits-ui locks body scroll by default: it reads computed styles on
+		 * <html> and <body>, then rewrites <body>'s overflow and padding, which
+		 * restyles the whole app on open and again on close. Stroke's page never
+		 * scrolls (html is overflow-hidden), so the lock guards nothing.
+		 */
+		preventScroll = false,
 		/** @type {((e: Event) => void) | undefined} */
 		onCloseAutoFocus,
 		...restProps
@@ -39,6 +46,7 @@
 	<Dialog.Overlay />
 	<DialogPrimitive.Content
 		bind:ref
+		{preventScroll}
 		data-slot="dialog-content"
 		onCloseAutoFocus={handleCloseAutoFocus}
 		class={cn(
