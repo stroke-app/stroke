@@ -109,7 +109,7 @@ export const PROVIDER_MODELS = {
  * }} ModelProfile
  */
 
-/** @typedef {{ baseUrl: string, apiKey: string, model: string }} AiSettings */
+/** @typedef {{ baseUrl: string, apiKey: string, model: string, provider?: string }} AiSettings */
 
 // ── Storage keys ─────────────────────────────────────────────────────────────
 
@@ -280,7 +280,26 @@ export async function refreshActiveSettings() {
   const profile = profiles.find((p) => p.id === activeId) ?? profiles[0]
   if (!profile) return
   const apiKey = await loadKeyForProfile(profile.id)
-  aiSettings.set({ baseUrl: profile.baseUrl, apiKey, model: profile.model })
+  aiSettings.set({ baseUrl: profile.baseUrl, apiKey, model: profile.model, provider: profile.provider })
+}
+
+/**
+ * Switch to a local agent CLI. Each agent keeps one profile (`agent:claude`)
+ * whose model follows the last pick, so the list does not grow a row per model.
+ * @param {string} agent
+ * @param {string} agentName
+ * @param {{ id: string, label: string } | null} model
+ */
+export async function useAgentProfile(agent, agentName, model) {
+  const id = `agent:${agent}`
+  await saveProfile({
+    id,
+    name: model ? `${agentName} · ${model.label}` : agentName,
+    provider: id,
+    baseUrl: '',
+    model: model?.id ?? '',
+  })
+  await setActiveProfile(id)
 }
 
 // Bootstrap after the first paint, not during module evaluation. This is the
@@ -364,6 +383,8 @@ export async function setActiveProfile(id) {
 /** True when the given settings can reach a provider without further setup. */
 export function isAiConfigured(s) {
   return Boolean(s.apiKey) ||
+    // A local agent CLI signs in on its own.
+    String(s.provider ?? '').startsWith('agent:') ||
     /localhost|127\.0\.0\.1/.test(s.baseUrl) ||
     // The free tier authenticates with the device id, so "no key" is configured.
     (s.baseUrl ?? '').includes('stroke.click') ||
