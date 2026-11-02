@@ -5405,11 +5405,13 @@
     border: 1px solid var(--border);
     border-radius: 8px;
     margin: 0.6rem 0;
+    /* Hug the table: a three-row answer should not stretch the full column. */
+    width: fit-content;
+    max-width: 100%;
   }
   :global(.prose-ai table) {
     border-collapse: collapse;
     width: max-content;
-    min-width: 100%;
     font-size: 0.875em;
   }
   :global(.prose-ai th) {
@@ -5418,15 +5420,12 @@
     z-index: 1;
     border-bottom: 1px solid var(--border);
     border-right: 1px solid color-mix(in oklch, var(--border) 60%, transparent);
-    padding: 0.45rem 1rem;
+    padding: 0.35rem 0.85rem;
     background: color-mix(in oklch, var(--muted) 50%, transparent);
-    font-weight: 600;
+    font-weight: 500;
     text-align: left;
     white-space: nowrap;
     color: var(--muted-foreground);
-    font-size: 0.8em;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
   }
   :global(.prose-ai th:last-child) {
     border-right: none;
@@ -5434,7 +5433,7 @@
   :global(.prose-ai td) {
     border-bottom: 1px solid color-mix(in oklch, var(--border) 45%, transparent);
     border-right: 1px solid color-mix(in oklch, var(--border) 40%, transparent);
-    padding: 0.4rem 1rem;
+    padding: 0.3rem 0.85rem;
     font-family: var(--font-mono);
     font-size: 1em;
     white-space: nowrap;
