@@ -3407,15 +3407,32 @@
     loadConvList();
   });
 
+  /**
+   * Ctrl+B hides and shows the chat list while the chat is on screen. The app
+   * binds it to its own sidebar, so this listens in the capture phase and
+   * keeps the key from reaching that binding.
+   * @param {KeyboardEvent} e
+   */
+  function onChatListKey(e) {
+    if (!(isActive || mode === "full")) return;
+    if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== "b") return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    toggleAiSidebar();
+  }
+
   onMount(() => {
     void tick().then(() => inputRef?.focus());
     document.addEventListener("keydown", handleGlobalKey);
+    window.addEventListener("keydown", onChatListKey, true);
     // Pre-warm schema cache so the first message doesn't pay the fetch cost
     if (schemaContext.tables?.length) void ensureFullSchemaCache();
   });
 
   onDestroy(() => {
     document.removeEventListener("keydown", handleGlobalKey);
+    window.removeEventListener("keydown", onChatListKey, true);
+    stopAgentSession();
     // Cancel any pending rAF handles to avoid callbacks on destroyed DOM
     if (rafId !== null) {
       cancelAnimationFrame(rafId);
@@ -3525,7 +3542,7 @@
         <button
           type="button"
           class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          title="Hide chats ({modKey}⇧B)"
+          title="Hide chats ({modKey}B)"
           onclick={toggleAiSidebar}
         >
           <PanelLeft class="size-3.5" />
@@ -3658,6 +3675,20 @@
           </div>
         {/if}
       </div>
+      {#if onexit}
+        <!-- The way back to the data, where the eye lands after the chat list. -->
+        <div class="shrink-0 border-t border-border/60 p-1.5">
+          <button
+            type="button"
+            class="flex h-8 w-full items-center gap-2 rounded-md px-2 text-ui-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            onclick={onexit}
+          >
+            <Minimize2 class="size-3.5 shrink-0" />
+            <span class="min-w-0 flex-1 truncate text-left">Exit AI mode</span>
+            <kbd class="shrink-0 font-mono text-ui-3xs text-muted-foreground/80">{modKey}⇧E</kbd>
+          </button>
+        </div>
+      {/if}
     </aside>
     <!-- Drag, or arrow keys when focused, to widen the chat list; double-click resets. -->
     <div class="-ml-1 flex" ondblclick={() => { sidebarWidth = SIDEBAR_DEFAULT_W; saveSidebarWidth(); }} role="presentation">
