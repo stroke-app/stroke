@@ -363,7 +363,9 @@
                 {/each}
               </colgroup>
 
-              <thead class="sticky top-0 z-10">
+              <!-- Opaque under the header's 25% tint: the tint alone let rows
+                   scrolling up show through the column names. -->
+              <thead class="sticky top-0 z-10 bg-background">
                 <tr>
                   {#if numW}
                     <th
