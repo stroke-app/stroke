@@ -1360,12 +1360,15 @@ async fn get_database_stats_pg(pool: &sqlx::PgPool, schema: &str) -> Result<Stri
             pg_indexes_size(t.oid),
             COALESCE(s.n_live_tup, 0),
             COALESCE(s.n_dead_tup, 0),
-            CASE WHEN (COALESCE(s.heap_blks_hit,0) + COALESCE(s.heap_blks_read,0)) > 0
-                 THEN ROUND(100.0 * s.heap_blks_hit / (s.heap_blks_hit + s.heap_blks_read), 1)
+            -- The block counters are in pg_statio_*, not pg_stat_*; float8 so
+            -- the f64 decode below does not silently drop a numeric.
+            CASE WHEN (COALESCE(io.heap_blks_hit,0) + COALESCE(io.heap_blks_read,0)) > 0
+                 THEN ROUND(100.0 * io.heap_blks_hit / (io.heap_blks_hit + io.heap_blks_read), 1)::float8
                  ELSE NULL END
         FROM pg_class t
         JOIN pg_namespace n ON n.oid = t.relnamespace
         LEFT JOIN pg_stat_user_tables s ON s.relid = t.oid
+        LEFT JOIN pg_statio_user_tables io ON io.relid = t.oid
         WHERE n.nspname = $1 AND t.relkind = 'r'
         ORDER BY pg_total_relation_size(t.oid) DESC
         LIMIT 30
