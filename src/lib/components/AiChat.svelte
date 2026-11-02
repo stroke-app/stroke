@@ -3954,9 +3954,9 @@
               <div class={item.kind === "thinking" || item.kind === "executing" || item.kind === "streaming" ? "" : "[content-visibility:auto] [contain-intrinsic-size:auto_120px]"}>
               <!-- ── User message ───────────────────────── -->
               {#if item.kind === "user"}
-                <div class="group/msg flex flex-col items-end px-3.5">
+                <div class="group/msg flex flex-col items-end px-3.5 pt-4">
                   <div
-                    class="ai-user-bubble max-w-[80%] rounded-lg bg-accent px-3.5 py-2 whitespace-pre-wrap break-words text-accent-foreground"
+                    class="ai-user-bubble max-w-[80%] rounded-2xl border border-border/50 bg-card px-4 py-2.5 whitespace-pre-wrap break-words text-foreground"
                   >
                     {item.text}
                   </div>
