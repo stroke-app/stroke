@@ -384,10 +384,9 @@
     if (!formModel.trim()) return;
     saving = true;
     try {
-      const id = editingId ?? crypto.randomUUID();
       const name = formName.trim() || modelShortName(formModel);
       const isNew = !editingId;
-      await saveProfile({ id, name, provider: formProvider, baseUrl: formBaseUrl.trim() || (provider?.url ?? ""), model: formModel.trim() }, formApiKey);
+      const id = await saveProfile({ id: editingId ?? crypto.randomUUID(), name, provider: formProvider, baseUrl: formBaseUrl.trim() || (provider?.url ?? ""), model: formModel.trim() }, formApiKey);
       await setActiveProfile(id);
       view = "list";
       // Adding a model is a finished errand - the new model is already active,
