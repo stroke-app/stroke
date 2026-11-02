@@ -51,6 +51,7 @@ sleep 1
         permission_mode: PermissionMode::Ask,
         env: Vec::new(),
         allowed_tools: Vec::new(),
+        extra_args: Vec::new(),
     };
     let mut session = adapter.spawn(ctx).await.unwrap();
     session.send(UserTurn::text("go")).await.unwrap();

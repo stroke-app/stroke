@@ -463,13 +463,16 @@ impl AgentSession for CliSession {
     async fn send(&mut self, turn: UserTurn) -> Result<(), AgentError> {
         let prompt = self.compose(&turn);
         let resume = self.resume_arg();
-        let args = self.spec.args(
+        let mut args = self.spec.args(
             &prompt,
             &self.ctx.cwd.to_string_lossy(),
             self.ctx.model.as_deref(),
             resume.as_deref(),
             self.ctx.permission_mode,
         );
+        // Options must come before a resume subcommand and the prompt.
+        let at = self.spec.base_args.len();
+        args.splice(at..at, self.ctx.extra_args.iter().cloned());
         self.turns += 1;
         let resuming = self.sent == 0 && self.ctx.resume.is_some() && resume.is_some();
         self.sent += 1;
@@ -543,6 +546,7 @@ mod tests {
             permission_mode: agent_core::PermissionMode::Ask,
             env: Vec::new(),
             allowed_tools: Vec::new(),
+            extra_args: Vec::new(),
         }
     }
 

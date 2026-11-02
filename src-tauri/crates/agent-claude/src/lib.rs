@@ -109,6 +109,7 @@ impl ClaudeAdapter {
             }
             .into(),
         );
+        a.extend(ctx.extra_args.iter().cloned());
         a
     }
 
@@ -581,6 +582,7 @@ mod tests {
             permission_mode: PermissionMode::Ask,
             env: Vec::new(),
             allowed_tools: Vec::new(),
+            extra_args: Vec::new(),
         }
     }
 

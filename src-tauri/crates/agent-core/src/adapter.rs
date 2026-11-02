@@ -114,6 +114,10 @@ pub struct SessionCtx {
     /// Tools pre-approved regardless of `permission_mode`, in the backend's own
     /// syntax (Claude: `Bash(deck:*)`). Lets a gated session still drive the host.
     pub allowed_tools: Vec<String>,
+    /// Extra command-line flags in the backend's own syntax, for host policy the
+    /// shared fields cannot express (Stroke: Claude's `--tools ""`, Codex's
+    /// `-c mcp_servers.…`). Placed after the backend's base arguments.
+    pub extra_args: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
