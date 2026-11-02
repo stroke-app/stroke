@@ -36,7 +36,19 @@
   import { Input } from "$lib/components/ui/input/index.js";
   import { Label } from "$lib/components/ui/label/index.js";
   import { cn } from "$lib/utils.js";
-  import { executeSql, aiWebSearch, aiFetchPage, saveExportAs } from "$lib/api.js";
+  import { executeSql, aiWebSearch, aiFetchPage, saveExportAs, agentStart, agentSend, agentInterrupt, agentStop } from "$lib/api.js";
+  import {
+    profileAgent,
+    strokeToolName,
+    toolOutputText,
+    parseSqlResult,
+    agentSystemPrompt,
+    agentPrefs,
+    AGENTS_WITH_EFFORT,
+    stepLabel,
+    cleanToolError,
+  } from "$lib/local-agents.js";
+  import AgentComposerChips from "$lib/components/AgentComposerChips.svelte";
   import { isReadOnly, guardWrite } from "$lib/stores/read-only.js";
   import { isWriteSql, stripSqlComments } from "$lib/sql-write.js";
   import {
@@ -106,6 +118,7 @@
   import Search from "@lucide/svelte/icons/search";
   import TrendingUp from "@lucide/svelte/icons/trending-up";
   import Layers from "@lucide/svelte/icons/layers";
+  import LoaderCircle from "@lucide/svelte/icons/loader-circle";
   import GitBranch from "@lucide/svelte/icons/git-branch";
   import Brain from "@lucide/svelte/icons/brain";
   import AiModelPicker from "./AiModelPicker.svelte";
@@ -132,7 +145,14 @@
    *   | { id: string, kind: 'executing', sql: string, op: 'query' | 'schema' | 'describe' | 'run' | 'diagram' }
    *   | { id: string, kind: 'diagram', code: string, title: string }
    *   | { id: string, kind: 'web', mode: 'search'|'fetch', label: string, hits: {title:string,url:string,snippet:string}[], error: string|null, loading: boolean }
+   *   | { id: string, kind: 'work', startedAt: number, endedAt: number|null, steps: WorkStep[] }
    * } ChatItem
+   */
+
+  /**
+   * One step of a local agent's turn, folded under "Worked for 4s": a tool
+   * call, or a `note` (what the agent said between calls).
+   * @typedef {{ id: string, tool: string, op: 'query' | 'schema' | 'describe' | 'note', detail: string, status: 'running' | 'done' | 'error', error?: string }} WorkStep
    */
 
   /**
@@ -415,6 +435,8 @@
     const conv = convList.find((c) => c.id === id);
     if (!conv) return;
     activeConvId = id;
+    stopAgentSession();
+    agentNative = /** @type {any} */ (conv).agentNative ?? null;
     // Restore - filter out ephemeral items (including any stuck streaming items)
     items = /** @type {ChatItem[]} */ (
       (conv.items ?? []).filter(
@@ -440,6 +462,8 @@
     abortCurrentRequest();
     await persistCurrent();
     activeConvId = null;
+    stopAgentSession();
+    agentNative = null;
     items = [];
     apiHistory = [];
     rawApiHistory = [];
@@ -464,6 +488,8 @@
     }
     if (activeConvId === id) {
       activeConvId = null;
+      stopAgentSession();
+      agentNative = null;
       items = [];
       apiHistory = [];
       rawApiHistory = [];
@@ -512,6 +538,7 @@
       await updateConversation(activeConvId, {
         items: plainItems,
         apiHistory: plainHistory,
+        agentNative: agentNative ? { ...agentNative } : null,
       });
     } else {
       const conv = await createConversation({
@@ -520,6 +547,7 @@
         connectionId,
         items: plainItems,
         apiHistory: plainHistory,
+        agentNative: agentNative ? { ...agentNative } : null,
       });
       activeConvId = conv.id;
       // Prepend new conversation at the top (it is the newest)
@@ -832,6 +860,7 @@
    */
   function stop() {
     if (!loading && !abortController) return;
+    interruptAgentTurn();
     turnSeq++;
     const ctrl = abortController;
     abortController = null;
@@ -879,6 +908,7 @@
     for (const i of items.filter((i) => i.kind === "confirm")) {
       i.resolve(false);
     }
+    interruptAgentTurn();
     turnSeq++;
     if (abortController) {
       abortController.abort();
@@ -1352,7 +1382,9 @@
         (i) =>
           i.kind === "thinking" ||
           i.kind === "streaming" ||
-          i.kind === "executing",
+          i.kind === "executing" ||
+          // A local agent's fold already says it is working.
+          (i.kind === "work" && i.endedAt === null),
       ),
   );
 
@@ -1705,6 +1737,27 @@
     executedCalls = new Set();
     failureTracker = new Map();
 
+    // A local agent CLI reads the schema through its own tools, so none of the
+    // prompt building below applies to it.
+    const agent = profileAgent($aiSettings);
+    if (agent) {
+      try {
+        const reply = await runAgentTurn(agent, $aiSettings.model ?? "", text, disowned);
+        if (disowned()) return;
+        if (reply) {
+          apiHistory.push({ role: "assistant", content: reply });
+          rawApiHistory.push({ role: "assistant", content: reply });
+        }
+        await persistCurrent();
+        void generateAiTitle();
+      } catch (e) {
+        if (!disowned()) error = String(/** @type {any} */ (e)?.message ?? e);
+      } finally {
+        if (!disowned()) await finishTurn();
+      }
+      return;
+    }
+
     // Proactively fetch column definitions for all tables into session cache
     // only when the query looks like it's asking about data (not a trivial message).
     const looksLikeDataQuery =
@@ -1848,6 +1901,15 @@
     inputRef?.focus();
   }
 
+  // ── Local agent CLIs ──────────────────────────────────────────────────────
+  /** Wall clock for a live "Working for 12s"; ticks only while a turn runs. */
+  let nowMs = $state(Date.now());
+  $effect(() => {
+    if (!loading) return;
+    nowMs = Date.now();
+    const timer = setInterval(() => (nowMs = Date.now()), 1000);
+    return () => clearInterval(timer);
+  });
   /**
    * What the list shows for a chat. Chats saved before titles skipped small
    * talk are all called "hi"; they get a title from their messages here,
@@ -1860,6 +1922,314 @@
       .filter((/** @type {any} */ i) => i?.kind === "user")
       .map((/** @type {any} */ i) => String(i.text ?? ""));
     return texts.length ? conversationTitle(texts, conv.createdAt) : conv.title || "New chat";
+  }
+
+  /** Folds the user opened. */
+  let openWork = $state(/** @type {Set<string>} */ (new Set()));
+
+  /** @param {string} id */
+  function toggleWork(id) {
+    const next = new Set(openWork);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    openWork = next;
+  }
+
+  /** @param {number} ms */
+  function formatElapsed(ms) {
+    const s = Math.max(1, Math.round(ms / 1000));
+    return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
+  }
+
+  /** "2 queries · 1 schema read". @param {WorkStep[]} steps */
+  function workSummary(steps) {
+    const queries = steps.filter((s) => s.op === "query").length;
+    const reads = steps.filter((s) => s.op !== "query" && s.op !== "note").length;
+    return [
+      queries ? `${queries} ${queries === 1 ? "query" : "queries"}` : "",
+      reads ? `${reads} schema ${reads === 1 ? "read" : "reads"}` : "",
+    ].filter(Boolean).join(" · ");
+  }
+
+  /** The agent session behind this chat: its backend key and what started it. */
+  let agentSession = /** @type {{ key: string, agent: string, model: string, effort: string, access: string, ready: Promise<void> } | null} */ (null);
+  /** The CLI's own session id for the open conversation, to resume it later. */
+  let agentNative = /** @type {{ agent: string, id: string } | null} */ (null);
+  /** Receives the running turn's events; null between turns. */
+  let agentOnEvent = /** @type {((ev: any) => void) | null} */ (null);
+  /** Ends the running turn early (Stop, or a switch of conversation). */
+  let agentSettle = /** @type {(() => void) | null} */ (null);
+
+  function stopAgentSession() {
+    if (agentSession) void agentStop(agentSession.key).catch(() => {});
+    agentSession = null;
+  }
+
+  function interruptAgentTurn() {
+    if (agentSession && agentOnEvent) void agentInterrupt(agentSession.key).catch(() => {});
+    agentOnEvent = null;
+    agentSettle?.();
+    agentSettle = null;
+  }
+
+  /**
+   * The session to send to, started when there is none or the agent or model
+   * changed. A restart resumes the CLI's own session, so the agent keeps the
+   * conversation it had.
+   * @param {string} agent @param {string} model
+   */
+  async function ensureAgentSession(agent, model) {
+    const effort = AGENTS_WITH_EFFORT.has(agent) ? $agentPrefs.effort : "";
+    // A connection opened read-only stays read-only for the agent too.
+    /** @type {import('$lib/local-agents.js').AgentAccess} */
+    const access = isReadOnly() ? "read" : $agentPrefs.access;
+    const s = agentSession;
+    if (s?.agent === agent && s.model === model && s.effort === effort && s.access === access) {
+      // Started already, or still starting from the composer's focus: wait for
+      // that start rather than racing it with a second one.
+      await s.ready;
+      return s.key;
+    }
+    stopAgentSession();
+    const key = activeConvId ?? `draft-${uid()}`;
+    /** @type {(v?: unknown) => void} */
+    let started = () => {};
+    /** @type {(e: unknown) => void} */
+    let failed = () => {};
+    /** @type {Promise<void>} */
+    const ready = new Promise((res, rej) => { started = res; failed = rej; });
+    // A failed start is reported by the send that awaits it, not as unhandled.
+    ready.catch(() => {});
+    const session = { key, agent, model, effort, access, ready };
+    agentSession = session;
+    const tables = (schemaContext.tables ?? [])
+      .map((/** @type {any} */ t) => (typeof t === "string" ? t : t?.name))
+      .filter(Boolean);
+    try {
+      await agentStart(
+        {
+          conversationId: key,
+          agent,
+          model,
+          systemPrompt: agentSystemPrompt({
+            dbType: schemaContext.dbType,
+            activeSchema: schemaContext.activeSchema,
+            activeTable: schemaContext.activeTable,
+            tables,
+            access,
+          }),
+          resume: agentNative?.agent === agent ? agentNative.id : null,
+          effort: effort || null,
+          access,
+        },
+        (ev) => {
+          if (agentSession !== session) return;
+          const native = ev.Started?.native_session_id;
+          if (native) agentNative = { agent, id: native };
+          if (ev.Fatal) agentSession = null;
+          agentOnEvent?.(ev);
+        },
+      );
+      started();
+    } catch (e) {
+      if (agentSession === session) agentSession = null;
+      failed(e);
+      throw e;
+    }
+    return key;
+  }
+
+  /**
+   * Start the agent while the user is still typing, as T3 and deck do: the
+   * CLI's boot (a second or two for Claude Code) is paid before Send, not after.
+   */
+  function prewarmAgent() {
+    const agent = profileAgent($aiSettings);
+    if (!agent || loading) return;
+    ensureAgentSession(agent, $aiSettings.model ?? "").catch(() => {});
+  }
+
+  /**
+   * One turn with a local agent, drawn with the same items as the HTTP path:
+   * streamed text, a query card per Stroke tool call, result tables.
+   * Resolves with the reply's text.
+   * @param {string} agent @param {string} model @param {string} text
+   * @param {() => boolean} disowned
+   * @returns {Promise<string>}
+   */
+  async function runAgentTurn(agent, model, text, disowned) {
+    const key = await ensureAgentSession(agent, model);
+    let content = "";
+    let reply = "";
+    let itemId = /** @type {string | null} */ (null);
+    /** The turn's one "Worked for" fold, made at its first tool call or note. */
+    let workId = /** @type {string | null} */ (null);
+    /** @type {Map<string, { workId: string, name: string, detail: string }>} */
+    const tools = new Map();
+    /** @param {string} id @param {(w: any) => any} fn */
+    const patchWork = (id, fn) => {
+      items = items.map((i) => (i.id === id && i.kind === "work" ? fn(i) : i));
+    };
+    /** Stop the fold's clock while the agent writes; the next call resumes it. */
+    const closeWork = () => {
+      if (!workId) return;
+      patchWork(workId, (w) => (w.endedAt === null ? { ...w, endedAt: Date.now() } : w));
+    };
+    const dropThinking = () => {
+      const i = items.findIndex((x) => x.kind === "thinking");
+      if (i >= 0) items.splice(i, 1);
+    };
+    /** Finish the streamed text so a tool card can follow it. */
+    const closeText = () => {
+      closeWork();
+      if (!itemId) return;
+      flushStreamingContent();
+      const id = itemId;
+      const parts = parseAssistantMessage(content);
+      items = items.map((i) =>
+        i.id === id ? /** @type {ChatItem} */ ({ id, kind: "assistant", parts, ts: Date.now() }) : i,
+      );
+      reply += (reply ? "\n\n" : "") + content;
+      itemId = null;
+      streamingId = null;
+      streamingContent = "";
+      _pendingStreamContent = "";
+      content = "";
+    };
+    /**
+     * Text written before a tool call was narration ("I'll check the schema"),
+     * not the answer: it moves into the fold, so only the reply that ends the
+     * turn stays in the transcript, as T3 does.
+     */
+    const foldText = () => {
+      if (!itemId) return;
+      flushStreamingContent();
+      const id = itemId;
+      const note = content.trim();
+      itemId = null;
+      streamingId = null;
+      streamingContent = "";
+      _pendingStreamContent = "";
+      content = "";
+      if (!workId) {
+        // The fold takes the narration's place in the transcript.
+        const wid = uid();
+        workId = wid;
+        items = items.map((i) =>
+          i.id === id ? /** @type {ChatItem} */ ({ id: wid, kind: "work", startedAt: Date.now(), endedAt: null, steps: [] }) : i,
+        );
+      } else {
+        items = items.filter((i) => i.id !== id);
+      }
+      if (note) {
+        /** @type {WorkStep} */
+        const step = { id: uid(), tool: "note", op: "note", detail: note, status: "done" };
+        patchWork(workId, (w) => ({ ...w, steps: [...w.steps, step] }));
+      }
+    };
+    /** @param {any} call */
+    const onToolCall = (call) => {
+      const tool = strokeToolName(String(call.name ?? ""));
+      const input = call.input ?? {};
+      /** @type {WorkStep['op']} */
+      const op = tool === "execute_sql" || tool === "explain_query" ? "query"
+        : tool === "describe_table" ? "describe" : "schema";
+      const detail = op === "query" ? String(input.sql ?? "")
+        : op === "describe" ? String(input.table ?? "") : tool.replace(/_/g, " ");
+      const known = tools.get(call.id);
+      if (known) {
+        // The same call again with its full input.
+        known.detail = detail || known.detail;
+        patchWork(known.workId, (w) => ({
+          ...w,
+          steps: w.steps.map((/** @type {WorkStep} */ s) => (s.id === call.id ? { ...s, detail: known.detail } : s)),
+        }));
+        return;
+      }
+      foldText();
+      dropThinking();
+      if (!workId) {
+        workId = uid();
+        items.push(/** @type {ChatItem} */ ({ id: workId, kind: "work", startedAt: Date.now(), endedAt: null, steps: [] }));
+      } else {
+        // Working again after a note: the clock runs on from where it paused.
+        patchWork(workId, (w) => (w.endedAt === null ? w : { ...w, startedAt: w.startedAt + (Date.now() - w.endedAt), endedAt: null }));
+      }
+      const wid = workId;
+      tools.set(call.id, { workId: wid, name: tool, detail });
+      /** @type {WorkStep} */
+      const step = { id: String(call.id), tool, op, detail, status: "running" };
+      patchWork(wid, (w) => ({ ...w, steps: [...w.steps, step] }));
+      scrollBottomSoon();
+    };
+    /** @param {any} res */
+    const onToolResult = (res) => {
+      const t = tools.get(res.id);
+      if (!t) return;
+      const out = toolOutputText(res.output);
+      patchWork(t.workId, (w) => ({
+        ...w,
+        steps: w.steps.map((/** @type {WorkStep} */ s) =>
+          s.id === String(res.id)
+            ? { ...s, status: res.is_error ? "error" : "done", ...(res.is_error ? { error: cleanToolError(out).slice(0, 400) } : {}) }
+            : s,
+        ),
+      }));
+      const parsed = t.name === "execute_sql" && !res.is_error ? parseSqlResult(out) : null;
+      // Rows still get their table; a failure is already shown in the fold.
+      if (parsed && parsed.total > 0) {
+        const id = uid();
+        items.push(/** @type {ChatItem} */ ({ id, kind: "result", sql: t.detail, columns: parsed.columns, rows: parsed.rows.slice(0, AI_DISPLAY_ROWS), total: parsed.total, error: null }));
+        autoOpenResult(id);
+      }
+    };
+
+    await new Promise((resolve, reject) => {
+      const settle = (/** @type {Error | null} */ err) => {
+        agentOnEvent = null;
+        agentSettle = null;
+        if (err) reject(err);
+        else resolve(undefined);
+      };
+      agentSettle = () => settle(null);
+      agentOnEvent = (ev) => {
+        if (disowned()) return settle(null);
+        if (ev.Text) {
+          aiStatusHint = "";
+          content += ev.Text.delta;
+          if (!itemId) {
+            closeWork();
+            dropThinking();
+            itemId = uid();
+            streamingId = itemId;
+            items.push(/** @type {ChatItem} */ ({ id: itemId, kind: "streaming" }));
+          }
+          scheduleStreamingUpdate(content);
+        } else if (ev.ToolCall) onToolCall(ev.ToolCall);
+        else if (ev.ToolResult) onToolResult(ev.ToolResult);
+        else if (ev.TurnFailed) error = ev.TurnFailed.message;
+        else if (ev.TurnEnd) {
+          closeText();
+          closeWork();
+          settle(null);
+        } else if (ev.Fatal) {
+          closeText();
+          closeWork();
+          settle(new Error(ev.Fatal.message));
+        }
+      };
+      agentSend(key, text).catch(async (e) => {
+        if (String(e) !== "NO_SESSION") return settle(e instanceof Error ? e : new Error(String(e)));
+        // The CLI exited between turns: start it again, resuming, and resend.
+        agentSession = null;
+        try {
+          await agentSend(await ensureAgentSession(agent, model), text);
+        } catch (e2) {
+          settle(e2 instanceof Error ? e2 : new Error(String(e2)));
+        }
+      });
+    });
+    return reply + (content ? (reply ? "\n\n" : "") + content : "");
   }
 
   /** Max rows fetched from DB per AI tool call - prevents OOM on large tables */
@@ -3548,6 +3918,74 @@
                   </span>
                 </div>
 
+                <!-- ── A local agent's tool steps, folded ─── -->
+              {:else if item.kind === "work"}
+                {@const running = item.endedAt === null && loading}
+                {@const isOpen = openWork.has(item.id)}
+                {@const failed = item.steps.filter((s) => s.status === "error").length}
+                {@const summary = workSummary(item.steps)}
+                <div class="min-w-0 px-3.5">
+                  <div class="border-b border-border/40 pb-1">
+                  <button
+                    type="button"
+                    class="inline-flex h-7 max-w-full items-center gap-1.5 rounded-md text-ui-xs text-muted-foreground transition-colors hover:text-foreground"
+                    aria-expanded={isOpen}
+                    onclick={() => toggleWork(item.id)}
+                  >
+                    {#if running}
+                      <LoaderCircle class="size-3.5 shrink-0 animate-spin" />
+                    {/if}
+                    <span class="shrink-0 tabular-nums">{running ? "Working for" : "Worked for"} {formatElapsed((item.endedAt ?? (running ? nowMs : item.startedAt)) - item.startedAt)}</span>
+                    {#if summary}
+                      <span class="truncate text-muted-foreground/70">· {summary}</span>
+                    {/if}
+                    {#if failed}
+                      <span class="shrink-0 text-destructive">· {failed} failed</span>
+                    {/if}
+                    <ChevronRight class={cn("size-3.5 shrink-0 transition-transform duration-150", isOpen && "rotate-90")} />
+                  </button>
+                  </div>
+                  <!-- Height eases open and shut (grid rows 0fr to 1fr) instead of
+                       the steps snapping in and out. -->
+                  <div
+                    class="grid transition-[grid-template-rows,opacity] duration-200 ease-out {isOpen ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}"
+                    inert={!isOpen}
+                  >
+                    <div class="min-h-0 overflow-hidden">
+                    <ol class="mt-2 mb-1 ml-1.5 flex flex-col gap-2 border-l border-border/60 pl-3">
+                      {#each item.steps as step (step.id)}
+                        {@const meta = stepLabel(step)}
+                        {#if step.op === "note"}
+                          <li class="text-ui-2xs leading-relaxed whitespace-pre-wrap break-words text-muted-foreground">{step.detail}</li>
+                        {:else}
+                        <li class="flex min-w-0 flex-col gap-1">
+                          <div class="flex min-w-0 items-center gap-2">
+                            {#if step.status === "running"}
+                              <LoaderCircle class="size-3.5 shrink-0 animate-spin text-muted-foreground" />
+                            {:else if step.op === "query"}
+                              <Database class={cn("size-3.5 shrink-0", step.status === "error" ? "text-destructive" : "text-muted-foreground")} />
+                            {:else}
+                              <Layers class={cn("size-3.5 shrink-0", step.status === "error" ? "text-destructive" : "text-muted-foreground")} />
+                            {/if}
+                            <span class="shrink-0 text-ui-2xs font-medium text-foreground/80">{meta.label}</span>
+                            {#if meta.detail}
+                              <span class="min-w-0 flex-1 truncate font-mono text-ui-3xs text-muted-foreground">{meta.detail}</span>
+                            {/if}
+                          </div>
+                          {#if step.op === "query" && step.detail.trim()}
+                            <pre class="max-h-40 overflow-auto rounded-md bg-muted/30 px-2.5 py-1.5 font-mono text-ui-3xs whitespace-pre-wrap break-words text-muted-foreground">{step.detail.trim()}</pre>
+                          {/if}
+                          {#if step.error}
+                            <p class="text-ui-3xs break-words text-destructive">{cleanToolError(step.error)}</p>
+                          {/if}
+                        </li>
+                        {/if}
+                      {/each}
+                    </ol>
+                    </div>
+                  </div>
+                </div>
+
                 <!-- ── Assistant message ──────────────────── -->
               {:else if item.kind === "assistant"}
                 <div class="group/msg min-w-0 px-3.5">
@@ -4375,7 +4813,10 @@
               pushHistory(inputText);
             }}
             onkeydown={handleKeydown}
-            onfocus={() => (inputFocused = true)}
+            onfocus={() => {
+              inputFocused = true;
+              prewarmAgent();
+            }}
             onblur={() => (inputFocused = false)}
             disabled={hasPendingConfirm}
           ></textarea>
@@ -4385,6 +4826,9 @@
                affordance stays alone on the right. -->
           <div class="flex items-center gap-1 px-2 pb-1.5">
             <AiModelPicker onopenSettings={onopenmodelsettings} />
+            {#if profileAgent($aiSettings)}
+              <AgentComposerChips agent={profileAgent($aiSettings) ?? ""} />
+            {/if}
 
             {#if contextStats.messages > 0}
               <span
