@@ -996,24 +996,26 @@
           {#if item.kind === 'user'}
             <!-- Prose stays prose; SQL, attached or fenced in an older chat,
                  shows as code inside the bubble instead of backticks. -->
-            <div class="flex justify-end">
-              <div class="flex max-w-[88%] min-w-0 flex-col gap-1.5 rounded-xl rounded-tr-md bg-primary px-3 py-2 text-ui-xs leading-relaxed text-primary-foreground">
+            <!-- A quiet card, as in the full chat: a solid accent bubble was the
+                 loudest thing in the panel and outshone the answers. -->
+            <div class="flex justify-end pt-1">
+              <div class="flex max-w-[88%] min-w-0 flex-col gap-1.5 rounded-2xl border border-border/50 bg-card px-3 py-2 text-ui-xs leading-relaxed text-foreground">
                 {#each splitFences(item.text) as part, pi (pi)}
                   {#if part.code}
-                    <pre class="max-h-40 overflow-auto rounded-md bg-primary-foreground/12 px-2 py-1.5 font-mono text-ui-2xs leading-snug whitespace-pre-wrap">{part.content}</pre>
+                    <pre class="max-h-40 overflow-auto rounded-md border border-border/40 bg-muted/40 px-2 py-1.5 font-mono text-ui-2xs leading-snug whitespace-pre-wrap text-foreground/85">{part.content}</pre>
                   {:else}
                     <p class="font-reading whitespace-pre-wrap break-words">{part.content}</p>
                   {/if}
                 {/each}
                 {#if item.sql}
-                  <pre class="max-h-40 overflow-auto rounded-md bg-primary-foreground/12 px-2 py-1.5 font-mono text-ui-2xs leading-snug whitespace-pre-wrap">{item.sql}</pre>
+                  <pre class="max-h-40 overflow-auto rounded-md border border-border/40 bg-muted/40 px-2 py-1.5 font-mono text-ui-2xs leading-snug whitespace-pre-wrap text-foreground/85">{item.sql}</pre>
                 {/if}
               </div>
             </div>
 
           {:else if item.kind === 'thinking'}
-            <div class="flex items-center gap-2.5">
-              <Sparkles class="size-3 shrink-0 animate-pulse text-primary" />
+            <div class="flex h-6 items-center gap-2">
+              <Loader2 class="size-3.5 shrink-0 animate-spin text-muted-foreground" />
               <span class="agent-think-label text-ui-xs text-muted-foreground transition-opacity duration-200 {thinkingVisible ? 'opacity-100' : 'opacity-0'}">{aiStatusHint || thinkingPhrase}</span>
             </div>
 
