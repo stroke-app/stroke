@@ -2010,6 +2010,9 @@
     return Sparkles;
   }
 
+  /** Docked chats keep a tab strip; full mode lists chats in its sidebar. */
+  const showTabBar = $derived(mode !== "full" && (openTabs.length > 0 || !activeConvId));
+
   /** Folds the user opened. */
   let openWork = $state(/** @type {Set<string>} */ (new Set()));
 
@@ -3704,66 +3707,74 @@
 
   <!-- ── Main chat area ─────────────────────────────────────────────── -->
   <div class="relative flex min-h-0 min-w-0 flex-1 flex-col">
-    <!-- Header: single clean row -->
-    <div
-      class="studio-chrome flex shrink-0 items-center border-b border-border/50 px-2 py-2"
-      data-studio-chrome
-    >
-      <!-- Left: sidebar toggle + new chat (when sidebar hidden) -->
-      <div class="flex items-center gap-0.5">
+    <!-- No header row: its four buttons cost a 48px band above the transcript.
+         In full mode they float over the transcript's top corners; docked, they
+         sit at the ends of the conversation tab bar that is there anyway. -->
+    {#snippet chatListButton()}
+      <button
+        type="button"
+        class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        title={sidebarVisible ? `Hide chats (${modKey}B)` : `Show chats (${modKey}B)`}
+        aria-label={sidebarVisible ? "Hide chats" : "Show chats"}
+        onclick={toggleAiSidebar}
+      >
+        <PanelLeft class="size-3.5" />
+      </button>
+    {/snippet}
+    {#snippet chromeRight()}
+      <button
+        type="button"
+        class={cn(
+          "inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground",
+          settingsOpen && "bg-accent text-foreground",
+        )}
+        title="Settings ({modKey}⇧,)"
+        aria-label="Settings"
+        onclick={() => {
+          settingsOpen = !settingsOpen;
+          settingsTab = "model";
+        }}
+      >
+        <Settings2 class="size-3.5" />
+      </button>
+      {#if onexit}
         <button
           type="button"
-          class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          title={sidebarVisible
-            ? `Hide chats (${modKey}⇧B)`
-            : `Show chats (${modKey}⇧B)`}
-          onclick={toggleAiSidebar}
+          class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          title="Exit AI mode ({modKey}⇧E)"
+          aria-label="Exit AI mode"
+          onclick={onexit}
         >
-          <PanelLeft class="size-3.5" />
+          <!-- Not an X: the window's close sits right above this corner, and two
+               stacked X's read as the same button. This one leaves AI mode. -->
+          <Minimize2 class="size-3.5" />
         </button>
-        {#if !sidebarVisible}
-          <button
-            type="button"
-            class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            title="New chat ({newChatShortcut})"
-            onclick={() => void newConversation()}
-          >
-            <Plus class="size-3.5" />
-          </button>
-        {/if}
-      </div>
+      {/if}
+    {/snippet}
 
-      <!-- Center: spacer -->
-      <div class="flex-1"></div>
-
-      <!-- Right: settings + close -->
-      <div class="flex items-center gap-0.5">
-        <button
-          type="button"
-          class={cn(
-            "inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground",
-            settingsOpen && "bg-accent text-foreground",
-          )}
-          title="Settings ({modKey}⇧,)"
-          onclick={() => {
-            settingsOpen = !settingsOpen;
-            settingsTab = "model";
-          }}
-        >
-          <Settings2 class="size-3.5" />
-        </button>
-        {#if onexit}
-          <button
-            type="button"
-            class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            title="Close AI panel (⌘⇧E)"
-            onclick={onexit}
-          >
-            <X class="size-3.5" />
-          </button>
-        {/if}
+    {#if !showTabBar}
+      <div class="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between p-2">
+        <div class="pointer-events-auto flex items-center gap-0.5 rounded-lg bg-background/90 p-0.5">
+          {@render chatListButton()}
+          {#if !sidebarVisible}
+            <button
+              type="button"
+              class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              title="New chat ({newChatShortcut})"
+              aria-label="New chat"
+              onclick={() => void newConversation()}
+            >
+              <Plus class="size-3.5" />
+            </button>
+          {/if}
+        </div>
+        <div class="pointer-events-auto flex items-center gap-0.5 rounded-lg bg-background/90 p-0.5">
+          {@render chromeRight()}
+        </div>
       </div>
-    </div>
+      <!-- Text scrolling up fades out under the buttons instead of running into them. -->
+      <div class="pointer-events-none absolute inset-x-0 top-0 z-10 h-10 bg-gradient-to-b from-background to-transparent" aria-hidden="true"></div>
+    {/if}
 
     <!-- ── Conversation tab bar ─────────────────────────────────────────
          Not in full AI mode: there the conversation sidebar already lists every
@@ -3771,9 +3782,11 @@
          switcher for the same thing, eating a row of vertical space above the
          messages. The docked panel keeps it (it is narrow enough that the
          sidebar is usually collapsed there). -->
-    {#if mode !== "full" && (openTabs.length > 0 || !activeConvId)}
+    {#if showTabBar}
+      <div class="flex shrink-0 items-center gap-1 border-b border-border bg-panel px-1.5 py-1">
+      {@render chatListButton()}
       <div
-        class="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-border bg-panel px-1.5 py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        class="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       >
         {#if !activeConvId}
           <!-- Unsaved draft tab: always active, never closeable -->
@@ -3823,6 +3836,8 @@
         >
           <Plus class="size-3.5" />
         </button>
+      </div>
+      {@render chromeRight()}
       </div>
     {/if}
 
