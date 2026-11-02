@@ -1239,10 +1239,12 @@
                so two or three fit on a line instead of one chip per line. -->
           {#each contextTables as t (t)}
             {@const short = t.startsWith(`${schemaContext.activeSchema}.`) ? t.slice(schemaContext.activeSchema.length + 1) : t}
-            <span class="inline-flex h-6 max-w-full min-w-0 items-center gap-1 rounded-md bg-primary/10 pl-1.5 pr-0.5 text-primary" title={t}>
-              <Table2 class="size-3 shrink-0" />
+            <!-- Neutral like the Editor SQL chip beside it: an accent fill made
+                 a mentioned table the loudest thing in the composer. -->
+            <span class="inline-flex h-6 max-w-full min-w-0 items-center gap-1 rounded-md bg-foreground/[0.06] pl-1.5 pr-0.5 text-foreground/85" title={t}>
+              <Table2 class="size-3 shrink-0 text-muted-foreground" />
               <span class="min-w-0 truncate font-mono text-ui-2xs">{short}</span>
-              <button type="button" class="inline-flex size-5 shrink-0 items-center justify-center rounded text-primary/80 transition-colors hover:bg-primary/15 hover:text-primary" title="Remove {t}" aria-label="Remove {t}" onclick={() => (contextTables = contextTables.filter((x) => x !== t))}>
+              <button type="button" class="inline-flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground" title="Remove {t}" aria-label="Remove {t}" onclick={() => (contextTables = contextTables.filter((x) => x !== t))}>
                 <X class="size-3" />
               </button>
             </span>
