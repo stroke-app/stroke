@@ -68,7 +68,8 @@
     filterSchemaForQuery,
     detectPromptTopics,
     toolsForTurn,
-    titleFromMessage,
+    conversationTitle,
+    isPlaceholderTitle,
     historyBudget,
     repairToolPairs,
     extractTextToolCalls,
@@ -530,13 +531,17 @@
   /** Generate a short title from the conversation and update the stored title. */
   async function generateAiTitle() {
     if (!activeConvId) return;
-    const userMsg = rawApiHistory.find((m) => m.role === "user");
-    if (!userMsg) return;
-    // From the first message, not from a second model call: on the free tier
-    // that extra request per turn is what tripped the rate limit and the
-    // retry wait that followed.
-    const title = titleFromMessage(String(userMsg.content ?? ""));
-    if (title.length < 3) return;
+    const conv = convList.find((c) => c.id === activeConvId);
+    // A real title stays: one the user typed, or one already taken from a
+    // message with content. Only a placeholder ("hi") is replaced.
+    if (conv?.title && !isPlaceholderTitle(conv.title)) return;
+    const userTexts = rawApiHistory.filter((m) => m.role === "user").map((m) => String(m.content ?? ""));
+    if (!userTexts.length) return;
+    // From the messages, not from a second model call: on the free tier that
+    // extra request per turn is what tripped the rate limit and the retry wait
+    // that followed.
+    const title = conversationTitle(userTexts, conv?.createdAt);
+    if (title.length < 3 || title === conv?.title) return;
     try {
       await updateConversation(activeConvId, { title });
       convList = convList.map((c) =>
@@ -1788,8 +1793,6 @@
       apiHistory = managedHistory;
     }
 
-    const isFirstTurn =
-      rawApiHistory.filter((m) => m.role === "user").length === 1;
     try {
       await runAiTurn(0, ctrl);
       if (disowned()) return;
@@ -1797,7 +1800,7 @@
       rawApiHistory.push(...apiHistory.slice(managedLen));
       await persistCurrent();
       // Generate AI title after the first turn, in the background
-      if (isFirstTurn) void generateAiTitle();
+      void generateAiTitle();
     } catch (e) {
       if (/** @type {any} */ (e)?.name !== "AbortError" && !disowned()) error = String(e);
     } finally {
@@ -1843,6 +1846,20 @@
     }
     await tick();
     inputRef?.focus();
+  }
+
+  /**
+   * What the list shows for a chat. Chats saved before titles skipped small
+   * talk are all called "hi"; they get a title from their messages here,
+   * without rewriting what is stored.
+   * @param {{ title?: string, createdAt?: number, items?: unknown[] }} conv
+   */
+  function displayTitle(conv) {
+    if (conv.title && !isPlaceholderTitle(conv.title)) return conv.title;
+    const texts = (conv.items ?? [])
+      .filter((/** @type {any} */ i) => i?.kind === "user")
+      .map((/** @type {any} */ i) => String(i.text ?? ""));
+    return texts.length ? conversationTitle(texts, conv.createdAt) : conv.title || "New chat";
   }
 
   /** Max rows fetched from DB per AI tool call - prevents OOM on large tables */
@@ -3145,7 +3162,7 @@
                   ></span>
                 {/if}
                 <span class="truncate text-ui-xs font-medium leading-snug"
-                  >{conv.title}</span
+                  >{displayTitle(conv)}</span
                 >
                 <span class="mt-0.5 text-ui-3xs text-muted-foreground"
                   >{relativeTime(conv.updatedAt)}</span
@@ -3292,10 +3309,10 @@
             <button
               type="button"
               class="max-w-[9rem] truncate text-left"
-              title={tab.title}
+              title={displayTitle(tab)}
               onclick={() => void selectConversation(tab.id)}
             >
-              {tab.title}
+              {displayTitle(tab)}
             </button>
             <button
               type="button"
