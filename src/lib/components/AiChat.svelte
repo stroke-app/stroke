@@ -442,7 +442,9 @@
     const conv = convList.find((c) => c.id === id);
     if (!conv) return;
     activeConvId = id;
+    clearAnchor();
     queued = [];
+    enterFrom = Number.MAX_SAFE_INTEGER;
     stopAgentSession();
     agentNative = /** @type {any} */ (conv).agentNative ?? null;
     // Restore - filter out ephemeral items (including any stuck streaming items)
@@ -462,6 +464,7 @@
       conv.apiHistory ?? []
     );
     syncSeq(items);
+    enterFrom = items.length;
     error = "";
     await scrollBottom();
   }
@@ -470,10 +473,12 @@
     abortCurrentRequest();
     await persistCurrent();
     activeConvId = null;
+    clearAnchor();
     queued = [];
     stopAgentSession();
     agentNative = null;
     items = [];
+    enterFrom = 0;
     apiHistory = [];
     rawApiHistory = [];
     error = "";
@@ -497,6 +502,7 @@
     }
     if (activeConvId === id) {
       activeConvId = null;
+      clearAnchor();
       stopAgentSession();
       agentNative = null;
       items = [];
@@ -832,7 +838,7 @@
 
   /** Scroll to bottom on the next animation frame (throttled; skipped if user scrolled up). */
   function scrollBottomSoon() {
-    if (userScrolledUp) return;
+    if (userScrolledUp || anchorId) return;
     if (rafId !== null) return;
     rafId = requestAnimationFrame(() => {
       rafId = null;
@@ -856,6 +862,59 @@
   function jumpToBottom() {
     userScrolledUp = false;
     pinToBottom();
+  }
+
+  // ── Anchored turn ─────────────────────────────────────────────────────────
+  // On send, the user's message moves to the top of the view and the answer
+  // grows beneath it, as in T3 and ChatGPT, instead of the view chasing the
+  // bottom on every token. A spacer under the turn gives it room until the
+  // answer is tall enough to fill the view on its own.
+  /** The user message the latest turn is pinned under. */
+  let anchorId = $state(/** @type {string | null} */ (null));
+  /** Room under the anchored turn, in px. */
+  let tailSpace = $state(0);
+
+  /**
+   * Size the spacer from measurements, not guesses: just enough for the
+   * message to scroll up to its stop (its scroll-margin under the floating
+   * buttons). A guessed constant overshot, so a one-turn chat that fit on
+   * screen still got a scrollbar.
+   */
+  function measureTail() {
+    if (!anchorId || !scrollEl || !msgListEl) return;
+    const anchor = msgListEl.querySelector(`[data-item-id="${anchorId}"]`);
+    if (!(anchor instanceof HTMLElement)) return;
+    const box = scrollEl.getBoundingClientRect();
+    const anchorTop = anchor.getBoundingClientRect().top - box.top + scrollEl.scrollTop;
+    const margin = parseFloat(getComputedStyle(anchor).scrollMarginTop) || 0;
+    const needed = anchorTop - margin + scrollEl.clientHeight;
+    const withoutSpacer = scrollEl.scrollHeight - tailSpace;
+    const next = Math.max(0, Math.floor(needed - withoutSpacer));
+    if (next !== tailSpace) tailSpace = next;
+  }
+
+  $effect(() => {
+    if (!anchorId || !msgListEl || typeof ResizeObserver !== "function") return;
+    const ro = new ResizeObserver(() => measureTail());
+    ro.observe(msgListEl);
+    return () => ro.disconnect();
+  });
+
+  /** @param {string} id */
+  async function anchorTurn(id) {
+    anchorId = id;
+    userScrolledUp = false;
+    await tick();
+    measureTail();
+    await tick();
+    const anchor = msgListEl?.querySelector(`[data-item-id="${id}"]`);
+    const still = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+    anchor?.scrollIntoView({ block: "start", behavior: still ? "auto" : "smooth" });
+  }
+
+  function clearAnchor() {
+    anchorId = null;
+    tailSpace = 0;
   }
 
   /**
@@ -1267,7 +1326,8 @@
     const content = msgListEl;
     if (!content) return;
     const ro = new ResizeObserver(() => {
-      if (!userScrolledUp) pinToBottom();
+      // An anchored turn keeps its place; the answer grows below it.
+      if (!userScrolledUp && !anchorId) pinToBottom();
     });
     ro.observe(content);
     return () => ro.disconnect();
@@ -1562,6 +1622,8 @@
 
   async function scrollBottom() {
     await tick();
+    // An anchored turn stays where it is; the answer grows into the space below.
+    if (anchorId) return;
     userScrolledUp = false;
     pinToBottom();
   }
@@ -1783,12 +1845,13 @@
       resetHistory();
     }
 
+    const userItemId = uid();
     items.push(
-      /** @type {ChatItem} */ ({ id: uid(), kind: "user", text, ts: Date.now() }),
+      /** @type {ChatItem} */ ({ id: userItemId, kind: "user", text, ts: Date.now() }),
     );
     apiHistory.push({ role: "user", content: text });
     rawApiHistory.push({ role: "user", content: text });
-    await scrollBottom();
+    await anchorTurn(userItemId);
 
     const thinkingId = uid();
     items.push(/** @type {ChatItem} */ ({ id: thinkingId, kind: "thinking" }));
@@ -2012,6 +2075,13 @@
 
   /** Docked chats keep a tab strip; full mode lists chats in its sidebar. */
   const showTabBar = $derived(mode !== "full" && (openTabs.length > 0 || !activeConvId));
+
+  /**
+   * Items from this index on arrived during this visit and slide in; the ones
+   * a saved conversation opened with appear at once, so switching chats does
+   * not replay forty entrances.
+   */
+  let enterFrom = $state(0);
 
   /** Folds the user opened. */
   let openWork = $state(/** @type {Set<string>} */ (new Set()));
@@ -3956,8 +4026,8 @@
                until hover) actions footer, so a large gap on top of it was paying
                for the same separation twice and left paragraphs stranded ~75px
                apart. The footer IS the breathing room. -->
-          <div bind:this={msgListEl} class="flex flex-col gap-2 py-5" data-studio-selectable="text">
-            {#each items as item (item.id)}
+          <div bind:this={msgListEl} class={cn("relative flex flex-col gap-2 py-5", !showTabBar && "pt-12")} data-studio-selectable="text">
+            {#each items as item, idx (item.id)}
               {#if !drawsNothing(item)}
               <!-- content-visibility:auto lets the browser skip layout/paint for
                    off-screen messages (markdown, code, mermaid, charts), so scrolling
@@ -3966,7 +4036,7 @@
                    Skipped for the transient thinking/executing/streaming rows: they're
                    always at the bottom (visible) and their ping/bounce animations would
                    be clipped by the paint containment cv:auto adds. -->
-              <div class={item.kind === "thinking" || item.kind === "executing" || item.kind === "streaming" ? "" : "[content-visibility:auto] [contain-intrinsic-size:auto_120px]"}>
+              <div data-item-id={item.id} class={cn(showTabBar ? "scroll-mt-3" : "scroll-mt-12", idx >= enterFrom && "ai-enter", item.kind === "thinking" || item.kind === "executing" || item.kind === "streaming" || item.id === anchorId ? "" : "[content-visibility:auto] [contain-intrinsic-size:auto_120px]")}>
               <!-- ── User message ───────────────────────── -->
               {#if item.kind === "user"}
                 <div class="group/msg flex flex-col items-end px-3.5 pt-4">
@@ -4805,6 +4875,9 @@
                  pinned to the bottom. A zero-height element is enough, and it
                  costs nothing per frame. -->
             <div bind:this={bottomSentinel} aria-hidden="true" class="h-px w-full shrink-0"></div>
+            {#if tailSpace > 0}
+              <div aria-hidden="true" class="w-full shrink-0" style="height:{tailSpace}px"></div>
+            {/if}
           </div>
         {/if}
       </div>
@@ -5826,6 +5899,22 @@
   }
   @media (prefers-reduced-motion: reduce) {
     :global([data-thinking-style]) .agent-think-label { animation: none; }
+  }
+
+  /* New turns ease in: a short rise and fade, so a reply, a fold or a result
+     arrives instead of appearing. The app's motion setting switches it off. */
+  @keyframes ai-enter {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  :global(.ai-enter) {
+    animation: ai-enter 220ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
   }
 
   /* The composer and the user's own turns read at the transcript's size, so one
