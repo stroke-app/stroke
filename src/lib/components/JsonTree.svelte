@@ -173,7 +173,7 @@
 
 <div class="min-w-0 font-mono text-ui-xs leading-normal">
   <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
-  <div class="group/jsonrow flex min-w-0 items-start gap-1">
+  <div class="flex min-w-0 items-start gap-1">
     {#if isContainer}
       <button
         type="button"
@@ -194,7 +194,10 @@
     {/if}
 
     <div class="min-w-0 flex-1">
-      <span class="inline-flex max-w-full items-baseline gap-1">
+      <!-- The hover group is this line only. It used to be the whole row block,
+           children included, so hovering an object lit the copy buttons of
+           every value inside it at once. -->
+      <span class="group/jsonrow inline-flex max-w-full items-baseline gap-1">
         {#if label !== null}
           <button
             type="button"
