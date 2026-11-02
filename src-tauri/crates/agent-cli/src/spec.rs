@@ -180,7 +180,9 @@ pub const OPENCODE: CliSpec = CliSpec {
     // the args for the one-shot `run` it falls back to.
     wire: Wire::OpenCodeJson,
     base_args: &["run", "--format", "json", "--thinking"],
-    cwd_flag: Some("--dir"),
+    // opencode 2 dropped `run --dir`; the turn runs in the session's folder
+    // as its working directory instead.
+    cwd_flag: None,
     model_flag: Some("--model"),
     resume: Resume::Flag("--session"),
     yolo_args: &["--auto"],
@@ -401,8 +403,6 @@ mod tests {
                 "--format",
                 "json",
                 "--thinking",
-                "--dir",
-                "/repo",
                 "--model",
                 "anthropic/x",
                 "--auto",

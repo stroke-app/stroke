@@ -58,6 +58,23 @@ exec 3<&-
 wait "$pid"
 kill -TERM 0"#;
 
+/// opencode 2 moved the server's API under `/api` with new routes, which the
+/// session below does not speak; on 2 and later each turn is an `opencode run`.
+pub(crate) async fn serve_api_moved(bin: &str) -> bool {
+    let out = Command::new(bin)
+        .arg("--version")
+        .stdin(Stdio::null())
+        .output()
+        .await;
+    let Ok(out) = out else { return false };
+    let text = String::from_utf8_lossy(&out.stdout);
+    let major = text
+        .split(|c: char| !c.is_ascii_digit() && c != '.')
+        .find(|w| !w.is_empty() && w.contains('.'))
+        .and_then(|v| v.split('.').next()?.parse::<u32>().ok());
+    major.is_some_and(|m| m >= 2)
+}
+
 /// One running `opencode serve`.
 struct Server {
     child: Child,

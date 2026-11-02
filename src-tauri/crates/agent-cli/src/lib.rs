@@ -155,7 +155,7 @@ impl AgentAdapter for CliAdapter {
     }
 
     async fn spawn(&self, mut ctx: SessionCtx) -> Result<Box<dyn AgentSession>, AgentError> {
-        if self.spec.wire == Wire::OpenCodeJson {
+        if self.spec.wire == Wire::OpenCodeJson && !opencode::serve_api_moved(self.spec.bin).await {
             return Ok(Box::new(opencode::OpenCodeSession::start(self.spec, ctx)));
         }
         if ctx.model.is_none() && self.spec.wire == Wire::CodexJson {
