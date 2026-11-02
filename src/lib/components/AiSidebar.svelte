@@ -1208,15 +1208,20 @@
     {#if slashOpen && slashItems.length > 0}
       <div class="absolute bottom-full left-2.5 right-2.5 z-50 mb-1.5 overflow-hidden rounded-[10px] border border-border/60 bg-popover elevate-2-rim">
         <div class="app-scroll max-h-56 overflow-y-auto p-1">
+          <!-- The command in full and what it does. A fixed name column cut
+               "/explain" to "/expla…" while a title beside it repeated the
+               name, and hover painted a second highlight next to the
+               keyboard's: hovering now moves the one highlight. -->
           {#each slashItems as item, idx (item.cmd)}
             {@const active = idx === slashIdx}
             <button type="button"
-              class={cn('flex w-full items-center gap-2 rounded-md px-2 py-1 text-left transition-colors', active ? 'bg-accent' : 'hover:bg-accent/40')}
+              class={cn('flex h-7 w-full min-w-0 items-center gap-2.5 rounded-md px-2 text-left', active && 'bg-accent')}
+              onmouseenter={() => (slashIdx = idx)}
               onmousedown={(e) => { e.preventDefault(); runSlash(item) }}
             >
-              <span class={cn('w-14 shrink-0 truncate font-mono text-ui-2xs', active ? 'text-primary' : 'text-muted-foreground')}>/{item.cmd}</span>
-              <span class="shrink-0 text-ui-2xs font-medium text-foreground/85">{item.label}</span>
-              <span class="min-w-0 flex-1 truncate text-right text-ui-3xs text-muted-foreground">{item.desc}</span>
+              <!-- min-w, not w: the descriptions line up, and a longer command grows past it instead of being cut. -->
+              <span class={cn('min-w-[10ch] shrink-0 font-mono text-ui-xs', active ? 'text-foreground' : 'text-foreground/80')}>/{item.cmd}</span>
+              <span class="min-w-0 flex-1 truncate text-ui-2xs text-muted-foreground" title={item.desc}>{item.desc}</span>
             </button>
           {/each}
         </div>
