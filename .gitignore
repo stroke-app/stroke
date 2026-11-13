@@ -54,3 +54,5 @@ file.txt
 
 # Local brag/demo media, not source
 brag-output/
+.perf-baseline.json
+dump.rdb

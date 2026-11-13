@@ -1,0 +1,44 @@
+# Local NoSQL databases with test data, for developing Stroke's NoSQL support.
+#   docker compose -f dev/nosql/docker-compose.yml up -d && dev/nosql/seed.sh
+# Ports avoid the usual local defaults only where noted; nothing is persisted
+# (no volumes), so `down` + `up` + seed gives a clean slate.
+name: stroke-nosql
+
+services:
+  dynamodb:
+    image: amazon/dynamodb-local:2.5.4
+    command: -jar DynamoDBLocal.jar -sharedDb -inMemory
+    ports: ["8000:8000"]
+
+  couchdb:
+    image: couchdb:3.4.2
+    environment:
+      COUCHDB_USER: admin
+      COUCHDB_PASSWORD: admin
+    ports: ["5984:5984"]
+
+  mongodb:
+    image: mongo:7.0.14
+    ports: ["27017:27017"]
+
+  cassandra:
+    image: cassandra:5.0.2
+    environment:
+      MAX_HEAP_SIZE: 768M
+      HEAP_NEWSIZE: 128M
+      CASSANDRA_CLUSTER_NAME: stroke-test
+    ports: ["9042:9042"]
+
+  firestore:
+    image: gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
+    command: gcloud emulators firestore start --host-port=0.0.0.0:8080 --project=stroke-test
+    ports: ["8086:8080"]
+
+  valkey:
+    image: valkey/valkey:8.0.1-alpine
+    ports: ["6392:6379"]
+
+  redis:
+    # Separate from any Redis already on 6379.
+    image: redis:7.4.1-alpine
+    ports: ["6391:6379"]

@@ -39,13 +39,51 @@ export function installPerfProbe() {
   }
   requestAnimationFrame(calibrate)
 
+  /** The input that last kept the sampler alive. @type {Event | null} */
+  let lastEvent = null
+  /** Slow frames since the last summary, each with the input before it. @type {string[]} */
+  let slow = []
+  /** `keydown k on button[tab] "users"`: enough to find the element. @param {Event | null} e */
+  const describe = (e) => {
+    if (!e) return 'no input'
+    const t = e.target instanceof Element ? e.target : null
+    const key = e instanceof KeyboardEvent ? ` ${e.key}` : ''
+    if (!t) return `${e.type}${key}`
+    const named = t.closest('[data-slot],[data-testid],[role],[id]')
+    const tag = (named ?? t).tagName.toLowerCase()
+    const name = named?.getAttribute('data-slot') || named?.getAttribute('data-testid') || named?.getAttribute('role') || named?.id || ''
+    const cls = typeof t.className === 'string' ? t.className.split(/\s+/).slice(0, 2).join('.') : ''
+    const text = (t.textContent || '').trim().slice(0, 24)
+    return `${e.type}${key} on ${tag}${name ? `[${name}]` : ''}${cls ? ` .${cls}` : ''}${text ? ` "${text}"` : ''}`
+  }
+
+  // A window that loses focus or visibility (⌘-Tab, a native file dialog, a
+  // menu being tracked) stops getting frames. That gap is the OS, not the app,
+  // so it is left out instead of reported as a multi-second stall.
+  let interrupted = false
+  let skipped = 0
+  const interrupt = () => { interrupted = true }
+  addEventListener('blur', interrupt)
+  document.addEventListener('visibilitychange', interrupt)
   const tick = (/** @type {number} */ t) => {
-    if (last) frames.push(t - last)
+    if (last && interrupted) skipped++
+    else if (last) {
+      const gap = t - last
+      frames.push(gap)
+      // A real long frame, logged on its own so it can be lined up with the
+      // ipc/ui lines around it.
+      if (gap > 250) void invoke('perf_log', { line: `long frame ${gap.toFixed(0)}ms (focused ${document.hasFocus()})` }).catch(() => {})
+      // Anything over four budgets, with the input that preceded it, so the
+      // log names the interaction instead of only counting the drop.
+      else if (gap > budget * 4) slow.push(`${gap.toFixed(0)}ms after ${describe(lastEvent)}`)
+    }
+    interrupted = false
     last = t
     if (performance.now() < until) requestAnimationFrame(tick)
     else { sampling = false; last = 0 }
   }
-  const poke = () => {
+  const poke = (/** @type {Event} */ e) => {
+    lastEvent = e
     until = performance.now() + 1000
     if (!sampling) { sampling = true; requestAnimationFrame(tick) }
   }
@@ -60,7 +98,13 @@ export function installPerfProbe() {
     const q = (/** @type {number} */ p) => s[Math.min(s.length - 1, Math.floor(p * s.length))].toFixed(1)
     const dropped = s.filter((x) => x > budget * DROP_FACTOR).length
     const line = `frames ${s.length}: p50 ${q(0.5)} p95 ${q(0.95)} max ${s[s.length - 1].toFixed(1)}ms, ` +
-      `${dropped} dropped (${((dropped / s.length) * 100).toFixed(0)}%)`
+      `${dropped} dropped (${((dropped / s.length) * 100).toFixed(0)}%)` +
+      (skipped ? `, ${skipped} gap(s) skipped (window unfocused)` : '')
+    skipped = 0
     void invoke('perf_log', { line }).catch(() => {})
+    if (slow.length) {
+      void invoke('perf_log', { line: `slow ${slow.slice(0, 8).join(' | ')}` }).catch(() => {})
+      slow = []
+    }
   }, 2000)
 }

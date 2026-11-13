@@ -5,6 +5,13 @@ modals, pages, menus, tables) must follow this. When a component disagrees with
 this file, the component is wrong — fix the component.
 
 Goal: **modern, minimal, production-grade, and identical across the whole app.**
+
+**Direction (T3 Code look):** calm, native, minimal chrome. Near-black canvas,
+sidebar one step lighter than the content, hairlines only where two regions
+meet, no cards inside cards, no boxed icon tiles, no decorative shadows. Small
+quiet type (13px UI text), muted secondary text, `font-medium` only for the
+current/primary item. Icons thin and muted, foreground on hover. Generous
+whitespace around content, tight spacing inside controls.
 The tokens already exist in `src/app.css` + the theme files. The problem this
 file solves is *consistent use* of them — no more arbitrary `text-[13px]`,
 mismatched control heights, or one-off selected states.
@@ -44,8 +51,10 @@ mismatched control heights, or one-off selected states.
 - **Sans** for all chrome, labels, prose, buttons.
 - **Heading** (`font-heading`) for dialog titles, via `Dialog.Title`. Nothing
   smaller than a title uses it.
-- **Mono** (`font-mono`) for data: identifiers, values, counts, IDs, SQL,
-  hostnames, table/column names, timings. Numbers in stat cards use
+- **Mono** (`font-mono`) for data: values, counts, IDs, SQL, timings, and
+  identifiers *inside data views* (grid headers, SQL, structure editor).
+  **Navigation lists** (sidebar tables/tree, connection rails) use the sans UI
+  face for names, like any native file list; only their counts stay mono. Numbers in stat cards use
   `font-mono tabular-nums`.
 
 ### Base size
@@ -116,7 +125,7 @@ literal colors.
 |---|---|
 | `background` | app base |
 | `panel` | content/main region surface |
-| `sidebar` / `sidebar-foreground` | sidebar surface |
+| `sidebar` / `sidebar-foreground` | sidebar surface - **one step lighter than `background`/`panel`** on dark themes (the canvas is the deepest surface) |
 | `popover` / `popover-foreground` | floating menus/dialogs |
 | `muted` / `muted-foreground` | subtle fills / secondary text |
 | `accent` / `accent-foreground` | hover + active chrome fill |
@@ -169,9 +178,11 @@ literal colors.
 
 `--radius` is **absolute px**, not rem: a corner is a physical size and has no
 reason to grow when the type scale or the zoom level does. 6px by default, 8px on
-macOS, 7px on Windows. Fields and the buttons beside them use `--radius-field`
-(10px), which is rounder on purpose; small buttons step down from it rather than
-running their own ladder.
+macOS, 7px on Windows. `--radius-field` (fields, `<Button>`, select triggers)
+equals `--radius`, so a field, the button beside it, a raw `rounded-md` button
+and a `rounded-[10px]` popover all share ONE corner. Select triggers wear the
+same `.field-surface` hairline as inputs and outline buttons - never a
+borderless fill.
 
 | Class | Use |
 |---|---|
@@ -221,7 +232,7 @@ form fields & the main toolbar row.
 
 ### Icon button (canonical class)
 ```
-inline-flex size-7 items-center justify-center rounded-md
+inline-flex size-7 items-center justify-center rounded-md   (28px, no fill at rest)
 text-muted-foreground transition-colors
 hover:bg-accent hover:text-foreground
 disabled:pointer-events-none disabled:opacity-40
@@ -241,13 +252,24 @@ Use `Button` from `ui/button`. Solid: `bg-primary text-primary-foreground
 hover:opacity-90`. Never hand-roll a primary button.
 
 ### Inputs / selects
-`h-9 rounded-lg border-2 border-border bg-muted/30 px-3 text-ui`, focus:
-`focus:border-ring/55 focus:ring-2 focus:ring-ring/15 focus:outline-none`. Prefer
-the `Input` / `Select` wrappers in `ui/*`.
+**Filled, hairline fields** (the macOS / SQL Studio look). Every field —
+inputs, textareas, select triggers — draws the same frame from tokens in
+`src/app.css`, through `.field-surface` and the bare-input rule:
 
-**The border is 2px on every field** — inputs, textareas and select triggers
-alike. A 1px control sitting next to a 2px one reads as a different component,
-which is exactly what the select trigger used to do.
+- border: `--field-border-width` (1px) in `--field-border` (foreground at 16%)
+- fill: `--field-bg` (foreground at 5%, translucent, so it sits right on any
+  panel, popover or dialog)
+- radius: `--radius-field`
+- focus: the border takes the accent (`--ring` at 60%) with a soft 3px halo
+  (`--ring` at 18%), as a box-shadow — no outline, no layout shift
+
+Prefer the `Input` / `Select` wrappers in `ui/*`. Don't restyle a field's
+border, fill or focus at the call site; change the tokens. A field that is
+genuinely frameless (inside a container that draws the frame) opts out with
+`.no-focus-ring` or `.no-field-frame`.
+
+**One frame for every field.** A field drawn differently from the one beside it
+reads as a different component, which is what the select trigger used to do.
 
 ### Focus ring (one convention, everywhere)
 A focused control gets a **muted accent border plus a tight, low-alpha halo** —
@@ -314,6 +336,25 @@ overrides — if a menu looks off, the primitive is wrong; fix it there.
 
 ## 8. List row pattern (files, tables, dbs, connections)
 
+**Sidebar rows** (classic list, tree, connections panel, connection rail):
+```
+rounded-md px-2 py-1.5 text-ui-sm (sans)
+<idle>     text-sidebar-foreground hover:bg-sidebar-accent/60 hover:text-foreground
+<current>  bg-sidebar-accent font-medium text-sidebar-accent-foreground
+```
+Leading glyph `size-4 text-muted-foreground` (foreground when current); a
+secondary line, if any, is `text-ui-2xs text-muted-foreground` in plain words
+(`Postgres · annapurna`), never a boxed chip; trailing count/timestamp
+`font-mono text-ui-2xs tabular-nums text-muted-foreground`.
+
+**Sidebar search row** (top of a sidebar): frameless - no field border - with
+a `Search size-3.5` icon at `left-2`, placeholder "Search", `text-ui-sm`, a
+`bg-sidebar-accent/60` fill only while focused, and a `size-5` clear (×)
+button at the right while it has text. Quiet `size-7` icon actions sit on the
+same row or the row above. In code: `no-field-frame` on a bare input, or
+`border-transparent! bg-transparent!` on the `Input` wrapper.
+
+**Prominent pick lists** (provider DB lists, account lists):
 ```
 flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left transition-colors
 <idle>     hover:bg-muted/50   text-foreground/85
@@ -344,14 +385,27 @@ flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left transition-col
 
 ---
 
-## 10. Micro-labels (uppercase section labels)
+## 10. Section labels
 
+Sidebar and landing-page section headers are **plain case**, not uppercase:
 ```
-text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground/55
+text-ui-xs font-medium text-muted-foreground
 ```
-Used for ACCOUNT / D1 DATABASE / PINNED / TABLES etc. Always this exact recipe.
-**Page/sidebar sections only** — menu group labels inside dropdowns are plain
-case (§7); do not put uppercase micro-labels inside a menu panel.
+("Tables", "Pinned", "Recent", "Quick access", "Connect with a provider"), with
+a right-aligned `font-mono text-ui-2xs` count when useful. The uppercase
+micro-label (`text-ui-3xs font-semibold uppercase tracking-[0.06em]`) is kept
+only for dense settings/form pages that already use it; do not add new ones.
+
+## 10a. Empty states (T3 pattern)
+
+One large light headline (`text-ui-2xl`/`text-ui-3xl font-normal
+tracking-tight`), one muted line (`text-ui-sm text-muted-foreground`), one
+focused control. No logo tile, no vignette, no boxed icon well. Secondary
+choices (engines, providers, suggestions) follow as borderless rows/chips
+(`h-7`/`h-8 rounded-md px-2 hover:bg-accent`, label `text-ui-sm`), never as a
+grid of bordered cards. The AI landing puts the composer directly under the
+headline in one centred column (max ~44rem), with at most four suggestion rows
+below it.
 
 ---
 
@@ -368,6 +422,11 @@ case (§7); do not put uppercase micro-labels inside a menu panel.
 - No loud full-accent fills on small icons.
 - No new bespoke dropdown/list markup — extend the shared component.
 - No `font-bold` in chrome; no ALL-CAPS body text.
+- No boxed icon tiles (`size-8 rounded-lg bg-muted` wells) beside titles; the
+  glyph alone, muted, carries it.
+- No vertical dividers between toolbar groups; spacing groups them.
+- No `elevate-*` shadows on in-flow controls (Run, chips); shadows are for
+  floating panels only.
 
 ---
 
