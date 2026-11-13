@@ -57,7 +57,7 @@
         aria-checked={cascade}
         aria-label="Cascade"
         class={cn(
-          'relative inline-flex h-[18px] w-8 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+          'relative inline-flex h-[18px] w-8 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
           cascade ? 'bg-destructive' : 'bg-muted',
         )}
         onclick={() => (cascade = !cascade)}
@@ -73,7 +73,7 @@
 
   <!-- The exact statement, so the confirmation is against what actually runs. -->
   <div class="px-5 py-4">
-    <p class="mb-2 text-ui-3xs font-semibold uppercase tracking-[0.07em] text-muted-foreground">Will execute</p>
+    <p class="mb-2 text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground">Will execute</p>
     <div class="rounded-lg border border-border/20 bg-muted/[0.3] px-3.5 py-2.5">
       <code class="break-all font-mono text-ui-xs text-destructive">{sql}</code>
     </div>

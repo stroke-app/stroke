@@ -117,6 +117,9 @@ export function isWriteSql(sql) {
 
     if (WRITE_HEADS.has(head)) return true
 
+    // MongoDB shell statements: `db.users.insertOne(…)`, `db.x.deleteMany(…)`.
+    if (head === 'db' && /\.\s*(insert(One|Many)|update(One|Many)|replaceOne|delete(One|Many)|bulkWrite|drop|findOneAnd\w+)\s*\(/.test(stmt)) return true
+
     // A CTE hides the real verb behind the WITH list: `WITH x AS (…) DELETE …`.
     if (head === 'with' && /\b(insert\s+into|update\s+[\w"`.]|delete\s+from|merge\s+into)\b/i.test(stmt))
       return true
@@ -359,4 +362,36 @@ export function sqlRunEffects(sql) {
     }
   }
   return fx
+}
+
+/** MongoDB shell calls that change data, indexes or the database. */
+const MONGO_WRITE_RE = /\.\s*(insert|insertOne|insertMany|update|updateOne|updateMany|replaceOne|remove|deleteOne|deleteMany|bulkWrite|drop|dropDatabase|dropIndex|dropIndexes|createIndex|createIndexes|createCollection|renameCollection|findOneAndUpdate|findOneAndReplace|findOneAndDelete|findAndModify)\s*\(/
+
+/** Firestore and CouchDB shell-style writes. */
+const DOC_WRITE_RE = /\.\s*(add|set|update|delete|insert|put|remove|bulkDocs|destroy|create)\s*\(/
+
+/**
+ * `isWriteSql`, knowing which language it is reading. The AI runs every engine
+ * through one `execute_sql` tool, and the SQL rules alone let some writes
+ * through read-only mode: Redis `SET` (left out of the shared list because SQL
+ * uses SET for session settings), Firestore/CouchDB `.add()`/`.set()`/
+ * `.delete()`, and MongoDB index and database calls.
+ * @param {string} sql @param {string | null | undefined} engine connection type
+ */
+export function isWriteFor(sql, engine) {
+  if (isWriteSql(sql)) return true
+  const text = stripSqlComments(String(sql ?? '')).trim()
+  if (!text) return false
+  switch (engine) {
+    case 'redis':
+    case 'valkey':
+      return /^\s*(set|copy|rename|renamenx|restore|sinterstore|sunionstore|sdiffstore|zunionstore|zinterstore|bitop|pfadd|pfmerge|setrange|setbit|hsetnx|linsert|lmove|blmove|zpopmin|zpopmax|bzpopmin|bzpopmax|blpop|brpop|swapdb|xgroup|xack|xclaim|eval|evalsha|fcall)\b/im.test(text)
+    case 'mongodb':
+      return MONGO_WRITE_RE.test(text)
+    case 'firestore':
+    case 'couchdb':
+      return DOC_WRITE_RE.test(text)
+    default:
+      return false
+  }
 }
