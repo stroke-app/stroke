@@ -45,7 +45,7 @@
         <!-- Expanding ring, so waiting reads as progress and not as a stall. -->
         <span class="pulse-ring pointer-events-none absolute inset-0 rounded-lg ring-1 ring-primary/40"></span>
       {/if}
-      {#if mark}{@render mark()}{:else}<Loader2 class="size-4 animate-spin text-muted-foreground" />{/if}
+      {#if mark}{@render mark()}{:else}<Loader2 class="size-4 shrink-0 animate-spin text-muted-foreground" />{/if}
     </div>
 
     <div class="min-w-0 flex-1">

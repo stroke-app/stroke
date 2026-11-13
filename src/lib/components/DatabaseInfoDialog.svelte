@@ -22,16 +22,16 @@
 
       <div class="flex items-start gap-3.5 border-b border-border/25 px-5 pt-5 pb-4">
         <div class="mt-px flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted/50">
-          <Icon name="database" class="size-3.5 text-muted-foreground" />
+          <Icon name="database" class="size-3.5 shrink-0 text-muted-foreground" />
         </div>
         <div class="min-w-0 flex-1">
           <Dialog.Title class="truncate font-mono text-ui-sm font-semibold text-foreground">{name}</Dialog.Title>
           <p class="mt-0.5 text-ui-2xs text-muted-foreground">Database properties</p>
         </div>
-        <Dialog.Close class="inline-flex size-6 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted/50 hover:text-muted-foreground focus-visible:outline-none" />
+        <Dialog.Close class="inline-flex size-6 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:outline-none" />
       </div>
 
-      <div class="px-5 py-4">
+      <div class="loading-reveal px-5 py-4">
         {#if loading}
           <p class="py-6 text-center text-ui-xs text-muted-foreground">Reading the catalog…</p>
         {:else if error}
@@ -52,7 +52,7 @@
 
       <div class="flex items-center justify-end border-t border-border/25 px-5 py-3">
         <button type="button"
-          class="inline-flex h-8 items-center rounded-lg px-3.5 text-ui-sm text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
+          class="inline-flex h-8 items-center rounded-md px-3.5 text-ui-sm text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
           onclick={() => (open = false)}>Close</button>
       </div>
 

@@ -8,7 +8,7 @@
  * no triggers." These flags let the UI say *why* a section is empty ("Triggers
  * require PostgreSQL") and let callers skip pointless round-trips entirely.
  *
- * @typedef {'postgres'|'mysql'|'sqlite'|'d1'|'libsql'|'clickhouse'|'duckdb'|'mssql'|'redis'|'posthog'} Engine
+ * @typedef {'postgres'|'mysql'|'sqlite'|'d1'|'libsql'|'clickhouse'|'duckdb'|'mssql'|'redis'|'dynamodb'|'couchdb'|'cassandra'|'firestore'|'mongodb'|'posthog'} Engine
  */
 
 /**
@@ -36,6 +36,15 @@ const SUPPORT = {
   // incompatible syntax (MySQL MODIFY COLUMN; SQLite has no ALTER COLUMN), so we
   // gate the editing affordances there and point users to the SQL console.
   editStructure: new Set(['postgres']),
+  // Whole pages. Instance Insights reads sessions, locks and server settings
+  // (pg_stat_activity / performance_schema); the Advisor's checks are pg_catalog
+  // queries, so every other engine got an empty "unsupported" report; Schema
+  // Explorer's pages are schema-level objects SQLite-family engines don't have.
+  // Offering a page that can only say "not here" is a dead end, so the entry
+  // points (Jump to, the command palette) hide them instead.
+  insights:       new Set(['postgres', 'mysql']),
+  advisor:        new Set(['postgres']),
+  schemaExplorer: new Set(['postgres', 'mysql']),
 }
 
 /**
@@ -83,6 +92,12 @@ const ENGINE_LABEL = /** @type {Record<string, string>} */ ({
   mariadb: 'MariaDB',
   cockroachdb: 'CockroachDB',
   redis: 'Redis',
+  valkey: 'Valkey',
+  dynamodb: 'DynamoDB',
+  couchdb: 'CouchDB',
+  cassandra: 'Cassandra',
+  firestore: 'Firestore',
+  mongodb: 'MongoDB',
 })
 
 /** @param {string | null | undefined} engine */
@@ -109,7 +124,7 @@ export function unsupportedReason(featureLabel, feature) {
  * this set.
  * @type {Set<string>}
  */
-export const KEY_VALUE_ENGINES = new Set(['redis'])
+export const KEY_VALUE_ENGINES = new Set(['redis', 'dynamodb', 'couchdb', 'cassandra', 'firestore', 'mongodb'])
 
 /** @param {string | null | undefined} engine */
 export function isKeyValue(engine) {

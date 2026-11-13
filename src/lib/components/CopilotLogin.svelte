@@ -173,7 +173,7 @@
   {#if phase === 'idle'}
     <!-- ── Not connected ── -->
     <div class="flex flex-col items-center gap-3 rounded-lg border border-border/60 bg-muted/30 px-4 py-5 text-center">
-      <GitBranch class="size-8 text-muted-foreground" />
+      <GitBranch class="size-8 shrink-0 text-muted-foreground" />
       <div>
         <p class="text-ui-sm font-medium text-foreground">Connect GitHub Copilot</p>
         <p class="mt-0.5 text-ui-xs text-muted-foreground">Sign in with your GitHub account to use Copilot models.</p>
@@ -183,15 +183,15 @@
         class="flex items-center gap-2 rounded-md bg-foreground px-4 py-1.5 text-ui-sm font-medium text-background transition-colors hover:bg-foreground/80"
         onclick={startLogin}
       >
-        <GitBranch class="size-3.5" />
+        <GitBranch class="size-3.5 shrink-0" />
         Login with GitHub
       </button>
     </div>
 
   {:else if phase === 'starting'}
     <!-- ── Starting ── -->
-    <div class="flex items-center justify-center gap-2 rounded-lg border border-border/60 bg-muted/30 px-4 py-5 text-ui-xs text-muted-foreground">
-      <Loader2 class="size-4 animate-spin" />
+    <div class="loading-reveal flex items-center justify-center gap-2 rounded-lg border border-border/60 bg-muted/30 px-4 py-5 text-ui-xs text-muted-foreground">
+      <Loader2 class="size-4 shrink-0 animate-spin" />
       Starting device flow…
     </div>
 
@@ -205,7 +205,7 @@
 
       <!-- User code, large and easy to read -->
       <div class="flex items-center justify-between gap-2 rounded-md border border-border bg-background px-3 py-2.5">
-        <span class="font-mono text-ui-lg font-bold tracking-widest text-foreground">{userCode}</span>
+        <span class="font-mono text-ui-lg font-semibold tracking-widest text-foreground">{userCode}</span>
         <button
           type="button"
           class="shrink-0 rounded px-1.5 py-0.5 text-ui-xs text-muted-foreground hover:bg-accent/20 hover:text-foreground"
@@ -218,12 +218,12 @@
         class="flex items-center justify-center gap-1.5 rounded-md border border-border/60 px-3 py-1.5 text-ui-xs text-muted-foreground transition-colors hover:bg-accent/20 hover:text-foreground"
         onclick={() => openExternal(verificationUri)}
       >
-        <ExternalLink class="size-3" />
+        <ExternalLink class="size-3 shrink-0" />
         Open github.com/login/device
       </button>
 
       <p class="text-center text-ui-xs text-muted-foreground">
-        <Loader2 class="mr-1 inline size-3 animate-spin" />
+        <Loader2 class="mr-1 inline size-3 shrink-0 animate-spin" />
         Waiting for authorization…
       </p>
 
@@ -236,8 +236,8 @@
 
   {:else if phase === 'verifying'}
     <!-- ── Exchanging token ── -->
-    <div class="flex items-center justify-center gap-2 rounded-lg border border-border/60 bg-muted/30 px-4 py-5 text-ui-xs text-muted-foreground">
-      <Loader2 class="size-4 animate-spin" />
+    <div class="loading-reveal flex items-center justify-center gap-2 rounded-lg border border-border/60 bg-muted/30 px-4 py-5 text-ui-xs text-muted-foreground">
+      <Loader2 class="size-4 shrink-0 animate-spin" />
       Verifying with GitHub Copilot…
     </div>
 
@@ -245,7 +245,7 @@
     <!-- ── Connected ── -->
     <div class="flex items-center gap-3 rounded-lg border border-success/30 bg-success/10 px-3 py-3">
       <div class="flex size-7 shrink-0 items-center justify-center rounded-full bg-success/30">
-        <Check class="size-4 text-success" />
+        <Check class="size-4 shrink-0 text-success" />
       </div>
       <div class="min-w-0 flex-1">
         <p class="text-ui-sm font-medium text-foreground">Connected to GitHub Copilot</p>
@@ -257,7 +257,7 @@
         title="Log out"
         onclick={handleLogout}
       >
-        <LogOut class="size-3.5" />
+        <LogOut class="size-3.5 shrink-0" />
       </button>
     </div>
 

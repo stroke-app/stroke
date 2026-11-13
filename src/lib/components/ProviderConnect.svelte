@@ -1,3 +1,8 @@
+<script module>
+  /** Providers whose only database was opened automatically this session. */
+  const autoPickedProviders = new Set()
+</script>
+
 <script>
   // One-flow provider sign-in: authorize (OAuth) or paste a token, list every
   // database on the account, and hand a ready-to-connect spec to the parent.
@@ -22,6 +27,7 @@
   import Eye from '@lucide/svelte/icons/eye'
   import EyeOff from '@lucide/svelte/icons/eye-off'
   import { cn } from '$lib/utils.js'
+  import { engineTint } from '$lib/engine-tint.js'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
   import {
     providerMeta,
@@ -93,6 +99,18 @@
   /** @type {import('$lib/providers.js').ProviderDatabase[]} */
   let databases = $state([])
   let selectedRef = $state('')
+  /** The list is being fetched again from the refresh button (the picker stays usable). */
+  let refreshing = $state(false)
+  // One database on the account: open it without asking. Once per visit, so a
+  // failed connect lands back on the picker instead of retrying in a loop.
+  // Only the first time per app session: coming back to this page (to refresh
+  // the list, or after a failed connect) must leave the picker in your hands.
+  $effect(() => {
+    if (phase !== 'selecting' || selectedRef || databases.length !== 1) return
+    if (autoPickedProviders.has(provider)) return
+    autoPickedProviders.add(provider)
+    void pick(databases[0].db_ref)
+  })
 
   // `SearchableMenu` owns the query, the filtering and the keyboard: the input
   // autofocuses on open, Arrow keys move the highlight, Enter selects, Esc closes.
@@ -574,7 +592,7 @@
         {#snippet action()}
           <Button class="group" onclick={startAuth}>
             Sign in
-            <ArrowRight class="size-3.5 transition-transform duration-150 ease-out group-hover:translate-x-0.5" />
+            <ArrowRight class="size-3.5 shrink-0 transition-transform duration-150 ease-out group-hover:translate-x-0.5" />
           </Button>
         {/snippet}
       </ProviderAuthPanel>
@@ -593,7 +611,7 @@
       {#snippet mark()}<DbIcon id={provider} class="size-4 shrink-0" />{/snippet}
       {#snippet action()}
         <Button variant="ghost" size="sm" onclick={cancelAuth}>
-          <X class="size-3.5" /> Cancel
+          <X class="size-3.5 shrink-0" /> Cancel
         </Button>
       {/snippet}
     </ProviderAuthPanel>
@@ -652,7 +670,7 @@
             <Button onclick={startAuth}>Sign in again</Button>
           {:else}
             <Button variant="outline" class="group" onclick={() => loadDatabases()}>
-              <RefreshCw class="size-3.5 transition-transform duration-500 ease-[var(--ease-out)] group-hover:rotate-180" />
+              <RefreshCw class="size-3.5 shrink-0" />
               Try again
             </Button>
           {/if}
@@ -668,17 +686,17 @@
     </ProviderAuthPanel>
 
   {:else if phase === 'selecting' || phase === 'building' || phase === 'password'}
-    <!-- Connected header -->
-    <div class="flex items-center gap-2.5 rounded-lg border border-border/40 bg-muted/[0.04] px-3 py-2.5">
-      <div class="flex size-7 shrink-0 items-center justify-center rounded-lg border border-border/40 bg-background">
-        <DbIcon id={provider} class="size-4 text-foreground" />
+    <!-- Connected account: brand mark, who you are, sign out. -->
+    <div class="flex items-center gap-3 rounded-lg border border-border/60 bg-muted/20 px-3.5 py-3">
+      <div class="grid size-9 shrink-0 place-items-center rounded-lg border border-border/60 bg-background">
+        <DbIcon id={provider} class={cn('size-4.5 shrink-0', engineTint(provider))} />
       </div>
       <div class="min-w-0 flex-1">
-        <p class="flex items-center gap-1.5 text-ui-xs font-medium text-foreground">
+        <p class="flex items-center gap-2 text-ui-sm font-medium text-foreground">
           {meta?.name}
-          <span class="inline-flex items-center gap-1 text-ui-3xs font-normal text-success"><Check class="size-3" />Connected</span>
+          <span class="inline-flex items-center gap-1.5 text-ui-2xs font-normal text-success"><span class="size-1.5 rounded-full bg-success" aria-hidden="true"></span>Connected</span>
         </p>
-        <p class="text-ui-3xs text-muted-foreground">Pick a database to connect</p>
+        <p class="truncate text-ui-xs text-muted-foreground">Pick a database to connect</p>
       </div>
       <Button variant="ghost" size="sm" class="shrink-0 text-muted-foreground hover:text-foreground" onclick={() => (confirmSignOut = true)}>
         <LogOut class="size-3.5 shrink-0" aria-hidden="true" />
@@ -714,25 +732,24 @@
             class="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
             onclick={() => (showPw = !showPw)}
           >
-            {#if showPw}<EyeOff class="size-3.5" />{:else}<Eye class="size-3.5" />{/if}
+            {#if showPw}<EyeOff class="size-3.5 shrink-0" />{:else}<Eye class="size-3.5 shrink-0" />{/if}
           </button>
         </div>
         <div class="flex gap-2">
           <button
             type="button"
-            class="flex-1 rounded-lg border border-border px-3 py-2 text-center text-ui-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            class="flex-1 rounded-md border border-border px-3 py-2 text-center text-ui-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
             onclick={() => { phase = 'selecting'; selectedRef = ''; resolved = null }}
           >
             Back
           </button>
-          <button
-            type="button"
-            class="flex-[2] inline-flex items-center justify-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-ui-xs font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
+          <Button
+            class="flex-[2]" size="lg"
             disabled={!pw.trim() || phase === 'building'}
             onclick={confirmPassword}
-          >
+>
             {#if phase === 'building'}<Loader2 class="size-3.5 shrink-0 animate-spin" />Connecting…{:else}Connect{/if}
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -741,11 +758,21 @@
       <!-- A field-width control, not a full-bleed bar: capped at 28rem so the
            name, the chevron and the list below sit where the eye reads, and the
            menu opens at the trigger's width (with a floor for long names). -->
-      <div class="flex max-w-md flex-col gap-1.5">
-        <span id="pc-db-label" class="flex items-baseline gap-1.5 text-ui-xs font-medium text-foreground/80">
-          Database
-          <span class="font-mono text-ui-2xs tabular-nums text-muted-foreground">{databases.length}</span>
-        </span>
+      <div class="flex min-w-0 flex-col gap-1.5">
+        <div class="flex items-center gap-1.5">
+          <span id="pc-db-label" class="flex items-baseline gap-1.5 text-ui-xs font-medium text-foreground/80">
+            Database
+            <span class="text-ui-2xs tabular-nums text-muted-foreground">{databases.length}</span>
+          </span>
+          <button
+          type="button"
+          class="ml-auto inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
+          title="Refresh the list"
+          aria-label="Refresh databases"
+          disabled={refreshing}
+          onclick={async () => { refreshing = true; try { await loadDatabases({ quiet: true }) } finally { refreshing = false } }}
+        ><RefreshCw class={cn('size-3.5 shrink-0', refreshing && 'animate-spin')} /></button>
+        </div>
         <SearchableMenu
           items={dbItems}
           placeholder="Search {databases.length} databases…"
@@ -792,7 +819,7 @@
       <!-- The same shape as the sidebar's empty tabs: a mark in a well, a title, one
      line on what to do, one button. Generous padding, because this block is
      the whole content of the panel when it shows. -->
-      <div class="flex flex-col items-center gap-4 rounded-xl border border-dashed border-border/60 px-6 py-10 text-center">
+      <div class="flex flex-col items-center gap-4 rounded-lg border border-dashed border-border/60 px-6 py-10 text-center">
         <div class="flex size-10 items-center justify-center rounded-lg border border-border/60 bg-muted/30">
           <DbIcon id={provider} class="size-5 text-muted-foreground" />
         </div>
@@ -801,7 +828,7 @@
           <p class="text-pretty text-ui-xs leading-relaxed text-muted-foreground">Nothing on this {meta?.name ?? ''} account yet. Create one in the {meta?.name ?? 'provider'} dashboard, then refresh.</p>
         </div>
         <Button variant="outline" size="sm" class="group active:scale-[0.96]" onclick={() => loadDatabases()}>
-          <RefreshCw class="size-3.5 shrink-0 transition-transform duration-500 ease-[var(--ease-out)] group-hover:rotate-180" aria-hidden="true" />
+          <RefreshCw class="size-3.5 shrink-0" aria-hidden="true" />
           Refresh
         </Button>
       </div>

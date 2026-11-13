@@ -191,3 +191,10 @@ describe('passwords with URL-special characters', () => {
     expect(parseRedisUri('rediss://default:p%q@h:6380')).toMatchObject({ password: 'p%q', host: 'h', port: '6380', tls: true })
   })
 })
+
+describe('MongoDB strings', () => {
+  it('are recognised, Atlas SRV included', () => {
+    expect(detectConnectionUri('mongodb://u:p@localhost:27017/shop')).toEqual({ type: 'mongodb', uriType: 'mongodb' })
+    expect(detectConnectionUri('mongodb+srv://u:p@cluster0.ab12.mongodb.net/?retryWrites=true')).toEqual({ type: 'mongodb', uriType: 'mongodb' })
+  })
+})

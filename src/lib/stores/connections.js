@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { saveSqlDraft, saveSqlTabs } from '$lib/stores/sql-draft.js'
+import { notifyLocalChange, recordDeletion } from '$lib/sync/changes.js'
 
 const STORAGE_KEY = 'stroke:connections'
 /**
@@ -16,7 +17,7 @@ const LAST_ID_KEY  = 'stroke:last-connection-id'
 const DISCONNECTED_KEY = 'stroke:disconnected'
 
 /**
- * @typedef {'postgres' | 'sqlite' | 'd1' | 'mysql' | 'mariadb' | 'cockroachdb' | 'libsql' | 'clickhouse' | 'duckdb' | 'mssql' | 'redis' | 'posthog'} DbType
+ * @typedef {'postgres' | 'sqlite' | 'd1' | 'mysql' | 'mariadb' | 'cockroachdb' | 'libsql' | 'clickhouse' | 'duckdb' | 'mssql' | 'redis' | 'valkey' | 'dynamodb' | 'couchdb' | 'cassandra' | 'firestore' | 'mongodb' | 'posthog'} DbType
  *
  * @typedef {{ host: string, port?: number, username: string, privateKeyPath?: string }} SshConfig
  *
@@ -49,6 +50,9 @@ const DISCONNECTED_KEY = 'stroke:disconnected'
  *   apiKey?: string     - PostHog personal API key
  *   providerRef?: string  - the provider's own id for this database (its db_ref), so reopening it from the provider picker connects with this entry instead of minting new credentials
  *   group?: string | null
+ *   workspaceId?: string | null  - the workspace it belongs to (stores/workspaces.js); missing = the default one
+ *   color?: string | null  - a colour id from stores/workspaces.js COLORS, shown as a dot wherever it appears
+ *   pinned?: boolean  - kept at the top of the connection lists (set through setConnectionMeta)
  *   origin?: 'studio' | 'docker'  - discovered locally rather than typed in
  *   tool?: 'prisma' | 'drizzle'
  *   toolLabel?: string
@@ -73,6 +77,7 @@ export function newConnectionId() {
 export function engineFamily(type) {
   if (type === 'mariadb') return 'mysql'
   if (type === 'cockroachdb') return 'postgres'
+  if (type === 'valkey') return 'redis'
   return /** @type {DbType} */ (type ?? 'postgres')
 }
 
@@ -88,7 +93,11 @@ export function loadSavedConnections() {
       // list (a throw here would fall through to the catch and wipe everything).
       if (!c || typeof c !== 'object') return null
       const type = c.type ?? 'postgres'
+      // Secrets come back from the keychain cache; an inline copy (not yet
+      // migrated, or the keychain unavailable) wins over it.
+      const sec = typeof c.id === 'string' ? _secretCache.get(c.id) : undefined
       const conn = {
+        ...(sec ?? {}),
         ...c,
         id:   c.id   ?? newConnectionId(),
         type,
@@ -131,8 +140,21 @@ export function loadSavedConnections() {
  */
 export function saveConnections(connections) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(connections))
+    let stored = connections
+    if (_vaultReady) {
+      // Secrets go to the keychain; the list on disk keeps everything else.
+      const next = new Map()
+      stored = connections.map((c) => {
+        const { pub, sec } = splitSecrets(c)
+        if (Object.keys(sec).length) next.set(c.id, sec)
+        return pub
+      })
+      _secretCache = next
+      queueSecretsWrite()
+    }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(stored))
     mirrorToDisk()
+    notifyLocalChange('connection')
     return true
   } catch (err) {
     // Quota/serialization failure must not throw into connect/disconnect flows.
@@ -166,6 +188,94 @@ function saveDeletedIds(ids) {
   try {
     localStorage.setItem(DELETED_KEY, JSON.stringify([...ids].slice(-MAX_DELETED_IDS)))
   } catch { /* the delete itself already landed; this only guards against revival */ }
+}
+
+// ── Secrets in the keychain ──────────────────────────────────────────────────
+// Passwords, tokens and keys never sit in localStorage or connections.json:
+// `saveConnections` splits them out into an in-memory cache that is persisted to
+// the OS keychain vault (secrets.rs), and `loadSavedConnections` merges them
+// back, so callers still see whole connections. Until the vault has been read
+// at startup (or when the keychain is unavailable) secrets stay inline, exactly
+// as before: a failed keychain write can never lose a password.
+
+/** Fields that hold credentials. MongoDB's `uri` carries its password. */
+export const SECRET_FIELDS = ['password', 'apiToken', 'apiKey', 'authToken', 'secretAccessKey', 'sessionToken', 'uri']
+
+/** @type {Map<string, Record<string, string>>} */
+let _secretCache = new Map()
+/** True once secrets live in the keychain; false keeps them inline. */
+let _vaultReady = false
+
+/**
+ * A connection's public fields and its secrets, separately.
+ * @param {Record<string, any>} c
+ */
+export function splitSecrets(c) {
+  const pub = { ...c }
+  /** @type {Record<string, string>} */
+  const sec = {}
+  for (const f of SECRET_FIELDS) {
+    if (typeof c[f] === 'string' && c[f] !== '') sec[f] = c[f]
+    delete pub[f]
+  }
+  return { pub, sec }
+}
+
+let _secretsChain = Promise.resolve()
+
+/** Persist the cache; on failure, put the secrets back inline so none is lost. */
+function queueSecretsWrite() {
+  const json = JSON.stringify(Object.fromEntries(_secretCache))
+  _secretsChain = _secretsChain
+    .then(() => invoke('conn_secrets_write', { json }))
+    .catch((err) => {
+      console.error('Keychain write failed; keeping connection secrets inline:', err)
+      _vaultReady = false
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(loadSavedConnections()))
+        mirrorToDisk()
+      } catch {}
+    })
+}
+
+/**
+ * Read the keychain's connection secrets and move any inline ones into it.
+ * Inline copies are stripped only after the keychain write succeeded. Runs at
+ * startup after the disk copy is loaded; outside Tauri it leaves things inline.
+ */
+export async function hydrateConnectionSecrets() {
+  try {
+    const json = /** @type {string | null} */ (await invoke('conn_secrets_read'))
+    /** @type {Record<string, Record<string, string>>} */
+    const stored = json ? JSON.parse(json) : {}
+    const cache = new Map(Object.entries(stored ?? {}))
+    const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '[]')
+    const list = Array.isArray(raw) ? raw : []
+    let inline = false
+    for (const c of list) {
+      if (!c || typeof c !== 'object' || typeof c.id !== 'string') continue
+      const { sec } = splitSecrets(c)
+      if (Object.keys(sec).length) {
+        cache.set(c.id, { ...(cache.get(c.id) ?? {}), ...sec })
+        inline = true
+      }
+    }
+    // Secrets of deleted connections don't come back.
+    const ids = new Set(list.map((c) => c?.id))
+    for (const id of [...cache.keys()]) if (!ids.has(id)) cache.delete(id)
+    if (inline || cache.size !== Object.keys(stored ?? {}).length) {
+      await invoke('conn_secrets_write', { json: JSON.stringify(Object.fromEntries(cache)) })
+    }
+    _secretCache = cache
+    _vaultReady = true
+    if (inline) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(list.map((c) => (c && typeof c === 'object' ? splitSecrets(c).pub : c))))
+      mirrorToDisk()
+    }
+  } catch (err) {
+    _vaultReady = false
+    console.warn('Connection secrets stay in local storage (keychain unavailable):', err)
+  }
 }
 
 // ── Durable copy on disk ─────────────────────────────────────────────────────
@@ -202,10 +312,13 @@ function mirrorToDisk() {
  * unreadable file, localStorage stays the source.
  */
 export async function hydrateConnectionsFromDisk() {
+  let seedFile = false
   try {
     const json = /** @type {string | null} */ (await invoke('connections_store_read'))
     if (json == null) {
-      mirrorToDisk()
+      // No file yet: write it after the secrets have moved to the keychain
+      // (below), so a first launch never puts a password on disk.
+      seedFile = true
       return
     }
     const data = JSON.parse(json)
@@ -213,6 +326,9 @@ export async function hydrateConnectionsFromDisk() {
     if (Array.isArray(data?.deleted)) localStorage.setItem(DELETED_KEY, JSON.stringify(data.deleted))
   } catch (err) {
     console.warn('Saved connections: using browser storage only.', err)
+  } finally {
+    await hydrateConnectionSecrets()
+    if (seedFile) mirrorToDisk()
   }
 }
 
@@ -234,8 +350,12 @@ export function upsertConnection(conn, { revive = false } = {}) {
   }
   const list = loadSavedConnections()
   const idx  = list.findIndex((c) => c.id === conn.id)
-  if (idx >= 0) list[idx] = conn
-  else list.push(conn)
+  if (idx >= 0) {
+    // A pin is set only through setConnectionMeta; a live copy written back
+    // here (connect, database switch, edit) must not drop or revive it.
+    const { pinned: _stale, ...rest } = conn
+    list[idx] = list[idx].pinned ? { ...rest, pinned: true } : rest
+  } else list.push(conn)
   _persistFailed = !saveConnections(list)
   return list
 }
@@ -246,6 +366,8 @@ export function removeConnection(id) {
   deleted.add(id)
   // Before saveConnections, so the disk copy it writes carries the id too.
   saveDeletedIds(deleted)
+  // Sync carries the delete to other devices (a no-op while sync applies one).
+  recordDeletion('connection', id)
   const list = loadSavedConnections().filter((c) => c.id !== id)
   saveConnections(list)
   if (getLastConnectionId() === id) setLastConnectionId(null)
@@ -327,6 +449,50 @@ export function setConnectionGroup(id, group) {
     }
     saveConnections(list)
   }
+  return list
+}
+
+/**
+ * Set a connection's workspace, colour and/or pin (null clears the colour; a
+ * null workspace means the default one).
+ * @param {string} id
+ * @param {{ workspaceId?: string | null, color?: string | null, pinned?: boolean }} patch
+ */
+export function setConnectionMeta(id, patch) {
+  const list = loadSavedConnections()
+  const idx = list.findIndex((c) => c.id === id)
+  if (idx >= 0) {
+    const next = { ...list[idx] }
+    if ('workspaceId' in patch) {
+      if (patch.workspaceId) next.workspaceId = patch.workspaceId
+      else delete next.workspaceId
+    }
+    if ('color' in patch) {
+      if (patch.color) next.color = patch.color
+      else delete next.color
+    }
+    if ('pinned' in patch) {
+      if (patch.pinned) next.pinned = true
+      else delete next.pinned
+    }
+    list[idx] = next
+    saveConnections(list)
+  }
+  return list
+}
+
+/**
+ * Move every connection of one workspace to the default one (the workspace is
+ * being deleted). Returns the updated list.
+ * @param {string} workspaceId
+ */
+export function releaseWorkspace(workspaceId) {
+  const list = loadSavedConnections().map((c) => {
+    if (c.workspaceId !== workspaceId) return c
+    const { workspaceId: _drop, ...rest } = c
+    return rest
+  })
+  saveConnections(list)
   return list
 }
 

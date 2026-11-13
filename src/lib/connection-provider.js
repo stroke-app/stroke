@@ -61,6 +61,12 @@ const ENGINE_SHORT = {
   'duckdb-memory': 'DuckDB',
   clickhouse: 'ClickHouse',
   redis: 'Redis',
+  valkey: 'Valkey',
+  dynamodb: 'DynamoDB',
+  couchdb: 'CouchDB',
+  cassandra: 'Cassandra',
+  firestore: 'Firestore',
+  mongodb: 'MongoDB',
   d1: 'D1',
   posthog: 'HogQL',
 }

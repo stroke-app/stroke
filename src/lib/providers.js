@@ -98,3 +98,38 @@ export async function providerListDatabases(provider) {
 export async function providerBuildConnection(provider, dbRef) {
   return invoke('provider_build_connection', { provider, dbRef })
 }
+
+/**
+ * Turn a resolved provider spec into the SavedConnection shape for its engine,
+ * reusing the id of an existing saved entry for the same database so a connect
+ * or a switch upserts that entry instead of piling up duplicates (or, worse,
+ * overwriting the connection you switched away from).
+ * libsql gets its URL in `host` and token in `password`; PostHog its project id
+ * in `database` and API key in `password`; Redis its db number in `database`.
+ * @param {ProviderConnection & { providerRef?: string }} conn
+ * @param {{ provider?: string, saved: any[], readOnly?: boolean, newId: () => string }} opts
+ */
+export function providerToSaved(conn, { provider, saved, readOnly, newId }) {
+  const base = { name: conn.name, provider, providerRef: conn.providerRef }
+  const ro = readOnly || undefined
+  if (conn.db_type === 'libsql') {
+    const existing = saved.find((s) => s.type === 'libsql' && s.url === conn.host)
+    return { ...base, id: existing?.id ?? newId(), type: 'libsql', url: conn.host, authToken: conn.password || undefined, readOnly: ro }
+  }
+  if (conn.db_type === 'posthog') {
+    const existing = saved.find((s) => s.type === 'posthog' && s.host === conn.host && String(s.projectId) === String(conn.database))
+    return { ...base, id: existing?.id ?? newId(), type: 'posthog', host: conn.host, projectId: conn.database, apiKey: conn.password, readOnly: true }
+  }
+  if (conn.db_type === 'redis') {
+    const existing = saved.find((s) => s.type === 'redis' && s.host === conn.host && s.port === conn.port)
+    return { ...base, id: existing?.id ?? newId(), type: 'redis', host: conn.host, port: conn.port, password: conn.password, db: Number(conn.database) || 0, tls: conn.ssl, readOnly: ro }
+  }
+  const type = conn.db_type === 'mysql' ? 'mysql' : 'postgres'
+  const existing = saved.find((s) => s.host === conn.host && s.user === conn.username && s.type === type && (s.database ?? '') === (conn.database ?? ''))
+    ?? saved.find((s) => s.host === conn.host && s.user === conn.username && s.type === type)
+  return { ...base, id: existing?.id ?? newId(), type, host: conn.host, port: conn.port, database: conn.database, user: conn.username, password: conn.password, ssl: conn.ssl, readOnly: ro }
+}
+
+/** A driver error that means "these credentials are no good", on any engine. */
+export const AUTH_FAILURE =
+  /password authentication failed|authentication failed|access denied|invalid password|28P01|\b1045\b|role ".*" does not exist|WRONGPASS|NOAUTH|unauthorized|\b401\b/i
