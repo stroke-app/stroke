@@ -2,10 +2,13 @@
 	import { cn } from "$lib/utils.js";
 	import Kbd from "$lib/components/Kbd.svelte";
 	import { keycaps } from "$lib/shortcuts.js";
+	import { bindingFor } from "$lib/stores/keybindings.js";
 	let {
 		ref = $bindable(null),
 		class: className,
 		keys = '',
+		/** A remappable command id: prints its current combo instead of `keys`. */
+		command = '',
 		children,
 		...restProps
 	} = $props();
@@ -17,6 +20,7 @@
 	// as names and let `keycaps` print each platform's own spelling.
 	const GLYPH_NAME = { '⌘': 'Mod', '⇧': 'Shift', '⌥': 'Alt', '⌃': 'Ctrl', '↵': 'Enter' };
 	const tokens = $derived(
+		command ? (bindingFor(command) ? keycaps(bindingFor(command)) : []) :
 		!keys ? [] :
 		keycaps(
 			keys.includes('+')

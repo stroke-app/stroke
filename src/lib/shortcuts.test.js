@@ -32,7 +32,8 @@ describe('the shortcuts list', () => {
     const { SHORTCUT_GROUPS } = await load('macos')
     for (const g of SHORTCUT_GROUPS) {
       const seen = new Set()
-      for (const s of g.shortcuts) {
+      // Commands that ship unbound (combo '') have no chord to collide on.
+      for (const s of g.shortcuts.filter((s) => s.combo)) {
         expect(seen.has(s.combo), `${g.label}: ${s.combo}`).toBe(false)
         seen.add(s.combo)
       }
