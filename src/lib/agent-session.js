@@ -11,7 +11,7 @@ import {
 import { isReadOnly } from '$lib/stores/read-only.js'
 
 /**
- * @typedef {{ dbType?: string, activeSchema?: string, activeTable?: string | null, tables?: string[], extra?: string }} AgentChatContext
+ * @typedef {{ dbType?: string, activeSchema?: string, activeTable?: string | null, tables?: string[], extra?: string, webAccess?: boolean }} AgentChatContext
  * @typedef {{
  *   text?: (delta: string) => void,
  *   toolCall?: (call: { id: string, tool: string, input: any }) => void,
@@ -39,9 +39,16 @@ export function createAgentChat() {
   let settle = null
   let key = `chat-${crypto.randomUUID()}`
 
+  /**
+   * End the running session. Resolves once the backend has let it go, so a
+   * restart under the same key (a changed access level, effort or model) never
+   * races the old process shutting down and gets stopped along with it.
+   * @returns {Promise<void>}
+   */
   function stop() {
-    if (session) void agentStop(session.key).catch(() => {})
+    const s = session
     session = null
+    return s ? agentStop(s.key).then(() => {}, () => {}) : Promise.resolve()
   }
 
   /**
@@ -55,11 +62,13 @@ export function createAgentChat() {
     /** @type {import('$lib/local-agents.js').AgentAccess} */
     const access = isReadOnly() ? 'read' : prefs.access
     const s = session
-    if (s?.agent === agent && s.model === model && s.effort === effort && s.access === access) {
+    // Web access is a launch flag on the agent, so turning it on or off starts a fresh session.
+    const webAccess = !!ctx.webAccess
+    if (s?.agent === agent && s.model === model && s.effort === effort && s.access === access && s.webAccess === webAccess) {
       await s.ready
       return s.key
     }
-    stop()
+    await stop()
     /** @type {(v?: unknown) => void} */
     let started = () => {}
     /** @type {(e: unknown) => void} */
@@ -67,9 +76,9 @@ export function createAgentChat() {
     /** @type {Promise<void>} */
     const ready = new Promise((res, rej) => { started = res; failed = rej })
     ready.catch(() => {})
-    const next = { key, agent, model, effort, access, ready }
+    const next = { key, agent, model, effort, access, webAccess, ready }
     session = next
-    const prompt = agentSystemPrompt({ ...ctx, access }) + (ctx.extra ? `\n\n${ctx.extra}` : '')
+    const prompt = agentSystemPrompt({ ...ctx, access, webAccess }) + (ctx.extra ? `\n\n${ctx.extra}` : '')
     try {
       await agentStart(
         {
@@ -80,6 +89,7 @@ export function createAgentChat() {
           resume: native?.agent === agent ? native.id : null,
           effort: effort || null,
           access,
+          webAccess,
         },
         (ev) => {
           if (session !== next) return

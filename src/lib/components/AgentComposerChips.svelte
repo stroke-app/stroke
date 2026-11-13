@@ -14,6 +14,10 @@
   let {
     /** @type {string} */
     agent = '',
+    /** 'access' renders only the access control, as a quiet text button (the
+        row under the composer); effort then lives in the model picker. */
+    /** @type {'all' | 'access'} */
+    part = 'all',
   } = $props()
 
   /** @type {Record<string, string>} */
@@ -41,7 +45,7 @@
   const chip = "inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-ui-xs text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground select-none data-[state=open]:bg-accent data-[state=open]:text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-60"
 </script>
 
-{#if AGENTS_WITH_EFFORT.has(agent)}
+{#if part === 'all' && AGENTS_WITH_EFFORT.has(agent)}
   <span class="h-3.5 w-px shrink-0 bg-border/70" aria-hidden="true"></span>
   <DropdownMenu.Root>
     <DropdownMenu.Trigger class={chip} title="Reasoning effort">
@@ -67,17 +71,17 @@
   </DropdownMenu.Root>
 {/if}
 
-<span class="h-3.5 w-px shrink-0 bg-border/70" aria-hidden="true"></span>
+{#if part === 'all'}<span class="h-3.5 w-px shrink-0 bg-border/70" aria-hidden="true"></span>{/if}
 <DropdownMenu.Root>
   <DropdownMenu.Trigger
-    class={cn(chip, access.id === 'dangerous' ? "text-destructive hover:text-destructive" : access.id !== 'read' && "text-foreground")}
+    class={cn(chip, part === 'access' && "h-6 px-1.5 text-ui-2xs", access.id === 'dangerous' ? "text-destructive hover:text-destructive" : access.id !== 'read' && "text-foreground")}
     title="What the agent may run"
   >
     <access.icon class="size-3.5 shrink-0" />
     <span>{access.label}</span>
     <ChevronDown class="size-3 shrink-0 opacity-40" />
   </DropdownMenu.Trigger>
-  <DropdownMenu.Content side="top" align="start" class="w-80 p-1">
+  <DropdownMenu.Content side="top" align={part === 'access' ? 'end' : 'start'} class="w-80 p-1">
     {#if $readOnlyMode}
       <p class="flex items-start gap-2 rounded-md bg-muted/40 px-2.5 py-2 text-ui-3xs text-muted-foreground">
         <Lock class="mt-0.5 size-3 shrink-0" />

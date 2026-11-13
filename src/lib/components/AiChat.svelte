@@ -1,4 +1,5 @@
 <script>
+  import CollapsibleCode from './CollapsibleCode.svelte'
   import { tick, onMount, onDestroy } from "svelte";
   import Sparkles from "@lucide/svelte/icons/sparkles";
   import ArrowUp from "@lucide/svelte/icons/arrow-up";
@@ -22,8 +23,10 @@
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
   import PanelLeft from "@lucide/svelte/icons/panel-left";
+  import Icon from "./Icon.svelte";
   import X from "@lucide/svelte/icons/x";
   import Database from "@lucide/svelte/icons/database";
+  import Lock from "@lucide/svelte/icons/lock";
   import Upload from "@lucide/svelte/icons/upload";
   import BookOpen from "@lucide/svelte/icons/book-open";
   import BarChart2 from "@lucide/svelte/icons/bar-chart-2";
@@ -41,20 +44,22 @@
   import { Label } from "$lib/components/ui/label/index.js";
   import { cn } from "$lib/utils.js";
   import { executeSql, aiWebSearch, aiFetchPage, saveExportAs, agentStart, agentSend, agentInterrupt, agentStop } from "$lib/api.js";
+  import { queryLanguageFor, sampleQuery, describeFromSample } from "$lib/ai-query-languages.js";
   import {
     profileAgent,
     strokeToolName,
     toolOutputText,
     parseSqlResult,
     agentSystemPrompt,
+    isWebTool,
     agentPrefs,
     AGENTS_WITH_EFFORT,
     stepLabel,
     cleanToolError,
   } from "$lib/local-agents.js";
   import AgentComposerChips from "$lib/components/AgentComposerChips.svelte";
-  import { isReadOnly, guardWrite } from "$lib/stores/read-only.js";
-  import { isWriteSql, stripSqlComments } from "$lib/sql-write.js";
+  import { isReadOnly, guardWrite, readOnlyMode } from "$lib/stores/read-only.js";
+  import { isWriteSql, isWriteFor, stripSqlComments } from "$lib/sql-write.js";
   import {
     rowsToCsv,
     rowsToJson,
@@ -116,7 +121,7 @@
   import { saveChart } from "$lib/stores/saved-charts.js";
   import { saveDiagram } from "$lib/stores/saved-diagrams.js";
   import { buildOption } from "$lib/chart-utils.js";
-  import { isCurrentThemeDark, appAgentQueryCards, appAgentWebAccess } from "$lib/stores/settings.js";
+  import { isCurrentThemeDark, appAgentQueryCards, appAgentWebAccess, toggleLightDark } from "$lib/stores/settings.js";
   import Save from "@lucide/svelte/icons/save";
   import Check from "@lucide/svelte/icons/check";
   import Search from "@lucide/svelte/icons/search";
@@ -126,7 +131,12 @@
   import HardDrive from "@lucide/svelte/icons/hard-drive";
   import Link2 from "@lucide/svelte/icons/link-2";
   import LoaderCircle from "@lucide/svelte/icons/loader-circle";
+  import CircleCheck from "@lucide/svelte/icons/circle-check";
+  import CircleAlert from "@lucide/svelte/icons/circle-alert";
   import GitBranch from "@lucide/svelte/icons/git-branch";
+  import BarChart3 from "@lucide/svelte/icons/chart-column";
+  import ImageIcon from "@lucide/svelte/icons/image";
+  import { loadLayout, setNavSidebarWidth, clampNavSidebarWidth, NAV_SIDEBAR_MIN, NAV_WIDTH_EVENT } from "$lib/stores/layout.js";
   import Brain from "@lucide/svelte/icons/brain";
   import AiModelPicker from "./AiModelPicker.svelte";
   import {
@@ -145,6 +155,7 @@
    *   | { id: string, kind: 'user', text: string, ts?: number }
    *   | { id: string, kind: 'assistant', parts: import('$lib/ai.js').AssistantPart[], ts?: number }
    *   | { id: string, kind: 'streaming' }
+   *   | { id: string, kind: 'generating', what: 'chart' | 'diagram' }
    *   | { id: string, kind: 'result', sql: string, columns: {name:string,dataType?:string}[], rows: unknown[][], total: number, error: string|null, isSchema?: boolean, capped?: boolean }
    *   | { id: string, kind: 'chart', spec: { type: string, title: string, data: object[], x_col: string, y_col: string, z_col?: string, group_col?: string }, error: string|null }
    *   | { id: string, kind: 'confirm', sql: string, resolve: (ok: boolean) => void }
@@ -159,7 +170,7 @@
   /**
    * One step of a local agent's turn, folded under "Worked for 4s": a tool
    * call, or a `note` (what the agent said between calls).
-   * @typedef {{ id: string, tool: string, op: 'query' | 'schema' | 'describe' | 'note', detail: string, status: 'running' | 'done' | 'error', error?: string }} WorkStep
+   * @typedef {{ id: string, tool: string, op: 'query' | 'schema' | 'describe' | 'web' | 'note', detail: string, status: 'running' | 'done' | 'error', error?: string }} WorkStep
    */
 
   /**
@@ -228,18 +239,31 @@
     mode = /** @type {'tab' | 'full'} */ ("tab"),
     /** Callback to exit fullscreen AI mode (null when in tab mode) */
     onexit = /** @type {(() => void) | null} */ (null),
+    /** App-wide controls for the chat list's footer (the table sidebar's set). */
+    onopensettings = /** @type {(() => void) | null} */ (null),
+    onopenshortcuts = /** @type {(() => void) | null} */ (null),
+    /** The window's own sidebar button drives the chat list (AI mode): no second toggle in here. */
+    externalToggle = false,
     /** @param {string} sql */
     onwritesql = (sql) => {},
     /** Open the dedicated AI model settings dialog. */
     onopenmodelsettings = () => {},
     /** Called when user saves a diagram - opens Diagrams page */
     onopendiagramspage = /** @type {(() => void) | undefined} */ (undefined),
+    /** The AI changed the schema (CREATE / ALTER / DROP...): reload the tables and database list. */
+    onschemadirty = () => {},
   } = $props();
+
+  /** A statement that changes the schema, so the sidebar must reload. @param {string} sql */
+  const isDdl = (sql) => /^\s*(?:--[^\n]*\n\s*)*(create|alter|drop|rename|truncate|comment\s+on)\b/i.test(sql ?? "") || /;\s*(create|alter|drop|rename|truncate)\b/i.test(sql ?? "");
 
   $effect(() => {
     if (isActive) {
-      // Re-focus the input whenever the AI tab becomes visible
-      void Promise.resolve().then(() => inputRef?.focus());
+      // Re-focus the input whenever the AI view becomes visible. A frame later,
+      // not a microtask: the view un-hides in the same update, and a hidden
+      // (display: none) textarea refuses focus - so entering AI mode left the
+      // composer unfocused.
+      void tick().then(() => requestAnimationFrame(() => inputRef?.focus({ preventScroll: true })));
     }
   });
 
@@ -290,10 +314,10 @@
   /** @type {'model'|'skills'|'context'|'chat'} */
   let settingsTab = $state("model");
   const SETTINGS_TABS = /** @type {const} */ ([
-    { id: "model", icon: Cpu },
-    { id: "chat", icon: MessageSquare },
-    { id: "skills", icon: Zap },
-    { id: "context", icon: Database },
+    { id: "model", icon: Cpu, label: "Model" },
+    { id: "chat", icon: MessageSquare, label: "Chat" },
+    { id: "skills", icon: Zap, label: "Skills" },
+    { id: "context", icon: Database, label: "Context" },
   ]);
 
   // ── Skills ────────────────────────────────────────────────────────────────
@@ -598,6 +622,32 @@
   // ── Rename conversation ───────────────────────────────────────────────────
   /** @type {string|null} */
   let renamingConvId = $state(null);
+
+  // ── Selecting chats (multi-delete, clear all) ───────────────────────────────
+  let selecting = $state(false);
+  /** Anchor for Shift-click range selection: the last chat row clicked. @type {string | null} */
+  let convAnchor = null;
+  /** @type {Set<string>} */
+  let selectedConvs = $state(new Set());
+  /** Two-step "Clear all": the first click arms it, the second deletes. */
+  let confirmClearAll = $state(false);
+  /** @param {string} id */
+  function toggleConvSelected(id) {
+    const next = new Set(selectedConvs);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    selectedConvs = next;
+  }
+  function endSelecting() {
+    selecting = false;
+    selectedConvs = new Set();
+    confirmClearAll = false;
+  }
+  /** @param {string[]} ids */
+  async function removeConversations(ids) {
+    for (const id of ids) await removeConversation(id);
+    endSelecting();
+  }
   let renamingTitle = $state("");
 
   function startRename(
@@ -1024,8 +1074,20 @@
   const MERMAID_CACHE_MAX = 30;
 
   /** `usecaseDiagram` is not a real Mermaid type - auto-correct it. */
+  /** Diagram type keywords Mermaid recognises on the first line. */
+  const MERMAID_TYPES = /^(?:%%[^\n]*\n\s*)*(?:erDiagram|flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|mindmap|gitGraph|timeline|journey|gantt|pie|quadrantChart|xychart-beta|sankey-beta|block-beta|requirementDiagram|C4Context|usecaseDiagram)\b/;
   function normalizeMermaidCode(code) {
-    return code.replace(/^usecaseDiagram\b/m, "flowchart TD");
+    let c = code.trim().replace(/^usecaseDiagram\b/m, "flowchart TD");
+    // Models often send an ER fragment without its `erDiagram` header (an
+    // entity block, or a relationship line). Mermaid then can't tell what it
+    // is and fails with "No diagram type detected"; the syntax itself is ER.
+    if (!MERMAID_TYPES.test(c)) {
+      const er = /^\s*[A-Za-z_][\w-]*\s*\{\s*$/m.test(c) || /[|}o]\|?[-.]{2}[|{o]/.test(c);
+      const flow = /^\s*[A-Za-z_][\w]*\s*(?:\[.*\]|\(.*\))?\s*-->/m.test(c);
+      if (er) c = `erDiagram\n${c}`;
+      else if (flow) c = `flowchart TD\n${c}`;
+    }
+    return c;
   }
 
   /** Reactive store for async-rendered diagrams (from full mermaid.js). */
@@ -1067,6 +1129,75 @@
       _asyncDiagrams[asyncKey] =
         `<div class="flex flex-col gap-1.5 p-3 rounded border border-destructive/30 bg-destructive/5"><p class="text-ui-xs font-medium text-destructive">Diagram render failed</p><p class="font-mono text-ui-3xs text-muted-foreground whitespace-pre-wrap">${msg}</p></div>`;
     }
+  }
+
+  /**
+   * Split a streaming reply at a diagram fence: the prose before it renders as
+   * markdown, the diagram shows as a generating card until the reply ends,
+   * and anything after a closed fence renders again. Null when there is none.
+   * @param {string} text
+   */
+  function splitStreamingDiagram(text) {
+    const re = /```([\w-]*)[ \t]*\n/g;
+    let m;
+    while ((m = re.exec(text))) {
+      const lang = m[1].toLowerCase();
+      const start = m.index + m[0].length;
+      const close = text.indexOf("```", start);
+      const body = close === -1 ? text.slice(start) : text.slice(start, close);
+      const kind = lang === "chart" || lang === "echarts" ? "chart"
+        : lang === "mermaid" || lang === "mmd" || MERMAID_TYPES.test(body.trimStart()) ? "diagram" : null;
+      if (kind) {
+        return { kind, before: text.slice(0, m.index), after: close === -1 ? "" : text.slice(close + 3) };
+      }
+      if (close === -1) break;
+      re.lastIndex = close + 3;
+    }
+    return null;
+  }
+
+  /**
+   * A finished reply as transcript items: text runs stay one assistant item,
+   * each ```chart block becomes a real chart item where it was written - the
+   * same card render_chart makes (save, zoom, export). Local agents chart this
+   * way, having no render_chart tool.
+   * @param {string} id @param {any[]} parts @returns {ChatItem[]}
+   */
+  function replyItems(id, parts) {
+    if (!parts.some((p) => p.type === "chart")) return [/** @type {ChatItem} */ ({ id, kind: "assistant", parts, ts: Date.now() })];
+    /** @type {ChatItem[]} */
+    const out = [];
+    /** @type {any[]} */
+    let run = [];
+    let n = 0;
+    const flush = () => {
+      if (!run.length) return;
+      out.push(/** @type {ChatItem} */ ({ id: n ? `${id}:${n}` : id, kind: "assistant", parts: run, ts: Date.now() }));
+      n++;
+      run = [];
+    };
+    for (const p of parts) {
+      if (p.type !== "chart") { run.push(p); continue; }
+      flush();
+      const spec = { ...p.spec, data: chartRows(p.spec.data, p.spec) };
+      out.push(/** @type {ChatItem} */ ({ id: uid(), kind: "chart", spec, error: spec.data.length ? null : "The chart came without data rows." }));
+    }
+    flush();
+    if (!out.some((i) => i.id === id)) out[0] = /** @type {ChatItem} */ ({ ...out[0], id });
+    return out;
+  }
+
+  /** The diagram's type as a label, from its Mermaid header line. @param {string} code */
+  function diagramKind(code) {
+    const head = (code.trim().split("\n").find((l) => l.trim() && !l.trim().startsWith("%%")) ?? "").trim().split(/\s+/)[0];
+    const map = /** @type {Record<string, string>} */ ({
+      erDiagram: "ER diagram", flowchart: "Flowchart", graph: "Flowchart", sequenceDiagram: "Sequence diagram",
+      classDiagram: "Class diagram", "classDiagram-v2": "Class diagram", stateDiagram: "State diagram",
+      "stateDiagram-v2": "State diagram", mindmap: "Mind map", gitGraph: "Git graph", timeline: "Timeline",
+      journey: "User journey", gantt: "Gantt chart", pie: "Pie chart", quadrantChart: "Quadrant chart",
+      "xychart-beta": "XY chart", "sankey-beta": "Sankey diagram",
+    });
+    return map[head] ?? "Diagram";
   }
 
   /** Render mermaid code to SVG. Tries beautiful-mermaid (sync), falls back to full mermaid.js (async). */
@@ -1111,8 +1242,36 @@
    *  Zoom: Ctrl/Meta + scroll (so regular chat scroll is never blocked).
    *  Pan: drag. Reset: double-click. */
   function mermaidInteractive(/** @type {HTMLDivElement} */ node) {
-    const svg = /** @type {SVGSVGElement|null} */ (node.querySelector("svg"));
-    if (!svg) return {};
+    // The SVG may not exist yet: a diagram the fast renderer can't draw goes to
+    // mermaid.js asynchronously, and the card mounts on a "Rendering…" spinner.
+    // Attaching only at mount left those diagrams unthemed with no pan or zoom,
+    // so this waits for the SVG and re-attaches whenever it is replaced.
+    /** @type {{ destroy(): void } | null} */
+    let live = null;
+    /** @type {Element | null} */
+    let current = null;
+    const sync = () => {
+      const svg = /** @type {SVGSVGElement|null} */ (node.querySelector("svg"));
+      if (svg === current) return;
+      live?.destroy();
+      live = null;
+      current = svg;
+      if (svg) live = attachMermaid(node, svg);
+    };
+    sync();
+    const mo = new MutationObserver(sync);
+    mo.observe(node, { childList: true, subtree: true });
+    return {
+      destroy() {
+        mo.disconnect();
+        live?.destroy();
+      },
+    };
+  }
+
+  /** Theming and pan/zoom for one rendered diagram SVG.
+   *  @param {HTMLDivElement} node @param {SVGSVGElement} svg */
+  function attachMermaid(node, svg) {
 
     // ── Theming ────────────────────────────────────────────────────────────
     function applyTheme() {
@@ -1444,6 +1603,21 @@
 
   const hasPendingConfirm = $derived(items.some((i) => i.kind === "confirm"));
   const suggestions = $derived(generateSuggestions(schemaContext));
+  /** The database the chat is about, for the landing headline. */
+  const dbName = $derived(String(/** @type {any} */ (schemaContext).database ?? ""));
+  // The composer moves between the landing (centred) and the foot of the
+  // transcript, which remounts it; keep focus in it across that move.
+  /** @type {boolean | null} */
+  let composerWasEmpty = null;
+  $effect(() => {
+    const empty = items.length === 0;
+    const first = composerWasEmpty === null;
+    if (empty === composerWasEmpty) return;
+    composerWasEmpty = empty;
+    if (first) return;
+    const hadFocus = inputFocused || !document.activeElement || document.activeElement === document.body;
+    if (hadFocus) void tick().then(() => inputRef?.focus());
+  });
   /** Show a persistent activity row while loading when no thinking/streaming/executing row is already visible. */
   const showWorking = $derived(
     loading &&
@@ -1528,6 +1702,9 @@
   const SIDEBAR_DEFAULT_W = 208;
 
   function loadSidebarWidth() {
+    // The full-window chat list is the window's left column, like the table
+    // sidebar: one shared width (layout.js), so switching modes never resizes it.
+    if (externalToggle) return loadLayout().navSidebarWidth;
     try {
       const w = Number(localStorage.getItem(AI_SIDEBAR_W_KEY) || SIDEBAR_DEFAULT_W);
       return Math.min(SIDEBAR_MAX_W, Math.max(SIDEBAR_MIN_W, w || SIDEBAR_DEFAULT_W));
@@ -1537,10 +1714,24 @@
   }
 
   let sidebarWidth = $state(loadSidebarWidth());
+  // Follow a resize of the table sidebar (full-window mode shares its width).
+  $effect(() => {
+    if (!externalToggle) return;
+    const on = (/** @type {Event} */ e) => {
+      const w = /** @type {CustomEvent<number>} */ (e).detail;
+      if (Number.isFinite(w)) sidebarWidth = w;
+    };
+    window.addEventListener(NAV_WIDTH_EVENT, on);
+    return () => window.removeEventListener(NAV_WIDTH_EVENT, on);
+  });
   let sidebarResizeStart = 0;
   let sidebarResizeScale = 1;
 
   function saveSidebarWidth() {
+    if (externalToggle) {
+      sidebarWidth = setNavSidebarWidth(sidebarWidth);
+      return;
+    }
     try {
       localStorage.setItem(AI_SIDEBAR_W_KEY, String(Math.round(sidebarWidth)));
     } catch {
@@ -1563,6 +1754,21 @@
   }
 
   let sidebarVisible = $state(loadSidebarPref());
+
+  /** Send a message from outside (Fix with AI, palette quick-ask). @param {string} text */
+  export function sendMessage(text) {
+    void send([text]);
+  }
+
+  /** Put text in the composer for the user to finish. @param {string} text */
+  export function draftMessage(text) {
+    inputText = text + inputText;
+  }
+
+  /** For the title bar's sidebar button in AI mode. */
+  export function toggleChats() {
+    toggleAiSidebar()
+  }
 
   function toggleAiSidebar() {
     sidebarVisible = !sidebarVisible;
@@ -1664,6 +1870,8 @@
    */
   async function ensureFullSchemaCache() {
     if (!schemaContext.tables?.length) return;
+    // Schemaless engines: fields come from sampled documents, not a catalog.
+    if (queryLanguageFor(schemaContext.dbType)) return;
     const dbTypeSC = schemaContext.dbType ?? "postgres";
     const isMysql = dbTypeSC === "mysql";
     const isSqliteFamilySC =
@@ -1758,9 +1966,14 @@
     await Promise.all(pending.map(async (key) => {
       const schema = key.slice(0, key.indexOf("."));
       const table = key.slice(key.indexOf(".") + 1);
+      // NoSQL: the engine's own read (db.users.find().limit(3)); none where
+      // any read would scan (DynamoDB, Redis).
+      const nosql = queryLanguageFor(schemaContext.dbType);
+      const nosqlQuery = nosql ? sampleQuery(String(schemaContext.dbType), schema, table, SAMPLE_ROWS) : null;
+      if (nosql && !nosqlQuery) return;
       try {
         const data = await executeSql(
-          `SELECT * FROM ${tableRefForEngine(schema, table)} LIMIT ${SAMPLE_ROWS}`,
+          nosqlQuery ?? `SELECT * FROM ${tableRefForEngine(schema, table)} LIMIT ${SAMPLE_ROWS}`,
         );
         const cols = (data.columns ?? []).map((c) => c.name);
         let truncated = false;
@@ -2103,12 +2316,15 @@
   /** "2 queries · 1 schema read". @param {WorkStep[]} steps */
   function workSummary(steps) {
     const queries = steps.filter((s) => s.op === "query").length;
-    const reads = steps.filter((s) => s.op !== "query" && s.op !== "note").length;
+    const web = steps.filter((s) => s.op === "web").length;
+    const reads = steps.filter((s) => s.op !== "query" && s.op !== "web" && s.op !== "note").length;
     return [
       queries ? `${queries} ${queries === 1 ? "query" : "queries"}` : "",
+      web ? `${web} web ${web === 1 ? "lookup" : "lookups"}` : "",
       reads ? `${reads} schema ${reads === 1 ? "read" : "reads"}` : "",
     ].filter(Boolean).join(" · ");
   }
+
 
   /** The agent session behind this chat: its backend key and what started it. */
   let agentSession = /** @type {{ key: string, agent: string, model: string, effort: string, access: string, ready: Promise<void> } | null} */ (null);
@@ -2143,7 +2359,8 @@
     /** @type {import('$lib/local-agents.js').AgentAccess} */
     const access = isReadOnly() ? "read" : $agentPrefs.access;
     const s = agentSession;
-    if (s?.agent === agent && s.model === model && s.effort === effort && s.access === access) {
+    const webAccess = $appAgentWebAccess;
+    if (s?.agent === agent && s.model === model && s.effort === effort && s.access === access && s.webAccess === webAccess) {
       // Started already, or still starting from the composer's focus: wait for
       // that start rather than racing it with a second one.
       await s.ready;
@@ -2159,7 +2376,7 @@
     const ready = new Promise((res, rej) => { started = res; failed = rej; });
     // A failed start is reported by the send that awaits it, not as unhandled.
     ready.catch(() => {});
-    const session = { key, agent, model, effort, access, ready };
+    const session = { key, agent, model, effort, access, webAccess, ready };
     agentSession = session;
     const tables = (schemaContext.tables ?? [])
       .map((/** @type {any} */ t) => (typeof t === "string" ? t : t?.name))
@@ -2176,10 +2393,14 @@
             activeTable: schemaContext.activeTable,
             tables,
             access,
+            webAccess,
           }),
           resume: agentNative?.agent === agent ? agentNative.id : null,
           effort: effort || null,
           access,
+          // The launch flag that actually gives the agent its web tools; the
+          // prompt above only tells it they exist.
+          webAccess,
         },
         (ev) => {
           if (agentSession !== session) return;
@@ -2245,9 +2466,7 @@
       flushStreamingContent();
       const id = itemId;
       const parts = parseAssistantMessage(content);
-      items = items.map((i) =>
-        i.id === id ? /** @type {ChatItem} */ ({ id, kind: "assistant", parts, ts: Date.now() }) : i,
-      );
+      items = items.flatMap((i) => (i.id === id ? replyItems(id, parts) : [i]));
       reply += (reply ? "\n\n" : "") + content;
       itemId = null;
       streamingId = null;
@@ -2292,9 +2511,12 @@
       const input = call.input ?? {};
       /** @type {WorkStep['op']} */
       const op = tool === "execute_sql" || tool === "explain_query" ? "query"
-        : tool === "describe_table" ? "describe" : "schema";
+        : tool === "describe_table" ? "describe"
+        : isWebTool(tool) ? "web" : "schema";
       const detail = op === "query" ? String(input.sql ?? "")
-        : op === "describe" ? String(input.table ?? "") : tool.replace(/_/g, " ");
+        : op === "describe" ? String(input.table ?? "")
+        : op === "web" ? String(input.query ?? input.url ?? input.prompt ?? "")
+        : tool.replace(/_/g, " ");
       const known = tools.get(call.id);
       if (known) {
         // The same call again with its full input.
@@ -2334,6 +2556,7 @@
             : s,
         ),
       }));
+      if (t.name === "execute_sql" && !res.is_error && isDdl(t.detail)) onschemadirty();
       const parsed = t.name === "execute_sql" && !res.is_error ? parseSqlResult(out) : null;
       // Rows still get their table; a failure is already shown in the fold.
       if (parsed && parsed.total > 0) {
@@ -2402,7 +2625,33 @@
    * @param {string} sql
    * @returns {{ sql: string, capped: boolean }}
    */
+  /**
+   * describe_table / get_schema for schemaless engines: the fields seen in a
+   * few sampled records of each collection.
+   * @param {Record<string, any>} args @param {string} tool
+   */
+  async function describeNosql(args, tool) {
+    const engine = String(schemaContext.dbType);
+    const schema = String(args.schema ?? schemaContext.activeSchema ?? "");
+    const names = tool === "get_schema" && !args.table
+      ? (schemaContext.tables ?? []).slice(0, 10).map((t) => t.name)
+      : [String(args.table ?? "")];
+    const out = await Promise.all(names.map(async (n) => {
+      const q = sampleQuery(engine, schema, n, 5);
+      if (!q) return { collection: n, note: "Sampling would scan; query it by its key to see records." };
+      try {
+        return describeFromSample(n, await executeSql(q));
+      } catch (e) {
+        return { collection: n, error: e instanceof Error ? e.message : String(e) };
+      }
+    }));
+    return JSON.stringify(names.length === 1 ? out[0] : { collections: out });
+  }
+
   function guardSelectLimit(sql) {
+    // Only SQL and CQL take a LIMIT clause; PartiQL and the shell languages don't.
+    const engine = schemaContext.dbType;
+    if (queryLanguageFor(engine) && engine !== "cassandra") return { sql: sql.trimEnd().replace(/;+$/, ""), capped: false };
     // Strip trailing semicolons first - appending "\nLIMIT N" after a ";" produces
     // a bare LIMIT statement that PostgreSQL rejects with a syntax error.
     const cleaned = sql.trimEnd().replace(/;+$/, "");
@@ -2475,13 +2724,25 @@
         // view sticks to the bottom exactly when the content has actually grown.
         scheduleStreamingUpdate(fullContent);
       }
+      if (chunk.toolStart && /^render_(chart|diagram)$/.test(chunk.toolStart)) {
+        // The spec streams for seconds; show what is being made right away.
+        const thinkIdx = items.findIndex((i) => i.kind === "thinking");
+        if (thinkIdx >= 0) items.splice(thinkIdx, 1);
+        items.push(/** @type {ChatItem} */ ({ id: uid(), kind: "generating", what: chunk.toolStart === "render_chart" ? "chart" : "diagram" }));
+        void scrollBottom();
+      }
       if (chunk.toolCalls) {
         toolCalls = chunk.toolCalls;
       }
     }
+    // The real chart/diagram (or an error) replaces the generating cards.
+    const dropGenerating = () => {
+      for (let k = items.length - 1; k >= 0; k--) if (items[k].kind === "generating") items.splice(k, 1);
+    };
 
     // Bail out immediately if the user stopped generation - stop() already finalized UI
     if (ctrl.signal.aborted) {
+      dropGenerating();
       throw Object.assign(new Error("Aborted"), { name: "AbortError" });
     }
 
@@ -2505,18 +2766,10 @@
       streamingId = null;
       streamingContent = "";
       _pendingStreamContent = "";
-      items = items.map((i) =>
-        i.id === itemId
-          ? /** @type {ChatItem} */ ({
-              id: itemId,
-              kind: "assistant",
-              parts: parseAssistantMessage(fullContent),
-              ts: Date.now(),
-            })
-          : i,
-      );
+      items = items.flatMap((i) => (i.id === itemId ? replyItems(itemId, parseAssistantMessage(fullContent)) : [i]));
     }
 
+    dropGenerating();
     if (toolCalls.length > 0) {
       // Drop the "Thinking…" placeholder so the executing rows are the live indicator.
       const thinkIdx = items.findIndex((i) => i.kind === "thinking");
@@ -2541,14 +2794,7 @@
       apiHistory.push({ role: "assistant", content: fullContent });
       // Fallback: if no streaming item was created (non-streaming endpoint), add it now
       if (!itemId) {
-        items.push(
-          /** @type {ChatItem} */ ({
-            id: uid(),
-            kind: "assistant",
-            parts: parseAssistantMessage(fullContent),
-            ts: Date.now(),
-          }),
-        );
+        items.push(...replyItems(uid(), parseAssistantMessage(fullContent)));
         await scrollBottom();
       }
     } else {
@@ -2622,7 +2868,7 @@
 
       if (call.function.name === "execute_sql") {
         const sql = String(args.sql ?? "").trim();
-        if (sql && isReadOnly() && isWriteSql(sql)) {
+        if (sql && isReadOnly() && isWriteFor(sql, schemaContext.dbType)) {
           // Refuse in the tool channel: the model needs to hear *why*, or it
           // retries the same write until it hits the retry cap.
           apiHistory.push({
@@ -2671,6 +2917,7 @@
         await scrollBottom();
         try {
           const data = await executeSql(guardedSql);
+          if (isDdl(sql)) onschemadirty();
           const cols = data.columns ?? [];
           const rows = data.rows ?? [];
           const total = data.rowCount ?? rows.length;
@@ -2873,6 +3120,8 @@
         } catch (err) {
           toolResult = JSON.stringify({ error: String(err) });
         }
+      } else if (queryLanguageFor(schemaContext.dbType) && (call.function.name === "describe_table" || call.function.name === "get_schema")) {
+        toolResult = await describeNosql(args, call.function.name);
       } else if (call.function.name === "describe_table") {
         const schema = String(
           args.schema ?? schemaContext.activeSchema,
@@ -3487,6 +3736,10 @@
    * @param {KeyboardEvent} e
    */
   function onChatListKey(e) {
+    // In the window's AI mode the app's own ⌘B handler toggles this list
+    // (StudioShell → toggleChats). Handling it here too toggled it twice per
+    // press - shown then hidden again - so ⌘B looked dead.
+    if (externalToggle) return;
     if (!(isActive || mode === "full")) return;
     if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== "b") return;
     e.preventDefault();
@@ -3520,11 +3773,42 @@
       historyTimer = null;
     }
   });
+  const isMacChrome = typeof document !== 'undefined' && document.documentElement.dataset.os === 'macos'
 </script>
 
 <!-- Single, unified agent loading indicator (icon + phase label + dots). Used for
      both the in-flow "thinking" placeholder and the bottom "working" state so they
      are pixel-identical and never visually drift or double up. -->
+{#snippet generatingCard(/** @type {'chart' | 'diagram'} */ what)}
+  <!-- A chart or diagram on its way: the card it will land in, with a sweep of
+       light and a live sketch of the thing being made. Every animation is a
+       transform or opacity, so it runs on the compositor while the reply
+       streams and the main thread is busy. -->
+  <div class="relative overflow-hidden rounded-lg border border-border/60 bg-muted/10" role="status" aria-live="polite">
+    <div class="flex h-8 items-center gap-2 border-b border-border/40 bg-muted/20 px-3">
+      {#if what === "chart"}<BarChart3 class="size-3.5 shrink-0 text-primary" />{:else}<GitBranch class="size-3.5 shrink-0 text-primary" />{/if}
+      <span class="text-ui-xs font-medium text-foreground/80">{what === "chart" ? "Generating chart" : "Generating diagram"}</span>
+      <span class="ai-gen-dots flex items-center gap-0.5 text-muted-foreground" aria-hidden="true"><i></i><i></i><i></i></span>
+    </div>
+    <div class="relative flex h-44 items-end justify-center gap-2 px-8 pb-6 pt-6">
+      {#if what === "chart"}
+        {#each [42, 68, 54, 86, 61, 74, 48] as h, k (k)}
+          <span class="ai-gen-bar w-6 rounded-t-sm bg-primary/25" style="height: {h}%; animation-delay: {k * 90}ms"></span>
+        {/each}
+      {:else}
+        <svg class="absolute inset-0 m-auto h-32 w-64 text-primary" viewBox="0 0 256 128" fill="none" aria-hidden="true">
+          <path class="ai-gen-line" d="M78 34 H128 V94 H178" stroke="currentColor" stroke-opacity="0.35" stroke-width="1.5" stroke-dasharray="4 4" />
+          <path class="ai-gen-line" d="M78 34 H128 V34 H178" stroke="currentColor" stroke-opacity="0.35" stroke-width="1.5" stroke-dasharray="4 4" style="animation-delay: 300ms" />
+          <rect class="ai-gen-node" x="18" y="18" width="60" height="32" rx="6" fill="currentColor" fill-opacity="0.16" stroke="currentColor" stroke-opacity="0.4" />
+          <rect class="ai-gen-node" x="178" y="18" width="60" height="32" rx="6" fill="currentColor" fill-opacity="0.16" stroke="currentColor" stroke-opacity="0.4" style="animation-delay: 250ms" />
+          <rect class="ai-gen-node" x="178" y="78" width="60" height="32" rx="6" fill="currentColor" fill-opacity="0.16" stroke="currentColor" stroke-opacity="0.4" style="animation-delay: 500ms" />
+        </svg>
+      {/if}
+      <span class="ai-gen-sweep pointer-events-none absolute inset-0" aria-hidden="true"></span>
+    </div>
+  </div>
+{/snippet}
+
 {#snippet agentIndicator()}
   <div class="flex h-7 items-center gap-2 px-3.5" role="status" aria-live="polite">
     <!-- A quiet spinner and the label, as T3 shows work in progress. The tinted
@@ -3570,9 +3854,9 @@
       onclick={() => void copyWithFeedback(`${key}:msg`, text)}
     >
       {#if copiedKey === `${key}:msg`}
-        <Check class="size-3 text-success" strokeWidth={2.5} />
+        <Check class="size-3 shrink-0 text-success" strokeWidth={2.5} />
       {:else}
-        <Copy class="size-3" />
+        <Copy class="size-3 shrink-0" />
       {/if}
     </button>
     {#if canQuote}
@@ -3583,7 +3867,7 @@
         aria-label="Reply to this message"
         onclick={() => quoteToInput(text)}
       >
-        <Reply class="size-3" />
+        <Reply class="size-3 shrink-0" />
       </button>
     {:else}
       <!-- Your own turn: put it back in the composer to ask it again with a
@@ -3595,7 +3879,7 @@
         aria-label="Edit and ask again"
         onclick={() => reusePrompt(text)}
       >
-        <Pencil class="size-3" />
+        <Pencil class="size-3 shrink-0" />
       </button>
     {/if}
   </div>
@@ -3605,21 +3889,25 @@
   <!-- ── Conversation sidebar ───────────────────────────────────────── -->
   {#if sidebarVisible}
     <aside
-      class="flex shrink-0 flex-col border-r border-border bg-panel"
+      class="flex shrink-0 flex-col border-r border-border/50 bg-sidebar"
       style="width: calc({sidebarWidth}px * var(--app-scale, 1))"
     >
-      <!-- Sidebar header: collapse + new chat -->
+      <!-- Sidebar header: collapse + new chat. In the window's AI mode this is
+           the top of a full-height column (T3): the traffic lights sit in it. -->
       <div
-        class="flex shrink-0 items-center gap-1 border-b border-border/50 px-2 py-2"
+        class={cn("flex shrink-0 items-center gap-1", externalToggle && isMacChrome ? "h-[52px] pr-2 pl-[92px]" : "border-b border-border/50 px-2 py-2")}
+        data-tauri-drag-region={externalToggle ? '' : undefined}
       >
+        {#if !externalToggle}
         <button
           type="button"
           class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           title="Hide chats ({modKey}B)"
           onclick={toggleAiSidebar}
         >
-          <PanelLeft class="size-3.5" />
+          <PanelLeft class="size-3.5 shrink-0" />
         </button>
+        {/if}
         <span
           class="flex-1 px-1 text-ui-xs font-medium text-muted-foreground"
           >History</span
@@ -3630,24 +3918,69 @@
           title="New chat ({newChatShortcut})"
           onclick={() => void newConversation()}
         >
-          <Plus class="size-3.5" />
+          <Plus class="size-3.5 shrink-0" />
         </button>
       </div>
 
+      <!-- List toolbar: count and Select, or the selection's actions. -->
+      {#if convList.length > 0}
+        <div class="flex h-8 shrink-0 items-center gap-1 px-3 text-ui-2xs text-muted-foreground">
+          {#if selecting}
+            <span class="tabular-nums text-foreground/80">{selectedConvs.size} selected</span>
+            <button
+              type="button"
+              class="rounded-md px-1.5 py-0.5 transition-colors hover:bg-accent hover:text-foreground"
+              onclick={() => (selectedConvs = selectedConvs.size === convList.length ? new Set() : new Set(convList.map((c) => c.id)))}
+            >{selectedConvs.size === convList.length ? "None" : "All"}</button>
+            <span class="flex-1"></span>
+            <button
+              type="button"
+              disabled={selectedConvs.size === 0}
+              class="rounded-md px-1.5 py-0.5 text-destructive transition-colors hover:bg-destructive/10 disabled:opacity-40"
+              onclick={() => void removeConversations([...selectedConvs])}
+            >Delete</button>
+            <button
+              type="button"
+              class="rounded-md px-1.5 py-0.5 transition-colors hover:bg-accent hover:text-foreground"
+              onclick={endSelecting}
+            >Done</button>
+          {:else}
+            <span class="tabular-nums">{convList.length} {convList.length === 1 ? "chat" : "chats"}</span>
+            <span class="flex-1"></span>
+            <button
+              type="button"
+              class="rounded-md px-1.5 py-0.5 transition-colors hover:bg-accent hover:text-foreground"
+              onclick={() => (selecting = true)}
+            >Select</button>
+            <button
+              type="button"
+              class={cn(
+                "rounded-md px-1.5 py-0.5 transition-colors",
+                confirmClearAll ? "bg-destructive/10 text-destructive" : "hover:bg-accent hover:text-foreground",
+              )}
+              onclick={() => {
+                if (!confirmClearAll) {
+                  confirmClearAll = true;
+                  setTimeout(() => (confirmClearAll = false), 3000);
+                  return;
+                }
+                void removeConversations(convList.map((c) => c.id));
+              }}
+              title={confirmClearAll ? "Click again to delete every chat" : "Delete every chat"}
+            >{confirmClearAll ? "Confirm" : "Clear all"}</button>
+          {/if}
+        </div>
+      {/if}
+
       <!-- Conversation list -->
-      <div class="app-scroll flex min-h-0 flex-1 flex-col overflow-y-auto py-1">
+      <div class="app-scroll flex min-h-0 flex-1 flex-col gap-px overflow-y-auto px-1.5 py-1">
         {#if isDraftChat}
           <button
             type="button"
-            class="relative flex w-full flex-col px-3 py-2 text-left"
+            class="relative flex h-9 w-full min-w-0 items-center gap-2 rounded-md bg-sidebar-accent px-2.5 text-left text-foreground"
           >
-            <span
-              class="absolute inset-y-2 left-0 w-0.5 rounded-full bg-primary"
-            ></span>
-            <span class="truncate text-ui-xs font-medium text-foreground"
-              >New chat</span
-            >
-            <span class="text-ui-3xs text-muted-foreground">Draft</span>
+            <span class="min-w-0 flex-1 truncate text-ui-xs font-medium">New chat</span>
+            <span class="shrink-0 text-ui-3xs text-muted-foreground">Draft</span>
           </button>
         {/if}
 
@@ -3656,12 +3989,7 @@
           {@const isRenaming = renamingConvId === conv.id}
           <div class="group/conv relative">
             {#if isRenaming}
-              <div class="flex items-center gap-1 px-3 py-2">
-                {#if isActive}
-                  <span
-                    class="absolute inset-y-2 left-0 w-0.5 rounded-full bg-primary"
-                  ></span>
-                {/if}
+              <div class="flex h-9 items-center gap-1 px-1">
                 <!-- svelte-ignore a11y_autofocus -->
                 <input
                   autofocus
@@ -3676,61 +4004,85 @@
                 />
               </div>
             {:else}
+              {@const isSel = selectedConvs.has(conv.id)}
               <button
                 type="button"
                 class={cn(
-                  // pr-12 permanently reserves the strip the hover actions sit
-                  // in. They are absolutely positioned, so without it the pencil
-                  // and trash landed on top of the title and timestamp; padding
-                  // it only on hover would instead re-truncate the title under
-                  // the cursor. Reserved always, so the row never shifts.
-                  "relative flex w-full flex-col py-2 pl-3 pr-12 text-left transition-colors",
-                  isActive
-                    ? "bg-accent/30 text-foreground"
-                    : "text-muted-foreground hover:bg-accent/20 hover:text-foreground",
+                  // A rounded inset row: title left, time right, the way the
+                  // table sidebar lists tables. Hover actions replace the time
+                  // in place instead of covering the title.
+                  // Focus is a soft fill like hover, never a border or bar.
+                  "relative flex h-9 w-full min-w-0 items-center gap-2 rounded-md px-2.5 text-left transition-colors outline-none focus-visible:bg-sidebar-accent/80 focus-visible:text-foreground",
+                  isSel
+                    ? "bg-primary/10 text-foreground"
+                    : isActive && !selecting
+                      ? "bg-sidebar-accent text-foreground"
+                      : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground",
                 )}
-                onclick={() => void selectConversation(conv.id)}
-                ondblclick={() => startRename(conv.id, conv.title)}
+                aria-pressed={selecting ? isSel : undefined}
+                onclick={(e) => {
+                  // Shift: everything from the anchor (last row clicked, or the
+                  // open chat) to this one. ⌘/Ctrl or select mode: toggle one.
+                  if (e.shiftKey) {
+                    const ids = convList.map((c) => c.id);
+                    const from = ids.indexOf(convAnchor ?? activeConvId ?? conv.id);
+                    const to = ids.indexOf(conv.id);
+                    const [lo, hi] = from < 0 ? [to, to] : from < to ? [from, to] : [to, from];
+                    const next = new Set(selectedConvs);
+                    for (let k = lo; k <= hi; k++) next.add(ids[k]);
+                    selectedConvs = next;
+                    selecting = true;
+                    convAnchor = conv.id;
+                    return;
+                  }
+                  if (selecting || e.metaKey || e.ctrlKey) {
+                    if (!selecting) selecting = true;
+                    toggleConvSelected(conv.id);
+                    convAnchor = conv.id;
+                    return;
+                  }
+                  convAnchor = conv.id;
+                  void selectConversation(conv.id);
+                }}
+                ondblclick={() => { if (!selecting) startRename(conv.id, conv.title); }}
                 oncontextmenu={(e) => showContextMenu(conv.id, e)}
               >
-                {#if isActive}
-                  <span
-                    class="absolute inset-y-2 left-0 w-0.5 rounded-full bg-primary"
-                  ></span>
+                {#if selecting}
+                  <span class={cn("flex size-3.5 shrink-0 items-center justify-center rounded-sm border", isSel ? "border-primary bg-primary text-primary-foreground" : "border-muted-foreground/40")}>
+                    {#if isSel}<Check class="size-2.5 shrink-0" strokeWidth={3} />{/if}
+                  </span>
                 {/if}
-                <span class="truncate text-ui-xs font-medium leading-snug"
-                  >{displayTitle(conv)}</span
-                >
-                <span class="mt-0.5 text-ui-3xs text-muted-foreground"
-                  >{relativeTime(conv.updatedAt)}</span
-                >
+                <span class="min-w-0 flex-1 truncate text-ui-xs font-medium leading-snug">{displayTitle(conv)}</span>
+                <span class={cn("shrink-0 text-ui-3xs tabular-nums text-muted-foreground", !selecting && "group-hover/conv:invisible")}>{relativeTime(conv.updatedAt)}</span>
               </button>
+              {#if !selecting}
               <div
-                class="absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-0.5 opacity-0 transition-opacity group-hover/conv:opacity-100"
+                class="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-0.5 opacity-0 transition-opacity group-hover/conv:opacity-100"
               >
                 <button
                   type="button"
-                  class="flex size-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  class="hit-area flex size-5 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                   title="Rename"
                   onclick={(e) => {
                     e.stopPropagation();
                     startRename(conv.id, conv.title);
                   }}
                 >
-                  <Pencil class="size-3" />
+                  <Pencil class="size-3 shrink-0" />
                 </button>
                 <button
                   type="button"
-                  class="flex size-5 items-center justify-center rounded text-muted-foreground transition-colors hover:text-destructive"
+                  class="hit-area flex size-5 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-destructive"
                   title="Delete"
                   onclick={(e) => {
                     e.stopPropagation();
                     void removeConversation(conv.id);
                   }}
                 >
-                  <Trash2 class="size-3" />
+                  <Trash2 class="size-3 shrink-0" />
                 </button>
               </div>
+              {/if}
             {/if}
           </div>
         {/each}
@@ -3749,38 +4101,211 @@
         {/if}
       </div>
       {#if onexit}
-        <!-- The way back to the data, where the eye lands after the chat list. -->
-        <div class="shrink-0 border-t border-border/60 p-1.5">
+        <!-- The table sidebar's footer, so both left columns end the same way:
+             app-wide controls as plain icons, and the one round action on the
+             right - here, back to the data. -->
+        <div class="flex h-12 shrink-0 items-center gap-1 px-3">
+          {#if onopensettings}
+            <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:text-foreground" title="Settings" aria-label="Settings" onclick={onopensettings}><Icon name="settings" class="size-4 shrink-0" /></button>
+          {/if}
+          <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:text-foreground" title={$isCurrentThemeDark ? "Light theme" : "Dark theme"} aria-label="Toggle theme" onclick={() => toggleLightDark()}><Icon name={$isCurrentThemeDark ? "sun" : "moon"} class="size-4 shrink-0" /></button>
+          {#if onopenshortcuts}
+            <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:text-foreground" title="Keyboard shortcuts" aria-label="Keyboard shortcuts" onclick={onopenshortcuts}><Icon name="keyboard" class="size-4 shrink-0" /></button>
+          {/if}
+          <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:text-foreground" title="Hide chats ({modKey}B)" aria-label="Hide chats" onclick={toggleAiSidebar}><PanelLeft class="size-4 shrink-0" /></button>
           <button
             type="button"
-            class="flex h-8 w-full items-center gap-2 rounded-md px-2 text-ui-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            class="ml-auto inline-flex size-8 items-center justify-center rounded-full text-muted-foreground outline-none hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+            title="Exit AI mode ({modKey}⇧E)"
+            aria-label="Exit AI mode"
             onclick={onexit}
-          >
-            <Minimize2 class="size-3.5 shrink-0" />
-            <span class="min-w-0 flex-1 truncate text-left">Exit AI mode</span>
-            <kbd class="shrink-0 font-mono text-ui-3xs text-muted-foreground/80">{modKey}⇧E</kbd>
-          </button>
+          ><Minimize2 class="size-4 shrink-0" /></button>
         </div>
       {/if}
     </aside>
     <!-- Drag, or arrow keys when focused, to widen the chat list; double-click resets. -->
-    <div class="-ml-1 flex" ondblclick={() => { sidebarWidth = SIDEBAR_DEFAULT_W; saveSidebarWidth(); }} role="presentation">
+    <div class="-ml-1 flex" ondblclick={() => { sidebarWidth = externalToggle ? NAV_SIDEBAR_MIN : SIDEBAR_DEFAULT_W; saveSidebarWidth(); }} role="presentation">
       <ResizeHandle
         axis="x"
         edge="end"
         onresizestart={() => { sidebarResizeStart = sidebarWidth; sidebarResizeScale = getAppScale(); }}
-        onresize={(dx) => { sidebarWidth = Math.min(SIDEBAR_MAX_W, Math.max(SIDEBAR_MIN_W, sidebarResizeStart + dx / sidebarResizeScale)); }}
+        onresize={(dx) => { const w = sidebarResizeStart + dx / sidebarResizeScale; sidebarWidth = externalToggle ? clampNavSidebarWidth(w) : Math.min(SIDEBAR_MAX_W, Math.max(SIDEBAR_MIN_W, w)); }}
         onresizeend={saveSidebarWidth}
       />
     </div>
   {/if}
 
+{#snippet composerCard()}
+        <!-- Soft-cornered surface rather than a hard-edged box: the field should
+             read as one calm object floating over the transcript, and only pick up
+             weight (border, lift) once it has focus. -->
+        <div
+          class={cn(
+            "rounded-2xl border border-border/50 bg-sidebar transition-colors focus-within:border-foreground/20",
+            hasPendingConfirm && "opacity-50",
+          )}
+        >
+          {#if queued.length}
+            <!-- Waiting to be sent, in order; each goes out as a turn ends. -->
+            <ul class="flex flex-col gap-1 border-b border-border/40 px-2 pt-2 pb-1.5" aria-label="Queued messages">
+              {#each queued as q, qi (q.id)}
+                <li class="ai-enter group/q flex min-w-0 items-center gap-2 rounded-lg bg-muted/40 py-1 pr-1 pl-2.5">
+                  <CornerDownRight class="size-3.5 shrink-0 text-muted-foreground" />
+                  <span class="min-w-0 flex-1 truncate text-ui-xs text-foreground/90" title={q.text}>{q.text}</span>
+                  <span class="shrink-0 text-ui-3xs text-muted-foreground">{qi === 0 ? (loading ? "Next" : "Queued") : `#${qi + 1}`}</span>
+                  <button
+                    type="button"
+                    class="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                    title="Remove from queue"
+                    aria-label="Remove from queue"
+                    onclick={() => unqueue(q.id)}
+                  >
+                    <X class="size-3.5 shrink-0" />
+                  </button>
+                </li>
+              {/each}
+            </ul>
+          {/if}
+          <!-- Textarea row. Font size comes from the same var as the transcript
+               (--ai-chat-font-size, Settings → Appearance), so what you type is
+               set at the size you'll read it back at. -->
+          <textarea
+            bind:this={inputRef}
+            class="ai-composer-input no-focus-ring block w-full resize-none bg-transparent px-5 pt-4 pb-3 text-foreground outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed"
+            style="height:auto;min-height:60px;max-height:200px;overflow-y:auto;font-family:inherit"
+            placeholder={hasPendingConfirm
+              ? "Confirm or cancel the operation above…"
+              : items.length === 0 ? "Ask about your data…" : "Ask a follow-up…"}
+            rows={1}
+            value={inputText}
+            oninput={(e) => {
+              inputText = /** @type {HTMLTextAreaElement} */ (e.target).value;
+              resizeInput();
+              pushHistory(inputText);
+            }}
+            onkeydown={handleKeydown}
+            onfocus={() => {
+              inputFocused = true;
+              prewarmAgent();
+            }}
+            onblur={() => (inputFocused = false)}
+            disabled={hasPendingConfirm}
+          ></textarea>
+
+          <!-- Bottom toolbar row: the controls that change what the next turn
+               does sit together on the left, separated by hairlines; the send
+               affordance stays alone on the right. -->
+          <div class="flex min-w-0 items-center gap-1.5 px-3 pb-3">
+            {#if contextStats.messages > 0}
+              <button
+                type="button"
+                class="inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 font-mono text-ui-2xs text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground select-none"
+                onclick={() => {
+                  settingsOpen = true;
+                  settingsTab = "context";
+                }}
+                title="Context usage - click for a breakdown"
+              >
+                <BarChart2 class="size-3 shrink-0" />
+                <span class="tabular-nums"
+                  >{tokEst(contextStats.totalChars)}</span
+                >
+                {#if contextStats.pct >= 70}
+                  <span
+                    class={contextStats.pct >= 90
+                      ? "text-destructive"
+                      : "text-warning"}>· {contextStats.pct}%</span
+                  >
+                {/if}
+              </button>
+            {/if}
+
+            <div class="min-w-2 flex-1"></div>
+
+            <!-- Shortcut hint only while the empty composer holds focus: it is
+                 guidance for someone about to type, not a permanent label. -->
+            {#if loading && inputText.trim()}
+              <span class="hidden shrink-0 text-ui-2xs text-muted-foreground sm:block">↵ to queue</span>
+            {:else if inputFocused && !inputText.trim() && !loading}
+              <span
+                class="hidden shrink-0 text-ui-2xs text-muted-foreground sm:block"
+              >
+                {hasPendingConfirm ? "Confirm or cancel above" : "↵ to send"}
+              </span>
+            {/if}
+
+            <AiModelPicker onopenSettings={onopenmodelsettings} />
+
+            <!-- Send / Stop. One control, one meaning: the spinner became the halo
+                 around Stop instead of a second indicator sitting beside it, and the
+                 idle Send button stays weightless until there is something to send. -->
+            {#if loading}
+              <div class="relative flex shrink-0 items-center justify-center">
+                <span
+                  class="pointer-events-none absolute -inset-[3px] animate-spin rounded-full border-[1.5px] border-transparent border-t-destructive/70"
+                  aria-hidden="true"
+                ></span>
+                <button
+                  type="button"
+                  class="flex size-7 items-center justify-center rounded-full bg-destructive/90 text-destructive-foreground transition-colors hover:bg-destructive active:scale-95"
+                  onclick={stop}
+                  aria-label="Stop"
+                  title="Stop (Esc)"
+                >
+                  <Square class="size-2 shrink-0 fill-current" />
+                </button>
+              </div>
+            {:else}
+              {@const canSend = !!inputText.trim() && !hasPendingConfirm}
+              <button
+                type="button"
+                class={cn(
+                  // T3's send: a round button, grey until there is something to send.
+                  "flex size-9 shrink-0 items-center justify-center rounded-full transition-[background-color,opacity,transform] duration-150 active:scale-95",
+                  canSend
+                    ? "bg-foreground text-background hover:opacity-90"
+                    : "bg-sidebar-accent text-muted-foreground cursor-not-allowed",
+                )}
+                disabled={!canSend}
+                onclick={() => void send()}
+                aria-label="Send"
+                title="Send (↵)"
+              >
+                <ArrowUp class="size-4 shrink-0" strokeWidth={2.25} />
+              </button>
+            {/if}
+          </div>
+        </div>
+        <!-- One quiet row under the composer: what the chat is looking at on
+             the left, what the agent may do on the right. -->
+        <div class="flex min-w-0 items-center gap-3 px-4 pt-2.5 text-ui-xs text-muted-foreground">
+          {#if schemaContext.activeSchema}
+            <span class="flex min-w-0 items-center gap-1.5 truncate" title="Schema in context">
+              <Database class="size-3.5 shrink-0" />
+              <span class="truncate">{schemaContext.activeTable ? `${schemaContext.activeSchema}.${schemaContext.activeTable}` : schemaContext.activeSchema}</span>
+            </span>
+          {/if}
+          <span class="flex-1"></span>
+          {#if profileAgent($aiSettings)}
+            <AgentComposerChips agent={profileAgent($aiSettings) ?? ""} part="access" />
+          {:else if $readOnlyMode}
+            <span class="flex shrink-0 items-center gap-1.5"><Lock class="size-3.5 shrink-0" />Read only</span>
+          {/if}
+        </div>
+{/snippet}
+
   <!-- ── Main chat area ─────────────────────────────────────────────── -->
   <div class="relative flex min-h-0 min-w-0 flex-1 flex-col">
+    {#if externalToggle && isMacChrome}
+      <!-- The window's top row over the conversation: drags the window, and
+           leaves the lights room when the chat list is hidden. -->
+      <div class="h-[52px] shrink-0" data-tauri-drag-region></div>
+    {/if}
     <!-- No header row: its four buttons cost a 48px band above the transcript.
          In full mode they float over the transcript's top corners; docked, they
          sit at the ends of the conversation tab bar that is there anyway. -->
     {#snippet chatListButton()}
+      {#if !externalToggle}
       <button
         type="button"
         class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
@@ -3788,8 +4313,9 @@
         aria-label={sidebarVisible ? "Hide chats" : "Show chats"}
         onclick={toggleAiSidebar}
       >
-        <PanelLeft class="size-3.5" />
+        <PanelLeft class="size-3.5 shrink-0" />
       </button>
+      {/if}
     {/snippet}
     {#snippet chromeRight()}
       <button
@@ -3805,7 +4331,7 @@
           settingsTab = "model";
         }}
       >
-        <Settings2 class="size-3.5" />
+        <Settings2 class="size-3.5 shrink-0" />
       </button>
       {#if onexit}
         <button
@@ -3817,13 +4343,13 @@
         >
           <!-- Not an X: the window's close sits right above this corner, and two
                stacked X's read as the same button. This one leaves AI mode. -->
-          <Minimize2 class="size-3.5" />
+          <Minimize2 class="size-3.5 shrink-0" />
         </button>
       {/if}
     {/snippet}
 
     {#if !showTabBar}
-      <div class="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between p-2">
+      <div class={cn("pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between p-2", externalToggle && isMacChrome && "pt-2.5", externalToggle && isMacChrome && !sidebarVisible && "pl-[92px]")}>
         <div class="pointer-events-auto flex items-center gap-0.5 rounded-lg bg-background/90 p-0.5">
           {@render chatListButton()}
           {#if !sidebarVisible}
@@ -3834,7 +4360,7 @@
               aria-label="New chat"
               onclick={() => void newConversation()}
             >
-              <Plus class="size-3.5" />
+              <Plus class="size-3.5 shrink-0" />
             </button>
           {/if}
         </div>
@@ -3887,24 +4413,24 @@
             </button>
             <button
               type="button"
-              class="flex size-4 shrink-0 items-center justify-center rounded text-muted-foreground opacity-0 transition-[opacity,color] hover:text-foreground group-hover/tab:opacity-100"
+              class="hit-area flex size-4 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-[opacity,color] hover:text-foreground group-hover/tab:opacity-100"
               title="Close tab"
               onclick={(e) => {
                 e.stopPropagation();
                 closeTab(tab.id);
               }}
             >
-              <X class="size-3" />
+              <X class="size-3 shrink-0" />
             </button>
           </div>
         {/each}
         <button
           type="button"
-          class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground"
+          class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           title="New chat ({newChatShortcut})"
           onclick={() => void newConversation()}
         >
-          <Plus class="size-3.5" />
+          <Plus class="size-3.5 shrink-0" />
         </button>
       </div>
       {@render chromeRight()}
@@ -3941,86 +4467,61 @@
           ? items.length === 0
             ? "px-6 h-full"
             : "px-6"
-          : "px-3 py-3"}
+          : items.length === 0
+            ? "px-3 h-full"
+            : "px-3 py-3"}
       >
       <div
         class={mode === "full"
           ? items.length === 0
             ? "mx-auto w-full max-w-3xl h-full"
             : "mx-auto w-full max-w-3xl"
-          : ""}
+          : items.length === 0
+            ? "h-full"
+            : ""}
       >
         {#if items.length === 0}
-          {#if mode === "full"}
-            <!-- ── Full-mode landing ──
-                 Sits low, at the composer's width, so the suggestions are a
-                 short reach from where you type; each card shows the prompt it
-                 sends, so picking one is not a guess. -->
-            <div class="flex h-full flex-col justify-end gap-6 pb-6 pt-14">
-              <div class="flex flex-col gap-1.5 px-1">
-                <h1 class="text-ui-2xl font-semibold tracking-[-0.02em] text-foreground">
-                  What do you want to know?
-                </h1>
-                {#if schemaContext.activeTable || schemaContext.tables?.length}
-                  <p class="flex items-center gap-1.5 text-ui-xs text-muted-foreground">
-                    <Database class="size-3.5 shrink-0" />
-                    <span class="truncate font-mono">
-                      {#if schemaContext.activeTable}
-                        {schemaContext.activeSchema}.{schemaContext.activeTable}
-                      {:else}
-                        {schemaContext.activeSchema} · {schemaContext.tables.length} tables
-                      {/if}
-                    </span>
-                  </p>
-                {/if}
-              </div>
+          <!-- ── Landing, T3's new-thread screen: one centred column, a light
+               headline naming the database, one muted line, the composer right
+               under it, and at most four quiet suggestions below. The side
+               panel gets the same pattern, scaled down. -->
+          {@const full = mode === "full"}
+          <div class={cn("mx-auto flex h-full w-full flex-col justify-center", full ? "max-w-[46rem] gap-7 py-12" : "gap-4 py-6")}>
+            <div class="flex flex-col items-center gap-1.5 text-center">
+              <h1 class={cn("font-light tracking-[-0.02em] text-foreground", full ? "text-ui-3xl" : "text-ui-xl")}>
+                What do you want to know{#if dbName}{" "}about <span class="font-normal">{dbName}</span>{/if}?
+              </h1>
+              {#if schemaContext.activeTable || schemaContext.tables?.length}
+                <p class="truncate text-ui-sm text-muted-foreground">
+                  {#if schemaContext.activeTable}
+                    {schemaContext.activeSchema}.{schemaContext.activeTable}
+                  {:else}
+                    {schemaContext.activeSchema} · {schemaContext.tables.length} tables
+                  {/if}
+                </p>
+              {/if}
+            </div>
 
-              {#if suggestions.length > 0}
-                <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  {#each suggestions.slice(0, 6) as s (s.label)}
-                    {@const SugIcon = suggestionIcon(s.label)}
-                    <button
-                      type="button"
-                      class="group flex min-w-0 items-start gap-3 rounded-xl border border-border/50 bg-card/40 px-3.5 py-3 text-left transition-colors duration-150 hover:border-border hover:bg-accent/40 disabled:opacity-40"
-                      disabled={loading}
-                      onclick={() => void send([s.prompt])}
-                    >
-                      <SugIcon class="mt-0.5 size-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground" />
-                      <span class="flex min-w-0 flex-col gap-0.5">
-                        <span class="truncate text-ui-sm font-medium text-foreground">{s.label}</span>
-                        <span class="truncate text-ui-2xs text-muted-foreground">{s.prompt}</span>
-                      </span>
-                    </button>
-                  {/each}
-                </div>
-              {/if}
-            </div>
-          {:else}
-            <!-- ── Tab-mode empty state: compact ── -->
-            <div class="flex flex-col items-center gap-4 py-6 text-center">
-              <Sparkles class="size-7 text-muted-foreground" />
-              <p class="text-ui-sm font-medium text-muted-foreground">
-                Ask anything about your database
-              </p>
-              {#if suggestions.length > 0}
-                <div class="flex flex-wrap justify-center gap-1.5 w-full">
-                  {#each suggestions as s (s.label)}
-                    <button
-                      type="button"
-                      class="inline-flex h-7 items-center gap-1 rounded-full border border-border bg-muted/30 px-3 text-ui-xs text-foreground transition-colors hover:bg-accent hover:border-ring/40 disabled:opacity-40"
-                      disabled={loading}
-                      onclick={() => void send([s.prompt])}
-                    >
-                      <MessageSquare
-                        class="size-3 shrink-0 text-muted-foreground"
-                      />
-                      {s.label}
-                    </button>
-                  {/each}
-                </div>
-              {/if}
-            </div>
-          {/if}
+            <div>{@render composerCard()}</div>
+
+            {#if suggestions.length > 0 && !full}
+              <div class="flex flex-col gap-0.5">
+                {#each suggestions.slice(0, 4) as s (s.label)}
+                  {@const SugIcon = suggestionIcon(s.label)}
+                  <button
+                    type="button"
+                    class="group flex min-h-8 min-w-0 items-center gap-2.5 rounded-md px-2.5 text-left text-ui-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40"
+                    disabled={loading}
+                    title={s.prompt}
+                    onclick={() => void send([s.prompt])}
+                  >
+                    <SugIcon class="size-4 shrink-0" />
+                    <span class="min-w-0 truncate">{s.label}</span>
+                  </button>
+                {/each}
+              </div>
+            {/if}
+          </div>
         {:else}
           <!-- gap-2, not gap-6: every message already carries a laid-out (invisible
                until hover) actions footer, so a large gap on top of it was paying
@@ -4036,7 +4537,7 @@
                    Skipped for the transient thinking/executing/streaming rows: they're
                    always at the bottom (visible) and their ping/bounce animations would
                    be clipped by the paint containment cv:auto adds. -->
-              <div data-item-id={item.id} class={cn(showTabBar ? "scroll-mt-3" : "scroll-mt-12", idx >= enterFrom && "ai-enter", item.kind === "thinking" || item.kind === "executing" || item.kind === "streaming" || item.id === anchorId ? "" : "[content-visibility:auto] [contain-intrinsic-size:auto_120px]")}>
+              <div data-item-id={item.id} class={cn(showTabBar ? "scroll-mt-3" : "scroll-mt-12", idx >= enterFrom && "ai-enter", "")}>
               <!-- ── User message ───────────────────────── -->
               {#if item.kind === "user"}
                 <div class="group/msg flex flex-col items-end px-3.5 pt-4">
@@ -4052,17 +4553,28 @@
               {:else if item.kind === "thinking"}
                 {@render agentIndicator()}
 
+                <!-- ── A chart or diagram being generated ── -->
+              {:else if item.kind === "generating"}
+                <div class="min-w-0 px-3.5">{@render generatingCard(item.what)}</div>
+
                 <!-- ── Streaming ──────────────────────────── -->
               {:else if item.kind === "streaming"}
                 <!-- No avatar column: the reply is the only thing on this side of
                      the transcript, so a per-message badge added a gutter that
                      bought nothing. The user's own turns are the contrast. -->
+                {@const split = splitStreamingDiagram(displayStreamingContent)}
                 <div class="min-w-0 px-3.5">
+                  {#if split}
+                    {#if split.before.trim()}<AiMarkdown content={split.before.trim()} streaming onrender={scrollBottomSoon} />{/if}
+                    <div class="my-2">{@render generatingCard(split.kind === "chart" ? "chart" : "diagram")}</div>
+                    {#if split.after.trim()}<AiMarkdown content={split.after.trim()} streaming onrender={scrollBottomSoon} />{/if}
+                  {:else}
                   <AiMarkdown
                     content={displayStreamingContent}
                     streaming
                     onrender={scrollBottomSoon}
                   />
+                  {/if}
                 </div>
 
                 <!-- ── Executing (tool call in progress) ──── -->
@@ -4079,11 +4591,11 @@
                       class="absolute inset-0 animate-ping rounded-full bg-primary/10 [animation-duration:1.8s]"
                     ></span>
                     {#if item.op === "schema" || item.op === "describe"}
-                      <Layers class="relative size-3 text-primary" />
+                      <Layers class="relative size-3 shrink-0 text-primary" />
                     {:else if item.op === "diagram"}
-                      <GitBranch class="relative size-3 text-primary" />
+                      <GitBranch class="relative size-3 shrink-0 text-primary" />
                     {:else}
-                      <Database class="relative size-3 text-primary" />
+                      <Database class="relative size-3 shrink-0 text-primary" />
                     {/if}
                   </span>
                   <span class="shrink-0 text-ui-xs font-medium text-foreground/70">{meta.label}</span>
@@ -4099,26 +4611,33 @@
                 {@const failed = item.steps.filter((s) => s.status === "error").length}
                 {@const summary = workSummary(item.steps)}
                 <div class="min-w-0 px-3.5">
-                  <div class="border-b border-border/40 pb-1">
+                  <!-- One quiet row: state icon, time, what was done, chevron.
+                       The full-width rule under it read as a section break in
+                       the middle of a reply; the row stands on its own. -->
                   <button
                     type="button"
-                    class="inline-flex h-7 max-w-full items-center gap-1.5 rounded-md text-ui-xs text-muted-foreground transition-colors hover:text-foreground"
+                    class="group/work -ml-1.5 inline-flex h-7 max-w-full items-center gap-2 rounded-md px-1.5 text-ui-xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
                     aria-expanded={isOpen}
                     onclick={() => toggleWork(item.id)}
                   >
                     {#if running}
-                      <LoaderCircle class="size-3.5 shrink-0 animate-spin" />
+                      <!-- A CSS ring on its own compositor layer: it keeps turning
+                           while the main thread is busy streaming the reply. -->
+                      <span class="size-3.5 shrink-0 animate-spin rounded-full border-[1.75px] border-current/25 border-t-current will-change-transform" aria-hidden="true"></span>
+                    {:else if failed}
+                      <CircleAlert class="size-3.5 shrink-0 text-destructive" />
+                    {:else}
+                      <CircleCheck class="size-3.5 shrink-0 text-muted-foreground/80 group-hover/work:text-foreground" />
                     {/if}
-                    <span class="shrink-0 tabular-nums">{running ? "Working for" : "Worked for"} {formatElapsed((item.endedAt ?? (running ? nowMs : item.startedAt)) - item.startedAt)}</span>
+                    <span class={cn("shrink-0 tabular-nums", running ? "text-foreground/85" : "")}>{running ? "Working" : "Worked"} <span class="text-muted-foreground">for</span> {formatElapsed((item.endedAt ?? (running ? nowMs : item.startedAt)) - item.startedAt)}</span>
                     {#if summary}
-                      <span class="truncate text-muted-foreground/70">· {summary}</span>
+                      <span class="truncate text-muted-foreground/80">· {summary}</span>
                     {/if}
                     {#if failed}
                       <span class="shrink-0 text-destructive">· {failed} failed</span>
                     {/if}
-                    <ChevronRight class={cn("size-3.5 shrink-0 transition-transform duration-150", isOpen && "rotate-90")} />
+                    <ChevronRight class={cn("size-3.5 shrink-0 opacity-60 transition-transform duration-150 group-hover/work:opacity-100", isOpen && "rotate-90")} />
                   </button>
-                  </div>
                   <!-- Height eases open and shut (grid rows 0fr to 1fr) instead of
                        the steps snapping in and out. -->
                   <div
@@ -4126,7 +4645,7 @@
                     inert={!isOpen}
                   >
                     <div class="min-h-0 overflow-hidden">
-                    <ol class="mt-2 mb-1 ml-1.5 flex flex-col gap-2 border-l border-border/60 pl-3">
+                    <ol class="mt-1 mb-2 ml-[0.4375rem] flex flex-col gap-1.5 border-l border-border/50 pl-3.5">
                       {#each item.steps as step (step.id)}
                         {@const meta = stepLabel(step)}
                         {#if step.op === "note"}
@@ -4135,9 +4654,11 @@
                         <li class="flex min-w-0 flex-col gap-1">
                           <div class="flex min-w-0 items-center gap-2">
                             {#if step.status === "running"}
-                              <LoaderCircle class="size-3.5 shrink-0 animate-spin text-muted-foreground" />
+                              <span class="size-3 shrink-0 animate-spin rounded-full border-[1.5px] border-muted-foreground/25 border-t-muted-foreground will-change-transform" aria-hidden="true"></span>
                             {:else if step.op === "query"}
                               <Database class={cn("size-3.5 shrink-0", step.status === "error" ? "text-destructive" : "text-muted-foreground")} />
+                            {:else if step.op === "web"}
+                              <Globe class={cn("size-3.5 shrink-0", step.status === "error" ? "text-destructive" : "text-muted-foreground")} />
                             {:else}
                               <Layers class={cn("size-3.5 shrink-0", step.status === "error" ? "text-destructive" : "text-muted-foreground")} />
                             {/if}
@@ -4147,7 +4668,7 @@
                             {/if}
                           </div>
                           {#if step.op === "query" && step.detail.trim()}
-                            <pre class="max-h-40 overflow-auto rounded-md bg-muted/30 px-2.5 py-1.5 font-mono text-ui-3xs whitespace-pre-wrap break-words text-muted-foreground">{step.detail.trim()}</pre>
+                            <CollapsibleCode text={step.detail.trim()} max={160} class="rounded-md bg-muted/30 px-2.5 py-1.5 font-mono text-ui-3xs whitespace-pre-wrap break-words text-muted-foreground" />
                           {/if}
                           {#if step.error}
                             <p class="text-ui-3xs break-words text-destructive">{cleanToolError(step.error)}</p>
@@ -4167,76 +4688,65 @@
                     {#each item.parts as part, pi}
                       {#if part.type === "text"}
                         <AiMarkdown content={part.content} />
+                      {:else if part.type === "chart"}
+                        <!-- A chart written as a ```chart block (local agents),
+                             drawn where it was written. -->
+                        <div class="group/chart overflow-hidden rounded-lg border border-border/60">
+                          <div class="flex h-8 items-center gap-2 border-b border-border/40 bg-muted/20 pl-3 pr-1.5">
+                            <BarChart3 class="size-3.5 shrink-0 text-muted-foreground" />
+                            <span class="min-w-0 flex-1 truncate text-ui-xs font-medium text-foreground/80">{part.spec.title || "Chart"}</span>
+                            <span class="shrink-0 text-ui-3xs capitalize text-muted-foreground">{String(part.spec.type).replace(/-/g, " ")}</span>
+                            <button
+                              type="button"
+                              class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                              title="Fullscreen"
+                              aria-label="Fullscreen"
+                              onclick={() => openChartFullscreen(part.spec)}
+                            ><Maximize2 class="size-3.5 shrink-0" /></button>
+                          </div>
+                          <div class="px-2 py-2">
+                            <AiChartRenderer spec={part.spec} noTitle={true} />
+                          </div>
+                        </div>
+                      {:else if part.type === "pending"}
+                        {#if part.kind === "diagram"}{@render generatingCard("diagram")}{:else if part.kind === "chart"}{@render generatingCard("chart")}{/if}
                       {:else if part.type === "mermaid"}
+                        {@const dKind = diagramKind(part.content)}
                         <div
                           class="mermaid-output overflow-hidden rounded-lg border border-border/60"
                         >
+                          <!-- One quiet row: what the diagram is, then icon actions.
+                               Five text buttons and a usage hint competed with
+                               the diagram they were there to serve. -->
                           <div
-                            class="flex items-center justify-between gap-2 border-b border-border/40 bg-muted/20 px-3 py-1.5"
+                            class="flex h-8 items-center gap-1 border-b border-border/40 bg-muted/20 pl-3 pr-1.5"
+                            title="Drag to pan · Ctrl/⌘ + scroll to zoom · double-click to reset"
                           >
-                            <span
-                              class="text-ui-3xs font-medium text-muted-foreground uppercase tracking-wider"
-                              >Diagram</span
-                            >
-                            <div class="flex items-center gap-0.5">
-                              <span
-                                class="hidden text-ui-3xs text-muted-foreground sm:block mr-1"
-                                >drag · Ctrl+scroll zoom</span
-                              >
-                              <button
-                                type="button"
-                                class="inline-flex h-5 items-center gap-1 rounded px-1.5 text-ui-3xs text-muted-foreground hover:bg-accent hover:text-foreground"
-                                onclick={() => copyText(part.content)}
-                                title="Copy source"
-                                ><Copy class="size-3" />Source</button
-                              >
-                              <button
-                                type="button"
-                                class="inline-flex h-5 items-center gap-1 rounded px-1.5 text-ui-3xs text-muted-foreground hover:bg-accent hover:text-foreground"
-                                onclick={() => void exportDiagramSvg()}
-                                title="Export SVG"
-                                ><ArrowDownToLine class="size-3" />SVG</button
-                              >
-                              <button
-                                type="button"
-                                class="inline-flex h-5 items-center gap-1 rounded px-1.5 text-ui-3xs text-muted-foreground hover:bg-accent hover:text-foreground"
-                                onclick={() => void exportDiagramPng()}
-                                title="Export PNG"
-                                ><ArrowDownToLine class="size-3" />PNG</button
-                              >
-                              <button
-                                type="button"
-                                class="inline-flex h-5 items-center gap-1 rounded px-1.5 text-ui-3xs text-muted-foreground hover:bg-accent hover:text-foreground"
-                                onclick={() => {
-                                  const name =
-                                    part.content
-                                      .trim()
-                                      .split("\n")[0]
-                                      .replace(/[^a-zA-Z0-9 _-]/g, "")
-                                      .trim() || "Diagram";
+                            <GitBranch class="size-3.5 shrink-0 text-muted-foreground" />
+                            <span class="min-w-0 flex-1 truncate text-ui-xs font-medium text-foreground/80">{dKind}</span>
+                            {#each [
+                              { label: "Copy source", icon: Copy, run: () => copyText(part.content) },
+                              { label: "Export SVG", icon: ArrowDownToLine, run: () => void exportDiagramSvg() },
+                              { label: "Export PNG", icon: ImageIcon, run: () => void exportDiagramPng() },
+                              { label: "Save to Diagrams", icon: Save, run: () => {
+                                  const name = part.content.trim().split("\n")[0].replace(/[^a-zA-Z0-9 _-]/g, "").trim() || "Diagram";
                                   saveDiagram(name, part.content);
                                   toast.success("Diagram saved", {
                                     description: "View it in the Diagrams page",
-                                    action: onopendiagramspage
-                                      ? {
-                                          label: "Open",
-                                          onClick: onopendiagramspage,
-                                        }
-                                      : undefined,
+                                    action: onopendiagramspage ? { label: "Open", onClick: onopendiagramspage } : undefined,
                                   });
-                                }}
-                                title="Save diagram"
-                                ><Save class="size-3" />Save</button
-                              >
+                                } },
+                              { label: "Fullscreen", icon: Maximize2, run: () => openDiagramFullscreen(part.content) },
+                            ] as a (a.label)}
+                              {@const Glyph = a.icon}
                               <button
                                 type="button"
-                                class="inline-flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
-                                onclick={() =>
-                                  openDiagramFullscreen(part.content)}
-                                title="Fullscreen"
-                                ><Maximize2 class="size-3" /></button
-                              >
-                            </div>
+                                class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                                title={a.label}
+                                aria-label={a.label}
+                                onclick={a.run}
+                              ><Glyph class="size-3.5 shrink-0" /></button>
+                            {/each}
                           </div>
                           <div class="mermaid-canvas" use:mermaidInteractive>
                             {@html processMermaidSvg(part.content)}
@@ -4267,13 +4777,13 @@
                               <span
                                 class="flex size-4 shrink-0 items-center justify-center text-muted-foreground transition-colors group-hover/sqlbar:text-muted-foreground"
                               >
-                                {#if sqlOpen}<ChevronDown class="size-3" />{:else}<ChevronRight class="size-3" />{/if}
+                                {#if sqlOpen}<ChevronDown class="size-3 shrink-0" />{:else}<ChevronRight class="size-3 shrink-0" />{/if}
                               </span>
                               <!-- The leading keyword, tinted when the statement
                                    writes: the one thing worth knowing before Run. -->
                               <span
                                 class={cn(
-                                  "shrink-0 rounded font-mono text-ui-3xs font-semibold uppercase tracking-wider px-1 py-px",
+                                  "shrink-0 rounded font-mono text-ui-3xs font-semibold uppercase tracking-[0.06em] px-1 py-px",
                                   sqlWrites
                                     ? "bg-warning/12 text-warning"
                                     : "bg-muted/50 text-muted-foreground",
@@ -4291,24 +4801,24 @@
                             <div class="flex shrink-0 items-center gap-0.5">
                               <button
                                 type="button"
-                                class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-all duration-150 hover:bg-muted/60 hover:text-foreground group-hover/sqlbar:opacity-100 focus-visible:opacity-100"
+                                class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity duration-150 hover:bg-accent hover:text-foreground group-hover/sqlbar:opacity-100 focus-visible:opacity-100"
                                 title="Copy SQL"
                                 onclick={() => copyText(part.content)}
-                                ><Copy class="size-3" /></button
+                                ><Copy class="size-3 shrink-0" /></button
                               >
                               <button
                                 type="button"
-                                class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-all duration-150 hover:bg-muted/60 hover:text-foreground group-hover/sqlbar:opacity-100 focus-visible:opacity-100"
+                                class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity duration-150 hover:bg-accent hover:text-foreground group-hover/sqlbar:opacity-100 focus-visible:opacity-100"
                                 title="Write to editor"
                                 onclick={() => onwritesql(part.content)}
-                                ><PenLine class="size-3" /></button
+                                ><PenLine class="size-3 shrink-0" /></button
                               >
                               <button
                                 type="button"
                                 class= "field-surface ml-0.5 inline-flex h-6 items-center gap-1 bg-muted/40 px-2 text-ui-2xs font-medium text-foreground/80 transition-colors hover:border-primary/40 hover:bg-primary hover:text-primary-foreground disabled:opacity-40"
                                 disabled={loading}
                                 onclick={() => void runSqlBlock(part.content)}
-                                ><Play class="size-3 fill-current" />Run</button
+                                ><Play class="size-3 shrink-0 fill-current" />Run</button
                               >
                             </div>
                           </div>
@@ -4328,7 +4838,7 @@
                           <AlertTriangle class="mt-0.5 size-3.5 shrink-0" />
                           <span>{part.content}</span>
                         </div>
-                      {:else}
+                      {:else if part.content?.trim()}
                         {@const codeKey = `${item.id}-${pi}`}
                         {@const codeOpen = !collapsed.has(codeKey)}
                         <div
@@ -4343,8 +4853,8 @@
                               onclick={() => toggleCollapse(codeKey)}
                             >
                               {#if codeOpen}<ChevronDown
-                                  class="size-3"
-                                />{:else}<ChevronRight class="size-3" />{/if}
+                                  class="size-3 shrink-0"
+                                />{:else}<ChevronRight class="size-3 shrink-0" />{/if}
                               <span class="font-mono"
                                 >{part.lang || "code"}</span
                               >
@@ -4353,7 +4863,7 @@
                               type="button"
                               class="inline-flex h-6 items-center gap-1 rounded-md px-2 text-ui-xs text-muted-foreground hover:bg-accent hover:text-foreground"
                               onclick={() => copyText(part.content)}
-                              ><Copy class="size-3" />Copy</button
+                              ><Copy class="size-3 shrink-0" />Copy</button
                             >
                           </div>
                           {#if codeOpen}
@@ -4424,17 +4934,17 @@
                     {#if item.sql}
                       <button
                         type="button"
-                        class="inline-flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity group-hover/res:opacity-100 hover:bg-accent hover:text-foreground"
+                        class="hit-area inline-flex size-5 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity group-hover/res:opacity-100 hover:bg-accent hover:text-foreground"
                         title="Copy SQL"
                         onclick={() => copyText(item.sql)}
-                        ><Copy class="size-3" /></button
+                        ><Copy class="size-3 shrink-0" /></button
                       >
                       <button
                         type="button"
-                        class="inline-flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity group-hover/res:opacity-100 hover:bg-accent hover:text-foreground"
+                        class="hit-area inline-flex size-5 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity group-hover/res:opacity-100 hover:bg-accent hover:text-foreground"
                         title="Write to editor"
                         onclick={() => onwritesql(item.sql)}
-                        ><PenLine class="size-3" /></button
+                        ><PenLine class="size-3 shrink-0" /></button
                       >
                     {/if}
                     {#if !item.error && item.rows.length > 0}
@@ -4442,7 +4952,7 @@
                            into a chat, unlike the rendered card. -->
                       <button
                         type="button"
-                        class="inline-flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity group-hover/res:opacity-100 hover:bg-accent hover:text-foreground"
+                        class="hit-area inline-flex size-5 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity group-hover/res:opacity-100 hover:bg-accent hover:text-foreground"
                         title="Copy table as Markdown"
                         onclick={() =>
                           void copyWithFeedback(
@@ -4451,9 +4961,9 @@
                           )}
                       >
                         {#if copiedKey === `${item.id}:table`}
-                          <Check class="size-3 text-success" strokeWidth={2.5} />
+                          <Check class="size-3 shrink-0 text-success" strokeWidth={2.5} />
                         {:else}
-                          <Table2 class="size-3" />
+                          <Table2 class="size-3 shrink-0" />
                         {/if}
                       </button>
                     {/if}
@@ -4479,7 +4989,7 @@
                         {#if humanizeDbError(item.error) !== item.error.replace(/^Error:\s*/i, "").trim()}
                           <button
                             type="button"
-                            class="mt-1.5 pl-2.5 text-ui-3xs text-muted-foreground transition-colors hover:text-muted-foreground"
+                            class="mt-1.5 pl-2.5 text-ui-3xs text-muted-foreground transition-colors hover:text-foreground"
                             onclick={() => (rawErrorId = rawErrorId === item.id ? null : item.id)}
                           >{rawErrorId === item.id ? "Hide" : "Show"} raw error</button>
                           {#if rawErrorId === item.id}
@@ -4611,7 +5121,7 @@
                       >
                       <button
                         type="button"
-                        class="inline-flex h-7 items-center rounded-lg bg-destructive px-3 text-ui-xs font-medium text-destructive-foreground hover:opacity-90"
+                        class="inline-flex h-7 items-center rounded-md bg-destructive px-3 text-ui-xs font-medium text-destructive-foreground hover:opacity-90"
                         onclick={() => item.resolve(true)}>Execute</button
                       >
                     </div>
@@ -4644,32 +5154,32 @@
                         <!-- Reset / re-centre -->
                         <button
                           type="button"
-                          class="inline-flex size-6 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground"
+                          class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground"
                           title="Reset view (or double-click chart)"
                           onclick={() => void resetChartView(item.id)}
-                          ><RotateCcw class="size-3" /></button
+                          ><RotateCcw class="size-3 shrink-0" /></button
                         >
                         <!-- Fullscreen / zoom mode -->
                         <button
                           type="button"
-                          class="inline-flex size-6 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground"
+                          class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground"
                           title="Zoom / fullscreen"
                           onclick={() => openChartFullscreen(item.spec)}
-                          ><Maximize2 class="size-3" /></button
+                          ><Maximize2 class="size-3 shrink-0" /></button
                         >
                         <button
                           type="button"
-                          class="inline-flex size-6 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground"
+                          class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground"
                           title="Download PNG"
                           onclick={() =>
                             void saveChartPng(
                               `[data-chart-id="${item.id}"] canvas`,
                               item.spec.title,
-                            )}><ArrowDownToLine class="size-3" /></button
+                            )}><ArrowDownToLine class="size-3 shrink-0" /></button
                         >
                         <button
                           type="button"
-                          class="inline-flex size-6 items-center justify-center rounded transition-colors {savedChartIds.has(
+                          class="inline-flex size-6 items-center justify-center rounded-md transition-colors {savedChartIds.has(
                             item.id,
                           )
                             ? 'text-primary'
@@ -4761,9 +5271,9 @@
                           }}
                         >
                           {#if savedChartIds.has(item.id)}
-                            <Check class="size-3" />
+                            <Check class="size-3 shrink-0" />
                           {:else}
-                            <Save class="size-3" />
+                            <Save class="size-3 shrink-0" />
                           {/if}
                         </button>
                       </div>
@@ -4811,36 +5321,36 @@
                       >
                       <button
                         type="button"
-                        class="inline-flex h-5 items-center gap-1 rounded px-1.5 text-ui-3xs text-muted-foreground hover:bg-accent hover:text-foreground"
+                        class="inline-flex h-5 items-center gap-1 rounded-md px-1.5 text-ui-3xs text-muted-foreground hover:bg-accent hover:text-foreground"
                         onclick={() => copyText(item.code)}
                         title="Copy source"
-                        ><Copy class="size-3" />Source</button
+                        ><Copy class="size-3 shrink-0" />Source</button
                       >
                       <button
                         type="button"
-                        class="inline-flex h-5 items-center gap-1 rounded px-1.5 text-ui-3xs text-muted-foreground hover:bg-accent hover:text-foreground"
+                        class="inline-flex h-5 items-center gap-1 rounded-md px-1.5 text-ui-3xs text-muted-foreground hover:bg-accent hover:text-foreground"
                         onclick={() => void exportDiagramSvg()}
                         title="Export SVG"
-                        ><ArrowDownToLine class="size-3" />SVG</button
+                        ><ArrowDownToLine class="size-3 shrink-0" />SVG</button
                       >
                       <button
                         type="button"
-                        class="inline-flex h-5 items-center gap-1 rounded px-1.5 text-ui-3xs text-muted-foreground hover:bg-accent hover:text-foreground"
+                        class="inline-flex h-5 items-center gap-1 rounded-md px-1.5 text-ui-3xs text-muted-foreground hover:bg-accent hover:text-foreground"
                         onclick={() => void exportDiagramPng()}
                         title="Export PNG"
-                        ><ArrowDownToLine class="size-3" />PNG</button
+                        ><ArrowDownToLine class="size-3 shrink-0" />PNG</button
                       >
                       <button
                         type="button"
-                        class="inline-flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+                        class="hit-area inline-flex size-5 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
                         onclick={() => openDiagramFullscreen(item.code)}
-                        title="Fullscreen"><Maximize2 class="size-3" /></button
+                        title="Fullscreen"><Maximize2 class="size-3 shrink-0" /></button
                       >
                       <button
                         type="button"
                         class={savedDiagramIds.has(item.id)
-                          ? "inline-flex size-5 items-center justify-center rounded text-success"
-                          : "inline-flex h-5 items-center gap-1 rounded px-1.5 text-ui-3xs text-muted-foreground hover:bg-accent hover:text-foreground"}
+                          ? "hit-area inline-flex size-5 items-center justify-center rounded-md text-success"
+                          : "inline-flex h-5 items-center gap-1 rounded-md px-1.5 text-ui-3xs text-muted-foreground hover:bg-accent hover:text-foreground"}
                         title={savedDiagramIds.has(item.id) ? "Saved to Diagrams library" : "Save to Diagrams library"}
                         disabled={savedDiagramIds.has(item.id)}
                         onclick={() => {
@@ -4854,7 +5364,7 @@
                               : undefined,
                           });
                         }}
-                        >{#if savedDiagramIds.has(item.id)}<Check class="size-3" strokeWidth={2.5} />{:else}<Save class="size-3" />Save{/if}</button
+                        >{#if savedDiagramIds.has(item.id)}<Check class="size-3 shrink-0" strokeWidth={2.5} />{:else}<Save class="size-3 shrink-0" />Save{/if}</button
                       >
                     </div>
                   </div>
@@ -4920,9 +5430,9 @@
                     type="button"
                     onclick={() => copyErrorDetail(failure.detail)}
                     title="Copy the provider's response"
-                    class="inline-flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                    class="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                   >
-                    <Copy class="size-3" />
+                    <Copy class="size-3 shrink-0" />
                   </button>
                 </div>
               {/if}
@@ -4930,11 +5440,11 @@
           </div>
           <button
             type="button"
-            class="inline-flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            class="hit-area inline-flex size-5 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
             onclick={() => (error = "")}
             title="Dismiss"
           >
-            <X class="size-3" />
+            <X class="size-3 shrink-0" />
           </button>
         </div>
       </div>
@@ -4952,7 +5462,7 @@
           title="Jump to bottom"
           aria-label="Jump to bottom"
         >
-          <ArrowDown class="size-4" />
+          <ArrowDown class="size-4 shrink-0" />
         </button>
       </div>
     {/if}
@@ -4960,159 +5470,15 @@
     <!-- Input -->
     <!-- No rule above the composer: it reads as one floating field over the
          transcript, and the card's own border already separates the two. -->
+    {#if items.length > 0}
     <div
       class="shrink-0 {mode === 'full' ? 'px-6 pb-5 pt-2' : 'px-3 pb-3 pt-2'}"
     >
       <div class={mode === "full" ? "mx-auto w-full max-w-3xl" : ""}>
-        <!-- Soft-cornered surface rather than a hard-edged box: the field should
-             read as one calm object floating over the transcript, and only pick up
-             weight (border, lift) once it has focus. -->
-        <div
-          class={cn(
-            "rounded-2xl border border-border/40 bg-card/30 transition-[background-color,border-color] duration-150 focus-within:border-ring",
-            "focus-within:border-border/70 focus-within:bg-card/60 focus-within:shadow-[0_4px_16px_-10px_rgba(0,0,0,0.6)]",
-            hasPendingConfirm && "opacity-50",
-          )}
-        >
-          {#if queued.length}
-            <!-- Waiting to be sent, in order; each goes out as a turn ends. -->
-            <ul class="flex flex-col gap-1 border-b border-border/40 px-2 pt-2 pb-1.5" aria-label="Queued messages">
-              {#each queued as q, qi (q.id)}
-                <li class="ai-enter group/q flex min-w-0 items-center gap-2 rounded-lg bg-muted/40 py-1 pr-1 pl-2.5">
-                  <CornerDownRight class="size-3.5 shrink-0 text-muted-foreground" />
-                  <span class="min-w-0 flex-1 truncate text-ui-xs text-foreground/90" title={q.text}>{q.text}</span>
-                  <span class="shrink-0 text-ui-3xs text-muted-foreground">{qi === 0 ? (loading ? "Next" : "Queued") : `#${qi + 1}`}</span>
-                  <button
-                    type="button"
-                    class="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                    title="Remove from queue"
-                    aria-label="Remove from queue"
-                    onclick={() => unqueue(q.id)}
-                  >
-                    <X class="size-3.5" />
-                  </button>
-                </li>
-              {/each}
-            </ul>
-          {/if}
-          <!-- Textarea row. Font size comes from the same var as the transcript
-               (--ai-chat-font-size, Settings → Appearance), so what you type is
-               set at the size you'll read it back at. -->
-          <textarea
-            bind:this={inputRef}
-            class="ai-composer-input no-focus-ring block w-full resize-none bg-transparent px-4 pt-3.5 pb-2 text-foreground outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed"
-            style="height:auto;min-height:60px;max-height:200px;overflow-y:auto;font-family:inherit"
-            placeholder={hasPendingConfirm
-              ? "Confirm or cancel the operation above…"
-              : "Ask about your data, or send a follow-up…"}
-            rows={1}
-            value={inputText}
-            oninput={(e) => {
-              inputText = /** @type {HTMLTextAreaElement} */ (e.target).value;
-              resizeInput();
-              pushHistory(inputText);
-            }}
-            onkeydown={handleKeydown}
-            onfocus={() => {
-              inputFocused = true;
-              prewarmAgent();
-            }}
-            onblur={() => (inputFocused = false)}
-            disabled={hasPendingConfirm}
-          ></textarea>
-
-          <!-- Bottom toolbar row: the controls that change what the next turn
-               does sit together on the left, separated by hairlines; the send
-               affordance stays alone on the right. -->
-          <div class="flex items-center gap-1 px-2 pb-2">
-            <AiModelPicker onopenSettings={onopenmodelsettings} />
-            {#if profileAgent($aiSettings)}
-              <AgentComposerChips agent={profileAgent($aiSettings) ?? ""} />
-            {/if}
-
-            {#if contextStats.messages > 0}
-              <span
-                class="h-3.5 w-px shrink-0 bg-border/70"
-                aria-hidden="true"
-              ></span>
-              <button
-                type="button"
-                class="inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 font-mono text-ui-2xs text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground select-none"
-                onclick={() => {
-                  settingsOpen = true;
-                  settingsTab = "context";
-                }}
-                title="Context usage - click for a breakdown"
-              >
-                <BarChart2 class="size-3 shrink-0" />
-                <span class="tabular-nums"
-                  >{tokEst(contextStats.totalChars)}</span
-                >
-                {#if contextStats.pct >= 70}
-                  <span
-                    class={contextStats.pct >= 90
-                      ? "text-destructive"
-                      : "text-warning"}>· {contextStats.pct}%</span
-                  >
-                {/if}
-              </button>
-            {/if}
-
-            <div class="min-w-2 flex-1"></div>
-
-            <!-- Shortcut hint only while the empty composer holds focus: it is
-                 guidance for someone about to type, not a permanent label. -->
-            {#if loading && inputText.trim()}
-              <span class="hidden shrink-0 text-ui-2xs text-muted-foreground sm:block">↵ to queue</span>
-            {:else if inputFocused && !inputText.trim() && !loading}
-              <span
-                class="hidden shrink-0 text-ui-2xs text-muted-foreground sm:block"
-              >
-                {hasPendingConfirm ? "Confirm or cancel above" : "↵ to send"}
-              </span>
-            {/if}
-
-            <!-- Send / Stop. One control, one meaning: the spinner became the halo
-                 around Stop instead of a second indicator sitting beside it, and the
-                 idle Send button stays weightless until there is something to send. -->
-            {#if loading}
-              <div class="relative flex shrink-0 items-center justify-center">
-                <span
-                  class="pointer-events-none absolute -inset-[3px] animate-spin rounded-full border-[1.5px] border-transparent border-t-destructive/70"
-                  aria-hidden="true"
-                ></span>
-                <button
-                  type="button"
-                  class="flex size-7 items-center justify-center rounded-full bg-destructive/90 text-destructive-foreground transition-colors hover:bg-destructive active:scale-95"
-                  onclick={stop}
-                  aria-label="Stop"
-                  title="Stop (Esc)"
-                >
-                  <Square class="size-2 fill-current" />
-                </button>
-              </div>
-            {:else}
-              {@const canSend = !!inputText.trim() && !hasPendingConfirm}
-              <button
-                type="button"
-                class={cn(
-                  "flex size-7 shrink-0 items-center justify-center rounded-full transition-[background-color,opacity,transform] duration-150 active:scale-95",
-                  canSend
-                    ? "bg-primary text-primary-foreground hover:opacity-85"
-                    : "bg-muted text-muted-foreground cursor-not-allowed",
-                )}
-                disabled={!canSend}
-                onclick={() => void send()}
-                aria-label="Send"
-                title="Send (↵)"
-              >
-                <ArrowUp class="size-3.5" strokeWidth={2.5} />
-              </button>
-            {/if}
-          </div>
-        </div>
+        {@render composerCard()}
       </div>
     </div>
+    {/if}
   </div>
 
   <!-- ── Right settings panel ─────────────────────────────────────── -->
@@ -5131,7 +5497,7 @@
           onclick={() => (settingsOpen = false)}
           title="Close ({modKey}⇧,)"
         >
-          <X class="size-3.5" />
+          <X class="size-3.5 shrink-0" />
         </button>
         <span class="flex-1 text-center text-ui-xs font-semibold tracking-wide"
           >Settings</span
@@ -5143,25 +5509,31 @@
       <div
         class="studio-chrome flex h-9 shrink-0 items-stretch border-b border-border/50"
         data-studio-chrome
+        role="tablist"
+        aria-label="AI settings"
       >
         {#each SETTINGS_TABS as tab (tab.id)}
           {@const Icon = tab.icon}
           {@const active = settingsTab === tab.id}
           <button
             type="button"
+            role="tab"
+            aria-selected={active}
+            aria-label={tab.label}
+            title={tab.label}
             class={cn(
               "relative flex flex-1 items-center justify-center gap-1.5 text-ui-xs transition-colors",
               active
                 ? "text-foreground font-medium"
-                : "text-muted-foreground hover:text-muted-foreground",
+                : "text-muted-foreground hover:text-foreground",
             )}
             onclick={() =>
               (settingsTab = /** @type {'model'|'chat'|'skills'|'context'} */ (
                 tab.id
               ))}
           >
-            <Icon class="size-3 shrink-0" />
-            <span
+            <Icon class="size-3.5 shrink-0" />
+            <span class="tabular-nums"
               >{tab.id === "skills" && skills.length
                 ? ` ${skills.length}`
                 : ""}</span
@@ -5226,7 +5598,7 @@
               class= "field-surface flex h-8 w-full items-center justify-center gap-1.5 bg-background/60 text-ui-xs text-foreground transition-colors hover:bg-accent"
               onclick={onopenmodelsettings}
             >
-              <Settings2 class="size-3.5 text-muted-foreground" />
+              <Settings2 class="size-3.5 shrink-0 text-muted-foreground" />
               Configure model…
             </button>
 
@@ -5378,7 +5750,7 @@
               </p>
               <button
                 type="button"
-                class="mt-1 flex h-8 w-full items-center justify-center gap-1.5 rounded-lg border border-destructive/40 bg-destructive/8 text-ui-xs text-destructive transition-colors hover:bg-destructive/15"
+                class="mt-1 flex h-8 w-full items-center justify-center gap-1.5 rounded-md border border-destructive/40 bg-destructive/8 text-ui-xs text-destructive transition-colors hover:bg-destructive/15"
                 onclick={async () => {
                   if (
                     !confirm("Delete all conversations? This cannot be undone.")
@@ -5392,7 +5764,7 @@
                   await newConversation();
                 }}
               >
-                <Trash2 class="size-3.5" />
+                <Trash2 class="size-3.5 shrink-0" />
                 Clear all history
               </button>
             </div>
@@ -5401,32 +5773,25 @@
           <!-- ── Skills tab ── -->
         {:else if settingsTab === "skills"}
           <div class="flex flex-col gap-3 p-4">
-            <!-- Action row -->
-            <div class="flex items-center gap-1.5">
-              <p class="flex-1 text-ui-3xs text-muted-foreground">
-                Inject domain knowledge into every request.
-              </p>
-              <label
-              class= "field-surface inline-flex h-7 cursor-pointer items-center gap-1 bg-background/60 px-2 text-ui-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-              >
-                <Upload class="size-3 shrink-0" />
-                Upload
-                <input
-                  type="file"
-                  accept=".md,text/markdown,text/plain"
-                  multiple
-                  class="sr-only"
-                  onchange={handleSkillFileUpload}
-                />
-              </label>
-              <button
-                type="button"
-                class="inline-flex h-7 items-center gap-1 rounded-lg border border-primary/30 bg-primary/8 px-2 text-ui-xs text-primary transition-colors hover:bg-primary/15"
-                onclick={() => (newSkillOpen = !newSkillOpen)}
-              >
-                <Plus class="size-3 shrink-0" />
-                New
-              </button>
+            <!-- What skills are, then the two ways to add one, on their own row
+                 so neither is ever cut off in a narrow panel. -->
+            <div class="flex flex-col gap-2.5">
+              <div>
+                <p class="text-ui-sm font-medium text-foreground">Skills</p>
+                <p class="mt-0.5 text-ui-2xs leading-relaxed text-muted-foreground">
+                  Know-how the assistant reads before it answers. Built-in skills load on their own when a question needs them; your skills apply to every request.
+                </p>
+              </div>
+              <div class="flex items-center gap-1.5">
+                <Button type="button" size="sm" class="h-7 gap-1 px-2.5 text-ui-xs" onclick={() => (newSkillOpen = !newSkillOpen)}>
+                  <Plus class="size-3.5 shrink-0" /> New skill
+                </Button>
+                <label class="field-surface inline-flex h-7 cursor-pointer items-center gap-1 px-2.5 text-ui-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
+                  <Upload class="size-3.5 shrink-0" />
+                  Upload .md
+                  <input type="file" accept=".md,text/markdown,text/plain" multiple class="sr-only" onchange={handleSkillFileUpload} />
+                </label>
+              </div>
             </div>
 
             <!-- New skill form -->
@@ -5489,40 +5854,47 @@
               </div>
             {/if}
 
-            <!-- Built-in -->
+            <!-- Built-in: what each one covers and when it loads. -->
             <div class="flex flex-col gap-1.5">
-              <p
-                class="text-ui-3xs font-medium text-muted-foreground uppercase tracking-wide"
-              >
-                Built-in
-              </p>
-              <div class="flex flex-wrap gap-1">
-                {#each ["PostgreSQL", "MySQL", "SQLite", "Mermaid", "Charts"] as b}
-                  <span
-                    class="inline-flex items-center gap-1 rounded-full border border-border/40 bg-muted/30 px-2 py-0.5 text-ui-3xs text-muted-foreground"
-                  >
-                    <span class="size-1.5 rounded-full bg-primary/50"></span>{b}
-                  </span>
+              <p class="text-ui-2xs font-medium text-muted-foreground">Built-in</p>
+              <ul class="overflow-hidden rounded-lg border border-border/50">
+                {#each [
+                  { name: "PostgreSQL", desc: "Schema design, indexing and pitfalls", when: "design, indexes, performance" },
+                  { name: "MySQL", desc: "Schema design, indexing and pitfalls", when: "design, indexes, performance" },
+                  { name: "SQLite", desc: "Schema design, limits and pragmas", when: "design, indexes, performance" },
+                  { name: "Operations", desc: "Sizes, WAL, settings, connections, locks, vacuum", when: "sizes, config, WAL, locks" },
+                  { name: "Diagrams", desc: "ER, flow, sequence, state and class diagrams", when: "diagrams, ERDs" },
+                  { name: "Charts", desc: "Interactive ECharts from query results", when: "charts, graphs, plots" },
+                ] as b, k (b.name)}
+                  <li class={cn("flex items-start gap-2.5 px-3 py-2", k > 0 && "border-t border-border/40")}>
+                    <span class="mt-1.5 size-1.5 shrink-0 rounded-full bg-primary/70" aria-hidden="true"></span>
+                    <div class="min-w-0 flex-1">
+                      <p class="text-ui-xs font-medium text-foreground">{b.name}</p>
+                      <p class="truncate text-ui-2xs text-muted-foreground">{b.desc}</p>
+                    </div>
+                    <span class="mt-0.5 shrink-0 text-ui-3xs text-muted-foreground/80" title="Loads when a question is about {b.when}">auto</span>
+                  </li>
                 {/each}
-              </div>
+              </ul>
             </div>
 
             <!-- Custom skills -->
             {#if skills.length === 0}
-              <div
-                class="flex flex-col items-center gap-2 rounded-lg border border-dashed border-border/40 py-7 text-center"
-              >
-                <BookOpen class="size-5 text-muted-foreground" />
-                <p class="text-ui-2xs text-muted-foreground">
-                  No custom skills yet
-                </p>
+              <div class="flex flex-col gap-1.5">
+                <p class="text-ui-2xs font-medium text-muted-foreground">Yours</p>
+                <div class="flex items-start gap-2.5 rounded-lg border border-dashed border-border/50 px-3 py-3">
+                  <BookOpen class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                  <p class="text-ui-2xs leading-relaxed text-muted-foreground">
+                    None yet. Add your team's conventions - naming rules, which tables matter, how to read a status column - and the assistant follows them in every answer.
+                  </p>
+                </div>
               </div>
             {:else}
               <div class="flex flex-col gap-1">
                 <p
-                  class="text-ui-3xs font-medium text-muted-foreground uppercase tracking-wide"
+                  class="text-ui-2xs font-medium text-muted-foreground"
                 >
-                  Custom ({skills.length})
+                  Yours ({skills.length})
                 </p>
                 {#each skills as skill (skill.id)}
                   <div
@@ -5545,11 +5917,11 @@
                     </div>
                     <button
                       type="button"
-                      class="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                      class="hit-area mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                       onclick={() => removeSkill(skill.id)}
                       title="Remove"
                     >
-                      <X class="size-3" />
+                      <X class="size-3 shrink-0" />
                     </button>
                   </div>
                 {/each}
@@ -5576,7 +5948,7 @@
               >
                 <div
                   class={cn(
-                    "h-full rounded-full transition-all duration-500",
+                    "h-full rounded-full transition-[width] duration-200",
                     contextStats.pct >= 90
                       ? "bg-destructive"
                       : contextStats.pct >= 70
@@ -5627,7 +5999,7 @@
             <!-- Clear button -->
             <button
               type="button"
-              class="flex h-8 w-full items-center justify-center gap-1.5 rounded-lg border border-destructive/25 text-ui-xs text-destructive transition-colors hover:bg-destructive/6 hover:border-destructive/40 hover:text-destructive"
+              class="flex h-8 w-full items-center justify-center gap-1.5 rounded-md border border-destructive/25 text-ui-xs text-destructive transition-colors hover:bg-destructive/6 hover:border-destructive/40 hover:text-destructive"
               onclick={() => {
                 apiHistory = [];
                 rawApiHistory = [];
@@ -5635,7 +6007,7 @@
                 error = "";
               }}
             >
-              <Trash2 class="size-3.5" />
+              <Trash2 class="size-3.5 shrink-0" />
               Clear history & cache
             </button>
           </div>
@@ -5674,7 +6046,7 @@
         class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-ui-sm text-destructive hover:bg-destructive/10"
         onclick={() => void removeConversation(menu.id)}
       >
-        <Trash2 class="size-3" /> Delete
+        <Trash2 class="size-3 shrink-0" /> Delete
       </button>
     </div>
   {/if}
@@ -5707,14 +6079,14 @@
           toast.success("Selection copied");
         }}
       >
-        <Copy class="size-3" />Copy
+        <Copy class="size-3 shrink-0" />Copy
       </button>
       <button
         type="button"
         class="inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-ui-2xs text-muted-foreground hover:bg-accent hover:text-foreground"
         onclick={() => quoteToInput(selToolbar?.text ?? "")}
       >
-        <Reply class="size-3" />Reply
+        <Reply class="size-3 shrink-0" />Reply
       </button>
     </div>
   </div>
@@ -5737,7 +6109,7 @@
   >
     <!-- Header -->
     <div
-      class="flex shrink-0 items-center gap-3 border-b border-border/60 bg-background/80 px-4 py-2"
+      class="window-overlay-head flex shrink-0 items-center gap-3 border-b border-border/60 bg-background px-4 py-2" data-tauri-drag-region
     >
       <span
         class="min-w-0 flex-1 truncate font-mono text-ui-sm font-semibold text-foreground/80"
@@ -5752,13 +6124,13 @@
           class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           title="Download PNG"
           onclick={() =>
-            void saveChartPng("[data-chart-fs] canvas", fullscreenChart?.title ?? "")}><ArrowDownToLine class="size-3.5" /></button
+            void saveChartPng("[data-chart-fs] canvas", fullscreenChart?.title ?? "")}><ArrowDownToLine class="size-3.5 shrink-0" /></button
         >
         <button
           type="button"
           class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           title="Close (Esc)"
-          onclick={closeChartFullscreen}><X class="size-4" /></button
+          onclick={closeChartFullscreen}><X class="size-4 shrink-0" /></button
         >
       </div>
     </div>
@@ -5790,7 +6162,7 @@
   >
     <!-- Header toolbar -->
     <div
-      class="flex shrink-0 items-center gap-2 border-b border-border bg-background/80 px-4 py-2"
+      class="window-overlay-head flex shrink-0 items-center gap-2 border-b border-border bg-background px-4 py-2" data-tauri-drag-region
     >
       <span class="text-ui-xs font-medium text-muted-foreground">Diagram</span>
       <div class="ml-auto flex items-center gap-1">
@@ -5801,7 +6173,7 @@
           onclick={() => dispatchDiagramEvent("diagram:zoomout")}
           title="Zoom out"
         >
-          <ZoomOut class="size-3" />
+          <ZoomOut class="size-3 shrink-0" />
         </button>
         <button
           type="button"
@@ -5809,7 +6181,7 @@
           onclick={() => dispatchDiagramEvent("diagram:reset")}
           title="Reset zoom (double-click canvas)"
         >
-          <RotateCcw class="size-3" />Reset
+          <RotateCcw class="size-3 shrink-0" />Reset
         </button>
         <button
           type="button"
@@ -5817,7 +6189,7 @@
           onclick={() => dispatchDiagramEvent("diagram:zoomin")}
           title="Zoom in"
         >
-          <ZoomIn class="size-3" />
+          <ZoomIn class="size-3 shrink-0" />
         </button>
         <div class="mx-1 h-4 w-px bg-border"></div>
         <!-- Export -->
@@ -5827,7 +6199,7 @@
           onclick={() => void exportDiagramSvg()}
           title="Export as SVG"
         >
-          <ArrowDownToLine class="size-3" />SVG
+          <ArrowDownToLine class="size-3 shrink-0" />SVG
         </button>
         <button
           type="button"
@@ -5835,7 +6207,7 @@
           onclick={() => void exportDiagramPng()}
           title="Export as PNG"
         >
-          <ArrowDownToLine class="size-3" />PNG
+          <ArrowDownToLine class="size-3 shrink-0" />PNG
         </button>
         <div class="mx-1 h-4 w-px bg-border"></div>
         <!-- Close -->
@@ -5845,7 +6217,7 @@
           onclick={closeDiagramFullscreen}
           title="Close (Esc)"
         >
-          <Minimize2 class="size-3" />Exit
+          <Minimize2 class="size-3 shrink-0" />Exit
         </button>
       </div>
     </div>

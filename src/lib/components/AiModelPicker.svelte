@@ -10,6 +10,8 @@
   import HardDrive from '@lucide/svelte/icons/hard-drive'
   import Waypoints from '@lucide/svelte/icons/waypoints'
   import SlidersHorizontal from '@lucide/svelte/icons/sliders-horizontal'
+  import Check from '@lucide/svelte/icons/check'
+  import Lock from '@lucide/svelte/icons/lock'
   import * as Popover from '$lib/components/ui/popover/index.js'
   import BrandIcon from '$lib/components/BrandIcon.svelte'
   import { hasBrand } from '$lib/brand-icons.js'
@@ -22,7 +24,9 @@
     PROVIDERS,
     PROVIDER_MODELS,
   } from '$lib/stores/ai-settings.js'
-  import { localAgents, refreshLocalAgents, profileAgent } from '$lib/local-agents.js'
+  import { localAgents, refreshLocalAgents, profileAgent, agentPrefs, EFFORTS, AGENTS_WITH_EFFORT } from '$lib/local-agents.js'
+  import { readOnlyMode } from '$lib/stores/read-only.js'
+  import { IS_MAC } from '$lib/shortcuts.js'
 
   let {
     /** @type {() => void} */
@@ -54,6 +58,9 @@
   let highlight = $state(0)
   let searchEl = $state(/** @type {HTMLInputElement | null} */ (null))
   let copied = $state(false)
+  let showAll = $state(false)
+  /** Rows shown before "Show more". */
+  const LIST_CAP = 8
 
   /** @param {string} key */
   function toggleFavorite(key) {
@@ -156,12 +163,28 @@
     return out
   })
 
-  const visible = $derived.by(() => {
+  const matching = $derived.by(() => {
     const q = query.trim().toLowerCase()
     if (q) return entries.filter((e) => `${e.label} ${e.provider} ${e.tag} ${e.note}`.toLowerCase().includes(q))
     if (railKey === 'fav') return entries.filter((e) => favorites.has(e.key))
     return entries.filter((e) => e.group === railKey)
   })
+  const visible = $derived(showAll || query.trim() ? matching : matching.slice(0, LIST_CAP))
+  const hiddenCount = $derived(matching.length - visible.length)
+
+  // Effort belongs to the model, so it is picked beside it (T3's Reasoning column).
+  const hasEffort = $derived(!!activeAgent && AGENTS_WITH_EFFORT.has(activeAgent))
+  const effortLabel = $derived(EFFORTS.find((e) => e.id === $agentPrefs.effort)?.label ?? 'Medium')
+  /** @param {string} id */
+  function setEffort(id) {
+    agentPrefs.update((p) => ({ ...p, effort: /** @type {any} */ (id) }))
+  }
+  // Shown in the footer: what the agent may run. Read-only connection wins.
+  const accessLabel = $derived(
+    $readOnlyMode || !activeAgent ? ($readOnlyMode ? 'Read only' : '')
+      : ({ read: 'Read only', write: 'Read & write', modify: 'Modify schema', dangerous: 'Dangerous' })[$agentPrefs.access] ?? 'Read only'
+  )
+  const modKey = IS_MAC ? '⌘' : 'Ctrl+'
 
   const railGroup = $derived(groups.find((g) => g.key === railKey))
   // An agent that cannot run yet gets its setup step instead of an empty list.
@@ -174,6 +197,7 @@
     copied = false
     const current = entries.find((e) => e.active)
     railKey = current && favorites.has(current.key) ? 'fav' : current?.group ?? groups[0]?.key ?? 'fav'
+    showAll = false
     highlight = Math.max(0, visible.findIndex((e) => e.active))
     void refreshLocalAgents()
     queueMicrotask(() => searchEl?.focus())
@@ -187,6 +211,12 @@
 
   /** @param {KeyboardEvent} e */
   function onSearchKey(e) {
+    // ⌘1-⌘4 pick the first four rows, as the chips beside them say.
+    if ((e.metaKey || e.ctrlKey) && /^[1-4]$/.test(e.key)) {
+      const hit = visible[Number(e.key) - 1]
+      if (hit) { e.preventDefault(); choose(hit) }
+      return
+    }
     if (e.key === 'ArrowDown') {
       e.preventDefault()
       highlight = Math.min(visible.length - 1, highlight + 1)
@@ -223,21 +253,22 @@
 
 <Popover.Popover bind:open onOpenChange={(o) => { if (o) openPicker() }}>
   <Popover.PopoverTrigger
-    class="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-ui-xs text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground select-none data-[state=open]:bg-accent data-[state=open]:text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
-    title={activeProfile ? `${activeProfile.name} · switch model` : 'Switch model'}
+    class="inline-flex h-9 min-w-0 shrink items-center gap-2 rounded-full px-3 text-ui-sm text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground select-none data-[state=open]:bg-accent data-[state=open]:text-foreground outline-none focus-visible:outline-2 focus-visible:outline-ring"
+    title={activeProfile ? `${activeProfile.name}${hasEffort ? ` · ${effortLabel}` : ''} · switch model` : 'Switch model'}
   >
     {@render mark(activeProfile ? brandOf(activeProfile.provider) : '', 'size-3.5 shrink-0')}
-    <span class="max-w-40 truncate">{displayName}</span>
-    <ChevronDown class="size-3 shrink-0 opacity-40" />
+    <span class="min-w-0 max-w-48 truncate text-foreground/90">{displayName}</span>
+    {#if hasEffort}<span class="shrink-0">{effortLabel}</span>{/if}
   </Popover.PopoverTrigger>
 
-  <Popover.PopoverContent side="top" align="start" sideOffset={8} class="flex h-96 w-[22rem] overflow-hidden">
+  <Popover.PopoverContent side="top" align="end" sideOffset={8} class={cn("flex h-96 flex-col overflow-hidden p-0", hasEffort ? "w-[32rem]" : "w-[24rem]")}>
+    <div class="flex min-h-0 flex-1">
     <!-- Provider rail: favourites first, then every provider with a model. -->
     <div class="flex w-11 shrink-0 flex-col items-center gap-1 border-r border-border/50 py-2">
       <button
         type="button"
         class={cn(
-          "relative flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground",
+          "relative flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground",
           railKey === 'fav' && !query && "bg-accent text-foreground",
         )}
         title="Favourites"
@@ -253,7 +284,7 @@
         <button
           type="button"
           class={cn(
-            "relative flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground",
+            "relative flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground",
             railKey === g.key && !query && "bg-accent text-foreground",
             g.agent && g.agent.status !== 'ready' && "opacity-40",
           )}
@@ -272,7 +303,7 @@
     </div>
 
     <div class="flex min-w-0 flex-1 flex-col">
-      <label class="flex h-10 shrink-0 items-center gap-2 border-b border-border/50 px-3 focus-within:border-primary/70">
+      <label data-slot="menu-search" class="flex h-10 shrink-0 items-center gap-2 px-3">
         <Search class="size-3.5 shrink-0 text-muted-foreground" />
         <input
           bind:this={searchEl}
@@ -316,26 +347,23 @@
               role="option"
               tabindex="-1"
               aria-selected={e.active}
+              title={[e.provider, e.note || e.tag].filter(Boolean).join(' · ')}
               class={cn(
-                "group flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-2.5 py-1.5",
-                i === highlight && "bg-accent/40",
-                e.active && "bg-accent/80",
+                "group flex min-h-7 w-full min-w-0 cursor-pointer items-center gap-2 rounded-sm px-2 py-1",
+                i === highlight && "bg-accent",
               )}
               onmouseenter={() => (highlight = i)}
               onclick={() => choose(e)}
               onkeydown={(ev) => ev.key === 'Enter' && choose(e)}
             >
-              <div class="flex min-w-0 flex-1 flex-col gap-0.5">
-                <span class="truncate text-ui-xs font-medium text-foreground">{e.label}</span>
-                <div class="flex min-w-0 items-center gap-1.5 text-ui-3xs text-muted-foreground">
-                  {@render mark(e.brand, 'size-3 shrink-0')}
-                  <span class="truncate">{[e.provider, e.note || e.tag].filter(Boolean).join(' · ')}</span>
-                </div>
-              </div>
+              {@render mark(e.brand, 'size-3.5 shrink-0 text-muted-foreground')}
+              <span class={cn("min-w-0 truncate text-ui-xs", e.active ? "font-medium text-foreground" : "text-foreground/90")}>{e.label}</span>
+              {#if e.active}<Check class="size-3.5 shrink-0 text-foreground" />{/if}
+              <span class="flex-1"></span>
               <button
                 type="button"
                 class={cn(
-                  "flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground transition-opacity hover:text-foreground",
+                  "flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground",
                   favorites.has(e.key) ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus-visible:opacity-100",
                 )}
                 aria-label={favorites.has(e.key) ? `Unstar ${e.label}` : `Star ${e.label}`}
@@ -343,19 +371,65 @@
               >
                 <Star class={cn("size-3.5 shrink-0", favorites.has(e.key) && "fill-current text-foreground")} />
               </button>
+              {#if i < 4}
+                <span class="shrink-0 font-mono text-ui-3xs tracking-widest text-muted-foreground">{modKey}{i + 1}</span>
+              {/if}
             </div>
           {/each}
+          {#if hiddenCount > 0}
+            <button
+              type="button"
+              class="flex min-h-7 w-full items-center gap-2 rounded-sm px-2 py-1 text-left text-ui-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+              onclick={() => (showAll = true)}
+            >
+              <ChevronDown class="size-3.5 shrink-0" />
+              Show more
+              <span class="ml-auto font-mono text-ui-3xs tabular-nums">{hiddenCount}</span>
+            </button>
+          {/if}
         {/if}
       </div>
+    </div>
 
+    {#if hasEffort}
+      <!-- Reasoning: the effort levels of the model above, picked beside it. -->
+      <div class="flex w-36 shrink-0 flex-col border-l border-border/50">
+        <div class="flex h-10 shrink-0 items-center px-3 text-ui-3xs font-medium text-muted-foreground">
+          <span class="truncate">Reasoning · {displayName}</span>
+        </div>
+        <div class="flex flex-col p-1.5" role="radiogroup" aria-label="Reasoning effort">
+          {#each EFFORTS as ef (ef.id)}
+            {@const on = $agentPrefs.effort === ef.id}
+            <button
+              type="button"
+              role="radio"
+              aria-checked={on}
+              class={cn("flex min-h-7 items-center gap-2 rounded-sm px-2 py-1 text-left text-ui-xs hover:bg-accent", on ? "font-medium text-foreground" : "text-foreground/90")}
+              onclick={() => setEffort(ef.id)}
+            >
+              <span class="min-w-0 flex-1 truncate">{ef.label}</span>
+              {#if on}<Check class="size-3.5 shrink-0" />{/if}
+            </button>
+          {/each}
+        </div>
+      </div>
+    {/if}
+    </div>
+
+    <div class="flex h-8 shrink-0 items-center gap-2 border-t border-border/50 px-1.5">
       <button
         type="button"
-        class="flex h-8 shrink-0 items-center gap-2 border-t border-border/50 px-3 text-ui-2xs text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground"
+        class="flex h-6 items-center gap-1.5 rounded-sm px-1.5 text-ui-2xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         onclick={() => { open = false; onopenSettings() }}
       >
         <Settings2 class="size-3.5 shrink-0" />
         <span>Manage models…</span>
       </button>
+      {#if accessLabel}
+        <span class="ml-auto flex items-center gap-1 px-1.5 text-ui-2xs text-muted-foreground" title="What the agent may run">
+          <Lock class="size-3 shrink-0" />{accessLabel}
+        </span>
+      {/if}
     </div>
   </Popover.PopoverContent>
 </Popover.Popover>

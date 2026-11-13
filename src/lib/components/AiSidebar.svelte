@@ -1,5 +1,8 @@
 <script>
-  import { comboTitle } from '$lib/shortcuts.js'
+  import CollapsibleCode from './CollapsibleCode.svelte'
+  import Maximize2 from '@lucide/svelte/icons/maximize-2'
+  import { Button } from '$lib/components/ui/button/index.js'
+  import { withShortcut } from '$lib/stores/keybindings.js'
   import { tick, onMount, onDestroy } from "svelte";
   import { getAppScale } from '$lib/app-zoom.js';
   import Sparkles from "@lucide/svelte/icons/sparkles";
@@ -27,10 +30,11 @@
   import Rows3 from "@lucide/svelte/icons/rows-3";
   import FileText from "@lucide/svelte/icons/file-text";
   import CodeXml from "@lucide/svelte/icons/code-xml";
-  import { cn } from "$lib/utils.js";
+  import { cn, plural } from "$lib/utils.js";
   import { executeSql } from "$lib/api.js";
+  import { queryLanguageFor, sampleQuery, describeFromSample } from "$lib/ai-query-languages.js";
   import { isReadOnly } from '$lib/stores/read-only.js'
-  import { isWriteSql } from '$lib/sql-write.js'
+  import { isWriteSql, isWriteFor } from '$lib/sql-write.js'
   import DataTable from "$lib/components/DataTable.svelte";
   import AiMarkdown from "$lib/components/AiMarkdown.svelte";
   import AiSqlBlock from "$lib/components/AiSqlBlock.svelte";
@@ -56,6 +60,7 @@
   } from "$lib/stores/ai-settings.js";
   import { profileAgent, parseSqlResult, stepLabel } from "$lib/local-agents.js";
   import { createAgentChat } from "$lib/agent-session.js";
+  import { appAgentWebAccess } from "$lib/stores/settings.js";
   import { loadSkills } from "$lib/stores/ai-skills.js";
   import {
     clampAiSidebarWidth,
@@ -108,6 +113,8 @@
     currentCode = "",
     ormMode = /** @type {'drizzle' | 'prisma'} */ ("drizzle"),
     onclose = () => {},
+    /** Open the full-window AI mode (null hides the button). @type {(() => void) | null} */
+    onexpand = null,
     /** @param {{ kind: 'sql' | 'code', lang?: string, content: string }} detail */
     onaccept = (detail) => {},
     onopensettings = () => {},
@@ -509,6 +516,8 @@
 
   async function ensureFullSchemaCache() {
     if (!schemaContext.tables?.length) return
+    // Schemaless engines: fields come from sampled documents, not a catalog.
+    if (queryLanguageFor(schemaContext.dbType)) return
     const dbType = schemaContext.dbType ?? 'postgres'
     const isMysql = dbType === 'mysql'
     const isSqliteFamily = dbType === 'sqlite' || dbType === 'd1' || dbType === 'libsql'
@@ -678,7 +687,7 @@
       agent,
       model: $aiSettings.model ?? '',
       text,
-      ctx: { dbType: schemaContext.dbType, activeSchema: schemaContext.activeSchema, activeTable: schemaContext.activeTable, tables, extra: buildViewContext() },
+      ctx: { dbType: schemaContext.dbType, activeSchema: schemaContext.activeSchema, activeTable: schemaContext.activeTable, tables, extra: buildViewContext(), webAccess: $appAgentWebAccess },
       on: {
         text: (delta) => {
           aiStatusHint = ''
@@ -812,7 +821,31 @@
 
   const AI_ROW_LIMIT = 500; const AI_DISPLAY_ROWS = 100
 
+  /**
+   * describe_table / get_schema for schemaless engines: the fields seen in a
+   * few sampled records of each collection.
+   * @param {Record<string, any>} args @param {string} tool
+   */
+  async function describeNosql(args, tool) {
+    const engine = String(schemaContext.dbType)
+    const schema = String(args.schema ?? schemaContext.activeSchema ?? '')
+    const names = tool === 'get_schema' && !args.table ? (schemaContext.tables ?? []).slice(0, 10).map((/** @type {any} */ t) => t.name) : [String(args.table ?? '')]
+    const out = await Promise.all(names.map(async (/** @type {string} */ n) => {
+      const q = sampleQuery(engine, schema, n, 5)
+      if (!q) return { collection: n, note: 'Sampling would scan; query it by its key to see records.' }
+      try {
+        return describeFromSample(n, await executeSql(q))
+      } catch (e) {
+        return { collection: n, error: e instanceof Error ? e.message : String(e) }
+      }
+    }))
+    return JSON.stringify(names.length === 1 ? out[0] : { collections: out })
+  }
+
   function guardSelectLimit(sql) {
+    // Only SQL and CQL take a LIMIT clause; PartiQL and the shell languages don't.
+    const engine = schemaContext.dbType
+    if (queryLanguageFor(engine) && engine !== 'cassandra') return { sql: sql.trimEnd().replace(/;+$/, ''), capped: false }
     const cleaned = sql.trimEnd().replace(/;+$/, '')
     const t = cleaned.trimStart()
     if (!/^(with\b|select\b)/i.test(t)) return { sql: cleaned, capped: false }
@@ -884,7 +917,7 @@
         if (!sql) { apiHistory.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ error: 'Empty SQL' }) }); return }
         // Same refusal as the AI tab: answer in the tool channel so the model
         // stops retrying a write it will never be allowed to make.
-        if (isReadOnly() && isWriteSql(sql)) {
+        if (isReadOnly() && isWriteFor(sql, schemaContext.dbType)) {
           apiHistory.push({ role: 'tool', tool_call_id: call.id, content: JSON.stringify({ error: 'This connection is open in read-only mode. Writing statements are blocked - propose the SQL to the user instead of running it.' }) })
           return
         }
@@ -902,6 +935,8 @@
           const msg = String(sqlErr); const hint = classifyDbError(msg); const ex = failureTracker.get(callKey) ?? { count: 0, lastError: '' }; failureTracker.set(callKey, { count: ex.count + 1, lastError: msg })
           toolResult = JSON.stringify({ error: msg, ...(hint ? { hint } : {}), attempt: ex.count + 1 })
         }
+      } else if (queryLanguageFor(schemaContext.dbType) && (call.function.name === 'describe_table' || call.function.name === 'get_schema')) {
+        toolResult = await describeNosql(args, call.function.name)
       } else if (call.function.name === 'describe_table') {
         const schema = String(args.schema ?? schemaContext.activeSchema).replace(/'/g, "''"); const table = String(args.table ?? '').replace(/'/g, "''")
         const dbType = schemaContext.dbType ?? 'postgres'
@@ -1044,20 +1079,28 @@
         aria-label="New chat"
         disabled={items.length === 0 && !loading}
         onclick={() => void newChat()}
-      ><SquarePen class="size-3.5" /></button>
+      ><SquarePen class="size-3.5 shrink-0" /></button>
       <button type="button"
         class={cn('inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground', historyOpen && 'bg-accent text-foreground')}
         title="Conversation history"
         aria-label="Conversation history"
         aria-pressed={historyOpen}
         onclick={() => { historyOpen = !historyOpen; if (historyOpen) void loadConvList() }}
-      ><History class="size-3.5" /></button>
+      ><History class="size-3.5 shrink-0" /></button>
+      {#if onexpand}
+        <button type="button"
+          class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          title={withShortcut('Expand to AI mode', 'ai.panel')}
+          aria-label="Expand to AI mode"
+          onclick={onexpand}
+        ><Maximize2 class="size-3.5 shrink-0" /></button>
+      {/if}
       <button type="button"
         class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-        title={`Close (${comboTitle('Mod+I')})`}
+        title={withShortcut('Close', 'ai.sidebar')}
         aria-label="Close the assistant"
         onclick={onclose}
-      ><X class="size-3.5" /></button>
+      ><X class="size-3.5 shrink-0" /></button>
     </div>
   </div>
 
@@ -1068,8 +1111,8 @@
       <div class="flex items-center justify-between gap-2 border-b border-border/50 px-3 py-2.5">
         <span class="text-ui-xs font-medium text-foreground">History</span>
         {#if convList.length}
-          <button type="button" class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-ui-2xs text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive" onclick={() => void clearAllConversations()}>
-            <Trash2 class="size-3" />Clear all
+          <button type="button" class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-ui-2xs text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive" onclick={() => void clearAllConversations()}>
+            <Trash2 class="size-3 shrink-0" />Clear all
           </button>
         {/if}
       </div>
@@ -1083,8 +1126,8 @@
                 <span class="w-full truncate text-ui-xs text-foreground">{conv.title}</span>
                 <span class="text-ui-2xs text-muted-foreground">{relTime(conv.updatedAt)}</span>
               </button>
-              <button type="button" class="inline-flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100" onclick={() => void removeConversation(conv.id)}>
-                <Trash2 class="size-3" />
+              <button type="button" class="hit-area inline-flex size-5 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100" onclick={() => void removeConversation(conv.id)}>
+                <Trash2 class="size-3 shrink-0" />
               </button>
             </div>
           {/each}
@@ -1102,37 +1145,31 @@
            the starters are where the hands already are, and a tall pane no
            longer leaves them floating in the middle. -->
       <div class="flex min-h-full flex-col justify-end gap-4 px-3 pb-3 pt-6">
-        <div class="flex items-start gap-2.5 px-1">
-          <span class="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-            <Sparkles class="size-4" />
-          </span>
-          <div class="min-w-0">
-            <p class="text-ui-sm font-medium text-foreground">Ask about your data</p>
-            {#if schemaContext.activeTable}
-              <p class="truncate font-mono text-ui-2xs text-muted-foreground">{schemaContext.activeSchema}.{schemaContext.activeTable}</p>
-            {:else if schemaContext.tables?.length}
-              <p class="truncate font-mono text-ui-2xs text-muted-foreground">{schemaContext.activeSchema} · {schemaContext.tables.length} tables</p>
-            {:else}
-              <p class="text-ui-2xs text-muted-foreground">Knows your schema, the open table and the editor</p>
-            {/if}
-          </div>
+        <div class="flex min-w-0 flex-col gap-1 px-1">
+          <p class="text-ui-xl font-normal tracking-tight text-foreground">Ask about your data</p>
+          {#if schemaContext.activeTable}
+            <p class="truncate text-ui-sm text-muted-foreground">{schemaContext.activeSchema}.{schemaContext.activeTable}</p>
+          {:else if schemaContext.tables?.length}
+            <p class="truncate text-ui-sm text-muted-foreground">{schemaContext.activeSchema} · {schemaContext.tables.length} {plural(schemaContext.tables.length, "table")}</p>
+          {:else}
+            <p class="text-ui-sm text-muted-foreground">Knows your schema, the open table and the editor</p>
+          {/if}
         </div>
 
         {#if !configured}
-          <button
-            type="button"
-            class="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg bg-primary px-3 text-ui-xs font-medium text-primary-foreground transition-[background-color,scale] duration-150 hover:bg-primary/90 active:scale-[0.96]"
+          <Button
+            
             onclick={onopensettings}
-          >
-            <Sparkles class="size-3.5" />Configure a model
-          </button>
+>
+            <Sparkles class="size-3.5 shrink-0" />Configure a model
+          </Button>
         {:else}
           <ul class="flex flex-col gap-0.5" aria-label="Suggestions">
             {#each suggestions as s (s.label)}
               {@const Icon = s.icon}
               <li>
                 <button type="button"
-                  class="group/sug flex h-8 w-full items-center gap-2.5 rounded-md px-2 text-left text-ui-xs text-foreground transition-colors hover:bg-accent disabled:opacity-40"
+                  class="group/sug flex h-8 w-full items-center gap-2.5 rounded-md px-2 text-left text-ui-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40"
                   disabled={loading}
                   onclick={() => void send([s.label])}
                 >
@@ -1164,13 +1201,13 @@
               <div class="flex max-w-[88%] min-w-0 flex-col gap-1.5 rounded-2xl border border-border/50 bg-card px-3 py-2 text-ui-xs leading-relaxed text-foreground">
                 {#each splitFences(item.text) as part, pi (pi)}
                   {#if part.code}
-                    <pre class="max-h-40 overflow-auto rounded-md border border-border/40 bg-muted/40 px-2 py-1.5 font-mono text-ui-2xs leading-snug whitespace-pre-wrap text-foreground/85">{part.content}</pre>
+                    <CollapsibleCode text={part.content} max={160} class="rounded-md border border-border/40 bg-muted/40 px-2 py-1.5 font-mono text-ui-2xs leading-snug whitespace-pre-wrap text-foreground/85" />
                   {:else}
                     <p class="font-reading whitespace-pre-wrap break-words">{part.content}</p>
                   {/if}
                 {/each}
                 {#if item.sql}
-                  <pre class="max-h-40 overflow-auto rounded-md border border-border/40 bg-muted/40 px-2 py-1.5 font-mono text-ui-2xs leading-snug whitespace-pre-wrap text-foreground/85">{item.sql}</pre>
+                  <CollapsibleCode text={item.sql} max={160} class="rounded-md border border-border/40 bg-muted/40 px-2 py-1.5 font-mono text-ui-2xs leading-snug whitespace-pre-wrap text-foreground/85" />
                 {/if}
               </div>
             </div>
@@ -1197,15 +1234,15 @@
                     <div class="group/sqlbar flex items-center gap-2 border-b border-border/30 bg-muted/8 px-2.5 py-1.5">
                       <button type="button" class="flex min-w-0 flex-1 items-center gap-1.5 text-left" onclick={() => toggleCollapse(sqlKey)}>
                         <span class="flex size-4 shrink-0 items-center justify-center text-muted-foreground">
-                          {#if sqlOpen}<ChevronDown class="size-3.5" />{:else}<ChevronRight class="size-3.5" />{/if}
+                          {#if sqlOpen}<ChevronDown class="size-3.5 shrink-0" />{:else}<ChevronRight class="size-3.5 shrink-0" />{/if}
                         </span>
                         <span class="shrink-0 rounded border border-border/40 bg-muted/50 px-1 font-mono text-ui-3xs font-semibold uppercase tracking-widest text-muted-foreground">SQL</span>
                         <span class="min-w-0 truncate font-mono text-ui-2xs text-muted-foreground">{part.content.trim().replace(/\s+/g, ' ').slice(0, 60)}</span>
                       </button>
                       <div class="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover/sqlbar:opacity-100">
-                        <button type="button" class="inline-flex size-6 items-center justify-center rounded text-muted-foreground hover:bg-muted/60 hover:text-foreground" title="Copy" onclick={() => copyText(part.content)}><Copy class="size-3" /></button>
-                        <button type="button" class="inline-flex size-6 items-center justify-center rounded text-muted-foreground hover:bg-muted/60 hover:text-foreground" title="Accept" onclick={() => acceptSql(part.content)}><CornerDownLeft class="size-3" /></button>
-                        <button type="button" class="inline-flex h-6 items-center gap-1 rounded bg-primary px-2 text-ui-3xs font-medium text-primary-foreground hover:opacity-90 disabled:opacity-40" disabled={loading} onclick={() => void runSqlBlock(part.content)}><Play class="size-3" />Run</button>
+                        <button type="button" class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" title="Copy" onclick={() => copyText(part.content)}><Copy class="size-3 shrink-0" /></button>
+                        <button type="button" class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" title="Accept" onclick={() => acceptSql(part.content)}><CornerDownLeft class="size-3 shrink-0" /></button>
+                        <Button size="xs" disabled={loading} onclick={() => void runSqlBlock(part.content)}><Play class="size-3 shrink-0" />Run</Button>
                       </div>
                     </div>
                     <AiSqlBlock sql={part.content} open={sqlOpen} />
@@ -1215,7 +1252,7 @@
                   <div class="overflow-hidden rounded-lg border border-border/50">
                     <div class="flex items-center justify-between gap-1 border-b border-border/30 bg-muted/10 px-2.5 py-1.5">
                       <span class="font-mono text-ui-2xs text-muted-foreground">diagram</span>
-                      <button type="button" class="inline-flex size-6 items-center justify-center rounded text-muted-foreground hover:bg-muted/60 hover:text-foreground" title="Copy" aria-label="Copy" onclick={() => copyText(part.content)}><Copy class="size-3" /></button>
+                      <button type="button" class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" title="Copy" aria-label="Copy" onclick={() => copyText(part.content)}><Copy class="size-3 shrink-0" /></button>
                     </div>
                     <ShikiBlock code={part.content} lang="plaintext" embedded />
                   </div>
@@ -1234,12 +1271,12 @@
                   <div class="overflow-hidden rounded-lg border border-border/50">
                     <div class="flex items-center justify-between gap-1 border-b border-border/30 bg-muted/10 px-2.5 py-1.5">
                       <button type="button" class="flex items-center gap-1 text-ui-2xs text-muted-foreground hover:text-foreground" onclick={() => toggleCollapse(codeKey)}>
-                        {#if codeOpen}<ChevronDown class="size-3" />{:else}<ChevronRight class="size-3" />{/if}
+                        {#if codeOpen}<ChevronDown class="size-3 shrink-0" />{:else}<ChevronRight class="size-3 shrink-0" />{/if}
                         <span class="font-mono">{part.lang || 'code'}</span>
                       </button>
                       <div class="flex gap-0.5">
-                        <button type="button" class="inline-flex size-6 items-center justify-center rounded text-muted-foreground hover:bg-muted/60 hover:text-foreground" title="Copy" aria-label="Copy" onclick={() => copyText(part.content)}><Copy class="size-3" /></button>
-                        <button type="button" class="inline-flex size-6 items-center justify-center rounded text-muted-foreground hover:bg-muted/60 hover:text-foreground" title="Accept" onclick={() => acceptCode(part.lang, part.content)}><CornerDownLeft class="size-3" /></button>
+                        <button type="button" class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" title="Copy" aria-label="Copy" onclick={() => copyText(part.content)}><Copy class="size-3 shrink-0" /></button>
+                        <button type="button" class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" title="Accept" onclick={() => acceptCode(part.lang, part.content)}><CornerDownLeft class="size-3 shrink-0" /></button>
                       </div>
                     </div>
                     {#if codeOpen}<ShikiBlock code={part.content} lang={part.lang || 'plaintext'} embedded />{/if}
@@ -1259,14 +1296,14 @@
             {@const isOpen = openWork.has(item.id)}
             {@const failed = item.steps.filter((x) => x.status === 'error').length}
             {@const summary = workSummary(item.steps)}
-            <div class="min-w-0 border-b border-border/40 pb-1">
+            <div class="min-w-0">
               <button
                 type="button"
-                class="inline-flex h-6 max-w-full items-center gap-1.5 text-ui-2xs text-muted-foreground transition-colors hover:text-foreground"
+                class="group/work -ml-1 inline-flex h-6 max-w-full items-center gap-1.5 rounded-md px-1 text-ui-2xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
                 aria-expanded={isOpen}
                 onclick={() => toggleWork(item.id)}
               >
-                {#if running}<Loader2 class="size-3 shrink-0 animate-spin" />{/if}
+                {#if running}<span class="size-3 shrink-0 animate-spin rounded-full border-[1.5px] border-current/25 border-t-current will-change-transform" aria-hidden="true"></span>{/if}
                 <span class="shrink-0">{running ? 'Working' : `Worked for ${formatElapsed((item.endedAt ?? item.startedAt) - item.startedAt)}`}</span>
                 {#if summary}<span class="truncate text-muted-foreground/70">· {summary}</span>{/if}
                 {#if failed}<span class="shrink-0 text-destructive">· {failed} failed</span>{/if}
@@ -1293,7 +1330,7 @@
                             {#if meta.detail}<span class="min-w-0 truncate font-mono text-ui-3xs text-muted-foreground">{meta.detail}</span>{/if}
                           </div>
                           {#if st.op === 'query' && st.detail.trim()}
-                            <pre class="max-h-32 overflow-auto rounded-md bg-muted/30 px-2 py-1 font-mono text-ui-3xs whitespace-pre-wrap break-words text-muted-foreground">{st.detail.trim()}</pre>
+                            <CollapsibleCode text={st.detail.trim()} max={128} class="rounded-md bg-muted/30 px-2 py-1 font-mono text-ui-3xs whitespace-pre-wrap break-words text-muted-foreground" />
                           {/if}
                           {#if st.error}<p class="text-ui-3xs break-words text-destructive">{st.error}</p>{/if}
                         </li>
@@ -1389,8 +1426,8 @@
   <!-- Jump to bottom -->
   {#if userScrolledUp}
     <div class="pointer-events-none absolute inset-x-0 bottom-20 z-10 flex justify-center">
-      <button type="button" onclick={jumpToBottom} class="pointer-events-auto flex items-center gap-1.5 rounded-full border border-border/50 bg-background px-3 py-1.5 text-ui-2xs font-medium text-foreground elevate-2-rim transition-all hover:bg-accent">
-        <ChevronDown class="size-3" />Jump to bottom
+      <button type="button" onclick={jumpToBottom} class="pointer-events-auto flex items-center gap-1.5 rounded-full border border-border/50 bg-background px-3 py-1.5 text-ui-2xs font-medium text-foreground elevate-2-rim transition-colors hover:bg-accent">
+        <ChevronDown class="size-3 shrink-0" />Jump to bottom
       </button>
     </div>
   {/if}
@@ -1457,8 +1494,8 @@
             <span class="inline-flex h-6 max-w-full min-w-0 items-center gap-1 rounded-md bg-foreground/[0.06] pl-1.5 pr-0.5 text-foreground/85" title={t}>
               <Table2 class="size-3 shrink-0 text-muted-foreground" />
               <span class="min-w-0 truncate font-mono text-ui-2xs">{short}</span>
-              <button type="button" class="inline-flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground" title="Remove {t}" aria-label="Remove {t}" onclick={() => (contextTables = contextTables.filter((x) => x !== t))}>
-                <X class="size-3" />
+              <button type="button" class="hit-area inline-flex size-5 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" title="Remove {t}" aria-label="Remove {t}" onclick={() => (contextTables = contextTables.filter((x) => x !== t))}>
+                <X class="size-3 shrink-0" />
               </button>
             </span>
           {/each}
@@ -1483,11 +1520,11 @@
           <pre class="line-clamp-3 min-w-0 flex-1 font-mono text-ui-2xs leading-snug whitespace-pre-wrap break-all text-foreground" title={attachedSql}>{attachedSql}</pre>
           <button
             type="button"
-            class="inline-flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            class="hit-area inline-flex size-5 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
             title="Remove the statement"
             aria-label="Remove the attached statement"
             onclick={() => { attachedSql = ''; inputRef?.focus() }}
-          ><X class="size-3" /></button>
+          ><X class="size-3 shrink-0" /></button>
         </div>
       {/if}
 
@@ -1510,17 +1547,17 @@
           title="Mention a table (@)"
           aria-label="Mention a table"
           onclick={() => { inputText += '@'; inputRef?.focus(); void tick().then(resizeInput) }}
-        ><At class="size-3.5" /></button>
+        ><At class="size-3.5 shrink-0" /></button>
         <button type="button"
           class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           title="Quick commands (/)"
           aria-label="Quick commands"
           onclick={() => { inputText = '/'; slashQuery = ''; slashIdx = 0; slashOpen = true; inputRef?.focus(); void tick().then(resizeInput) }}
-        ><Slash class="size-3.5" /></button>
+        ><Slash class="size-3.5 shrink-0" /></button>
         <span class="flex-1"></span>
         {#if loading}
-          <button type="button" class="inline-flex size-7 shrink-0 items-center justify-center rounded-lg bg-foreground/[0.08] text-foreground transition-[background-color,scale] duration-150 hover:bg-foreground/15 active:scale-[0.96]" onclick={stop} title="Stop" aria-label="Stop">
-            <Square class="size-2.5 fill-current" />
+          <button type="button" class="inline-flex size-7 shrink-0 items-center justify-center rounded-md bg-foreground/[0.08] text-foreground transition-[background-color,scale] duration-150 hover:bg-foreground/15 active:scale-[0.96]" onclick={stop} title="Stop" aria-label="Stop">
+            <Square class="size-2.5 shrink-0 fill-current" />
           </button>
         {:else}
           {@const ready = (inputText.trim() || attachedSql) && configured}
@@ -1530,7 +1567,7 @@
             onclick={() => void send()}
             title="Send (Enter)"
             aria-label="Send"
-          ><Send class="size-3.5 -translate-x-px translate-y-px" /></button>
+          ><Send class="size-3.5 shrink-0 -translate-x-px translate-y-px" /></button>
         {/if}
       </div>
     </div>
