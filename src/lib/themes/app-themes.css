@@ -128,7 +128,7 @@ html[data-theme="ice"] {
 
 /* ── Studio - neutral near-black, signature indigo primary (default) ── */
 html[data-theme="dark"] {
-  --background:               oklch(0.132 0 0);
+  --background:               oklch(0.118 0 0);
   --foreground:               oklch(0.940 0 0);
   --card:                     oklch(0.168 0 0);
   --card-foreground:          oklch(0.940 0 0);
@@ -146,12 +146,14 @@ html[data-theme="dark"] {
   --border:                   oklch(0.262 0 0);
   --input:                    oklch(0.280 0 0);
   --ring:                     oklch(0.585 0.178 266);
-  --sidebar:                  oklch(0.100 0 0);
+  /* T3-style: the sidebar sits one step LIGHTER than the content, so the
+     canvas reads as the deepest surface and the chrome as a quiet shelf. */
+  --sidebar:                  oklch(0.150 0 0);
   --sidebar-foreground:       oklch(0.880 0 0);
-  --sidebar-accent:           oklch(0.210 0 0);
+  --sidebar-accent:           oklch(0.240 0 0);
   --sidebar-accent-foreground: oklch(0.980 0 0);
-  --sidebar-border:           oklch(0.242 0 0);
-  --panel:                    oklch(0.148 0 0);
+  --sidebar-border:           oklch(0.235 0 0);
+  --panel:                    oklch(0.118 0 0);
   --table-grid:               oklch(0.272 0 0);
   --link:                     oklch(0.74 0.11 252);
   --link-hover:               oklch(0.82 0.09 252);
@@ -977,4 +979,220 @@ html[data-theme="orchid"] {
   --link-hover:               oklch(0.870 0.085 330);
   --editor-surface:           oklch(0.162 0.012 325);
   --editor-line-highlight:    oklch(0.212 0.014 325);
+}
+
+/* ── Glass - the window shows the desktop through it (macOS vibrancy) ──────
+   Two parts. The palette below is complete and opaque, so on Windows/Linux -
+   where no native material is applied - Glass is a clean frosted grey theme in
+   its own right. On macOS (`data-os="macos"`) the surfaces turn translucent
+   over the window's Sidebar material (set_window_glass in commands.rs), so the
+   wallpaper and windows behind blur through.
+
+   What stays opaque on purpose: popovers, menus, dialogs and cards. Floating
+   surfaces sit over busy content, and text on a see-through menu over a data
+   grid is unreadable. The page canvas, sidebar and panels are what go clear,
+   and they are layered so stacking two of them never turns solid: the canvas
+   carries the tint, panels and the sidebar add only a faint step on top. */
+html[data-theme="glass-dark"] {
+  --background:               oklch(0.150 0.004 264);
+  --foreground:               oklch(0.955 0 0);
+  --card:                     oklch(0.200 0.004 264);
+  --card-foreground:          oklch(0.955 0 0);
+  --popover:                  oklch(0.195 0.004 264);
+  --popover-foreground:       oklch(0.955 0 0);
+  --primary:                  oklch(0.640 0.170 258);
+  --primary-foreground:       oklch(0.99 0 0);
+  --secondary:                oklch(0.250 0.004 264);
+  --secondary-foreground:     oklch(0.900 0 0);
+  --muted:                    oklch(0.250 0.004 264);
+  --muted-foreground:         oklch(0.760 0.004 264);
+  --accent:                   oklch(0.290 0.006 264);
+  --accent-foreground:        oklch(0.975 0 0);
+  --destructive:              oklch(0.66 0.20 25);
+  --border:                   oklch(0.320 0.004 264);
+  --input:                    oklch(0.340 0.004 264);
+  --ring:                     oklch(0.640 0.170 258);
+  --sidebar:                  oklch(0.175 0.004 264);
+  --sidebar-foreground:       oklch(0.900 0 0);
+  --sidebar-accent:           oklch(0.290 0.006 264);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border:           oklch(0.300 0.004 264);
+  --panel:                    oklch(0.150 0.004 264);
+  --table-grid:               oklch(0.310 0.004 264);
+  --link:                     oklch(0.76 0.11 252);
+  --link-hover:               oklch(0.84 0.09 252);
+  --editor-surface:           #222327;
+  --editor-line-highlight:    #2b2c31;
+}
+
+html[data-theme="glass-light"] {
+  --background:               oklch(0.955 0.004 264);
+  --foreground:               oklch(0.15 0.010 264);
+  --card:                     oklch(0.995 0 0);
+  --card-foreground:          oklch(0.15 0.010 264);
+  --popover:                  oklch(0.995 0 0);
+  --popover-foreground:       oklch(0.15 0.010 264);
+  --primary:                  oklch(0.500 0.190 262);
+  --primary-foreground:       oklch(0.99 0 0);
+  --secondary:                oklch(0.925 0.005 264);
+  --secondary-foreground:     oklch(0.22 0.010 264);
+  --muted:                    oklch(0.925 0.005 264);
+  --muted-foreground:         oklch(0.440 0.010 264);
+  --accent:                   oklch(0.905 0.007 264);
+  --accent-foreground:        oklch(0.15 0.010 264);
+  --destructive:              oklch(0.55 0.22 25);
+  --border:                   oklch(0.840 0.006 264);
+  --input:                    oklch(0.825 0.008 264);
+  --ring:                     oklch(0.500 0.190 262);
+  --sidebar:                  oklch(0.940 0.005 264);
+  --sidebar-foreground:       oklch(0.24 0.010 264);
+  --sidebar-accent:           oklch(0.900 0.008 264);
+  --sidebar-accent-foreground: oklch(0.13 0.010 264);
+  --sidebar-border:           oklch(0.850 0.006 264);
+  --panel:                    oklch(0.955 0.004 264);
+  --table-grid:               oklch(0.860 0.006 264);
+  --link:                     oklch(0.50 0.17 258);
+  --link-hover:               oklch(0.42 0.17 258);
+  --editor-surface:           #fbfbfd;
+  --editor-line-highlight:    #f0f1f5;
+}
+
+/* macOS: the surfaces go see-through over the native material.
+
+   The material is the tint - the way a native Mac sidebar works - and the
+   page adds ONE light wash at the root (the body). Every layout surface above
+   it (shell, panels, sidebar, title/tab/status bars, pages) is nearly clear:
+   they nest four or five deep, and at half opacity each the stack came out
+   ~90% solid, which is why the first version showed no glass at all. Faint
+   per-layer values keep that stack under ~20% however deep it goes.
+
+   Dialogs fill with --background too, so they are pointed back at the solid
+   popover colour below: a see-through dialog over the app is unreadable. */
+html[data-os="macos"][data-theme="glass-dark"] {
+  --background:               oklch(0.150 0.004 264 / 0.05);
+  --panel:                    oklch(0.150 0.004 264 / 0.02);
+  --sidebar:                  oklch(0.180 0.004 264 / 0.35);
+  --muted:                    oklch(1 0 0 / 0.07);
+  --secondary:                oklch(1 0 0 / 0.07);
+  --accent:                   oklch(1 0 0 / 0.09);
+  --sidebar-accent:           oklch(1 0 0 / 0.09);
+  --border:                   oklch(1 0 0 / 0.10);
+  --sidebar-border:           oklch(1 0 0 / 0.08);
+  --table-grid:               oklch(1 0 0 / 0.08);
+  --input:                    oklch(1 0 0 / 0.14);
+  --editor-surface:           rgba(0, 0, 0, 0.12);
+  --editor-line-highlight:    rgba(255, 255, 255, 0.05);
+  background: transparent !important;
+}
+html[data-os="macos"][data-theme="glass-dark"] body {
+  /* Glossy, not clear film: a solid-feeling dark tint (the material still
+     colours it) with a soft highlight across the top, the way polished glass
+     catches light. */
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.015) 30%, transparent 55%),
+    oklch(0.120 0.004 264 / 0.62) !important;
+}
+html[data-os="macos"][data-theme="glass-light"] {
+  --background:               oklch(0.985 0.003 264 / 0.06);
+  --panel:                    oklch(1 0 0 / 0.03);
+  --sidebar:                  oklch(0.955 0.004 264 / 0.40);
+  --muted:                    oklch(0 0 0 / 0.05);
+  --secondary:                oklch(0 0 0 / 0.05);
+  --accent:                   oklch(0 0 0 / 0.07);
+  --sidebar-accent:           oklch(0 0 0 / 0.07);
+  --border:                   oklch(0 0 0 / 0.10);
+  --sidebar-border:           oklch(0 0 0 / 0.08);
+  --table-grid:               oklch(0 0 0 / 0.08);
+  --input:                    oklch(0 0 0 / 0.14);
+  --editor-surface:           rgba(255, 255, 255, 0.25);
+  --editor-line-highlight:    rgba(0, 0, 0, 0.04);
+  background: transparent !important;
+}
+html[data-os="macos"][data-theme="glass-light"] body {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.12) 30%, transparent 55%),
+    oklch(0.975 0.003 264 / 0.55) !important;
+}
+/* Floating surfaces - menus, popovers, dialogs, the command palette - are
+   frosted glass of their own: near-black (or near-white) at high opacity with
+   a strong backdrop blur, so they read as solid panels while the content they
+   sit over turns to colour behind them. Opaque enough that text on them never
+   competes with a data grid underneath. */
+html[data-os="macos"][data-theme="glass-dark"] {
+  --popover:                  oklch(0.135 0.003 264);
+  --card:                     oklch(0.165 0.003 264 / 0.55);
+}
+html[data-os="macos"][data-theme="glass-light"] {
+  --popover:                  oklch(0.99 0.002 264);
+  --card:                     oklch(1 0 0 / 0.55);
+}
+html[data-os="macos"]:is([data-theme="glass-dark"], [data-theme="glass-light"], [data-glass])
+  :is([data-slot="dialog-content"], [data-slot="popover-content"], [data-slot="dropdown-menu-content"],
+      [data-slot="dropdown-menu-sub-content"], [data-slot="context-menu-content"],
+      [data-slot="context-menu-sub-content"], [data-slot="select-content"], [data-slot="tooltip-content"]) {
+  -webkit-backdrop-filter: blur(28px) saturate(1.6);
+  backdrop-filter: blur(28px) saturate(1.6);
+}
+html[data-os="macos"]:is([data-theme="glass-dark"], [data-glass="dark"])
+  :is([data-slot="dialog-content"], [data-slot="popover-content"], [data-slot="dropdown-menu-content"],
+      [data-slot="dropdown-menu-sub-content"], [data-slot="context-menu-content"],
+      [data-slot="context-menu-sub-content"], [data-slot="select-content"], [data-slot="tooltip-content"]) {
+  background-color: oklch(0.125 0.003 264 / 0.9) !important;
+}
+html[data-os="macos"]:is([data-theme="glass-light"], [data-glass="light"])
+  :is([data-slot="dialog-content"], [data-slot="popover-content"], [data-slot="dropdown-menu-content"],
+      [data-slot="dropdown-menu-sub-content"], [data-slot="context-menu-content"],
+      [data-slot="context-menu-sub-content"], [data-slot="select-content"], [data-slot="tooltip-content"]) {
+  background-color: oklch(0.995 0.002 264 / 0.88) !important;
+}
+
+/* Full-screen pages that open over the app (the connection page, the lock and
+   loading screens) fill with --background, which Glass makes nearly clear - the
+   app behind them showed straight through. They get a frosted surface of
+   their own: the same near-solid tint as a menu, blurring what is under it. */
+html[data-os="macos"]:is([data-theme="glass-dark"], [data-glass="dark"]) :is(.fixed.inset-0.bg-background, .fixed.inset-x-0.bg-background) {
+  background-color: oklch(0.125 0.003 264 / 0.88) !important;
+  -webkit-backdrop-filter: blur(32px) saturate(1.5);
+  backdrop-filter: blur(32px) saturate(1.5);
+}
+html[data-os="macos"]:is([data-theme="glass-light"], [data-glass="light"]) :is(.fixed.inset-0.bg-background, .fixed.inset-x-0.bg-background) {
+  background-color: oklch(0.99 0.002 264 / 0.86) !important;
+  -webkit-backdrop-filter: blur(32px) saturate(1.5);
+  backdrop-filter: blur(32px) saturate(1.5);
+}
+
+/* Anything that hides what is behind it by being filled - sticky table and
+   list headers with rows scrolling under them, loading masks and overlays that
+   cover a region, fixed floating panels - relied on an opaque fill. Glass makes
+   those fills nearly clear, so the content they cover showed through. They get
+   the frosted surface instead: near-solid tint plus a blur of what is under.
+   Matched by shape (positioning class + a surface fill), so a header or panel
+   added later is covered without being listed here. */
+html[data-os="macos"]:is([data-theme="glass-dark"], [data-glass="dark"]) :is([class~="sticky"], [class~="fixed"], [class~="absolute"][class~="inset-0"]:not([class~="pointer-events-none"])):is([class~="bg-background"], [class^="bg-background/"], [class*=" bg-background/"], [class~="bg-panel"], [class^="bg-panel/"], [class*=" bg-panel/"], [class~="bg-card"], [class^="bg-card/"], [class*=" bg-card/"], [class~="bg-sidebar"], [class^="bg-sidebar/"], [class*=" bg-sidebar/"], [class~="bg-muted"], [class^="bg-muted/"], [class*=" bg-muted/"]) {
+  background-color: oklch(0.135 0.003 264 / 0.84) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(1.4);
+  backdrop-filter: blur(24px) saturate(1.4);
+}
+html[data-os="macos"]:is([data-theme="glass-light"], [data-glass="light"]) :is([class~="sticky"], [class~="fixed"], [class~="absolute"][class~="inset-0"]:not([class~="pointer-events-none"])):is([class~="bg-background"], [class^="bg-background/"], [class*=" bg-background/"], [class~="bg-panel"], [class^="bg-panel/"], [class*=" bg-panel/"], [class~="bg-card"], [class^="bg-card/"], [class*=" bg-card/"], [class~="bg-sidebar"], [class^="bg-sidebar/"], [class*=" bg-sidebar/"], [class~="bg-muted"], [class^="bg-muted/"], [class*=" bg-muted/"]) {
+  background-color: oklch(0.985 0.002 264 / 0.82) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(1.4);
+  backdrop-filter: blur(24px) saturate(1.4);
+}
+
+/* Ink in a surface colour - the label on an inverted button (bg-foreground
+   text-background, "Get started"), a badge's text on its fill, an icon cut out
+   of a shape - assumed the surface was opaque. Under glass it is nearly clear,
+   so the label vanished into its own button. The popover colour is the glass
+   themes' one solid surface, and the same light/dark side as the canvas. */
+html[data-os="macos"]:is([data-theme="glass-dark"], [data-theme="glass-light"], [data-glass])
+  :is(.text-background, .text-card, .text-panel) {
+  color: var(--popover) !important;
+}
+html[data-os="macos"]:is([data-theme="glass-dark"], [data-theme="glass-light"], [data-glass])
+  .text-background\/60 {
+  color: color-mix(in oklch, var(--popover) 60%, transparent) !important;
+}
+html[data-os="macos"]:is([data-theme="glass-dark"], [data-theme="glass-light"], [data-glass])
+  .stroke-background {
+  stroke: var(--popover) !important;
 }

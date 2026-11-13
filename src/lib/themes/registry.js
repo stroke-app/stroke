@@ -1,6 +1,8 @@
+import { customIsDark } from '$lib/stores/custom-theme.js'
+
 /** @typedef {'light' | 'dark'} ThemeGroup */
 
-/** @typedef {'matte' | 'light' | 'parchment' | 'clay' | 'claude-light' | 'moss-light' | 'orchid-light' | 'ice' | 'github-light' | 'light-high-contrast' | 'dark' | 'obsidian' | 'claude' | 'moss' | 'orchid' | 'graphite' | 'midnight' | 'vitesse' | 'slate' | 'forest' | 'mono' | 'rose-pine' | 'catppuccin' | 'solarized' | 'dark-high-contrast' | 'hotdog'} ThemeId */
+/** @typedef {'matte' | 'light' | 'parchment' | 'clay' | 'claude-light' | 'moss-light' | 'orchid-light' | 'ice' | 'github-light' | 'light-high-contrast' | 'dark' | 'obsidian' | 'claude' | 'moss' | 'orchid' | 'graphite' | 'midnight' | 'vitesse' | 'slate' | 'forest' | 'mono' | 'rose-pine' | 'catppuccin' | 'solarized' | 'dark-high-contrast' | 'hotdog' | 'glass-dark' | 'glass-light' | 'custom'} ThemeId */
 
 /**
  * `hidden` keeps a theme out of the picker until it is found. Only the easter
@@ -29,6 +31,14 @@ export const APP_THEMES = [
     isDark: false,
     group: 'light',
     preview: { bg: '#fafafa', fg: '#1a1a1a', accent: '#1a1a1a' },
+  },
+  {
+    id: 'glass-light',
+    name: 'Glass',
+    description: 'Frosted, the desktop shows through (macOS)',
+    isDark: false,
+    group: 'light',
+    preview: { bg: '#eef0f5', fg: '#1a1c24', accent: '#3d5fd6' },
   },
   {
     id: 'parchment',
@@ -94,6 +104,23 @@ export const APP_THEMES = [
     isDark: true,
     group: 'dark',
     preview: { bg: '#1c1c1c', fg: '#f0f0f0', accent: '#f0f0f0' },
+  },
+  {
+    id: 'custom',
+    name: 'Custom',
+    description: 'Your own colours, from the theme builder',
+    // Resolved from the builder's mode at runtime (see isDarkTheme).
+    isDark: true,
+    group: 'dark',
+    preview: { bg: '#2a2438', fg: '#f0f0f0', accent: '#9b7cf0' },
+  },
+  {
+    id: 'glass-dark',
+    name: 'Glass',
+    description: 'Frosted, the desktop shows through (macOS)',
+    isDark: true,
+    group: 'dark',
+    preview: { bg: '#23252b', fg: '#f2f2f2', accent: '#5b8cf0' },
   },
   {
     id: 'obsidian',
@@ -263,6 +290,7 @@ export function getThemeDefinition(id) {
 
 /** @param {ThemeId} id */
 export function isDarkTheme(id) {
+  if (id === 'custom') return customIsDark()
   return getThemeDefinition(id)?.isDark ?? true
 }
 
