@@ -195,6 +195,40 @@ fn esc_like(s: &str) -> String {
 
 // ── Query ────────────────────────────────────────────────────────────────────
 
+/// `execute_sql` inside a transaction that is always rolled back, so nothing
+/// the statement does is kept (SQL Server's DDL is transactional too). For
+/// read-only callers (the MCP server at "Read only"). BEGIN, the statement and
+/// ROLLBACK are separate batches on one held connection, and ROLLBACK runs
+/// even when the statement fails.
+pub async fn execute_sql_readonly(handle: &MssqlHandle, sql: &str) -> Result<SqlResult, String> {
+    let t0 = Instant::now();
+    let mut client = handle.lock().await;
+    client
+        .simple_query("BEGIN TRANSACTION")
+        .await
+        .map_err(|e| format!("MS SQL error: {e}"))?
+        .into_results()
+        .await
+        .map_err(|e| format!("MS SQL error: {e}"))?;
+    let run = async {
+        client
+            .simple_query(sql)
+            .await
+            .map_err(|e| format!("MS SQL error: {e}"))?
+            .into_results()
+            .await
+            .map_err(|e| format!("MS SQL error: {e}"))
+    }
+    .await;
+    if let Ok(stream) = client.simple_query("IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION").await {
+        let _ = stream.into_results().await;
+    }
+    let rows = run?.into_iter().next().unwrap_or_default();
+    let mut out = rows_to_result(&rows, t0.elapsed().as_millis() as u64);
+    out.sql = sql.to_string();
+    Ok(out)
+}
+
 pub async fn execute_sql(handle: &MssqlHandle, sql: &str) -> Result<SqlResult, String> {
     let t0 = Instant::now();
     let mut client = handle.lock().await;
@@ -239,6 +273,57 @@ async fn fetch_rows(handle: &MssqlHandle, sql: &str) -> Result<Vec<Row>, String>
         .await
         .map_err(|e| format!("MS SQL error: {e}"))?;
     Ok(results.into_iter().next().unwrap_or_default())
+}
+
+// ── Explain ────────────────────────────────────────────────────────────────────
+
+/// The three batches `explain_showplan_all` runs, in order: plan mode on, the
+/// target query, plan mode off. `SET SHOWPLAN_ALL` must be alone in its batch,
+/// so each is sent as its own `simple_query`.
+fn showplan_all_batches(sql: &str) -> [String; 3] {
+    let query = sql.trim().trim_end_matches(';').trim();
+    ["SET SHOWPLAN_ALL ON".to_string(), query.to_string(), "SET SHOWPLAN_ALL OFF".to_string()]
+}
+
+/// Return the estimated plan for `sql` as SHOWPLAN_ALL rows without running it.
+///
+/// SHOWPLAN_ALL is session state and the handle is one shared connection, so
+/// the guard is held for the whole sequence and plan mode is always turned off
+/// again, even when the query fails. Otherwise every later query on this
+/// connection would return a plan instead of rows.
+pub async fn explain_showplan_all(handle: &MssqlHandle, sql: &str) -> Result<SqlResult, String> {
+    let t0 = Instant::now();
+    let [on, query, off] = showplan_all_batches(sql);
+    let mut client = handle.lock().await;
+
+    // If plan mode can't be enabled, stop: running the query now would execute it.
+    client
+        .simple_query(on.as_str())
+        .await
+        .map_err(|e| format!("EXPLAIN failed: {e}"))?
+        .into_results()
+        .await
+        .map_err(|e| format!("EXPLAIN failed: {e}"))?;
+
+    let captured = match client.simple_query(query.as_str()).await {
+        Ok(stream) => stream.into_results().await,
+        Err(e) => Err(e),
+    };
+
+    let restored = match client.simple_query(off.as_str()).await {
+        Ok(stream) => stream.into_results().await.map(|_| ()),
+        Err(e) => Err(e),
+    };
+    drop(client);
+
+    let result_sets = captured.map_err(|e| format!("EXPLAIN failed: {e}"))?;
+    restored.map_err(|e| format!("EXPLAIN ran, but SHOWPLAN_ALL could not be turned off again: {e}"))?;
+
+    // One result set per statement in the batch; same columns in each.
+    let rows: Vec<Row> = result_sets.into_iter().flatten().collect();
+    let mut out = rows_to_result(&rows, t0.elapsed().as_millis() as u64);
+    out.sql = query;
+    Ok(out)
 }
 
 // ── Schema introspection ───────────────────────────────────────────────────────
@@ -321,43 +406,101 @@ pub async fn list_indexes(handle: &MssqlHandle, schema: &str) -> Result<Vec<Inde
         .collect())
 }
 
-pub async fn get_column_structure(handle: &MssqlHandle, schema: &str, table: &str) -> Result<Vec<ColumnStructureRow>, String> {
-    let s = esc_literal(schema);
-    let t = esc_literal(table);
-    let rows = fetch_rows(
-        handle,
-        &format!(
-            "SELECT c.ORDINAL_POSITION, c.COLUMN_NAME, \
-                    c.DATA_TYPE + ISNULL('(' + CASE WHEN c.CHARACTER_MAXIMUM_LENGTH = -1 THEN 'max' \
-                        ELSE CONVERT(varchar, c.CHARACTER_MAXIMUM_LENGTH) END + ')', '') AS data_type, \
-                    c.IS_NULLABLE, c.COLUMN_DEFAULT \
-             FROM INFORMATION_SCHEMA.COLUMNS c \
-             WHERE c.TABLE_SCHEMA = '{s}' AND c.TABLE_NAME = '{t}' ORDER BY c.ORDINAL_POSITION"
-        ),
-    )
-    .await?;
-    Ok(rows
-        .iter()
+/// Every column from the sys catalog: the declared type with its length,
+/// precision or scale (`nvarchar(50)`, `decimal(10,2)`, `varchar(max)`,
+/// `datetime2(3)`), primary key membership, the foreign key it belongs to and
+/// its MS_Description. `{filter}` narrows it to a schema, and a table.
+const MSSQL_COLUMNS_SQL: &str = "\
+    SELECT o.name AS table_name, c.column_id, c.name, \
+        CASE \
+            WHEN ty.name IN ('varchar', 'char', 'varbinary', 'binary') \
+                THEN ty.name + '(' + CASE WHEN c.max_length = -1 THEN 'max' ELSE CAST(c.max_length AS varchar(10)) END + ')' \
+            WHEN ty.name IN ('nvarchar', 'nchar') \
+                THEN ty.name + '(' + CASE WHEN c.max_length = -1 THEN 'max' ELSE CAST(c.max_length / 2 AS varchar(10)) END + ')' \
+            WHEN ty.name IN ('decimal', 'numeric') \
+                THEN ty.name + '(' + CAST(c.precision AS varchar(10)) + ',' + CAST(c.scale AS varchar(10)) + ')' \
+            WHEN ty.name IN ('datetime2', 'time', 'datetimeoffset') \
+                THEN ty.name + '(' + CAST(c.scale AS varchar(10)) + ')' \
+            ELSE ty.name \
+        END AS data_type, \
+        c.is_nullable, \
+        OBJECT_DEFINITION(c.default_object_id) AS column_default, \
+        CAST(CASE WHEN pk.column_id IS NULL THEN 0 ELSE 1 END AS bit) AS is_pk, \
+        fk.ref, fk.fk_name, \
+        CAST(ep.value AS nvarchar(4000)) AS comment \
+    FROM sys.columns c \
+    JOIN sys.objects o ON o.object_id = c.object_id AND o.type IN ('U', 'V') \
+    JOIN sys.schemas sc ON sc.schema_id = o.schema_id \
+    JOIN sys.types ty ON ty.user_type_id = c.user_type_id \
+    LEFT JOIN ( \
+        SELECT ic.object_id, ic.column_id FROM sys.indexes i \
+        JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id \
+        WHERE i.is_primary_key = 1 \
+    ) pk ON pk.object_id = c.object_id AND pk.column_id = c.column_id \
+    OUTER APPLY ( \
+        SELECT TOP 1 rs.name + '.' + rt.name + '.' + rc.name AS ref, f.name AS fk_name \
+        FROM sys.foreign_key_columns fkc \
+        JOIN sys.foreign_keys f ON f.object_id = fkc.constraint_object_id \
+        JOIN sys.objects rt ON rt.object_id = fkc.referenced_object_id \
+        JOIN sys.schemas rs ON rs.schema_id = rt.schema_id \
+        JOIN sys.columns rc ON rc.object_id = fkc.referenced_object_id AND rc.column_id = fkc.referenced_column_id \
+        WHERE fkc.parent_object_id = c.object_id AND fkc.parent_column_id = c.column_id \
+        ORDER BY f.name \
+    ) fk \
+    LEFT JOIN sys.extended_properties ep \
+        ON ep.class = 1 AND ep.major_id = c.object_id AND ep.minor_id = c.column_id AND ep.name = 'MS_Description' \
+    WHERE {filter} \
+    ORDER BY o.name, c.column_id";
+
+fn columns_sql(schema: &str, table: Option<&str>) -> String {
+    let mut filter = format!("sc.name = '{}'", esc_literal(schema));
+    if let Some(t) = table {
+        filter.push_str(&format!(" AND o.name = '{}'", esc_literal(t)));
+    }
+    MSSQL_COLUMNS_SQL.replace("{filter}", &filter)
+}
+
+fn columns_from_rows(rows: &[Row]) -> Vec<(String, ColumnStructureRow)> {
+    rows.iter()
         .enumerate()
         .filter_map(|(idx, r)| {
-            let name = r.try_get::<&str, _>(1).ok().flatten()?.to_string();
-            let data_type = r.try_get::<&str, _>(2).ok().flatten().unwrap_or("").to_string();
-            let is_nullable = r.try_get::<&str, _>(3).ok().flatten().map(|s| s.eq_ignore_ascii_case("YES")).unwrap_or(true);
-            let column_default = r.try_get::<&str, _>(4).ok().flatten().filter(|s| !s.is_empty()).map(String::from);
-            let ordinal = r.try_get::<i32, _>(0).ok().flatten().unwrap_or((idx + 1) as i32);
-            Some(ColumnStructureRow {
-                ordinal_position: ordinal,
-                name,
-                data_type,
-                is_nullable,
-                column_default,
-                foreign_key: None,
-                fk_constraint_name: None,
-                is_primary_key: false,
-                comment: None,
-            })
+            let text = |i: usize| r.try_get::<&str, _>(i).ok().flatten().filter(|s| !s.is_empty()).map(String::from);
+            let table = text(0)?;
+            let name = text(2)?;
+            Some((
+                table,
+                ColumnStructureRow {
+                    ordinal_position: r.try_get::<i32, _>(1).ok().flatten().unwrap_or((idx + 1) as i32),
+                    name,
+                    data_type: text(3).unwrap_or_default(),
+                    is_nullable: r.try_get::<bool, _>(4).ok().flatten().unwrap_or(true),
+                    column_default: text(5),
+                    is_primary_key: r.try_get::<bool, _>(6).ok().flatten().unwrap_or(false),
+                    foreign_key: text(7),
+                    fk_constraint_name: text(8),
+                    comment: text(9),
+                },
+            ))
         })
-        .collect())
+        .collect()
+}
+
+pub async fn get_column_structure(handle: &MssqlHandle, schema: &str, table: &str) -> Result<Vec<ColumnStructureRow>, String> {
+    let rows = fetch_rows(handle, &columns_sql(schema, Some(table))).await?;
+    Ok(columns_from_rows(&rows).into_iter().map(|(_, c)| c).collect())
+}
+
+/// Every table's and view's columns in a schema, in one statement.
+pub async fn schema_column_structure(handle: &MssqlHandle, schema: &str) -> Result<Vec<super::schema::TableColumnStructure>, String> {
+    let rows = fetch_rows(handle, &columns_sql(schema, None)).await?;
+    let mut out: Vec<super::schema::TableColumnStructure> = Vec::new();
+    for (table, col) in columns_from_rows(&rows) {
+        match out.last_mut() {
+            Some(last) if last.table == table => last.columns.push(col),
+            _ => out.push(super::schema::TableColumnStructure { table, columns: vec![col] }),
+        }
+    }
+    Ok(out)
 }
 
 pub async fn get_ddl(handle: &MssqlHandle, schema: &str, table: &str) -> Result<String, String> {
@@ -438,19 +581,28 @@ pub async fn get_table_rows(
         .and_then(|r| r.try_get::<i64, _>(0).ok().flatten())
         .unwrap_or(0);
 
-    // OFFSET/FETCH requires an ORDER BY; fall back to the first column.
-    let order_col = sort_column
+    let sort_col = sort_column
         .as_deref()
-        .filter(|c| !c.trim().is_empty() && col_names.iter().any(|k| k == c))
-        .map(|c| c.to_string())
-        .or_else(|| col_names.first().cloned());
+        .filter(|c| !c.trim().is_empty() && col_names.iter().any(|k| k == c));
+    // A table open (include_meta) re-reads the key; it's also the PK the grid gets.
+    let order_info = cached_order_info(handle, schema, table, &col_names, include_meta).await;
 
-    let order = match order_col {
-        Some(c) => {
-            let dir = if sort_direction.as_deref().map(|d| d.eq_ignore_ascii_case("desc")).unwrap_or(false) { "DESC" } else { "ASC" };
-            format!(" ORDER BY {} {dir}", quote_ident(&c))
-        }
-        None => " ORDER BY (SELECT NULL)".to_string(),
+    // OFFSET/FETCH requires an ORDER BY, and it has to be total or pages overlap.
+    // Unsorted pages use the same default on every page - the primary key, else
+    // the first column - instead of reshuffling under `(SELECT NULL)`; sorted
+    // pages get the key as a tie-breaker for rows equal on the sort column.
+    let mut terms: Vec<String> = Vec::new();
+    if let Some(c) = sort_col {
+        let dir = if sort_direction.as_deref().map(|d| d.eq_ignore_ascii_case("desc")).unwrap_or(false) { "DESC" } else { "ASC" };
+        terms.push(format!("{} {dir}", quote_ident(c)));
+        terms.extend(order_info.pk.iter().filter(|k| k.as_str() != c).map(|k| quote_ident(k)));
+    } else {
+        terms.extend(order_info.order_columns().iter().map(|k| quote_ident(k)));
+    }
+    let order = if terms.is_empty() {
+        " ORDER BY (SELECT NULL)".to_string()
+    } else {
+        format!(" ORDER BY {}", terms.join(", "))
     };
 
     let data_sql = format!("SELECT * FROM {tq}{where_clause}{order} OFFSET {offset} ROWS FETCH NEXT {limit} ROWS ONLY");
@@ -463,10 +615,78 @@ pub async fn get_table_rows(
         rows: result.rows,
         total,
         query_ms: t0.elapsed().as_millis() as u64,
-        primary_key: if include_meta { primary_key(handle, schema, table).await } else { Vec::new() },
+        primary_key: if include_meta { order_info.pk } else { Vec::new() },
         foreign_keys: Vec::<ForeignKeyInfo>::new(),
         sql: format!("{data_sql}\n{count_sql}"),
     })
+}
+
+/// What an unsorted page orders by: the primary key, else the first column.
+#[derive(Clone)]
+struct OrderInfo {
+    pk: Vec<String>,
+    first_col: Option<String>,
+}
+
+impl OrderInfo {
+    fn order_columns(&self) -> &[String] {
+        if !self.pk.is_empty() {
+            &self.pk
+        } else {
+            self.first_col.as_slice()
+        }
+    }
+}
+
+type OrderCacheEntry = (Instant, std::sync::Weak<tokio::sync::Mutex<MssqlClient>>, OrderInfo);
+
+/// Memoised per connection + table. MSSQL serializes every round-trip on one
+/// locked connection, so uncached this puts one or two catalog queries in front
+/// of every infinite-scroll page. Keyed by the handle's address and checked
+/// against a `Weak` to it, so a reconnect that reuses the address never reads
+/// the old connection's entry.
+static ORDER_CACHE: std::sync::OnceLock<std::sync::Mutex<HashMap<(usize, String), OrderCacheEntry>>> =
+    std::sync::OnceLock::new();
+const ORDER_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(30);
+
+async fn cached_order_info(
+    handle: &MssqlHandle,
+    schema: &str,
+    table: &str,
+    col_names: &[String],
+    refresh: bool,
+) -> OrderInfo {
+    let key = (std::sync::Arc::as_ptr(handle) as usize, format!("{schema}\u{0}{table}"));
+    let cache = ORDER_CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
+    if !refresh {
+        if let Ok(map) = cache.lock() {
+            if let Some((at, weak, info)) = map.get(&key) {
+                let same_conn = weak.upgrade().is_some_and(|h| std::sync::Arc::ptr_eq(&h, handle));
+                if same_conn && at.elapsed() < ORDER_CACHE_TTL {
+                    return info.clone();
+                }
+            }
+        }
+    }
+    let pk = primary_key(handle, schema, table).await;
+    let first_col = if !pk.is_empty() {
+        None
+    } else if let Some(c) = col_names.first() {
+        Some(c.clone())
+    } else {
+        get_column_structure(handle, schema, table)
+            .await
+            .ok()
+            .and_then(|cols| cols.into_iter().next().map(|c| c.name))
+    };
+    let info = OrderInfo { pk, first_col };
+    if let Ok(mut map) = cache.lock() {
+        if map.len() > 256 {
+            map.retain(|_, (at, weak, _)| at.elapsed() < ORDER_CACHE_TTL && weak.strong_count() > 0);
+        }
+        map.insert(key, (Instant::now(), std::sync::Arc::downgrade(handle), info.clone()));
+    }
+    info
 }
 
 /// Build a WHERE clause with single-quoted literals (tiberius simple_query has
@@ -487,6 +707,16 @@ fn build_where(cols: &[String], search: Option<&str>, filters: Option<&[RowFilte
     }
 
     for f in filters.unwrap_or(&[]) {
+        // Typed SQL filter. Already checked in `query::validate_raw_filters`
+        // before this builder runs; an error here can't happen, and nothing is
+        // dropped silently.
+        if f.op == super::sql_util::RAW_SQL_FILTER_OP {
+            let raw = f.value.as_deref().unwrap_or("");
+            if let Ok(Some(expr)) = super::sql_util::raw_where_expr(raw, super::sql_util::RawFilterDialect::Literal) {
+                clauses.push(expr);
+            }
+            continue;
+        }
         if !known.contains(f.column.as_str()) {
             continue;
         }
@@ -629,6 +859,31 @@ mod tests {
             encrypt: false,
             trust_cert: true,
         }
+    }
+
+    #[test]
+    fn showplan_all_batches_turn_plan_mode_off_last() {
+        let [on, query, off] = showplan_all_batches("  SELECT * FROM t WHERE id = 1; ");
+        assert_eq!(on, "SET SHOWPLAN_ALL ON");
+        assert_eq!(query, "SELECT * FROM t WHERE id = 1");
+        assert_eq!(off, "SET SHOWPLAN_ALL OFF");
+    }
+
+    // Requires a live SQL Server on 127.0.0.1:1433 (run with --ignored).
+    #[tokio::test]
+    #[ignore]
+    async fn explain_leaves_showplan_off() {
+        let h = open_mssql(&test_config()).await.expect("connect");
+
+        let plan = explain_showplan_all(&h, "SELECT name FROM sys.databases").await.unwrap();
+        assert!(plan.columns.iter().any(|c| c.name.eq_ignore_ascii_case("StmtText")), "cols: {:?}", plan.columns);
+
+        // A failing query must still turn plan mode off.
+        assert!(explain_showplan_all(&h, "SELECT * FROM no_such_table_xyz").await.is_err());
+
+        let rows = execute_sql(&h, "SELECT 42 AS answer").await.unwrap();
+        assert_eq!(rows.columns.first().map(|c| c.name.as_str()), Some("answer"));
+        assert_eq!(rows.rows, vec![vec![Value::from(42)]]);
     }
 
     // Requires a live SQL Server on 127.0.0.1:1433. Run with:

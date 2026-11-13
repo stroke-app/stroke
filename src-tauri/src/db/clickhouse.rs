@@ -85,6 +85,22 @@ pub async fn query_in(
     database: &str,
     sql: &str,
 ) -> Result<SqlResult, String> {
+    query_in_with(config, database, sql, false).await
+}
+
+/// `query` with ClickHouse's own `readonly=1` setting on the request: the
+/// server itself refuses any write, DDL or settings change. For read-only
+/// callers (the MCP server at "Read only").
+pub async fn query_readonly(config: &ClickhouseConfig, sql: &str) -> Result<SqlResult, String> {
+    query_in_with(config, &config.database, sql, true).await
+}
+
+async fn query_in_with(
+    config: &ClickhouseConfig,
+    database: &str,
+    sql: &str,
+    readonly: bool,
+) -> Result<SqlResult, String> {
     let trimmed = sql.trim().trim_end_matches(';');
     let read = is_read_query(trimmed);
     let body = if read {
@@ -93,7 +109,12 @@ pub async fn query_in(
         trimmed.to_string()
     };
 
-    let url = format!("{}/?database={}", config.base_url(), urlencoding::encode(database));
+    let url = format!(
+        "{}/?database={}{}",
+        config.base_url(),
+        urlencoding::encode(database),
+        if readonly { "&readonly=1" } else { "" }
+    );
     let t0 = Instant::now();
     let res = client()
         .post(&url)
@@ -212,10 +233,92 @@ pub async fn list_tables(config: &ClickhouseConfig, schema: &str) -> Result<Vec<
         .collect())
 }
 
-pub async fn list_indexes(_config: &ClickhouseConfig) -> Result<Vec<IndexInfo>, String> {
-    // ClickHouse has no classic secondary indexes; sorting keys / data-skipping
-    // indices don't map onto the IndexInfo model, so report none.
-    Ok(vec![])
+/// What stands in for indexes in ClickHouse: the primary key (the sparse
+/// index every MergeTree table has), the sorting key when it is longer than the
+/// primary key, and the data-skipping indices. One statement for the database.
+const CH_INDEXES_SQL: &str = "\
+    SELECT name AS tbl, 'primary key' AS index_name, primary_key AS expr, 'primary' AS kind, 1 AS is_primary \
+    FROM system.tables WHERE database = currentDatabase() AND primary_key != '' \
+    UNION ALL \
+    SELECT name, 'sorting key', sorting_key, 'sorting', 0 \
+    FROM system.tables WHERE database = currentDatabase() AND sorting_key != '' AND sorting_key != primary_key";
+const CH_SKIP_INDEXES_SQL: &str = "\
+    UNION ALL \
+    SELECT table, name, expr, type, 0 FROM system.data_skipping_indices WHERE database = currentDatabase()";
+
+pub async fn list_indexes(config: &ClickhouseConfig, schema: &str) -> Result<Vec<IndexInfo>, String> {
+    let db = database_for(config, schema);
+    // system.data_skipping_indices arrived in 20.x; an older server still has keys.
+    let r = match query_in(config, &db, &format!("{CH_INDEXES_SQL} {CH_SKIP_INDEXES_SQL}")).await {
+        Ok(r) => r,
+        Err(_) => query_in(config, &db, CH_INDEXES_SQL).await?,
+    };
+    Ok(indexes_from_result(&r))
+}
+
+fn indexes_from_result(r: &SqlResult) -> Vec<IndexInfo> {
+    let (t_i, n_i, e_i, k_i, p_i) = (col_index(r, "tbl"), col_index(r, "index_name"), col_index(r, "expr"), col_index(r, "kind"), col_index(r, "is_primary"));
+    r.rows
+        .iter()
+        .filter_map(|row| {
+            let kind = row.get(k_i).and_then(|v| v.as_str()).unwrap_or("").to_string();
+            Some(IndexInfo {
+                name: row.get(n_i)?.as_str()?.to_string(),
+                table_name: row.get(t_i)?.as_str()?.to_string(),
+                columns: row.get(e_i).and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                is_unique: false,
+                is_primary: row.get(p_i).and_then(json_to_i64).unwrap_or(0) != 0,
+                index_type: kind,
+                condition: None,
+                comment: None,
+            })
+        })
+        .collect()
+}
+
+/// Columns of one table, or of every table in the database when `table` is None.
+/// The type is the declared one, wrappers included (`Nullable(String)`,
+/// `LowCardinality(String)`): that is the column's type in ClickHouse.
+const CH_COLUMNS_SQL: &str = "\
+    SELECT table, position, name, type, default_expression, comment, is_in_primary_key \
+    FROM system.columns WHERE database = currentDatabase()";
+
+fn columns_from_result(r: &SqlResult) -> Vec<(String, ColumnStructureRow)> {
+    let (tbl_i, pos_i, name_i, type_i, def_i, com_i, pk_i) = (
+        col_index(r, "table"),
+        col_index(r, "position"),
+        col_index(r, "name"),
+        col_index(r, "type"),
+        col_index(r, "default_expression"),
+        col_index(r, "comment"),
+        col_index(r, "is_in_primary_key"),
+    );
+    r.rows
+        .iter()
+        .enumerate()
+        .filter_map(|(i, row)| {
+            let table = row.get(tbl_i)?.as_str()?.to_string();
+            let name = row.get(name_i)?.as_str()?.to_string();
+            let ty = row.get(type_i).and_then(|v| v.as_str()).unwrap_or("");
+            let default = row.get(def_i).and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(String::from);
+            let comment = row.get(com_i).and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(String::from);
+            let ordinal = row.get(pos_i).and_then(json_to_i64).unwrap_or((i + 1) as i64) as i32;
+            Some((
+                table,
+                ColumnStructureRow {
+                    ordinal_position: ordinal,
+                    name,
+                    data_type: ty.to_string(),
+                    is_nullable: ty.starts_with("Nullable(") || ty.starts_with("LowCardinality(Nullable("),
+                    column_default: default,
+                    foreign_key: None,
+                    fk_constraint_name: None,
+                    is_primary_key: row.get(pk_i).and_then(json_to_i64).unwrap_or(0) != 0,
+                    comment,
+                },
+            ))
+        })
+        .collect()
 }
 
 pub async fn get_column_structure(
@@ -224,39 +327,27 @@ pub async fn get_column_structure(
     table: &str,
 ) -> Result<Vec<ColumnStructureRow>, String> {
     let sql = format!(
-        "SELECT position, name, type, default_expression, comment \
-         FROM system.columns WHERE database = currentDatabase() AND table = '{}' ORDER BY position",
-        table.replace('\'', "\\'")
+        "{CH_COLUMNS_SQL} AND table = '{}' ORDER BY position",
+        table.replace('\\', "\\\\").replace('\'', "\\'")
     );
     let r = query_in(config, &database_for(config, schema), &sql).await?;
-    let pos_i = col_index(&r, "position");
-    let name_i = col_index(&r, "name");
-    let type_i = col_index(&r, "type");
-    let def_i = col_index(&r, "default_expression");
-    let com_i = col_index(&r, "comment");
-    Ok(r
-        .rows
-        .iter()
-        .enumerate()
-        .filter_map(|(i, row)| {
-            let name = row.get(name_i)?.as_str()?.to_string();
-            let ty = row.get(type_i).and_then(|v| v.as_str()).unwrap_or("");
-            let default = row.get(def_i).and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(String::from);
-            let comment = row.get(com_i).and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(String::from);
-            let ordinal = row.get(pos_i).and_then(json_to_i64).unwrap_or((i + 1) as i64) as i32;
-            Some(ColumnStructureRow {
-                ordinal_position: ordinal,
-                name,
-                data_type: ch_type_label(ty),
-                is_nullable: ty.starts_with("Nullable("),
-                column_default: default,
-                foreign_key: None,
-                fk_constraint_name: None,
-                is_primary_key: false,
-                comment,
-            })
-        })
-        .collect())
+    Ok(columns_from_result(&r).into_iter().map(|(_, c)| c).collect())
+}
+
+/// Every table's columns in the database, in one statement.
+pub async fn schema_column_structure(
+    config: &ClickhouseConfig,
+    schema: &str,
+) -> Result<Vec<super::schema::TableColumnStructure>, String> {
+    let r = query_in(config, &database_for(config, schema), &format!("{CH_COLUMNS_SQL} ORDER BY table, position")).await?;
+    let mut out: Vec<super::schema::TableColumnStructure> = Vec::new();
+    for (table, col) in columns_from_result(&r) {
+        match out.last_mut() {
+            Some(last) if last.table == table => last.columns.push(col),
+            _ => out.push(super::schema::TableColumnStructure { table, columns: vec![col] }),
+        }
+    }
+    Ok(out)
 }
 
 pub async fn get_ddl(config: &ClickhouseConfig, schema: &str, table: &str) -> Result<String, String> {
@@ -356,6 +447,16 @@ pub(crate) fn build_where(cols: &[ColumnStructureRow], search: Option<&str>, fil
     }
 
     for f in filters.unwrap_or(&[]) {
+        // Typed SQL filter. Already checked in `query::validate_raw_filters`
+        // before this builder runs; an error here can't happen, and nothing is
+        // dropped silently.
+        if f.op == super::sql_util::RAW_SQL_FILTER_OP {
+            let raw = f.value.as_deref().unwrap_or("");
+            if let Ok(Some(expr)) = super::sql_util::raw_where_expr(raw, super::sql_util::RawFilterDialect::Literal) {
+                clauses.push(expr);
+            }
+            continue;
+        }
         if !known.contains(f.column.as_str()) {
             continue;
         }
@@ -408,4 +509,53 @@ fn col_index(r: &SqlResult, name: &str) -> usize {
 /// accept both number and string forms.
 fn json_to_i64(v: &Value) -> Option<i64> {
     v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok()))
+}
+
+#[cfg(test)]
+mod tree_tests {
+    use super::*;
+
+    fn result(cols: &[&str], rows: Vec<Vec<Value>>) -> SqlResult {
+        SqlResult {
+            columns: cols.iter().map(|c| ColumnInfo::new(c.to_string(), String::new())).collect(),
+            rows,
+            row_count: None,
+            message: None,
+            query_ms: 0,
+            sql: String::new(),
+        }
+    }
+
+    #[test]
+    fn columns_keep_the_declared_type_and_primary_key() {
+        let r = result(
+            &["table", "position", "name", "type", "default_expression", "comment", "is_in_primary_key"],
+            vec![
+                vec!["hits".into(), "1".into(), "id".into(), "UInt64".into(), "".into(), "".into(), 1.into()],
+                vec!["hits".into(), "2".into(), "ref".into(), "Nullable(String)".into(), "".into(), "".into(), 0.into()],
+                vec!["hits".into(), "3".into(), "tag".into(), "LowCardinality(Nullable(String))".into(), "''".into(), "kind".into(), 0.into()],
+            ],
+        );
+        let cols = columns_from_result(&r);
+        assert_eq!(cols.iter().map(|(_, c)| c.data_type.as_str()).collect::<Vec<_>>(), ["UInt64", "Nullable(String)", "LowCardinality(Nullable(String))"]);
+        assert!(cols[0].1.is_primary_key && !cols[0].1.is_nullable);
+        assert!(cols[1].1.is_nullable && cols[2].1.is_nullable);
+        assert_eq!(cols[2].1.column_default.as_deref(), Some("''"));
+    }
+
+    #[test]
+    fn keys_and_skip_indices_are_indexes() {
+        let r = result(
+            &["tbl", "index_name", "expr", "kind", "is_primary"],
+            vec![
+                vec!["hits".into(), "primary key".into(), "id".into(), "primary".into(), 1.into()],
+                vec!["hits".into(), "sorting key".into(), "id, ts".into(), "sorting".into(), 0.into()],
+                vec!["hits".into(), "ref_bf".into(), "ref".into(), "bloom_filter".into(), 0.into()],
+            ],
+        );
+        let idx = indexes_from_result(&r);
+        assert!(idx[0].is_primary && idx[0].columns == "id");
+        assert_eq!((idx[1].name.as_str(), idx[1].columns.as_str()), ("sorting key", "id, ts"));
+        assert_eq!(idx[2].index_type, "bloom_filter");
+    }
 }

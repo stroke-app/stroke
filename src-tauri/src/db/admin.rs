@@ -35,7 +35,7 @@ impl Dialect {
             ActiveConnection::Duckdb(_) => Some(Self::Duckdb),
             ActiveConnection::Mssql(_) => Some(Self::Mssql),
             ActiveConnection::Clickhouse(_) => Some(Self::Clickhouse),
-            ActiveConnection::Redis(_) | ActiveConnection::Posthog(_) => None,
+            ActiveConnection::Redis(_) | ActiveConnection::Posthog(_) | ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => None,
         }
     }
 
@@ -136,7 +136,7 @@ pub(crate) async fn run_statement(conn: &ActiveConnection, sql: &str) -> Result<
         ActiveConnection::Duckdb(h) => super::duckdb::execute_sql(h, sql).await.map(|_| ()),
         ActiveConnection::Mssql(h) => super::mssql::execute_sql(h, sql).await.map(|_| ()),
         ActiveConnection::Clickhouse(cfg) => super::clickhouse::query(cfg, sql).await.map(|_| ()),
-        ActiveConnection::Redis(_) | ActiveConnection::Posthog(_) => Err("This connection does not run DDL statements".into()),
+        ActiveConnection::Redis(_) | ActiveConnection::Posthog(_) | ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => Err("This connection does not run DDL statements".into()),
     }
 }
 

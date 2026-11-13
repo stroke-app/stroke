@@ -221,7 +221,10 @@ fn json_cell(row: &sqlx::mysql::MySqlRow, idx: usize, v: Option<serde_json::Valu
     }
 }
 
-pub async fn fetch_primary_key(pool: &MySqlPool, schema: &str, table: &str) -> Result<Vec<String>, String> {
+pub async fn fetch_primary_key<'e, E>(ex: E, schema: &str, table: &str) -> Result<Vec<String>, String>
+where
+    E: sqlx::Executor<'e, Database = sqlx::MySql>,
+{
     let rows = sqlx::query(
         "SELECT COLUMN_NAME FROM information_schema.KEY_COLUMN_USAGE \
          WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND CONSTRAINT_NAME = 'PRIMARY' \
@@ -229,7 +232,7 @@ pub async fn fetch_primary_key(pool: &MySqlPool, schema: &str, table: &str) -> R
     )
     .bind(schema)
     .bind(table)
-    .fetch_all(pool)
+    .fetch_all(ex)
     .await
     .map_err(|e| format!("Failed to load primary key: {e}"))?;
     Ok(rows.iter().filter_map(|r| my_text(r, 0)).collect())
@@ -291,6 +294,14 @@ fn build_where(columns: &[String], search: Option<&str>, search_is_regex: bool, 
                 }).collect();
                 cond_parts.push((conj, format!("({})", parts.join(" OR "))));
                 for _ in columns { binds.push(pattern.clone()); }
+            }
+            continue;
+        }
+
+        if f.op == super::sql_util::RAW_SQL_FILTER_OP {
+            let raw = f.value.as_deref().unwrap_or("");
+            if let Some(expr) = super::sql_util::raw_where_expr(raw, super::sql_util::RawFilterDialect::Mysql)? {
+                cond_parts.push((conj, expr));
             }
             continue;
         }
@@ -727,6 +738,25 @@ pub async fn insert_table_row(
     table: &str,
     values: HashMap<String, Value>,
 ) -> Result<Vec<Value>, String> {
+    // The INSERT and the LAST_INSERT_ID()/re-fetch run on ONE pinned connection:
+    // LAST_INSERT_ID() is connection-scoped, and a second pool acquire can land
+    // on a different connection (returning 0 or a stale id) whenever background
+    // work is also using the pool.
+    let mut conn = pool
+        .acquire()
+        .await
+        .map_err(|e| format!("Failed to acquire connection: {e}"))?;
+    insert_row_on(&mut conn, schema, table, &values).await
+}
+
+/// Insert one row on the given connection and read it back. Shared by the
+/// single-row insert and the transactional apply (which passes its transaction).
+async fn insert_row_on(
+    conn: &mut sqlx::MySqlConnection,
+    schema: &str,
+    table: &str,
+    values: &HashMap<String, Value>,
+) -> Result<Vec<Value>, String> {
     let meta_rows = sqlx::query(
         "SELECT COLUMN_NAME, IS_NULLABLE, COLUMN_DEFAULT, EXTRA \
          FROM information_schema.COLUMNS \
@@ -735,7 +765,7 @@ pub async fn insert_table_row(
     )
     .bind(schema)
     .bind(table)
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await
     .map_err(|e| format!("Failed to load column metadata: {e}"))?;
 
@@ -789,14 +819,6 @@ pub async fn insert_table_row(
             .ok_or_else(|| format!("Missing value for column: {col}"))?;
         q = bind_value(q, value);
     }
-    // Run the INSERT and the LAST_INSERT_ID()/re-fetch on ONE pinned connection:
-    // LAST_INSERT_ID() is connection-scoped, and a second pool acquire can land
-    // on a different connection (returning 0 or a stale id) whenever background
-    // work is also using the pool.
-    let mut conn = pool
-        .acquire()
-        .await
-        .map_err(|e| format!("Failed to acquire connection: {e}"))?;
     q.execute(&mut *conn).await.map_err(|e| format!("Insert failed: {e}"))?;
 
     // Re-fetch the inserted row
@@ -809,7 +831,7 @@ pub async fn insert_table_row(
         sqlx::query(&sel).bind(last_id as i64).fetch_optional(&mut *conn).await
             .map_err(|e| format!("Failed to fetch inserted row: {e}"))?
     } else {
-        let pk_cols = fetch_primary_key(pool, schema, table).await.unwrap_or_default();
+        let pk_cols = fetch_primary_key(&mut *conn, schema, table).await.unwrap_or_default();
         if !pk_cols.is_empty() && pk_cols.iter().all(|c| values.contains_key(c)) {
             let where_parts: Vec<String> = pk_cols.iter().map(|c| format!("{} = ?", bt(c))).collect();
             let sel = format!("SELECT * FROM {}.{} WHERE {} LIMIT 1", bt(schema), bt(table), where_parts.join(" AND "));
@@ -886,6 +908,116 @@ pub async fn delete_table_rows(
         total += res.rows_affected();
     }
     Ok(total)
+}
+
+/// Apply a grid's staged edits, deletions and insert as one transaction - the
+/// MySQL side of `query::apply_table_changes`. Each edited row is one UPDATE of
+/// all its changed columns, and every UPDATE/DELETE must match exactly one row
+/// (sqlx connects with CLIENT_FOUND_ROWS, so a row rewritten with the value it
+/// already held still counts as matched).
+///
+/// A table on a non-transactional engine (MyISAM, MEMORY, …) can't roll back,
+/// so this refuses it with `NOT_TRANSACTIONAL` rather than promise an
+/// all-or-nothing write it can't deliver; the UI then writes change by change.
+pub async fn apply_table_changes(
+    pool: &MySqlPool,
+    schema: &str,
+    table: &str,
+    updates: Vec<super::query::RowUpdate>,
+    deletes: Vec<HashMap<String, Value>>,
+    insert: Option<HashMap<String, Value>>,
+) -> Result<super::query::ApplyChangesResult, String> {
+    use super::query::{row_count_error, describe_pk, ApplyChangesResult, NOT_TRANSACTIONAL};
+
+    let engine_row = sqlx::query("SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?")
+        .bind(schema)
+        .bind(table)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| format!("Failed to load table metadata: {e}"))?
+        .ok_or_else(|| format!("Table not found: {schema}.{table}"))?;
+    // A view has no engine of its own (NULL); its writes land in the base table.
+    if let Some(engine) = my_text(&engine_row, 0) {
+        let transactional = ["innodb", "ndbcluster", "ndb", "rocksdb", "tokudb"]
+            .contains(&engine.to_ascii_lowercase().as_str());
+        if !transactional {
+            return Err(format!("Table engine {engine} {NOT_TRANSACTIONAL}"));
+        }
+    }
+
+    let pk_columns = if updates.is_empty() && deletes.is_empty() {
+        Vec::new()
+    } else {
+        let pk = fetch_primary_key(pool, schema, table).await?;
+        if pk.is_empty() {
+            return Err("Cannot apply changes: table has no primary key".into());
+        }
+        pk
+    };
+    let pk_value = |primary_key: &HashMap<String, Value>, c: &str| -> Result<Value, String> {
+        primary_key.get(c).cloned().ok_or_else(|| format!("Missing primary key column: {c}"))
+    };
+    let where_sql = pk_columns.iter().map(|c| format!("{} = ?", bt(c))).collect::<Vec<_>>().join(" AND ");
+    let table_ref = format!("{}.{}", bt(schema), bt(table));
+
+    let mut tx = pool.begin().await.map_err(|e| format!("Could not start a transaction: {e}"))?;
+    let mut updated = 0_u64;
+    let mut deleted = 0_u64;
+
+    for row in &updates {
+        if row.values.is_empty() {
+            continue;
+        }
+        let pk_vals = pk_columns.iter().map(|c| pk_value(&row.primary_key, c)).collect::<Result<Vec<_>, _>>()?;
+        let mut cols: Vec<&String> = row.values.keys().collect();
+        cols.sort();
+        let sets = cols.iter().map(|c| format!("{} = ?", bt(c))).collect::<Vec<_>>().join(", ");
+        let sql = format!("UPDATE {table_ref} SET {sets} WHERE {where_sql}");
+        let mut q = sqlx::query(&sql);
+        for c in &cols {
+            q = bind_value(q, &row.values[*c]);
+        }
+        for v in &pk_vals {
+            q = bind_value(q, v);
+        }
+        let n = q
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| format!("Update failed ({}): {e}", describe_pk(&pk_columns, &row.primary_key)))?
+            .rows_affected();
+        if n != 1 {
+            return Err(row_count_error(&pk_columns, &row.primary_key, n));
+        }
+        updated += 1;
+    }
+
+    if !deletes.is_empty() {
+        let sql = format!("DELETE FROM {table_ref} WHERE {where_sql}");
+        for primary_key in &deletes {
+            let pk_vals = pk_columns.iter().map(|c| pk_value(primary_key, c)).collect::<Result<Vec<_>, _>>()?;
+            let mut q = sqlx::query(&sql);
+            for v in &pk_vals {
+                q = bind_value(q, v);
+            }
+            let n = q
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| format!("Delete failed ({}): {e}", describe_pk(&pk_columns, primary_key)))?
+                .rows_affected();
+            if n != 1 {
+                return Err(row_count_error(&pk_columns, primary_key, n));
+            }
+            deleted += 1;
+        }
+    }
+
+    let inserted = match insert.filter(|v| !v.is_empty()) {
+        Some(values) => Some(insert_row_on(&mut tx, schema, table, &values).await?),
+        None => None,
+    };
+
+    tx.commit().await.map_err(|e| format!("Could not commit: {e}"))?;
+    Ok(ApplyChangesResult { updated, deleted, inserted })
 }
 
 fn bind_value<'q>(

@@ -195,6 +195,25 @@ fn escape_like(input: &str) -> String {
 
 // ── Public API ─────────────────────────────────────────────────────────────────
 
+/// `execute_sql` inside a transaction that is always rolled back, so nothing
+/// the statement does is kept. For read-only callers (the MCP server at "Read
+/// only"); DuckDB's DDL is transactional, so this covers schema changes too.
+pub async fn execute_sql_readonly(handle: &DuckdbHandle, sql: &str) -> Result<SqlResult, String> {
+    let h = handle.clone();
+    let sql = sql.trim().to_string();
+    let t0 = Instant::now();
+    run_blocking(h, move |conn| {
+        conn.execute_batch("BEGIN TRANSACTION").map_err(|e| format!("DuckDB error: {e}"))?;
+        let out = collect_rows(conn, &sql, &[]).map(|(columns, rows)| {
+            let row_count = Some(rows.len() as i64);
+            SqlResult { columns, rows, row_count, message: None, query_ms: t0.elapsed().as_millis() as u64, sql: sql.clone() }
+        });
+        let _ = conn.execute_batch("ROLLBACK");
+        out
+    })
+    .await
+}
+
 pub async fn execute_sql(handle: &DuckdbHandle, sql: &str) -> Result<SqlResult, String> {
     let h = handle.clone();
     let sql = sql.trim().to_string();
@@ -287,27 +306,41 @@ pub async fn list_tables(handle: &DuckdbHandle) -> Result<Vec<TableInfo>, String
     .await
 }
 
+/// Indexes: the PRIMARY KEY and UNIQUE constraints (DuckDB backs each with an
+/// ART index that `duckdb_indexes()` does not list) and every CREATE INDEX,
+/// with its columns. One statement for the database.
+const DUCK_INDEXES_SQL: &str = "\
+    SELECT table_name, \
+           coalesce(constraint_name, table_name || CASE WHEN constraint_type = 'PRIMARY KEY' THEN '_pkey' ELSE '_' || list_aggregate(constraint_column_names, 'string_agg', '_') || '_key' END) AS name, \
+           list_aggregate(constraint_column_names, 'string_agg', ', ') AS cols, \
+           true AS is_unique, constraint_type = 'PRIMARY KEY' AS is_primary, 'art' AS kind \
+    FROM duckdb_constraints() \
+    WHERE schema_name = 'main' AND database_name = current_database() AND constraint_type IN ('PRIMARY KEY', 'UNIQUE') \
+    UNION ALL \
+    SELECT table_name, index_name, CAST(expressions AS VARCHAR), is_unique, false, 'art' \
+    FROM duckdb_indexes() \
+    WHERE schema_name = 'main' AND database_name = current_database() \
+    ORDER BY 1, 5 DESC, 2";
+
+/// `duckdb_indexes().expressions` reads `[a, "b c"]`: the column list inside.
+fn index_expr_columns(s: &str) -> String {
+    s.trim().trim_start_matches('[').trim_end_matches(']').replace('"', "").replace('\'', "")
+}
+
 pub async fn list_indexes(handle: &DuckdbHandle) -> Result<Vec<IndexInfo>, String> {
     let h = handle.clone();
     run_blocking(h, move |conn| {
-        let (_c, rows) = collect_rows(
-            conn,
-            "SELECT index_name, table_name, is_unique FROM duckdb_indexes() ORDER BY table_name, index_name",
-            &[],
-        )?;
+        let (_c, rows) = collect_rows(conn, DUCK_INDEXES_SQL, &[])?;
         Ok(rows
             .iter()
             .filter_map(|r| {
-                let name = r.first()?.as_str()?.to_string();
-                let table_name = r.get(1)?.as_str()?.to_string();
-                let is_unique = r.get(2).and_then(|v| v.as_bool()).unwrap_or(false);
                 Some(IndexInfo {
-                    name,
-                    table_name,
-                    columns: String::new(),
+                    table_name: r.first()?.as_str()?.to_string(),
+                    name: r.get(1)?.as_str()?.to_string(),
+                    columns: index_expr_columns(r.get(2).and_then(|v| v.as_str()).unwrap_or("")),
+                    is_unique: r.get(3).and_then(|v| v.as_bool()).unwrap_or(false),
+                    is_primary: r.get(4).and_then(|v| v.as_bool()).unwrap_or(false),
                     index_type: "art".to_string(),
-                    is_unique,
-                    is_primary: false,
                     condition: None,
                     comment: None,
                 })
@@ -317,38 +350,79 @@ pub async fn list_indexes(handle: &DuckdbHandle) -> Result<Vec<IndexInfo>, Strin
     .await
 }
 
+/// Every column with its declared type, whether it is in the primary key, and
+/// the foreign key it belongs to (matched by position, so each column of a
+/// composite key points at its own referenced column).
+const DUCK_COLUMNS_SQL: &str = "\
+    WITH fk AS ( \
+        SELECT table_name, constraint_name, referenced_table, \
+               unnest(constraint_column_names) AS col, unnest(referenced_column_names) AS ref_col \
+        FROM duckdb_constraints() \
+        WHERE schema_name = 'main' AND database_name = current_database() AND constraint_type = 'FOREIGN KEY' \
+    ), pk AS ( \
+        SELECT table_name, unnest(constraint_column_names) AS col \
+        FROM duckdb_constraints() \
+        WHERE schema_name = 'main' AND database_name = current_database() AND constraint_type = 'PRIMARY KEY' \
+    ) \
+    SELECT c.table_name, c.column_index, c.column_name, c.data_type, c.is_nullable, c.column_default, \
+           pk.col IS NOT NULL AS is_pk, \
+           CASE WHEN fk.col IS NULL THEN NULL ELSE 'main.' || fk.referenced_table || '.' || fk.ref_col END AS fk_ref, \
+           fk.constraint_name, c.comment \
+    FROM duckdb_columns() c \
+    LEFT JOIN pk ON pk.table_name = c.table_name AND pk.col = c.column_name \
+    LEFT JOIN (SELECT DISTINCT ON (table_name, col) * FROM fk) fk ON fk.table_name = c.table_name AND fk.col = c.column_name \
+    WHERE c.schema_name = 'main' AND c.database_name = current_database()";
+
+fn columns_from_rows(rows: &[Vec<Value>]) -> Vec<(String, ColumnStructureRow)> {
+    rows.iter()
+        .enumerate()
+        .filter_map(|(i, r)| {
+            let table = r.first()?.as_str()?.to_string();
+            let name = r.get(2)?.as_str()?.to_string();
+            let text = |k: usize| r.get(k).and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(String::from);
+            Some((
+                table,
+                ColumnStructureRow {
+                    ordinal_position: r.get(1).and_then(json_to_i64).unwrap_or((i + 1) as i64) as i32,
+                    name,
+                    data_type: text(3).unwrap_or_default(),
+                    is_nullable: r.get(4).and_then(|v| v.as_bool()).unwrap_or(true),
+                    column_default: text(5),
+                    is_primary_key: r.get(6).and_then(|v| v.as_bool()).unwrap_or(false),
+                    foreign_key: text(7),
+                    fk_constraint_name: text(8),
+                    comment: text(9),
+                },
+            ))
+        })
+        .collect()
+}
+
 pub async fn get_column_structure(handle: &DuckdbHandle, table: &str) -> Result<Vec<ColumnStructureRow>, String> {
     let h = handle.clone();
     let table = table.to_string();
     run_blocking(h, move |conn| {
-        let (_c, rows) = collect_rows(
-            conn,
-            "SELECT column_index, column_name, data_type, is_nullable, column_default \
-             FROM duckdb_columns() WHERE table_name = ? AND schema_name = 'main' ORDER BY column_index",
-            &[DuckValue::Text(table.clone())],
-        )?;
-        Ok(rows
-            .iter()
-            .enumerate()
-            .filter_map(|(i, r)| {
-                let name = r.get(1)?.as_str()?.to_string();
-                let data_type = r.get(2).and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let is_nullable = r.get(3).and_then(|v| v.as_bool()).unwrap_or(true);
-                let column_default = r.get(4).and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(String::from);
-                let ordinal = r.first().and_then(json_to_i64).unwrap_or((i + 1) as i64) as i32;
-                Some(ColumnStructureRow {
-                    ordinal_position: ordinal,
-                    name,
-                    data_type,
-                    is_nullable,
-                    column_default,
-                    foreign_key: None,
-                    fk_constraint_name: None,
-                    is_primary_key: false,
-                    comment: None,
-                })
-            })
-            .collect())
+        let sql = format!("{DUCK_COLUMNS_SQL} AND c.table_name = ? ORDER BY c.column_index");
+        let (_c, rows) = collect_rows(conn, &sql, &[DuckValue::Text(table.clone())])?;
+        Ok(columns_from_rows(&rows).into_iter().map(|(_, c)| c).collect())
+    })
+    .await
+}
+
+/// Every table's columns, in one statement.
+pub async fn schema_column_structure(handle: &DuckdbHandle) -> Result<Vec<super::schema::TableColumnStructure>, String> {
+    let h = handle.clone();
+    run_blocking(h, move |conn| {
+        let sql = format!("{DUCK_COLUMNS_SQL} ORDER BY c.table_name, c.column_index");
+        let (_c, rows) = collect_rows(conn, &sql, &[])?;
+        let mut out: Vec<super::schema::TableColumnStructure> = Vec::new();
+        for (table, col) in columns_from_rows(&rows) {
+            match out.last_mut() {
+                Some(last) if last.table == table => last.columns.push(col),
+                _ => out.push(super::schema::TableColumnStructure { table, columns: vec![col] }),
+            }
+        }
+        Ok(out)
     })
     .await
 }
@@ -478,6 +552,16 @@ fn build_where(
     }
 
     for f in filters.unwrap_or(&[]) {
+        // Typed SQL filter. Already checked in `query::validate_raw_filters`
+        // before this builder runs; an error here can't happen, and nothing is
+        // dropped silently.
+        if f.op == super::sql_util::RAW_SQL_FILTER_OP {
+            let raw = f.value.as_deref().unwrap_or("");
+            if let Ok(Some(expr)) = super::sql_util::raw_where_expr(raw, super::sql_util::RawFilterDialect::Duckdb) {
+                clauses.push(expr);
+            }
+            continue;
+        }
         if !known.contains(f.column.as_str()) {
             continue;
         }
@@ -635,6 +719,48 @@ mod tests {
         // Listed by name, ordered by creation: zeta first, then alpha, then the view.
         assert!(z < a && a < m, "zeta {z}, alpha {a}, mid {m}");
         assert_eq!(tables.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), ["alpha", "mid", "zeta"]);
+    }
+
+    /// The tree's catalog reads: declared types, keys from duckdb_constraints
+    /// (composite foreign keys matched column by column), and PRIMARY KEY /
+    /// UNIQUE constraints listed with the CREATE INDEX ones.
+    #[tokio::test]
+    async fn tree_catalog_keys_indexes_and_types() {
+        let h = handle();
+        for sql in [
+            "CREATE TABLE orgs (a INTEGER, b INTEGER, name VARCHAR(40), PRIMARY KEY (a, b))",
+            "CREATE TYPE mood AS ENUM ('ok', 'sad')",
+            "CREATE TABLE users (id INTEGER PRIMARY KEY, email VARCHAR UNIQUE, bal DECIMAL(10,2), tags VARCHAR[], m mood, meta JSON)",
+            "CREATE TABLE members (id INTEGER PRIMARY KEY, user_id INTEGER REFERENCES users(id), oa INTEGER, ob INTEGER, \
+               FOREIGN KEY (oa, ob) REFERENCES orgs(a, b))",
+            "CREATE INDEX members_user_idx ON members(user_id)",
+        ] {
+            execute_sql(&h, sql).await.unwrap();
+        }
+        let all = schema_column_structure(&h).await.unwrap();
+        assert_eq!(all.iter().map(|t| t.table.as_str()).collect::<Vec<_>>(), ["members", "orgs", "users"]);
+        let users = &all[2].columns;
+        let ty = |n: &str| users.iter().find(|c| c.name == n).unwrap().data_type.clone();
+        assert_eq!(ty("bal"), "DECIMAL(10,2)");
+        assert_eq!(ty("tags"), "VARCHAR[]");
+        assert_eq!(ty("m"), "ENUM('ok', 'sad')");
+        assert!(users[0].is_primary_key && !users[1].is_primary_key);
+        let members = get_column_structure(&h, "members").await.unwrap();
+        let col = |n: &str| members.iter().find(|c| c.name == n).unwrap();
+        assert_eq!(col("user_id").foreign_key.as_deref(), Some("main.users.id"));
+        assert_eq!(col("oa").foreign_key.as_deref(), Some("main.orgs.a"));
+        assert_eq!(col("ob").foreign_key.as_deref(), Some("main.orgs.b"));
+        assert_eq!(col("oa").fk_constraint_name, col("ob").fk_constraint_name);
+        let orgs = &all[1].columns;
+        assert!(orgs.iter().filter(|c| c.is_primary_key).count() == 2);
+
+        let idx = list_indexes(&h).await.unwrap();
+        let of = |t: &str| idx.iter().filter(|i| i.table_name == t).collect::<Vec<_>>();
+        let m = of("members");
+        assert!(m.iter().any(|i| i.is_primary && i.columns == "id"), "{m:?}");
+        assert!(m.iter().any(|i| i.name == "members_user_idx" && i.columns == "user_id" && !i.is_unique), "{m:?}");
+        assert!(of("orgs").iter().any(|i| i.is_primary && i.columns == "a, b"));
+        assert!(of("users").iter().any(|i| !i.is_primary && i.is_unique && i.columns == "email"));
     }
 
     #[tokio::test]
