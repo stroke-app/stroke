@@ -14,8 +14,10 @@
   import Network from "@lucide/svelte/icons/network";
   import X from "@lucide/svelte/icons/x";
 
-  import { SHORTCUT_GROUPS, keycaps, comboText, IS_MAC } from "$lib/shortcuts.js";
+  import { SHORTCUT_GROUPS, keycaps, comboText, IS_MAC, rowCommandIds } from "$lib/shortcuts.js";
+  import ShortcutRecorder from "./ShortcutRecorder.svelte";
   import Kbd from "./Kbd.svelte";
+  import { keybindings, effectiveShortcutGroups } from "$lib/stores/keybindings.js";
 
   let { open = $bindable(false) } = $props();
 
@@ -46,11 +48,12 @@
    * @typedef {{ label: string; icon: string; shortcuts: Shortcut[] }} Group
    */
 
+  /** What the app answers to now: remapped rows show the user's keys. */
   /** @type {Group[]} */
-  const groups = SHORTCUT_GROUPS;
+  const groups = $derived(effectiveShortcutGroups($keybindings));
 
   let query = $state("");
-  let selectedGroup = $state(groups[0].label);
+  let selectedGroup = $state(SHORTCUT_GROUPS[0].label);
   /** @type {HTMLInputElement | null} */
   let searchEl = $state(null);
 
@@ -117,48 +120,38 @@
     onkeydown={handleGlobalKey}
   >
     <!-- Header -->
-    <div class="flex shrink-0 items-center gap-4 border-b border-border/40 px-5 py-3">
-      <div class="flex items-center gap-3 min-w-0 flex-1">
-        <div class="flex size-7 shrink-0 items-center justify-center rounded-md border border-border/50 bg-muted/60">
-          <Keyboard class="size-3.5 text-muted-foreground" />
-        </div>
-        <div>
-          <h1 class="text-ui-sm font-semibold tracking-tight">Keyboard Shortcuts</h1>
-          <p class="text-ui-2xs text-muted-foreground leading-none mt-0.5">
-            {mod} on {isMac ? "macOS" : "Windows/Linux"} · {mod}F to search
-          </p>
-        </div>
-      </div>
+    <div class="flex h-14 shrink-0 items-center gap-4 border-b border-border/30 px-5">
+      <h1 class="min-w-0 flex-1 truncate text-ui-sm font-medium text-foreground">Keyboard shortcuts</h1>
 
       <!-- Search -->
-      <div class="relative w-52 shrink-0">
-        <Search class="pointer-events-none absolute top-1/2 left-2.5 size-3 -translate-y-1/2 text-muted-foreground" />
+      <div class="relative w-64 shrink-0">
+        <Search class="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
         <input
           bind:this={searchEl}
           type="text"
           placeholder="Search shortcuts…"
           bind:value={query}
-          class= "field-surface h-7 w-full bg-muted/25 pl-7 pr-3 text-ui-xs text-foreground outline-none placeholder:text-muted-foreground focus:bg-muted/50 transition-colors"
+          class="no-field-frame h-8 w-full rounded-full border-0 bg-sidebar-accent/50 pl-8 pr-7 text-ui-xs text-foreground outline-none placeholder:text-muted-foreground focus:bg-sidebar-accent"
         />
         {#if query}
           <button
             type="button"
-            class="absolute top-1/2 right-2 -translate-y-1/2 text-muted-foreground hover:text-muted-foreground transition-colors"
+            class="absolute top-1/2 right-2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
             onclick={() => (query = "")}
           >
-            <X class="size-3" />
+            <X class="size-3 shrink-0" />
           </button>
         {/if}
       </div>
 
       <button
         type="button"
-        class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        class="inline-flex size-7 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         onclick={() => (open = false)}
         aria-label="Close"
         title="Close (Esc)"
       >
-        <X class="size-3.5" />
+        <X class="size-3.5 shrink-0" />
       </button>
     </div>
 
@@ -167,7 +160,7 @@
 
       <!-- Sidebar -->
       {#if !isSearching}
-        <nav class="flex w-48 shrink-0 flex-col gap-px overflow-y-auto border-r border-border/40 px-2 py-3">
+        <nav class="flex w-52 shrink-0 flex-col gap-px overflow-y-auto border-r border-border/30 bg-sidebar px-2 py-3">
           {#each groups as group (group.label)}
             {@const Icon = GROUP_ICONS[group.icon]}
             {@const active = selectedGroup === group.label}
@@ -175,10 +168,10 @@
               type="button"
               onclick={() => (selectedGroup = group.label)}
               class={cn(
-                "group flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-ui-xs transition-colors",
+                "group flex h-8 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-ui-xs",
                 active
-                  ? "bg-accent text-foreground font-medium"
-                  : "text-muted-foreground hover:bg-accent/40 hover:text-foreground/80",
+                  ? "bg-sidebar-accent text-foreground"
+                  : "text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground",
               )}
             >
               <Icon
@@ -189,7 +182,7 @@
               />
               {group.label}
               <span class={cn(
-                "ml-auto text-ui-3xs tabular-nums transition-colors",
+                "ml-auto text-ui-2xs tabular-nums text-muted-foreground/70",
                 active ? "text-muted-foreground" : "text-muted-foreground group-hover:text-muted-foreground",
               )}>
                 {group.shortcuts.length}
@@ -204,47 +197,41 @@
         {#if displayGroups.length === 0}
           <div class="flex flex-col items-center gap-3 py-20 text-center">
             <div class="flex size-10 items-center justify-center rounded-full border border-border/30 bg-muted/30">
-              <Search class="size-4 text-muted-foreground" />
+              <Search class="size-4 shrink-0 text-muted-foreground" />
             </div>
             <p class="text-ui-sm text-muted-foreground">No shortcuts match <span class="text-foreground/60">"{query}"</span></p>
           </div>
         {:else}
-          <div class={cn(isSearching ? "divide-y divide-border/30" : "")}>
+          <div class="mx-auto flex w-full max-w-3xl flex-col gap-6 px-6 py-6">
             {#each displayGroups as group (group.label)}
-              {@const Icon = GROUP_ICONS[group.icon]}
-              <div class="px-6 py-5">
-
-                {#if isSearching}
-                  <div class="mb-4 flex items-center gap-2">
-                    <Icon class="size-3.5 text-muted-foreground" />
-                    <span class="text-ui-2xs font-semibold uppercase tracking-widest text-muted-foreground">
-                      {group.label}
-                    </span>
-                  </div>
-                {/if}
-
-                <ul class="flex flex-col">
+              <section>
+                <h2 class="mb-1.5 px-3 text-ui-xs font-medium text-foreground/80">{group.label}</h2>
+                <ul class="flex flex-col gap-px">
                   {#each group.shortcuts as shortcut, i (group.label + ':' + i)}
                     {@const caps = keycaps(shortcut.combo)}
+                    {@const ids = rowCommandIds(/** @type {any} */ (shortcut))}
                     <li
                       class={cn(
-                        "group/row flex items-center justify-between gap-8 px-2 py-2 rounded-md transition-colors hover:bg-accent/30",
-                        i !== group.shortcuts.length - 1 && "border-b border-border/20",
+                        "group/row flex min-h-9 items-center justify-between gap-6 rounded-lg px-3 py-1 transition-colors hover:bg-accent/50",
                       )}
                     >
-                      <span class="text-ui-xs text-foreground/65 group-hover/row:text-foreground/80 transition-colors">
+                      <span class="min-w-0 text-ui-xs text-foreground/85 group-hover/row:text-foreground">
                         {shortcut.desc}
                       </span>
 
-                      <!-- No `+` between the caps: the separator was as wide as
-                           the caps at this size, and three chips in a row already
-                           read as one chord. -->
-                      <Kbd keys={caps} size="md" class="gap-1" />
+                      <!-- A single command is remappable right here; ranges
+                           (⌘1-9) and built-in keys only show their caps. No `+`
+                           between the caps: three chips already read as one chord. -->
+                      {#if ids.length === 1}
+                        <ShortcutRecorder id={ids[0]} label={shortcut.desc} />
+                      {:else}
+                        <!-- pr-9: the pencil slot editable rows reserve, so every row's caps share one right edge. -->
+                        <span class="flex shrink-0 items-center pr-9"><Kbd keys={caps} size="md" class="gap-1" /></span>
+                      {/if}
                     </li>
                   {/each}
                 </ul>
-
-              </div>
+              </section>
             {/each}
           </div>
         {/if}

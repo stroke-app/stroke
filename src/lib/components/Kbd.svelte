@@ -21,6 +21,8 @@
    *
    * @typedef {Object} Props
    * @property {string} [combo] e.g. `Mod+Shift+X`, or `Mod+K W` for a sequence
+   * @property {string} [command] a remappable command id (`tab.close`): prints
+   *   whatever the user has bound it to, and nothing when it is unbound
    * @property {string[]} [keys] pre-resolved caps, for a chord with no combo string
    * @property {'sm' | 'md'} [size] `sm` inside menus and fields, `md` in dialogs and empty states
    * @property {boolean} [wrap] let a chord break onto a second line instead of
@@ -30,10 +32,12 @@
    *   identifies the shortcut.
    */
   import { keycaps } from '$lib/shortcuts.js'
+  import { bindingFor } from '$lib/stores/keybindings.js'
   import { cn } from '$lib/utils.js'
 
   let {
-    combo = '',
+    combo: comboProp = '',
+    command = '',
     /** @type {string[] | null} */
     keys = null,
     size = 'sm',
@@ -42,6 +46,7 @@
     ...rest
   } = $props()
 
+  const combo = $derived(command ? bindingFor(command) : comboProp)
   /** One group per step of the sequence; one step is the common case. */
   const groups = $derived(
     keys

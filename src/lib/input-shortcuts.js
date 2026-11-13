@@ -122,6 +122,32 @@ function redo(/** @type {HTMLInputElement | HTMLTextAreaElement} */ el) {
 }
 
 const isWs = (/** @type {string} */ c) => /\s/.test(c)
+const isWordChar = (/** @type {string} */ c) => /[\p{L}\p{N}_]/u.test(c)
+
+/**
+ * Where a word delete stops, the way macOS text fields do it: skip spaces,
+ * then take one run of word characters OR one run of punctuation. Stopping
+ * only at whitespace made `users.created_at` vanish in one press.
+ * @param {string} v @param {number} at @param {boolean} forward
+ */
+export function wordBoundary(v, at, forward) {
+  if (forward) {
+    let j = at
+    while (j < v.length && isWs(v[j])) j++
+    if (j < v.length) {
+      const w = isWordChar(v[j])
+      while (j < v.length && !isWs(v[j]) && isWordChar(v[j]) === w) j++
+    }
+    return j
+  }
+  let i = at
+  while (i > 0 && isWs(v[i - 1])) i--
+  if (i > 0) {
+    const w = isWordChar(v[i - 1])
+    while (i > 0 && !isWs(v[i - 1]) && isWordChar(v[i - 1]) === w) i--
+  }
+  return i
+}
 
 /**
  * Delete text relative to the caret.
@@ -147,17 +173,8 @@ function deleteBy(el, mode, forward) {
     from = 0
     to = v.length
   } else if (mode === 'word') {
-    if (forward) {
-      let j = start
-      while (j < v.length && isWs(v[j])) j++ // eat leading whitespace
-      while (j < v.length && !isWs(v[j])) j++ // eat the word
-      to = j
-    } else {
-      let i = start
-      while (i > 0 && isWs(v[i - 1])) i-- // eat trailing whitespace
-      while (i > 0 && !isWs(v[i - 1])) i-- // eat the word
-      from = i
-    }
+    if (forward) to = wordBoundary(v, start, true)
+    else from = wordBoundary(v, start, false)
   } else { // line
     if (forward) {
       const nl = v.indexOf('\n', start)
@@ -201,6 +218,9 @@ function onKeyDown(e) {
       if (e.metaKey && e.shiftKey) mode = 'all'
       else if (e.metaKey && !e.altKey) mode = 'line'
       else if (e.altKey && !e.metaKey) mode = 'word'
+      // Ctrl+Backspace is not a macOS chord, but it is everyone's muscle memory
+      // from every other editor - and unclaimed it deleted one character.
+      else if (e.ctrlKey && !e.metaKey && !e.altKey) mode = 'word'
     } else {
       if (e.ctrlKey && e.shiftKey) mode = 'all'
       else if (e.ctrlKey && !e.altKey) mode = 'word'
