@@ -167,6 +167,21 @@ fn write_vault(store: &dyn CredStore, map: &Map) -> Result<(), String> {
         b.iter().map(|x| format!("{x:02x}")).collect::<String>()
     };
     let chunks = split_utf16(&json, store.max_utf16());
+    // Fits in one credential: store the map itself under `secrets-vault`, the
+    // old single-credential format. A header plus one chunk is two keychain
+    // items, and macOS asks for the password once per item.
+    if chunks.len() == 1 {
+        store.set(KEYCHAIN_ACCOUNT, &json)?;
+        if read_vault(store).ok().flatten().as_ref() != Some(map) {
+            return Err("keychain did not keep the vault".into());
+        }
+        if let Some(h) = old {
+            for i in 0..h.chunks {
+                let _ = store.delete(&chunk_account(&h.gen, i));
+            }
+        }
+        return Ok(());
+    }
     let cleanup_new = |upto: usize| {
         for i in 0..upto {
             let _ = store.delete(&chunk_account(&gen, i));
@@ -249,7 +264,13 @@ fn load_from(path: &Path, store: &dyn CredStore) -> Map {
         let _ = persist_to(path, store, &map);
         return map;
     }
-    read_vault(store).ok().flatten().unwrap_or_default()
+    let map = read_vault(store).ok().flatten().unwrap_or_default();
+    // A header + single chunk from an earlier version: fold it into one item so
+    // later launches prompt once.
+    if matches!(read_header(store), Ok(Some((_, Some(h)))) if h.chunks == 1) {
+        let _ = write_vault(store, &map);
+    }
+    map
 }
 
 fn persist_to(path: &Path, store: &dyn CredStore, map: &Map) -> Result<(), String> {
@@ -372,6 +393,33 @@ pub async fn ai_delete_key(app: tauri::AppHandle, profile_id: String) -> Result<
     .await
 }
 
+// ── Saved-connection secrets ─────────────────────────────────────────────────
+//
+// Passwords, tokens and keys of saved connections, as one JSON object keyed by
+// connection id (stores/connections.js splits them out of the connection list,
+// which lives in localStorage and connections.json). Kept in the same vault as
+// the AI keys, so there is one keychain item and one prompt.
+
+const CONN_SECRETS_KEY: &str = "__connection_secrets__";
+
+#[tauri::command]
+pub async fn conn_secrets_read(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    Ok(read_all_async(&app).await.get(CONN_SECRETS_KEY).cloned())
+}
+
+#[tauri::command]
+pub async fn conn_secrets_write(app: tauri::AppHandle, json: String) -> Result<(), String> {
+    serde_json::from_str::<serde_json::Value>(&json).map_err(|e| format!("Not JSON: {e}"))?;
+    update_async(&app, move |map| {
+        if json.trim().is_empty() || json.trim() == "{}" {
+            map.remove(CONN_SECRETS_KEY);
+        } else {
+            map.insert(CONN_SECRETS_KEY.to_string(), json);
+        }
+    })
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -449,8 +497,19 @@ mod tests {
         let small = HashMap::from([("k".to_string(), "v".to_string())]);
         write_vault(&store, &small).unwrap();
         assert_eq!(read_vault(&store).unwrap(), Some(small));
-        // Header + one chunk.
-        assert_eq!(store.slots.borrow().len(), 2);
+        // Small enough for one credential: a single item, no header.
+        assert_eq!(store.slots.borrow().len(), 1);
+    }
+
+    #[test]
+    fn a_header_with_one_chunk_is_folded_into_one_item_on_load() {
+        let store = MemStore::new(1 << 20);
+        let map = HashMap::from([("openai".to_string(), "sk".to_string())]);
+        store.slots.borrow_mut().insert(chunk_account("abc", 0), serde_json::to_string(&map).unwrap());
+        store.slots.borrow_mut().insert(KEYCHAIN_ACCOUNT.into(), r#"{"v":2,"gen":"abc","chunks":1}"#.into());
+        assert_eq!(load_from(&tmp_path("fold"), &store), map);
+        assert_eq!(store.slots.borrow().len(), 1);
+        assert_eq!(read_vault(&store).unwrap(), Some(map));
     }
 
     #[test]

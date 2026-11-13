@@ -41,7 +41,7 @@
       <div class="flex items-center justify-between gap-3">
         <div class="flex items-center gap-3">
           <div class="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted">
-            <Lightbulb class="size-3.5 text-muted-foreground" />
+            <Lightbulb class="size-3.5 shrink-0 text-muted-foreground" />
           </div>
           <div class="flex flex-col gap-0.5">
             <Dialog.Title class="text-ui-sm font-semibold">SQL Insider</Dialog.Title>
@@ -56,7 +56,7 @@
           title="Shuffle tips"
           class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         >
-          <Shuffle class="size-3.5" />
+          <Shuffle class="size-3.5 shrink-0" />
         </button>
       </div>
     </Dialog.Header>
@@ -65,7 +65,7 @@
       <div class="flex flex-col gap-0 divide-y divide-border">
         {#each grouped as group (group.cat)}
           <div class="px-5 py-4">
-            <p class="mb-3 text-ui-3xs font-semibold tracking-wider text-muted-foreground uppercase">
+            <p class="mb-3 text-ui-3xs font-semibold tracking-[0.06em] text-muted-foreground uppercase">
               {group.cat}
             </p>
             <ul class="flex flex-col gap-3">

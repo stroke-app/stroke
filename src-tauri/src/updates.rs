@@ -199,7 +199,7 @@ pub async fn update_download(
 
 /// The staged build, if there is one. A webview reload loses the frontend's
 /// state but not this, so the status bar can still say an update is ready.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn update_status(state: State<'_, UpdateState>) -> Option<UpdateInfo> {
     staged_info(&state)
 }

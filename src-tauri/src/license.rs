@@ -1,4 +1,4 @@
-/// License system - Ed25519 signed keys + 5-day trial.
+/// License system - Ed25519 signed keys + a TRIAL_DAYS-day trial.
 ///
 /// Key format:  <base64url_message>.<base64url_64_byte_signature>
 /// Message:     "v1:{email}:{plan}:{iat}:{exp}"   (UTF-8, exp=0 means lifetime)
@@ -112,6 +112,63 @@ fn trial_paths(data_dir: &Path) -> Vec<PathBuf> {
         paths.push(home.join(".stroke").join("trial"));
     }
     paths
+}
+
+// ── Clock guard ───────────────────────────────────────────────────────────────
+//
+// Offline, every expiry check compares against the system clock - and setting
+// the clock back would stretch a trial or a cached entitlement for as long as
+// the machine stays off the network. The latest time the app has ever seen is
+// kept (mirrored like the trial start, so deleting one copy changes nothing),
+// and offline checks use whichever is later: the clock, or that mark. Winding
+// the clock back then gains nothing. A successful server check resets the mark
+// to the server's own time, so a clock that was wrong in the future direction
+// heals the next time the app is online.
+
+fn clock_paths(data_dir: &Path) -> Vec<PathBuf> {
+    let mut paths = vec![data_dir.join(".clock")];
+    if let Some(home) = home_dir() {
+        paths.push(home.join(".stroke").join("clock"));
+    }
+    paths
+}
+
+fn read_clock_mark(data_dir: &Path) -> u64 {
+    clock_paths(data_dir)
+        .iter()
+        .filter_map(|p| std::fs::read(p).ok())
+        .filter_map(|b| <[u8; 8]>::try_from(b.as_slice()).ok())
+        .map(u64::from_le_bytes)
+        .max()
+        .unwrap_or(0)
+}
+
+fn write_clock_mark(data_dir: &Path, t: u64) {
+    for p in clock_paths(data_dir) {
+        if let Some(dir) = p.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(p, t.to_le_bytes());
+    }
+}
+
+/// "Now" for offline license checks: the later of the system clock and the
+/// latest time this app has seen. Advances the mark (at most every few minutes,
+/// so a status check is not a disk write).
+pub fn trusted_now(data_dir: &Path) -> u64 {
+    let now = now_secs();
+    let mark = read_clock_mark(data_dir);
+    if now > mark.saturating_add(300) {
+        write_clock_mark(data_dir, now);
+    }
+    now.max(mark)
+}
+
+/// The server has vouched for the time: reset the mark to it.
+pub fn reset_clock_mark(data_dir: &Path, server_now: u64) {
+    if server_now > 0 {
+        write_clock_mark(data_dir, server_now);
+    }
 }
 
 // ── Device fingerprint ────────────────────────────────────────────────────────
@@ -233,13 +290,13 @@ pub fn trial_days_remaining(data_dir: &Path) -> i64 {
         let _ = std::fs::write(p, start_secs.to_le_bytes());
     }
 
-    let elapsed_days = (now_secs().saturating_sub(start_secs) / 86_400) as i64;
+    let elapsed_days = (trusted_now(data_dir).saturating_sub(start_secs) / 86_400) as i64;
     TRIAL_DAYS - elapsed_days
 }
 
 /// The earliest trial start recorded across local mirrors, without writing.
 /// `None` if no local trial file exists yet (e.g. a fresh install).
-fn local_trial_start(data_dir: &Path) -> Option<u64> {
+pub(crate) fn local_trial_start(data_dir: &Path) -> Option<u64> {
     let mut earliest: Option<u64> = None;
     for p in trial_paths(data_dir) {
         if let Ok(bytes) = std::fs::read(&p) {
@@ -444,11 +501,15 @@ fn http_client() -> &'static reqwest::Client {
 pub async fn api_activate(
     key: &str,
     device_id: &str,
+    app_version: &str,
 ) -> Result<Option<serde_json::Value>, String> {
     let body = serde_json::json!({
         "key": key,
         "device_id": device_id,
         "hostname": hostname(),
+        // Shown next to the device on the account dashboard.
+        "os": std::env::consts::OS,
+        "version": app_version,
     });
     let resp = match http_client()
         .post(format!("{STROKE_API}/activate"))
@@ -472,11 +533,40 @@ pub async fn api_activate(
     }
 }
 
+/// What `/api/license/check` said about this key on this device.
+#[derive(Debug, PartialEq)]
+pub enum CheckOutcome {
+    Valid,
+    /// `revoked` or `expired`: the key is finished, drop it.
+    Ended,
+    /// The device was never registered (offline activation) or its seat was
+    /// released: register it again.
+    NotActivated,
+    /// Any other answer (`not_found`, a server bug, a bad deploy). Keep the key;
+    /// the local signature still holds and the next check tries again.
+    Unknown,
+}
+
+pub fn check_outcome(json: &serde_json::Value) -> CheckOutcome {
+    if json.get("valid").and_then(|v| v.as_bool()) == Some(true) {
+        return CheckOutcome::Valid;
+    }
+    match json.get("error").and_then(|v| v.as_str()) {
+        Some("revoked" | "expired") => CheckOutcome::Ended,
+        Some("device_not_activated") => CheckOutcome::NotActivated,
+        _ => CheckOutcome::Unknown,
+    }
+}
+
 /// POST /api/license/check - phone-home to detect server-side revocation.
-/// Returns `true` if still valid, `false` if revoked/invalid.
-/// Returns `None` on network error (caller should skip and retry later).
-pub async fn api_check(key: &str, device_id: &str) -> Option<bool> {
-    let body = serde_json::json!({ "key": key, "device_id": device_id });
+/// Returns `None` on network error or an unreadable reply (retry later).
+pub async fn api_check(key: &str, device_id: &str, app_version: &str) -> Option<CheckOutcome> {
+    let body = serde_json::json!({
+        "key": key,
+        "device_id": device_id,
+        "os": std::env::consts::OS,
+        "version": app_version,
+    });
     let resp = http_client()
         .post(format!("{STROKE_API}/check"))
         .json(&body)
@@ -484,7 +574,7 @@ pub async fn api_check(key: &str, device_id: &str) -> Option<bool> {
         .await
         .ok()?;
     let json: serde_json::Value = resp.json().await.ok()?;
-    Some(json.get("valid").and_then(|v| v.as_bool()).unwrap_or(false))
+    Some(check_outcome(&json))
 }
 
 /// POST /api/license/trial - register/sync this device's trial start.
@@ -550,5 +640,26 @@ pub fn check_status(data_dir: &Path) -> LicenseStatus {
         }
     } else {
         LicenseStatus::TrialExpired
+    }
+}
+
+#[cfg(test)]
+mod check_outcome_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn only_revoked_or_expired_end_the_key() {
+        assert_eq!(check_outcome(&json!({"valid": true})), CheckOutcome::Valid);
+        assert_eq!(check_outcome(&json!({"valid": false, "error": "revoked"})), CheckOutcome::Ended);
+        assert_eq!(check_outcome(&json!({"valid": false, "error": "expired"})), CheckOutcome::Ended);
+        assert_eq!(
+            check_outcome(&json!({"valid": false, "error": "device_not_activated"})),
+            CheckOutcome::NotActivated
+        );
+        for e in ["not_found", "bad_signature", "missing_fields", "something_new"] {
+            assert_eq!(check_outcome(&json!({"valid": false, "error": e})), CheckOutcome::Unknown);
+        }
+        assert_eq!(check_outcome(&json!({"oops": 1})), CheckOutcome::Unknown);
     }
 }
