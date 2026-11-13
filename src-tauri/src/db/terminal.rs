@@ -85,6 +85,61 @@ const REDIS_INSTALL: &str = if cfg!(target_os = "macos") {
     "Install redis-tools on Debian and Ubuntu, redis or valkey on Arch and Fedora."
 };
 
+/// Turso's own CLI. Its shell takes the database URL and signs in through the
+/// CLI's login (`turso auth login`); a local libsql-server needs no sign-in.
+const TURSO_INSTALL: &str = if cfg!(target_os = "macos") {
+    "brew install tursodatabase/tap/turso"
+} else if cfg!(windows) {
+    "The Turso CLI runs under WSL on Windows: install WSL (wsl --install), then the Turso CLI inside it from docs.turso.tech/cli/installation."
+} else {
+    "Install the Turso CLI from docs.turso.tech/cli/installation, then run turso auth login."
+};
+
+const MONGOSH_INSTALL: &str = if cfg!(target_os = "macos") {
+    "brew install mongosh"
+} else if cfg!(windows) {
+    "winget install MongoDB.Shell"
+} else {
+    "Install mongosh from mongodb.com/try/download/shell, or npm i -g mongosh."
+};
+
+/// The URI with the connection's database in its path when the URI names
+/// none, so mongosh opens on that database instead of `test`.
+fn mongo_uri_with_db(uri: &str, db: Option<&str>) -> String {
+    let Some(db) = db.map(str::trim).filter(|d| !d.is_empty()) else { return uri.to_string() };
+    let (base, query) = match uri.split_once('?') {
+        Some((b, q)) => (b, Some(q)),
+        None => (uri, None),
+    };
+    let Some(scheme_end) = base.find("://") else { return uri.to_string() };
+    let rest = &base[scheme_end + 3..];
+    let (hosts, path) = match rest.find('/') {
+        Some(i) => (&rest[..i], &rest[i + 1..]),
+        None => (rest, ""),
+    };
+    if !path.is_empty() {
+        return uri.to_string();
+    }
+    let mut out = format!("{}{}/{}", &base[..scheme_end + 3], hosts, db);
+    if let Some(q) = query {
+        out.push('?');
+        out.push_str(q);
+    }
+    out
+}
+
+#[cfg(test)]
+mod mongo_uri_tests {
+    use super::mongo_uri_with_db;
+    #[test]
+    fn adds_db_only_when_missing() {
+        assert_eq!(mongo_uri_with_db("mongodb://localhost:27017", Some("shop")), "mongodb://localhost:27017/shop");
+        assert_eq!(mongo_uri_with_db("mongodb://u:p@h/?tls=true", Some("shop")), "mongodb://u:p@h/shop?tls=true");
+        assert_eq!(mongo_uri_with_db("mongodb://h/app", Some("shop")), "mongodb://h/app");
+        assert_eq!(mongo_uri_with_db("mongodb://h", None), "mongodb://h");
+    }
+}
+
 /// The client for an engine, or why it has none.
 fn client_for(config: &AnyConnectionConfig) -> Result<Client, String> {
     let client = |name, binaries, install| Ok(Client { name, binaries, install });
@@ -103,7 +158,7 @@ fn client_for(config: &AnyConnectionConfig) -> Result<Client, String> {
         ),
         AnyConnectionConfig::Sqlite(_) => client("sqlite3", &["sqlite3"], SQLITE_INSTALL),
         AnyConnectionConfig::Mssql(_) => client("sqlcmd", &["sqlcmd"], SQLCMD_INSTALL),
-        AnyConnectionConfig::Redis(_) => client("redis-cli", &["redis-cli", "valkey-cli"], REDIS_INSTALL),
+        AnyConnectionConfig::Redis(_) => client("redis-cli", &["redis-cli", "valkey-cli", "memurai-cli"], REDIS_INSTALL),
         AnyConnectionConfig::Duckdb(_) => Err(
             "DuckDB lets one process at a time open a database file, and Stroke already has this one open."
                 .into(),
@@ -111,15 +166,23 @@ fn client_for(config: &AnyConnectionConfig) -> Result<Client, String> {
         AnyConnectionConfig::D1(_) => Err(
             "D1 has no interactive shell: wrangler d1 execute runs one command and exits.".into(),
         ),
-        AnyConnectionConfig::Libsql(_) => Err(
-            "Turso's shell signs in through the Turso CLI, not through this connection's token.".into(),
-        ),
+        AnyConnectionConfig::Libsql(c) if c.url.trim().is_empty() => {
+            Err("Add the database URL to open a shell.".into())
+        }
+        // Windows has no native Turso CLI; `wsl` runs the one installed in WSL.
+        AnyConnectionConfig::Libsql(_) => {
+            client("turso", if cfg!(windows) { &["turso", "wsl"] } else { &["turso"] }, TURSO_INSTALL)
+        }
         AnyConnectionConfig::Clickhouse(_) => Err(
             "clickhouse-client speaks the native protocol, on a different port from the HTTP interface this connection uses."
                 .into(),
         ),
         AnyConnectionConfig::Posthog(_) => {
             Err("PostHog is queried over its HTTP API and has no shell.".into())
+        }
+        AnyConnectionConfig::Mongodb(_) => client("mongosh", &["mongosh", "mongo"], MONGOSH_INSTALL),
+        AnyConnectionConfig::Dynamodb(_) | AnyConnectionConfig::Couchdb(_) => {
+            Err("This database has no interactive shell here; use the query editor instead.".into())
         }
     }
 }
@@ -207,6 +270,12 @@ fn install_dirs() -> Vec<PathBuf> {
         }
         out.extend(versioned(Path::new("/usr/lib/postgresql"), "", "bin"));
     }
+    // winget and the per-user MSI put mongosh here, which a running app's PATH
+    // often does not include until the next sign-in.
+    #[cfg(windows)]
+    if let Some(local) = std::env::var_os("LOCALAPPDATA").map(PathBuf::from) {
+        out.push(local.join("Programs").join("mongosh"));
+    }
     #[cfg(windows)]
     for var in ["ProgramFiles", "ProgramFiles(x86)"] {
         let Some(root) = std::env::var_os(var).map(PathBuf::from) else {
@@ -216,6 +285,8 @@ fn install_dirs() -> Vec<PathBuf> {
         out.extend(versioned(&root.join("MySQL"), "MySQL Server", "bin"));
         out.extend(versioned(&root, "MariaDB", "bin"));
         out.push(root.join("SqlCmd"));
+        out.push(root.join("Memurai"));
+        out.push(root.join("mongosh"));
         out.extend(versioned(
             &root.join("Microsoft SQL Server").join("Client SDK").join("ODBC"),
             "",
@@ -268,6 +339,22 @@ fn is_executable(path: &Path) -> bool {
 /// The first line of `<binary> --version`, e.g. `psql (PostgreSQL) 17.2`.
 /// `None` when the client has no such flag (the ODBC build of sqlcmd).
 async fn client_version(binary: &Path) -> Option<String> {
+    // Asked once per binary per run: every open used to spawn `--version` again
+    // (twice for mysql and sqlite3, once for the page and once to launch), and on
+    // a cold disk that alone was a visible part of the wait for the prompt.
+    static CACHE: std::sync::OnceLock<Mutex<HashMap<PathBuf, Option<String>>>> = std::sync::OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(hit) = cache.lock().ok().and_then(|m| m.get(binary).cloned()) {
+        return hit;
+    }
+    let found = client_version_uncached(binary).await;
+    if let Ok(mut m) = cache.lock() {
+        m.insert(binary.to_path_buf(), found.clone());
+    }
+    found
+}
+
+async fn client_version_uncached(binary: &Path) -> Option<String> {
     let mut cmd = tokio::process::Command::new(binary);
     cmd.arg("--version").stdin(Stdio::null()).kill_on_drop(true);
     crate::proc::quiet(&mut cmd);
@@ -387,6 +474,11 @@ async fn mysql_launch(config: MysqlConfig, mariadb: bool) -> Result<Launch, Stri
         format!("--port={}", c.port),
         format!("--user={}", c.user),
         "--default-character-set=utf8mb4".to_string(),
+        // No table-name download before the prompt. By default the client reads
+        // every table and column for its tab completion first, which against a
+        // far server (a TiDB cluster in Tokyo) held the prompt back for seconds.
+        // The page offers its own name suggestions; `\#` rebuilds the client's.
+        "--no-auto-rehash".to_string(),
         // The terminal cannot scroll sideways: a result wider than it is shown
         // one column per line (as `\G` does) instead of wrapping every row.
         "--auto-vertical-output".to_string(),
@@ -639,12 +731,83 @@ pub async fn terminal_client(config: AnyConnectionConfig) -> Result<TerminalClie
 /// socket the page talks to it over.
 #[tauri::command]
 pub async fn terminal_open(
+    app: tauri::AppHandle,
     state: State<'_, TerminalState>,
     config: AnyConnectionConfig,
     cols: u16,
     rows: u16,
 ) -> Result<TerminalSession, String> {
-    open_session(&state, config, cols, rows).await
+    let turso_token = match &config {
+        AnyConnectionConfig::Libsql(_) => crate::providers::turso_cli_token(&app).await,
+        _ => None,
+    };
+    open_session(&state, config, cols, rows, turso_token).await
+}
+
+/// Install the connection's client with this OS's package manager, without a
+/// prompt in a terminal: Homebrew on macOS (no password), winget on Windows
+/// (agreements pre-accepted), and the distribution's manager through `pkexec`
+/// on Linux, which raises the desktop's own password dialog. Returns where the
+/// client landed; an engine with no one-line install returns its advice as
+/// the error, for the page to show.
+#[tauri::command]
+pub async fn terminal_install_client(config: AnyConnectionConfig) -> Result<String, String> {
+    let client = client_for(&config)?;
+    if let Some(found) = find_binary(client.binaries).await {
+        return Ok(found.display().to_string());
+    }
+    let hint = install_hint(&client);
+    let words: Vec<&str> = hint.split_whitespace().collect();
+    let argv: Vec<String> = match words.as_slice() {
+        ["brew", "install", pkgs @ ..] if !pkgs.is_empty() => {
+            let mut v = vec!["brew".to_string(), "install".to_string()];
+            v.extend(pkgs.iter().map(|p| p.to_string()));
+            v
+        }
+        ["winget", "install", rest @ ..] if !rest.is_empty() => {
+            let mut v: Vec<String> = ["winget", "install", "--silent", "--accept-source-agreements", "--accept-package-agreements"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
+            v.extend(rest.iter().map(|p| p.to_string()));
+            v
+        }
+        ["sudo", manager @ ("apt" | "dnf" | "pacman"), rest @ ..] if !rest.is_empty() => {
+            let mut v = vec!["pkexec".to_string(), manager.to_string()];
+            v.extend(rest.iter().map(|p| p.to_string()));
+            v.push(if *manager == "pacman" { "--noconfirm" } else { "-y" }.to_string());
+            v
+        }
+        _ => return Err(hint),
+    };
+
+    let path = crate::omniroute::user_path().await;
+    let program = which_in(&argv[0], &path).ok_or_else(|| match argv[0].as_str() {
+        "brew" => "Homebrew is not installed. Get it from brew.sh, then try again.".to_string(),
+        "winget" => "winget (App Installer) is not available. Install it from the Microsoft Store, then try again.".to_string(),
+        other => format!("{other} is not available here. {hint}"),
+    })?;
+    let mut cmd = tokio::process::Command::new(program);
+    cmd.args(&argv[1..]).env("PATH", &path).env("HOMEBREW_NO_AUTO_UPDATE", "1").kill_on_drop(true);
+    let out = tokio::time::timeout(std::time::Duration::from_secs(600), cmd.output())
+        .await
+        .map_err(|_| "The install took longer than 10 minutes and was stopped.".to_string())?
+        .map_err(|e| format!("Could not run {}: {e}", argv[0]))?;
+    if !out.status.success() {
+        let text = String::from_utf8_lossy(if out.stderr.is_empty() { &out.stdout } else { &out.stderr }).to_string();
+        let tail: String = text.lines().rev().take(6).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n");
+        return Err(format!("{} failed:\n{}", argv.join(" "), tail.trim()));
+    }
+    find_binary(client.binaries)
+        .await
+        .map(|p| p.display().to_string())
+        .ok_or_else(|| format!("{} installed, but {} was not found where clients usually land. Restart Stroke and try again.", argv.join(" "), client.name))
+}
+
+/// `name` on `path`, as the shell would find it.
+fn which_in(name: &str, path: &str) -> Option<PathBuf> {
+    let file = if cfg!(windows) { format!("{name}.exe") } else { name.to_string() };
+    std::env::split_paths(path).map(|d| d.join(&file)).find(|p| is_executable(p))
 }
 
 /// Kill the client. A connected socket gets its exit message first.
@@ -665,12 +828,15 @@ async fn open_session(
     config: AnyConnectionConfig,
     cols: u16,
     rows: u16,
+    turso_token: Option<String>,
 ) -> Result<TerminalSession, String> {
     reap_unattached(state);
+    let t0 = Instant::now();
     let client = client_for(&config)?;
     let binary = find_binary(client.binaries)
         .await
         .ok_or_else(|| format!("{} is not installed. {}", client.name, install_hint(&client)))?;
+    let t_find = t0.elapsed();
     let launch = match config {
         AnyConnectionConfig::Postgres(c) => pg_launch(c).await?,
         AnyConnectionConfig::Mysql(c) => {
@@ -684,13 +850,48 @@ async fn open_session(
         AnyConnectionConfig::Sqlite(c) => sqlite_launch(&c, client_version(&binary).await.as_deref()),
         AnyConnectionConfig::Mssql(c) => mssql_launch(&c),
         AnyConnectionConfig::Redis(c) => redis_launch(&c),
+        // The URI carries host, credentials and options; mongosh reads it as is.
+        // `--quiet` drops the startup banner.
+        AnyConnectionConfig::Mongodb(c) => Launch {
+            args: vec!["--quiet".into(), mongo_uri_with_db(&c.uri, c.database.as_deref())],
+            env: Vec::new(),
+            unset: &[],
+            tunnel: None,
+        },
+        // `turso db shell <url>`: the URL picks the database and the CLI's own
+        // login authorises it (the shell refuses a token passed in the URL).
+        AnyConnectionConfig::Libsql(c) => {
+            let via_wsl = binary.file_stem().and_then(|s| s.to_str()).is_some_and(|s| s.eq_ignore_ascii_case("wsl"));
+            let mut args: Vec<String> = Vec::new();
+            if via_wsl {
+                args.extend(["-e".into(), "turso".into()]);
+            }
+            args.extend(["db".into(), "shell".into(), c.url.trim().to_string()]);
+            let mut env = Vec::new();
+            if let Some(token) = turso_token {
+                env.push(("TURSO_API_TOKEN", token));
+                // WSL only forwards the Windows variables WSLENV names.
+                if via_wsl {
+                    env.push(("WSLENV", "TURSO_API_TOKEN/u".to_string()));
+                }
+            }
+            Launch { args, env, unset: &[], tunnel: None }
+        }
         _ => return Err("This connection has no terminal client.".into()),
     };
     let shared = state.shared();
     let port = *state.port.get_or_try_init(|| serve(shared)).await?;
 
+    let t_launch = t0.elapsed();
     let Spawned { master, mut child, reader, writer } =
         spawn_client(&binary, client.name, &launch, cols, rows).await?;
+    log::info!(
+        "terminal {}: find {}ms, launch args {}ms, spawned {}ms",
+        client.name,
+        t_find.as_millis(),
+        t_launch.as_millis(),
+        t0.elapsed().as_millis()
+    );
 
     let id = format!("term-{}", NEXT_ID.fetch_add(1, Ordering::Relaxed));
     let mut token = [0u8; 16];
@@ -700,7 +901,8 @@ async fn open_session(
     let (out_tx, output) = tokio::sync::mpsc::unbounded_channel::<Out>();
     std::thread::spawn(move || write_loop(writer, keystrokes));
     let reader_out = out_tx.clone();
-    let reader_thread = std::thread::spawn(move || read_loop(reader, reader_out));
+    let (name, started) = (client.name, t0);
+    let reader_thread = std::thread::spawn(move || read_loop(reader, reader_out, name, started));
 
     // Both in their maps before the waiter starts, so a client that exits at
     // once (a refused login) is still found and released by it.
@@ -827,6 +1029,26 @@ async fn pump(
                     }
                     next = output.try_recv().ok();
                 }
+                // Line editors (mongosh, node's readline) redraw the input line
+                // as several writes a millisecond or two apart: clear, then the
+                // prompt and text. Sent separately they could paint in different
+                // frames and the cleared line flashed. Give a small burst up to
+                // 4 ms to finish, so a redraw lands as one frame.
+                if exit.is_none() && data.len() < MAX_FRAME {
+                    let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(4);
+                    while let Ok(Some(item)) = tokio::time::timeout_at(deadline, output.recv()).await {
+                        match item {
+                            Out::Data(bytes) => data.extend_from_slice(&bytes),
+                            Out::Exit(code) => {
+                                exit = Some(code);
+                                break;
+                            }
+                        }
+                        if data.len() >= MAX_FRAME {
+                            break;
+                        }
+                    }
+                }
                 if !data.is_empty() && socket.send(Message::Binary(data)).await.is_err() {
                     break;
                 }
@@ -924,12 +1146,22 @@ async fn spawn_client(
     }
 }
 
-fn read_loop(mut reader: Box<dyn Read + Send>, out: tokio::sync::mpsc::UnboundedSender<Out>) {
+fn read_loop(
+    mut reader: Box<dyn Read + Send>,
+    out: tokio::sync::mpsc::UnboundedSender<Out>,
+    name: &'static str,
+    started: Instant,
+) {
     let mut buf = vec![0u8; 64 * 1024];
+    let mut first = true;
     loop {
         match reader.read(&mut buf) {
             Ok(0) => break,
             Ok(n) => {
+                if first {
+                    first = false;
+                    log::info!("terminal {name}: first output {}ms after open", started.elapsed().as_millis());
+                }
                 if out.send(Out::Data(buf[..n].to_vec())).is_err() {
                     break;
                 }
@@ -1084,7 +1316,7 @@ mod tests {
                 name: "t".into(),
                 file_path: db.display().to_string(),
             });
-            let session = open_session(&state, config, 80, 24).await.unwrap();
+            let session = open_session(&state, config, 80, 24, None).await.unwrap();
 
             let wrong = session.url.replace("token=", "token=x");
             assert!(tokio_tungstenite::connect_async(&wrong).await.is_err(), "a wrong token must not attach");

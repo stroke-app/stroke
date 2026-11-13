@@ -39,10 +39,27 @@ function rgbOf(expr, host) {
   }
   if (!ctx) return null
   ctx.clearRect(0, 0, 1, 1)
+  // Rasterised over opaque black is wrong for a translucent token (the Glass
+  // themes' panel is a few percent white): read its alpha separately.
   ctx.fillStyle = color
   ctx.fillRect(0, 0, 1, 1)
-  const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data
+  const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data
+  lastAlpha = a / 255
   return [r, g, b]
+}
+
+/** Alpha of the colour `rgbOf` resolved last (1 = opaque). */
+let lastAlpha = 1
+
+/**
+ * Whether the terminal's surface lets the window show through - the Glass
+ * themes. xterm then has to be built with `allowTransparency` and draw a clear
+ * background, or it paints a solid black box over the glass.
+ * @param {HTMLElement} host
+ */
+export function terminalIsTranslucent(host) {
+  rgbOf('var(--panel, var(--background))', host)
+  return lastAlpha < 0.98
 }
 
 /** @param {[number, number, number]} rgb @param {number} [alpha] 0..1 */
@@ -66,7 +83,12 @@ function luminance(/** @type {[number, number, number]} */ [r, g, b]) {
  */
 export function terminalTheme(host) {
   // The SQL editor's surface, so the two read as one family.
-  const bg = rgbOf('var(--panel, var(--background))', host) ?? [10, 10, 10]
+  let bg = rgbOf('var(--panel, var(--background))', host) ?? [10, 10, 10]
+  const clear = lastAlpha < 0.98
+  // A see-through panel's own rgb is meaningless as a surface; judge dark or
+  // light from the text instead, and stand in the popover colour for the
+  // cursor's inner colour (the one place a concrete background is needed).
+  if (clear) bg = rgbOf('var(--popover)', host) ?? bg
   const dark = luminance(bg) < 0.25
   /** @param {string} expr @param {[number, number, number]} fallback */
   const rgb = (expr, fallback) => rgbOf(expr, host) ?? fallback
@@ -75,16 +97,22 @@ export function terminalTheme(host) {
   const surface = rgb('var(--muted)', dark ? [38, 38, 38] : [235, 235, 235])
   const accent = rgb('var(--primary)', fg)
 
-  const red = hex(rgb('var(--destructive)', [229, 72, 77]))
-  const green = hex(rgb('var(--json-string)', [74, 180, 110]))
-  const yellow = hex(rgb('var(--json-number)', [214, 160, 60]))
-  const blue = hex(rgb('var(--json-key)', [90, 150, 230]))
-  const magenta = hex(rgb('var(--json-boolean)', [180, 110, 220]))
+  const redRgb = rgb('var(--destructive)', [229, 72, 77])
+  const greenRgb = rgb('var(--json-string)', [74, 180, 110])
+  const yellowRgb = rgb('var(--json-number)', [214, 160, 60])
+  const blueRgb = rgb('var(--json-key)', [90, 150, 230])
+  const magentaRgb = rgb('var(--json-boolean)', [180, 110, 220])
   // No token is cyan; halfway between the success green and the info blue is.
-  const cyan = hex(rgb('color-mix(in oklch, var(--success), var(--info))', [70, 180, 190]))
+  const cyanRgb = rgb('color-mix(in oklch, var(--success), var(--info))', [70, 180, 190])
+  const [red, green, yellow, blue, magenta, cyan] = [redRgb, greenRgb, yellowRgb, blueRgb, magentaRgb, cyanRgb].map((c) => hex(c))
+  // Bright is its own shade, as in every terminal: toward white on a dark
+  // theme, toward black on a light one. It was the same colour as normal, so
+  // bold-as-bright output (ls, git, psql's \x headers) lost its emphasis.
+  /** @param {[number, number, number]} c */
+  const bright = (c) => hex(/** @type {[number, number, number]} */ (c.map((v) => Math.round(dark ? v + (255 - v) * 0.3 : v * 0.75))))
 
   return {
-    background: hex(bg),
+    background: clear ? '#00000000' : hex(bg),
     foreground: hex(fg),
     cursor: hex(fg),
     cursorAccent: hex(bg),
@@ -101,12 +129,12 @@ export function terminalTheme(host) {
     brightBlack: hex(muted),
     brightWhite: hex(fg),
     red, green, yellow, blue, magenta, cyan,
-    brightRed: red,
-    brightGreen: green,
-    brightYellow: yellow,
-    brightBlue: blue,
-    brightMagenta: magenta,
-    brightCyan: cyan,
+    brightRed: bright(redRgb),
+    brightGreen: bright(greenRgb),
+    brightYellow: bright(yellowRgb),
+    brightBlue: bright(blueRgb),
+    brightMagenta: bright(magentaRgb),
+    brightCyan: bright(cyanRgb),
   }
 }
 

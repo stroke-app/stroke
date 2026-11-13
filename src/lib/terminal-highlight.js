@@ -50,7 +50,10 @@ const encoder = new TextEncoder()
 
 /** @param {string} client */
 function rulesFor(client) {
-  const rules = RULES_BY_CLIENT[client] ?? Object.values(RULES_BY_CLIENT).flat()
+  // Only clients we know. Borrowing every client's rules held lines back for
+  // shells like mongosh (`ReferenceError` waited 40 ms on sqlite's `Runtime error`),
+  // so output arrived in two parts and flickered.
+  const rules = RULES_BY_CLIENT[client] ?? []
   return rules.map(([prefix, sgr]) => ({ prefix: encoder.encode(prefix), sgr: encoder.encode(sgr) }))
 }
 
