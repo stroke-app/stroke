@@ -266,7 +266,7 @@ fn read_plugin(dir: &Path) -> Result<ExternalPlugin, String> {
 
 /// Every plugin folder found, sorted by name. Unreadable folders are skipped;
 /// invalid ones are included with their error.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn plugins_list(app: tauri::AppHandle) -> Result<Vec<ExternalPlugin>, String> {
     let root = plugins_root(&app)?;
     let mut out = Vec::new();
@@ -284,7 +284,7 @@ pub fn plugins_list(app: tauri::AppHandle) -> Result<Vec<ExternalPlugin>, String
 
 /// The entry file's source, for the frontend to hand to a Worker. Refuses
 /// anything that does not validate, so unvalidated code never reaches the host.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn plugins_read_source(app: tauri::AppHandle, id: String) -> Result<String, String> {
     if !valid_id(&id) {
         return Err("not a valid plugin id".into());
@@ -304,7 +304,7 @@ pub fn plugins_read_source(app: tauri::AppHandle, id: String) -> Result<String, 
 /// Copy a folder into the plugins directory. The source is validated *before*
 /// anything is written, and only allowed file types are copied, so installing
 /// cannot drop an executable into the app's data directory.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn plugins_install(app: tauri::AppHandle, path: String) -> Result<ExternalPlugin, String> {
     let src = PathBuf::from(&path);
     if !src.is_dir() {
@@ -364,7 +364,7 @@ fn copy_allowed(src: &Path, dest: &Path) -> Result<(), String> {
 }
 
 /// Delete an installed plugin folder. Only ever inside the plugins directory.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn plugins_uninstall(app: tauri::AppHandle, id: String) -> Result<(), String> {
     if !valid_id(&id) {
         return Err("not a valid plugin id".into());
@@ -381,7 +381,7 @@ pub fn plugins_uninstall(app: tauri::AppHandle, id: String) -> Result<(), String
 }
 
 /// Absolute path of the plugins directory, for "show me where these live".
-#[tauri::command]
+#[tauri::command(async)]
 pub fn plugins_dir(app: tauri::AppHandle) -> Result<String, String> {
     Ok(plugins_root(&app)?.to_string_lossy().to_string())
 }

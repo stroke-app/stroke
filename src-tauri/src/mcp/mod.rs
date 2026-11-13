@@ -57,6 +57,7 @@ impl McpState {
 
     /// Called once from `setup()` - loads or generates a stable token from disk.
     pub fn init_token(&self, app: &AppHandle) {
+        let _ = APP.set(app.clone());
         let mut tok = self.token.lock().unwrap_or_else(|e| e.into_inner());
         if !tok.is_empty() {
             return;
@@ -155,7 +156,7 @@ pub async fn mcp_stop(mcp: State<'_, McpState>) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn mcp_status(mcp: State<'_, McpState>) -> Result<McpStatus, String> {
     let running = mcp.shutdown_tx.lock().map_err(|e| e.to_string())?.is_some();
     let raw_port = *mcp.port.lock().map_err(|e| e.to_string())?;
@@ -172,7 +173,7 @@ pub fn mcp_status(mcp: State<'_, McpState>) -> Result<McpStatus, String> {
 
 /// Called by the frontend to sync credential-free connection metadata into the MCP layer.
 /// Must be called on app start and whenever the connection list or active connection changes.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn mcp_update_connections(
     connections: Vec<ConnMeta>,
     active_id: Option<String>,
@@ -185,7 +186,7 @@ pub fn mcp_update_connections(
 
 /// Enable or disable read-only mode for the MCP server.
 /// When enabled, execute_sql only allows SELECT / read-only queries.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn mcp_set_readonly(readonly: bool, mcp: State<'_, McpState>) -> Result<(), String> {
     *mcp.read_only.lock().map_err(|e| e.to_string())? = readonly;
     Ok(())
@@ -215,4 +216,48 @@ pub(crate) fn generate_token() -> String {
     let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().subsec_nanos();
     let pid = std::process::id();
     format!("{pid:08x}{nanos:08x}")
+}
+
+
+/// The app, for the activity events the server emits. Set once at setup.
+static APP: std::sync::OnceLock<AppHandle> = std::sync::OnceLock::new();
+
+/// One MCP tool call, as the Logs page shows it.
+#[derive(serde::Serialize, Clone)]
+pub struct McpActivity {
+    /// Who called: the client's User-Agent ("claude-code/2.1", "Cursor/…"), or
+    /// "Stroke agent" for an AI chat's private server.
+    pub client: String,
+    pub tool: String,
+    /// The SQL, or a short summary of the other arguments.
+    pub detail: String,
+    pub ok: bool,
+    /// Refused by the access gate before it ran.
+    pub refused: bool,
+    pub error: Option<String>,
+    pub ms: u64,
+}
+
+/// Tell the frontend about a tool call (Logs page → MCP). Never fails the call.
+pub fn emit_activity(a: McpActivity) {
+    if let Some(app) = APP.get() {
+        use tauri::Emitter;
+        let _ = app.emit("mcp-activity", a);
+    }
+}
+
+/// What `open_in_stroke` asks the window to show.
+#[derive(serde::Serialize, Clone)]
+pub struct McpOpen {
+    pub table: Option<String>,
+    pub schema: Option<String>,
+    pub query: Option<String>,
+}
+
+/// Ask Stroke's window to open a table or a prepared query (nothing is run).
+pub fn emit_open(o: McpOpen) {
+    if let Some(app) = APP.get() {
+        use tauri::Emitter;
+        let _ = app.emit("mcp-open", o);
+    }
 }

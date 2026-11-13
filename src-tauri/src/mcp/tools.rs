@@ -98,13 +98,61 @@ pub fn tool_list() -> Value {
                 "properties": {
                     "sql": { "type": "string", "description": "Read-only SQL query (SELECT/WITH). Add WHERE/ORDER BY/LIMIT to filter and sort." },
                     "format": { "type": "string", "enum": ["json", "csv", "markdown"], "description": "Output format (default: json)" },
-                    "path": { "type": "string", "description": "Absolute file path to write the result to. If omitted, the formatted content is returned inline." },
+                    "path": { "type": "string", "description": "Absolute file path to write the result to. If omitted, the formatted content is returned inline. Refused for agent chats and in read-only mode." },
                     "max_rows": { "type": "number", "description": "Maximum rows to include (default 5000, max 50000)" }
                 },
                 "required": ["sql"]
             }
+        },
+        {
+            "name": "sample_rows",
+            "description": "Return a few real rows from a table (read-only), to see actual values, formats and casing before writing a query against it. SQL engines only; for document stores and Redis use execute_sql in the engine's own language.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "table": { "type": "string", "description": "Table name" },
+                    "schema": { "type": "string", "description": "Schema (default: public; ignored by SQLite-family engines)" },
+                    "limit": { "type": "number", "description": "Rows to return (default 5, max 50)" }
+                },
+                "required": ["table"]
+            }
+        },
+        {
+            "name": "open_in_stroke",
+            "description": "Show something to the user in Stroke's window: open a table, or open a query in a new SQL editor tab for them to review and run. Nothing is executed. Use it to hand the user a write statement you are not allowed to run, or to show the table you are talking about.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "table": { "type": "string", "description": "Table to open" },
+                    "schema": { "type": "string", "description": "Schema of the table" },
+                    "query": { "type": "string", "description": "A query to place in a new editor tab (not run)" }
+                }
+            }
         }
     ])
+}
+
+/// An identifier that can be quoted safely: letters, digits, `_`, `$`, `-`, spaces.
+fn safe_ident(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 128 && s.chars().all(|c| c.is_alphanumeric() || matches!(c, '_' | '$' | '-' | ' '))
+}
+
+/// `SELECT * … LIMIT n` for one table, quoted for the engine.
+fn sample_sql(conn: &ActiveConnection, schema: &str, table: &str, n: usize) -> Result<String, String> {
+    if !safe_ident(table) || (!schema.is_empty() && !safe_ident(schema)) {
+        return Err("Invalid table or schema name.".to_string());
+    }
+    let dq = |s: &str| format!("\"{s}\"");
+    Ok(match conn {
+        ActiveConnection::Postgres(_) => format!("SELECT * FROM {}.{} LIMIT {n}", dq(schema), dq(table)),
+        ActiveConnection::Mysql(_) => format!("SELECT * FROM `{schema}`.`{table}` LIMIT {n}"),
+        ActiveConnection::Mssql(_) => format!("SELECT TOP {n} * FROM [{schema}].[{table}]"),
+        ActiveConnection::Clickhouse(_) => format!("SELECT * FROM {}.{} LIMIT {n}", dq(schema), dq(table)),
+        ActiveConnection::Sqlite(_) | ActiveConnection::D1(_) | ActiveConnection::LibSql(_) | ActiveConnection::Duckdb(_) => {
+            format!("SELECT * FROM {} LIMIT {n}", dq(table))
+        }
+        _ => return Err("sample_rows is for SQL engines. Use execute_sql with this engine's own query language.".to_string()),
+    })
 }
 
 // ── Tool dispatchers ──────────────────────────────────────────────────────────
@@ -181,16 +229,20 @@ pub fn call_meta_tool(
     }
 }
 
+/// `read_only`: the session is at Read only. The access check has already
+/// passed in `server::gate`; this adds a read-only transaction on the engines
+/// that have one, so a side effect the classifier missed still fails.
 pub async fn call_tool(
     conn: &ActiveConnection,
     name: &str,
     args: &Value,
+    read_only: bool,
 ) -> Result<String, String> {
     match name {
         "execute_sql" => {
             let sql = args["sql"].as_str().ok_or("Missing sql argument")?;
             let max_rows = args["max_rows"].as_u64().unwrap_or(200).min(1000) as usize;
-            execute_sql(conn, sql, max_rows).await
+            execute_sql(conn, sql, max_rows, read_only).await
         }
         "list_tables" => {
             let schema = args["schema"].as_str().unwrap_or("public");
@@ -215,72 +267,63 @@ pub async fn call_tool(
         }
         "export_query" => {
             let sql = args["sql"].as_str().ok_or("Missing sql argument")?;
-            if !is_read_only_sql(sql) {
-                return Err("export_query only supports read-only queries (SELECT, WITH, …).".to_string());
+            // export_query is a read whatever the session's level.
+            let dialect = crate::mcp::access::Dialect::for_driver(conn.driver());
+            if crate::mcp::access::script_level_in(dialect, sql) > crate::mcp::access::READ
+                || crate::mcp::access::statement_count(dialect, sql) > 1
+            {
+                return Err("export_query only runs one read-only query (SELECT, WITH, …).".to_string());
             }
             let format = args["format"].as_str().unwrap_or("json");
             let path = args["path"].as_str();
             let max_rows = args["max_rows"].as_u64().unwrap_or(5000).min(50000) as usize;
             export_query(conn, sql, format, path, max_rows).await
         }
-        _ => Err(format!("Unknown tool: {name}")),
-    }
-}
-
-// ── Read-only guard ───────────────────────────────────────────────────────────
-
-/// Write keywords that make a statement mutating. Used to reject writes wrapped
-/// in a leading CTE (`WITH ... DELETE/INSERT/UPDATE ...`), which the first-word
-/// check alone can't catch.
-const WRITE_KEYWORDS: &[&str] = &[
-    "INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE", "TRUNCATE",
-    "REPLACE", "MERGE", "GRANT", "REVOKE", "ATTACH", "DETACH", "REINDEX", "VACUUM",
-];
-
-/// Returns true if the SQL is read-only (SELECT, WITH, EXPLAIN, SHOW, DESCRIBE,
-/// PRAGMA) - used to enforce MCP read-only mode.
-pub fn is_read_only_sql(sql: &str) -> bool {
-    // Strip leading whitespace and block/line comments, then check the first keyword.
-    let s = sql.trim();
-    // Skip leading block comments (/* ... */) and line comments (--)
-    let stripped = strip_sql_comments(s).trim();
-    let first_word = stripped
-        .split(|c: char| c.is_whitespace() || c == '(')
-        .next()
-        .unwrap_or("")
-        .to_ascii_uppercase();
-
-    // A `WITH` (CTE) prefix can hide a write in its final statement
-    // (`WITH x AS (...) DELETE/INSERT/UPDATE ...`) or in a data-modifying CTE.
-    // Scan the whole statement for write keywords and reject if any appear.
-    if first_word == "WITH" {
-        let upper = stripped.to_ascii_uppercase();
-        for kw in WRITE_KEYWORDS {
-            if upper
-                .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-                .any(|tok| tok == *kw)
-            {
-                return false;
-            }
+        "sample_rows" => {
+            let table = args["table"].as_str().ok_or("Missing table argument")?;
+            let schema = args["schema"].as_str().unwrap_or(if matches!(conn, ActiveConnection::Mysql(_) | ActiveConnection::Clickhouse(_)) { "" } else { "public" });
+            let schema = if schema.is_empty() {
+                match conn {
+                    ActiveConnection::Mssql(_) => "dbo",
+                    _ => schema,
+                }
+            } else {
+                schema
+            };
+            let n = args["limit"].as_u64().unwrap_or(5).clamp(1, 50) as usize;
+            let sql = if schema.is_empty() {
+                // MySQL / ClickHouse with no schema named: the connection's database.
+                if !safe_ident(table) {
+                    return Err("Invalid table name.".to_string());
+                }
+                match conn {
+                    ActiveConnection::Mysql(_) => format!("SELECT * FROM `{table}` LIMIT {n}"),
+                    _ => format!("SELECT * FROM \"{table}\" LIMIT {n}"),
+                }
+            } else {
+                sample_sql(conn, schema, table, n)?
+            };
+            // Always read-only, whatever the session's level.
+            execute_sql(conn, &sql, n, true).await
         }
-        return true;
-    }
-
-    matches!(
-        first_word.as_str(),
-        "SELECT" | "EXPLAIN" | "SHOW" | "DESCRIBE" | "DESC" | "PRAGMA"
-    )
-}
-
-fn strip_sql_comments(s: &str) -> &str {
-    let s = s.trim_start();
-    if s.starts_with("--") {
-        // skip to end of line
-        s.find('\n').map_or("", |i| strip_sql_comments(&s[i + 1..]))
-    } else if s.starts_with("/*") {
-        s.find("*/").map_or("", |i| strip_sql_comments(&s[i + 2..]))
-    } else {
-        s
+        "open_in_stroke" => {
+            let table = args["table"].as_str().map(str::trim).filter(|t| !t.is_empty());
+            let query = args["query"].as_str().map(str::trim).filter(|q| !q.is_empty());
+            if table.is_none() && query.is_none() {
+                return Err("Give a table or a query to open.".to_string());
+            }
+            crate::mcp::emit_open(crate::mcp::McpOpen {
+                table: table.map(str::to_string),
+                schema: args["schema"].as_str().map(str::to_string),
+                query: query.map(str::to_string),
+            });
+            Ok(if query.is_some() {
+                "Opened the query in a new editor tab in Stroke. It has not been run; the user reviews and runs it.".to_string()
+            } else {
+                format!("Opened {} in Stroke.", table.unwrap_or_default())
+            })
+        }
+        _ => Err(format!("Unknown tool: {name}")),
     }
 }
 
@@ -297,7 +340,8 @@ async fn export_query(
     path: Option<&str>,
     max_rows: usize,
 ) -> Result<String, String> {
-    let raw = execute_sql(conn, sql, max_rows).await?;
+    // Always a read, so it always runs read-only where the engine can.
+    let raw = execute_sql(conn, sql, max_rows, true).await?;
     let parsed: Value =
         serde_json::from_str(&raw).map_err(|e| format!("Could not parse result: {e}"))?;
     let columns: Vec<String> = parsed["columns"]
@@ -428,20 +472,55 @@ fn truncated_result_json(result: &crate::db::SqlResult, max_rows: usize) -> Stri
     .to_string()
 }
 
+/// With `read_only`, Postgres and MySQL run the statement in a read-only
+/// transaction and SQLite in one that is rolled back, as a second line behind
+/// the classifier. The other engines have no such mode; the classifier alone
+/// holds there.
 async fn execute_sql(
     conn: &ActiveConnection,
     sql: &str,
     max_rows: usize,
+    read_only: bool,
 ) -> Result<String, String> {
     match conn {
+        ActiveConnection::Postgres(pool) if read_only => {
+            let mut tx = pool.begin_with("BEGIN READ ONLY").await.map_err(|e| format!("SQL error: {e}"))?;
+            let out = execute_sql_pg(&mut *tx, sql, max_rows).await;
+            let _ = tx.rollback().await;
+            out
+        }
         ActiveConnection::Postgres(pool) => execute_sql_pg(pool, sql, max_rows).await,
+        ActiveConnection::Sqlite(pool) if read_only => {
+            let mut tx = pool.begin().await.map_err(|e| format!("SQL error: {e}"))?;
+            let out = execute_sql_sqlite(&mut *tx, sql, max_rows).await;
+            let _ = tx.rollback().await;
+            out
+        }
         ActiveConnection::Sqlite(pool) => execute_sql_sqlite(pool, sql, max_rows).await,
         ActiveConnection::D1(cfg) => execute_sql_d1(cfg, sql, max_rows).await,
+        // Read only: the engine enforces it, not just the classifier.
+        ActiveConnection::LibSql(cfg) if read_only => {
+            let result = crate::db::libsql::query_readonly(cfg, sql).await?;
+            Ok(truncated_result_json(&result, max_rows))
+        }
         ActiveConnection::LibSql(cfg) => {
             let result = crate::db::libsql::query(cfg, sql, vec![]).await?;
             Ok(truncated_result_json(&result, max_rows))
         }
+        ActiveConnection::Mysql(pool) if read_only => {
+            let mut tx = pool
+                .begin_with("START TRANSACTION READ ONLY")
+                .await
+                .map_err(|e| format!("SQL error: {e}"))?;
+            let out = execute_sql_mysql(&mut *tx, sql, max_rows).await;
+            let _ = tx.rollback().await;
+            out
+        }
         ActiveConnection::Mysql(pool) => execute_sql_mysql(pool, sql, max_rows).await,
+        ActiveConnection::Clickhouse(cfg) if read_only => {
+            let result = crate::db::clickhouse::query_readonly(cfg, sql).await?;
+            Ok(truncated_result_json(&result, max_rows))
+        }
         ActiveConnection::Clickhouse(cfg) => {
             let result = crate::db::clickhouse::query(cfg, sql).await?;
             Ok(truncated_result_json(&result, max_rows))
@@ -454,8 +533,24 @@ async fn execute_sql(
             let result = crate::db::redis::query(cfg, sql).await?;
             Ok(truncated_result_json(&result, max_rows))
         }
+        ActiveConnection::Dynamodb(cfg) => {
+            let result = crate::db::dynamodb::query(cfg, sql).await?;
+            Ok(truncated_result_json(&result, max_rows))
+        }
+        ActiveConnection::Doc(d) => {
+            let result = crate::db::docdb::query(d, sql).await?;
+            Ok(truncated_result_json(&result, max_rows))
+        }
+        ActiveConnection::Duckdb(h) if read_only => {
+            let result = crate::db::duckdb::execute_sql_readonly(h, sql).await?;
+            Ok(truncated_result_json(&result, max_rows))
+        }
         ActiveConnection::Duckdb(h) => {
             let result = crate::db::duckdb::execute_sql(h, sql).await?;
+            Ok(truncated_result_json(&result, max_rows))
+        }
+        ActiveConnection::Mssql(h) if read_only => {
+            let result = crate::db::mssql::execute_sql_readonly(h, sql).await?;
             Ok(truncated_result_json(&result, max_rows))
         }
         ActiveConnection::Mssql(h) => {
@@ -465,13 +560,12 @@ async fn execute_sql(
     }
 }
 
-async fn execute_sql_mysql(
-    pool: &sqlx::MySqlPool,
-    sql: &str,
-    max_rows: usize,
-) -> Result<String, String> {
+async fn execute_sql_mysql<'c, E>(ex: E, sql: &'c str, max_rows: usize) -> Result<String, String>
+where
+    E: sqlx::Executor<'c, Database = sqlx::MySql>,
+{
     // Stream rows instead of fetch_all - caps memory at max_rows regardless of result size.
-    let mut stream = sqlx::query(sql).fetch(pool);
+    let mut stream = sqlx::query(sql).fetch(ex);
     let mut columns: Vec<String> = Vec::new();
     let mut data: Vec<Vec<serde_json::Value>> = Vec::with_capacity(max_rows.min(256));
     let mut total = 0usize;
@@ -494,13 +588,12 @@ async fn execute_sql_mysql(
     }).to_string())
 }
 
-async fn execute_sql_pg(
-    pool: &sqlx::PgPool,
-    sql: &str,
-    max_rows: usize,
-) -> Result<String, String> {
+async fn execute_sql_pg<'c, E>(ex: E, sql: &'c str, max_rows: usize) -> Result<String, String>
+where
+    E: sqlx::Executor<'c, Database = sqlx::Postgres>,
+{
     // Stream rows - never materialises more than max_rows rows in memory.
-    let mut stream = sqlx::query(sql).fetch(pool);
+    let mut stream = sqlx::query(sql).fetch(ex);
     let mut columns: Vec<String> = Vec::new();
     let mut data: Vec<Vec<Value>> = Vec::with_capacity(max_rows.min(256));
     let mut total = 0usize;
@@ -524,13 +617,12 @@ async fn execute_sql_pg(
     .to_string())
 }
 
-async fn execute_sql_sqlite(
-    pool: &sqlx::SqlitePool,
-    sql: &str,
-    max_rows: usize,
-) -> Result<String, String> {
+async fn execute_sql_sqlite<'c, E>(ex: E, sql: &'c str, max_rows: usize) -> Result<String, String>
+where
+    E: sqlx::Executor<'c, Database = sqlx::Sqlite>,
+{
     // Stream rows - never materialises more than max_rows rows in memory.
-    let mut stream = sqlx::query(sql).fetch(pool);
+    let mut stream = sqlx::query(sql).fetch(ex);
     let mut columns: Vec<String> = Vec::new();
     let mut data: Vec<Vec<Value>> = Vec::with_capacity(max_rows.min(256));
     let mut total = 0usize;
@@ -585,6 +677,14 @@ async fn list_tables(conn: &ActiveConnection, schema: &str) -> Result<String, St
         }
         ActiveConnection::Redis(cfg) => {
             let tables = crate::db::redis::list_tables(cfg).await?;
+            Ok(json!({"tables":tables.iter().map(|t|&t.name).collect::<Vec<_>>()}).to_string())
+        }
+        ActiveConnection::Dynamodb(cfg) => {
+            let tables = crate::db::dynamodb::table_names(cfg).await?;
+            Ok(json!({"tables":tables}).to_string())
+        }
+        ActiveConnection::Doc(d) => {
+            let tables = crate::db::docdb::list_tables(d).await?;
             Ok(json!({"tables":tables.iter().map(|t|&t.name).collect::<Vec<_>>()}).to_string())
         }
         ActiveConnection::Duckdb(h) => {
@@ -720,6 +820,25 @@ async fn describe_table(
             })).collect();
             Ok(json!({"table":table,"columns":columns}).to_string())
         }
+        ActiveConnection::Dynamodb(cfg) => {
+            // Schemaless: the key schema, indexes and attribute types are the shape.
+            let d = crate::db::dynamodb::request(cfg, "DescribeTable", &json!({"TableName": table})).await?;
+            let t = &d["Table"];
+            Ok(json!({
+                "table": table,
+                "key_schema": t["KeySchema"],
+                "attribute_definitions": t["AttributeDefinitions"],
+                "global_secondary_indexes": t["GlobalSecondaryIndexes"],
+                "local_secondary_indexes": t["LocalSecondaryIndexes"],
+                "item_count": t["ItemCount"],
+                "note": "DynamoDB is schemaless: only key attributes are declared. Query with PartiQL.",
+            }).to_string())
+        }
+        ActiveConnection::Doc(d) => Ok(json!({
+            "table": table,
+            "engine": d.driver(),
+            "note": "Schemaless or wide-column: inspect documents with the query tool instead of a column list.",
+        }).to_string()),
         ActiveConnection::Duckdb(h) => {
             let cols = crate::db::duckdb::get_column_structure(h, table).await?;
             let columns: Vec<_> = cols.iter().map(|c| json!({
@@ -992,6 +1111,7 @@ async fn check_migrations(conn: &ActiveConnection, schema: &str) -> Result<Strin
         ActiveConnection::Clickhouse(_) => Ok(json!({"migrations":[],"note":"Migration detection not supported for ClickHouse"}).to_string()),
         ActiveConnection::Posthog(_) => Ok(json!({"migrations":[],"note":"Migration detection not supported for PostHog"}).to_string()),
         ActiveConnection::Redis(_) => Ok(json!({"migrations":[],"note":"Migration detection not supported for Redis"}).to_string()),
+        ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => Ok(json!({"migrations":[],"note":"Migration detection not supported for DynamoDB"}).to_string()),
         ActiveConnection::Duckdb(_) => Ok(json!({"migrations":[],"note":"Migration detection not supported for DuckDB"}).to_string()),
         ActiveConnection::Mssql(_) => Ok(json!({"migrations":[],"note":"Migration detection not supported for MS SQL Server"}).to_string()),
     }
@@ -1200,13 +1320,14 @@ async fn explain_query(conn: &ActiveConnection, sql: &str) -> Result<String, Str
             Ok(json!({"plan":r.rows,"database":"clickhouse"}).to_string())
         }
         ActiveConnection::Redis(_) => Ok(json!({"plan":[],"database":"redis","note":"EXPLAIN is not supported on Redis"}).to_string()),
+        ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => Ok(json!({"plan":[],"database":"dynamodb","note":"EXPLAIN is not supported on DynamoDB"}).to_string()),
         ActiveConnection::Posthog(_) => Ok(json!({"plan":[],"database":"posthog","note":"EXPLAIN is not available through PostHog's query API"}).to_string()),
         ActiveConnection::Duckdb(h) => {
             let r = crate::db::duckdb::execute_sql(h, &format!("EXPLAIN {sql}")).await?;
             Ok(json!({"plan":r.rows,"database":"duckdb"}).to_string())
         }
         ActiveConnection::Mssql(h) => {
-            let r = crate::db::mssql::execute_sql(h, &format!("SET SHOWPLAN_ALL ON; {sql}")).await?;
+            let r = crate::db::mssql::explain_showplan_all(h, sql).await?;
             Ok(json!({"plan":r.rows,"database":"mssql"}).to_string())
         }
     }
@@ -1291,6 +1412,14 @@ async fn get_database_stats(conn: &ActiveConnection, schema: &str) -> Result<Str
         ActiveConnection::Redis(cfg) => {
             let tables = crate::db::redis::list_tables(cfg).await?;
             Ok(json!({"database":"redis","table_count":tables.len()}).to_string())
+        }
+        ActiveConnection::Dynamodb(cfg) => {
+            let tables = crate::db::dynamodb::table_names(cfg).await?;
+            Ok(json!({"database":"dynamodb","table_count":tables.len()}).to_string())
+        }
+        ActiveConnection::Doc(d) => {
+            let tables = crate::db::docdb::list_tables(d).await?;
+            Ok(json!({"database":d.driver(),"table_count":tables.len()}).to_string())
         }
         ActiveConnection::Duckdb(h) => {
             let tables = crate::db::duckdb::list_tables(h).await?;
