@@ -154,7 +154,7 @@
         title="Soft wrap (Alt+Z)"
         onclick={toggleWrap}
       >
-        <Icon name="wrap-text" class="size-3.5" />
+        <Icon name="wrap-text" class="size-3.5 shrink-0" />
       </Button>
       <Button
         variant="ghost"
@@ -165,10 +165,10 @@
         title="{showGutter ? 'Hide' : 'Show'} line numbers (Alt+L)"
         onclick={toggleGutter}
       >
-        <Icon name="list-ordered" class="size-3.5" />
+        <Icon name="list-ordered" class="size-3.5 shrink-0" />
       </Button>
       <Button variant="ghost" size="icon-sm" class={toolBtn} aria-label="Copy SQL" title="Copy SQL" onclick={copy}>
-        <Icon name="copy" class="size-3.5" />
+        <Icon name="copy" class="size-3.5 shrink-0" />
       </Button>
       <Button
         variant="ghost"
@@ -179,7 +179,7 @@
         title="Revert to the generated SQL (Alt+R)"
         onclick={revert}
       >
-        <Icon name="undo-2" class="size-3.5" />
+        <Icon name="undo-2" class="size-3.5 shrink-0" />
       </Button>
 
       <span class="mx-2 h-4 w-px bg-border/70" aria-hidden="true"></span>
@@ -200,9 +200,9 @@
         onclick={onconfirm}
       >
         {#if running}
-          <Icon name="loader-2" class="size-3.5 animate-spin" />
+          <Icon name="loader-2" class="size-3.5 shrink-0 animate-spin" />
         {:else}
-          <Icon name={destructive ? 'trash-2' : 'check'} class="size-3.5" />
+          <Icon name={destructive ? 'trash-2' : 'check'} class="size-3.5 shrink-0" />
         {/if}
         {confirmLabel}
         <Kbd combo="Mod+Enter" class="ms-1" />

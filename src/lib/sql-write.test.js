@@ -204,3 +204,15 @@ describe('stripSqlComments', () => {
     expect(stripSqlComments("SELECT 'it''s fine' -- tail")).toBe("SELECT 'it''s fine' ")
   })
 })
+
+describe('MongoDB shell writes', () => {
+  it('flags mutating collection methods and leaves reads alone', () => {
+    expect(isWriteSql('db.users.insertOne({a: 1})')).toBe(true)
+    expect(isWriteSql('db.users.updateMany({}, {$set: {a: 1}})')).toBe(true)
+    expect(isWriteSql('db.users.deleteOne({_id: 1})')).toBe(true)
+    expect(isWriteSql('db.users.findOneAndUpdate({}, {$set: {a: 1}})')).toBe(true)
+    expect(isWriteSql('db.users.find({note: "insertOne("})')).toBe(false)
+    expect(isWriteSql('db.users.find({}).sort({a: 1})')).toBe(false)
+    expect(isWriteSql('db.orders.aggregate([{$match: {}}])')).toBe(false)
+  })
+})

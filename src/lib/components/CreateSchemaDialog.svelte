@@ -1,8 +1,9 @@
 <script>
   import * as Dialog from '$lib/components/ui/dialog/index.js'
-  import DdlConfirmDialog from './DdlConfirmDialog.svelte'
-  import Box from '@lucide/svelte/icons/box'
-  import Loader from '@lucide/svelte/icons/loader'
+  import { Button } from '$lib/components/ui/button/index.js'
+  import { Input } from '$lib/components/ui/input/index.js'
+  import Loader2 from '@lucide/svelte/icons/loader-2'
+  import { quoteIdent } from '$lib/dml-preview.js'
 
   let {
     open = $bindable(false),
@@ -14,102 +15,96 @@
     oncreated = async () => {},
   } = $props()
 
+  const PLACEHOLDER = 'analytics'
+
   let name = $state('')
-  let confirmOpen = $state(false)
   let saving = $state(false)
 
   const trimmed = $derived(name.trim())
   const duplicate = $derived(existingSchemas.includes(trimmed))
-  const hasQuote = $derived(trimmed.includes('"'))
-  const isValid = $derived(trimmed.length > 0 && !duplicate && !hasQuote)
+  const isValid = $derived(trimmed.length > 0 && !duplicate)
 
-  const sql = $derived(`CREATE SCHEMA "${trimmed || 'schema_name'}";`)
+  // The identifier is quoted (embedded quotes doubled), so any name is safe to
+  // send. With nothing typed yet the preview shows the placeholder, dimmed like
+  // the field's own placeholder, instead of a made-up `schema_name`.
+  const sql = $derived(`CREATE SCHEMA ${quoteIdent(trimmed || PLACEHOLDER, 'postgres')};`)
 
-  function reset() {
-    name = ''
-  }
+  $effect(() => {
+    if (!open) {
+      name = ''
+      saving = false
+    }
+  })
 
+  // The SQL is on screen before the button, and CREATE SCHEMA changes nothing
+  // that exists, so this runs on click - the same as New table. It used to open
+  // a second dialog that repeated the preview it had just shown.
   async function handleCreate() {
+    if (!isValid || saving) return
     saving = true
     try {
       await onexecute(sql)
       const created = trimmed
-      reset()
       open = false
       await oncreated(created)
-    } catch (e) {
+    } catch {
       // onexecute surfaces its own toast on failure
     } finally {
       saving = false
-      confirmOpen = false
     }
   }
-
-  const lbl = 'mb-1.5 block text-ui-3xs font-semibold uppercase tracking-[0.07em] text-muted-foreground'
-  const inp = 'h-8 w-full rounded-lg border-2 border-border bg-muted/[0.4] px-3 font-mono text-ui-xs outline-none placeholder:text-muted-foreground focus:border-border/50 focus:ring-0'
 </script>
 
-<Dialog.Root bind:open onOpenChange={(v) => { if (!v) reset() }}>
-  <Dialog.Portal>
-    <Dialog.Overlay />
-    <Dialog.Content showCloseButton={false} class="w-[min(27.5rem,calc(100vw-2rem))] sm:max-w-none gap-0 overflow-hidden p-0">
+<Dialog.Root bind:open>
+  <Dialog.Content class="flex flex-col gap-0 overflow-hidden p-0 sm:max-w-md">
+    <Dialog.Header class="shrink-0 gap-1 px-6 pt-6 pb-4">
+      <Dialog.Title>New schema</Dialog.Title>
+      <Dialog.Description class="text-ui-xs text-muted-foreground">
+        A namespace for tables, views and functions.
+      </Dialog.Description>
+    </Dialog.Header>
 
-      <!-- Header -->
-      <div class="flex items-start gap-3.5 border-b border-border/25 px-5 pt-5 pb-4">
-        <div class="mt-px flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted/50">
-          <Box class="size-3.5 text-muted-foreground" />
-        </div>
-        <div class="min-w-0 flex-1">
-          <Dialog.Title class="text-ui-sm font-semibold text-foreground">Create Schema</Dialog.Title>
-          <p class="mt-0.5 text-ui-2xs text-muted-foreground">A namespace for tables, views and functions</p>
-        </div>
-        <Dialog.Close class="inline-flex size-6 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted/50 hover:text-muted-foreground focus-visible:outline-none" />
+    <div class="flex flex-col gap-5 px-6 pb-5">
+      <div class="flex flex-col gap-1.5">
+        <label class="text-ui-xs font-medium text-foreground/80" for="create-schema-name">Schema name</label>
+        <!-- svelte-ignore a11y_autofocus -->
+        <Input
+          id="create-schema-name"
+          class="h-9 font-mono text-ui-sm placeholder:text-muted-foreground/50"
+          placeholder={PLACEHOLDER}
+          bind:value={name}
+          autofocus
+          autocomplete="off"
+          spellcheck="false"
+          aria-invalid={duplicate || undefined}
+          aria-describedby={duplicate ? 'create-schema-error' : undefined}
+          onkeydown={(e) => e.key === 'Enter' && handleCreate()}
+        />
+        {#if duplicate}
+          <p id="create-schema-error" class="text-ui-2xs text-destructive">
+            A schema named <span class="font-mono">{trimmed}</span> already exists.
+          </p>
+        {/if}
       </div>
 
-      <div class="flex flex-col gap-4 px-5 py-4">
-        <div>
-          <label for="schema-name" class={lbl}>Schema name</label>
-          <!-- svelte-ignore a11y_autofocus -->
-          <input
-            id="schema-name"
-            type="text"
-            autofocus
-            bind:value={name}
-            placeholder="analytics"
-            class={inp}
-            onkeydown={(e) => { if (e.key === 'Enter' && isValid) confirmOpen = true }}
-          />
-          {#if duplicate}
-            <p class="mt-1.5 text-ui-2xs text-destructive">A schema named <span class="font-mono">{trimmed}</span> already exists</p>
-          {:else if hasQuote}
-            <p class="mt-1.5 text-ui-2xs text-destructive">Name can't contain double quotes</p>
-          {/if}
-        </div>
-
-        <div>
-          <p class="{lbl} mb-2">SQL preview</p>
-          <pre class="overflow-x-auto rounded-lg border border-border/20 bg-muted/[0.15] px-4 py-3 font-mono text-ui-2xs leading-relaxed text-muted-foreground whitespace-pre">{sql}</pre>
-        </div>
+      <div class="flex flex-col gap-1.5">
+        <span class="text-ui-xs font-medium text-foreground/80">SQL preview</span>
+        <pre
+          class="overflow-x-auto rounded-lg border border-border/60 bg-muted/30 px-3.5 py-3 font-mono text-ui-2xs leading-relaxed whitespace-pre-wrap break-all {trimmed ? 'text-muted-foreground' : 'text-muted-foreground/50'}"
+        >{sql}</pre>
       </div>
+    </div>
 
-      <!-- Footer -->
-      <div class="flex items-center justify-end gap-2 border-t border-border/25 px-5 py-3">
-        <button type="button"
-          class="inline-flex h-8 items-center rounded-lg px-3.5 text-ui-sm text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
-          onclick={() => { reset(); open = false }}>Cancel</button>
-        <button type="button"
-          class="inline-flex h-8 items-center gap-1.5 rounded-lg bg-foreground px-4 text-ui-sm font-medium text-background transition-opacity hover:opacity-85 disabled:opacity-40"
-          disabled={!isValid || saving}
-          onclick={() => (confirmOpen = true)}>
-          {#if saving}<Loader class="size-3.5 shrink-0 animate-spin" />{/if}
-          Create Schema
-        </button>
-      </div>
-
-    </Dialog.Content>
-  </Dialog.Portal>
+    <div class="flex shrink-0 items-center justify-end gap-2 border-t border-border/60 px-6 py-3.5">
+      <Button variant="ghost" onclick={() => (open = false)}>Cancel</Button>
+      <Button disabled={!isValid || saving} onclick={handleCreate}>
+        {#if saving}
+          <Loader2 class="size-3.5 shrink-0 animate-spin" aria-hidden="true" />
+          Creating…
+        {:else}
+          Create schema
+        {/if}
+      </Button>
+    </div>
+  </Dialog.Content>
 </Dialog.Root>
-
-<DdlConfirmDialog bind:open={confirmOpen} title="Create schema"
-  description="This will create a new schema in your database."
-  {sql} confirmLabel="Create" loading={saving} onconfirm={handleCreate} />

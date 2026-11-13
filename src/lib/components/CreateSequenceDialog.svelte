@@ -1,180 +1,175 @@
 <script>
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
-  import { executeSql } from '$lib/api.js'
-  import * as Dialog from '$lib/components/ui/dialog/index.js'
-  import DdlConfirmDialog from './DdlConfirmDialog.svelte'
-  import Hash from '@lucide/svelte/icons/hash'
-  import Loader from '@lucide/svelte/icons/loader'
+  import { executeSql, getTableColumnStructure } from '$lib/api.js'
+  import { Input } from '$lib/components/ui/input/index.js'
+  import { Switch } from '$lib/components/ui/switch/index.js'
+  import PickerField from './PickerField.svelte'
+  import SegmentedControl from './SegmentedControl.svelte'
+  import DdlDialogShell from './DdlDialogShell.svelte'
+  import {
+    buildSequenceSql, validateSequence, hasPlaceholder, placeholderText, toSnippet, SEQUENCE_TYPES,
+  } from '$lib/ddl-builders.js'
+  import X from '@lucide/svelte/icons/x'
 
   let {
     open = $bindable(false),
     schema = '',
+    /** Tables for "Owned by". @type {{ name: string }[]} */
+    tables = [],
     onrefresh = () => {},
+    /** Opens SQL in a new editor tab. @type {((spec: { text: string, title: string, snippet?: string }) => void) | null} */
+    onopensql = null,
   } = $props()
 
-  const DATA_TYPES = ['bigint', 'integer', 'smallint']
-  const DEFAULTS = {
-    bigint:   { min: '1', max: '9223372036854775807' },
-    integer:  { min: '1', max: '2147483647' },
-    smallint: { min: '1', max: '32767' },
-  }
+  /** @typedef {keyof typeof SEQUENCE_TYPES} SeqType */
+  const TYPE_OPTS = [
+    { value: 'smallint', label: 'smallint' },
+    { value: 'integer', label: 'integer' },
+    { value: 'bigint', label: 'bigint' },
+  ]
 
   let name = $state('')
-  let dataType = $state('bigint')
+  let dataType = $state(/** @type {SeqType} */ ('bigint'))
   let startValue = $state('1')
   let minValue = $state('1')
-  let maxValue = $state('9223372036854775807')
+  let maxValue = $state(SEQUENCE_TYPES.bigint.hi)
   let increment = $state('1')
+  let cache = $state('1')
   let cycle = $state(false)
-  let confirmOpen = $state(false)
+  let ownedTable = $state('')
+  let ownedColumn = $state('')
   let saving = $state(false)
+  let attempted = $state(false)
+  let touched = $state(/** @type {Record<string, boolean>} */ ({}))
+  /** @type {Record<string, string[]>} */
+  let columnsByTable = $state({})
+
+  /** Max value follows the type unless it was edited away from a type's default. @param {SeqType} t */
+  function onType(t) {
+    const defaults = Object.values(SEQUENCE_TYPES).map((r) => r.hi)
+    if (!maxValue.trim() || defaults.includes(maxValue.trim())) maxValue = SEQUENCE_TYPES[t].hi
+  }
 
   $effect(() => {
-    const d = DEFAULTS[/** @type {keyof typeof DEFAULTS} */ (dataType)]
-    if (d) { minValue = d.min; maxValue = d.max }
+    const t = ownedTable
+    if (!open || !t || columnsByTable[t]) return
+    getTableColumnStructure(schema, t)
+      .then((/** @type {any[]} */ cols) => { columnsByTable = { ...columnsByTable, [t]: (cols ?? []).map((c) => c.name) } })
+      .catch(() => { columnsByTable = { ...columnsByTable, [t]: [] } })
   })
 
-  const sql = $derived.by(() => {
-    const n = name.trim() || 'sequence_name'
-    const inc = increment.trim() || '1'
-    const start = startValue.trim() || '1'
-    return `CREATE SEQUENCE "${schema}"."${n}"
-  AS ${dataType}
-  INCREMENT BY ${inc}
-  MINVALUE ${minValue.trim()}
-  MAXVALUE ${maxValue.trim()}
-  START WITH ${start}
-  ${cycle ? 'CYCLE' : 'NO CYCLE'};`
+  const spec = $derived({
+    schema, name, dataType, increment, minValue, maxValue, startValue, cache, cycle, ownedTable, ownedColumn,
   })
-
-  const isValid = $derived(name.trim().length > 0)
+  const sql = $derived(buildSequenceSql(spec))
+  const errors = $derived(validateSequence(spec))
+  const isValid = $derived(Object.keys(errors).length === 0 && !hasPlaceholder(sql))
+  /** @param {string} k */
+  const err = (k) => (k === 'name' && !touched.name && !attempted ? '' : errors[k] ?? '')
 
   function reset() {
-    name = ''; dataType = 'bigint'
-    startValue = '1'; minValue = '1'
-    maxValue = '9223372036854775807'; increment = '1'; cycle = false
+    name = ''; dataType = 'bigint'; startValue = '1'; minValue = '1'
+    maxValue = SEQUENCE_TYPES.bigint.hi; increment = '1'; cache = '1'; cycle = false
+    ownedTable = ''; ownedColumn = ''; attempted = false; touched = {}
   }
 
   async function handleCreate() {
+    attempted = true
+    if (!isValid || saving) return
     saving = true
     try {
       await executeSql(sql)
       toast.success(`Sequence "${name.trim()}" created`)
       onrefresh(); reset(); open = false
-    } catch (e) { toast.error('Could not create sequence', { description: String(e) })
-    } finally { saving = false; confirmOpen = false }
+    } catch (e) {
+      toast.error('Could not create sequence', { description: String(e) })
+    } finally { saving = false }
   }
 
-  const lbl = 'mb-1.5 block text-ui-3xs font-semibold uppercase tracking-[0.07em] text-muted-foreground'
-  const inp = 'h-8 w-full rounded-lg border-2 border-border bg-muted/[0.4] px-3 font-mono text-ui-xs outline-none placeholder:text-muted-foreground focus:border-border/50 focus:ring-0 [appearance:none] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none'
+  function openInEditor() {
+    onopensql?.({
+      text: placeholderText(sql),
+      title: name.trim() ? `Sequence · ${name.trim()}` : 'New sequence',
+      snippet: hasPlaceholder(sql) ? toSnippet(sql) : undefined,
+    })
+    open = false
+  }
+
+  const lbl = 'text-ui-xs text-muted-foreground'
+  const errCls = 'text-ui-2xs text-destructive'
+  const num = 'h-8 font-mono tabular-nums'
 </script>
 
-<Dialog.Root bind:open onOpenChange={(v) => { if (!v) reset() }}>
-  <Dialog.Portal>
-    <Dialog.Overlay />
-    <Dialog.Content showCloseButton={false} class="w-[min(30rem,calc(100vw-2rem))] sm:max-w-none gap-0 overflow-hidden p-0">
+{#snippet numField(/** @type {string} */ id, /** @type {string} */ label, /** @type {string} */ key, /** @type {() => string} */ get, /** @type {(v: string) => void} */ set)}
+  <div class="flex min-w-0 flex-col gap-1.5">
+    <label for={id} class={lbl}>{label}</label>
+    <Input {id} class={num} inputmode="numeric" value={get()} oninput={(e) => set(e.currentTarget.value)}
+      aria-invalid={!!err(key) || undefined} />
+    {#if err(key)}<p class={errCls}>{err(key)}</p>{/if}
+  </div>
+{/snippet}
 
-      <!-- Header -->
-      <div class="flex items-start gap-3.5 border-b border-border/25 px-5 pt-5 pb-4">
-        <div class="mt-px flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted/50">
-          <Hash class="size-3.5 text-muted-foreground" />
-        </div>
+<DdlDialogShell
+  bind:open
+  title="New sequence"
+  subtitle={`in ${schema}`}
+  {sql}
+  canSubmit={isValid}
+  busy={saving}
+  submitLabel="Create sequence"
+  onsubmit={handleCreate}
+  onopensql={onopensql ? openInEditor : null}
+  onOpenChange={(v) => { if (!v) reset() }}
+>
+  <div class="grid grid-cols-2 gap-x-3 gap-y-4">
+    <div class="flex min-w-0 flex-col gap-1.5">
+      <label for="seq-name" class={lbl}>Name</label>
+      <!-- svelte-ignore a11y_autofocus -->
+      <Input id="seq-name" class="h-8 font-mono" bind:value={name} placeholder="user_id_seq" autofocus
+        aria-invalid={!!err('name') || undefined} onblur={() => (touched.name = true)} />
+      {#if err('name')}<p class={errCls}>{err('name')}</p>{/if}
+    </div>
+    <div class="flex min-w-0 flex-col gap-1.5">
+      <span class={lbl}>Data type</span>
+      <SegmentedControl options={TYPE_OPTS} mono bind:value={dataType} ariaLabel="Data type" onchange={onType} />
+    </div>
+
+    {@render numField('seq-start', 'Start with', 'startValue', () => startValue, (v) => (startValue = v))}
+    {@render numField('seq-inc', 'Increment by', 'increment', () => increment, (v) => (increment = v))}
+    {@render numField('seq-min', 'Min value', 'minValue', () => minValue, (v) => (minValue = v))}
+    {@render numField('seq-max', 'Max value', 'maxValue', () => maxValue, (v) => (maxValue = v))}
+    {@render numField('seq-cache', 'Cache', 'cache', () => cache, (v) => (cache = v))}
+
+    <label class="flex min-w-0 cursor-pointer items-center justify-between gap-3 self-end pb-1.5">
+      <span class="flex min-w-0 flex-col">
+        <span class="text-ui-sm text-foreground">Cycle</span>
+        <span class="text-ui-xs text-muted-foreground">Restart at the min after the max</span>
+      </span>
+      <Switch bind:checked={cycle} aria-label="Cycle" />
+    </label>
+
+    <div class="col-span-2 flex min-w-0 flex-col gap-1.5">
+      <span class={lbl}>Owned by <span class="text-muted-foreground">(optional, dropped with the column)</span></span>
+      <div class="flex items-center gap-2">
         <div class="min-w-0 flex-1">
-          <Dialog.Title class="text-ui-sm font-semibold text-foreground">Create Sequence</Dialog.Title>
-          <p class="mt-0.5 text-ui-2xs text-muted-foreground">Auto-incrementing counter in <span class="font-mono">{schema}</span></p>
+          <PickerField mono bind:value={ownedTable} placeholder="Table" search="Search tables…" empty="No matching table"
+            aria-label="Owning table" items={tables.map((t) => ({ value: t.name }))} onchange={() => (ownedColumn = '')} />
         </div>
-        <Dialog.Close class="inline-flex size-6 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted/50 hover:text-muted-foreground focus-visible:outline-none" />
-      </div>
-
-      <div class="app-scroll max-h-[72vh] overflow-y-auto">
-        <div class="flex flex-col gap-4 px-5 py-4">
-
-          <!-- Name + Data type -->
-          <div class="grid grid-cols-2 gap-3">
-            <div>
-              <label for="seq-name" class={lbl}>Sequence name</label>
-              <input id="seq-name" type="text" bind:value={name} placeholder="user_id_seq" class={inp} />
-            </div>
-            <div>
-              <p class={lbl}>Data type</p>
-              <div class="flex gap-0.5 rounded-lg border border-border/25 bg-muted/[0.3] p-0.5">
-                {#each DATA_TYPES as t (t)}
-                  <button type="button"
-                    class="flex flex-1 items-center justify-center rounded-md px-1.5 py-1.5 font-mono text-ui-3xs font-medium transition-all {dataType === t
-                      ? 'bg-background text-foreground ring-1 ring-border/30'
-                      : 'text-muted-foreground hover:text-foreground'}"
-                    onclick={() => (dataType = t)}>{t}</button>
-                {/each}
-              </div>
-            </div>
-          </div>
-
-          <!-- Start + Increment -->
-          <div class="grid grid-cols-2 gap-3">
-            <div>
-              <label for="seq-start" class={lbl}>Start value</label>
-              <input id="seq-start" type="text" inputmode="numeric" bind:value={startValue} class={inp} />
-            </div>
-            <div>
-              <label for="seq-increment" class={lbl}>Increment by</label>
-              <input id="seq-increment" type="text" inputmode="numeric" bind:value={increment} class={inp} />
-            </div>
-          </div>
-
-          <!-- Min + Max -->
-          <div class="grid grid-cols-2 gap-3">
-            <div>
-              <label for="seq-min" class={lbl}>Min value</label>
-              <input id="seq-min" type="text" inputmode="numeric" bind:value={minValue} class={inp} />
-            </div>
-            <div>
-              <label for="seq-max" class={lbl}>Max value</label>
-              <input id="seq-max" type="text" inputmode="numeric" bind:value={maxValue} class={inp} />
-            </div>
-          </div>
-
-          <!-- Cycle toggle -->
-          <button type="button" role="checkbox" aria-checked={cycle}
-            class="flex cursor-pointer items-center gap-3 rounded-lg border border-border/20 bg-muted/[0.15] px-4 py-3 text-left transition-colors hover:bg-muted/25"
-            onclick={() => (cycle = !cycle)}>
-            <span class="flex size-4 shrink-0 items-center justify-center rounded border transition-all {cycle ? 'border-foreground bg-foreground' : 'border-border/40 bg-transparent'}">
-              {#if cycle}
-                <svg class="size-2.5 text-background" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M2 6l3 3 5-5"/></svg>
-              {/if}
-            </span>
-            <div>
-              <p class="text-ui-xs font-medium text-foreground">Cycle</p>
-              <p class="mt-0.5 text-ui-2xs text-muted-foreground">Restart from minimum when max is reached</p>
-            </div>
+        <span class="text-muted-foreground">.</span>
+        <div class="min-w-0 flex-1">
+          <PickerField mono bind:value={ownedColumn} placeholder="Column" search="Search columns…"
+            empty={ownedTable ? 'No matching column' : 'Pick a table first'} aria-label="Owning column"
+            invalid={!!(ownedTable && err('ownedColumn'))}
+            items={(columnsByTable[ownedTable] ?? []).map((c) => ({ value: c }))} />
+        </div>
+        {#if ownedTable}
+          <button type="button" class="hit-area inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            aria-label="Clear owner" onclick={() => { ownedTable = ''; ownedColumn = '' }}>
+            <X class="size-3.5 shrink-0" />
           </button>
-
-          <!-- SQL preview -->
-          <div>
-            <p class="{lbl} mb-2">SQL preview</p>
-            <pre class="overflow-x-auto rounded-lg border border-border/20 bg-muted/[0.15] px-4 py-3 font-mono text-ui-2xs leading-relaxed text-muted-foreground whitespace-pre">{sql}</pre>
-          </div>
-
-        </div>
+        {/if}
       </div>
-
-      <!-- Footer -->
-      <div class="flex items-center justify-end gap-2 border-t border-border/25 px-5 py-3">
-        <button type="button"
-          class="inline-flex h-8 items-center rounded-lg px-3.5 text-ui-sm text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
-          onclick={() => { reset(); open = false }}>Cancel</button>
-        <button type="button"
-          class="inline-flex h-8 items-center gap-1.5 rounded-lg bg-foreground px-4 text-ui-sm font-medium text-background transition-opacity hover:opacity-85 disabled:opacity-40"
-          disabled={!isValid || saving}
-          onclick={() => (confirmOpen = true)}>
-          {#if saving}<Loader class="size-3.5 shrink-0 animate-spin" />{/if}
-          Create Sequence
-        </button>
-      </div>
-
-    </Dialog.Content>
-  </Dialog.Portal>
-</Dialog.Root>
-
-<DdlConfirmDialog bind:open={confirmOpen} title="Create sequence"
-  description="This will create the sequence in your database."
-  {sql} confirmLabel="Create" loading={saving} onconfirm={handleCreate} />
+      {#if ownedTable && err('ownedColumn')}<p class={errCls}>{err('ownedColumn')}</p>{/if}
+    </div>
+  </div>
+</DdlDialogShell>

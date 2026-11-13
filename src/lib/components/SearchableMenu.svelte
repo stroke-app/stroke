@@ -10,7 +10,8 @@
 
   let {
     open = $bindable(false),
-    /** @type {Array<{ value: string, label?: string, keywords?: string[], disabled?: boolean }>} */
+    /** `group` shows a label above the first row of each run when nothing is typed.
+     *  @type {Array<{ value: string, label?: string, keywords?: string[], disabled?: boolean, group?: string }>} */
     items = [],
     placeholder = "Search…",
     empty = "No results",
@@ -70,6 +71,45 @@
     }
   }
 
+  /**
+   * Substring ranking instead of cmdk's default fuzzy score. The fuzzy score
+   * matches scattered letters across every keyword, so "dyn" listed MariaDB,
+   * DuckDB and PlanetScale (d…y…n somewhere in a description) above DynamoDB.
+   * The first keyword is the row's label: a prefix of it ranks first, then a
+   * word starting with it, then anywhere in it; other keywords (category,
+   * description, id) match only as whole substrings, below any label match.
+   * @param {string} value @param {string} query @param {string[]} [keywords]
+   */
+  function score(value, query, keywords) {
+    const q = query.trim().toLowerCase();
+    if (!q) return 1;
+    const label = (keywords?.[0] ?? value).toLowerCase();
+    if (label.startsWith(q)) return 1;
+    if (label.split(/[\s/._-]+/).some((w) => w.startsWith(q))) return 0.9;
+    if (label.includes(q)) return 0.8;
+    const rest = [value, ...(keywords?.slice(1) ?? [])].join(" ").toLowerCase();
+    return rest.includes(q) ? 0.5 : 0;
+  }
+
+  /** Rows for the current query, best match first (stable within a score). */
+  const shown = $derived.by(() => {
+    if (!search.trim()) return items;
+    return items
+      .map((it, i) => ({ it, i, s: score(it.value, search, [it.label ?? it.value, ...(it.keywords ?? [])]) }))
+      .filter((r) => r.s > 0)
+      .sort((a, b) => b.s - a.s || a.i - b.i)
+      .map((r) => r.it);
+  });
+
+  // The highlighted row. With our own filtering, cmdk no longer moves it to the
+  // top result as you type, so Enter picked whatever the previous query had
+  // highlighted ("sql" then "dyn" + Enter chose SQL Server). Reset it per query.
+  let highlighted = $state("");
+  $effect(() => {
+    search;
+    highlighted = shown.find((it) => !it.disabled)?.value ?? "";
+  });
+
   /** Esc closes; Tab / Shift+Tab map onto the Command's Arrow navigation. */
   function onInputKeydown(/** @type {KeyboardEvent} */ e) {
     if (e.key === "Escape") {
@@ -78,6 +118,18 @@
       e.preventDefault();
       e.stopPropagation();
       open = false;
+      return;
+    }
+    if (e.key === "Enter" && !e.isComposing) {
+      // Typed and pressed Enter before the highlight caught up with the new
+      // results: pick the top result rather than a row that is no longer shown.
+      if (!shown.some((it) => it.value === highlighted && !it.disabled)) {
+        const top = shown.find((it) => !it.disabled);
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if (top) handleSelect(top);
+        return true;
+      }
       return;
     }
     if (e.key !== "Tab") return;
@@ -90,13 +142,16 @@
 <!--
   cmdk always calls #selectFirstItem() on every re-render (sort/filter pass), so "id"
   gets data-selected any time the parent state changes, even if the mouse is over a
-  different row. The :has() rule below suppresses that background while the mouse is
+  different row. The rule below suppresses that background while the mouse is
   inside the list: the hovered item shows its own :hover highlight, and the stale
   cmdk auto-selection on other items is invisible. Keyboard navigation is unaffected
   because the mouse isn't hovering any item during pure keyboard use.
+  It keys on the list's own :hover, not `:has([data-command-item]:hover)`: a
+  :has() outside the subject makes WebKit re-check the whole document on every
+  hover change anywhere in the app (see ui/alert/alert-title.svelte).
 -->
 <style>
-  :global(.sm-item-list:has([data-command-item]:hover) [data-command-item][data-selected]:not(:hover)) {
+  :global(.sm-item-list:hover [data-command-item][data-selected]:not(:hover)) {
     background-color: transparent !important;
     color: inherit !important;
   }
@@ -112,17 +167,17 @@
     <Popover.Content
       {align}
       {side}
-      sideOffset={6}
+      sideOffset={4}
       onOpenAutoFocus={(e) => { e.preventDefault(); inputEl?.focus(); }}
       class={cn(
         "z-[100] overflow-hidden rounded-[10px] border border-border/60 bg-popover text-popover-foreground elevate-2-rim outline-none",
         contentClass,
       )}
     >
-      <Command.Root loop class="flex max-h-72 flex-col">
+      <Command.Root loop shouldFilter={false} bind:value={highlighted} class="flex max-h-72 flex-col">
         <!-- Input stays mounted (Command needs it for keyboard nav) but is only
              shown for longer lists; short menus hide it and are just scannable. -->
-        <div class={cn("flex items-center gap-2 border-b border-border/50 px-2.5 py-2", !showSearch && "sr-only")}>
+        <div data-slot="menu-search" class={cn("flex items-center gap-2 px-2.5 py-2", !showSearch && "sr-only")}>
           <SearchIcon class="size-3.5 shrink-0 text-muted-foreground" />
           <Command.Input bind:value={search} {placeholder}>
             {#snippet child({ props })}
@@ -130,7 +185,7 @@
                 {...props}
                 bind:value={search}
                 bind:this={inputEl}
-                onkeydown={(e) => { /** @type {any} */ (props).onkeydown?.(e); onInputKeydown(e); }}
+                onkeydown={(e) => { if (onInputKeydown(e) === true) return; /** @type {any} */ (props).onkeydown?.(e); }}
                 {placeholder}
                 class="no-focus-ring min-w-0 flex-1 bg-transparent text-ui-sm text-foreground outline-none placeholder:text-muted-foreground"
               />
@@ -140,7 +195,12 @@
         {@render header?.()}
         <Command.List bind:ref={listEl} class="sm-item-list min-h-0 flex-1 overflow-y-auto p-1">
           <Command.Empty class="px-2 py-5 text-center text-ui-xs text-muted-foreground">{empty}</Command.Empty>
-          {#each items as it (it.value)}
+          {#each shown as it, i (it.value)}
+            <!-- Group labels (plain case, per the menu recipe) when the list is
+                 browsed; a search ranks across groups, so it shows none. -->
+            {#if !search.trim() && it.group && it.group !== shown[i - 1]?.group}
+              <div class="px-2 pt-2 pb-1 text-ui-2xs font-medium text-muted-foreground first:pt-1" role="presentation">{it.group}</div>
+            {/if}
             <!-- cmdk scores a row against `value` + `keywords`, never its rendered
                  content. `value` is the selection key, so whenever it is an id
                  (a uuid, an account id) the visible label is not searchable at all
@@ -149,12 +209,12 @@
                  still pass `keywords` to add aliases. -->
             <Command.Item
               value={it.value}
-              keywords={it.keywords ?? (it.label ? [it.label] : undefined)}
+              keywords={[it.label ?? it.value, ...(it.keywords ?? [])]}
               disabled={it.disabled}
               onSelect={() => handleSelect(it)}
               onpointerenter={onhover ? () => onhover?.(it) : undefined}
               class={cn(
-                "flex w-full min-w-0 cursor-default items-center gap-1.5 rounded-md px-1.5 py-1.5 text-ui-xs outline-hidden select-none",
+                "flex min-h-7 w-full min-w-0 cursor-default items-center gap-2 rounded-sm px-2 py-1 text-ui-xs outline-hidden select-none",
                 "text-foreground/85 hover:bg-accent hover:text-foreground data-selected:bg-accent data-selected:text-foreground",
                 "data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-40",
                 "[&_svg]:pointer-events-none [&_svg]:shrink-0",

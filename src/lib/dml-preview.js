@@ -127,6 +127,55 @@ export function buildUpdateStatements(edits, rows, ctx) {
 }
 
 /**
+ * One UPDATE per edited row, setting all of that row's changed columns -
+ * matching the atomic apply (`pg_apply_table_changes`), which writes a row in a
+ * single statement. Rows keep their first-edit order; columns are sorted by
+ * name, as the backend sorts them.
+ * @param {{ rowIdx: number, colIdx: number, value: unknown }[]} edits
+ * @param {unknown[][]} rows
+ * @param {DmlContext} ctx
+ * @returns {string[]}
+ */
+export function buildRowUpdateStatements(edits, rows, ctx) {
+  const idx = nameIndex(ctx.columns)
+  const tbl = qualifiedTable(ctx)
+  /** @type {Map<number, Map<string, unknown>>} */
+  const byRow = new Map()
+  for (const e of edits) {
+    const col = ctx.columns[e.colIdx]
+    if (!col) continue
+    let sets = byRow.get(e.rowIdx)
+    if (!sets) byRow.set(e.rowIdx, (sets = new Map()))
+    sets.set(col.name, e.value)
+  }
+  /** @type {string[]} */
+  const out = []
+  for (const [rowIdx, sets] of byRow) {
+    const setClause = [...sets.keys()]
+      .sort()
+      .map((name) => `${quoteIdent(name, ctx.dialect)} = ${sqlLiteral(sets.get(name), ctx.dialect)}`)
+      .join(', ')
+    const where = pkWhere(rows[rowIdx], ctx, idx)
+    out.push(`UPDATE ${tbl} SET ${setClause} WHERE ${where ?? '/* no primary key */'};`)
+  }
+  return out
+}
+
+/**
+ * Per-row DELETEs, one statement per key - matching the atomic apply, which
+ * deletes row by row so it can check each one still exists.
+ * @param {number[]} rowIndices
+ * @param {unknown[][]} rows
+ * @param {DmlContext} ctx
+ * @returns {string[]}
+ */
+export function buildRowDeleteStatements(rowIndices, rows, ctx) {
+  const idx = nameIndex(ctx.columns)
+  const tbl = qualifiedTable(ctx)
+  return rowIndices.map((ri) => `DELETE FROM ${tbl} WHERE ${pkWhere(rows[ri], ctx, idx) ?? '/* no primary key */'};`)
+}
+
+/**
  * DELETE statements for the given row indices. Collapses to a single `IN (…)`
  * when the table has a single-column primary key (matching the backend).
  * @param {number[]} rowIndices
