@@ -1,5 +1,6 @@
 import { writable } from 'svelte/store'
 import { agentList } from '$lib/api.js'
+import { queryLanguageFor } from '$lib/ai-query-languages.js'
 
 /**
  * Local agent CLIs as AI providers. The backend (src-tauri/src/agents.rs)
@@ -125,20 +126,33 @@ const ACCESS_RULES = {
 /**
  * The agent's standing instructions. Short on purpose: the agent reads the
  * schema through its tools instead of carrying it in the prompt.
- * @param {{ dbType?: string, activeSchema?: string, activeTable?: string | null, tables?: string[], connectionName?: string, access?: AgentAccess }} ctx
+ * @param {{ dbType?: string, activeSchema?: string, activeTable?: string | null, tables?: string[], connectionName?: string, access?: AgentAccess, webAccess?: boolean }} ctx
  */
 export function agentSystemPrompt(ctx) {
   const tables = (ctx.tables ?? []).slice(0, 200)
+  // NoSQL engines: execute_sql takes the engine's own language (mongosh, CQL, ...).
+  const lang = queryLanguageFor(ctx.dbType)
   return [
     'You are the database assistant inside Stroke, a desktop database client.',
     `The connected database is ${ctx.dbType || 'unknown engine'}${ctx.connectionName ? ` ("${ctx.connectionName}")` : ''}, schema "${ctx.activeSchema || 'public'}".`,
     ctx.activeTable ? `The table open in Stroke is ${ctx.activeTable}.` : '',
     tables.length ? `Tables: ${tables.join(', ')}${(ctx.tables?.length ?? 0) > tables.length ? ', …' : ''}.` : '',
     '',
-    'Use the stroke tools (list_tables, describe_table, execute_sql, explain_query, get_database_stats) to look at the real schema and data before answering. Write SQL in this engine\'s dialect.',
+    lang
+      ? `Use the stroke tools (list_tables, describe_table, execute_sql) to look at the real data before answering. execute_sql takes ${lang.name}, not SQL.\n\n${lang.guide}`
+      : 'Use the stroke tools (list_tables, describe_table, sample_rows, execute_sql, explain_query, get_database_stats) to look at the real schema and data before answering. Write SQL in this engine\'s dialect.',
     ACCESS_RULES[ctx.access ?? 'read'],
-    'Stroke refuses any statement above that level. When a change is needed that your level does not allow, do not try it: put the statement in a ```sql block, and Stroke shows it with a Run button so the user can review and run it.',
+    `Stroke refuses any statement above that level. When a change is needed that your level does not allow, do not try it: hand it to the user with open_in_stroke (query) - it opens in Stroke's editor for them to review and run - or put it in a \`\`\`${lang?.fence ?? 'sql'} block.`,
     'Answer in Markdown. Show query results as Markdown tables when they are small.',
+    '',
+    // Stroke draws these itself; without being told, an agent believed it
+    // could only make text and drew bar charts out of block characters.
+    'Stroke renders charts and diagrams in the chat. To chart data, run the query, then write a ```chart block holding JSON: {"type": "bar", "title": "...", "x_col": "<column>", "y_col": "<column>", "group_col": "<optional series column>", "data": [<the result rows as objects>]}. Types: bar, bar-horizontal, bar-grouped, bar-stacked, line, area, line-multi, pie, donut, scatter, heatmap, histogram, funnel, treemap, sankey, gauge, radar, box-plot. Stroke draws it as an interactive chart (tooltips, zoom, export).',
+    'For a diagram (ERD, flow, sequence, state), write a ```mermaid block whose first line is the diagram type (erDiagram, flowchart TD, …); Stroke draws it.',
+    'Never draw a chart with text characters, and never say you cannot make charts or images.',
+    ctx.webAccess
+      ? 'Web access is on: for facts the database cannot answer - current exchange rates and prices, outside facts, docs, error codes - use your web search and fetch tools, then cite the URL. Do not guess or say you cannot know.'
+      : '',
   ].filter(Boolean).join('\n')
 }
 
@@ -153,6 +167,18 @@ const STEP_LABELS = {
   export_query: 'Exported query',
   list_databases: 'Listed connections',
   current_database: 'Checked connection',
+  sample_rows: 'Sampled rows',
+  open_in_stroke: 'Opened in Stroke',
+  WebSearch: 'Searched the web',
+  WebFetch: 'Read page',
+  web_search: 'Searched the web',
+  web_fetch: 'Read page',
+  webfetch: 'Read page',
+}
+
+/** A web search or page fetch (the agent's own tools, allowed with web access). @param {string} tool */
+export function isWebTool(tool) {
+  return /^(websearch|webfetch|web_search|web_fetch)$/i.test(tool)
 }
 
 /**
@@ -163,7 +189,7 @@ const STEP_LABELS = {
 export function stepLabel(step) {
   const label = STEP_LABELS[step.tool]
     ?? step.tool.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase())
-  return { label, detail: step.tool === 'describe_table' ? step.detail : '' }
+  return { label, detail: step.tool === 'describe_table' || isWebTool(step.tool) ? step.detail : '' }
 }
 
 /**

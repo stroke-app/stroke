@@ -222,14 +222,19 @@ async fn read_codex_user_mcp_names() -> Vec<String> {
 }
 
 /// The per-CLI part of "database tools only", plus the effort level.
-async fn lock_down(agent: &str, ctx: &mut SessionCtx, url: &str, token: &str, effort: Option<&str>) {
+async fn lock_down(agent: &str, ctx: &mut SessionCtx, url: &str, token: &str, effort: Option<&str>, web: bool) {
     match agent {
         "claude" => {
             ctx.allowed_tools = vec![format!("mcp__{MCP_NAME}")];
+            if web {
+                ctx.allowed_tools.push("WebSearch".into());
+                ctx.allowed_tools.push("WebFetch".into());
+            }
             ctx.extra_args = vec![
-                // No built-in tools at all: no shell, files, web or subagents.
+                // No built-in tools: no shell, files or subagents. Web search
+                // and fetch only when the user turned on web access.
                 "--tools".into(),
-                String::new(),
+                if web { "WebSearch,WebFetch".into() } else { String::new() },
                 // Only Stroke's server, not the ones in the user's config.
                 "--strict-mcp-config".into(),
                 // No user hooks or permission rules either.
@@ -259,6 +264,10 @@ async fn lock_down(agent: &str, ctx: &mut SessionCtx, url: &str, token: &str, ef
                 a.push("-c".into());
                 a.push(format!("model_reasoning_effort=\"{e}\""));
             }
+            if web {
+                a.push("-c".into());
+                a.push("tools.web_search=true".into());
+            }
             for name in codex_user_mcp_names().await {
                 a.push("-c".into());
                 a.push(format!("mcp_servers.{name}.enabled=false"));
@@ -276,7 +285,7 @@ async fn lock_down(agent: &str, ctx: &mut SessionCtx, url: &str, token: &str, ef
                     "enabled": true,
                 }},
                 // Every tool off, then Stroke's back on.
-                "tools": { "*": false, format!("{MCP_NAME}_*"): true },
+                "tools": { "*": false, format!("{MCP_NAME}_*"): true, "webfetch": web },
             });
             ctx.env.push(("OPENCODE_CONFIG_CONTENT".into(), config.to_string()));
         }
@@ -286,6 +295,17 @@ async fn lock_down(agent: &str, ctx: &mut SessionCtx, url: &str, token: &str, ef
 
 /// Whether a permission request is for one of Stroke's own tools. Anything
 /// else is outside "database tools only" and is refused.
+/// A web search or page fetch - allowed only while web access is on.
+fn is_web_tool(action: &Action) -> bool {
+    match action {
+        Action::Other { name, .. } => {
+            let n = name.to_ascii_lowercase();
+            matches!(n.as_str(), "websearch" | "webfetch" | "web_search" | "web_fetch")
+        }
+        _ => false,
+    }
+}
+
 fn is_stroke_tool(action: &Action) -> bool {
     match action {
         Action::McpCall { server, .. } => server == MCP_NAME,
@@ -311,8 +331,10 @@ pub async fn agent_start(
     resume: Option<String>,
     effort: Option<String>,
     access: Option<String>,
+    web_access: Option<bool>,
     on_event: Channel<AgentEvent>,
 ) -> Result<(), String> {
+    let web = web_access.unwrap_or(false);
     ensure_user_path().await;
     let adapter = adapter(&agent)?;
     let effort = effort.filter(|e| EFFORTS.contains(&e.as_str()));
@@ -355,7 +377,7 @@ pub async fn agent_start(
         allowed_tools: Vec::new(),
         extra_args: Vec::new(),
     };
-    lock_down(&agent, &mut ctx, &url, &token, effort.as_deref()).await;
+    lock_down(&agent, &mut ctx, &url, &token, effort.as_deref(), web).await;
 
     let mut session = adapter
         .spawn(ctx)
@@ -382,7 +404,7 @@ pub async fn agent_start(
             };
             match next {
                 Next::Event(Some(AgentEvent::Permission { id, action, .. })) => {
-                    let decision = if is_stroke_tool(&action) { Decision::Allow } else { Decision::Deny };
+                    let decision = if is_stroke_tool(&action) || (web && is_web_tool(&action)) { Decision::Allow } else { Decision::Deny };
                     let _ = session.decide(id, decision).await;
                 }
                 Next::Event(Some(ev)) => {
@@ -457,6 +479,12 @@ mod tests {
         assert!(is_stroke_tool(&other("stroke_list_tables")));
         assert!(!is_stroke_tool(&other("mcp__strokes__x")));
         assert!(!is_stroke_tool(&other("bash")));
+        // Web tools are their own class: allowed only when web access is on.
+        assert!(is_web_tool(&other("WebSearch")));
+        assert!(is_web_tool(&other("WebFetch")));
+        assert!(is_web_tool(&other("web_search")));
+        assert!(!is_web_tool(&other("bash")));
+        assert!(!is_web_tool(&mcp("stroke")));
         assert!(!is_stroke_tool(&Action::Bash { command: "ls".into(), cwd: None }));
     }
 }

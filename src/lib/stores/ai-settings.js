@@ -1,5 +1,6 @@
 import { writable, get } from 'svelte/store'
 import { invoke } from '@tauri-apps/api/core'
+import { notifyLocalChange } from '$lib/sync/changes.js'
 
 // ── Provider catalogue ───────────────────────────────────────────────────────
 
@@ -236,6 +237,7 @@ function modelShortName(model) {
 /** @param {ModelProfile[]} profiles */
 function saveProfiles(profiles) {
   try { localStorage.setItem(PROFILES_KEY, JSON.stringify(profiles)) } catch { /* ignore */ }
+  notifyLocalChange('settings')
 }
 
 function loadActiveId() {
@@ -245,6 +247,20 @@ function loadActiveId() {
 /** @param {string} id */
 function saveActiveId(id) {
   try { localStorage.setItem(ACTIVE_KEY, id) } catch { /* ignore */ }
+  notifyLocalChange('settings')
+}
+
+/**
+ * Take the profile list (and active choice) another device synced. Profiles
+ * carry no keys: those stay in this device's keychain under the profile id.
+ * @param {ModelProfile[]} profiles @param {string | null} activeId
+ */
+export async function replaceProfiles(profiles, activeId) {
+  const list = Array.isArray(profiles) ? profiles.filter((p) => p && typeof p.id === 'string') : []
+  aiProfiles.set(list)
+  saveProfiles(list)
+  const nextActive = activeId && list.some((p) => p.id === activeId) ? activeId : list[0]?.id ?? null
+  if (nextActive && nextActive !== get(activeProfileId)) await setActiveProfile(nextActive)
 }
 
 // ── Stores ───────────────────────────────────────────────────────────────────

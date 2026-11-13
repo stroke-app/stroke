@@ -1,4 +1,5 @@
 <script>
+  import { Button } from '$lib/components/ui/button/index.js'
   import { profileAgent } from "$lib/local-agents.js";
   import { onDestroy } from "svelte";
   import { fetchOllamaRegistry, formatModelSize } from "$lib/ollama-registry.js";
@@ -452,7 +453,7 @@
 
 {#snippet checkBadge()}
   <span class="flex size-4 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-[0_1px_2px_rgba(0,0,0,0.25)]">
-    <Check class="size-3" strokeWidth={3.5} />
+    <Check class="size-3 shrink-0" strokeWidth={3.5} />
   </span>
 {/snippet}
 
@@ -476,12 +477,12 @@
     </button>
     <button
       type="button"
-      class="inline-flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+      class="hit-area inline-flex size-5 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
       aria-label="Copy {m.pull}"
       title={m.pull}
       onclick={() => copyCommand(m.pull)}
     >
-      {#if emptyCopied === m.pull}<Check class="size-3 text-success" />{:else}<Copy class="size-3" />{/if}
+      {#if emptyCopied === m.pull}<Check class="size-3 shrink-0 text-success" />{:else}<Copy class="size-3 shrink-0" />{/if}
     </button>
   </div>
 {/snippet}
@@ -506,7 +507,7 @@
             Right-click a model to edit or delete it.
           </Dialog.Description>
         </div>
-        <Dialog.Close class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/50 hover:text-muted-foreground focus-visible:outline-none" />
+        <Dialog.Close class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:outline-none" />
       </div>
 
       <div class="app-scroll max-h-[min(60vh,26rem)] overflow-y-auto px-2 py-1.5">
@@ -592,16 +593,16 @@
       <div class="border-b border-border/25 px-4 py-3.5">
         <div class="flex items-center gap-2">
           <button type="button"
-            class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+            class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
             onclick={prevStep}
             title={step === 0 ? "Cancel" : "Back"}
           >
-            <ChevronLeft class="size-3.5" />
+            <ChevronLeft class="size-3.5 shrink-0" />
           </button>
           <Dialog.Title class="flex-1 text-center text-ui-sm font-semibold text-foreground">
             {editingId ? "Edit model" : "Add model"}
           </Dialog.Title>
-          <Dialog.Close class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/50 hover:text-muted-foreground focus-visible:outline-none" />
+          <Dialog.Close class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:outline-none" />
         </div>
 
         <!-- Progress. Numbered bubbles joined by connector lines are a lot of
@@ -658,8 +659,8 @@
           {#if isCopilot}
             <!-- Copilot: show dynamic models fetched from the API -->
             {#if copilotModelsLoading}
-              <div class="flex items-center justify-center gap-2 py-4 text-ui-xs text-muted-foreground">
-                <Loader2 class="size-3.5 animate-spin" />Fetching available models…
+              <div class="loading-reveal flex items-center justify-center gap-2 py-4 text-ui-xs text-muted-foreground">
+                <Loader2 class="size-3.5 shrink-0 animate-spin" />Fetching available models…
               </div>
             {:else}
               {@const list = copilotModels.length > 0 ? copilotModels.map(m => ({ label: m.name, model: m.id, tag: '' })) : modelPresets}
@@ -727,11 +728,11 @@
                     disabled={omniBusy !== ''}
                   >
                     {#if omniBusy === 'installing'}
-                      <Loader2 class="size-3.5 animate-spin" />Installing…
+                      <Loader2 class="size-3.5 shrink-0 animate-spin" />Installing…
                     {:else}
                       <!-- Not `-g`: Stroke installs its own copy under the app
                            data directory, so this never needs elevation. -->
-                      <Plus class="size-3.5" />Install OmniRoute
+                      <Plus class="size-3.5 shrink-0" />Install OmniRoute
                     {/if}
                   </button>
                 {:else if omniEnv && !omniServing}
@@ -742,9 +743,9 @@
                     disabled={omniBusy !== ''}
                   >
                     {#if omniBusy === 'starting'}
-                      <Loader2 class="size-3.5 animate-spin" />Starting…
+                      <Loader2 class="size-3.5 shrink-0 animate-spin" />Starting…
                     {:else}
-                      <Waypoints class="size-3.5" />Start the gateway
+                      <Waypoints class="size-3.5 shrink-0" />Start the gateway
                     {/if}
                   </button>
                 {/if}
@@ -769,8 +770,8 @@
 
             <!-- Local server: list what is actually installed, never a guessed tag -->
             {#if localModelsLoading}
-              <div class="flex items-center justify-center gap-2 py-4 text-ui-xs text-muted-foreground">
-                <Loader2 class="size-3.5 animate-spin" />Looking for installed models…
+              <div class="loading-reveal flex items-center justify-center gap-2 py-4 text-ui-xs text-muted-foreground">
+                <Loader2 class="size-3.5 shrink-0 animate-spin" />Looking for installed models…
               </div>
             {:else if localModels.length > 0}
               {@render freeToggle()}
@@ -819,18 +820,18 @@
                        Model ID below, so Continue works without retyping it. -->
 
                   {#if suggestionsLoading}
-                    <div class="flex items-center gap-2 py-1 text-ui-3xs text-muted-foreground">
-                      <Loader2 class="size-3 animate-spin" />Loading what Ollama offers…
+                    <div class="loading-reveal flex items-center gap-2 py-1 text-ui-3xs text-muted-foreground">
+                      <Loader2 class="size-3 shrink-0 animate-spin" />Loading what Ollama offers…
                     </div>
                   {:else if ollamaSuggestions.local.length || ollamaSuggestions.cloud.length}
                     {#if ollamaSuggestions.local.length}
-                      <p class="text-ui-3xs uppercase tracking-wider text-muted-foreground">Runs on this machine</p>
+                      <p class="text-ui-3xs uppercase tracking-[0.06em] text-muted-foreground">Runs on this machine</p>
                       <div class="flex flex-col gap-1">
                         {#each ollamaSuggestions.local.slice(0, 3) as m (m.id)}{@render suggestionRow(m)}{/each}
                       </div>
                     {/if}
                     {#if ollamaSuggestions.cloud.length}
-                      <p class="mt-0.5 text-ui-3xs uppercase tracking-wider text-muted-foreground">
+                      <p class="mt-0.5 text-ui-3xs uppercase tracking-[0.06em] text-muted-foreground">
                         Ollama Cloud · runs on their hardware
                       </p>
                       <div class="flex flex-col gap-1">
@@ -866,7 +867,7 @@
               <div class="mt-2 flex flex-col gap-1.5">
                 <button
                   type="button"
-                  class="flex items-center gap-1.5 self-start text-ui-3xs uppercase tracking-wider text-muted-foreground transition-colors hover:text-foreground"
+                  class="flex items-center gap-1.5 self-start text-ui-3xs uppercase tracking-[0.06em] text-muted-foreground transition-colors hover:text-foreground"
                   onclick={() => (cloudOpen = !cloudOpen)}
                 >
                   <ChevronRight class={cn("size-3 transition-transform duration-150", cloudOpen && "rotate-90")} />
@@ -894,20 +895,19 @@
                     {isOllama ? "Ollama is not answering" : isOmniroute ? "The gateway is not answering" : "The server is not answering"}
                   </p>
                   {#if isOmniroute && omniEnv?.omniroute && !omniServing}
-                    <button
-                      type="button"
-                      class="inline-flex h-6 shrink-0 items-center gap-1 rounded-md bg-primary px-2 text-ui-3xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+                    <Button
+                      class="shrink-0" size="sm"
                       onclick={() => void startOmni()}
                       disabled={omniBusy !== ''}
-                    >
-                      {#if omniBusy === 'starting'}<Loader2 class="size-3 animate-spin" />Starting{:else}<Waypoints class="size-3" />Start{/if}
-                    </button>
+>
+                      {#if omniBusy === 'starting'}<Loader2 class="size-3 shrink-0 animate-spin" />Starting{:else}<Waypoints class="size-3 shrink-0" />Start{/if}
+                    </Button>
                   {:else}
                     <button
                       type="button"
                       class= "field-surface inline-flex h-6 shrink-0 items-center gap-1 px-2 text-ui-3xs text-muted-foreground transition-colors hover:text-foreground"
                       onclick={() => void loadLocalModels()}
-                    ><RefreshCw class="size-3" />Retry</button>
+                    ><RefreshCw class="size-3 shrink-0" />Retry</button>
                   {/if}
                 </div>
                 <p class="text-ui-3xs text-muted-foreground">
@@ -1011,7 +1011,7 @@
                     onclick={() => (showKey = !showKey)}
                     tabindex="-1"
                   >
-                    {#if showKey}<EyeOff class="size-3.5" />{:else}<Eye class="size-3.5" />{/if}
+                    {#if showKey}<EyeOff class="size-3.5 shrink-0" />{:else}<Eye class="size-3.5 shrink-0" />{/if}
                   </button>
                 </div>
                 {#if needsKey}
@@ -1068,33 +1068,33 @@
             class= "field-surface inline-flex h-7 items-center gap-1.5 px-3 text-ui-xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground disabled:opacity-40"
               disabled={testState === "testing" || !formModel.trim()}
               onclick={testConnection}>
-              {#if testState === "testing"}<Loader2 class="size-3 animate-spin" />Testing…{:else}Test{/if}
+              {#if testState === "testing"}<Loader2 class="size-3 shrink-0 animate-spin" />Testing…{:else}Test{/if}
             </button>
           {/if}
           {#if editingId}
             <button type="button"
-              class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/40 hover:text-destructive"
+              class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-destructive"
               onclick={() => void handleDelete(editingId)}>
-              <Trash2 class="size-3.5" />
+              <Trash2 class="size-3.5 shrink-0" />
             </button>
           {/if}
         </div>
 
         {#if step < STEPS.length - 1}
-          <button type="button"
-            class="inline-flex h-7 items-center gap-1 rounded-md bg-primary px-3 text-ui-xs font-medium text-primary-foreground elevate-1 transition-[background-color,transform] duration-150 hover:bg-primary/90 active:scale-[0.97] disabled:opacity-40"
+          <Button
+             size="sm"
             disabled={!stepCanProceed}
             onclick={nextStep}>
-            Continue <ChevronRight class="size-3" />
-          </button>
+            Continue <ChevronRight class="size-3 shrink-0" />
+          </Button>
         {:else}
-          <button type="button"
-            class="inline-flex h-7 items-center gap-1.5 rounded-md bg-primary px-3 text-ui-xs font-medium text-primary-foreground elevate-1 transition-[background-color,transform] duration-150 hover:bg-primary/90 active:scale-[0.97] disabled:opacity-40"
+          <Button
+             size="sm"
             disabled={saving || !formModel.trim()}
             onclick={() => void save()}>
-            {#if saving}<Loader2 class="size-3 animate-spin" />{/if}
+            {#if saving}<Loader2 class="size-3 shrink-0 animate-spin" />{/if}
             {editingId ? "Save" : "Add model"}
-          </button>
+          </Button>
         {/if}
       </div>
     {/if}
