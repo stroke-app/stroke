@@ -73,7 +73,7 @@
       {/if}
       {#if imgError}
         <div class="flex h-[80px] w-[200px] flex-col items-center justify-center gap-1.5 text-muted-foreground">
-          <ImageOff class="size-5 opacity-40" />
+          <ImageOff class="size-5 shrink-0 opacity-40" />
           <span class="text-ui-2xs">Could not load image</span>
         </div>
       {:else}
@@ -109,7 +109,7 @@
         title="Open full screen"
         onclick={(e) => { e.stopPropagation(); onexpand() }}
       >
-        <Maximize2 class="size-3.5" />
+        <Maximize2 class="size-3.5 shrink-0" />
       </button>
     {/if}
     <button
@@ -118,7 +118,7 @@
       title="Open in browser"
       onclick={(e) => { e.stopPropagation(); onopen() }}
     >
-      <ExternalLink class="size-3.5" />
+      <ExternalLink class="size-3.5 shrink-0" />
     </button>
   </div>
 </div>

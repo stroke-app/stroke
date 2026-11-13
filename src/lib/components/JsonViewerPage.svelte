@@ -217,22 +217,22 @@
       {#if parsedJson !== null}
         <JsonWrapToggle />
         <button type="button"
-          class="inline-flex items-center gap-1 rounded px-2 py-0.5 font-mono text-ui-2xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          class="inline-flex items-center gap-1 rounded-md px-2 py-0.5 font-mono text-ui-2xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           onclick={formatJson}
-        ><Wand2 class="size-3" />Format</button>
+        ><Wand2 class="size-3 shrink-0" />Format</button>
       {/if}
       {#if rawJson.trim()}
         <button type="button"
-          class="inline-flex items-center gap-1 rounded px-2 py-0.5 font-mono text-ui-2xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          class="inline-flex items-center gap-1 rounded-md px-2 py-0.5 font-mono text-ui-2xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           onclick={handleCopyInput}
         >
-          {#if copiedInput}<CheckCheck class="size-3 text-success" />{:else}<Copy class="size-3" />{/if}
+          {#if copiedInput}<CheckCheck class="size-3 shrink-0 text-success" />{:else}<Copy class="size-3 shrink-0" />{/if}
           Copy
         </button>
         <button type="button"
-          class="inline-flex size-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+          class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
           onclick={clearInput}
-        ><Trash2 class="size-3" /></button>
+        ><Trash2 class="size-3 shrink-0" /></button>
       {/if}
     </div>
   </div>
@@ -290,14 +290,14 @@
 
     <div class="ml-auto flex shrink-0 items-center gap-0.5">
       <button type="button"
-        class="inline-flex items-center gap-1 rounded px-2 py-0.5 font-mono text-ui-2xs transition-colors {resultJson ? 'text-muted-foreground hover:bg-muted hover:text-foreground' : 'cursor-default text-muted-foreground'}"
+        class="inline-flex items-center gap-1 rounded-md px-2 py-0.5 font-mono text-ui-2xs transition-colors {resultJson ? 'text-muted-foreground hover:bg-muted hover:text-foreground' : 'cursor-default text-muted-foreground'}"
         disabled={!resultJson}
         onclick={handleCopyResult}
       >
         {#if copied}
-          <CheckCheck class="size-3 text-success" />Copied
+          <CheckCheck class="size-3 shrink-0 text-success" />Copied
         {:else}
-          <Copy class="size-3" />Copy result
+          <Copy class="size-3 shrink-0" />Copy result
         {/if}
       </button>
     </div>

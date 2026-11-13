@@ -344,7 +344,7 @@
       libsql: 'LibSQL', clickhouse: 'ClickHouse', duckdb: 'DuckDB', mssql: 'SQL Server',
     }[connectionType ?? ''] ?? (connectionType ?? 'This engine')}
     <div class="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 p-8 text-center">
-      <ShieldCheck class="size-10 text-muted-foreground" />
+      <ShieldCheck class="size-10 shrink-0 text-muted-foreground" />
       <div class="space-y-1.5">
         <p class="font-mono text-ui font-medium text-foreground">{engineLabel} does not support roles or RLS</p>
         <p class="font-mono text-ui-xs text-muted-foreground">
@@ -363,7 +363,7 @@
           "relative flex h-8 items-center px-3 font-mono text-ui-xs transition-colors",
           activeTab === tab.id
             ? "text-foreground"
-            : "text-muted-foreground hover:text-muted-foreground",
+            : "text-muted-foreground hover:text-foreground",
         )}
         onclick={() => { activeTab = /** @type {any} */ (tab.id) }}
       >
@@ -376,7 +376,7 @@
     <div class="flex-1"></div>
     <button
       type="button"
-      class="mr-1 inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground"
+      class="mr-1 inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
       title="Refresh (⌘R)"
       onclick={refresh}
     >
@@ -399,15 +399,15 @@
           class= "field-surface inline-flex h-7 items-center gap-1.5 bg-background px-2.5 font-mono text-ui-xs text-muted-foreground transition-colors hover:bg-accent/35 hover:text-foreground"
           onclick={() => openRoleModal()}
         >
-          <Plus class="size-3.5" />New role
+          <Plus class="size-3.5 shrink-0" />New role
         </button>
       </div>
 
       {#if rolesLoading || roles === null}
         <div
-          class="flex items-center justify-center gap-2 py-16 text-muted-foreground"
+          class="loading-reveal flex items-center justify-center gap-2 py-16 text-muted-foreground"
         >
-          <RefreshCw class="size-4 animate-spin" /><span
+          <RefreshCw class="size-4 shrink-0 animate-spin" /><span
             class="font-mono text-ui-sm">Loading…</span
           >
         </div>
@@ -427,7 +427,7 @@
         <div
           class="flex h-full flex-col items-center justify-center gap-3 py-16 text-center"
         >
-          <Users class="size-10 text-muted-foreground" />
+          <Users class="size-10 shrink-0 text-muted-foreground" />
           <p class="font-mono text-ui text-muted-foreground">No roles found</p>
         </div>
       {:else}
@@ -520,9 +520,9 @@
                 <td class="px-2 py-2">
                   <button
                     type="button"
-                    class="opacity-0 inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground group-hover/row:opacity-100"
+                    class="opacity-0 inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground group-hover/row:opacity-100"
                     onclick={() => openRoleModal(role)}
-                    title="Edit"><KeyRound class="size-3.5" /></button
+                    title="Edit"><KeyRound class="size-3.5 shrink-0" /></button
                   >
                 </td>
               </tr>
@@ -534,8 +534,8 @@
       <!-- Permissions (master-detail) -->
     {:else if activeTab === "permissions"}
       {#if rolesLoading || roles === null}
-        <div class="flex items-center justify-center gap-2 py-16 text-muted-foreground">
-          <RefreshCw class="size-4 animate-spin" /><span class="font-mono text-ui-sm">Loading…</span>
+        <div class="loading-reveal flex items-center justify-center gap-2 py-16 text-muted-foreground">
+          <RefreshCw class="size-4 shrink-0 animate-spin" /><span class="font-mono text-ui-sm">Loading…</span>
         </div>
       {:else if rolesError}
         <div class="px-4 py-8 text-center">
@@ -547,7 +547,7 @@
           <!-- Left: role tree -->
           <aside class="w-56 shrink-0 overflow-y-auto border-r border-border/40">
             {#each roleGroups as group (group.id)}
-              <div class="px-3 pt-3 pb-1 font-mono text-ui-3xs uppercase tracking-wider text-muted-foreground">
+              <div class="px-3 pt-3 pb-1 font-mono text-ui-3xs uppercase tracking-[0.06em] text-muted-foreground">
                 {group.label} · {group.items.length}
               </div>
               {#each group.items as r (r.rolname)}
@@ -577,7 +577,7 @@
           <div class="min-w-0 flex-1 overflow-y-auto">
             {#if !selectedRoleObj}
               <div class="flex h-full flex-col items-center justify-center gap-3 py-16 text-center">
-                <Users class="size-9 text-muted-foreground" />
+                <Users class="size-9 shrink-0 text-muted-foreground" />
                 <p class="font-mono text-ui-xs text-muted-foreground">Select a role to inspect its permissions</p>
               </div>
             {:else}
@@ -598,12 +598,12 @@
                   type="button"
                   class= "field-surface ml-auto inline-flex h-7 items-center gap-1.5 bg-background px-2.5 font-mono text-ui-xs text-muted-foreground transition-colors hover:bg-accent/35 hover:text-foreground"
                   onclick={() => openRoleModal(role)}
-                ><KeyRound class="size-3.5" />Edit</button>
+                ><KeyRound class="size-3.5 shrink-0" />Edit</button>
               </div>
 
               <!-- Role attributes -->
               <section class="border-b border-border/40 px-4 py-3">
-                <p class="mb-2 font-mono text-ui-3xs uppercase tracking-wider text-muted-foreground">Role attributes</p>
+                <p class="mb-2 font-mono text-ui-3xs uppercase tracking-[0.06em] text-muted-foreground">Role attributes</p>
                 <div class="flex flex-wrap gap-1.5">
                   {#each ROLE_ATTRS as attr (attr.key)}
                     {@const on = bool(role[attr.key])}
@@ -613,7 +613,7 @@
                         on ? "bg-primary/10 text-primary" : "bg-muted/60 text-muted-foreground",
                       )}
                     >
-                      {#if on}<Check class="size-3" />{/if}{attr.label}
+                      {#if on}<Check class="size-3 shrink-0" />{/if}{attr.label}
                     </span>
                   {/each}
                   <span class="inline-flex items-center gap-1 rounded-full bg-muted/60 px-2 py-0.5 font-mono text-ui-3xs text-muted-foreground">
@@ -627,7 +627,7 @@
 
               <!-- Membership -->
               <section class="border-b border-border/40 px-4 py-3">
-                <p class="mb-2 font-mono text-ui-3xs uppercase tracking-wider text-muted-foreground">Inherited from · member of</p>
+                <p class="mb-2 font-mono text-ui-3xs uppercase tracking-[0.06em] text-muted-foreground">Inherited from · member of</p>
                 {#if memberOf.length}
                   <div class="flex flex-wrap gap-1.5">
                     {#each memberOf as m (m)}
@@ -638,7 +638,7 @@
                   <p class="font-mono text-ui-2xs text-muted-foreground">Not a member of any role</p>
                 {/if}
                 {#if membersOfSelected.length}
-                  <p class="mt-3 mb-2 font-mono text-ui-3xs uppercase tracking-wider text-muted-foreground">Granted to · members</p>
+                  <p class="mt-3 mb-2 font-mono text-ui-3xs uppercase tracking-[0.06em] text-muted-foreground">Granted to · members</p>
                   <div class="flex flex-wrap gap-1.5">
                     {#each membersOfSelected as m (m)}
                       <button type="button" class="rounded-full bg-muted/60 px-2 py-0.5 font-mono text-ui-3xs text-muted-foreground transition-colors hover:bg-accent/40" onclick={() => selectRole(m)}>{m}</button>
@@ -649,9 +649,9 @@
 
               <!-- Database access -->
               <section class="px-4 py-3">
-                <p class="mb-2 font-mono text-ui-3xs uppercase tracking-wider text-muted-foreground">Database access</p>
+                <p class="mb-2 font-mono text-ui-3xs uppercase tracking-[0.06em] text-muted-foreground">Database access</p>
                 {#if dbGrantsLoading || dbGrants === null}
-                  <div class="flex items-center gap-2 py-6 text-muted-foreground"><RefreshCw class="size-3.5 animate-spin" /><span class="font-mono text-ui-xs">Loading grants…</span></div>
+                  <div class="loading-reveal flex items-center gap-2 py-6 text-muted-foreground"><RefreshCw class="size-3.5 shrink-0 animate-spin" /><span class="font-mono text-ui-xs">Loading grants…</span></div>
                 {:else if dbGrantsError}
                   <p class="font-mono text-ui-2xs text-destructive">{dbGrantsError}</p>
                 {:else if dbGrants.length === 0}
@@ -674,7 +674,7 @@
                             {#each ["can_connect", "can_create", "can_temp"] as col (col)}
                               <td class="px-3 py-1.5 text-center">
                                 {#if bool(g[col])}
-                                  <Check class="mx-auto size-3.5 text-primary" />
+                                  <Check class="mx-auto size-3.5 shrink-0 text-primary" />
                                 {:else}
                                   <span class="text-muted-foreground">—</span>
                                 {/if}
@@ -707,15 +707,15 @@
           class= "field-surface inline-flex h-7 items-center gap-1.5 bg-background px-2.5 font-mono text-ui-xs text-muted-foreground transition-colors hover:bg-accent/35 hover:text-foreground"
           onclick={openPolicyModal}
         >
-          <Plus class="size-3.5" />New policy
+          <Plus class="size-3.5 shrink-0" />New policy
         </button>
       </div>
 
       {#if policiesLoading || policies === null}
         <div
-          class="flex items-center justify-center gap-2 py-16 text-muted-foreground"
+          class="loading-reveal flex items-center justify-center gap-2 py-16 text-muted-foreground"
         >
-          <RefreshCw class="size-4 animate-spin" /><span
+          <RefreshCw class="size-4 shrink-0 animate-spin" /><span
             class="font-mono text-ui-sm">Loading…</span
           >
         </div>
@@ -735,7 +735,7 @@
         <div
           class="flex h-full flex-col items-center justify-center gap-3 py-20 text-center"
         >
-          <ShieldCheck class="size-10 text-muted-foreground" />
+          <ShieldCheck class="size-10 shrink-0 text-muted-foreground" />
           <p class="font-mono text-ui text-muted-foreground">
             No policies found
           </p>
@@ -746,7 +746,7 @@
             type="button"
             class= "field-surface mt-3 inline-flex h-7 items-center gap-1.5 bg-background px-2.5 font-mono text-ui-xs text-muted-foreground transition-colors hover:bg-accent/35 hover:text-foreground"
             onclick={openPolicyModal}
-            ><Plus class="size-3.5" />Create first policy</button
+            ><Plus class="size-3.5 shrink-0" />Create first policy</button
           >
         </div>
       {:else}
@@ -813,7 +813,7 @@
                 <td class="px-2 py-2">
                   <button
                     type="button"
-                    class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground"
+                    class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                     onclick={() => {
                       expandedPolicy = expandedPolicy === i ? null : i;
                     }}
@@ -840,7 +840,7 @@
                       {#if pol.qual}
                         <div>
                           <p
-                            class="mb-1.5 font-mono text-ui-2xs text-muted-foreground uppercase tracking-wider"
+                            class="mb-1.5 font-mono text-ui-2xs text-muted-foreground uppercase tracking-[0.06em]"
                           >
                             USING
                           </p>
@@ -851,7 +851,7 @@
                       {#if pol.with_check}
                         <div>
                           <p
-                            class="mb-1.5 font-mono text-ui-2xs text-muted-foreground uppercase tracking-wider"
+                            class="mb-1.5 font-mono text-ui-2xs text-muted-foreground uppercase tracking-[0.06em]"
                           >
                             WITH CHECK
                           </p>
@@ -880,7 +880,7 @@
         {#if rlsTables && rlsTables.length > 0}
           <div class="h-1 flex-1 overflow-hidden rounded-full bg-muted">
             <div
-              class="h-full rounded-full bg-primary/50 transition-all"
+              class="h-full rounded-full bg-primary/50 transition-[width]"
               style="width:{Math.round(
                 (enabledCount / rlsTables.length) * 100,
               )}%"
@@ -891,9 +891,9 @@
 
       {#if rlsLoading || rlsTables === null}
         <div
-          class="flex items-center justify-center gap-2 py-16 text-muted-foreground"
+          class="loading-reveal flex items-center justify-center gap-2 py-16 text-muted-foreground"
         >
-          <RefreshCw class="size-4 animate-spin" /><span
+          <RefreshCw class="size-4 shrink-0 animate-spin" /><span
             class="font-mono text-ui-sm">Loading…</span
           >
         </div>
@@ -948,19 +948,19 @@
                     <span
                       class="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-px font-mono text-ui-3xs font-medium text-primary"
                     >
-                      <Lock class="size-3" />On
+                      <Lock class="size-3 shrink-0" />On
                     </span>
                   {:else}
                     <span
                       class="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-px font-mono text-ui-3xs text-muted-foreground"
                     >
-                      <LockOpen class="size-3" />Off
+                      <LockOpen class="size-3 shrink-0" />Off
                     </span>
                   {/if}
                 </td>
                 <td class="px-3 py-2 text-center">
                   {#if forced}
-                    <Check class="mx-auto size-3.5 text-primary" />
+                    <Check class="mx-auto size-3.5 shrink-0 text-primary" />
                   {:else}
                     <span class="text-muted-foreground">—</span>
                   {/if}

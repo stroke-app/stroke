@@ -10,6 +10,7 @@
   // the widget is a fix everywhere rather than in whichever copy was noticed.
   import { cn } from '$lib/utils.js'
   import { splitPath } from '$lib/jsonpath.js'
+  import Kbd from './Kbd.svelte'
 
   let {
     /** @type {import('$lib/jsonpath.js').CompletionItem[]} */
@@ -41,20 +42,24 @@
     return { head: label.slice(0, at), hit: label.slice(at, at + token.length), tail: label.slice(at + token.length) }
   }
 
-  /** @param {string} kind */
+  /**
+   * A small glyph per kind, coloured with the app's JSON tokens (the same
+   * colours the JSON view paints values in), and the kind's name.
+   * @param {string} kind
+   */
   function kindMeta(kind) {
     switch (kind) {
-      case 'object':   return { dot: 'bg-blue-400',   label: 'obj' }
-      case 'array':    return { dot: 'bg-amber-400',  label: 'arr' }
-      case 'string':   return { dot: 'bg-green-400',  label: 'str' }
-      case 'number':   return { dot: 'bg-yellow-400', label: 'num' }
-      case 'boolean':  return { dot: 'bg-purple-400', label: 'bool' }
-      case 'null':     return { dot: 'bg-slate-400',  label: 'null' }
-      case 'wildcard': return { dot: 'bg-cyan-400',   label: 'all' }
-      case 'index':    return { dot: 'bg-indigo-400', label: 'idx' }
-      case 'filter':   return { dot: 'bg-rose-400',   label: 'fn' }
-      case 'slice':    return { dot: 'bg-teal-400',   label: 'slc' }
-      default:         return { dot: 'bg-muted-foreground/40', label: '·' }
+      case 'object':   return { glyph: '{}', tone: 'text-[var(--json-key)]',     label: 'object' }
+      case 'array':    return { glyph: '[]', tone: 'text-[var(--json-key)]',     label: 'array' }
+      case 'string':   return { glyph: '""', tone: 'text-[var(--json-string)]',  label: 'string' }
+      case 'number':   return { glyph: '#',  tone: 'text-[var(--json-number)]',  label: 'number' }
+      case 'boolean':  return { glyph: '?',  tone: 'text-[var(--json-boolean)]', label: 'boolean' }
+      case 'null':     return { glyph: '∅',  tone: 'text-[var(--json-null)]',    label: 'null' }
+      case 'wildcard': return { glyph: '*',  tone: 'text-muted-foreground',      label: 'every item' }
+      case 'index':    return { glyph: '0',  tone: 'text-muted-foreground',      label: 'index' }
+      case 'filter':   return { glyph: '?()', tone: 'text-muted-foreground',     label: 'filter' }
+      case 'slice':    return { glyph: ':',  tone: 'text-muted-foreground',      label: 'slice' }
+      default:         return { glyph: '·',  tone: 'text-muted-foreground',      label: '' }
     }
   }
 
@@ -87,74 +92,57 @@
      elements are the option buttons inside; this wrapper is scaffolding. -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
-  class="absolute left-0 top-full z-50 mt-1 w-[min(32rem,calc(100vw-3rem))] overflow-hidden rounded-lg border border-border/70 bg-popover elevate-2-rim"
+  class="absolute left-0 top-full z-50 mt-1 min-w-64 max-w-[min(30rem,calc(100vw-3rem))] overflow-hidden rounded-[10px] border border-border/60 bg-popover elevate-2-rim"
   onmousedown={(e) => e.preventDefault()}
 >
   <div class="relative">
-  <ul bind:this={listEl} onscroll={syncOverflow} class="max-h-64 overflow-y-auto p-1" role="listbox" aria-label="Path suggestions">
-    {#each items as item, i (item.insert)}
-      {@const on = i === activeIdx}
-      {@const p = parts(item.label)}
-      {@const meta = kindMeta(item.kind)}
-      <li>
-        <button
-          type="button"
-          data-idx={i}
-          role="option"
-          aria-selected={on}
-          class={cn(
-            'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors',
-            on ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
-          )}
-          onmousemove={() => (activeIdx = i)}
-          onclick={() => onpick(item.insert)}
-        >
-          <span class={cn('size-1.5 shrink-0 rounded-full', meta.dot)}></span>
-
-          <span class="min-w-0 flex-1 truncate font-mono text-ui-xs">
-            {p.head}<span class="font-semibold text-primary">{p.hit}</span>{p.tail}
-          </span>
-
-          {#if item.detail}
-            <span class="shrink-0 font-mono text-ui-3xs text-muted-foreground">{item.detail}</span>
-          {/if}
-          <!-- Whether the sample below is representative. A key whose value is
-               identical in every element says so, instead of leaving a preview
-               that never changes to imply it. -->
-          {#if item.spread}
-            <span class="shrink-0 font-mono text-ui-3xs text-muted-foreground">{item.spread}</span>
-          {/if}
-          <!-- The preview is what lets you pick by what is in the data rather
-               than by name, so it shows on the armed row where it is being read. -->
-          {#if on && item.preview}
-            <span class="max-w-40 shrink-0 truncate font-mono text-ui-3xs text-muted-foreground">{item.preview}</span>
-          {/if}
-        </button>
-      </li>
-    {/each}
-  </ul>
-  <!-- The "there is more" cue. `pointer-events-none` so it never eats a click on
-       the row it is fading over, and it is purely decorative - the count in the
-       footer is what actually states the number. -->
-  {#if moreBelow}
-    <div class="pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-gradient-to-t from-popover to-transparent"></div>
-  {/if}
+    <ul bind:this={listEl} onscroll={syncOverflow} class="max-h-64 overflow-y-auto p-1" role="listbox" aria-label="Path suggestions">
+      {#each items as item, i (item.insert)}
+        {@const on = i === activeIdx}
+        {@const p = parts(item.label)}
+        {@const meta = kindMeta(item.kind)}
+        <li>
+          <button
+            type="button"
+            data-idx={i}
+            role="option"
+            aria-selected={on}
+            class={cn('flex w-full min-w-0 items-center gap-1.5 rounded-sm px-1.5 py-1 text-left', on && 'bg-accent')}
+            onmousemove={() => (activeIdx = i)}
+            onclick={() => onpick(item.insert)}
+          >
+            <span class={cn('w-5 shrink-0 text-center font-mono text-ui-3xs font-medium', meta.tone)} aria-hidden="true">{meta.glyph}</span>
+            <!-- Typed fragment in full foreground, the rest muted: the reason a
+                 row is offered, without a loud accent colour. -->
+            <span class={cn('min-w-0 truncate font-mono text-ui-xs', p.hit ? 'text-muted-foreground' : 'text-foreground')}>
+              {p.head}<span class="text-foreground">{p.hit}</span>{p.tail}
+            </span>
+            <span class="ml-auto flex shrink-0 items-center gap-1.5 pl-3 text-ui-3xs text-muted-foreground">
+              {#if on && item.preview}
+                <span class="max-w-36 truncate font-mono">{item.preview}</span>
+                <span class="text-border">·</span>
+              {/if}
+              <!-- Whether a preview is representative: "5 values" says the key
+                   varies across elements; a single value says it doesn't. -->
+              {#if item.spread}<span class="font-mono tabular-nums">{item.spread}</span><span class="text-border">·</span>{/if}
+              <span>{item.detail || meta.label}</span>
+            </span>
+          </button>
+        </li>
+      {/each}
+    </ul>
+    <!-- The "there is more" cue; purely decorative, the footer states the count. -->
+    {#if moreBelow}
+      <div class="pointer-events-none absolute inset-x-0 bottom-0 h-6 bg-gradient-to-t from-popover to-transparent"></div>
+    {/if}
   </div>
 
   <!-- A list that simply appears teaches none of its keys. -->
-  <div class="flex items-center gap-3 border-t border-border/50 bg-muted/20 px-2.5 py-1 font-mono text-ui-3xs text-muted-foreground">
-    {#snippet key(/** @type {string} */ k)}
-      <span class="rounded border border-border/60 bg-background/60 px-1 py-px text-muted-foreground">{k}</span>
-    {/snippet}
-    <span class="flex items-center gap-1">{@render key('↑')}{@render key('↓')} move</span>
-    <span class="flex items-center gap-1">
-      {@render key('↵')}<span class="opacity-50">or</span>{@render key('tab')} accept
-    </span>
-    <span class="flex items-center gap-1">{@render key('esc')} dismiss</span>
-    <!-- Position, not just the total. "3 / 12" answers "is there more?" from the
-         footer, which is the question the cut-off list raises. -->
-    <span class="ms-auto tabular-nums">
-      {#if activeIdx >= 0}{activeIdx + 1} / {/if}{items.length}
-    </span>
+  <div class="flex items-center gap-3 border-t border-border/60 px-2.5 py-1.5 text-ui-3xs text-muted-foreground">
+    <span class="flex items-center gap-1"><Kbd keys={['↑', '↓']} /> navigate</span>
+    <span class="flex items-center gap-1"><Kbd keys={['↵']} /> accept</span>
+    <span class="flex items-center gap-1"><Kbd keys={['esc']} /> close</span>
+    <!-- Position, not just the total: answers "is there more?" from the footer. -->
+    <span class="ms-auto font-mono tabular-nums">{#if activeIdx >= 0}{activeIdx + 1} / {/if}{items.length}</span>
   </div>
 </div>

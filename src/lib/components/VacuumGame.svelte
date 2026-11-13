@@ -338,7 +338,7 @@
 
     {#if !started || game.over || !running}
       <div class="absolute inset-0 flex items-center justify-center px-6">
-        <div class="flex max-w-lg flex-col items-center gap-3 rounded-xl border border-border bg-background px-8 py-7 text-center">
+        <div class="flex max-w-lg flex-col items-center gap-3 rounded-lg border border-border bg-background px-8 py-7 text-center">
         {#if game.over}
           <p class="font-mono text-ui-sm font-semibold text-destructive">{game.over.reason}</p>
           <p class="max-w-md font-mono text-ui-2xs text-muted-foreground">{game.over.detail}</p>

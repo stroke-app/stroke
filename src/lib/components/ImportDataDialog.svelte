@@ -292,18 +292,18 @@
           </p>
           <div class="mt-3 flex gap-5 rounded-lg border border-border/40 bg-background/60 px-3 py-2.5 font-mono text-ui-xs">
             <div>
-              <p class="text-ui-3xs uppercase tracking-wide text-muted-foreground">Inserted</p>
+              <p class="text-ui-3xs uppercase tracking-[0.06em] text-muted-foreground">Inserted</p>
               <p class="mt-0.5 font-semibold text-success">{result.inserted}</p>
             </div>
             {#if result.failed > 0}
               <div>
-                <p class="text-ui-3xs uppercase tracking-wide text-muted-foreground">Failed</p>
+                <p class="text-ui-3xs uppercase tracking-[0.06em] text-muted-foreground">Failed</p>
                 <p class="mt-0.5 font-semibold text-destructive">{result.failed}</p>
               </div>
             {/if}
             {#if result.skipped > 0}
               <div>
-                <p class="text-ui-3xs uppercase tracking-wide text-muted-foreground">Not run</p>
+                <p class="text-ui-3xs uppercase tracking-[0.06em] text-muted-foreground">Not run</p>
                 <p class="mt-0.5 font-semibold text-muted-foreground">{result.skipped}</p>
               </div>
             {/if}
@@ -364,7 +364,7 @@
         {#if parsed.format === "delimited"}
           <div class="mt-4 flex flex-wrap items-end gap-3">
             <label class="flex flex-col gap-1">
-              <span class="text-ui-3xs uppercase tracking-wide text-muted-foreground">Delimiter</span>
+              <span class="text-ui-3xs uppercase tracking-[0.06em] text-muted-foreground">Delimiter</span>
               <Select.Root type="single" bind:value={delimiter}>
                 <Select.Trigger class="h-8 w-32 text-ui-xs">
                   {DELIMITERS.find((d) => d.value === delimiter)?.label ?? "Detect"}
@@ -377,7 +377,7 @@
               </Select.Root>
             </label>
             <label class="flex flex-col gap-1">
-              <span class="text-ui-3xs uppercase tracking-wide text-muted-foreground">Null is</span>
+              <span class="text-ui-3xs uppercase tracking-[0.06em] text-muted-foreground">Null is</span>
               <Input bind:value={nullText} placeholder="(nothing)" class="h-8 w-32 font-mono text-ui-xs" />
             </label>
             <label class="flex h-8 items-center gap-2">
@@ -396,7 +396,7 @@
         {/if}
 
         <!-- Mapping -->
-        <p class="mt-5 text-ui-3xs uppercase tracking-wide text-muted-foreground">Columns</p>
+        <p class="mt-5 text-ui-3xs uppercase tracking-[0.06em] text-muted-foreground">Columns</p>
         <div class="mt-2 overflow-hidden rounded-lg border border-border/60">
           {#each columns as col (col.name)}
             <div class="flex items-center gap-3 border-b border-border/40 px-3 py-1.5 last:border-b-0">
@@ -432,7 +432,7 @@
         <!-- Conflicts -->
         <div class="mt-5 flex flex-wrap items-end gap-3">
           <label class="flex flex-col gap-1">
-            <span class="text-ui-3xs uppercase tracking-wide text-muted-foreground">If the row exists</span>
+            <span class="text-ui-3xs uppercase tracking-[0.06em] text-muted-foreground">If the row exists</span>
             <Select.Root type="single" bind:value={conflict}>
               <Select.Trigger class="h-8 w-52 text-ui-xs">
                 {CONFLICT_OPTIONS.find((o) => o.value === conflict)?.label}
@@ -463,7 +463,7 @@
 
         <!-- Preview -->
         {#if previewRows.length > 0}
-          <p class="mt-5 text-ui-3xs uppercase tracking-wide text-muted-foreground">Preview</p>
+          <p class="mt-5 text-ui-3xs uppercase tracking-[0.06em] text-muted-foreground">Preview</p>
           <div class="mt-2 overflow-x-auto rounded-lg border border-border/60">
             <table class="w-full border-collapse">
               <thead>

@@ -348,7 +348,7 @@
   {#if error}
     <div class="flex min-h-0 flex-1 items-center justify-center p-8">
       <div class="max-w-md text-center">
-        <Icon name="alert-circle" class="mx-auto size-5 text-destructive" />
+        <Icon name="alert-circle" class="mx-auto size-5 shrink-0 text-destructive" />
         <p class="mt-2 text-ui-sm text-foreground">Couldn't read this schema</p>
         <p class="mt-1 text-ui-xs text-muted-foreground">{error}</p>
       </div>
@@ -357,7 +357,7 @@
     <div class="flex min-h-0 flex-1 items-center justify-center p-8">
       <div class="max-w-md text-center">
         {#if active.id === 'sql'}
-          <Icon name="terminal" class="mx-auto size-6 text-muted-foreground" />
+          <Icon name="terminal" class="mx-auto size-6 shrink-0 text-muted-foreground" />
         {:else}
           <DbIcon id={active.id} class="mx-auto size-6 text-muted-foreground" />
         {/if}

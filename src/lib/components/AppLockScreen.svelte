@@ -57,7 +57,7 @@
 
 <div data-app-lock class="fixed inset-0 z-[9999] flex flex-col bg-background">
   <div
-    class="flex h-[38px] shrink-0 items-center border-b border-border/40 px-2.5 select-none"
+    class="flex h-[52px] shrink-0 items-center border-b border-border/40 px-2.5 select-none"
     data-tauri-drag-region
     role="toolbar"
     aria-label="Window title bar"
@@ -65,7 +65,7 @@
     ondblclick={onDragRegionDblClick}
   >
     {#if isMac}
-      <div class="w-[70px] shrink-0"></div>
+      <div class="w-[92px] shrink-0"></div>
     {/if}
     <Logo class="size-4 shrink-0" />
     <div class="min-w-0 flex-1" data-tauri-drag-region></div>
@@ -79,8 +79,8 @@
     ></div>
 
     <div class="relative flex w-full max-w-[20rem] flex-col items-center text-center">
-      <div class="grid size-11 place-items-center rounded-xl border border-border/50 bg-card/40 shadow-sm">
-        <Icon name="lock" class="size-5 text-muted-foreground" />
+      <div class="grid size-11 place-items-center rounded-lg border border-border/50 bg-card/40 shadow-sm">
+        <Icon name="lock" class="size-5 shrink-0 text-muted-foreground" />
       </div>
 
       <h1 class="mt-4 text-ui-lg font-semibold tracking-tight text-foreground">Stroke is locked</h1>

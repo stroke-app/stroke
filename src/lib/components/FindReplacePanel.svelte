@@ -1,4 +1,5 @@
 <script>
+  import { Button } from '$lib/components/ui/button/index.js'
   /**
    * Find & replace, as a sidebar panel.
    *
@@ -354,16 +355,15 @@
         bind:value={replaceText}
         onkeydown={onFieldKey}
       />
-      <button
-        type="button"
-        class="inline-flex h-7 shrink-0 items-center gap-1 rounded-md bg-primary px-2 font-mono text-ui-3xs font-medium text-primary-foreground transition-[opacity,transform] hover:opacity-90 active:scale-[0.97] disabled:pointer-events-none disabled:opacity-40"
+      <Button
+        class="shrink-0 font-mono" size="sm"
         disabled={matches.length === 0 || applying || !!regexError || noKey}
         onclick={handleApply}
         title={`Replace in ${matches.length} cell(s) · ${keycaps('Mod+Enter').join(' ')}`}
-      >
+>
         {#if applying}<Icon name="loader-2" class="size-3 shrink-0 animate-spin" />{/if}
         {matches.length ? `Replace ${matches.length.toLocaleString('en-US')}` : 'Replace'}
-      </button>
+      </Button>
     </div>
 
     {#if regexError}

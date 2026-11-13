@@ -113,9 +113,15 @@
   <!-- Visual-only line, pointer-events-none so it never shadows the cursor -->
   <div
     class={cn(
-      'pointer-events-none absolute rounded-full bg-border/50 transition-colors group-hover:bg-primary/70 group-active:bg-primary group-focus-visible:bg-primary/70',
-      axis === 'x' && 'inset-y-2 w-px left-1/2 -translate-x-1/2',
-      axis === 'y' && 'inset-x-2 h-px top-1/2 -translate-y-1/2',
+      // A full-length hairline exactly on the panel's edge, so it meets the
+      // title bar's edge line above it. It used to be rounded, translucent,
+      // inset 8px at each end and centred 2px inside the grab area: a short,
+      // soft line that never lined up with anything.
+      'pointer-events-none absolute bg-border/50 group-hover:bg-primary/70 group-active:bg-primary group-focus-visible:bg-primary/70',
+      axis === 'x' && 'inset-y-0 w-px',
+      axis === 'x' && (edge === 'start' ? 'left-0' : 'right-0'),
+      axis === 'y' && 'inset-x-0 h-px',
+      axis === 'y' && (edge === 'start' ? 'top-0' : 'bottom-0'),
     )}
   ></div>
 </div>

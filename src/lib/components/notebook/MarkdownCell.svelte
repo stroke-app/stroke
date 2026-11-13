@@ -108,7 +108,7 @@
           class="flex h-7 shrink-0 items-center gap-2 border-b border-border/20 px-6"
         >
           <span
-            class="rounded px-1.5 py-px text-ui-3xs font-semibold uppercase tracking-widest text-emerald-500/70"
+            class="rounded px-1.5 py-px text-ui-3xs font-semibold uppercase tracking-widest text-success"
           >
             md source
           </span>
@@ -170,7 +170,7 @@
           class="rounded p-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:pointer-events-none disabled:opacity-20"
           title="Delete cell"
         >
-          <Trash2 class="size-3" />
+          <Trash2 class="size-3 shrink-0" />
         </button>
       </div>
     </div>
@@ -214,7 +214,7 @@
           class="rounded p-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:pointer-events-none disabled:opacity-20"
           title="Delete cell"
         >
-          <Trash2 class="size-3" />
+          <Trash2 class="size-3 shrink-0" />
         </button>
       </div>
     </div>

@@ -1,4 +1,5 @@
 <script>
+  import { Button } from '$lib/components/ui/button/index.js'
   import { comboTitle } from '$lib/shortcuts.js'
   import Plus from '@lucide/svelte/icons/plus'
   import Save from '@lucide/svelte/icons/save'
@@ -212,28 +213,28 @@
     <div class="ml-auto flex shrink-0 items-center gap-0.5">
       <button
         onclick={openFile}
-        class="flex items-center gap-1.5 rounded px-2.5 py-1 text-ui-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+        class="flex items-center gap-1.5 rounded-md px-2.5 py-1 text-ui-xs text-muted-foreground hover:bg-muted hover:text-foreground"
         title="Open notebook"
       >
-        <FolderOpen class="size-3.5" />
+        <FolderOpen class="size-3.5 shrink-0" />
         Open
       </button>
       <button
         onclick={save}
-        class="flex items-center gap-1.5 rounded px-2.5 py-1 text-ui-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+        class="flex items-center gap-1.5 rounded-md px-2.5 py-1 text-ui-xs text-muted-foreground hover:bg-muted hover:text-foreground"
         title={`Save (${comboTitle('Mod+S')})`}
       >
-        <Save class="size-3.5" />
+        <Save class="size-3.5 shrink-0" />
         Save
       </button>
-      <button
+      <Button
         onclick={runAll}
-        class="ml-1 flex items-center gap-1.5 rounded-md bg-primary px-2.5 py-1 text-ui-xs font-medium text-primary-foreground hover:opacity-90"
+        class="ml-1" size="sm"
         title="Run all SQL cells"
-      >
-        <Play class="size-3" />
+>
+        <Play class="size-3 shrink-0" />
         Run all
-      </button>
+      </Button>
     </div>
   </div>
 
@@ -241,13 +242,13 @@
   <div class="min-h-0 flex-1 overflow-y-auto">
     {#if notebook.cells.length === 0}
       <div class="flex flex-col items-center gap-3 py-24 text-muted-foreground">
-        <FileCode2 class="size-8 opacity-20" />
+        <FileCode2 class="size-8 shrink-0 opacity-20" />
         <p class="text-ui-sm">Empty notebook</p>
         <button
           onclick={() => { update({ cells: [createSqlCell()] }) }}
           class="flex items-center gap-2 rounded-md border border-dashed border-border px-4 py-2 text-ui-sm hover:bg-muted"
         >
-          <Plus class="size-4" />
+          <Plus class="size-4 shrink-0" />
           Add first cell
         </button>
       </div>
@@ -344,9 +345,9 @@
       onclick={(e) => openAddMenu(idx, e)}
       class="mx-2 flex items-center gap-1 rounded px-1.5 py-0.5 text-ui-3xs text-muted-foreground hover:bg-muted hover:text-foreground"
     >
-      <Plus class="size-3" />
+      <Plus class="size-3 shrink-0" />
       Add cell
-      <ChevronDown class="size-3 opacity-60" />
+      <ChevronDown class="size-3 shrink-0 opacity-60" />
     </button>
     <div class="h-px flex-1 bg-border/30 transition-colors group-hover/adder:bg-border/60"></div>
   </div>

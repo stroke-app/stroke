@@ -26,6 +26,13 @@
   import Lock from '@lucide/svelte/icons/lock'
   import RotateCcw from '@lucide/svelte/icons/rotate-ccw'
   import PowerOff from '@lucide/svelte/icons/power-off'
+  import Layers from '@lucide/svelte/icons/layers'
+  import ListFilter from '@lucide/svelte/icons/list-filter'
+  import Circle from '@lucide/svelte/icons/circle'
+  import CircleDot from '@lucide/svelte/icons/circle-dot'
+  import CircleCheck from '@lucide/svelte/icons/circle-check'
+  import CircleAlert from '@lucide/svelte/icons/circle-alert'
+  import CircleX from '@lucide/svelte/icons/circle-x'
 
   let { active = false, connectionName = '', dbType = '' } = $props()
 
@@ -348,6 +355,9 @@
       return (c.name + ' ' + c.category + ' ' + c.description).toLowerCase().includes(q)
     })
   })
+  /** Bordered toolbar button beside the search field (Category / Filters / Refresh). */
+  const cfgBtn = 'field-surface inline-flex h-9 shrink-0 items-center gap-2 px-3 text-ui-sm text-foreground/85 shadow-none outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:border-ring data-[state=open]:border-ring disabled:pointer-events-none disabled:opacity-50'
+  const configFilterCount = $derived((configGroup !== 'all' ? 1 : 0) + (configStatus !== 'all' ? 1 : 0))
   const configFiltering = $derived(configGroup !== 'all' || configStatus !== 'all' || !!configSearch.trim())
 
   /** Browsing the unfiltered list means 350+ rows; break it into labelled
@@ -564,15 +574,12 @@
 
 <div class="flex min-h-0 flex-1 flex-col overflow-hidden bg-panel">
   <!-- ── Header ──────────────────────────────────────────────────────────── -->
-  <div class="flex shrink-0 items-center gap-4 border-b border-border/50 px-5 py-3">
+  <div class="flex shrink-0 items-center gap-4 px-6 pt-5 pb-3">
     <div class="flex min-w-0 flex-1 items-center gap-3">
-      <div class="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-muted/25">
-        <Database class="size-4 text-muted-foreground" />
-      </div>
       <div class="min-w-0">
-        <h1 class="truncate text-ui-lg font-semibold leading-tight text-foreground">Instance Insights</h1>
-        <p class="mt-0.5 flex min-w-0 items-center gap-1.5 text-ui-2xs text-muted-foreground">
-          <span class="truncate font-mono text-foreground/70">{connectionName || '—'}</span>
+        <h1 class="truncate text-ui-lg font-semibold leading-tight tracking-tight text-foreground">Instance insights</h1>
+        <p class="mt-1 flex min-w-0 items-center gap-1.5 text-ui-xs text-muted-foreground">
+          <span class="truncate">{connectionName || '—'}</span>
           {#if version}
             <span class="text-muted-foreground">·</span>
             <span class="shrink-0 truncate">{isPg ? 'PostgreSQL' : 'MySQL'} {version.version}</span>
@@ -592,9 +599,9 @@
           aria-checked={autoRefresh}
           title={autoRefresh ? `Refreshing every ${REFRESH_MS / 1000}s` : 'Poll the server automatically'}
           class={cn(
-            'inline-flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-ui-xs transition-colors',
-            'focus-visible:border-ring/55 focus-visible:ring-2 focus-visible:ring-ring/18 focus-visible:outline-none',
-            autoRefresh ? 'border-success/45 bg-success/10 text-success' : 'border-border text-muted-foreground hover:bg-accent hover:text-foreground',
+            'inline-flex h-7 items-center gap-1.5 rounded-md px-3 text-ui-xs transition-colors',
+            'focus-visible:ring-2 focus-visible:ring-ring/18 focus-visible:outline-none',
+            autoRefresh ? 'bg-success/10 text-success' : 'text-muted-foreground hover:bg-accent hover:text-foreground',
           )}
           onclick={() => (autoRefresh = !autoRefresh)}
         >
@@ -609,7 +616,7 @@
         </button>
         <button
           type="button"
-          class= "field-surface inline-flex h-7 items-center gap-1.5 px-2.5 text-ui-xs text-foreground/85 transition-colors hover:bg-accent hover:text-foreground focus-visible:border-ring/55 focus-visible:ring-2 focus-visible:ring-ring/18 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50"
+          class="inline-flex h-7 items-center gap-1.5 rounded-md bg-muted/60 px-3 text-ui-xs text-foreground/85 transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/18 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50"
           disabled={refreshing}
           onclick={() => void refreshAll()}
         >
@@ -622,7 +629,7 @@
 
   {#if !supported}
     <div class="flex flex-1 flex-col items-center justify-center gap-2 p-8 text-center">
-      <Database class="size-5 text-muted-foreground" />
+      <Database class="size-5 shrink-0 text-muted-foreground" />
       <p class="text-ui-sm text-muted-foreground">Instance Insights needs a server-based engine</p>
       <p class="max-w-sm text-ui-xs text-muted-foreground">
         Live sessions, transaction rates and server configuration come from PostgreSQL and MySQL catalogs.
@@ -631,11 +638,11 @@
     </div>
   {:else}
     <!-- ── Sub-tabs ──────────────────────────────────────────────────────── -->
-    <div class="shrink-0 border-b border-border/40 px-5 py-2">
+    <div class="shrink-0 px-6 pb-1">
       <div
         role="tablist"
         aria-label="Instance sections"
-        class="inline-flex items-center gap-0.5 rounded-lg border border-border/50 bg-muted/20 p-0.5"
+        class="inline-flex items-center gap-1"
       >
         {#each SUBTABS as t (t.id)}
           <button
@@ -645,9 +652,9 @@
             aria-selected={subtab === t.id}
             tabindex={subtab === t.id ? 0 : -1}
             class={cn(
-              'inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-ui-xs font-medium transition-colors',
+              'inline-flex h-7 items-center gap-1.5 rounded-md px-3 text-ui-xs font-medium transition-colors',
               'focus-visible:ring-2 focus-visible:ring-ring/18 focus-visible:outline-none',
-              subtab === t.id ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+              subtab === t.id ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
             )}
             onclick={() => (subtab = t.id)}
             onkeydown={onTabKeydown}
@@ -664,14 +671,15 @@
       </div>
     </div>
 
-    <div class={cn('app-scroll min-h-0 flex-1 overflow-y-auto px-5 pb-5', subtab !== 'config' && 'pt-5')}>
+    <div class={cn('app-scroll min-h-0 flex-1 overflow-y-auto px-6 pb-6', subtab !== 'config' && 'pt-4')}>
       {#if error}
         <div class={cn('mb-4 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-ui-xs text-destructive', subtab === 'config' && 'mt-5')}>{error}</div>
       {/if}
 
       <!-- ══ ACTIVITY ══════════════════════════════════════════════════════ -->
       {#if subtab === 'activity'}
-        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {@render listHeader(Gauge, 'Overview', 4)}
+        <div class="flex flex-col gap-px">
           {@render stat({
             label: 'Connections',
             help: 'Client sessions open on the server right now, against max_connections.',
@@ -735,12 +743,13 @@
         </div>
 
         {#if !autoRefresh}
-          <p class="mt-3 flex items-center gap-1.5 text-ui-2xs text-muted-foreground">
+          <p class="mt-2 flex items-center gap-1.5 px-3 text-ui-2xs text-muted-foreground">
             Rates are sampled per refresh - turn on <span class="font-medium text-foreground/80">Live</span> to watch them move.
           </p>
         {/if}
 
-        <div class="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <div class="mt-5">{@render listHeader(Activity, 'Trends', 3)}</div>
+        <div class="grid grid-cols-1 gap-3 xl:grid-cols-2">
           {@render chartCard({
             title: 'Sessions',
             caption: 'How many clients are connected, and how many are doing work.',
@@ -756,7 +765,7 @@
             ready: hasSeries,
           })}
         </div>
-        <div class="mt-4">
+        <div class="mt-3">
           {@render chartCard({
             title: 'Block I/O',
             caption: 'Cache hits versus disk reads, with the resulting hit ratio on the right axis.',
@@ -802,143 +811,122 @@
 
       <!-- ══ CONFIG ════════════════════════════════════════════════════════ -->
       {:else if subtab === 'config'}
-        <!-- Sticky toolbar: search and filters stay reachable through a 350-row
-             list. The fill is fully opaque on purpose - a translucent header with
-             `backdrop-blur` ghosts the rows scrolling beneath it straight through
-             the search field on WebKitGTK, and blurring a full-width strip over a
-             379-row list costs a compositing layer for nothing.
-
-             No negative *vertical* margin here: sticky offsets resolve against the
-             margin box, so a `-mt-5` pins the border box 20px below the scrollport
-             top and list rows scroll visibly through the gap above it. The scroll
-             container drops its top padding for this tab and the toolbar supplies
-             it via `pt-5` instead. `-mx-5` is fine - horizontal margins don't
-             affect a `top` offset. -->
-        <div class="sticky top-0 z-20 -mx-5 mb-4 border-b border-border/40 bg-panel px-5 pb-3 pt-5">
-          <div class="mb-2.5 flex items-center justify-between gap-3">
-            <div class="flex min-w-0 items-baseline gap-2">
-              <h2 class="text-ui font-semibold text-foreground">Configuration</h2>
-              <span class="shrink-0 text-ui-2xs tabular-nums text-muted-foreground">
-                {#if configFiltering}
-                  {big(configFiltered.length)} of {big(config.length)}
-                {:else}
-                  {big(config.length)} settings
-                {/if}
-              </span>
-            </div>
-            <button
-              type="button"
-              class= "field-surface inline-flex h-7 shrink-0 items-center gap-1.5 px-2.5 text-ui-xs text-foreground/85 transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
-              disabled={refreshing}
-              onclick={() => void withSpinner(refreshConfig)}
-            >
-              <RefreshCw class={cn('size-3.5 shrink-0', refreshing && 'animate-spin')} /> Refresh
-            </button>
-          </div>
-
-          <!-- Search, then two bounded filters. The old design put ~14 category
-               chips in a horizontally scrolling strip: the overflow was invisible,
-               scrolling it needed a trackpad gesture, and it mixed two different
-               filter dimensions in one row. A menu holds any number of categories
-               at a fixed size, and status stays a real segmented control. -->
-          <div class="flex flex-col gap-2 sm:flex-row sm:items-center">
+        <!-- One row, like a list app's header: a wide search, then bordered
+             Category / Status menus and a square Refresh. Opaque and sticky; no
+             negative vertical margin (sticky resolves against the margin box, so
+             rows would show through a gap above it). -->
+        <div class="sticky top-0 z-20 -mx-6 mb-2 bg-panel px-6 pb-3 pt-5">
+          <div class="flex items-center gap-2">
             <div class="relative min-w-0 flex-1">
-              <Search class="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Search class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
               <input
                 bind:value={configSearch}
-                placeholder="Search settings by name, category, or description…"
-                class= "field-surface h-9 w-full bg-muted/30 pl-9 pr-9 text-ui-sm text-foreground transition-[border-color,box-shadow] outline-none placeholder:text-muted-foreground"
+                placeholder="Search {big(config.length)} settings, names or descriptions"
+                aria-label="Search settings"
+                class="field-surface h-9 w-full pl-9 pr-9 text-ui-sm text-foreground shadow-none outline-none placeholder:text-muted-foreground"
+                onkeydown={(e) => { if (e.key === 'Escape' && configSearch) { e.preventDefault(); e.stopPropagation(); configSearch = '' } }}
               />
               {#if configSearch}
                 <button
                   type="button"
                   aria-label="Clear search"
-                  class="absolute right-2 top-1/2 inline-flex size-6 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  class="absolute right-2 top-1/2 inline-flex size-5 -translate-y-1/2 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                   onclick={() => (configSearch = '')}
                 >
-                  <X class="size-3.5" />
+                  <X class="size-3 shrink-0" />
                 </button>
               {/if}
             </div>
 
-            <div class="flex shrink-0 items-center gap-2">
-              <SearchableMenu
-                items={[{ value: 'all', label: 'All categories' }, ...configGroups.map((g) => ({ value: g.id, label: g.id }))]}
-                placeholder="Filter categories…"
-                empty="No matching category"
-                contentClass="min-w-[260px]"
-                onselect={(it) => (configGroup = it.value)}
-              >
-                {#snippet trigger(props)}
-                  <button
-                    {...props}
-                    type="button"
-                    class={cn(
-                      'flex h-9 min-w-[11rem] items-center gap-2 rounded-lg border-2 px-3 text-left text-ui-sm transition-[border-color,box-shadow]',
-                      'focus:border-ring/55 focus:ring-2 focus:ring-ring/15 focus:outline-none data-[state=open]:border-ring/55',
-                      configGroup === 'all' ? 'border-border bg-muted/30 text-foreground/80' : 'border-primary/40 bg-primary/10 text-foreground',
-                    )}
-                  >
-                    <span class="min-w-0 flex-1 truncate">{configGroup === 'all' ? 'All categories' : configGroup}</span>
-                    <ChevronDown class="size-3.5 shrink-0 text-muted-foreground" />
-                  </button>
-                {/snippet}
-                {#snippet item(it)}
-                  <span class="min-w-0 flex-1 truncate">{it.label}</span>
-                  <span class="shrink-0 text-ui-2xs tabular-nums text-muted-foreground">
-                    {it.value === 'all' ? config.length : (configGroups.find((g) => g.id === it.value)?.n ?? 0)}
-                  </span>
-                  {#if it.value === configGroup}<Check class="size-3.5 shrink-0 text-primary" />{/if}
-                {/snippet}
-              </SearchableMenu>
-
-                <div class= "field-surface inline-flex h-9 shrink-0 items-center gap-0.5 bg-muted/30 p-0.5">
-                {#each statusOptions as o (o.id)}
-                  <button
-                    type="button"
-                    aria-pressed={configStatus === o.id}
-                    class={cn(
-                      'inline-flex h-full items-center gap-1.5 rounded-md px-2.5 text-ui-xs font-medium transition-colors',
-                      'focus-visible:ring-2 focus-visible:ring-ring/18 focus-visible:outline-none',
-                      configStatus === o.id ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
-                    )}
-                    onclick={() => (configStatus = /** @type {any} */ (o.id))}
-                  >
-                    {#if o.id === 'restart'}<PowerOff class="size-3 shrink-0 text-warning" />{/if}
-                    {o.label}
-                    <span class="tabular-nums opacity-60">{o.n}</span>
-                  </button>
-                {/each}
-              </div>
-
-              {#if configFiltering}
+            <SearchableMenu
+              items={[{ value: 'all', label: 'All categories' }, ...configGroups.map((g) => ({ value: g.id, label: g.id }))]}
+              placeholder="Filter categories…"
+              empty="No matching category"
+              contentClass="min-w-[260px]"
+              onselect={(it) => (configGroup = it.value)}
+            >
+              {#snippet trigger(props)}
                 <button
+                  {...props}
                   type="button"
-                  class="inline-flex h-9 shrink-0 items-center gap-1 rounded-md px-2 text-ui-xs text-muted-foreground transition-colors hover:text-foreground"
-                  onclick={clearConfigFilters}
+                  title={configGroup === 'all' ? 'Filter by category' : configGroup}
+                  class={cn(cfgBtn, 'max-w-[14rem]', configGroup !== 'all' && 'text-foreground')}
                 >
-                  <X class="size-3.5" /> Clear
+                  <Layers class="size-4 shrink-0 text-muted-foreground" />
+                  <span class="min-w-0 truncate">{configGroup === 'all' ? 'Category' : configGroup}</span>
+                  <ChevronDown class="size-3.5 shrink-0 text-muted-foreground" />
                 </button>
-              {/if}
-            </div>
+              {/snippet}
+              {#snippet item(it)}
+                <span class="min-w-0 flex-1 truncate">{it.label}</span>
+                <span class="shrink-0 text-ui-2xs tabular-nums text-muted-foreground">
+                  {it.value === 'all' ? config.length : (configGroups.find((g) => g.id === it.value)?.n ?? 0)}
+                </span>
+                {#if it.value === configGroup}<Check class="size-3.5 shrink-0 text-primary" />{/if}
+              {/snippet}
+            </SearchableMenu>
+
+            <SearchableMenu
+              items={statusOptions.map((o) => ({ value: o.id, label: o.label }))}
+              placeholder="Status…"
+              contentClass="min-w-[220px]"
+              onselect={(it) => (configStatus = /** @type {any} */ (it.value))}
+            >
+              {#snippet trigger(props)}
+                <button {...props} type="button" class={cn(cfgBtn, configStatus !== 'all' && 'text-foreground')}>
+                  <ListFilter class="size-4 shrink-0 text-muted-foreground" />
+                  Filters
+                  {#if configFilterCount}
+                    <span class="inline-flex h-5 min-w-5 items-center justify-center rounded-sm bg-muted px-1 text-ui-2xs tabular-nums text-foreground">{configFilterCount}</span>
+                  {/if}
+                </button>
+              {/snippet}
+              {#snippet item(it)}
+                {@const o = statusOptions.find((x) => x.id === it.value)}
+                {#if it.value === 'restart'}<PowerOff class="size-3.5 shrink-0 text-warning" />{:else if it.value === 'modified'}<span class="grid size-3.5 shrink-0 place-items-center"><span class="size-1.5 rounded-full bg-primary"></span></span>{:else}<span class="size-3.5 shrink-0"></span>{/if}
+                <span class="min-w-0 flex-1 truncate">{it.label}</span>
+                <span class="shrink-0 text-ui-2xs tabular-nums text-muted-foreground">{o?.n ?? ''}</span>
+                {#if it.value === configStatus}<Check class="size-3.5 shrink-0 text-primary" />{/if}
+              {/snippet}
+            </SearchableMenu>
+
+            <button
+              type="button"
+              class={cn(cfgBtn, 'w-9 justify-center px-0')}
+              disabled={refreshing}
+              title="Reload settings"
+              aria-label="Reload settings"
+              onclick={() => void withSpinner(refreshConfig)}
+            >
+              <RefreshCw class={cn('size-4 shrink-0', refreshing && 'animate-spin')} />
+            </button>
           </div>
+          {#if configFiltering}
+            <div class="mt-2 flex items-center gap-2 px-1 text-ui-2xs tabular-nums text-muted-foreground">
+              <span>{big(configFiltered.length)} of {big(config.length)} settings</span>
+              <button type="button" class="rounded-sm px-1 text-primary hover:underline" onclick={clearConfigFilters}>Clear filters</button>
+            </div>
+          {/if}
         </div>
 
         {#if !configFiltered.length}
-          <div class="rounded-lg border border-border/40 bg-muted/[0.04] py-12 text-center">
+          <div class="py-16 text-center">
             <p class="text-ui-sm text-muted-foreground">No settings match these filters</p>
             {#if configFiltering}
               <button type="button" class="mt-2 text-ui-xs text-primary hover:underline" onclick={clearConfigFilters}>Clear filters</button>
             {/if}
           </div>
         {:else}
-          <div class="flex flex-col gap-5">
+          <div class="flex flex-col gap-4">
             {#each configSectionsShown as sec (sec.group || '_flat')}
               <section>
                 {#if sec.group}
-                  <div class="mb-1.5 flex items-baseline gap-2">
-                    <h3 class="text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground">{sec.group}</h3>
-                    <span class="text-ui-3xs tabular-nums text-muted-foreground">{sec.rows.length}</span>
+                  <!-- Icon, name, count, then a hairline to the edge. -->
+                  <div class="mb-1 flex items-center gap-2 px-3 py-1.5">
+                    <Settings class="size-4 shrink-0 text-muted-foreground" />
+                    <h3 class="text-ui-sm text-muted-foreground">{sec.group}</h3>
+                    <span class="text-ui-sm tabular-nums text-muted-foreground/70">{sec.rows.length}</span>
+                    <span class="ml-2 h-px flex-1 bg-border/50" aria-hidden="true"></span>
                   </div>
                 {/if}
                 <!-- One row per setting; content-visibility keeps the ~350-row list
@@ -949,7 +937,7 @@
                      for one list. The heading above and the space between
                      sections carry the grouping; a rule per row is all the
                      structure the rows need. -->
-                <div class="border-t border-border/25">
+                <div class="flex flex-col gap-px">
                   {#each sec.rows as row (row.name)}
                     {@const open = openSetting === row.name}
                     {@const editable = row.editable !== false && !$readOnlyMode && !configWritesBlocked}
@@ -965,68 +953,77 @@
                     {@const panelId = `cfg-panel-${row.name}`}
                     {@const fieldId = `cfg-value-${row.name}`}
                     {@const labelId = `cfg-label-${row.name}`}
-                    <div class={cn('cfg-row border-b border-border/25 last:border-b-0', open && 'bg-muted/20')}>
-                      <!-- The focus style was `focus-visible:bg-accent/40` with the
-                           outline removed - the exact same treatment as `hover`, so a
-                           keyboard user could not tell which of 364 rows they were on.
-                           Project ring, inset so the rounded card does not clip it. -->
+                    <div class={cn('cfg-row group overflow-hidden rounded-lg transition-colors', open ? 'bg-muted/30' : 'hover:bg-muted/25')}>
+                      <!-- Two lines like a list item: status glyph, name and badges
+                           on top, description below; value and its source on the
+                           right, stacked the same way. Ring is inset so the rounded
+                           row does not clip it. -->
                       <button
                         type="button"
                         aria-expanded={open}
                         aria-controls={panelId}
-                        class="flex w-full items-center gap-3 px-3 py-2 text-left outline-none transition-colors hover:bg-accent/40 focus-visible:bg-accent/40 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+                        class="flex w-full items-start gap-3 rounded-lg px-3 py-2.5 text-left outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
                         onclick={() => toggleSetting(row)}
                       >
+                        <span class="mt-0.5 grid size-4 shrink-0 place-items-center" aria-hidden="true">
+                          {#if row.pendingRestart}
+                            <PowerOff class="size-4 text-warning" />
+                          {:else if row.editable === false}
+                            <Lock class="size-3.5 text-muted-foreground/60" />
+                          {:else if modified}
+                            <CircleDot class="size-4 text-primary" />
+                          {:else}
+                            <Circle class="size-4 text-muted-foreground/40" />
+                          {/if}
+                        </span>
                         <div class="min-w-0 flex-1">
-                          <div class="flex items-center gap-1.5">
-                            <span class="truncate font-mono text-ui-xs font-medium text-foreground">{row.name}</span>
+                          <div class="flex min-w-0 items-center gap-2">
+                            <span class="truncate font-mono text-ui-sm text-foreground">{row.name}</span>
                             {#if modified}
-                              <span class="shrink-0 rounded bg-primary/12 px-1 py-px text-ui-3xs text-primary" title="Not the built-in default - set by {row.source}">modified</span>
+                              <span class="shrink-0 text-ui-2xs text-primary" title="Not the built-in default - set by {row.source}">Modified</span>
                             {/if}
                             {#if row.pendingRestart}
-                              <span class="inline-flex shrink-0 items-center gap-1 rounded bg-warning/12 px-1 py-px text-ui-3xs text-warning">
-                                <PowerOff class="size-3" /> restart pending
-                              </span>
-                            {/if}
-                            {#if row.editable === false}
-                              <Lock class="size-3 shrink-0 text-muted-foreground" role="img" aria-label="Read-only setting" />
+                              <span class="shrink-0 text-ui-2xs text-warning">Restart pending</span>
                             {/if}
                           </div>
                           {#if row.description}
-                            <p class="mt-0.5 truncate text-ui-2xs text-muted-foreground">{row.description}</p>
+                            <p class="mt-0.5 truncate text-ui-xs text-muted-foreground">{row.description}</p>
                           {/if}
                         </div>
 
-                        <span class="flex shrink-0 items-baseline gap-1.5">
-                          <span class="max-w-[14rem] truncate rounded-md bg-muted/50 px-1.5 py-0.5 font-mono text-ui-2xs tabular-nums text-foreground">{shownValue(row)}</span>
-                          {#if row.unit}<span class="font-mono text-ui-3xs text-muted-foreground">{row.unit}</span>{/if}
+                        <span class="flex max-w-[16rem] shrink-0 flex-col items-end gap-0.5 text-right">
+                          <span class="flex max-w-full items-baseline gap-1">
+                            <span class={cn('truncate font-mono text-ui-sm tabular-nums', modified ? 'text-primary' : 'text-foreground')}>{shownValue(row)}</span>
+                            {#if row.unit}<span class="font-mono text-ui-2xs text-muted-foreground">{row.unit}</span>{/if}
+                          </span>
+                          <span class="truncate text-ui-xs text-muted-foreground">{row.source || row.vartype || ''}</span>
                         </span>
-                        <ChevronRight class={cn('size-3.5 shrink-0 self-center text-muted-foreground transition-transform duration-150', open && 'rotate-90')} />
+                        <ChevronRight class={cn('mt-0.5 size-4 shrink-0 text-muted-foreground opacity-0 transition-[transform,opacity] duration-150 group-hover:opacity-100', open && 'rotate-90 opacity-100')} />
                       </button>
 
                       {#if open}
-                        <div id={panelId} class="border-t border-border/30 px-3 pb-3 pt-3">
+                        <div id={panelId} class="pb-3 pl-10 pr-3 pt-1">
                           <div class="flex max-w-3xl flex-wrap items-end gap-2">
                             <div class="min-w-[13rem] flex-1">
                               <div class="mb-1 flex items-baseline justify-between gap-2">
                                 <label
                                   id={labelId}
                                   for={row.vartype === 'bool' ? undefined : fieldId}
-                                  class="text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground"
+                                  class="text-ui-2xs font-medium text-muted-foreground"
                                 >New value</label>
                                 <span class="truncate font-mono text-ui-3xs text-muted-foreground">
                                   current: {shownValue(row)}{row.unit ? ` ${row.unit}` : ''}
                                 </span>
                               </div>
                               {#if row.vartype === 'bool'}
-                              <div role="group" aria-labelledby={labelId} class="field-surface inline-flex h-9 items-center gap-0.5 bg-muted/30 p-0.5">
+                              <div role="group" aria-labelledby={labelId} class="inline-flex h-8 items-center gap-1">
                                   {#each ['on', 'off'] as v (v)}
                                     <button
                                       type="button"
                                       disabled={!editable}
                                       aria-pressed={draft === v}
                                       onclick={() => (draft = v)}
-                                      class={cn('h-full rounded-md px-4 font-mono text-ui-xs transition-colors disabled:opacity-40', draft === v ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}
+                                      class={cn('h-full rounded-md px-4 font-mono text-ui-xs transition-colors disabled:opacity-40', draft === v ? 'bg-foreground text-background' : 'bg-background/60 text-muted-foreground hover:text-foreground')}
                                     >{v}</button>
                                   {/each}
                                 </div>
@@ -1035,7 +1032,7 @@
                                   id={fieldId}
                                   bind:value={draft}
                                   disabled={!editable}
-                                  class= "field-surface h-9 w-full bg-muted/30 px-2.5 font-mono text-ui-sm text-foreground transition-[border-color,box-shadow] outline-none disabled:opacity-40"
+                                  class="h-8 w-full rounded-lg border-0 bg-background/70 px-2.5 font-mono text-ui-xs text-foreground shadow-none outline-none focus:ring-0 disabled:opacity-40"
                                 >
                                   {#each row.enumVals as v (v)}<option value={v}>{v}</option>{/each}
                                 </select>
@@ -1062,14 +1059,14 @@
                                     if (e.key === 'Enter' && editable && draft !== row.value) { e.preventDefault(); void applySetting(row) }
                                     else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); openSetting = '' }
                                   }}
-                                  class= "field-surface h-9 w-full bg-muted/30 px-3 font-mono text-ui-sm tabular-nums text-foreground transition-[border-color,box-shadow] outline-none placeholder:text-muted-foreground disabled:opacity-40"
+                                  class="h-8 w-full rounded-lg border-0 bg-background/70 px-3 font-mono text-ui-xs tabular-nums text-foreground shadow-none outline-none transition-colors placeholder:text-muted-foreground focus:bg-background focus:ring-0 disabled:opacity-40"
                                 />
                               {/if}
                             </div>
 
                             <div class="flex items-center gap-1.5">
                               <Button
-                                size="lg"
+                                class="rounded-md"
                                 disabled={!editable || savingSetting === row.name || draft === row.value}
                                 title={$readOnlyMode ? READ_ONLY_HINT : undefined}
                                 onclick={() => void applySetting(row)}
@@ -1078,8 +1075,7 @@
                               </Button>
                               <Button
                                 variant="ghost"
-                                size="lg"
-                                class="text-muted-foreground hover:text-foreground"
+                                class="rounded-md text-muted-foreground hover:text-foreground"
                                 disabled={!editable || savingSetting === row.name || !canReset}
                                 title={!modified && row.pendingRestart
                                   ? 'Drop the queued change - the server keeps running the value it has now'
@@ -1102,7 +1098,7 @@
                             {#each [['Category', row.category], ['Type', row.vartype], ['Unit', row.unit], ['Default', row.bootVal], ['Range', (row.minVal || row.maxVal) ? `${row.minVal || '−∞'} … ${row.maxVal || '∞'}` : ''], ['Source', row.source]] as [k, v] (k)}
                               {#if v}
                                 <div class="flex min-w-0 items-baseline gap-2">
-                                  <dt class="w-[4.5rem] shrink-0 text-ui-3xs uppercase tracking-[0.06em] text-muted-foreground">{k}</dt>
+                                  <dt class="w-[4.5rem] shrink-0 text-ui-2xs text-muted-foreground">{k}</dt>
                                   <dd class="min-w-0 flex-1 truncate font-mono text-ui-2xs text-foreground/85" title={String(v)}>{v}</dd>
                                 </div>
                               {/if}
@@ -1205,53 +1201,60 @@
   </div>
 {/snippet}
 
+{#snippet listHeader(/** @type {any} */ Glyph, /** @type {string} */ title, /** @type {number | string} */ n)}
+  <!-- Icon, name, count, then a hairline to the edge - the Config list's header. -->
+  <div class="mb-1 flex items-center gap-2 px-3 py-1.5">
+    <Glyph class="size-4 shrink-0 text-muted-foreground" />
+    <h3 class="text-ui-sm text-muted-foreground">{title}</h3>
+    <span class="text-ui-sm tabular-nums text-muted-foreground/70">{n}</span>
+    <span class="ml-2 h-px flex-1 bg-border/50" aria-hidden="true"></span>
+  </div>
+{/snippet}
+
 {#snippet stat(/** @type {any} */ s)}
-  <div class="flex flex-col rounded-lg border border-border/60 bg-muted/[0.04] p-3">
-    <!-- Row 1: label + status hint. Every card shares this grid so the four
-         cards line up line-for-line across the row (DESIGN_SYSTEM §9). -->
-    <div class="flex items-baseline justify-between gap-2">
-      <span class="truncate text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground" title={s.help}>{s.label}</span>
-      {#if s.hint}
-        <span class={cn('shrink-0 text-ui-3xs tabular-nums', toneClass(s.tone))}>{s.hint}</span>
+  <!-- One metric as a list row: status glyph; label over its breakdown; the
+       trend; value over its status hint on the right. -->
+  <div class="group flex items-center gap-3 rounded-lg px-3 py-2.5 transition-colors hover:bg-muted/25" title={s.help}>
+    <span class="grid size-4 shrink-0 place-items-center self-start pt-0.5" aria-hidden="true">
+      {#if s.tone === 'bad'}<CircleX class="size-4 text-destructive" />
+      {:else if s.tone === 'warn'}<CircleAlert class="size-4 text-warning" />
+      {:else if s.tone === 'ok'}<CircleCheck class="size-4 text-success" />
+      {:else}<Circle class="size-4 text-muted-foreground/40" />{/if}
+    </span>
+    <div class="min-w-0 flex-1">
+      <div class="truncate text-ui-sm text-foreground">{s.label}</div>
+      <div class="mt-0.5 flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-0.5 text-ui-xs text-muted-foreground">
+        {#each s.rows as r (r.k)}
+          <span class="whitespace-nowrap">{r.k} <span class="font-mono tabular-nums text-foreground/75">{r.v}</span></span>
+        {/each}
+      </div>
+    </div>
+    <div class="hidden w-40 shrink-0 flex-col gap-1 sm:flex">
+      {@render sparkline(s.series ?? [], toneClass(s.tone))}
+      {#if s.meter != null}
+        <div class="h-1 overflow-hidden rounded-full bg-muted/60">
+          <div
+            class={cn('h-full rounded-full transition-[width] duration-200 ease-out', s.tone === 'bad' ? 'bg-destructive' : s.tone === 'warn' ? 'bg-warning' : 'bg-success')}
+            style="width: {Math.max(0, Math.min(100, s.meter))}%"
+          ></div>
+        </div>
       {/if}
     </div>
-
-    <!-- Row 2: the headline number -->
-    <div class="mt-1.5 flex items-baseline gap-1">
-      <span class="font-mono text-ui-lg font-semibold leading-none tabular-nums text-foreground">{s.value}</span>
-      {#if s.unit}<span class="text-ui-xs text-muted-foreground">{s.unit}</span>{/if}
+    <div class="flex w-28 shrink-0 flex-col items-end gap-0.5 text-right">
+      <span class="flex items-baseline gap-1">
+        <span class="font-mono text-ui-sm font-medium tabular-nums text-foreground">{s.value}</span>
+        {#if s.unit}<span class="text-ui-2xs text-muted-foreground">{s.unit}</span>{/if}
+      </span>
+      <span class={cn('truncate text-ui-xs tabular-nums', s.hint ? toneClass(s.tone) : 'text-muted-foreground')}>{s.hint || ' '}</span>
     </div>
-
-    <!-- Row 3: trend -->
-    <div class="mt-2">{@render sparkline(s.series ?? [], toneClass(s.tone))}</div>
-
-    <!-- Row 4: optional 0-100 meter, on cards where the number has a ceiling -->
-    {#if s.meter != null}
-      <div class="mt-1.5 h-1 overflow-hidden rounded-full bg-muted/60">
-        <div
-          class={cn('h-full rounded-full transition-[width] duration-300 ease-out', s.tone === 'bad' ? 'bg-destructive' : s.tone === 'warn' ? 'bg-warning' : 'bg-success')}
-          style="width: {Math.max(0, Math.min(100, s.meter))}%"
-        ></div>
-      </div>
-    {/if}
-
-    <!-- Row 5: aligned detail pairs -->
-    <dl class="mt-2.5 grid grid-cols-2 gap-x-3 gap-y-1 border-t border-border/40 pt-2">
-      {#each s.rows as r (r.k)}
-        <div class="flex min-w-0 items-baseline gap-1.5">
-          <dt class="truncate text-ui-3xs text-muted-foreground">{r.k}</dt>
-          <dd class="ml-auto shrink-0 font-mono text-ui-2xs tabular-nums text-foreground/85">{r.v}</dd>
-        </div>
-      {/each}
-    </dl>
   </div>
 {/snippet}
 
 {#snippet chartCard(/** @type {any} */ c)}
-  <div class="rounded-lg border border-border/60 bg-muted/[0.04] p-3">
+  <div class="rounded-lg border border-border/40 p-4">
     <div class="mb-2 flex flex-wrap items-start justify-between gap-x-4 gap-y-1">
       <div class="min-w-0">
-        <h3 class="text-ui-sm font-semibold text-foreground">{c.title}</h3>
+        <h3 class="text-ui-sm font-medium text-foreground">{c.title}</h3>
         <p class="mt-0.5 text-ui-2xs text-muted-foreground">{c.caption}</p>
       </div>
       <div class="flex shrink-0 items-center gap-3 pt-0.5">
@@ -1269,7 +1272,7 @@
            refresh tick - exactly the case merging is for. -->
       <div class="h-52"><EChartPanel option={c.option} mergeUpdates /></div>
     {:else}
-      <div class="flex h-52 flex-col items-center justify-center gap-1 rounded-md bg-muted/20 text-center">
+      <div class="flex h-52 flex-col items-center justify-center gap-1 text-center">
         <p class="text-ui-xs text-muted-foreground">Collecting samples…</p>
         <p class="max-w-[18rem] text-ui-2xs text-muted-foreground">
           Rates need two readings. {autoRefresh ? 'The next one lands in a few seconds.' : 'Turn on Live, or hit Refresh again.'}
@@ -1306,7 +1309,7 @@
 
 {#snippet dataGrid(/** @type {any[]} */ rows, /** @type {string} */ empty)}
   {#if !rows || rows.length === 0}
-    <div class="rounded-lg border border-border/40 bg-muted/[0.04] py-10 text-center text-ui-xs text-muted-foreground">{empty}</div>
+    <div class="rounded-lg border border-dashed border-border/40 py-8 text-center text-ui-xs text-muted-foreground">{empty}</div>
   {:else}
     <!-- Column list computed ONCE per grid. It used to be re-derived inside the
          row loop, so a 200-session table allocated 200 throwaway Object.keys()
@@ -1316,20 +1319,21 @@
     <!-- `insight-grid` (see <style>) does two things the shared .app-scroll
          cannot: it lets a wheel that runs out of table keep scrolling the page,
          and it gives the horizontal bar enough height to read as an affordance.
-         The cap is viewport-relative so a tall screen shows more than 24rem of
-         a 200-session table instead of the same short window everywhere. -->
-    <div class="app-scroll insight-grid max-h-[min(32rem,60vh)] overflow-auto rounded-lg border border-border/50">
+         No height cap: a table that scrolled vertically inside the page
+         scroller trapped the wheel (two scrollbars, one list). The page owns
+         vertical scrolling; a table only scrolls sideways. -->
+    <div class="app-scroll insight-grid overflow-x-auto overflow-y-hidden rounded-lg border border-border/40">
       <!-- w-max lets every column take its natural width and the container do the
            scrolling. Under w-full the browser squeezed columns to fit and then
            overflowed anyway, so the widths were wrong AND the tail was cut. -->
       <table class="w-max min-w-full border-collapse text-ui-2xs">
         <thead>
           <tr>
-            <th class="sticky top-0 z-10 w-8 whitespace-nowrap border-b border-border/50 bg-panel px-2 py-1.5 text-right text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground">#</th>
+            <th class="w-8 whitespace-nowrap border-b border-border/40 bg-muted/20 px-2 py-2 text-right text-ui-2xs font-medium text-muted-foreground">#</th>
             {#each cols as k (k)}
               <th
                 class={cn(
-                  'sticky top-0 z-10 whitespace-nowrap border-b border-border/50 bg-panel px-2.5 py-1.5 text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground',
+                  'whitespace-nowrap border-b border-border/40 bg-muted/20 px-3 py-2 text-ui-2xs font-medium text-muted-foreground',
                   numeric.has(k) ? 'text-right' : 'text-left',
                 )}
               >{humanize(k)}</th>
@@ -1338,14 +1342,14 @@
         </thead>
         <tbody>
           {#each rows as row, i (i)}
-            <tr class={cn('transition-colors hover:bg-accent/30', isBlocked(row) && 'bg-destructive/[0.06]')}>
-              <td class="border-b border-border/20 px-2 py-1 text-right tabular-nums text-muted-foreground">{i + 1}</td>
+            <tr class={cn('transition-colors hover:bg-muted/25 [&:last-child>td]:border-b-0', isBlocked(row) && 'bg-destructive/[0.06]')}>
+              <td class="border-b border-border/15 px-2 py-2 text-right tabular-nums text-muted-foreground/70">{i + 1}</td>
               {#each cols as k (k)}
                 {@const raw = row[k]}
                 {@const text = cell(raw)}
                 <td
                   class={cn(
-                    'max-w-[280px] truncate border-b border-border/20 px-2.5 py-1 font-mono text-foreground/85',
+                    'max-w-[280px] truncate border-b border-border/15 px-3 py-2 font-mono text-foreground/85',
                     numeric.has(k) && 'text-right tabular-nums',
                   )}
                   title={text.length > 32 ? text : undefined}

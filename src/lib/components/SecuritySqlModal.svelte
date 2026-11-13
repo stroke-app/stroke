@@ -1,4 +1,5 @@
 <script>
+  import { Button } from '$lib/components/ui/button/index.js'
   import { onMount } from 'svelte'
   import { completionStatus } from '@codemirror/autocomplete'
   import CodeEditor from './CodeEditor.svelte'
@@ -58,11 +59,11 @@
       <span class="font-mono text-ui-sm font-medium text-foreground">{title}</span>
       <button
         type="button"
-        class="inline-flex size-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         onclick={onclose}
         disabled={running}
       >
-        <X class="size-3.5" />
+        <X class="size-3.5 shrink-0" />
       </button>
     </div>
 
@@ -85,18 +86,17 @@
           onclick={onclose}
           disabled={running}
         >Cancel</button>
-        <button
-          type="button"
-          class="inline-flex h-7 items-center gap-1.5 rounded-md bg-primary px-3 font-mono text-ui-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+        <Button
+          class="font-mono" size="sm"
           onclick={onrun}
           disabled={running || !sql.trim()}
-        >
+>
           {#if running}
             <RefreshCw class="size-3.5 shrink-0 animate-spin" />Running…
           {:else}
             <Play class="size-3.5 shrink-0" />Run SQL
           {/if}
-        </button>
+        </Button>
       </div>
     </div>
   </div>

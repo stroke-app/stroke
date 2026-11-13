@@ -145,7 +145,7 @@
       <div class="pointer-events-none absolute inset-0 z-40">
         <div
           class={cn(
-            'absolute rounded-md bg-primary/20 ring-2 ring-inset ring-primary/70 transition-all duration-75',
+            'absolute rounded-md bg-primary/20 ring-2 ring-inset ring-primary/70 transition-[inset,width,height] duration-75',
             HINT_CLASS[hintEdge],
           )}
         ></div>

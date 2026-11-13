@@ -37,6 +37,8 @@
     loading = false,
     active = false,
     onrefresh = () => {},
+    /** Opens SQL in a new editor tab (the create dialogs' "Open in SQL editor"). @type {((spec: { text: string, title: string, snippet?: string }) => void) | null} */
+    onopensql = null,
   } = $props()
 
   /** @type {'indexes' | 'triggers' | 'sequences' | 'enums' | 'views' | 'matviews'} */
@@ -175,15 +177,15 @@
 
   <!-- Toolbar -->
   <div class="studio-chrome flex h-9 shrink-0 items-center gap-2 border-b border-border bg-panel px-3" data-studio-chrome>
-    <span class="font-mono text-ui-sm font-medium">Schema Explorer</span>
+    <span class="text-ui-sm font-medium">Schema explorer</span>
     <div class="ml-auto flex items-center gap-1">
       {#if activeType === 'triggers' && activeSupported}
         <Button variant="ghost" size="sm" class="h-7 gap-1.5 px-2 text-muted-foreground hover:text-foreground" disabled={$readOnlyMode} title={$readOnlyMode ? READ_ONLY_HINT : ''} onclick={() => (createTriggerOpen = true)}>
-          <Plus class="size-3.5" /><span class="text-ui-xs">New Trigger</span>
+          <Plus class="size-3.5 shrink-0" /><span class="text-ui-xs">New trigger</span>
         </Button>
       {:else if activeType === 'sequences' && activeSupported}
         <Button variant="ghost" size="sm" class="h-7 gap-1.5 px-2 text-muted-foreground hover:text-foreground" disabled={$readOnlyMode} title={$readOnlyMode ? READ_ONLY_HINT : ''} onclick={() => (createSequenceOpen = true)}>
-          <Plus class="size-3.5" /><span class="text-ui-xs">New Sequence</span>
+          <Plus class="size-3.5 shrink-0" /><span class="text-ui-xs">New sequence</span>
         </Button>
       {/if}
       <Button variant="ghost" size="sm" class="h-7 gap-1.5 px-2 text-muted-foreground hover:text-foreground" disabled={loading} title="Refresh" onclick={onrefresh}>
@@ -202,14 +204,14 @@
         <button
           type="button"
           class={cn(
-            'inline-flex h-6 shrink-0 items-center gap-1 rounded-[5px] px-2.5 text-ui-2xs font-medium transition-all',
+            'inline-flex h-6 shrink-0 items-center gap-1 rounded-sm px-2.5 text-ui-2xs font-medium transition-colors',
             activeType === tab.id
               ? 'bg-card text-foreground ring-1 ring-border/50'
               : 'text-muted-foreground hover:text-foreground',
           )}
           onclick={() => { activeType = /** @type {any} */ (tab.id); filter = '' }}
         >
-          <Icon class="size-3 shrink-0" />
+          <Icon class="size-3.5 shrink-0" />
           {tab.label}
           {#if cnt > 0}
             <span class="rounded-full bg-muted/80 px-1 font-mono text-ui-3xs tabular-nums {activeType === tab.id ? 'text-foreground/60' : 'text-muted-foreground'}">{cnt}</span>
@@ -256,7 +258,7 @@
           <thead>
             <tr>
               {#each ['index_name','table','algorithm','unique','columns','condition'] as h}
-                <th class="border-b border-r border-border bg-panel/80 px-3 py-2 text-left font-medium text-muted-foreground text-ui-2xs uppercase tracking-wide whitespace-nowrap">{h}</th>
+                <th class="border-b border-r border-border bg-panel/80 px-3 py-2 text-left font-medium text-muted-foreground text-ui-2xs uppercase tracking-[0.06em] whitespace-nowrap">{h}</th>
               {/each}
             </tr>
           </thead>
@@ -301,7 +303,7 @@
           <thead>
             <tr>
               {#each ['trigger_name','table','timing','events','function','status',''] as h}
-                <th class="border-b border-r border-border bg-panel/80 px-3 py-2 text-left font-medium text-muted-foreground text-ui-2xs uppercase tracking-wide whitespace-nowrap">{h}</th>
+                <th class="border-b border-r border-border bg-panel/80 px-3 py-2 text-left font-medium text-muted-foreground text-ui-2xs uppercase tracking-[0.06em] whitespace-nowrap">{h}</th>
               {/each}
             </tr>
           </thead>
@@ -315,7 +317,7 @@
                   <span class="block truncate">{trig.tableName}</span>
                 </td>
                 <td class="border-b border-r border-border/40 px-3">
-                  <span class="rounded bg-muted/60 px-1.5 py-0.5 font-mono text-ui-3xs text-muted-foreground">{trig.timing}</span>
+                  <span class="rounded-sm bg-muted/60 px-1.5 py-0.5 font-mono text-ui-3xs text-muted-foreground">{trig.timing}</span>
                 </td>
                 <td class="border-b border-r border-border/40 px-3 overflow-hidden">
                   <div class="flex flex-wrap gap-1 overflow-hidden">
@@ -329,7 +331,7 @@
                 </td>
                 <td class="border-b border-r border-border/40 px-3">
                   {#if trig.enabled}
-                    <span class="flex items-center gap-1 font-mono text-ui-3xs text-success">
+                    <span class="flex items-center gap-1 text-ui-3xs text-success">
                       <span class="size-1.5 rounded-full bg-success"></span>enabled
                     </span>
                   {:else}
@@ -345,7 +347,7 @@
                     disabled={$readOnlyMode}
                     title={$readOnlyMode ? READ_ONLY_HINT : 'Drop trigger'}
                     onclick={() => dropTrigger(trig)}
-                  ><Trash2 class="size-3.5" /></button>
+                  ><Trash2 class="size-3.5 shrink-0" /></button>
                 </td>
               </tr>
             {/each}
@@ -375,7 +377,7 @@
           <thead>
             <tr>
               {#each ['sequence_name','data_type','start','increment','range','cycle','owned_by',''] as h}
-                <th class="border-b border-r border-border bg-panel/80 px-3 py-2 text-left font-medium text-muted-foreground text-ui-2xs uppercase tracking-wide whitespace-nowrap last:border-r-0">{h}</th>
+                <th class="border-b border-r border-border bg-panel/80 px-3 py-2 text-left font-medium text-muted-foreground text-ui-2xs uppercase tracking-[0.06em] whitespace-nowrap last:border-r-0">{h}</th>
               {/each}
             </tr>
           </thead>
@@ -408,7 +410,7 @@
                     disabled={$readOnlyMode}
                     title={$readOnlyMode ? READ_ONLY_HINT : 'Drop sequence'}
                     onclick={() => dropSequence(seq)}
-                  ><Trash2 class="size-3.5" /></button>
+                  ><Trash2 class="size-3.5 shrink-0" /></button>
                 </td>
               </tr>
             {/each}
@@ -426,10 +428,10 @@
         <table class="w-full text-ui-xs">
           <thead class="studio-chrome sticky top-0 z-10 bg-panel text-left">
             <tr class="border-b border-border/50">
-              <th class="w-56 px-3 py-2 font-mono font-normal text-muted-foreground">Name</th>
-              <th class="px-3 py-2 font-mono font-normal text-muted-foreground">Values</th>
-              <th class="w-52 px-3 py-2 font-mono font-normal text-muted-foreground">Used by</th>
-              <th class="w-10 px-3 py-2 text-right font-mono font-normal text-muted-foreground">n</th>
+              <th class="w-56 px-3 py-2 font-normal text-muted-foreground">Name</th>
+              <th class="px-3 py-2 font-normal text-muted-foreground">Values</th>
+              <th class="w-52 px-3 py-2 font-normal text-muted-foreground">Used by</th>
+              <th class="w-10 px-3 py-2 text-right font-normal text-muted-foreground">n</th>
             </tr>
           </thead>
           <tbody>
@@ -452,11 +454,11 @@
                   {#if (e.usedInTables ?? []).length > 0}
                     <div class="flex flex-wrap gap-1">
                       {#each e.usedInTables as tbl (tbl)}
-                        <span class="rounded bg-muted/40 px-1.5 py-px font-mono text-ui-3xs text-foreground/60">{tbl}</span>
+                        <span class="rounded-sm bg-muted/40 px-1.5 py-px font-mono text-ui-3xs text-foreground/60">{tbl}</span>
                       {/each}
                     </div>
                   {:else}
-                    <span class="font-mono text-ui-xs text-muted-foreground">unused</span>
+                    <span class="text-ui-xs text-muted-foreground">unused</span>
                   {/if}
                 </td>
                 <td class="px-3 py-2.5 text-right font-mono text-ui-xs tabular-nums text-muted-foreground">{e.values.length}</td>
@@ -476,7 +478,7 @@
         <table class="border-collapse" style="table-layout:fixed;width:max-content;min-width:100%">
           <thead>
             <tr>
-              <th class="border-b border-r border-border bg-panel/80 px-3 py-2 text-left font-medium text-muted-foreground text-ui-2xs uppercase tracking-wide">view_name</th>
+              <th class="border-b border-r border-border bg-panel/80 px-3 py-2 text-left font-medium text-muted-foreground text-ui-2xs uppercase tracking-[0.06em]">view_name</th>
             </tr>
           </thead>
           <tbody>
@@ -499,8 +501,8 @@
         <table class="border-collapse" style="table-layout:fixed;width:max-content;min-width:100%">
           <thead>
             <tr>
-              <th class="border-b border-r border-border bg-panel/80 px-3 py-2 text-left font-medium text-muted-foreground text-ui-2xs uppercase tracking-wide">view_name</th>
-              <th class="border-b border-border bg-panel/80 px-3 py-2 text-left font-medium text-muted-foreground text-ui-2xs uppercase tracking-wide">rows</th>
+              <th class="border-b border-r border-border bg-panel/80 px-3 py-2 text-left font-medium text-muted-foreground text-ui-2xs uppercase tracking-[0.06em]">view_name</th>
+              <th class="border-b border-border bg-panel/80 px-3 py-2 text-left font-medium text-muted-foreground text-ui-2xs uppercase tracking-[0.06em]">rows</th>
             </tr>
           </thead>
           <tbody>
@@ -521,9 +523,9 @@
 <!-- Snippets -->
 {#snippet emptyState(Icon, label, sub)}
   <div class="flex h-full flex-col items-center justify-center gap-3 p-12 text-center">
-    <Icon class="size-10 text-muted-foreground" />
+    <Icon class="size-10 shrink-0 text-muted-foreground" />
     <div>
-      <p class="font-mono text-ui text-muted-foreground">{label}</p>
+      <p class="text-ui text-muted-foreground">{label}</p>
       <p class="mt-1 text-ui-xs text-muted-foreground">{sub}</p>
     </div>
   </div>
@@ -535,9 +537,9 @@
 
 {#snippet unsupported(label, key)}
   <div class="flex h-full flex-col items-center justify-center gap-3 p-12 text-center">
-    <Lock class="size-9 text-muted-foreground" />
+    <Lock class="size-9 shrink-0 text-muted-foreground" />
     <div>
-      <p class="font-mono text-ui text-muted-foreground">Not available on this database</p>
+      <p class="text-ui text-muted-foreground">Not available on this database</p>
       <p class="mx-auto mt-1 max-w-xs text-ui-xs text-muted-foreground">{unsupportedReason(label, key)}</p>
     </div>
   </div>
@@ -560,10 +562,13 @@
   {schema}
   tables={allTables}
   onrefresh={onrefresh}
+  {onopensql}
 />
 
 <CreateSequenceDialog
   bind:open={createSequenceOpen}
   {schema}
+  tables={allTables}
   onrefresh={onrefresh}
+  {onopensql}
 />

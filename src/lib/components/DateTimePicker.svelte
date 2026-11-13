@@ -1,4 +1,5 @@
 <script>
+  import { Button } from '$lib/components/ui/button/index.js'
   /**
    * A popover-based date/time picker for insert-row inputs.
    * Accepts/emits an ISO-ish string (YYYY-MM-DDTHH:mm:ss).
@@ -309,10 +310,10 @@
         {disabled}
         tabindex={-1}
         aria-label="Open calendar"
-        class="inline-flex size-4 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+        class="hit-area inline-flex size-4 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
         onclick={() => (open = !open)}
       >
-        <CalendarIcon class="size-3" />
+        <CalendarIcon class="size-3 shrink-0" />
       </button>
     {/snippet}
     {#if !iconTrailing}{@render calendarButton()}{/if}
@@ -404,15 +405,14 @@
         <!-- The way out with a value, for a hand on the mouse; Enter does the
              same from any field in here. Labelled, because a lone tick in a
              corner does not say what it applies to. -->
-        <button
-          type="button"
+        <Button
           onclick={confirm}
           title="Apply this date and time (Enter)"
-          class="ml-auto inline-flex h-7 shrink-0 items-center gap-1 rounded-md bg-primary px-2 font-mono text-ui-3xs font-medium text-primary-foreground transition-[opacity,transform] hover:opacity-90 active:scale-[0.97]"
-        >
+          class="ml-auto shrink-0 font-mono" size="sm"
+>
           <Check class="size-3 shrink-0" />
           Apply
-        </button>
+        </Button>
       </div>
     {/if}
   </PopoverContent>

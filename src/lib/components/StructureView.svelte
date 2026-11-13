@@ -40,7 +40,11 @@
     enums = /** @type {{ name: string }[]} */ ([]),
     columnSearch = '',
     loading = false,
+    /** Why the structure could not be read. */
+    error = '',
     onrefresh = () => {},
+    /** Opens SQL in a new editor tab (the trigger dialog's "Open in SQL editor"). @type {((spec: { text: string, title: string, snippet?: string }) => void) | null} */
+    onopensql = null,
   } = $props()
 
   const pkSet = $derived(new Set(primaryKey))
@@ -471,9 +475,9 @@
   function focusOnMount(el) { el.focus() }
 
   // shared classes
-  const TH = 'relative select-none overflow-hidden border-b border-r border-border/30 bg-muted/[0.15] px-3 py-2 text-left font-semibold text-muted-foreground text-ui-3xs uppercase tracking-[0.07em] whitespace-nowrap'
-  const TD = 'border-b border-r border-border/25 p-0 align-middle overflow-hidden'
-  const TD_DROP = 'border-b border-r border-border/25 p-0 align-middle overflow-visible'
+  const TH = 'relative select-none overflow-hidden border-b border-border/40 px-3 py-2.5 text-left font-medium normal-case text-muted-foreground text-ui-xs whitespace-nowrap'
+  const TD = 'border-b border-border/20 p-0 align-middle overflow-hidden'
+  const TD_DROP = 'border-b border-border/20 p-0 align-middle overflow-visible'
   const INP = 'box-border block h-full w-full min-w-0 overflow-x-auto border-0 bg-transparent px-3 py-0 font-mono text-ui-xs text-foreground outline-none selection:bg-primary/20'
   const DROP_PANEL = 'absolute left-0 top-full z-50 mt-0.5 max-h-64 min-w-48 overflow-y-auto rounded-[10px] border border-border/60 bg-popover p-1 elevate-2-rim'
   const DROP_ITEM = 'relative flex w-full min-w-0 cursor-default select-none items-center gap-1.5 truncate rounded-md px-2 py-1 font-mono text-ui-xs text-foreground outline-none hover:bg-accent hover:text-foreground'
@@ -506,13 +510,13 @@
   <div class="studio-chrome flex shrink-0 items-center gap-3 border-b border-border/30 px-4 py-2.5 font-mono text-ui-2xs" data-studio-chrome>
     <span class="font-semibold text-foreground">{table}</span>
     {#if primaryKey.length > 0}
-      <span class="flex items-center gap-1 rounded-md bg-warning/10 px-1.5 py-0.5 text-warning"><KeyRound class="size-3" />{primaryKey.join(', ')}</span>
+      <span class="flex items-center gap-1 rounded-md bg-warning/10 px-1.5 py-0.5 text-warning"><KeyRound class="size-3 shrink-0" />{primaryKey.join(', ')}</span>
     {/if}
-    {#if loading}<Loader class="ml-auto size-3.5 animate-spin text-muted-foreground" />{/if}
+    {#if loading}<Loader class="ml-auto size-3.5 shrink-0 animate-spin text-muted-foreground" />{/if}
   </div>
 
   <!-- Tab bar -->
-  <div class="studio-chrome flex shrink-0 items-center gap-0 border-b border-border/30 bg-panel px-2" data-studio-chrome>
+  <div class="studio-chrome flex h-11 shrink-0 items-center gap-1 border-b border-border/40 bg-panel px-3" data-studio-chrome>
     {#each [
       { id: 'columns',   label: 'Columns',   count: columns.length },
       { id: 'indexes',   label: 'Indexes',   count: tableIndexes.length },
@@ -521,16 +525,13 @@
     ] as tab (tab.id)}
       <button
         type="button"
-        class="relative flex h-9 items-center gap-1.5 px-3.5 text-ui-xs font-medium transition-colors
-          {activeTab === tab.id
-            ? 'text-foreground after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:rounded-t-full after:bg-primary'
-            : 'text-muted-foreground hover:text-foreground'}"
+        class="flex h-7 items-center gap-1.5 rounded-md px-2.5 text-ui-sm
+          {activeTab === tab.id ? 'bg-sidebar-accent text-foreground' : 'text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground'}"
         onclick={() => activeTab = /** @type {any} */ (tab.id)}
       >
         {tab.label}
         {#if tab.count > 0}
-          <span class="rounded-full px-1.5 py-px text-ui-3xs font-normal
-            {activeTab === tab.id ? 'bg-primary/15 text-primary' : 'bg-muted/50 text-muted-foreground'}">
+          <span class="font-mono text-ui-2xs tabular-nums text-muted-foreground">
             {tab.count}
           </span>
         {/if}
@@ -669,7 +670,7 @@
               <!-- is_nullable -->
               <td class="{TD} {stagedValues['nullable:' + col.name] !== undefined ? 'ring-1 ring-inset ring-warning/50' : ''}">
                 <div class="relative flex h-full items-center px-3">
-                  <FieldSelect
+                  <FieldSelect mono
                     size="sm"
                     class="w-full px-0 font-mono text-ui-xs {displayNullable ? 'text-foreground' : 'text-muted-foreground'} {stagedValues['nullable:' + col.name] !== undefined ? 'text-warning' : ''}"
                     value={displayNullable ? 'YES' : 'NO'}
@@ -747,8 +748,8 @@
                   </button>
                 {:else if !isPk}
                   <div class="flex h-full items-center px-3 opacity-0 transition-opacity group-hover/row:opacity-100">
-                    <button type="button" class="flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-ui-xs text-muted-foreground hover:bg-accent/20 hover:text-muted-foreground" onclick={() => openFkDialog(col)}>
-                      <Plus class="size-3" />Add FK
+                    <button type="button" class="flex items-center gap-1 rounded-md px-1.5 py-0.5 font-mono text-ui-xs text-muted-foreground hover:bg-accent/20 hover:text-foreground" onclick={() => openFkDialog(col)}>
+                      <Plus class="size-3 shrink-0" />Add FK
                     </button>
                   </div>
                 {/if}
@@ -780,7 +781,7 @@
           {:else if visibleColumns.length === 0 && columnSearch}
             <tr><td colspan="7" class="px-4 py-6 font-mono text-ui-xs text-muted-foreground">No columns match "{columnSearch}"</td></tr>
           {:else if columns.length === 0 && !loading}
-            <tr><td colspan="7" class="px-4 py-6 font-mono text-ui-xs text-muted-foreground">No structure data, click Refresh in the toolbar</td></tr>
+            <tr><td colspan="7" class="px-4 py-6 text-ui-sm {error ? 'text-destructive' : 'text-muted-foreground'}">{error ? `Could not read this table's structure: ${error}` : 'No columns found for this table.'}</td></tr>
           {/if}
 
           <!-- Add column row -->
@@ -819,7 +820,7 @@
               </td>
               <td class={TD}>
                 <div class="relative flex h-full items-center px-3">
-                  <FieldSelect
+                  <FieldSelect mono
                     size="sm"
                     class="w-full px-0 font-mono text-ui-xs {newColumn.isNullable ? 'text-foreground' : 'text-muted-foreground'}"
                     value={newColumn.isNullable ? 'YES' : 'NO'}
@@ -847,33 +848,33 @@
     {#if newColumn}
       <span class="text-ui-3xs text-success">New column, fill in details then save</span>
       <button type="button" disabled={confirmLoading}
-        class="ml-auto inline-flex h-6 items-center gap-1 rounded-lg bg-foreground px-2.5 text-ui-2xs font-medium text-background transition-opacity hover:opacity-85 disabled:opacity-40"
+        class="ml-auto inline-flex h-6 items-center gap-1 rounded-md bg-foreground px-2.5 text-ui-2xs font-medium text-background transition-opacity hover:opacity-85 disabled:opacity-40"
         onclick={saveNewColumn}>
-        {#if confirmLoading}<Loader class="mr-0.5 size-3 animate-spin" />{/if}
+        {#if confirmLoading}<Loader class="mr-0.5 size-3 shrink-0 animate-spin" />{/if}
         Save column
       </button>
       <button type="button"
-        class="inline-flex h-6 items-center gap-1 rounded-lg px-2.5 text-ui-2xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
+        class="inline-flex h-6 items-center gap-1 rounded-md px-2.5 text-ui-2xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
         onclick={() => (newColumn = null)}>Cancel</button>
     {:else}
       {#if hasPending}
         <span class="text-ui-3xs text-warning">{pendingCount} pending {pendingCount === 1 ? 'change' : 'changes'}</span>
         <button type="button" disabled={confirmLoading}
-          class="inline-flex h-6 items-center gap-1 rounded-lg bg-foreground px-2.5 text-ui-2xs font-medium text-background transition-opacity hover:opacity-85 disabled:opacity-40"
+          class="inline-flex h-6 items-center gap-1 rounded-md bg-foreground px-2.5 text-ui-2xs font-medium text-background transition-opacity hover:opacity-85 disabled:opacity-40"
           onclick={applyPendingDdl}>
-          {#if confirmLoading}<Loader class="size-3 animate-spin" />{:else}<Check class="size-3" />{/if}
+          {#if confirmLoading}<Loader class="size-3 shrink-0 animate-spin" />{:else}<Check class="size-3 shrink-0" />{/if}
           Apply {pendingCount}
         </button>
         <button type="button"
-          class="inline-flex h-6 items-center gap-1 rounded-lg px-2.5 text-ui-2xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
+          class="inline-flex h-6 items-center gap-1 rounded-md px-2.5 text-ui-2xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
           onclick={resetPendingDdl}>
-          <Undo2 class="size-3" />Reset
+          <Undo2 class="size-3 shrink-0" />Reset
         </button>
       {/if}
       <button type="button"
-        class="ml-auto inline-flex h-6 items-center gap-1 rounded-lg px-2.5 text-ui-2xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
+        class="ml-auto inline-flex h-6 items-center gap-1 rounded-md px-2.5 text-ui-2xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
         onclick={startNewColumn}>
-        <Plus class="size-3" />Add column
+        <Plus class="size-3 shrink-0" />Add column
       </button>
     {/if}
     </div>
@@ -884,15 +885,15 @@
     {#if activeTab === 'indexes'}
     <div class="font-mono">
       <div class="flex items-center gap-2 border-b border-border/30 bg-muted/[0.08] px-3 py-2">
-        <span class="text-ui-3xs font-semibold uppercase tracking-[0.07em] text-muted-foreground">
+        <span class="text-ui-xs font-medium text-muted-foreground">
           Indexes
           {#if columnSearch && visibleIndexes.length !== tableIndexes.length}
             <span class="ml-1 font-normal text-muted-foreground">({visibleIndexes.length}/{tableIndexes.length})</span>
           {/if}
         </span>
         {#if canEdit}
-        <button type="button" class="ml-auto inline-flex h-6 items-center gap-1 rounded-lg px-2.5 text-ui-3xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground" onclick={startNewIndex}>
-          <Plus class="size-3" />Add index
+        <button type="button" class="ml-auto inline-flex h-6 items-center gap-1 rounded-md px-2.5 text-ui-3xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground" onclick={startNewIndex}>
+          <Plus class="size-3 shrink-0" />Add index
         </button>
         {/if}
       </div>
@@ -919,10 +920,10 @@
             <tr class="group/idx" style="height:32px">
 
               <!-- index_name -->
-              <td class="border-b border-r border-border/25 px-3 font-mono text-ui-xs text-foreground overflow-hidden">{idx.name}</td>
+              <td class="border-b border-border/20 px-3 font-mono text-ui-xs text-foreground overflow-hidden">{idx.name}</td>
 
               <!-- algorithm -->
-              <td class="border-b border-r border-border/25 p-0 align-middle overflow-hidden">
+              <td class="border-b border-border/20 p-0 align-middle overflow-hidden">
                 <DropdownMenu.Root>
                   <DropdownMenu.Trigger class="group/alg flex h-full w-full cursor-pointer items-center gap-1 px-3 font-mono text-ui-xs uppercase text-foreground hover:bg-accent/20">
                     <span class="flex-1">{idx.indexType}</span>
@@ -941,7 +942,7 @@
               </td>
 
               <!-- is_unique -->
-              <td class="border-b border-r border-border/25 p-0 align-middle overflow-hidden">
+              <td class="border-b border-border/20 p-0 align-middle overflow-hidden">
                 <div class="flex h-full items-center px-3">
                   <button
                     type="button"
@@ -955,7 +956,7 @@
               </td>
 
               <!-- columns -->
-              <td class="border-b border-r border-border/25 p-0 align-middle overflow-hidden">
+              <td class="border-b border-border/20 p-0 align-middle overflow-hidden">
                 <input type="text"
                   value={idx.columns}
                   class="{INP} text-muted-foreground"
@@ -965,12 +966,12 @@
               </td>
 
               <!-- condition -->
-              <td class="border-b border-r border-border/25 px-3 font-mono text-ui-xs text-muted-foreground overflow-hidden">
+              <td class="border-b border-border/20 px-3 font-mono text-ui-xs text-muted-foreground overflow-hidden">
                 <span class="truncate block">{idx.condition ?? '—'}</span>
               </td>
 
               <!-- comment -->
-              <td class="border-b border-r border-border/25 p-0 align-middle overflow-hidden">
+              <td class="border-b border-border/20 p-0 align-middle overflow-hidden">
                 <input type="text" value={idx.comment ?? ''} placeholder="—"
                   class="{INP} italic text-muted-foreground placeholder:not-italic placeholder:text-muted-foreground focus:not-italic focus:text-foreground"
                   onblur={(e) => { const v = /** @type {HTMLInputElement} */ (e.target).value; if (v !== (idx.comment ?? '')) void updateIndexComment(idx.name, v) }}
@@ -984,7 +985,7 @@
                   class="flex h-full w-full items-center justify-center text-muted-foreground transition-colors hover:text-destructive disabled:opacity-40 disabled:hover:text-muted-foreground group-hover/idx:text-muted-foreground"
                   title={$readOnlyMode ? READ_ONLY_HINT : 'Drop index'} onclick={() => requestDropIndex(idx.name)}
                 >
-                  <Trash2 class="size-3.5" />
+                  <Trash2 class="size-3.5 shrink-0" />
                 </button>
               </td>
             </tr>
@@ -1042,7 +1043,7 @@
                   <button type="button" disabled={confirmLoading} title="Save" class="flex items-center justify-center text-success hover:text-success disabled:opacity-40" onclick={saveNewIndex}>
                     <svg class="size-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 8l4 4 6-6"/></svg>
                   </button>
-                  <button type="button" title="Cancel" class="flex items-center justify-center text-muted-foreground hover:text-muted-foreground" onclick={() => newIndex = null}>
+                  <button type="button" title="Cancel" class="flex items-center justify-center text-muted-foreground hover:text-foreground" onclick={() => newIndex = null}>
                     <svg class="size-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M4 4l8 8M12 4l-8 8"/></svg>
                   </button>
                 </div>
@@ -1058,7 +1059,7 @@
     {#if activeTab === 'relations'}
     <div class="font-mono">
       <div class="flex items-center gap-2 border-b border-border/30 bg-muted/[0.08] px-3 py-2">
-        <span class="text-ui-3xs font-semibold uppercase tracking-[0.07em] text-muted-foreground">Foreign Key Relations</span>
+        <span class="text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground">Foreign key relations</span>
       </div>
       <table class="cell-fields border-collapse" style="table-layout: fixed; width: max-content; min-width: 100%">
         <colgroup>
@@ -1076,13 +1077,13 @@
         <tbody>
           {#each relationsColumns as col (col.name)}
             <tr class="group/rel" style="height:32px">
-              <td class="border-b border-r border-border/25 px-3 font-mono text-ui-xs text-foreground overflow-hidden">
+              <td class="border-b border-border/20 px-3 font-mono text-ui-xs text-foreground overflow-hidden">
                 <div class="flex items-center gap-1.5 truncate">
                   {#if pkSet.has(col.name)}<KeyRound class="size-3 shrink-0 text-warning" />{/if}
                   <span class="truncate">{col.name}</span>
                 </div>
               </td>
-              <td class="border-b border-r border-border/25 p-0 overflow-hidden">
+              <td class="border-b border-border/20 p-0 overflow-hidden">
                 <button type="button" class="flex h-full w-full items-center gap-1.5 px-2.5 font-mono text-ui-xs text-info transition-colors hover:bg-muted/40 hover:text-info" onclick={() => openFkDialog(col)}>
                   <ArrowRight class="size-3 shrink-0" /><span class="truncate">{col.foreignKey}</span>
                 </button>
@@ -1093,7 +1094,7 @@
                   title="Remove foreign key"
                   onclick={() => openFkDialog(col)}
                 >
-                  <Trash2 class="size-3.5" />
+                  <Trash2 class="size-3.5 shrink-0" />
                 </button>
               </td>
             </tr>
@@ -1111,14 +1112,14 @@
     <div class="font-mono">
       <div class="flex items-center gap-2 border-b border-border/30 bg-muted/[0.08] px-3 py-2">
         <GitBranch class="size-3 shrink-0 text-muted-foreground" />
-        <span class="text-ui-3xs font-semibold uppercase tracking-[0.07em] text-muted-foreground">
+        <span class="text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground">
           Triggers
           {#if columnSearch && visibleTriggers.length !== tableTriggers.length}
             <span class="ml-1 font-normal text-muted-foreground">({visibleTriggers.length}/{tableTriggers.length})</span>
           {/if}
         </span>
-        <button type="button" class="ml-auto inline-flex h-6 items-center gap-1 rounded-lg px-2.5 text-ui-3xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground" onclick={() => (createTriggerOpen = true)}>
-          <Plus class="size-3" />Add trigger
+        <button type="button" class="ml-auto inline-flex h-6 items-center gap-1 rounded-md px-2.5 text-ui-3xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground" onclick={() => (createTriggerOpen = true)}>
+          <Plus class="size-3 shrink-0" />Add trigger
         </button>
       </div>
 
@@ -1141,23 +1142,23 @@
         <tbody>
           {#each visibleTriggers as trig (trig.name)}
             <tr class="group/trig" style="height:32px">
-              <td class="border-b border-r border-border/25 px-3 font-mono text-ui-xs text-foreground overflow-hidden">
+              <td class="border-b border-border/20 px-3 font-mono text-ui-xs text-foreground overflow-hidden">
                 <span class="block truncate">{trig.name}</span>
               </td>
-              <td class="border-b border-r border-border/25 px-3">
+              <td class="border-b border-border/20 px-3">
                 <span class="rounded bg-muted/60 px-1.5 py-0.5 font-mono text-ui-3xs text-muted-foreground">{trig.timing}</span>
               </td>
-              <td class="border-b border-r border-border/25 px-3 overflow-hidden">
+              <td class="border-b border-border/20 px-3 overflow-hidden">
                 <div class="flex gap-1 overflow-hidden">
                   {#each trig.events.split(', ').filter(Boolean) as ev (ev)}
                     <span class="shrink-0 rounded bg-primary/8 px-1.5 py-0.5 font-mono text-ui-3xs text-primary">{ev}</span>
                   {/each}
                 </div>
               </td>
-              <td class="border-b border-r border-border/25 px-3 font-mono text-ui-xs text-muted-foreground overflow-hidden">
+              <td class="border-b border-border/20 px-3 font-mono text-ui-xs text-muted-foreground overflow-hidden">
                 <span class="block truncate">{trig.functionName}()</span>
               </td>
-              <td class="border-b border-r border-border/25 px-3">
+              <td class="border-b border-border/20 px-3">
                 {#if trig.enabled}
                   <span class="flex items-center gap-1 font-mono text-ui-3xs text-success">
                     <span class="size-1.5 rounded-full bg-success"></span>on
@@ -1177,7 +1178,7 @@
                     async () => { await executeSql(`DROP TRIGGER "${trig.name}" ON ${tbl()}`); toast.success(`Trigger "${trig.name}" dropped`); onrefresh() }
                   )}
                 >
-                  <Trash2 class="size-3.5" />
+                  <Trash2 class="size-3.5 shrink-0" />
                 </button>
               </td>
             </tr>
@@ -1203,4 +1204,5 @@
   defaultTable={table}
   {tables}
   onrefresh={onrefresh}
+  {onopensql}
 />

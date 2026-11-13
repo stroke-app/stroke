@@ -16,7 +16,7 @@
 import { splitSqlStatements } from './sql-statements.js'
 
 /** Engines without LIMIT. */
-const NO_LIMIT_ENGINES = new Set(['mssql', 'redis', 'oracle'])
+const NO_LIMIT_ENGINES = new Set(['mssql', 'redis', 'dynamodb', 'couchdb', 'firestore', 'mongodb', 'oracle'])
 /** Any of these at the top level leaves the statement as it is. */
 const STOP_WORDS = new Set(['LIMIT', 'FETCH', 'OFFSET', 'TOP', 'INTO', 'FOR', 'FORMAT', 'SETTINGS', 'LOCK', 'PROCEDURE'])
 /** After WITH, the first of these says what the statement does. */

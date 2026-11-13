@@ -52,7 +52,7 @@
     >
       <div class="flex flex-col items-center px-6 pt-6 pb-5 text-center">
         <div class="grid size-9 place-items-center rounded-lg border border-border/50 bg-muted/30">
-          <Icon name="lock" class="size-4 text-muted-foreground" />
+          <Icon name="lock" class="size-4 shrink-0 text-muted-foreground" />
         </div>
 
         <Dialog.Title class="mt-3.5 text-ui-sm font-semibold text-foreground">Confirm your PIN</Dialog.Title>

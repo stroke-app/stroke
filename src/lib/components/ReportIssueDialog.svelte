@@ -126,7 +126,7 @@
 <Dialog.Root bind:open>
   <Dialog.Content
     showCloseButton={false}
-    class="@container/ri flex w-[min(34rem,calc(100vw-2rem))] flex-col gap-0 overflow-hidden rounded-xl border border-border/25 bg-background p-0 shadow-2xl shadow-black/50"
+    class="@container/ri flex w-[min(34rem,calc(100vw-2rem))] flex-col gap-0 overflow-hidden rounded-2xl border border-border/60 bg-background p-0 elevate-3-rim"
   >
     <!-- Header -->
     <div
@@ -139,9 +139,9 @@
         >
       </div>
       <Dialog.Close
-        class="inline-flex size-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted/50 hover:text-muted-foreground focus-visible:outline-none"
+        class="inline-flex size-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:outline-none"
       >
-        <X class="size-3.5" />
+        <X class="size-3.5 shrink-0" />
       </Dialog.Close>
     </div>
 
@@ -219,10 +219,10 @@
         class="inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-[var(--radius-field)] px-3 text-ui-2xs text-muted-foreground transition-colors hover:bg-muted/30 hover:text-foreground"
       >
         {#if copied}
-          <Check class="size-3 text-success" />
+          <Check class="size-3 shrink-0 text-success" />
           <span class="text-success">Copied</span>
         {:else}
-          <Copy class="size-3" />
+          <Copy class="size-3 shrink-0" />
           Copy
         {/if}
       </button>

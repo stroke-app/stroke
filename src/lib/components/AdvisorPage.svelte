@@ -155,15 +155,15 @@
         <DropdownMenu.Trigger>
           {#snippet child({ props })}
             <Button {...props} type="button" variant="outline" size="sm" class="h-8 gap-2" disabled={visible.length === 0}>
-              <Icon name="download" class="size-3.5" />
+              <Icon name="download" class="size-3.5 shrink-0" />
               Export
-              <Icon name="chevron-down" class="size-3" />
+              <Icon name="chevron-down" class="size-3 shrink-0" />
             </Button>
           {/snippet}
         </DropdownMenu.Trigger>
         <DropdownMenu.Content align="end" class="min-w-40">
           <DropdownMenu.Group>
-            <DropdownMenu.GroupHeading class="text-ui-2xs font-medium uppercase tracking-[0.06em] text-muted-foreground">
+            <DropdownMenu.GroupHeading>
               Export {visible.length} findings
             </DropdownMenu.GroupHeading>
             <DropdownMenu.Item onSelect={() => void exportReport('csv')}>CSV</DropdownMenu.Item>
@@ -215,13 +215,13 @@
         <p class="mt-1 font-mono text-ui-xs leading-relaxed text-muted-foreground">{error}</p>
       </div>
     {:else if loading && !report}
-      <div class="flex flex-col items-center justify-center gap-2 py-20 text-center">
-        <Icon name="loader-2" class="size-5 animate-spin text-muted-foreground" />
+      <div class="loading-reveal flex flex-col items-center justify-center gap-2 py-20 text-center">
+        <Icon name="loader-2" class="size-5 shrink-0 animate-spin text-muted-foreground" />
         <p class="text-ui-xs text-muted-foreground">Reading the catalog…</p>
       </div>
     {:else if report?.unsupported}
       <div class="flex flex-col items-center justify-center gap-2 py-20 text-center">
-        <Icon name="info" class="size-5 text-muted-foreground" />
+        <Icon name="info" class="size-5 shrink-0 text-muted-foreground" />
         <p class="text-ui-sm text-foreground">No checks for {report.engine} yet</p>
         <p class="max-w-md text-ui-xs leading-relaxed text-muted-foreground">
           The checks are PostgreSQL catalog queries. Rather than show an empty report that
@@ -231,7 +231,7 @@
       </div>
     {:else if groups.length === 0}
       <div class="flex flex-col items-center justify-center gap-2 py-20 text-center">
-        <Icon name="check" class="size-5 text-emerald-500" />
+        <Icon name="check" class="size-5 shrink-0 text-success" />
         <p class="text-ui-sm text-foreground">
           {findings.length === 0 ? 'Nothing to report' : 'Nothing matches this filter'}
         </p>
@@ -285,7 +285,7 @@
                         <span class="mt-0.5 block text-ui-2xs leading-relaxed text-muted-foreground">{f.detail}</span>
                       {/if}
                     </span>
-                    <span class={cn('shrink-0 text-ui-2xs uppercase tracking-wide', (SEVERITY_META[f.severity] ?? SEVERITY_META.info).text)}>
+                    <span class={cn('shrink-0 text-ui-2xs uppercase tracking-[0.06em]', (SEVERITY_META[f.severity] ?? SEVERITY_META.info).text)}>
                       {f.severity}
                     </span>
                     {#if f.remediation}
@@ -297,7 +297,7 @@
                         title={f.remediation}
                         onclick={() => void copySql(f.remediation ?? '')}
                       >
-                        <Icon name="copy" class="size-3" />
+                        <Icon name="copy" class="size-3 shrink-0" />
                         Fix SQL
                       </Button>
                     {/if}

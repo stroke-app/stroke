@@ -47,11 +47,11 @@
 >
   <button
     type="button"
-    class="absolute top-1.5 left-1.5 z-10 inline-flex size-6 items-center justify-center rounded-md border border-transparent bg-background/80 text-muted-foreground opacity-0 shadow-sm backdrop-blur-sm transition-opacity hover:border-border hover:text-foreground group-hover/mini:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    class="absolute top-1.5 left-1.5 z-10 inline-flex size-6 items-center justify-center rounded-md border border-transparent bg-background text-muted-foreground opacity-0 shadow-sm transition-opacity hover:border-border hover:text-foreground group-hover/mini:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     title="Copy JSON"
     onclick={copyJson}
   >
-    <Copy class="size-3" />
+    <Copy class="size-3 shrink-0" />
   </button>
   <div
     bind:this={rootEl}
