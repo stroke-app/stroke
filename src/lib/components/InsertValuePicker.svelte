@@ -138,7 +138,7 @@
       {disabled}
       tabindex={-1}
       aria-label="Show values"
-      class="absolute right-0 inline-flex size-4 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground"
+      class="absolute right-0 inline-flex size-4 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground"
       onclick={() => { open = !open; inputEl?.focus() }}
     >
       <Icon name="chevron-down" class={cn('size-3 transition-transform', open && 'rotate-180')} />
@@ -164,7 +164,7 @@
         onmouseenter={() => (active = i)}
         onclick={() => commit(row.value)}
         class={cn(
-          'flex h-7 w-full items-center gap-2 rounded px-2 text-left font-mono text-ui-xs transition-colors',
+          'flex h-7 w-full items-center gap-2 rounded-md px-2 text-left font-mono text-ui-xs transition-colors',
           row.empty ? 'text-muted-foreground' : 'text-foreground',
           i === active ? 'bg-accent text-accent-foreground' : '',
         )}

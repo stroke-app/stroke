@@ -147,12 +147,12 @@
 <div class="flex min-h-0 flex-1 flex-col">
   <!-- Sticky header -->
   <div class="flex h-9 shrink-0 items-center gap-1 px-2.5">
-    <span class="min-w-0 flex-1 truncate text-ui-3xs font-medium uppercase tracking-wider text-muted-foreground">
+    <span class="min-w-0 flex-1 truncate text-ui-3xs font-medium uppercase tracking-[0.06em] text-muted-foreground">
       Extensions
     </span>
     <button
       type="button"
-      class="inline-flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground disabled:opacity-40"
+      class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40"
       title="Install a plugin from a folder"
       aria-label="Install a plugin from a folder"
       onclick={install}
@@ -162,12 +162,12 @@
     </button>
     <button
       type="button"
-      class="inline-flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground"
+      class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
       title="Rescan the plugins folder"
       aria-label="Rescan the plugins folder"
       onclick={() => void refreshExternalPlugins()}
     >
-      <Icon name="refresh-cw" class="size-3.5" />
+      <Icon name="refresh-cw" class="size-3.5 shrink-0" />
     </button>
   </div>
 
@@ -195,7 +195,7 @@
          Third-party plugins. Each runs in its own Worker with the network
          globals removed, so the worst a broken one can do is stop formatting. -->
     {#if filteredExternal.length > 0}
-      <p class="px-2.5 pt-1 pb-1 text-ui-3xs font-medium uppercase tracking-wider text-muted-foreground">
+      <p class="px-2.5 pt-1 pb-1 text-ui-3xs font-medium uppercase tracking-[0.06em] text-muted-foreground">
         Installed
       </p>
       {#each filteredExternal as p (p.id)}
@@ -218,18 +218,18 @@
                 title="Reload from disk"
                 aria-label="Reload {p.name}"
                 onclick={() => void reload(p)}
-                class="inline-flex size-5 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover/ext:opacity-100"
+                class="hit-area inline-flex size-5 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover/ext:opacity-100"
               >
-                <Icon name="refresh-cw" class="size-3" />
+                <Icon name="refresh-cw" class="size-3 shrink-0" />
               </button>
               <button
                 type="button"
                 title="Remove, deleting its folder"
                 aria-label="Remove {p.name}"
                 onclick={() => void remove(p)}
-                class="inline-flex size-5 items-center justify-center rounded text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover/ext:opacity-100"
+                class="hit-area inline-flex size-5 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover/ext:opacity-100"
               >
-                <Icon name="trash-2" class="size-3" />
+                <Icon name="trash-2" class="size-3 shrink-0" />
               </button>
               {#if !p.loadable}
                 <span class="rounded-md bg-destructive/10 px-2 py-0.5 text-ui-2xs font-medium text-destructive">Broken</span>
@@ -240,7 +240,7 @@
                   onclick={() => void setExternalEnabled(p.id, false)}
                   class="flex items-center gap-1 rounded-md bg-primary/10 px-2 py-0.5 text-ui-2xs font-medium text-primary transition-colors hover:bg-primary/20"
                 >
-                  <Icon name="check" class="size-3" />
+                  <Icon name="check" class="size-3 shrink-0" />
                   On
                 </button>
               {:else}
@@ -273,12 +273,12 @@
       </div>
     {/if}
 
-    <p class="px-2.5 pt-1 pb-1 text-ui-3xs font-medium uppercase tracking-wider text-muted-foreground">
+    <p class="px-2.5 pt-1 pb-1 text-ui-3xs font-medium uppercase tracking-[0.06em] text-muted-foreground">
       Built in
     </p>
     {#if filtered.length === 0}
       <div class="flex flex-col items-center gap-2 px-4 py-10 text-center">
-        <Icon name="blocks" class="size-5 text-muted-foreground" />
+        <Icon name="blocks" class="size-5 shrink-0 text-muted-foreground" />
         <p class="text-ui-xs text-muted-foreground">No extensions match "{filter}"</p>
       </div>
     {:else}
@@ -310,7 +310,7 @@
                 }}
                 class="flex items-center gap-1 rounded-md bg-primary/10 px-2 py-0.5 text-ui-2xs font-medium text-primary transition-colors hover:bg-primary/20"
               >
-                <Icon name="check" class="size-3" />
+                <Icon name="check" class="size-3 shrink-0" />
                 Installed
               </button>
             {:else}

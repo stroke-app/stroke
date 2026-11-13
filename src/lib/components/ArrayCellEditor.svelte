@@ -1,4 +1,5 @@
 <script>
+  import { Button } from '$lib/components/ui/button/index.js'
   // Dedicated editor for SQL array cells (Postgres text[]/int[]/… , ClickHouse
   // Array(...)). Prisma-Studio-style add / remove / reorder / insert, instead of
   // treating the array as raw JSON. Emits the edited JS array back to the parent,
@@ -110,7 +111,7 @@
       <!-- Header -->
       <div class="flex items-center gap-3 border-b border-border/15 px-4 py-3.5">
         <div class="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-          <Brackets class="size-4" />
+          <Brackets class="size-4 shrink-0" />
         </div>
         <div class="min-w-0 flex-1">
           <p class="truncate text-ui-sm font-semibold tracking-tight text-foreground antialiased">{column}</p>
@@ -123,10 +124,10 @@
         <button
           type="button"
           aria-label="Close"
-          class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-[color,background-color,transform] duration-150 ease-out hover:bg-muted/50 hover:text-foreground active:scale-[0.94]"
+          class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-[color,background-color,transform] duration-150 ease-out hover:bg-accent hover:text-foreground active:scale-[0.94]"
           onclick={cancel}
         >
-          <X class="size-4" />
+          <X class="size-4 shrink-0" />
         </button>
       </div>
 
@@ -142,7 +143,7 @@
               class="inline-flex items-center gap-1.5 rounded-md border border-border/50 px-2.5 py-1 text-ui-2xs font-medium text-muted-foreground transition-[color,background-color,transform] duration-150 ease-out hover:bg-muted/40 hover:text-foreground active:scale-[0.96]"
               onclick={addItem}
             >
-              <Plus class="size-3.5" /> Add element
+              <Plus class="size-3.5 shrink-0" /> Add element
             </button>
           </div>
         {:else}
@@ -170,9 +171,9 @@
                   draggable="true"
                   ondragstart={(e) => onDragStart(i, e)}
                   ondragend={onDragEnd}
-                  class="flex size-5 shrink-0 cursor-grab items-center justify-center rounded text-muted-foreground/35 transition-colors group-hover:text-muted-foreground active:cursor-grabbing"
+                  class="hit-area flex size-5 shrink-0 cursor-grab items-center justify-center rounded-md text-muted-foreground/35 transition-colors group-hover:text-muted-foreground active:cursor-grabbing"
                 >
-                  <GripVertical class="size-3.5" />
+                  <GripVertical class="size-3.5 shrink-0" />
                 </button>
                 <span class="w-6 shrink-0 pr-1 text-right font-mono text-ui-3xs tabular-nums text-muted-foreground/60">{i}</span>
                 {#if item.v === null}
@@ -199,15 +200,15 @@
                 <div class="flex shrink-0 items-center gap-0.5">
                   <button type="button" aria-label={item.v === null ? 'Clear NULL' : 'Set NULL'}
                     class={cn(
-                      'inline-flex size-6 items-center justify-center rounded transition-colors hover:bg-muted/60 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring',
+                      'inline-flex size-6 items-center justify-center rounded-md transition-colors hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring',
                       item.v === null ? 'text-warning' : 'text-muted-foreground/40 group-hover:text-muted-foreground hover:text-foreground',
                     )}
                     title={item.v === null ? 'Clear NULL' : 'Set NULL'}
-                    onclick={() => toggleNull(i)}><CircleSlash class="size-3.5" /></button>
+                    onclick={() => toggleNull(i)}><CircleSlash class="size-3.5 shrink-0" /></button>
                   <button type="button" aria-label="Remove element"
-                    class="inline-flex size-6 items-center justify-center rounded text-muted-foreground/40 transition-colors group-hover:text-muted-foreground hover:bg-destructive/15 hover:text-destructive focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
+                    class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground/40 transition-colors group-hover:text-muted-foreground hover:bg-destructive/15 hover:text-destructive focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
                     title="Remove"
-                    onclick={() => removeAt(i)}><X class="size-3.5" /></button>
+                    onclick={() => removeAt(i)}><X class="size-3.5 shrink-0" /></button>
                 </div>
               </div>
             {/each}
@@ -222,7 +223,7 @@
           class= "field-surface inline-flex h-8 items-center gap-1.5 px-2.5 text-ui-xs font-medium text-muted-foreground transition-[color,background-color,transform] duration-150 ease-out hover:bg-muted/40 hover:text-foreground active:scale-[0.96]"
           onclick={addItem}
         >
-          <Plus class="size-3.5" /> Add
+          <Plus class="size-3.5 shrink-0" /> Add
         </button>
         {#if items.length > 0}
           <button
@@ -240,11 +241,10 @@
           <!-- bg-primary, the way ConfirmDialog and the update dialog do it. It
                was the only primary button in the app painted in the foreground
                colour. -->
-          <button
-            type="button"
-            class="inline-flex h-8 items-center rounded-md bg-primary px-4 text-ui-xs font-medium text-primary-foreground transition-[background-color,transform] duration-150 ease-out hover:bg-primary/90 active:scale-[0.96] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+          <Button
+            
             onclick={save}
-          >Save</button>
+>Save</Button>
         </div>
       </div>
     </div>

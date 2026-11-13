@@ -398,7 +398,7 @@
           title="Copy JSON"
           onclick={copyJson}
         >
-          <Copy class="size-3.5" />
+          <Copy class="size-3.5 shrink-0" />
         </button>
         <button
           type="button"
@@ -406,7 +406,7 @@
           title="Close panel (Esc)"
           onclick={onclose}
         >
-          <X class="size-3.5" />
+          <X class="size-3.5 shrink-0" />
         </button>
       </header>
 
@@ -428,32 +428,34 @@
           {#if viewMode === 'details' && target?.kind === 'row'}
             <div class="flex min-h-0 flex-1 flex-col">
               <!-- Search -->
-              <div class="shrink-0 px-2.5 py-2">
-                <div class="relative">
-                  <Search class="absolute left-2 top-1/2 size-3 -translate-y-1/2 text-muted-foreground" />
+              <div class="shrink-0 px-2.5 pb-1.5 pt-2">
+                <div class="relative flex items-center">
+                  <Search class="pointer-events-none absolute left-2.5 size-3.5 text-muted-foreground" />
                   <input
                     type="text"
-                    placeholder="Search for field..."
+                    placeholder="Search fields and values"
+                    aria-label="Search fields"
                     bind:value={fieldSearch}
-                    class="w-full rounded-lg border-2 border-border bg-muted/20 py-1.5 pl-7 pr-2.5 font-mono text-ui-xs placeholder:text-muted-foreground focus:border-ring/55 focus:ring-2 focus:ring-ring/15 focus:outline-none"
+                    onkeydown={(e) => { if (e.key === 'Escape' && fieldSearch) { e.preventDefault(); e.stopPropagation(); fieldSearch = '' } }}
+                    class="field-surface h-8 w-full min-w-0 pl-8 pr-2.5 text-ui-sm text-foreground shadow-none outline-none placeholder:text-muted-foreground"
                   />
                 </div>
               </div>
 
               <!-- Field list -->
-              <div class="flex-1 overflow-y-auto px-2.5 pb-3">
+              <div class="app-scroll flex-1 overflow-y-auto px-1.5 pb-3">
                 {#key target.rowIdx}
                   {#each filteredFields as field (field.colIdx)}
-                    <div class={`group/field mb-2${fields.length > 100 ? ' [content-visibility:auto] [contain-intrinsic-size:auto_56px]' : ''}`}>
-                      <!-- Label row: name + type + hover actions -->
-                      <div class="mb-0.5 flex h-5 items-center gap-1">
-                        <span class="min-w-0 flex-1 truncate font-mono text-ui-2xs text-muted-foreground">{field.name}</span>
+                    <!-- The record view's row, stacked for a narrow panel: name, key and
+                         type on one line, the value under it as text that becomes a
+                         field only on hover and focus. -->
+                    <div class={`group/field rounded-md px-1 py-1 transition-colors hover:bg-muted/25${fields.length > 100 ? ' [content-visibility:auto] [contain-intrinsic-size:auto_46px]' : ''}`}>
+                      <div class="flex h-5 items-center gap-1.5 px-1.5">
+                        <span class="min-w-0 truncate font-mono text-ui-xs text-foreground/90">{field.name}</span>
                         {#if field.isPk}
-                          <span title="Primary key, cannot be changed" class="inline-flex shrink-0 items-center gap-0.5 font-mono text-ui-3xs text-warning">
-                            <KeyRound class="size-3" />PK
-                          </span>
+                          <KeyRound class="size-3 shrink-0 text-warning" aria-label="Primary key, cannot be changed" />
                         {/if}
-                        <span class="shrink-0 font-mono text-ui-3xs text-muted-foreground">{field.dataType}</span>
+                        <span class="ml-auto min-w-0 shrink truncate text-ui-2xs text-muted-foreground/70" title={field.dataType}>{field.dataType}</span>
 
                         {#if field.editable}
                           <DropdownMenu.Root>
@@ -461,7 +463,7 @@
                               class="opacity-0 ml-0.5 inline-flex size-4 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground group-hover/field:opacity-100"
                               aria-label="Field actions"
                             >
-                              <Ellipsis class="size-3" />
+                              <Ellipsis class="size-3 shrink-0" />
                             </DropdownMenu.Trigger>
                             <DropdownMenu.Content class="min-w-40 text-ui-xs" align="end" sideOffset={4}>
                               <DropdownMenu.Item
@@ -469,7 +471,7 @@
                                 disabled={savingFields[field.colIdx]}
                                 onSelect={() => void copyFieldValue(field)}
                               >
-                                <Copy class="size-3.5 text-muted-foreground" />
+                                <Copy class="size-3.5 shrink-0 text-muted-foreground" />
                                 Copy value
                               </DropdownMenu.Item>
 
@@ -480,7 +482,7 @@
                                   disabled={field.isNull || savingFields[field.colIdx]}
                                   onSelect={() => void commitValue(field.colIdx, null)}
                                 >
-                                  <CircleSlash class="size-3.5 text-muted-foreground" />
+                                  <CircleSlash class="size-3.5 shrink-0 text-muted-foreground" />
                                   Set NULL
                                 </DropdownMenu.Item>
                               {/if}
@@ -491,7 +493,7 @@
                                   disabled={field.isEmpty || savingFields[field.colIdx]}
                                   onSelect={() => void commitValue(field.colIdx, '')}
                                 >
-                                  <Eraser class="size-3.5 text-muted-foreground" />
+                                  <Eraser class="size-3.5 shrink-0 text-muted-foreground" />
                                   Set empty
                                 </DropdownMenu.Item>
                               {/if}
@@ -502,7 +504,7 @@
                                   disabled={field.isNull || savingFields[field.colIdx]}
                                   onSelect={() => void prettyFormat(field)}
                                 >
-                                  <Braces class="size-3.5 text-muted-foreground" />
+                                  <Braces class="size-3.5 shrink-0 text-muted-foreground" />
                                   Pretty format
                                 </DropdownMenu.Item>
                               {/if}
@@ -512,11 +514,11 @@
                           <!-- Non-editable: copy only -->
                           <button
                             type="button"
-                            class="opacity-0 ml-0.5 inline-flex size-4 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground group-hover/field:opacity-100"
+                            class="hit-area opacity-0 ml-0.5 inline-flex size-4 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground group-hover/field:opacity-100"
                             title="Copy value"
                             onclick={() => copyFieldValue(field)}
                           >
-                            <Copy class="size-3" />
+                            <Copy class="size-3 shrink-0" />
                           </button>
                         {/if}
                       </div>
@@ -525,14 +527,14 @@
                       {#if !field.editable}
                         <!-- Read-only -->
                         <div
-                          class="w-full rounded border border-border/60 bg-muted/10 px-2.5 py-1.5 font-mono text-ui-xs {field.isNull || field.isEmpty ? 'italic text-muted-foreground' : 'text-foreground'} {field.isMultiline ? 'whitespace-pre-wrap break-all' : 'truncate'}"
+                          class="w-full px-1.5 font-mono text-ui-xs leading-5 {field.isNull || field.isEmpty ? 'text-muted-foreground/70' : 'text-foreground'} {field.isMultiline ? 'line-clamp-6 whitespace-pre-wrap break-all' : 'line-clamp-2 break-all'}"
                           title={field.displayValue}
-                        >{field.displayValue}</div>
+                        >{#if field.isNull}<span class="rounded-sm bg-muted/60 px-1 text-ui-2xs">NULL</span>{:else if field.isEmpty}<span class="rounded-sm bg-muted/60 px-1 text-ui-2xs">empty</span>{:else}{field.displayValue}{/if}</div>
 
                       {:else if field.isBoolean}
                         <div class="relative">
                           <FieldSelect
-                            class="w-full bg-muted/20 text-ui-xs"
+                            class="h-6 w-full bg-transparent text-ui-xs"
                             value={field.initialEditStr}
                             disabled={savingFields[field.colIdx]}
                             onchange={(v) => void saveField(field.colIdx, v)}
@@ -544,7 +546,7 @@
                           />
                           {#if savingFields[field.colIdx]}
                             <span class="pointer-events-none absolute right-7 top-1/2 -translate-y-1/2 text-muted-foreground">
-                              <Loader class="size-3 animate-spin" />
+                              <Loader class="size-3 shrink-0 animate-spin" />
                             </span>
                           {/if}
                         </div>
@@ -552,7 +554,7 @@
                       {:else if field.enumValues}
                         <div class="relative">
                           <FieldSelect
-                            class="w-full bg-muted/20 text-ui-xs"
+                            class="h-6 w-full bg-transparent text-ui-xs"
                             value={field.initialEditStr}
                             disabled={savingFields[field.colIdx]}
                             onchange={(v) => void saveField(field.colIdx, v)}
@@ -563,7 +565,7 @@
                           />
                           {#if savingFields[field.colIdx]}
                             <span class="pointer-events-none absolute right-7 top-1/2 -translate-y-1/2 text-muted-foreground">
-                              <Loader class="size-3 animate-spin" />
+                              <Loader class="size-3 shrink-0 animate-spin" />
                             </span>
                           {/if}
                         </div>
@@ -575,7 +577,7 @@
                             rows={Math.min(6, Math.max(2, (field.initialEditStr.match(/\n/g)?.length ?? 0) + 1))}
                             disabled={savingFields[field.colIdx]}
                             placeholder={field.isNull ? 'NULL' : ''}
-                            class="w-full resize-none rounded-lg border bg-muted/20 px-2.5 py-1.5 font-mono text-ui-xs text-foreground placeholder:text-muted-foreground focus:border-ring/55 focus:ring-2 focus:ring-ring/15 focus:outline-none disabled:opacity-50 {fieldErrors[field.colIdx] ? 'border-destructive' : 'border-border'}"
+                            class="no-field-frame block w-full resize-none py-0.5 rounded-sm border bg-transparent px-1.5 font-mono text-ui-xs leading-5 text-foreground shadow-none outline-none transition-colors placeholder:text-muted-foreground hover:border-field-border hover:bg-background/40 focus:border-ring/70 focus:bg-background/60 disabled:opacity-50 {fieldErrors[field.colIdx] ? 'border-destructive' : 'border-transparent'}"
                             oninput={(e) => scheduleFieldSave(field.colIdx, /** @type {HTMLTextAreaElement} */ (e.currentTarget).value)}
                             onblur={(e) => handleFieldBlur(field.colIdx, e)}
                             onkeydown={(e) => handleFieldKeydown(field.colIdx, e)}
@@ -592,7 +594,7 @@
                             value={field.initialEditStr}
                             disabled={savingFields[field.colIdx]}
                             placeholder={field.isNull ? 'NULL' : ''}
-                            class="w-full rounded-lg border bg-muted/20 px-2.5 py-1.5 font-mono text-ui-xs text-foreground placeholder:text-muted-foreground focus:border-ring/55 focus:ring-2 focus:ring-ring/15 focus:outline-none disabled:opacity-50 {fieldErrors[field.colIdx] ? 'border-destructive' : 'border-border'}"
+                            class="no-field-frame block h-6 w-full rounded-sm border bg-transparent px-1.5 font-mono text-ui-xs leading-5 text-foreground shadow-none outline-none transition-colors placeholder:text-muted-foreground hover:border-field-border hover:bg-background/40 focus:border-ring/70 focus:bg-background/60 disabled:opacity-50 {fieldErrors[field.colIdx] ? 'border-destructive' : 'border-transparent'}"
                             oninput={(e) => scheduleFieldSave(field.colIdx, /** @type {HTMLInputElement} */ (e.currentTarget).value)}
                             onblur={(e) => handleFieldBlur(field.colIdx, e)}
                             onkeydown={(e) => handleFieldKeydown(field.colIdx, e)}
@@ -604,13 +606,13 @@
                       {/if}
 
                       {#if fieldErrors[field.colIdx]}
-                        <p class="mt-0.5 font-mono text-ui-3xs text-destructive">{fieldErrors[field.colIdx]}</p>
+                        <p class="mt-0.5 px-1.5 text-ui-2xs text-destructive">{fieldErrors[field.colIdx]}</p>
                       {/if}
                     </div>
                   {/each}
 
                   {#if filteredFields.length === 0 && fieldSearch}
-                    <p class="py-6 text-center font-mono text-ui-xs text-muted-foreground">No fields match</p>
+                    <p class="py-8 text-center text-ui-sm text-muted-foreground">No fields match "{fieldSearch}"</p>
                   {/if}
                 {/key}
               </div>
@@ -643,7 +645,7 @@
                 class="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-ui-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                 onclick={openPreviewExternal}
               >
-                <ExternalLink class="size-3" />
+                <ExternalLink class="size-3 shrink-0" />
                 Open in browser
               </button>
             </div>

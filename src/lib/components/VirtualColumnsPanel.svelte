@@ -1,4 +1,5 @@
 <script>
+  import { Button } from '$lib/components/ui/button/index.js'
   import { virtualColumnsStore } from '$lib/stores/virtual-columns.js'
   import { templateRefs, bindExpr, FN_SNIPPETS } from '$lib/virtual-column.js'
   import ResizeHandle from './ResizeHandle.svelte'
@@ -136,9 +137,9 @@
     >{tableName}</span>
     <button
       type="button"
-      class="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+      class="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
       onclick={onclose}
-    ><X class="size-3" /></button>
+    ><X class="size-3 shrink-0" /></button>
   </div>
 
   <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -203,9 +204,9 @@
               {#if colSearch}
                 <button
                   type="button"
-                  class="flex size-3.5 items-center justify-center rounded text-muted-foreground hover:text-foreground"
+                  class="flex size-3.5 items-center justify-center rounded-md text-muted-foreground hover:text-foreground"
                   onclick={() => { colSearch = '' }}
-                ><X class="size-2.5" /></button>
+                ><X class="size-3 shrink-0" /></button>
               {/if}
             </div>
             <div class="max-h-40 overflow-y-auto rounded border border-border/40 bg-background/60">
@@ -238,12 +239,12 @@
           <div class="flex flex-col gap-3">
             {#each fnGroups as group}
               <div>
-                <p class="mb-1.5 text-ui-2xs font-semibold uppercase tracking-wider text-muted-foreground">{group.label}</p>
+                <p class="mb-1.5 text-ui-2xs font-semibold uppercase tracking-[0.06em] text-muted-foreground">{group.label}</p>
                 <div class="flex flex-wrap gap-1">
                   {#each group.fns as fn}
                     <button
                       type="button"
-                      class="inline-flex items-center justify-center rounded border border-border/60 bg-muted/50 px-2 py-1 font-mono text-ui-xs font-medium text-foreground/70 transition-colors hover:border-primary/40 hover:bg-primary/10 hover:text-primary"
+                      class="inline-flex items-center justify-center rounded-md border border-border/60 bg-muted/50 px-2 py-1 font-mono text-ui-xs font-medium text-foreground/70 transition-colors hover:border-primary/40 hover:bg-primary/10 hover:text-primary"
                       onclick={() => insertFn(fn)}
                     >{fn.label}</button>
                   {/each}
@@ -279,18 +280,17 @@
         <!-- Actions ──────────────────────────────────────────────────────── -->
         <div class="shrink-0 border-t border-border/50 px-3 py-3">
           <div class="flex gap-2">
-            <button
-              type="button"
+            <Button
               onclick={save}
               disabled={!canSave}
-              class="inline-flex h-8 flex-1 items-center justify-center gap-1.5 rounded bg-primary text-ui-xs font-semibold text-primary-foreground transition-opacity disabled:cursor-not-allowed disabled:opacity-30 hover:not-disabled:opacity-90"
-            >
-              <Check class="size-3.5" /> Save
-            </button>
+              class="flex-1"
+>
+              <Check class="size-3.5 shrink-0" /> Save
+            </Button>
             <button
               type="button"
               onclick={cancelForm}
-              class="inline-flex h-8 items-center justify-center rounded border border-border/50 px-3.5 text-ui-xs font-medium text-foreground/65 transition-colors hover:bg-muted hover:text-foreground"
+              class="inline-flex h-8 items-center justify-center rounded-md border border-border/50 px-3.5 text-ui-xs font-medium text-foreground/65 transition-colors hover:bg-muted hover:text-foreground"
             >Cancel</button>
           </div>
         </div>
@@ -304,7 +304,7 @@
           <div class="px-3 py-6">
             <div class="flex items-start gap-2.5">
               <span class="flex size-7 shrink-0 items-center justify-center rounded-md border border-border/30 bg-muted/20">
-                <FunctionSquare class="size-3.5 text-muted-foreground" />
+                <FunctionSquare class="size-3.5 shrink-0 text-muted-foreground" />
               </span>
               <div class="min-w-0">
                 <p class="text-ui-sm font-medium text-foreground/60">No virtual columns yet</p>
@@ -318,7 +318,7 @@
               onclick={openAdd}
               class="mt-4 flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-border/50 py-2 text-ui-xs font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
             >
-              <Plus class="size-3" /> Add virtual column
+              <Plus class="size-3 shrink-0" /> Add virtual column
             </button>
           </div>
         {:else}
@@ -332,7 +332,7 @@
                 <button
                   type="button"
                   class={cn(
-                    "flex size-5 shrink-0 items-center justify-center rounded transition-colors",
+                    "hit-area flex size-5 shrink-0 items-center justify-center rounded-md transition-colors",
                     col.enabled
                       ? "text-foreground/50 hover:bg-muted hover:text-foreground"
                       : "text-muted-foreground hover:bg-muted hover:text-foreground"
@@ -340,7 +340,7 @@
                   title={col.enabled ? 'Disable' : 'Enable'}
                   onclick={() => virtualColumnsStore.patch(tableKey, col.id, { enabled: !col.enabled })}
                 >
-                  {#if col.enabled}<Eye class="size-3.5" />{:else}<EyeOff class="size-3.5" />{/if}
+                  {#if col.enabled}<Eye class="size-3.5 shrink-0" />{:else}<EyeOff class="size-3.5 shrink-0" />{/if}
                 </button>
                 <div class="min-w-0 flex-1 overflow-hidden">
                   <div class="flex items-baseline gap-1.5">
@@ -354,14 +354,14 @@
                 <div class="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
                   <button
                     type="button"
-                    class="flex size-6 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+                    class="flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
                     onclick={() => openEdit(col)}
-                  ><Pencil class="size-3" /></button>
+                  ><Pencil class="size-3 shrink-0" /></button>
                   <button
                     type="button"
-                    class="flex size-6 items-center justify-center rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                    class="flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                     onclick={() => virtualColumnsStore.remove(tableKey, col.id)}
-                  ><Trash2 class="size-3" /></button>
+                  ><Trash2 class="size-3 shrink-0" /></button>
                 </div>
               </div>
             {/each}
@@ -378,7 +378,7 @@
             onclick={openAdd}
             class="flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-border/50 py-2 text-ui-xs font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
           >
-            <Plus class="size-3" /> Add virtual column
+            <Plus class="size-3 shrink-0" /> Add virtual column
           </button>
         </div>
       {/if}

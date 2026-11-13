@@ -73,8 +73,11 @@ export function rowsToTsv(columns, rows) {
 
 export const mdEscape = (/** @type {unknown} */ v) => singleLine(v).replace(/\|/g, '\\|')
 
-/** Padding cap so one huge cell doesn't blow up every row with spaces. */
-const MD_PAD_MAX = 48
+/** Padding cap so one huge cell doesn't blow up every row with spaces. Wide
+ *  enough for the long-but-ordinary values (a 64-char hash, a UUID, an ISO
+ *  timestamp, a URL): at 48 a sha256 column overflowed its own header and
+ *  shoved every column after it out of line. Only real prose overflows now. */
+const MD_PAD_MAX = 96
 
 /**
  * Column widths for a padded (column-aligned) Markdown table, capped at

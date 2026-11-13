@@ -42,11 +42,11 @@
     {/if}
     <button
       type="button"
-      class="ml-1 inline-flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+      class="ml-1 inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
       onclick={onclose}
       aria-label="Close stats"
     >
-      <X class="size-3" />
+      <X class="size-3 shrink-0" />
     </button>
   </div>
 
@@ -68,7 +68,7 @@
         </div>
         <div class="flex h-1.5 w-full overflow-hidden rounded-full bg-muted">
           <div
-            class="h-full rounded-full bg-primary transition-all"
+            class="h-full rounded-full bg-primary transition-[width]"
             style="width:{filledPct}%"
           ></div>
         </div>

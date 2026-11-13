@@ -15,7 +15,9 @@
 // A render-directive is a plain object; fields are merged across formatters
 // (first writer wins per field) so e.g. money `display` and heatmap `bgTint`
 // stack on one cell. Recognized fields:
-//   display, title, badge{bg,fg}, swatch, dot, fg, bgTint, mask, reveal, link, warn
+//   display, title, badge{bg,fg}, swatch, dot, fg, bgTint, mask, reveal, link, warn,
+//   trail{text, color?: 'success'|'destructive'} (muted text after the value)
+// ctx: { stats, row, prev (the row drawn above), colIdx, colIndex (name → index), fk }
 import { isPluginEnabled, getPluginConfig } from '$lib/stores/plugins.js'
 import { externalFormatCell, externalFormattersActive } from './external/host.js'
 import { betterTime } from './extensions/better-time.js'
@@ -37,6 +39,14 @@ import { idGenerators } from './extensions/id-generators.js'
 import { dataGen } from './extensions/data-gen.js'
 import { cellTransforms } from './extensions/cell-transforms.js'
 import { savedViews, findReplace } from './extensions/workflow.js'
+import { fkLabels } from './extensions/fk-labels.js'
+import { idDecoder } from './extensions/id-decoder.js'
+import { tokenDecoder } from './extensions/token-decoder.js'
+import { byteSize } from './extensions/byte-size.js'
+import { ipAddress } from './extensions/ip-address.js'
+import { duplicates } from './extensions/duplicates.js'
+import { rowChange } from './extensions/row-change.js'
+import { geoPair } from './extensions/geo-pair.js'
 
 // Display order also = merge precedence for formatters (earlier wins per field).
 export const EXTENSIONS = [
@@ -51,6 +61,14 @@ export const EXTENSIONS = [
   colorSwatch,
   maskSensitive,
   smartText,
+  byteSize,
+  fkLabels,
+  idDecoder,
+  tokenDecoder,
+  ipAddress,
+  geoPair,
+  rowChange,
+  duplicates,
   heatmap,
   validators,
   linkify,

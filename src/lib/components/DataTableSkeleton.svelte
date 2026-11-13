@@ -36,7 +36,7 @@
   }
 </script>
 
-<div class="min-h-0 w-full min-w-full" role="status" aria-label="Loading rows">
+<div class="loading-reveal min-h-0 w-full min-w-full" role="status" aria-label="Loading rows">
   <table class="studio-data-table w-max min-w-full table-fixed text-ui-sm">
     <colgroup>
       {#if showRowExpand}

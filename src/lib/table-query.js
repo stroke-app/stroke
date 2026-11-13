@@ -34,7 +34,7 @@ export function readRowsResponse(data) {
 
 /** @typedef {{ column: string, direction: SortDirection }} TableSort */
 
-/** @typedef {'eq' | 'neq' | 'gt' | 'gte' | 'lt' | 'lte' | 'contains' | 'not_contains' | 'starts_with' | 'ends_with' | 'is_null' | 'is_not_null' | 'between'} FilterOp */
+/** @typedef {'eq' | 'neq' | 'gt' | 'gte' | 'lt' | 'lte' | 'contains' | 'not_contains' | 'starts_with' | 'ends_with' | 'is_null' | 'is_not_null' | 'between' | 'sql'} FilterOp */
 
 /** @typedef {{ id: string, column: string, op: FilterOp, value: string, conjunct: 'and' | 'or' }} TableFilter */
 
@@ -158,6 +158,18 @@ export const NUM_FILTER_OPS = FILTER_OPS.filter((o) =>
 
 let filterSeq = 0
 
+/**
+ * Op of a filter row that holds a typed SQL condition (`id > 200 AND …`) in
+ * `value` instead of a column/operator/value triple. The backend splices it in
+ * as one parenthesised `WHERE` term after checking it can't escape that.
+ */
+export const SQL_FILTER_OP = /** @type {FilterOp} */ ('sql')
+
+/** A new, empty SQL-condition filter row. @param {string} [value] @returns {TableFilter} */
+export function createSqlFilter(value = '') {
+  return { id: nextFilterId(), column: '', op: SQL_FILTER_OP, value, conjunct: 'and' }
+}
+
 export function nextFilterId() {
   filterSeq += 1
   return `filter-${filterSeq}`
@@ -171,6 +183,8 @@ export function createFilter(column = '', op = /** @type {FilterOp} */ ('contain
 /** @param {TableFilter[]} filters */
 export function activeFilters(filters) {
   return filters.filter((f) => {
+    // A typed SQL condition has no column; it counts once it says something.
+    if (f.op === SQL_FILTER_OP) return f.value.trim().length > 0
     if (!f.column) return false
     const op = FILTER_OPS.find((o) => o.value === f.op)
     if (!op) return false
@@ -280,6 +294,7 @@ export function buildSelectSql({ schema, table, columns = [], filters = [], sear
       case 'not_contains': return `${asText(col)} NOT ${like} ${lit('%' + v + '%')}`
       case 'starts_with': return `${asText(col)} ${like} ${lit(v + '%')}`
       case 'ends_with': return `${asText(col)} ${like} ${lit('%' + v)}`
+      case 'sql': return `(${v})`
       case 'is_null': return `${col} IS NULL`
       case 'is_not_null': return `${col} IS NOT NULL`
       case 'between': {

@@ -1,4 +1,5 @@
 <script>
+  import { Button } from '$lib/components/ui/button/index.js'
   import Icon from "./Icon.svelte";
   import SlidersHorizontal from "@lucide/svelte/icons/sliders-horizontal";
   import Check from "@lucide/svelte/icons/check";
@@ -13,17 +14,20 @@
   import { cn } from "$lib/utils.js";
   import { IS_MAC, keycaps, comboTitle } from "$lib/shortcuts.js";
   import Kbd from "./Kbd.svelte";
+  import { bindingFor } from "$lib/stores/keybindings.js";
   /** Tooltip keycaps. A control that has a shortcut should say so where the
    *  pointer already is - the shortcuts dialog is where you look when you do not
    *  know a key exists, not when you are already on the button. */
-  const KEY = {
-    search: comboTitle('Mod+F'),
-    filter: IS_MAC ? "⌥A" : "Alt+A",
-    sort: IS_MAC ? "⌥S" : "Alt+S",
-    columns: IS_MAC ? "⌥C" : "Alt+C",
-    reset: IS_MAC ? "⌥R" : "Alt+R",
-    addRow: IS_MAC ? "⌥N" : "Alt+N",
-  };
+  /** Follows the user's keybindings; "no shortcut" when one is unbound. */
+  const keyOf = (/** @type {string} */ id) => comboTitle(bindingFor(id)) || "no shortcut";
+  const KEY = $derived({
+    search: keyOf('table.search'),
+    filter: keyOf('table.filterMenu'),
+    sort: keyOf('table.sortMenu'),
+    columns: keyOf('table.columnsMenu'),
+    reset: keyOf('table.resetView'),
+    addRow: keyOf('table.addRow'),
+  });
   import { GAME_WORD, CLEAR_WORD, isMagic } from '$lib/games/easter-eggs.js'
   import {
     FILTER_OPS,
@@ -36,9 +40,11 @@
     pageSizeLabel,
     activeFilters,
     createFilter,
+    createSqlFilter,
+    SQL_FILTER_OP,
     ANY_COLUMN,
   } from "$lib/table-query.js";
-  import { onDestroy, untrack } from "svelte";
+  import { onDestroy, tick, untrack } from "svelte";
   import { formatCompactCount } from "$lib/table-list.js";
   import { describeTableView } from "$lib/stores/table-views.js";
   import { searchOptionHotkey, SEARCH_OPTION_KEYS } from "$lib/search-options.js";
@@ -68,9 +74,13 @@
     hasPrimaryKey = false,
     deleting = false,
     columns = [],
+    /** The app's Dialect id - highlighting, quoting and functions in the SQL filter. */
+    dialect = "postgres",
     rowSearch = "",
     rowSort = null,
     rowFilters = [],
+    /** The database's complaint about the applied SQL condition, if any. */
+    sqlFilterError = "",
     onrefresh = () => {},
     /** Auto-refresh interval for THIS tab, in ms (0 = off). */
     autoRefreshMs = 0,
@@ -430,6 +440,29 @@
   }
 
   /** Page numbers shown in the page dropdown (windowed when many pages). */
+  let pageMenuOpen = $state(false);
+  let sizeMenuOpen = $state(false);
+  let sizeCustom = $state("");
+  $effect(() => { if (sizeMenuOpen) sizeCustom = PAGE_SIZE_OPTIONS.includes(pageSize) ? "" : String(pageSize); });
+  /** 25 · 1K · 5M · All */
+  const sizeShort = (/** @type {number} */ n) =>
+    n === -1 ? "All" : n >= 1_000_000 && n % 1_000_000 === 0 ? `${n / 1_000_000}M` : n >= 1000 && n % 1000 === 0 ? `${n / 1000}K` : n.toLocaleString("en-US");
+  let pageJump = $state("");
+  $effect(() => { if (pageMenuOpen) pageJump = String(page); });
+  /** Focus + select the page field when the popover opens. @param {HTMLInputElement} el */
+  function autofocusSelect(el) {
+    requestAnimationFrame(() => { el.focus(); el.select(); });
+  }
+  /** 15 pages around the current one. While counting the last page is unknown,
+   *  so the window runs forward from the current page instead of stopping at a
+   *  page count that is still only what has been seen. */
+  const pageGrid = $derived.by(() => {
+    const last = counting ? Infinity : Math.max(1, pageCount);
+    let lo = Math.max(1, page - 7);
+    const hi = Math.min(last, lo + 14);
+    lo = Math.max(1, Math.min(lo, hi - 14));
+    return Array.from({ length: hi - lo + 1 }, (_, i) => lo + i);
+  });
   const pageMenuItems = $derived.by(() => {
     const n = pageCount;
     if (n <= 40) return Array.from({ length: n }, (_, i) => i + 1);
@@ -442,7 +475,7 @@
   // fields, dropdown triggers and buttons to share one corner, and `rounded-md` (8px)
   // left every toolbar button 2px squarer than the field it sits next to.
   const iconBtn =
-    "inline-flex size-7 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-30";
+    "inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-30";
 
   // ── Filter row chrome ──────────────────────────────────────────────────────
   // One border, one surface, one hover for every control in a filter row. Column,
@@ -450,7 +483,7 @@
   // as one sentence was drawn as three unrelated boxes. `dark:` is repeated on the
   // surface because the Input primitive sets its own dark background.
   const fCtl =
-    "field-surface h-7 bg-transparent text-ui-sm font-normal text-foreground outline-none transition-[color,background-color]";
+    "field-surface h-7 text-ui-sm font-normal text-foreground outline-none transition-[color,background-color]";
   const fTrigger = cn(
     fCtl,
     "inline-flex items-center gap-1 px-2.5 hover:bg-muted/40 data-[state=open]:bg-muted/40 focus-visible:border-ring data-[state=open]:border-ring",
@@ -474,6 +507,9 @@
   const autoRefreshLabel = $derived(
     AUTO_REFRESH_OPTIONS.find((o) => o.ms === autoRefreshMs)?.label ?? "off",
   );
+
+  // Quiet section labels inside the ⋯ menu.
+  const menuHeading = "px-1.5 pt-1.5 pb-0.5 text-ui-3xs font-medium text-muted-foreground"
 
   /** @type {Array<{ id: 'table' | 'json' | 'record' | 'text' | 'chart' | 'erd' | 'map', icon: string, label: string, title?: string }>} */
   const DATA_VIEW_MODES = [
@@ -585,9 +621,52 @@
   /** Matches the "more actions" / delete menu panel */
   const menuContent = "w-44 text-ui-sm";
 
+  // Measured collapse. The container queries below hide the optional controls
+  // by width, but what the row needs depends on its content (a 7-digit count,
+  // saved views, a filter badge) and the zoom, so at some widths it still ran
+  // off the edge and scrolled. This folds controls away one priority step at a
+  // time until the row fits, lowest priority first:
+  //   1 previewed chip · 2 range readout · 3 terminal · 4 focus · 5 columns
+  //   6 sort · 7 saved views · 8 limit/offset · 9 rows per page · 10 "of N"
+  //   11 the Add label · 12 the Add button (its shortcut still works)
+  // Search, filter, the page picker, prev/next, refresh and More stay.
+  const COLLAPSE_MAX = 12;
+  let collapse = $state(0);
+  /** @type {HTMLElement | undefined} */
+  let toolbarEl = $state();
+  /** @param {number} n */
+  const hideAt = (n) => (collapse >= n ? "hidden" : "");
+  let fitting = false;
+  async function fitToolbar() {
+    if (!toolbarEl || fitting) return;
+    fitting = true;
+    try {
+      collapse = 0;
+      await tick();
+      while (collapse < COLLAPSE_MAX && toolbarEl && toolbarEl.scrollWidth > toolbarEl.clientWidth + 1) {
+        collapse += 1;
+        await tick();
+      }
+    } finally {
+      fitting = false;
+    }
+  }
+  $effect(() => {
+    const el = toolbarEl;
+    if (!el) return;
+    const ro = new ResizeObserver(() => void fitToolbar());
+    ro.observe(el);
+    return () => ro.disconnect();
+  });
+  // Content that changes the row's natural width without resizing it.
+  $effect(() => {
+    void [total, counting, from, to, page, pageSize, savedViews.length, filterCount, hiddenCount, previewColumns.length, tableViewMode, readonly, searchExpanded, showSearchOpts];
+    untrack(() => void fitToolbar());
+  });
+
   /** Compact shadcn select trigger for pagination */
   const pageSelectTrigger =
-    "h-7 min-w-0 gap-1 px-2 text-ui-sm font-normal tabular-nums shadow-none";
+    "h-7 min-w-0 gap-1 border-transparent! bg-transparent! focus-visible:border-ring! data-[state=open]:border-ring! px-2 text-ui-xs font-normal tabular-nums shadow-none hover:bg-accent!";
 
   /** @typedef {'text' | 'boolean' | 'date' | 'number'} ColKind */
 
@@ -705,6 +784,21 @@
     onfilterschange([...rowFilters, createFilter(col, op)]);
   }
 
+  /** A SQL-condition row, with the caret in it once its editor has loaded. */
+  function addSqlFilterAndFocus() {
+    onfilterschange([...rowFilters, createSqlFilter()]);
+    filterBarOpen = true;
+    // The editor is loaded on first use, so wait for it rather than one tick.
+    let tries = 0;
+    const focus = () => {
+      const rows = document.querySelectorAll(".studio-filter-bar [data-filter-row]");
+      const cm = /** @type {HTMLElement | null} */ (rows[rows.length - 1]?.querySelector(".cm-content") ?? null);
+      if (cm) cm.focus();
+      else if (++tries < 20) setTimeout(focus, 25);
+    };
+    setTimeout(focus, 0);
+  }
+
   /** "+ Add filter": a new row is only useful with the caret already in it. */
   function addFilterAndFocus() {
     addFilter();
@@ -769,7 +863,8 @@
        clipped off the edge. Menus are portaled, so nothing is trapped by it, and
        app.css already gives this class a 4px overlay scrollbar. -->
   <header
-    class="@container/tb studio-chrome studio-table-toolbar flex h-9 shrink-0 items-center gap-1 overflow-x-auto border-b border-border bg-panel px-2"
+    bind:this={toolbarEl}
+    class="@container/tb studio-chrome studio-table-toolbar flex h-11 shrink-0 items-center gap-1.5 overflow-x-auto border-b border-border/40 bg-panel px-3"
     data-studio-chrome
   >
     <!-- Search, far left, expands on focus (wider when option toggles show) -->
@@ -783,7 +878,12 @@
         // its full 13rem, so the pager clipped off the right edge. A search
         // field is the most shrinkable thing here; it gives way first, down to
         // a floor where the icon and a word of text still fit.
-        "relative flex h-7 min-w-[7.5rem] shrink items-center transition-[width] duration-200",
+        "@container/search relative flex h-7 shrink items-center transition-[width] duration-200",
+        // A real floor, larger while in use. The toolbar only hides optional
+        // controls when the row overflows, and a field that could shrink to
+        // 7.5rem meant it never did: the search took the squeeze instead and the
+        // Aa/ab/.* toggles and ✕ left room for about one character.
+        showSearchOpts ? "min-w-[18rem]" : searchExpanded ? "min-w-[14rem]" : "min-w-[10rem]",
         // Wider at both sizes: the trailing corner now holds three toggles and a
         // clear ✕ while you type, and 13rem left the query itself two words of
         // room. Still `shrink`, so a narrow pane takes it back first.
@@ -802,7 +902,7 @@
           bind:this={structureSearchEl}
           type="text"
           aria-label="Search column"
-          class="field-surface h-7 w-full min-w-0 bg-transparent pl-8 pr-7 font-mono text-ui-sm outline-none"
+          class="field-surface h-7 w-full min-w-0 pl-8 pr-7 font-mono text-ui-sm shadow-none outline-none"
           placeholder="Search column…"
           value={structureSearch}
           oninput={(e) =>
@@ -827,12 +927,17 @@
             // ("they fit the field's own corner") fit nothing.
             // `border-ring!` still needs its `!` to beat the unlayered bare-input
             // frame rule in app.css; the radius no longer has anything to beat.
-            "field-surface h-7 w-full min-w-0 bg-transparent pl-8 text-ui-sm outline-none",
+            // The shared field frame (fill + hairline, accent edge on focus, no
+            // shadow), same as every NoSQL field.
+            "h-8 w-full min-w-0 pl-8 text-ui-sm shadow-none outline-none placeholder:text-muted-foreground",
             // Right padding is whatever the cluster in that corner occupies:
             // options trigger, keycaps, both, or neither.
             // hint (⌘F) and the toggles never coexist: the hint is for an empty
             // field, the toggles for a filled one.
-            searchHint ? "pr-12" : showSearchOpts ? "pr-[7.5rem]" : "pr-7",
+            // The hint only shows once the field has room for it (below), so its
+            // padding follows the same breakpoint: at the 7.5rem floor the ⌘F
+            // keycaps took the placeholder's room and it read "Searc".
+            searchHint ? "pr-7 @[11rem]/search:pr-12" : showSearchOpts ? "pr-[7.5rem]" : "pr-7",
             localSearch.trim() && "border-ring!",
           )}
           placeholder="Search…"
@@ -845,7 +950,7 @@
       <!-- Right-side cluster: keycap hint + search options popover + clear (✕) -->
       <div class="absolute inset-y-0 right-1 flex items-center gap-0.5">
         {#if searchHint}
-          <Kbd keys={searchHintCaps} class="pointer-events-none" aria-hidden="true" />
+          <Kbd keys={searchHintCaps} class="pointer-events-none hidden @[11rem]/search:inline-flex" aria-hidden="true" />
         {/if}
         {#if showSearchOpts}
           <!-- A segmented control, not a popover list.
@@ -856,8 +961,10 @@
                each one's state is visible without opening anything. -->
           <!-- `rounded-sm` (6px), not `rounded-md`: this sits 4px inside the field's
                10px corner, and concentric means inner = outer - inset. -->
-          <div class="flex shrink-0 items-center overflow-hidden rounded-sm border border-border/50 bg-input/40">
-            {#each SEARCH_OPTS as opt, i (opt.key)}
+          <!-- Three quiet toggles, no frame and no dividers: muted when off, a
+               soft fill and the accent when on, like a native find bar. -->
+          <div class="flex shrink-0 items-center gap-px">
+            {#each SEARCH_OPTS as opt (opt.key)}
               {@const active = searchOptions[opt.key]}
               <button
                 type="button"
@@ -866,11 +973,10 @@
                 aria-keyshortcuts={SEARCH_OPTION_KEYS[opt.key]}
                 title={opt.title}
                 class={cn(
-                  "inline-flex h-5 items-center justify-center px-1.5 font-mono text-ui-3xs transition-colors",
-                  i > 0 && "border-l border-border/40",
+                  "inline-flex h-5 min-w-5 items-center justify-center rounded-md px-1 font-mono text-ui-3xs",
                   active
-                    ? "bg-primary/15 text-foreground"
-                    : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
+                    ? "bg-primary/15 text-primary"
+                    : "text-muted-foreground/70 hover:bg-accent hover:text-foreground",
                 )}
                 onclick={() => onsearchoptionschange({ ...searchOptions, [opt.key]: !active })}
               >{opt.cap}</button>
@@ -880,12 +986,12 @@
         {#if localSearch}
           <button
             type="button"
-            class="inline-flex size-5 items-center justify-center rounded-sm text-muted-foreground transition-[background-color,color] duration-150 ease-out hover:bg-muted/70 hover:text-foreground"
+            class="hit-area inline-flex size-5 items-center justify-center rounded-sm text-muted-foreground transition-[background-color,color] duration-150 ease-out hover:bg-accent hover:text-foreground"
             aria-label="Clear search (Escape, or {IS_MAC ? '⌥X' : 'Alt+X'})"
             title="Clear search (Esc)"
             onclick={clearSearch}
           >
-            <Icon name="x" class="size-3" />
+            <Icon name="x" class="size-3 shrink-0" />
           </button>
         {/if}
       </div>
@@ -901,7 +1007,11 @@
           <DropdownMenu.Trigger
             class={cn(
               iconBtn,
-              "shrink-0",
+              // Collapse order at high zoom / narrow panes (container width,
+              // rem): views and rows-per-page go at 30rem, limit/offset at 34rem;
+              // search, filter, the page picker, paging and refresh always stay.
+              "shrink-0 @max-[30rem]/tb:hidden",
+              hideAt(7),
               savedViews.length > 0 ? "gap-1 !w-auto px-2" : "",
               (savedViews.length > 0 || viewsMenuOpen) && "bg-accent text-foreground",
               activeViewId && "text-primary",
@@ -909,14 +1019,14 @@
             title={activeViewId ? "Saved views, one applied" : "Saved views"}
             disabled={loading || columns.length === 0}
           >
-            <Icon name="bookmark" class="size-3.5" />
+            <Icon name="bookmark" class="size-3.5 shrink-0" />
             {#if savedViews.length > 0}
               <span class="tabular-nums text-ui-2xs font-medium text-primary" aria-hidden="true">{savedViews.length}</span>
             {/if}
           </DropdownMenu.Trigger>
           <DropdownMenu.Content align="start" class="min-w-64 p-0 text-ui-sm">
             <div class="flex items-center border-b border-border/50 px-3 py-1.5">
-              <span class="text-ui-2xs font-medium uppercase tracking-[0.08em] text-muted-foreground">Saved views</span>
+              <span class="text-ui-2xs font-medium uppercase tracking-[0.06em] text-muted-foreground">Saved views</span>
               <button
                 type="button"
                 class="ml-auto rounded px-1.5 py-0.5 text-ui-2xs text-muted-foreground transition-[background-color,color] hover:bg-accent hover:text-foreground"
@@ -959,11 +1069,11 @@
                     </button>
                     <button
                       type="button"
-                      class="mr-1 inline-flex size-5 shrink-0 items-center justify-center rounded text-transparent transition-colors hover:!text-destructive group-hover/view:text-muted-foreground"
+                      class="hit-area mr-1 inline-flex size-5 shrink-0 items-center justify-center rounded-md text-transparent transition-colors hover:!text-destructive group-hover/view:text-muted-foreground"
                       title="Delete view"
                       onclick={() => ondeleteview(v.id)}
                     >
-                      <Icon name="trash-2" class="size-3" />
+                      <Icon name="trash-2" class="size-3 shrink-0" />
                     </button>
                   </div>
                 {/each}
@@ -977,14 +1087,13 @@
                 class= "field-surface h-7 w-full min-w-0 flex-1 bg-transparent px-2 text-ui-xs text-foreground outline-none placeholder:text-muted-foreground"
                 onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commitSaveView(); } }}
               />
-              <button
-                type="button"
-                class="inline-flex h-7 shrink-0 items-center rounded-md bg-primary px-2.5 text-ui-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:pointer-events-none disabled:opacity-40"
+              <Button
+                class="shrink-0" size="sm"
                 disabled={!viewNameDraft.trim()}
                 onclick={commitSaveView}
-              >
+>
                 Save
-              </button>
+              </Button>
             </div>
           </DropdownMenu.Content>
         </DropdownMenu.Root>
@@ -1006,7 +1115,7 @@
           else openFilterBar();
         }}
       >
-        <Icon name="list-filter" class="size-3.5" />
+        <Icon name="list-filter" class="size-3.5 shrink-0" />
         <!-- A corner badge, not inline text: widening the button moved the five
              buttons after it 14px every time a filter was typed or cleared. -->
         {#if filterCount > 0}
@@ -1025,11 +1134,11 @@
         {#snippet trigger(props)}
           <button
             {...props}
-            class={cn(iconBtn, "shrink-0 @max-[420px]/tb:hidden", (rowSort?.column || sortMenuOpen) && "bg-accent text-foreground")}
+            class={cn(iconBtn, "shrink-0 @max-[26.25rem]/tb:hidden", hideAt(6), (rowSort?.column || sortMenuOpen) && "bg-accent text-foreground")}
             title="{sortLabel} ({KEY.sort})"
             disabled={loading || columns.length === 0}
           >
-            <Icon name="arrow-up-down" class="size-3.5" />
+            <Icon name="arrow-up-down" class="size-3.5 shrink-0" />
           </button>
         {/snippet}
         {#snippet header()}
@@ -1039,12 +1148,12 @@
               class="flex w-full items-center gap-1.5 border-b border-border/40 px-3 py-1.5 text-left text-ui-xs text-muted-foreground transition-colors hover:text-foreground"
               onclick={() => { clearSort(); sortMenuOpen = false; }}
             >
-              <Icon name="x" class="size-3.5" /> Clear sort
+              <Icon name="x" class="size-3.5 shrink-0" /> Clear sort
             </button>
           {/if}
         {/snippet}
         {#snippet item(it)}
-          {#if it.dir === "asc"}<Icon name="arrow-up" class="size-3.5 text-muted-foreground" />{:else}<Icon name="arrow-down" class="size-3.5 text-muted-foreground" />{/if}
+          {#if it.dir === "asc"}<Icon name="arrow-up" class="size-3.5 shrink-0 text-muted-foreground" />{:else}<Icon name="arrow-down" class="size-3.5 shrink-0 text-muted-foreground" />{/if}
           <span class="min-w-0 flex-1 truncate">{it.label}</span>
           <span class="shrink-0 text-ui-3xs text-muted-foreground">{it.dir === "asc" ? "Asc" : "Desc"}</span>
           {#if it.active}<span class="shrink-0 text-primary">✓</span>{/if}
@@ -1063,7 +1172,7 @@
         {#snippet trigger(props)}
           <button
             {...props}
-            class={cn(iconBtn, "shrink-0 @max-[460px]/tb:hidden", hiddenCount > 0 ? "gap-1 w-auto px-2" : "", (hiddenCount > 0 || columnsMenuOpen) && "bg-accent text-foreground")}
+            class={cn(iconBtn, "shrink-0 @max-[28.75rem]/tb:hidden", hideAt(5), hiddenCount > 0 ? "gap-1 w-auto px-2" : "", (hiddenCount > 0 || columnsMenuOpen) && "bg-accent text-foreground")}
             title="Show / hide columns ({KEY.columns})"
             aria-label="Show or hide columns"
             disabled={loading || columns.length === 0}
@@ -1076,7 +1185,7 @@
         {/snippet}
         {#snippet header()}
           <div class="flex items-center justify-between border-b border-border/40 px-3 py-1.5">
-            <span class="text-ui-2xs font-medium uppercase tracking-wide text-muted-foreground">Columns</span>
+            <span class="text-ui-2xs font-medium uppercase tracking-[0.06em] text-muted-foreground">Columns</span>
             <!-- Both actions, whenever both mean something. One toggle that
                  flipped on "anything hidden" made "Hide all" unreachable as
                  soon as a single column was hidden. -->
@@ -1104,13 +1213,13 @@
         {/snippet}
         {#snippet item(it)}
           {#if it.hidden}
-            <Icon name="eye-off" class="size-3.5 text-muted-foreground" />
+            <Icon name="eye-off" class="size-3.5 shrink-0 text-muted-foreground" />
           {:else if it.kind === "vrel"}
-            <Icon name="link-2" class="size-3.5 text-primary" />
+            <Icon name="link-2" class="size-3.5 shrink-0 text-primary" />
           {:else if it.kind === "vexpr"}
-            <Icon name="eye" class="size-3.5 text-primary" />
+            <Icon name="eye" class="size-3.5 shrink-0 text-primary" />
           {:else}
-            <Icon name="eye" class="size-3.5" />
+            <Icon name="eye" class="size-3.5 shrink-0" />
           {/if}
           <span class={cn("min-w-0 flex-1 truncate", it.hidden && "text-muted-foreground")}>{it.label}</span>
           {#if it.kind === "vrel"}<span class="shrink-0 text-ui-3xs text-muted-foreground">rel</span>{/if}
@@ -1129,20 +1238,20 @@
         {#snippet trigger(props)}
           <button
             {...props}
-            class={cn(iconBtn, "shrink-0 @max-[500px]/tb:hidden", focusMenuOpen && "bg-accent text-foreground")}
+            class={cn(iconBtn, "shrink-0 @max-[31.25rem]/tb:hidden", hideAt(4), focusMenuOpen && "bg-accent text-foreground")}
             title="Jump to column"
             disabled={loading || columns.length === 0}
           >
-            <Icon name="crosshair" class="size-3.5" />
+            <Icon name="crosshair" class="size-3.5 shrink-0" />
           </button>
         {/snippet}
         {#snippet header()}
           <div class="border-b border-border/40 px-3 py-1.5">
-            <span class="text-ui-2xs font-medium uppercase tracking-wide text-muted-foreground">Jump to column</span>
+            <span class="text-ui-2xs font-medium uppercase tracking-[0.06em] text-muted-foreground">Jump to column</span>
           </div>
         {/snippet}
         {#snippet item(it)}
-          <Icon name="crosshair" class="size-3.5 text-muted-foreground" />
+          <Icon name="crosshair" class="size-3.5 shrink-0 text-muted-foreground" />
           <span class="min-w-0 flex-1 truncate">{it.label}</span>
         {/snippet}
       </SearchableMenu>
@@ -1152,13 +1261,13 @@
            menu. Virtual columns stay in the menu only, a once-a-session action. -->
       <button
         type="button"
-        class={cn(iconBtn, "shrink-0 @max-[540px]/tb:hidden")}
+        class={cn(iconBtn, "shrink-0 @max-[33.75rem]/tb:hidden", hideAt(3))}
         title="Open in SQL editor ({IS_MAC ? '⌘' : 'Ctrl'}+click to run it)"
         aria-label="Open in SQL editor"
         disabled={loading || columns.length === 0}
         onclick={(e) => onopeninsql({ run: e.ctrlKey || e.metaKey })}
       >
-        <Icon name="terminal" class="size-3.5" />
+        <Icon name="terminal" class="size-3.5 shrink-0" />
       </button>
 
       <!-- Reset everything, only appears when something is non-default -->
@@ -1170,24 +1279,22 @@
           disabled={loading}
           onclick={onresetview}
         >
-          <Icon name="rotate-ccw" class="size-3.5" />
+          <Icon name="rotate-ccw" class="size-3.5 shrink-0" />
         </button>
       {/if}
 
       </div><!-- /action group -->
 
-      <span class="mx-0.5 h-4 w-px shrink-0 bg-border/60"></span>
-
       <!-- Add row -->
       <button
         type="button"
-        class= "field-surface inline-flex h-7 shrink-0 items-center gap-1 px-2 text-ui-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
+        class={cn("inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-ui-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-30", hideAt(12))}
         disabled={loading || columns.length === 0 || readonly}
         title={readonly ? "Read-only mode" : `Stage a new row (${KEY.addRow}), again for another`}
         onclick={onaddrow}
       >
         <Icon name="plus" class="size-3.5 shrink-0" />
-        <span class="@max-[440px]/tb:hidden">Add</span>
+        <span class={cn("@max-[27.5rem]/tb:hidden", hideAt(11))}>Add</span>
       </button>
     {/if}
 
@@ -1198,7 +1305,7 @@
       <!-- What the page did NOT fetch, and why. One chip, no dialog: it is a
            fact about this table, not a decision anyone has to make. -->
       <span
-        class="flex shrink-0 items-center gap-1 rounded-[4px] border border-border/50 bg-muted/30 px-1.5 py-px font-mono text-ui-3xs text-muted-foreground @max-[760px]/tb:hidden"
+        class={cn("flex shrink-0 items-center gap-1 px-1.5 font-mono text-ui-2xs text-muted-foreground @max-[47.5rem]/tb:hidden", hideAt(1))}
         title={`Fetched as previews, not values: ${previewColumns
           .map((c) => `${c.name} (~${fmtBytes(c.avgBytes)}/row)`)
           .join(', ')}.\n\nA page of these would move ${fmtBytes(
@@ -1212,53 +1319,91 @@
 
     {#if tableViewMode !== "structure"}
       {#if infiniteScroll}
-        {#if total > 0 || counting}
+        <!-- Kept while a load is in flight: the readout disappearing at the
+             start of every table open (total resets to 0) slid the controls
+             beside it over and back again - the open "flicker". -->
+        {#if total > 0 || counting || loading}
           <span
-            class="flex shrink-0 items-center gap-1 font-mono text-ui-xs tabular-nums @max-[600px]/tb:hidden"
+            class={cn("flex shrink-0 items-center gap-1 font-mono text-ui-2xs tabular-nums @max-[37.5rem]/tb:hidden", hideAt(2))}
             title="{to.toLocaleString('en-US')} of {counting ? 'counting…' : total.toLocaleString('en-US') + ' rows'} loaded{queryMs > 0 ? ` · ${queryMs}ms` : ''}"
           >
-            <span class="text-foreground/65">{to.toLocaleString("en-US")}</span>
-            <span class="text-muted-foreground">of {counting ? "…" : total.toLocaleString("en-US")} loaded</span>
+            <span class="text-foreground">{total > 0 || counting ? to.toLocaleString("en-US") : "–"}</span>
+            <span class="text-muted-foreground">of {#if counting || (loading && total === 0)}<Icon name="loader-2" class="inline size-3 shrink-0 animate-spin align-[-2px]" aria-label="Counting rows" />{:else}{total.toLocaleString("en-US")}{/if} loaded</span>
           </span>
         {/if}
       {:else}
-        {#if total > 0 || counting}
+        {#if total > 0 || counting || loading}
           <!-- A min-width box, so "…" becoming "18,234" grows into it instead of
                shoving the pager sideways. The text is held to its right: held
                left, a short readout ("1-14 of 14") left the spare width as an
                unexplained gap between it and the page-size menu. -->
           <span
-            class="flex min-w-[18ch] shrink-0 items-center justify-end gap-1 font-mono text-ui-xs tabular-nums @max-[600px]/tb:hidden"
+            class={cn("mr-1 flex min-w-[18ch] shrink-0 items-center justify-end gap-1 font-mono text-ui-2xs tabular-nums @max-[37.5rem]/tb:hidden", hideAt(2))}
             title="{from.toLocaleString('en-US')}-{to.toLocaleString('en-US')} of {counting ? 'counting…' : total.toLocaleString('en-US') + ' rows'}{queryMs > 0 ? ` · ${queryMs}ms` : ''}"
           >
-            <span class="text-foreground/65">{from.toLocaleString("en-US")}-{to.toLocaleString("en-US")}</span>
-            {#if live && !counting}
+            <span class="text-foreground">{total > 0 || counting ? `${from.toLocaleString("en-US")}-${to.toLocaleString("en-US")}` : "–"}</span>
+            {#if loading && total === 0 && !counting}
+              <span class="text-muted-foreground">of <Icon name="loader-2" class="inline size-3 shrink-0 animate-spin align-[-2px]" aria-label="Loading rows" /></span>
+            {:else if live && !counting}
               <span class="text-muted-foreground">of <span class="inline-block tabular-nums" use:slotRoll={total.toLocaleString("en-US")}></span></span>
             {:else}
-              <span class="text-muted-foreground">of {counting ? "…" : total.toLocaleString("en-US")}</span>
+              <span class="text-muted-foreground">of {#if counting}<Icon name="loader-2" class="inline size-3 shrink-0 animate-spin align-[-2px]" aria-label="Counting rows" />{:else}{total.toLocaleString("en-US")}{/if}</span>
             {/if}
           </span>
         {/if}
 
         <!-- divider before the pagination cluster (only when the range readout shows) -->
-        <span class="mx-0.5 h-4 w-px shrink-0 bg-border/50 @max-[600px]/tb:hidden"></span>
 
         <div class="flex shrink-0 items-center gap-1.5">
-        <Select.Root
-          type="single"
-          value={String(pageSize)}
-          onValueChange={(v) => { if (v) onpagesizechange(Number(v)); }}
-          disabled={loading}
-        >
-          <Select.Trigger size="sm" class={pageSelectTrigger} title="Rows per page" aria-label="Rows per page">
-            {pageSizeLabel(pageSize)}
-          </Select.Trigger>
-          <Select.Content align="end" class="min-w-0">
-            {#each PAGE_SIZE_OPTIONS as size (size)}
-              <Select.Item value={String(size)} label={pageSizeLabel(size)} />
-            {/each}
-          </Select.Content>
-        </Select.Root>
+        <!-- Rows per page: presets as a grid plus a custom size, titled so the
+             number in the toolbar is not a bare "1000". -->
+        <Popover bind:open={sizeMenuOpen}>
+          <PopoverTrigger
+            class={cn(pageSelectTrigger, "inline-flex items-center", "@max-[30rem]/tb:hidden", hideAt(9))}
+            title="Rows per page"
+            aria-label="Rows per page: {pageSizeLabel(pageSize)}"
+            disabled={loading}
+          >
+            {sizeShort(pageSize)}<span class="text-muted-foreground">rows</span>
+            <Icon name="chevron-down" class="size-3.5 shrink-0 opacity-60" />
+          </PopoverTrigger>
+          <PopoverContent align="end" sideOffset={6} class="w-56 p-2">
+            <p class="px-1 pb-1.5 text-ui-2xs font-medium text-muted-foreground">Rows per page</p>
+            <div class="grid grid-cols-4 gap-1">
+              {#each PAGE_SIZE_OPTIONS as size (size)}
+                <button
+                  type="button"
+                  aria-pressed={size === pageSize}
+                  class={cn(
+                    "h-7 rounded-md font-mono text-ui-xs tabular-nums transition-colors",
+                    size === pageSize ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+                  )}
+                  title={size === -1 ? "Load every row" : `${size.toLocaleString("en-US")} rows`}
+                  onclick={() => { if (size !== pageSize) onpagesizechange(size); sizeMenuOpen = false; }}
+                >{sizeShort(size)}</button>
+              {/each}
+            </div>
+            <form
+              class="mt-2 flex items-center gap-2 border-t border-border/40 pt-2"
+              onsubmit={(e) => {
+                e.preventDefault();
+                const n = Math.round(Number(String(sizeCustom).replace(/[,_\s]/g, "")));
+                if (!Number.isFinite(n) || n < 1) return;
+                if (n !== pageSize) onpagesizechange(n);
+                sizeMenuOpen = false;
+              }}
+            >
+              <input
+                bind:value={sizeCustom}
+                inputmode="numeric"
+                placeholder="Custom"
+                aria-label="Custom rows per page"
+                class="field-surface h-7 min-w-0 flex-1 px-2 font-mono text-ui-sm tabular-nums shadow-none outline-none placeholder:font-sans placeholder:text-muted-foreground"
+              />
+              <span class="shrink-0 text-ui-xs text-muted-foreground">rows ↵</span>
+            </form>
+          </PopoverContent>
+        </Popover>
 
         <!-- Page picker + arrows only exist when there is something to paginate
              (more than one page, or the count is still unknown). A single-page
@@ -1277,7 +1422,7 @@
             onclick={onprev}
             aria-label="Previous page"
           >
-            <Icon name="chevron-left" class="size-3.5" />
+            <Icon name="chevron-left" class="size-3.5 shrink-0" />
           </button>
           <button
             type="button"
@@ -1286,32 +1431,67 @@
             onclick={onnext}
             aria-label="Next page"
           >
-            <Icon name="chevron-right" class="size-3.5" />
+            <Icon name="chevron-right" class="size-3.5 shrink-0" />
           </button>
         {:else if !isAll}
           <!-- Always present outside All, disabled on a single page: appearing
                only for multi-page results moved the page-size select 179px
                between tables. All never paginates, so it never shows. -->
-          <Select.Root
-            type="single"
-            value={String(page)}
-            onValueChange={(v) => { if (v) onpagechange(Number(v)); }}
-            disabled={loading || total === 0 || (!counting && pageCount <= 1)}
-          >
-            <Select.Trigger size="sm" class={pageSelectTrigger} title="Go to page" aria-label="Go to page">
+          <!-- Go to page: a number field over a small grid of nearby pages,
+               instead of a viewport-tall list of single numbers you had to
+               scroll through with arrow buttons. -->
+          <Popover bind:open={pageMenuOpen}>
+            <PopoverTrigger
+              class={cn(pageSelectTrigger, "inline-flex items-center")}
+              title="Go to page"
+              aria-label="Go to page {page}"
+              disabled={loading || total === 0 || (!counting && pageCount <= 1)}
+            >
               {page}
-            </Select.Trigger>
-            <Select.Content align="end" class="max-h-56">
-              {#each pageMenuItems as p (p)}
-                <Select.Item value={String(p)} label={String(p)} />
-              {/each}
-            </Select.Content>
-          </Select.Root>
+              <Icon name="chevron-down" class="size-3.5 shrink-0 opacity-60" />
+            </PopoverTrigger>
+            <PopoverContent align="end" sideOffset={6} class="w-56 p-2">
+              <form
+                class="flex items-center gap-2"
+                onsubmit={(e) => {
+                  e.preventDefault();
+                  const n = Math.round(Number(pageJump));
+                  if (!Number.isFinite(n) || n < 1) return;
+                  const target = counting ? n : Math.min(n, pageCount);
+                  if (target !== page) onpagechange(target);
+                  pageMenuOpen = false;
+                }}
+              >
+                <input
+                  bind:value={pageJump}
+                  inputmode="numeric"
+                  placeholder="Page"
+                  aria-label="Page number"
+                  class="field-surface h-7 min-w-0 flex-1 px-2 font-mono text-ui-sm tabular-nums shadow-none outline-none placeholder:font-sans placeholder:text-muted-foreground"
+                  use:autofocusSelect
+                />
+                <span class="shrink-0 text-ui-xs tabular-nums text-muted-foreground">{#if counting}counting…{:else}of {pageCount.toLocaleString()}{/if}</span>
+              </form>
+              <div class="mt-2 grid grid-cols-5 gap-1">
+                {#each pageGrid as p (p)}
+                  <button
+                    type="button"
+                    aria-current={p === page ? "page" : undefined}
+                    class={cn(
+                      "h-7 rounded-md font-mono text-ui-xs tabular-nums transition-colors",
+                      p === page ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+                    )}
+                    onclick={() => { if (p !== page) onpagechange(p); pageMenuOpen = false; }}
+                  >{p.toLocaleString()}</button>
+                {/each}
+              </div>
+            </PopoverContent>
+          </Popover>
 
           <span
-            class="min-w-[6ch] shrink-0 text-ui-xs text-muted-foreground tabular-nums @max-[500px]/tb:hidden"
-            title={counting ? "counting…" : pageCount.toLocaleString("en-US")}
-          >of {counting ? "…" : formatCompactCount(pageCount)}</span>
+            class={cn("min-w-[6ch] shrink-0 text-ui-xs text-muted-foreground tabular-nums @max-[31.25rem]/tb:hidden", hideAt(10))}
+            title={counting ? "Counting rows…" : `${pageCount.toLocaleString("en-US")} pages`}
+          >of {#if counting}<Icon name="loader-2" class="inline size-3 shrink-0 animate-spin align-[-2px]" aria-label="Counting rows" />{:else}{formatCompactCount(pageCount)}{/if}</span>
 
           <button
             type="button"
@@ -1320,7 +1500,7 @@
             onclick={onprev}
             aria-label="Previous page"
           >
-            <Icon name="chevron-left" class="size-3.5" />
+            <Icon name="chevron-left" class="size-3.5 shrink-0" />
           </button>
           <button
             type="button"
@@ -1329,7 +1509,7 @@
             onclick={onnext}
             aria-label="Next page"
           >
-            <Icon name="chevron-right" class="size-3.5" />
+            <Icon name="chevron-right" class="size-3.5 shrink-0" />
           </button>
         {/if}
         </div>
@@ -1368,7 +1548,7 @@
               title={autoRefreshMs > 0 ? `Auto-refresh: every ${autoRefreshLabel}` : "Auto-refresh: off"}
               aria-label="Auto-refresh interval"
             >
-              <Icon name="chevron-down" class="size-3" />
+              <Icon name="chevron-down" class="size-3 shrink-0" />
             </button>
           {/snippet}
         </DropdownMenu.Trigger>
@@ -1376,14 +1556,14 @@
           <!-- GroupHeading needs a Group parent: bits-ui reads the group context from
                it, and rendering one bare throws "Menu.Group not found". -->
           <DropdownMenu.Group>
-            <DropdownMenu.GroupHeading class="text-ui-2xs font-medium uppercase tracking-[0.06em] text-muted-foreground">
+            <DropdownMenu.GroupHeading>
               Auto-refresh
             </DropdownMenu.GroupHeading>
             {#each AUTO_REFRESH_OPTIONS as opt (opt.ms)}
               <DropdownMenu.Item onSelect={() => onautorefreshchange(opt.ms)}>
                 <span class="flex-1">{opt.label}</span>
                 {#if autoRefreshMs === opt.ms}
-                  <Icon name="check" class="size-3.5 text-primary" />
+                  <Icon name="check" class="size-3.5 shrink-0 text-primary" />
                 {/if}
               </DropdownMenu.Item>
             {/each}
@@ -1402,12 +1582,12 @@
       }}
     >
       <DropdownMenu.Trigger
-        class={cn(iconBtn, "shrink-0", limitOffsetOpen && "bg-accent text-foreground")}
+        class={cn(iconBtn, "shrink-0 @max-[34rem]/tb:hidden", hideAt(8), limitOffsetOpen && "bg-accent text-foreground")}
         title="Custom limit & offset"
         aria-label="Custom limit & offset"
         disabled={loading || tableViewMode === "structure" || total === 0}
       >
-        <Icon name="sliders-horizontal" class="size-3.5" />
+        <Icon name="sliders-horizontal" class="size-3.5 shrink-0" />
       </DropdownMenu.Trigger>
       <DropdownMenu.Content align="end" class="min-w-52 p-0 text-ui-sm">
         <div class="border-b border-border px-3 py-2.5">
@@ -1460,9 +1640,8 @@
               class= "field-surface inline-flex flex-1 h-7 items-center justify-center text-ui-sm text-muted-foreground hover:bg-accent hover:text-foreground"
               onclick={() => { limitOffsetOpen = false; limitError = ""; }}
             >Cancel</button>
-            <button
-              type="button"
-              class="inline-flex flex-1 h-7 items-center justify-center rounded-md bg-primary text-ui-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-40 disabled:pointer-events-none"
+            <Button
+              class="flex-1" size="sm"
               disabled={!!limitError || draftLimit < 1}
               onclick={() => {
                 const l = Math.max(1, Math.floor(draftLimit));
@@ -1475,7 +1654,7 @@
                 limitOffsetOpen = false;
                 limitError = "";
               }}
-            >Apply</button>
+>Apply</Button>
           </div>
         </div>
       </DropdownMenu.Content>
@@ -1496,79 +1675,75 @@
         title="More actions"
         disabled={loading || deleting}
       >
-        <Icon name="more-horizontal" class="size-3.5" />
+        <Icon name="more-horizontal" class="size-3.5 shrink-0" />
       </DropdownMenu.Trigger>
       <DropdownMenu.Content align="end" class="min-w-56 [&_[data-slot=dropdown-menu-item]]:whitespace-nowrap [&_[data-slot=dropdown-menu-radio-item]]:whitespace-nowrap">
-        {#if structureAllowed}
-          <DropdownMenu.Item onSelect={ontogglestructure}>
-            <Icon name="layout-list" class="size-3.5" />
-            {tableViewMode === "structure" ? "View Data" : "View Structure"}
-          </DropdownMenu.Item>
+        <DropdownMenu.Group>
+          <DropdownMenu.GroupHeading class={menuHeading}>View</DropdownMenu.GroupHeading>
           {#if tableViewMode !== "structure"}
-            <DropdownMenu.Separator />
+            <DropdownMenu.RadioGroup
+              value={dataViewMode}
+              onValueChange={(v) => (dataViewMode = /** @type {'table' | 'json' | 'record' | 'text' | 'chart' | 'erd'} */ (v))}
+            >
+              {#each dataViewModes as m (m.id)}
+                <DropdownMenu.RadioItem value={m.id} disabled={columns.length === 0}>
+                  <Icon name={m.icon} class="size-3.5 shrink-0" />
+                  <span data-slot="menu-label">{m.label.replace(/ view$/, "")}</span>
+                </DropdownMenu.RadioItem>
+              {/each}
+            </DropdownMenu.RadioGroup>
           {/if}
-        {/if}
-        {#if tableViewMode !== "structure"}
-          <DropdownMenu.RadioGroup
-            value={dataViewMode}
-            onValueChange={(v) => (dataViewMode = /** @type {'table' | 'json' | 'record' | 'text' | 'chart' | 'erd'} */ (v))}
-          >
-            {#each dataViewModes as m (m.id)}
-              <DropdownMenu.RadioItem value={m.id} disabled={columns.length === 0}>
-                <Icon name={m.icon} class="size-3.5" />
-                {m.label}
-              </DropdownMenu.RadioItem>
-            {/each}
-          </DropdownMenu.RadioGroup>
-          <DropdownMenu.Separator />
-          {#if findReplaceEnabled}
-            <DropdownMenu.Item disabled={total === 0 || readonly || !hasPrimaryKey} onSelect={onfindreplace}>
-              <Icon name="replace" class="size-3.5" />
-              Find & replace…
-              <DropdownMenu.Shortcut combo={IS_MAC ? "Mod+Alt+F" : "Mod+H"} />
+          {#if structureAllowed}
+            <DropdownMenu.Item onSelect={ontogglestructure}>
+              <Icon name={tableViewMode === "structure" ? "table-2" : "columns-3"} class="size-3.5 shrink-0" />
+              <span data-slot="menu-label">{tableViewMode === "structure" ? "Back to data" : "Structure"}</span>
             </DropdownMenu.Item>
           {/if}
-          <DropdownMenu.Item disabled={loading || columns.length === 0} onSelect={onopenvirtualcols}>
-            <Icon name="function-square" class="size-3.5" />
-            Virtual columns…
-            {#if virtualColCount > 0}
-              <span class="ml-auto font-mono text-ui-2xs tabular-nums text-primary">{virtualColCount}</span>
-            {/if}
-          </DropdownMenu.Item>
-          <DropdownMenu.Item disabled={loading || columns.length === 0} onSelect={() => onopeninsql()}>
-            <Icon name="terminal" class="size-3.5" />
-            Open in SQL editor
-          </DropdownMenu.Item>
+        </DropdownMenu.Group>
+        {#if tableViewMode !== "structure"}
           <DropdownMenu.Separator />
-          <DropdownMenu.Item onSelect={oninfinitescrolltoggle}>
-            <Icon name="infinity" class="size-3.5" />
-            Infinite scroll
-            {#if infiniteScroll}
-              <span class="ml-auto text-ui-3xs text-primary">✓</span>
+          <DropdownMenu.Group>
+            <DropdownMenu.GroupHeading class={menuHeading}>Tools</DropdownMenu.GroupHeading>
+            {#if findReplaceEnabled}
+              <DropdownMenu.Item disabled={total === 0 || readonly || !hasPrimaryKey} onSelect={onfindreplace}>
+                <Icon name="replace" class="size-3.5 shrink-0" />
+                <span data-slot="menu-label">Find and replace…</span>
+                <DropdownMenu.Shortcut command={IS_MAC ? "table.findReplaceAlt" : "table.findReplace"} />
+              </DropdownMenu.Item>
             {/if}
-          </DropdownMenu.Item>
+            <DropdownMenu.Item disabled={loading || columns.length === 0} onSelect={onopenvirtualcols}>
+              <Icon name="function-square" class="size-3.5 shrink-0" />
+              <span data-slot="menu-label">Virtual columns…</span>
+              {#if virtualColCount > 0}
+                <span class="ml-auto rounded-full bg-muted px-1.5 font-mono text-ui-3xs tabular-nums text-muted-foreground">{virtualColCount}</span>
+              {/if}
+            </DropdownMenu.Item>
+            <DropdownMenu.Item disabled={loading || columns.length === 0} onSelect={() => onopeninsql()}>
+              <Icon name="terminal" class="size-3.5 shrink-0" />
+              <span data-slot="menu-label">Open in SQL editor</span>
+            </DropdownMenu.Item>
+            <DropdownMenu.CheckboxItem checked={infiniteScroll} onCheckedChange={() => oninfinitescrolltoggle()}>
+              <Icon name="infinity" class="size-3.5 shrink-0" />
+              <span data-slot="menu-label">Infinite scroll</span>
+            </DropdownMenu.CheckboxItem>
+          </DropdownMenu.Group>
           <DropdownMenu.Separator />
-          {#if selectedCount > 0}
-            <DropdownMenu.Label class="text-ui-xs font-normal text-muted-foreground">
-              {selectedCount} row{selectedCount === 1 ? "" : "s"} selected
-            </DropdownMenu.Label>
-          {/if}
+          <DropdownMenu.Group>
+            <DropdownMenu.GroupHeading class={menuHeading}>Data</DropdownMenu.GroupHeading>
           <DropdownMenu.Sub>
             <DropdownMenu.SubTrigger disabled={total === 0 && dataViewMode !== 'erd' && dataViewMode !== 'chart'}>
-              <Icon name="file-down" class="size-3.5" />
-              Export
+              <Icon name="file-down" class="size-3.5 shrink-0" />
+              <span data-slot="menu-label">Export</span>
             </DropdownMenu.SubTrigger>
             <DropdownMenu.SubContent class="min-w-44">
               <!-- GroupHeading needs a Group parent: bits-ui reads the group context
                    from it, and rendering one bare throws "Menu.Group not found". -->
               {#if dataViewMode === 'erd'}
                 <DropdownMenu.Group>
-                  <DropdownMenu.GroupHeading class="text-ui-2xs font-medium uppercase tracking-[0.06em] text-muted-foreground">
-                    Diagram
-                  </DropdownMenu.GroupHeading>
+                  <DropdownMenu.GroupHeading class={menuHeading}>Diagram</DropdownMenu.GroupHeading>
                   {#each DIAGRAM_FORMATS as fmt (fmt.id)}
                     <DropdownMenu.Item onSelect={() => onexportdiagram(fmt.id)}>
-                      <Icon name={fmt.icon} class="size-3.5" />
+                      <Icon name={fmt.icon} class="size-3.5 shrink-0" />
                       {fmt.label}
                     </DropdownMenu.Item>
                   {/each}
@@ -1577,12 +1752,10 @@
               {/if}
               {#if dataViewMode === 'chart'}
                 <DropdownMenu.Group>
-                  <DropdownMenu.GroupHeading class="text-ui-2xs font-medium uppercase tracking-[0.06em] text-muted-foreground">
-                    Chart
-                  </DropdownMenu.GroupHeading>
+                  <DropdownMenu.GroupHeading class={menuHeading}>Chart</DropdownMenu.GroupHeading>
                   {#each CHART_FORMATS as fmt (fmt.id)}
                     <DropdownMenu.Item onSelect={() => onexportchart(fmt.id)}>
-                      <Icon name={fmt.icon} class="size-3.5" />
+                      <Icon name={fmt.icon} class="size-3.5 shrink-0" />
                       {fmt.label}
                     </DropdownMenu.Item>
                   {/each}
@@ -1591,13 +1764,11 @@
               {/if}
               <DropdownMenu.Group>
                 {#if dataViewMode === 'erd' || dataViewMode === 'chart'}
-                  <DropdownMenu.GroupHeading class="text-ui-2xs font-medium uppercase tracking-[0.06em] text-muted-foreground">
-                    Rows
-                  </DropdownMenu.GroupHeading>
+                  <DropdownMenu.GroupHeading class={menuHeading}>Rows</DropdownMenu.GroupHeading>
                 {/if}
                 {#each EXPORT_FORMATS as fmt (fmt.id)}
                   <DropdownMenu.Item disabled={total === 0} onSelect={() => onexport(fmt.id)}>
-                    <Icon name="file-down" class="size-3.5" />
+                    <Icon name="file-down" class="size-3.5 shrink-0" />
                     {fmt.label}
                   </DropdownMenu.Item>
                 {/each}
@@ -1605,13 +1776,15 @@
             </DropdownMenu.SubContent>
           </DropdownMenu.Sub>
           <DropdownMenu.Item disabled={readonly} onSelect={() => onimport()}>
-            <Icon name="file-up" class="size-3.5" />
-            Import data…
+            <Icon name="file-up" class="size-3.5 shrink-0" />
+            <span data-slot="menu-label">Import data…</span>
           </DropdownMenu.Item>
+          </DropdownMenu.Group>
+          {#if selectedCount > 0}
           <DropdownMenu.Separator />
           <DropdownMenu.Item
             variant="destructive"
-            disabled={selectedCount === 0 || !hasPrimaryKey || deleting || readonly}
+            disabled={!hasPrimaryKey || deleting || readonly}
             class={deleteConfirmPending ? "animate-pulse" : ""}
             onSelect={(e) => {
               if (!deleteConfirmPending) {
@@ -1629,10 +1802,11 @@
               }
             }}
           >
-            <Icon name="trash-2" />
-            {deleteConfirmPending ? "Click again to confirm" : deleteLabel}
-            <DropdownMenu.Shortcut combo="Mod+Backspace" />
+            <Icon name="trash-2" class="size-3.5 shrink-0" />
+            <span data-slot="menu-label">{deleteConfirmPending ? "Click again to confirm" : deleteLabel}</span>
+            <DropdownMenu.Shortcut command="table.deleteRows" />
           </DropdownMenu.Item>
+          {/if}
         {/if}
       </DropdownMenu.Content>
     </DropdownMenu.Root>
@@ -1642,14 +1816,49 @@
   <!-- Kept up while a reload empties `columns`: dropping and remounting it
        moved the grid 82px each way around every load. -->
   {#if filterBarOpen && (columns.length > 0 || loading) && tableViewMode !== "structure"}
-    <div class="studio-filter-bar border-b border-border/50 bg-panel">
+    <div class="studio-filter-bar border-b border-border/50 bg-panel py-1">
+      <!-- The add actions close the last clause instead of taking a row of their
+           own: one filter used to cost two rows of grid. They keep a wider gap
+           than the clause's own fields so they read as a separate group. -->
+      {#snippet filterActions()}
+        <div class="ms-1.5 flex items-center gap-0.5">
+          <button
+            type="button"
+            class="inline-flex h-7 items-center gap-1 rounded-md px-2 text-ui-sm text-muted-foreground transition-[color,background-color,transform] hover:bg-accent hover:text-foreground active:scale-[0.97]"
+            onclick={addFilterAndFocus}
+            title="Add a filter condition ({KEY.filter} opens this bar)"
+          >
+            <Icon name="plus" class="size-3.5 shrink-0" />
+            Add filter
+          </button>
+          <button
+            type="button"
+            class="inline-flex h-7 items-center gap-1 rounded-md px-2 text-ui-sm text-muted-foreground transition-[color,background-color,transform] hover:bg-accent hover:text-foreground active:scale-[0.97]"
+            onclick={addSqlFilterAndFocus}
+            title="Filter with a SQL condition, like id > 200 AND name LIKE 'a%'"
+          >
+            <Icon name="code-2" class="size-3.5 shrink-0" />
+            SQL filter
+          </button>
+        </div>
+        {#if rowFilters.length > 0}
+          <button
+            type="button"
+            class="ms-auto inline-flex h-7 items-center gap-1 rounded-md px-2 text-ui-sm text-muted-foreground transition-[color,background-color,transform] hover:bg-accent hover:text-foreground active:scale-[0.97]"
+            onclick={clearFilters}
+            title="Remove every filter condition ({KEY.reset} also clears search, sort and hidden columns)"
+          >
+            Clear filters
+          </button>
+        {/if}
+      {/snippet}
       {#each rowFilters as filter, i (filter.id)}
         {@const colKind = getColKind(filter.column)}
         {@const colOps = opsForCol(filter.column)}
         {@const enumOpts = enumOptionsFor(filter.column)}
         <div
           data-filter-row
-          class="flex items-center gap-1.5 border-b border-border/30 px-3 py-1.5 last:border-b-0"
+          class="flex flex-wrap items-center gap-x-1.5 gap-y-1 px-3 py-1"
         >
           <button
             type="button"
@@ -1657,17 +1866,17 @@
             aria-label="Remove filter"
             onclick={() => removeFilter(filter.id)}
           >
-            <Icon name="x" class="size-3" />
+            <Icon name="x" class="size-3 shrink-0" />
           </button>
           {#if i === 0}
             <span
-              class="inline-flex h-7 w-12 shrink-0 select-none items-center justify-center font-mono text-ui-2xs uppercase tracking-wide text-muted-foreground"
+              class="inline-flex h-7 w-12 shrink-0 select-none items-center justify-center font-mono text-ui-2xs uppercase tracking-[0.06em] text-muted-foreground"
               >where</span
             >
           {:else}
             <button
               type="button"
-              class= "field-surface inline-flex h-7 w-12 shrink-0 items-center justify-center bg-background dark:bg-background font-mono text-ui-2xs font-semibold uppercase tracking-wide text-muted-foreground transition-[color,background-color,border-color] hover: hover:bg-muted/40 hover:text-foreground"
+              class= "field-surface inline-flex h-7 w-12 shrink-0 items-center justify-center font-mono text-ui-2xs font-semibold uppercase tracking-[0.06em] text-muted-foreground transition-[color,background-color,border-color] hover: hover:bg-muted/40 hover:text-foreground"
               title="Toggle AND / OR"
               onclick={() =>
                 patchFilter(filter.id, {
@@ -1677,6 +1886,17 @@
               {filter.conjunct === "or" ? "or" : "and"}
             </button>
           {/if}
+          {#if filter.op === SQL_FILTER_OP}
+            {#await import("./SqlFilterInput.svelte") then { default: SqlFilterInput }}
+              <SqlFilterInput
+                value={filter.value}
+                {dialect}
+                {columns}
+                error={sqlFilterError}
+                oncommit={(text) => patchFilter(filter.id, { value: text })}
+              />
+            {/await}
+          {:else}
           <SearchableMenu
             items={filterColumnItems}
             placeholder="Search columns…"
@@ -1796,33 +2016,14 @@
                   patchFilter(filter.id, { value: e.currentTarget.value })}
               />
             {/if}
-          {:else}
-            <div class="flex-1"></div>
           {/if}
+          {/if}
+          {#if i === rowFilters.length - 1}{@render filterActions()}{/if}
         </div>
       {/each}
-      <div class="flex items-center gap-1 px-3 py-1.5">
-        <button
-          type="button"
-          class="inline-flex h-7 items-center gap-1 rounded-md px-2.5 text-ui-sm text-muted-foreground transition-[color,background-color,transform] hover:bg-accent hover:text-foreground active:scale-[0.97]"
-          onclick={addFilterAndFocus}
-          title="Add a filter condition ({KEY.filter} opens this bar)"
-        >
-          <Icon name="plus" class="size-3.5" />
-          Add filter
-        </button>
-        <div class="flex-1"></div>
-        {#if rowFilters.length > 0}
-          <button
-            type="button"
-            class="inline-flex h-7 items-center gap-1 rounded-md px-2.5 text-ui-sm text-muted-foreground transition-[color,background-color,transform] hover:bg-accent hover:text-foreground active:scale-[0.97]"
-            onclick={clearFilters}
-            title="Remove every filter condition ({KEY.reset} also clears search, sort and hidden columns)"
-          >
-            Clear filters
-          </button>
-        {/if}
-      </div>
+      {#if rowFilters.length === 0}
+        <div class="flex flex-wrap items-center gap-x-1.5 gap-y-1 px-3 py-1">{@render filterActions()}</div>
+      {/if}
     </div>
   {/if}
 </div>
