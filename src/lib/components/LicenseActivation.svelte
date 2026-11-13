@@ -161,10 +161,10 @@
     class={cn(fullWidth && 'w-full', (loading || success) && 'pointer-events-none', success && 'text-success')}
   >
     {#if loading && verifyingVisible}
-      <Icon name="loader-2" class="size-3.5 animate-spin" />
+      <Icon name="loader-2" class="size-3.5 shrink-0 animate-spin" />
       Verifying
     {:else if success}
-      <Icon name="check" class="size-3.5" />
+      <Icon name="check" class="size-3.5 shrink-0" />
       License activated
     {:else}
       {label}
