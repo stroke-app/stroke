@@ -24,11 +24,11 @@
 
 <DropdownMenu.Root>
   <DropdownMenu.Trigger
-    class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground data-[state=open]:bg-muted/50 data-[state=open]:text-foreground {extraClass}"
+    class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-sidebar-accent/60 hover:text-foreground data-[state=open]:bg-sidebar-accent/60 data-[state=open]:text-foreground {extraClass}"
     title="Appearance"
     aria-label="Appearance"
   >
-    <LayoutTemplate class="size-3.5" />
+    <LayoutTemplate class="size-3.5 shrink-0" />
   </DropdownMenu.Trigger>
 
   <DropdownMenu.Content class="z-[200] min-w-64" align="end" sideOffset={6}>
@@ -39,22 +39,22 @@
       <span class="min-w-0 flex-1 truncate whitespace-nowrap">Sidebar</span>
       <span class="ml-auto flex shrink-0 items-center gap-2">
         {#if sidebarVisible}<Check class="size-3 shrink-0 text-muted-foreground" />{:else}<span class="size-3 shrink-0"></span>{/if}
-        <Kbd combo="Mod+B" />
+        <Kbd command="view.sidebar" />
       </span>
     </DropdownMenu.Item>
 
     <DropdownMenu.Item onclick={ontoggletabbar}>
       <PanelTop class="size-3.5 shrink-0 text-muted-foreground" />
-      <span class="min-w-0 flex-1 truncate whitespace-nowrap">Tab Bar</span>
+      <span class="min-w-0 flex-1 truncate whitespace-nowrap">Tab bar</span>
       <span class="ml-auto flex shrink-0 items-center gap-2">
         {#if tabBarVisible}<Check class="size-3 shrink-0 text-muted-foreground" />{:else}<span class="size-3 shrink-0"></span>{/if}
-        <Kbd combo="Mod+Shift+T" />
+        <Kbd command="view.tabBar" />
       </span>
     </DropdownMenu.Item>
 
     <DropdownMenu.Item onclick={ontoggletabletoolbar}>
       <Rows3 class="size-3.5 shrink-0 text-muted-foreground" />
-      <span class="min-w-0 flex-1 truncate whitespace-nowrap">Table Toolbar</span>
+      <span class="min-w-0 flex-1 truncate whitespace-nowrap">Table toolbar</span>
       <span class="ml-auto flex shrink-0 items-center">
         {#if tableToolbarVisible}<Check class="size-3 shrink-0 text-muted-foreground" />{:else}<span class="size-3 shrink-0"></span>{/if}
       </span>
@@ -64,10 +64,10 @@
 
     <DropdownMenu.Item onclick={ontogglestatusbar}>
       <PanelBottom class="size-3.5 shrink-0 text-muted-foreground" />
-      <span class="min-w-0 flex-1 truncate whitespace-nowrap">Status Bar</span>
+      <span class="min-w-0 flex-1 truncate whitespace-nowrap">Status bar</span>
       <span class="ml-auto flex shrink-0 items-center gap-2">
         {#if statusBarVisible}<Check class="size-3 shrink-0 text-muted-foreground" />{:else}<span class="size-3 shrink-0"></span>{/if}
-        <Kbd combo="Mod+Shift+B" />
+        <Kbd command="view.statusBar" />
       </span>
     </DropdownMenu.Item>
   </DropdownMenu.Content>
