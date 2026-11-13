@@ -279,6 +279,14 @@ pub async fn get_table_rows(
                 else if f.conjunct.as_deref().is_some_and(|s| s.eq_ignore_ascii_case("or")) { Some("OR") }
                 else { Some("AND") };
 
+            if f.op == super::sql_util::RAW_SQL_FILTER_OP {
+                let raw = f.value.as_deref().unwrap_or("");
+                if let Some(expr) = super::sql_util::raw_where_expr(raw, super::sql_util::RawFilterDialect::Sqlite)? {
+                    cond_parts.push((conj, expr));
+                }
+                continue;
+            }
+
             if f.column == "__any__" {
                 if let Some(ref v) = f.value {
                     let v = v.trim();
@@ -508,10 +516,21 @@ pub async fn insert_table_row(
     table: &str,
     values: std::collections::HashMap<String, Value>,
 ) -> Result<Vec<Value>, String> {
+    let mut conn = pool.acquire().await.map_err(|e| format!("Failed to acquire connection: {e}"))?;
+    insert_row_on(&mut conn, table, &values).await
+}
+
+/// Insert one row on the given connection and return it (RETURNING *). Shared
+/// by the single-row insert and the transactional apply.
+async fn insert_row_on(
+    conn: &mut sqlx::SqliteConnection,
+    table: &str,
+    values: &std::collections::HashMap<String, Value>,
+) -> Result<Vec<Value>, String> {
     let tq = format!("\"{}\"", table.replace('"', "\"\""));
     let pragma_sql = format!("PRAGMA table_info({tq})");
     let pragma_rows = sqlx::query(&pragma_sql)
-        .fetch_all(pool)
+        .fetch_all(&mut *conn)
         .await
         .map_err(|e| format!("PRAGMA table_info: {e}"))?;
 
@@ -575,7 +594,7 @@ pub async fn insert_table_row(
     }
 
     let inserted = q
-        .fetch_one(pool)
+        .fetch_one(&mut *conn)
         .await
         .map_err(|e| format!("Insert failed: {e}"))?;
 
@@ -666,6 +685,116 @@ pub async fn delete_table_rows(
         total += res.rows_affected();
     }
     Ok(total)
+}
+
+// ── apply_table_changes ───────────────────────────────────────────────────────
+
+/// Apply a grid's staged edits, deletions and insert as one transaction - the
+/// SQLite side of `query::apply_table_changes`. Each edited row is one UPDATE
+/// of all its changed columns, bound with the column's declared type (so a
+/// STRICT table gets an INTEGER, not the numeric string the grid holds), and
+/// every UPDATE/DELETE must match exactly one row or the whole apply rolls back.
+pub async fn apply_table_changes(
+    pool: &SqlitePool,
+    table: &str,
+    updates: Vec<super::query::RowUpdate>,
+    deletes: Vec<std::collections::HashMap<String, Value>>,
+    insert: Option<std::collections::HashMap<String, Value>>,
+) -> Result<super::query::ApplyChangesResult, String> {
+    use super::query::{describe_pk, row_count_error, ApplyChangesResult};
+
+    let quote = |name: &str| format!("\"{}\"", name.replace('"', "\"\""));
+    let tq = quote(table);
+    // One PRAGMA gives both the declared types and the key, in key order.
+    let pragma_rows = sqlx::query(&format!("PRAGMA table_info({tq})"))
+        .fetch_all(pool)
+        .await
+        .map_err(|e| format!("PRAGMA table_info: {e}"))?;
+    if pragma_rows.is_empty() {
+        return Err(format!("Table not found: {table}"));
+    }
+    let mut col_types: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut pk: Vec<(i64, String)> = Vec::new();
+    for r in &pragma_rows {
+        let Some(name) = r.try_get::<Option<String>, _>(1).ok().flatten() else { continue };
+        let col_type = r.try_get::<Option<String>, _>(2).ok().flatten().unwrap_or_default();
+        let pk_pos: i64 = r.try_get::<Option<i64>, _>(5).ok().flatten().unwrap_or(0);
+        if pk_pos > 0 {
+            pk.push((pk_pos, name.clone()));
+        }
+        col_types.insert(name, col_type.to_lowercase());
+    }
+    pk.sort_by_key(|(pos, _)| *pos);
+    let pk_columns: Vec<String> = pk.into_iter().map(|(_, n)| n).collect();
+    if pk_columns.is_empty() && !(updates.is_empty() && deletes.is_empty()) {
+        return Err("Cannot apply changes: table has no primary key".into());
+    }
+    let col_type = |c: &str| -> Result<&str, String> {
+        col_types.get(c).map(|s| s.as_str()).ok_or_else(|| format!("Unknown column: {c}"))
+    };
+    let pk_value = |primary_key: &std::collections::HashMap<String, Value>, c: &str| -> Result<Value, String> {
+        primary_key.get(c).cloned().ok_or_else(|| format!("Missing primary key column: {c}"))
+    };
+    let where_sql = pk_columns.iter().map(|c| format!("{} = ?", quote(c))).collect::<Vec<_>>().join(" AND ");
+
+    let mut tx = pool.begin().await.map_err(|e| format!("Could not start a transaction: {e}"))?;
+    let mut updated = 0_u64;
+    let mut deleted = 0_u64;
+
+    for row in &updates {
+        if row.values.is_empty() {
+            continue;
+        }
+        let pk_vals = pk_columns.iter().map(|c| pk_value(&row.primary_key, c)).collect::<Result<Vec<_>, _>>()?;
+        let mut cols: Vec<&String> = row.values.keys().collect();
+        cols.sort();
+        let sets = cols.iter().map(|c| format!("{} = ?", quote(c))).collect::<Vec<_>>().join(", ");
+        let sql = format!("UPDATE {tq} SET {sets} WHERE {where_sql}");
+        let mut q = sqlx::query(&sql);
+        for c in &cols {
+            q = bind_value_typed(q, &row.values[*c], col_type(c)?);
+        }
+        for (c, v) in pk_columns.iter().zip(&pk_vals) {
+            q = bind_value_typed(q, v, col_type(c)?);
+        }
+        let n = q
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| format!("Update failed ({}): {e}", describe_pk(&pk_columns, &row.primary_key)))?
+            .rows_affected();
+        if n != 1 {
+            return Err(row_count_error(&pk_columns, &row.primary_key, n));
+        }
+        updated += 1;
+    }
+
+    if !deletes.is_empty() {
+        let sql = format!("DELETE FROM {tq} WHERE {where_sql}");
+        for primary_key in &deletes {
+            let pk_vals = pk_columns.iter().map(|c| pk_value(primary_key, c)).collect::<Result<Vec<_>, _>>()?;
+            let mut q = sqlx::query(&sql);
+            for (c, v) in pk_columns.iter().zip(&pk_vals) {
+                q = bind_value_typed(q, v, col_type(c)?);
+            }
+            let n = q
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| format!("Delete failed ({}): {e}", describe_pk(&pk_columns, primary_key)))?
+                .rows_affected();
+            if n != 1 {
+                return Err(row_count_error(&pk_columns, primary_key, n));
+            }
+            deleted += 1;
+        }
+    }
+
+    let inserted = match insert.filter(|v| !v.is_empty()) {
+        Some(values) => Some(insert_row_on(&mut tx, table, &values).await?),
+        None => None,
+    };
+
+    tx.commit().await.map_err(|e| format!("Could not commit: {e}"))?;
+    Ok(ApplyChangesResult { updated, deleted, inserted })
 }
 
 // ── value binding ─────────────────────────────────────────────────────────────

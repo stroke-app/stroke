@@ -176,6 +176,7 @@ pub async fn import_rows(
         }
         ActiveConnection::Posthog(_) => Err("PostHog is read-only: its data comes from HogQL queries.".into()),
         ActiveConnection::Redis(_) => Err("Importing rows is not supported on Redis".into()),
+        ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => Err("Importing rows is not supported on DynamoDB".into()),
     }?;
 
     let level = if result.failed > 0 || result.cancelled { "warn" } else { "ok" };

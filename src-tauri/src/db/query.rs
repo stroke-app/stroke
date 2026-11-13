@@ -113,20 +113,24 @@ static COLUMN_FLAGS_CACHE: std::sync::OnceLock<
 > = std::sync::OnceLock::new();
 const COLUMN_FLAGS_TTL: std::time::Duration = std::time::Duration::from_secs(10);
 
+/// Cache key for a table on the database this pool is connected to: two
+/// connections open on the same `public.users` are two different tables.
+fn pool_table_key(pool: &sqlx::PgPool, schema: &str, table: &str) -> String {
+    let opts = pool.connect_options();
+    format!(
+        "{}:{}/{}\u{0}{schema}.{table}",
+        opts.get_host(),
+        opts.get_port(),
+        opts.get_database().unwrap_or_default()
+    )
+}
+
 async fn cached_column_flags(
     pool: &sqlx::PgPool,
     schema: &str,
     table: &str,
 ) -> Result<HashMap<String, ColumnFlags>, String> {
-    // Keyed by the database this pool is connected to as well as the table:
-    // two connections open on the same `public.users` are two different tables.
-    let opts = pool.connect_options();
-    let key = format!(
-        "{}:{}/{}\u{0}{schema}.{table}",
-        opts.get_host(),
-        opts.get_port(),
-        opts.get_database().unwrap_or_default()
-    );
+    let key = pool_table_key(pool, schema, table);
     let cache = COLUMN_FLAGS_CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
     // Scoped so the guard is dropped before the await below - never hold a lock
     // across one.
@@ -149,6 +153,118 @@ async fn cached_column_flags(
         map.insert(key, (std::time::Instant::now(), flags.clone()));
     }
     Ok(flags)
+}
+
+/// Primary-key columns for the default page order, memoised like the flags above.
+///
+/// Every unsorted page needs them before its SQL can be built, so uncached that
+/// is a catalog round-trip in front of each infinite-scroll page. `refresh`
+/// (a table open, `include_meta`) re-reads the catalog so a key added or
+/// dropped since is picked up. A failed lookup returns no key and isn't cached:
+/// the page then keeps the engine's own order rather than failing to load.
+static PRIMARY_KEY_CACHE: std::sync::OnceLock<
+    std::sync::Mutex<HashMap<String, (std::time::Instant, Vec<String>)>>,
+> = std::sync::OnceLock::new();
+const PRIMARY_KEY_TTL: std::time::Duration = std::time::Duration::from_secs(30);
+/// How long a cached key may be used WITHOUT waiting for the catalog. Past
+/// `PRIMARY_KEY_TTL` (and on every table open) the answer is still used at
+/// once and re-read behind the page, so the lookup is no longer a round trip
+/// in front of the rows. A key that changed in between costs one page ordered
+/// by the old one, or, if its column is gone, a retry (see `get_table_rows`).
+const PRIMARY_KEY_TRUST: std::time::Duration = std::time::Duration::from_secs(600);
+
+fn store_primary_key(pool: &sqlx::PgPool, schema: &str, table: &str, pk: &[String]) {
+    let cache = PRIMARY_KEY_CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
+    if let Ok(mut map) = cache.lock() {
+        if map.len() > 4096 {
+            map.retain(|_, (at, _)| at.elapsed() < PRIMARY_KEY_TRUST);
+        }
+        map.insert(pool_table_key(pool, schema, table), (std::time::Instant::now(), pk.to_vec()));
+    }
+}
+
+/// Read the key from the catalog now and cache it. No key on failure, uncached.
+async fn fresh_primary_key(pool: &sqlx::PgPool, schema: &str, table: &str) -> Vec<String> {
+    let Ok(pk) = fetch_primary_key(pool, schema, table).await else {
+        return Vec::new();
+    };
+    store_primary_key(pool, schema, table, &pk);
+    pk
+}
+
+/// Every primary key of a schema in one catalog query, cached ahead of the
+/// first open of any of its tables - the key lookup is otherwise a round trip
+/// in front of that table's rows. Run in the background when the table list
+/// loads; a table without a key is cached as such.
+pub async fn prefetch_primary_keys(pool: &sqlx::PgPool, schema: &str, tables: &[String]) {
+    let Ok(rows) = sqlx::query(
+        r#"
+        SELECT t.relname::text, a.attname::text
+        FROM pg_constraint c
+        JOIN pg_class t ON t.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = t.relnamespace
+        JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
+        WHERE c.contype = 'p' AND n.nspname = $1
+        ORDER BY t.relname, array_position(c.conkey, a.attnum)
+        "#,
+    )
+    .bind(schema)
+    .fetch_all(pool)
+    .await
+    else {
+        return;
+    };
+    let mut keys: HashMap<String, Vec<String>> = HashMap::new();
+    for r in &rows {
+        if let (Ok(t), Ok(c)) = (r.try_get::<String, _>(0), r.try_get::<String, _>(1)) {
+            keys.entry(t).or_default().push(c);
+        }
+    }
+    for table in tables {
+        store_primary_key(pool, schema, table, keys.get(table).map(Vec::as_slice).unwrap_or(&[]));
+    }
+}
+
+/// The page's ORDER BY made total by the primary key, without ever waiting on
+/// the catalog (a total order keeps LIMIT/OFFSET pages from repeating rows). A cached key is used
+/// at once (and re-read behind the page once past `PRIMARY_KEY_TTL`; a table
+/// open re-reads it anyway in its metadata tasks). A miss leaves the page in
+/// the engine's order and caches the key for the next page.
+fn pk_order_nowait(pool: &sqlx::PgPool, schema: &str, table: &str, refresh: bool, order_by: String) -> (String, bool) {
+    let key = pool_table_key(pool, schema, table);
+    let cache = PRIMARY_KEY_CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
+    let hit = cache.lock().ok().and_then(|map| map.get(&key).map(|(at, pk)| (at.elapsed(), pk.clone())));
+    let spawn_refresh = || {
+        let (pool, schema, table) = (pool.clone(), schema.to_string(), table.to_string());
+        tokio::spawn(async move { fresh_primary_key(&pool, &schema, &table).await });
+    };
+    match hit {
+        Some((age, pk)) if age < PRIMARY_KEY_TRUST => {
+            if age >= PRIMARY_KEY_TTL && !refresh {
+                spawn_refresh();
+            }
+            (pk_order(&pk, order_by, &[]), true)
+        }
+        _ => {
+            if !refresh {
+                spawn_refresh();
+            }
+            (order_by, false)
+        }
+    }
+}
+
+fn pk_order(pk: &[String], order_by: String, sorted: &[&str]) -> String {
+    let extra = pk
+        .iter()
+        .filter(|c| !sorted.contains(&c.as_str()))
+        .map(|c| quoted_column(c))
+        .collect::<Result<Vec<_>, _>>();
+    match extra {
+        Ok(cols) if !cols.is_empty() && order_by.is_empty() => format!(" ORDER BY {}", cols.join(", ")),
+        Ok(cols) if !cols.is_empty() => format!("{order_by}, {}", cols.join(", ")),
+        _ => order_by,
+    }
 }
 
 fn apply_column_flags(columns: &mut [ColumnInfo], flags: &HashMap<String, ColumnFlags>) {
@@ -1147,6 +1263,46 @@ async fn text_safe_wrap(pool: &sqlx::PgPool, stmt: &str) -> Option<String> {
     Some(format!("SELECT {} FROM ({inner}) AS _stroke_text", parts.join(", ")))
 }
 
+/// Column names of a table, memoised for sort/filter/search fetches.
+///
+/// Every sorted, filtered or searched page validates its column names against
+/// the table, and that used to be a catalog round trip in front of the rows on
+/// every sort click and filter keystroke. The list is cached per table for
+/// `COLUMN_NAMES_TTL`; `refresh` (a table open) re-reads it, and so does any
+/// request naming a column the cached list lacks, so a column added since is
+/// never refused.
+static COLUMN_NAMES_CACHE: std::sync::OnceLock<
+    std::sync::Mutex<HashMap<String, (std::time::Instant, Vec<String>)>>,
+> = std::sync::OnceLock::new();
+const COLUMN_NAMES_TTL: std::time::Duration = std::time::Duration::from_secs(60);
+
+pub(super) async fn cached_table_column_names(
+    pool: &sqlx::PgPool,
+    schema: &str,
+    table: &str,
+    refresh: bool,
+    needed: &[&str],
+) -> Result<Vec<String>, String> {
+    let key = pool_table_key(pool, schema, table);
+    let cache = COLUMN_NAMES_CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
+    if !refresh {
+        let hit = cache.lock().ok().and_then(|m| m.get(&key).cloned());
+        if let Some((at, cols)) = hit {
+            if at.elapsed() < COLUMN_NAMES_TTL && needed.iter().all(|n| cols.iter().any(|c| c == n)) {
+                return Ok(cols);
+            }
+        }
+    }
+    let cols = fetch_table_column_names(pool, schema, table).await?;
+    if let Ok(mut m) = cache.lock() {
+        if m.len() > 4096 {
+            m.retain(|_, (at, _)| at.elapsed() < COLUMN_NAMES_TTL);
+        }
+        m.insert(key, (std::time::Instant::now(), cols.clone()));
+    }
+    Ok(cols)
+}
+
 pub(super) async fn fetch_table_column_names(
     pool: &sqlx::PgPool,
     schema: &str,
@@ -1495,6 +1651,14 @@ pub(super) fn build_where(
         let op = filter.op.as_str();
         let conjunct = filter.conjunct.as_deref();
 
+        if op == super::sql_util::RAW_SQL_FILTER_OP {
+            let raw = filter.value.as_deref().unwrap_or("");
+            if let Some(expr) = super::sql_util::raw_where_expr(raw, super::sql_util::RawFilterDialect::Postgres)? {
+                builder.push_condition(expr, conjunct);
+            }
+            continue;
+        }
+
         if filter.column == "__any__" {
             let value = filter.value.as_deref().unwrap_or("").trim();
             if !value.is_empty() {
@@ -1586,6 +1750,16 @@ const MAX_PAGE_LIMIT: i64 = 5_000_000;
 /// Bind a page query's parameters in the fixed order the SQL is built with:
 /// WHERE binds, then either the keyset cursor + limit, or limit + offset. Taken
 /// out of line so a page can be re-issued with a different SELECT list.
+/// The exact number of matching rows, when the page itself proves it: an
+/// OFFSET page that came back short has reached the end, so the total is what
+/// was skipped plus what arrived. `None` for a full page, a failed one, a
+/// keyset page (its offset is not a position), or an empty page past the
+/// start (the offset may be beyond the end).
+fn short_page_total<R>(rows: &Result<Vec<R>, sqlx::Error>, keyset: bool, limit: i64, offset: i64) -> Option<i64> {
+    let n = rows.as_ref().ok()?.len() as i64;
+    (!keyset && n < limit && (n > 0 || offset == 0)).then_some(offset + n)
+}
+
 fn bind_page<'q>(
     sql: &'q str,
     where_binds: &'q [String],
@@ -1601,6 +1775,39 @@ fn bind_page<'q>(
         Some(v) => q.bind(v.as_str()).bind(limit),
         None => q.bind(limit).bind(offset),
     }
+}
+
+/// The SQL family a typed filter expression is checked against for this
+/// connection - see `sql_util::raw_where_expr`.
+pub(crate) fn raw_filter_dialect(conn: &ActiveConnection) -> super::sql_util::RawFilterDialect {
+    use super::sql_util::RawFilterDialect as D;
+    match conn {
+        ActiveConnection::Postgres(_) => D::Postgres,
+        ActiveConnection::Mysql(_) => D::Mysql,
+        ActiveConnection::Sqlite(_) | ActiveConnection::D1(_) | ActiveConnection::LibSql(_) => D::Sqlite,
+        ActiveConnection::Duckdb(_) => D::Duckdb,
+        ActiveConnection::Mssql(_) | ActiveConnection::Clickhouse(_) | ActiveConnection::Posthog(_) | ActiveConnection::Redis(_) | ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => D::Literal,
+    }
+}
+
+/// Check every typed SQL filter before any engine builds its query, so a bad
+/// expression is an error the filter bar can show - never a filter quietly
+/// dropped from a result that still looks filtered (the literal-SQL engines'
+/// builders can't return one).
+pub(crate) fn validate_raw_filters(conn: &ActiveConnection, filters: Option<&[RowFilter]>) -> Result<(), String> {
+    if matches!(conn, ActiveConnection::Redis(_)) {
+        if filters.unwrap_or(&[]).iter().any(|f| f.op == super::sql_util::RAW_SQL_FILTER_OP) {
+            return Err("SQL filters aren't available for Redis".into());
+        }
+        return Ok(());
+    }
+    let dialect = raw_filter_dialect(conn);
+    for f in filters.unwrap_or(&[]) {
+        if f.op == super::sql_util::RAW_SQL_FILTER_OP {
+            super::sql_util::raw_where_expr(f.value.as_deref().unwrap_or(""), dialect)?;
+        }
+    }
+    Ok(())
 }
 
 pub async fn get_table_rows(
@@ -1654,6 +1861,7 @@ pub async fn get_table_rows(
     if offset < 0 {
         return Err("Offset must be 0 or greater".to_string());
     }
+    validate_raw_filters(&require_conn(&state)?, filters.as_deref())?;
 
     match require_conn(&state)? {
         ActiveConnection::Sqlite(pool) => {
@@ -1679,6 +1887,9 @@ pub async fn get_table_rows(
         }
         ActiveConnection::Posthog(cfg) => {
             return super::posthog::get_table_rows(&cfg, &table, limit, offset, search, sort_column, sort_direction, filters).await;
+        }
+        ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => {
+            return Err("DynamoDB tables open in the DynamoDB page".into());
         }
         ActiveConnection::Redis(cfg) => {
             return super::redis::get_table_rows(
@@ -1707,7 +1918,10 @@ pub async fn get_table_rows(
     let has_search = search.as_deref().map(str::trim).is_some_and(|s| !s.is_empty());
     let has_sort = sort_column.as_deref().map(str::trim).is_some_and(|s| !s.is_empty()) || !sorts.is_empty();
     let table_columns = if has_search || has_sort || !filters.is_empty() {
-        fetch_table_column_names(&pool, &schema, &table).await?
+        let mut needed: Vec<&str> = filters.iter().map(|f| f.column.as_str()).collect();
+        needed.extend(sorts.iter().map(|s| s.column.as_str()));
+        needed.extend(sort_column.as_deref());
+        cached_table_column_names(&pool, &schema, &table, include_meta, &needed).await?
     } else {
         vec![]
     };
@@ -1761,7 +1975,10 @@ pub async fn get_table_rows(
     let keyset_bind: Option<String>;
     // Everything after the SELECT list, so the same page can be re-issued with a
     // different projection if a column turns out to have no binary output.
-    let data_tail: String;
+    let mut data_tail: String;
+    // Set when the page is ordered by a primary key taken on trust: what it
+    // takes to rebuild the ORDER BY from the catalog if that key is wrong.
+    let mut trusted_pk_order: Option<(String, Vec<String>)> = None;
     if let Some(ks) = keyset_ok {
         let col = quoted_column(&ks.column)?;
         let op = if ks.after == !ks.desc { ">" } else { "<" };
@@ -1780,6 +1997,25 @@ pub async fn get_table_rows(
     } else {
         keyset_reverse = false;
         keyset_bind = None;
+        // Mirrors build_order_by: multi-sort keys win over the single column.
+        let sorted: Vec<&str> = if !sorts.is_empty() {
+            sorts.iter().map(|s| s.column.trim()).filter(|c| !c.is_empty()).collect()
+        } else {
+            sort_column.as_deref().map(str::trim).filter(|c| !c.is_empty()).into_iter().collect()
+        };
+        let base_order = order_by.clone();
+        // Only an unsorted, unfiltered page gets the key order, and only from the
+        // cache: a catalog read here was a round trip in front of every first
+        // open, and `ORDER BY pk` under a WHERE (or as a tie-breaker behind a
+        // sort) can turn a LIMIT that stops early into a walk of the whole index.
+        let (order_by, trusted) = if sorted.is_empty() && where_clause.sql.is_empty() {
+            pk_order_nowait(&pool, &schema, &table, include_meta, order_by)
+        } else {
+            (order_by, false)
+        };
+        if trusted {
+            trusted_pk_order = Some((base_order, sorted.iter().map(|s| s.to_string()).collect()));
+        }
         let limit_param = where_clause.binds.len() + 1;
         let offset_param = where_clause.binds.len() + 2;
         data_tail = format!(
@@ -1843,8 +2079,8 @@ pub async fn get_table_rows(
     // scan that can take seconds - that's the "pause" when opening a big table.
     // Use the planner's row estimate (pg_class.reltuples) instead, which is
     // instant, and only fall back to an exact COUNT when the table is small
-    // (estimate < threshold, where an exact count is sub-millisecond) or has
-    // never been analyzed (reltuples = -1). Filtered/searched queries always use
+    // (estimate < threshold, where an exact count is sub-millisecond) or nothing
+    // knows its size yet (see ROW_ESTIMATE_SQL). Filtered/searched queries always use
     // an exact count since the WHERE clause bounds the scan and accuracy matters.
     const ESTIMATE_THRESHOLD: i64 = 100_000;
     let rows_res;
@@ -1854,20 +2090,24 @@ pub async fn get_table_rows(
         // total = -1 signals "unknown / counting" to the UI (same sentinel the
         // sidebar already uses); the frontend fills it in via count_table_rows.
         rows_res = data_query.fetch_all(&pool).await;
-        total = -1;
+        // Unless the page came back short: then it has reached the end of the
+        // matching rows and counted them itself, and the frontend has no count
+        // left to ask for.
+        total = short_page_total(&rows_res, keyset_bind.is_some(), limit, offset).unwrap_or(-1);
     } else if where_clause.sql.is_empty() {
         // Estimate and data fetch are independent - run them together so the
         // planner estimate adds no extra round-trip in series.
-        let estimate_query = sqlx::query_scalar::<_, i64>(
-            "SELECT reltuples::bigint FROM pg_class WHERE oid = $1::regclass",
-        )
-        .bind(&table_ref);
+        let estimate_query = sqlx::query_scalar::<_, i64>(ROW_ESTIMATE_SQL).bind(&table_ref);
         let (estimate_res, page_res) =
             tokio::join!(estimate_query.fetch_optional(&pool), data_query.fetch_all(&pool));
         rows_res = page_res;
         let estimate = estimate_res.ok().flatten();
-        total = match estimate {
-            Some(est) if est >= ESTIMATE_THRESHOLD => est,
+        // A page that came back short ends the table, so it has already counted
+        // it: no COUNT(*) round trip behind the rows for a small table.
+        let counted_by_page = short_page_total(&rows_res, keyset_bind.is_some(), limit, offset);
+        total = match (counted_by_page, estimate) {
+            (Some(n), _) => n,
+            (None, Some(est)) if est >= ESTIMATE_THRESHOLD => est,
             _ => count_query
                 .fetch_one(&pool)
                 .await
@@ -1897,7 +2137,30 @@ pub async fn get_table_rows(
             // was built. Rebuild the page from `SELECT *` rather than showing an
             // error where the table should be, and drop the cached decision so
             // the next page builds a current one.
-            if wide_projection.is_some() && (msg.contains("does not exist") || msg.contains("42703")) {
+            let missing_column = msg.contains("does not exist") || msg.contains("42703");
+            if let (true, Some((base_order, sorted))) = (missing_column, trusted_pk_order.take()) {
+                // The key this page was ordered by came from the cache, and a
+                // column it names is gone. Order by the key the catalog has now,
+                // and read `SELECT *`: a stale projection fails the same way.
+                let pk = fresh_primary_key(&pool, &schema, &table).await;
+                let sorted: Vec<&str> = sorted.iter().map(String::as_str).collect();
+                let order_by = pk_order(&pk, base_order, &sorted);
+                let limit_param = where_clause.binds.len() + 1;
+                let offset_param = where_clause.binds.len() + 2;
+                data_tail = format!(
+                    "FROM {table_ref}{}{} LIMIT ${limit_param} OFFSET ${offset_param}",
+                    where_clause.sql,
+                    order_by
+                );
+                if wide_projection.take().is_some() {
+                    super::wide_columns::invalidate(&pool, &schema, &table);
+                }
+                data_sql = format!("SELECT * {data_tail}");
+                bind_page(&data_sql, &where_clause.binds, keyset_bind.as_ref(), limit, offset)
+                    .fetch_all(&pool)
+                    .await
+                    .map_err(|e| format!("Failed to fetch rows: {e}"))?
+            } else if wide_projection.is_some() && missing_column {
                 super::wide_columns::invalidate(&pool, &schema, &table);
                 wide_projection = None;
                 data_sql = format!("SELECT * {data_tail}");
@@ -2054,7 +2317,10 @@ pub async fn get_table_rows(
             task.await.map_err(|e| format!("Failed to load table metadata: {e}"))?;
         if let Ok(enums) = enums_result { apply_column_enums(&mut columns, &enums); }
         if let Ok(flags) = flags_result { apply_column_flags(&mut columns, &flags); }
-        (pk_result?, fk_result?)
+        let pk = pk_result?;
+        // The catalog's answer, read alongside the rows: what the next page trusts.
+        store_primary_key(&pool, &schema, &table, &pk);
+        (pk, fk_result?)
     } else {
         (Vec::new(), Vec::new())
     };
@@ -2087,6 +2353,21 @@ pub async fn get_table_rows(
     })
 }
 
+/// The planner's row estimate for an unfiltered table, as the grid uses it.
+///
+/// `reltuples` alone is -1 until the table's first ANALYZE or VACUUM, and a
+/// table loaded in bulk on a hosted server (Prisma Postgres, a fresh restore)
+/// often has neither yet. Every count of it then fell through to an exact
+/// `COUNT(*)`: on a local 5M-row table that is 1.7s cold against 20ms for this
+/// query, and on a remote one it was the 13s `pg_count_table_rows` in the
+/// profile. `n_live_tup` is kept by the statistics collector from the inserts
+/// themselves, so it knows the size before anything has been analyzed. The
+/// larger of the two, as the sidebar's counts already take it (schema.rs).
+const ROW_ESTIMATE_SQL: &str = "SELECT GREATEST(c.reltuples::bigint, COALESCE(s.n_live_tup, 0))::bigint \
+     FROM pg_catalog.pg_class c \
+     LEFT JOIN pg_catalog.pg_stat_all_tables s ON s.relid = c.oid \
+     WHERE c.oid = $1::regclass";
+
 /// Row count for the main grid, fetched separately so `get_table_rows` can
 /// return rows immediately (include_count = false) while the UI fills the total
 /// in asynchronously. Mirrors the count logic in `get_table_rows`: planner
@@ -2106,6 +2387,7 @@ pub async fn count_table_rows(
     // Skip the planner estimate and COUNT(*) a large table too.
     exact: bool,
 ) -> Result<i64, String> {
+    validate_raw_filters(&require_conn(&state)?, filters.as_deref())?;
     match require_conn(&state)? {
         ActiveConnection::Postgres(_) => {}
         // The grid's "All" mode takes its total from here, so PostHog needs its
@@ -2120,7 +2402,8 @@ pub async fn count_table_rows(
 
     let has_search = search.as_deref().map(str::trim).is_some_and(|s| !s.is_empty());
     let table_columns = if has_search || !filters.is_empty() {
-        fetch_table_column_names(&pool, &schema, &table).await?
+        let needed: Vec<&str> = filters.iter().map(|f| f.column.as_str()).collect();
+        cached_table_column_names(&pool, &schema, &table, false, &needed).await?
     } else {
         vec![]
     };
@@ -2129,9 +2412,7 @@ pub async fn count_table_rows(
 
     const ESTIMATE_THRESHOLD: i64 = 100_000;
     if where_clause.sql.is_empty() && !exact {
-        let estimate = sqlx::query_scalar::<_, i64>(
-            "SELECT reltuples::bigint FROM pg_class WHERE oid = $1::regclass",
-        )
+        let estimate = sqlx::query_scalar::<_, i64>(ROW_ESTIMATE_SQL)
         .bind(&table_ref)
         .fetch_optional(&pool)
         .await
@@ -2205,6 +2486,9 @@ pub async fn update_table_cell(
         ActiveConnection::Posthog(_) => return Err("PostHog is read-only: its data comes from HogQL queries.".into()),
         ActiveConnection::Redis(_) => {
             return Err("Editing is not supported on Redis".into());
+        }
+        ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => {
+            return Err("Edit DynamoDB items from the table page".into());
         }
         ActiveConnection::Duckdb(h) => {
             return super::duckdb::update_table_cell(&h, &table, primary_key, &column, &value).await;
@@ -2425,6 +2709,9 @@ pub async fn insert_table_row(
         ActiveConnection::Redis(_) => {
             return Err("Editing is not supported on Redis".into());
         }
+        ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => {
+            return Err("Edit DynamoDB items from the table page".into());
+        }
         ActiveConnection::Duckdb(h) => {
             let row = super::duckdb::insert_table_row(&h, &table, values).await?;
             return Ok(InsertRowResult { row });
@@ -2548,6 +2835,9 @@ pub async fn delete_table_rows(
         ActiveConnection::Posthog(_) => return Err("PostHog is read-only: its data comes from HogQL queries.".into()),
         ActiveConnection::Redis(_) => {
             return Err("Editing is not supported on Redis".into());
+        }
+        ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => {
+            return Err("Edit DynamoDB items from the table page".into());
         }
         ActiveConnection::Duckdb(h) => {
             return super::duckdb::delete_table_rows(&h, &table, primary_keys).await;
@@ -2677,6 +2967,235 @@ WHERE {match_cols}"#,
     Ok(result.rows_affected())
 }
 
+/// One edited row of a staged grid apply: the row's primary key as loaded, and
+/// every column the user changed on it.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RowUpdate {
+    pub primary_key: HashMap<String, Value>,
+    pub values: HashMap<String, Value>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplyChangesResult {
+    pub updated: u64,
+    pub deleted: u64,
+    /// The inserted row in table column order, when an insert was staged.
+    pub inserted: Option<Vec<Value>>,
+}
+
+/// Start of the error an engine's apply returns when the table can't roll back
+/// (MySQL MyISAM, MEMORY, …). The UI recognises it and falls back to writing
+/// the changes one by one, as it did before.
+pub(crate) const NOT_TRANSACTIONAL: &str = "does not support transactions";
+
+/// Error for an UPDATE/DELETE inside an apply that touched `n` rows instead of
+/// exactly one. Returning it drops the transaction, rolling everything back.
+pub(crate) fn row_count_error(pk_columns: &[String], primary_key: &HashMap<String, Value>, n: u64) -> String {
+    format!(
+        "Row {} {} - nothing was applied",
+        describe_pk(pk_columns, primary_key),
+        if n == 0 { "no longer exists or its key changed" } else { "matched more than one row" }
+    )
+}
+
+/// Short `col = value` description of a key, for errors that name the row.
+pub(crate) fn describe_pk(pk_columns: &[String], primary_key: &HashMap<String, Value>) -> String {
+    pk_columns
+        .iter()
+        .map(|c| format!("{c} = {}", primary_key.get(c).map(|v| v.to_string()).unwrap_or_else(|| "?".into())))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Apply a grid's staged edits, deletions and insert as one transaction
+/// (Postgres here; MySQL and SQLite in their modules): all of it lands, or
+/// none of it does.
+///
+/// The per-cell path wrote each cell in its own autocommit with two catalog
+/// queries in front, so an Apply that failed halfway left some cells written
+/// and others not, and an UPDATE that matched no row (deleted or re-keyed by
+/// someone else since the page loaded) reported success. Here the catalog is
+/// read once, each edited row is one UPDATE of all its changed columns, and
+/// every statement must touch exactly the rows it addressed - otherwise the
+/// whole apply rolls back with an error naming the row.
+///
+/// Order is updates, deletes, then the insert, matching the review the user
+/// confirmed.
+pub async fn apply_table_changes(
+    state: State<'_, DbState>,
+    schema: String,
+    table: String,
+    updates: Vec<RowUpdate>,
+    deletes: Vec<HashMap<String, Value>>,
+    insert: Option<HashMap<String, Value>>,
+) -> Result<ApplyChangesResult, String> {
+    match require_conn(&state)? {
+        ActiveConnection::Postgres(_) => {}
+        ActiveConnection::Mysql(pool) => {
+            return super::mysql::apply_table_changes(&pool, &schema, &table, updates, deletes, insert).await;
+        }
+        ActiveConnection::Sqlite(pool) => {
+            return super::sqlite::apply_table_changes(&pool, &table, updates, deletes, insert).await;
+        }
+        _ => return Err("Atomic apply is only available for PostgreSQL, MySQL and SQLite connections".into()),
+    }
+    let pool = require_pool(&state)?;
+    pg_apply_table_changes(&pool, &schema, &table, updates, deletes, insert).await
+}
+
+pub(crate) async fn pg_apply_table_changes(
+    pool: &sqlx::PgPool,
+    schema: &str,
+    table: &str,
+    updates: Vec<RowUpdate>,
+    deletes: Vec<HashMap<String, Value>>,
+    insert: Option<HashMap<String, Value>>,
+) -> Result<ApplyChangesResult, String> {
+    // Validates schema and table, and loads every column's type and cast.
+    let (column_order, meta) = pg_insert_meta(pool, schema, table).await?;
+    let column_meta = |c: &str| meta.get(c).ok_or_else(|| format!("Unknown column: {c}"));
+
+    let pk_columns = if updates.is_empty() && deletes.is_empty() {
+        Vec::new()
+    } else {
+        let pk = fetch_primary_key(pool, schema, table).await?;
+        if pk.is_empty() {
+            return Err("Cannot apply changes: table has no primary key".into());
+        }
+        pk
+    };
+    let check_pk = |primary_key: &HashMap<String, Value>| -> Result<(), String> {
+        for c in &pk_columns {
+            if !primary_key.contains_key(c) {
+                return Err(format!("Missing primary key column: {c}"));
+            }
+        }
+        Ok(())
+    };
+    let where_sql = |first: u32| -> String {
+        pk_columns
+            .iter()
+            .enumerate()
+            .map(|(i, c)| format!(r#""{c}" = ${}"#, first + i as u32))
+            .collect::<Vec<_>>()
+            .join(" AND ")
+    };
+
+    let mut tx = pool.begin().await.map_err(|e| format!("Could not start a transaction: {e}"))?;
+    let mut updated = 0_u64;
+    let mut deleted = 0_u64;
+
+    for row in &updates {
+        check_pk(&row.primary_key)?;
+        if row.values.is_empty() {
+            continue;
+        }
+        // Sorted so the statement text is stable for a given set of columns.
+        let mut cols: Vec<&String> = row.values.keys().collect();
+        cols.sort();
+        let mut sets = Vec::with_capacity(cols.len());
+        for (i, col) in cols.iter().enumerate() {
+            validate_ident(col)?;
+            let m = column_meta(col)?;
+            if is_bytea_type(&m.data_type) {
+                return Err(format!("Cannot edit bytea column: {col}"));
+            }
+            validate_typed_value(&m.data_type, &row.values[*col])?;
+            sets.push(format!(r#""{col}" = {}"#, m.pg.insert_value_sql(i as u32 + 1)?));
+        }
+        let sql = format!(
+            r#"UPDATE "{schema}"."{table}" SET {} WHERE {}"#,
+            sets.join(", "),
+            where_sql(cols.len() as u32 + 1)
+        );
+        let mut q = sqlx::query(&sql);
+        for col in &cols {
+            q = bind_typed_value(q, &column_meta(col)?.data_type, &row.values[*col])?;
+        }
+        for c in &pk_columns {
+            q = bind_typed_value(q, &column_meta(c)?.data_type, &row.primary_key[c])?;
+        }
+        let n = q
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| format!("Update failed ({}): {e}", describe_pk(&pk_columns, &row.primary_key)))?
+            .rows_affected();
+        if n != 1 {
+            // Dropping `tx` rolls back everything run so far.
+            return Err(row_count_error(&pk_columns, &row.primary_key, n));
+        }
+        updated += 1;
+    }
+
+    if !deletes.is_empty() {
+        let sql = format!(r#"DELETE FROM "{schema}"."{table}" WHERE {}"#, where_sql(1));
+        for primary_key in &deletes {
+            check_pk(primary_key)?;
+            let mut q = sqlx::query(&sql);
+            for c in &pk_columns {
+                q = bind_typed_value(q, &column_meta(c)?.data_type, &primary_key[c])?;
+            }
+            let n = q
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| format!("Delete failed ({}): {e}", describe_pk(&pk_columns, primary_key)))?
+                .rows_affected();
+            if n != 1 {
+                return Err(row_count_error(&pk_columns, primary_key, n));
+            }
+            deleted += 1;
+        }
+    }
+
+    let mut inserted = None;
+    if let Some(values) = insert.filter(|v| !v.is_empty()) {
+        for m in meta.values() {
+            if !m.optional_when_omitted && !values.contains_key(&m.name) {
+                return Err(format!("Column \"{}\" is required (NOT NULL, no default)", m.name));
+            }
+        }
+        let mut cols: Vec<&String> = values.keys().collect();
+        cols.sort();
+        let mut names = Vec::with_capacity(cols.len());
+        let mut placeholders = Vec::with_capacity(cols.len());
+        for (i, col) in cols.iter().enumerate() {
+            validate_ident(col)?;
+            let m = column_meta(col)?;
+            if is_bytea_type(&m.data_type) {
+                return Err(format!("Cannot insert into bytea column: {col}"));
+            }
+            validate_typed_value(&m.data_type, &values[*col])?;
+            names.push(format!(r#""{col}""#));
+            placeholders.push(m.pg.insert_value_sql(i as u32 + 1)?);
+        }
+        let sql = format!(
+            r#"INSERT INTO "{schema}"."{table}" ({}) VALUES ({}) RETURNING *"#,
+            names.join(", "),
+            placeholders.join(", ")
+        );
+        let mut q = sqlx::query(&sql);
+        for col in &cols {
+            q = bind_typed_value(q, &column_meta(col)?.data_type, &values[*col])?;
+        }
+        let row = q.fetch_one(&mut *tx).await.map_err(|e| format!("Insert failed: {e}"))?;
+        let mut out = Vec::with_capacity(column_order.len());
+        for name in &column_order {
+            let idx = row
+                .columns()
+                .iter()
+                .position(|c| c.name() == name.as_str())
+                .ok_or_else(|| format!("RETURNING missing column: {name}"))?;
+            out.push(cell_to_json(&row, idx));
+        }
+        inserted = Some(out);
+    }
+
+    tx.commit().await.map_err(|e| format!("Could not commit: {e}"))?;
+    Ok(ApplyChangesResult { updated, deleted, inserted })
+}
+
 pub(crate) fn bind_typed_value<'a>(
     q: sqlx::query::Query<'a, sqlx::Postgres, sqlx::postgres::PgArguments>,
     data_type: &str,
@@ -2801,6 +3320,8 @@ pub async fn execute_sql(
                     ActiveConnection::Clickhouse(cfg) => super::clickhouse::query(&cfg, &sql_str).await,
                     ActiveConnection::Posthog(cfg) => super::posthog::query(&cfg, &sql_str).await,
                     ActiveConnection::Redis(cfg) => super::redis::query(&cfg, &sql_str).await,
+                    ActiveConnection::Dynamodb(cfg) => super::dynamodb::query(&cfg, &sql_str).await,
+                    ActiveConnection::Doc(d) => super::docdb::query(&d, &sql_str).await,
                     ActiveConnection::Duckdb(h) => super::duckdb::execute_sql(&h, &sql_str).await,
                     ActiveConnection::Mssql(h) => super::mssql::execute_sql(&h, &sql_str).await,
                     ActiveConnection::Postgres(_) | ActiveConnection::Mysql(_) => unreachable!(),
@@ -2852,6 +3373,9 @@ pub async fn execute_sql_on_conn(
         AnyConnectionConfig::Clickhouse(c) => super::clickhouse::query(&c, sql).await,
         AnyConnectionConfig::Posthog(c) => super::posthog::query(&c, sql).await,
         AnyConnectionConfig::Redis(c) => super::redis::query(&c, sql).await,
+        AnyConnectionConfig::Dynamodb(c) => super::dynamodb::query(&c, sql).await,
+        AnyConnectionConfig::Couchdb(c) => super::couchdb::query(&c, sql).await,
+        AnyConnectionConfig::Mongodb(_) => Err("Run MongoDB queries from the MongoDB console".into()),
         AnyConnectionConfig::Duckdb(c) => {
             let h = super::connection::open_duckdb(&c).await?;
             super::duckdb::execute_sql(&h, sql).await
@@ -3749,6 +4273,8 @@ async fn run_one_other(conn: &ActiveConnection, stmt: &str) -> Result<SqlResult,
         ActiveConnection::Clickhouse(cfg) => super::clickhouse::query(cfg, stmt).await,
         ActiveConnection::Posthog(cfg) => super::posthog::query(cfg, stmt).await,
         ActiveConnection::Redis(cfg) => super::redis::query(cfg, stmt).await,
+        ActiveConnection::Dynamodb(cfg) => super::dynamodb::query(cfg, stmt).await,
+        ActiveConnection::Doc(d) => super::docdb::query(d, stmt).await,
         ActiveConnection::Duckdb(h) => super::duckdb::execute_sql(h, stmt).await,
         ActiveConnection::Mssql(h) => super::mssql::execute_sql(h, stmt).await,
     }
@@ -3952,15 +4478,12 @@ async fn get_table_rows_remote<C: RemoteSqlite>(
             .collect()
     };
 
-    let (col_names, primary_key, foreign_keys) = if include_meta {
-        // Both are independent so we fire them at the same time. The shared HTTP
-        // client reuses the pooled TLS connection for the second request.
-        let (pragma_res, fk_res) = tokio::join!(
-            cfg.run(&pragma_sql, vec![]),
-            cfg.run(&fk_sql, vec![]),
-        );
-        let pragma = pragma_res?;
-        let fk_res = fk_res?;
+    // The catalog read feeds the WHERE clause only when there is a search or a
+    // filter to build. A plain first open needs nothing from it before the rows
+    // query can be written, so there it runs alongside the rows instead of ahead
+    // of them: one request's wait for the whole open, not two.
+    let meta_first = has_search || has_filters;
+    let parse_meta = |pragma: SqlResult, fk_res: SqlResult| {
 
         let name_idx = pragma.columns.iter().position(|c| c.name == "name").unwrap_or(1);
         let pk_idx   = pragma.columns.iter().position(|c| c.name == "pk").unwrap_or(5);
@@ -3996,8 +4519,17 @@ async fn get_table_rows_remote<C: RemoteSqlite>(
                 e.referenced_columns.push(to);
             }
         }
-        (col_names, primary_key, fk_map.into_values().collect())
-    } else if has_search || has_filters {
+        (col_names, primary_key, fk_map.into_values().collect::<Vec<ForeignKeyInfo>>())
+    };
+    let (col_names, mut primary_key, mut foreign_keys) = if include_meta && meta_first {
+        // Both are independent so we fire them at the same time. The shared HTTP
+        // client reuses the pooled TLS connection for the second request.
+        let (pragma_res, fk_res) = tokio::join!(
+            cfg.run(&pragma_sql, vec![]),
+            cfg.run(&fk_sql, vec![]),
+        );
+        parse_meta(pragma_res?, fk_res?)
+    } else if meta_first {
         let pragma = cfg.run(&pragma_sql, vec![]).await?;
         (extract_col_names(&pragma), Vec::new(), Vec::new())
     } else {
@@ -4032,6 +4564,14 @@ async fn get_table_rows_remote<C: RemoteSqlite>(
             let conj: Option<&'static str> = if cond_parts.is_empty() { None }
                 else if f.conjunct.as_deref().is_some_and(|s| s.eq_ignore_ascii_case("or")) { Some("OR") }
                 else { Some("AND") };
+
+            if f.op == super::sql_util::RAW_SQL_FILTER_OP {
+                let raw = f.value.as_deref().unwrap_or("");
+                if let Some(expr) = super::sql_util::raw_where_expr(raw, super::sql_util::RawFilterDialect::Sqlite)? {
+                    cond_parts.push((conj, expr));
+                }
+                continue;
+            }
 
             if f.column == "__any__" {
                 if let Some(ref v) = f.value {
@@ -4085,12 +4625,22 @@ async fn get_table_rows_remote<C: RemoteSqlite>(
     row_params.push(Value::Number(limit.into()));
     row_params.push(Value::Number(offset.into()));
 
-    let (count_res, rows_res) = tokio::join!(
+    let late_meta = include_meta && !meta_first;
+    let (count_res, rows_res, meta_res) = tokio::join!(
         cfg.run(&count_sql, params),
         cfg.run(&rows_sql, row_params),
+        async {
+            if !late_meta { return None; }
+            Some(tokio::join!(cfg.run(&pragma_sql, vec![]), cfg.run(&fk_sql, vec![])))
+        },
     );
     let count_res = count_res?;
     let rows_res  = rows_res?;
+    if let Some((pragma_res, fk_res)) = meta_res {
+        let (_, pk, fks) = parse_meta(pragma_res?, fk_res?);
+        primary_key = pk;
+        foreign_keys = fks;
+    }
 
     let total = count_res.rows.first().and_then(|r| r.first()).and_then(|v| v.as_i64()).unwrap_or(0);
 
@@ -4607,6 +5157,7 @@ async fn dispatch_stats_sql(conn: &ActiveConnection, sql: &str) -> Result<SqlRes
         ActiveConnection::Clickhouse(cfg) => super::clickhouse::query(cfg, sql).await,
         ActiveConnection::Posthog(cfg) => super::posthog::query(cfg, sql).await,
         ActiveConnection::Redis(_) => Err("Column statistics are not supported on Redis".into()),
+        ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => Err("Column statistics are not supported on DynamoDB".into()),
         ActiveConnection::Duckdb(h) => super::duckdb::execute_sql(h, sql).await,
         ActiveConnection::Mssql(h) => super::mssql::execute_sql(h, sql).await,
     }
@@ -4619,17 +5170,14 @@ async fn dispatch_stats_sql(conn: &ActiveConnection, sql: &str) -> Result<SqlRes
 pub async fn ping_connection(state: State<'_, DbState>) -> Result<(), String> {
     let conn = require_conn(&state)?;
     match conn {
-        ActiveConnection::Postgres(pool) => {
-            sqlx::query("SELECT 1").execute(&pool).await.map(|_| ()).map_err(|e| e.to_string())
-        }
+        // Remote pools: touch every idle connection, not just one (see keepalive_idle).
+        ActiveConnection::Postgres(pool) => super::connection::keepalive_idle(&pool).await,
         ActiveConnection::Sqlite(pool) => {
             sqlx::query("SELECT 1").execute(&pool).await.map(|_| ()).map_err(|e| e.to_string())
         }
-        ActiveConnection::Mysql(pool) => {
-            sqlx::query("SELECT 1").execute(&pool).await.map(|_| ()).map_err(|e| e.to_string())
-        }
+        ActiveConnection::Mysql(pool) => super::connection::keepalive_idle(&pool).await,
         // HTTP-based: stateless, no persistent TCP connection to validate
-        ActiveConnection::D1(_) | ActiveConnection::LibSql(_) | ActiveConnection::Clickhouse(_) | ActiveConnection::Redis(_) | ActiveConnection::Posthog(_) => Ok(()),
+        ActiveConnection::D1(_) | ActiveConnection::LibSql(_) | ActiveConnection::Clickhouse(_) | ActiveConnection::Redis(_) | ActiveConnection::Posthog(_) | ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => Ok(()),
         ActiveConnection::Duckdb(h) => super::duckdb::execute_sql(&h, "SELECT 1").await.map(|_| ()),
         ActiveConnection::Mssql(h) => super::mssql::execute_sql(&h, "SELECT 1").await.map(|_| ()),
     }
@@ -4897,5 +5445,105 @@ mod console_run_live {
         // The connection is usable afterwards and no longer carries the tag.
         let n: i64 = sqlx::query_scalar("SELECT 41::bigint + 1").fetch_one(&pool).await.unwrap();
         assert_eq!(n, 42);
+    }
+}
+
+#[cfg(test)]
+mod raw_filter_where_tests {
+    use super::*;
+
+    fn f(column: &str, op: &str, value: &str, conjunct: Option<&str>) -> RowFilter {
+        RowFilter {
+            column: column.into(),
+            op: op.into(),
+            value: Some(value.into()),
+            conjunct: conjunct.map(Into::into),
+            data_type: None,
+        }
+    }
+
+    #[test]
+    fn typed_sql_filter_joins_the_where_as_one_term() {
+        let cols = vec!["id".to_string(), "name".to_string()];
+        let w = build_where(
+            &cols,
+            None,
+            false,
+            false,
+            &[f("name", "eq", "ann", None), f("", "sql", "id > 200 OR id < 5", Some("and"))],
+        )
+        .unwrap();
+        assert!(w.sql.ends_with("AND (id > 200 OR id < 5)"), "{}", w.sql);
+        // The structured filter keeps its own bind; the typed one adds none.
+        assert_eq!(w.binds, vec!["ann".to_string()]);
+    }
+
+    #[test]
+    fn blank_typed_filter_adds_nothing_and_bad_one_is_an_error() {
+        let cols = vec!["id".to_string()];
+        let w = build_where(&cols, None, false, false, &[f("", "sql", "   ", None)]).unwrap();
+        assert!(w.sql.is_empty(), "{}", w.sql);
+        let e = build_where(&cols, None, false, false, &[f("", "sql", "1=1) OR (1=1", None)]).err().unwrap();
+        assert!(e.contains("Unbalanced"), "{e}");
+    }
+}
+
+/// Every NoSQL engine through the query editor's own path, against dev/nosql:
+/// `cargo test --lib nosql_console_live -- --ignored --test-threads=1`.
+#[cfg(test)]
+mod nosql_console_live {
+    use super::*;
+    use crate::db::docdb::DocConn;
+
+    async fn run(conn: &ActiveConnection, stmt: &str) -> SqlResult {
+        run_one_other(conn, stmt).await.unwrap_or_else(|e| panic!("{stmt}: {e}"))
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn nosql_console_live() {
+        // MongoDB
+        let m = crate::db::mongo::connect(&crate::db::mongo::MongoConfig { name: "t".into(), uri: "mongodb://localhost:27017".into(), database: Some("shop".into()) }).await.unwrap();
+        let mc = ActiveConnection::Doc(DocConn::Mongo(m));
+        let r = run(&mc, "db.users.find({}).limit(3)").await;
+        assert_eq!(r.rows.len(), 3);
+        assert_eq!((r.columns[0].name.as_str(), r.columns[0].data_type.as_str()), ("_id", "objectId"));
+        assert!(r.rows[0][0].is_string(), "ObjectId shown as its hex");
+        assert!(r.columns.len() > 3, "every field is a column: {:?}", r.columns.iter().map(|c| &c.name).collect::<Vec<_>>());
+        assert_eq!(run(&mc, r#"db.orders.aggregate([{$group: {_id: "$status", n: {$sum: 1}}}, {$sort: {n: -1}}])"#).await.columns[1].name, "n");
+
+        // DynamoDB (PartiQL)
+        let dc = ActiveConnection::Dynamodb(crate::db::dynamodb::DynamoConfig {
+            name: "t".into(), region: "us-east-1".into(), profile: None, access_key_id: None, secret_access_key: None,
+            session_token: None, endpoint: Some("http://localhost:8000".into()),
+        });
+        let r = run(&dc, r#"SELECT * FROM "stroke-test" WHERE pk = 'USER#1'"#).await;
+        assert_eq!(r.rows.len(), 3);
+
+        // Cassandra (CQL)
+        let s = crate::db::cassandra::connect(&crate::db::cassandra::CassandraConfig { name: "t".into(), hosts: "127.0.0.1".into(), user: None, password: None, keyspace: Some("shop".into()) }).await.unwrap();
+        let cc = ActiveConnection::Doc(DocConn::Cassandra(s));
+        assert!(!run(&cc, "SELECT * FROM users LIMIT 5").await.rows.is_empty(), "unqualified name uses the keyspace");
+        assert!(!run(&cc, "SELECT * FROM shop.orders_by_user LIMIT 5").await.columns.is_empty());
+
+        // CouchDB (Mango shell syntax)
+        let couch = ActiveConnection::Doc(DocConn::Couch(crate::db::couchdb::CouchConfig { name: "t".into(), url: "http://localhost:5984".into(), user: Some("admin".into()), password: Some("admin".into()) }));
+        assert_eq!(run(&couch, r#"products.find({"price": {"$gt": 50}})"#).await.rows.len(), 2);
+
+        // Firestore (emulator)
+        let fs = ActiveConnection::Doc(DocConn::Firestore(crate::db::firestore::FirestoreConfig {
+            name: "t".into(), project_id: "stroke-test".into(), database: None, auth: "emulator".into(), key_file: None, emulator_host: Some("localhost:8086".into()),
+        }));
+        assert_eq!(run(&fs, r#"users.where("age", ">", 30)"#).await.rows.len(), 1);
+
+        // The AI's sample reads (ai-query-languages.js sampleQuery), as sent.
+        assert_eq!(run(&mc, "db.users.find({}).limit(3)").await.rows.len(), 3);
+        assert_eq!(run(&couch, r#"products.find({}, {"limit": 2})"#).await.rows.len(), 2);
+        assert_eq!(run(&fs, "users.limit(2)").await.rows.len(), 2);
+        assert!(run(&cc, r#"SELECT * FROM "shop"."users" LIMIT 2"#).await.rows.len() <= 2);
+
+        // Redis
+        let rc = ActiveConnection::Redis(crate::db::connection::RedisConfig { name: "t".into(), host: "127.0.0.1".into(), port: 6391, password: None, db: 0, tls: false });
+        assert!(!run(&rc, "DBSIZE").await.rows.is_empty());
     }
 }

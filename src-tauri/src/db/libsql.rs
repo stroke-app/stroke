@@ -132,20 +132,39 @@ fn to_libsql_arg(v: &Value) -> Value {
 // ── Public API ─────────────────────────────────────────────────────────────────
 
 pub async fn query(config: &LibSqlConfig, sql: &str, params: Vec<Value>) -> Result<SqlResult, String> {
+    query_with(config, sql, params, false).await
+}
+
+/// `query` inside a transaction that is always rolled back: whatever the
+/// statement is, nothing it does is kept. For read-only callers (the MCP server
+/// at "Read only"), where the classifier alone used to be the only guard.
+pub async fn query_readonly(config: &LibSqlConfig, sql: &str) -> Result<SqlResult, String> {
+    query_with(config, sql, vec![], true).await
+}
+
+async fn query_with(config: &LibSqlConfig, sql: &str, params: Vec<Value>, rollback: bool) -> Result<SqlResult, String> {
     let url = format!("{}/v2/pipeline", base_url(config));
     let t0 = Instant::now();
 
     let args: Vec<Value> = params.iter().map(to_libsql_arg).collect();
+    let stmt = serde_json::json!({ "type": "execute", "stmt": { "sql": sql, "args": args } });
+    let requests = if rollback {
+        serde_json::json!([
+            { "type": "execute", "stmt": { "sql": "BEGIN" } },
+            stmt,
+            { "type": "execute", "stmt": { "sql": "ROLLBACK" } },
+            { "type": "close" }
+        ])
+    } else {
+        serde_json::json!([stmt, { "type": "close" }])
+    };
+    // Which `execute` response is the statement's own: after BEGIN when wrapped.
+    let want = if rollback { 1 } else { 0 };
 
     let mut builder = client()
         .post(&url)
         .header("Content-Type", "application/json")
-        .json(&serde_json::json!({
-            "requests": [
-                { "type": "execute", "stmt": { "sql": sql, "args": args } },
-                { "type": "close" }
-            ]
-        }));
+        .json(&serde_json::json!({ "requests": requests }));
 
     if let Some(token) = &config.auth_token {
         if !token.is_empty() {
@@ -165,12 +184,16 @@ pub async fn query(config: &LibSqlConfig, sql: &str, params: Vec<Value>) -> Resu
     let pipeline: PipelineResponse = res.json().await.map_err(|e| format!("Failed to parse LibSQL response: {e}"))?;
 
     let mut exec_result = None;
+    let mut seen = 0;
     for item in pipeline.results {
         match item {
             PipelineItem::Error { error } => return Err(format!("LibSQL error: {}", error.message)),
             PipelineItem::Ok { response } if response.kind == "execute" => {
-                exec_result = response.result;
-                break;
+                if seen == want {
+                    exec_result = response.result;
+                    break;
+                }
+                seen += 1;
             }
             _ => {}
         }

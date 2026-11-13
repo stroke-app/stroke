@@ -106,6 +106,111 @@ pub fn cap_json_value(data_type: &str, v: serde_json::Value) -> serde_json::Valu
     }
 }
 
+/// Filter op for a typed SQL `WHERE` expression in the grid's filter bar
+/// (`id > 200 AND name LIKE 'a%'`). Its text arrives in `RowFilter::value`.
+pub const RAW_SQL_FILTER_OP: &str = "sql";
+
+/// The SQL family a raw filter expression is checked against: which bind
+/// placeholders and comment markers the engine understands.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RawFilterDialect {
+    Postgres,
+    Mysql,
+    Sqlite,
+    Duckdb,
+    /// Engines whose filters are inlined literals with no bind placeholders
+    /// (SQL Server, ClickHouse, HogQL).
+    Literal,
+}
+
+/// Check a typed `WHERE` expression and return it wrapped in parentheses, or
+/// `None` when it is blank.
+///
+/// The expression is the user's own SQL against their own database - it may
+/// call any function the connection may call, just as the SQL editor can. What
+/// this guards is the query it is spliced into: it must stay one boolean term
+/// inside `WHERE (...)`. So, outside string literals and quoted identifiers:
+/// parentheses must balance (`1=1) OR (1=1` would escape the wrapper), and `;`
+/// (a second statement), comments (`--`, `/*`, MySQL `#` - they would swallow
+/// the LIMIT after it) and the engine's bind placeholders (they would steal the
+/// query's own parameters) are refused.
+///
+/// Backslash escapes inside strings differ by engine and setting, so the text
+/// is scanned both ways and must pass both: no reading of an ambiguous string
+/// lets a quote end somewhere the check did not see.
+pub fn raw_where_expr(expr: &str, dialect: RawFilterDialect) -> Result<Option<String>, String> {
+    let trimmed = expr.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    scan_raw_where(trimmed, dialect, false)?;
+    scan_raw_where(trimmed, dialect, true)?;
+    Ok(Some(format!("({trimmed})")))
+}
+
+fn scan_raw_where(expr: &str, dialect: RawFilterDialect, backslash_escapes: bool) -> Result<(), String> {
+    use RawFilterDialect::*;
+    let chars: Vec<char> = expr.chars().collect();
+    let mut depth = 0_i32;
+    let mut quote: Option<char> = None;
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        let next = chars.get(i + 1).copied();
+        if let Some(q) = quote {
+            if backslash_escapes && c == '\\' && q == '\'' {
+                i += 2;
+                continue;
+            }
+            if c == q {
+                // A doubled quote is an escaped quote, not the end.
+                if next == Some(q) {
+                    i += 2;
+                    continue;
+                }
+                quote = None;
+            }
+            i += 1;
+            continue;
+        }
+        match c {
+            '\'' | '"' | '`' => quote = Some(c),
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth < 0 {
+                    return Err("Unbalanced parentheses in the filter: a ')' has no matching '('".into());
+                }
+            }
+            ';' => return Err("A filter is one condition: remove the ';'".into()),
+            '-' if next == Some('-') => return Err("Comments (--) aren't allowed in a filter".into()),
+            '/' if next == Some('*') => return Err("Comments (/* */) aren't allowed in a filter".into()),
+            '#' if dialect == Mysql => return Err("Comments (#) aren't allowed in a filter".into()),
+            '?' if matches!(dialect, Mysql | Sqlite | Duckdb) => {
+                return Err("'?' is a query parameter here; write the value itself".into())
+            }
+            '$' if matches!(dialect, Postgres | Duckdb) && next.is_some_and(|n| n.is_ascii_digit()) => {
+                return Err("$1-style parameters aren't allowed in a filter; write the value itself".into())
+            }
+            '$' | '@' if dialect == Sqlite => {
+                return Err(format!("'{c}' starts a query parameter here; write the value itself"))
+            }
+            ':' if dialect == Sqlite && next.is_some_and(|n| n.is_ascii_alphanumeric() || n == '_') => {
+                return Err("':name' is a query parameter here; write the value itself".into())
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    if quote.is_some() {
+        return Err("Unclosed quote in the filter".into());
+    }
+    if depth != 0 {
+        return Err("Unbalanced parentheses in the filter: a '(' is never closed".into());
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -173,5 +278,56 @@ mod tests {
         assert_eq!(cell["bytes"], serde_json::json!(9_999_999));
         assert_eq!(cell["dataType"], serde_json::json!("bytea"));
         assert_eq!(cell["preview"].as_str().unwrap().len(), CELL_PREVIEW_BYTES);
+    }
+
+    #[test]
+    fn raw_where_accepts_ordinary_conditions() {
+        use RawFilterDialect::*;
+        assert_eq!(raw_where_expr("  ", Postgres).unwrap(), None);
+        assert_eq!(raw_where_expr("id > 200", Postgres).unwrap().as_deref(), Some("(id > 200)"));
+        let ok = [
+            "name LIKE 'a%' AND (age BETWEEN 1 AND 5 OR age IS NULL)",
+            "note = 'it''s; -- not a comment (really'",
+            r#""weird;col" = 1"#,
+            "doc ->> 'k' = 'v' AND tags @> '{a}'",
+            "created_at > now() - interval '1 day'",
+            "x::int = 3",
+        ];
+        for e in ok {
+            assert!(raw_where_expr(e, Postgres).is_ok(), "{e}");
+        }
+        assert!(raw_where_expr("`a;b` = 1 AND c = 'x''y'", Mysql).is_ok());
+        // A backslash-escaped quote reads differently by engine and setting, so
+        // it is refused; the doubled quote above means the same thing everywhere.
+        assert!(raw_where_expr("c = 'x\\'y'", Mysql).is_err());
+    }
+
+    #[test]
+    fn raw_where_refuses_escapes_from_the_wrapper() {
+        use RawFilterDialect::*;
+        let bad = [
+            ("1=1) OR (1=1", Postgres),
+            ("(id = 1", Postgres),
+            ("id = 1; DROP TABLE users", Postgres),
+            ("id = 1 --", Postgres),
+            ("id = 1 /* x */", Postgres),
+            ("id = $1", Postgres),
+            ("id = 'unclosed", Postgres),
+            ("id = 1 # x", Mysql),
+            ("id = ?", Mysql),
+            ("id = ?", Sqlite),
+            ("id = :id", Sqlite),
+            ("id = @id", Sqlite),
+            ("id = $1", Duckdb),
+            // Under MySQL's backslash escapes the string never ends; under the
+            // standard reading the ')' escapes. Either way it is refused.
+            (r"name = 'a\' ) OR (1=1 --'", Mysql),
+            (r"name = 'a\' ) OR (1=1 --'", Postgres),
+        ];
+        for (e, d) in bad {
+            assert!(raw_where_expr(e, d).is_err(), "{e} ({d:?}) should be refused");
+        }
+        // '#' is an operator in Postgres, not a comment.
+        assert!(raw_where_expr("flags # 1 = 0", Postgres).is_ok());
     }
 }

@@ -420,8 +420,54 @@ async fn list_tables_sqlite(pool: &sqlx::SqlitePool) -> Result<Vec<TableInfo>, S
 /// Max number of COUNT(*) subqueries per batched UNION ALL round-trip. Kept well
 /// under SQLite's default SQLITE_MAX_COMPOUND_SELECT (500) with headroom.
 const SQLITE_COUNT_BATCH: usize = 200;
+/// Counts per D1 statement: each is one result column, and D1 allows 100.
+const D1_COUNT_BATCH: usize = 50;
+/// Simultaneous D1 requests when a batch has to be retried table by table.
+const D1_FALLBACK_CONCURRENCY: usize = 8;
 
-async fn list_indexes_sqlite(pool: &sqlx::SqlitePool) -> Result<Vec<IndexInfo>, String> {
+/// The column list of a SQLite `CREATE [UNIQUE] INDEX name ON tbl (a, b DESC)`,
+/// as "a, b". `sqlite_master.sql` is the only place D1 and libSQL expose it
+/// without a PRAGMA round trip per index; automatic indexes have no SQL.
+fn sqlite_index_columns(sql: &str) -> String {
+    let upper = sql.to_uppercase();
+    let Some(on) = upper.find(" ON ") else { return String::new() };
+    let rest = &sql[on + 4..];
+    let Some(open) = rest.find('(') else { return String::new() };
+    let mut depth = 0i32;
+    let mut end = None;
+    for (i, ch) in rest[open..].char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    end = Some(open + i);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let Some(end) = end else { return String::new() };
+    rest[open + 1..end]
+        .split(',')
+        .map(|c| c.trim().trim_matches(|ch| ch == '"' || ch == '`' || ch == '[' || ch == ']').to_string())
+        .filter(|c| !c.is_empty())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+#[cfg(test)]
+mod sqlite_index_columns_tests {
+    #[test]
+    fn reads_the_column_list() {
+        assert_eq!(super::sqlite_index_columns("CREATE INDEX `a_idx` ON `account` (`userId`)"), "userId");
+        assert_eq!(super::sqlite_index_columns("CREATE UNIQUE INDEX x ON t(a, \"b\" DESC)"), "a, b\" DESC");
+        assert_eq!(super::sqlite_index_columns(""), "");
+    }
+}
+
+async fn list_indexes_sqlite_master(pool: &sqlx::SqlitePool) -> Result<Vec<IndexInfo>, String> {
     let rows = sqlx::query(
         "SELECT name, tbl_name, COALESCE(sql, '') FROM sqlite_master WHERE type = 'index' ORDER BY tbl_name, name",
     )
@@ -434,13 +480,14 @@ async fn list_indexes_sqlite(pool: &sqlx::SqlitePool) -> Result<Vec<IndexInfo>, 
         .filter_map(|r| {
             let name = r.try_get::<Option<String>, _>(0).ok().flatten()?;
             let table_name = r.try_get::<Option<String>, _>(1).ok().flatten()?;
-            let sql = r.try_get::<String, _>(2).unwrap_or_default().to_uppercase();
-            let is_unique = sql.contains("UNIQUE");
+            let raw_sql = r.try_get::<String, _>(2).unwrap_or_default();
+            let sql = raw_sql.to_uppercase();
+            let is_unique = sql.contains("UNIQUE") || name.starts_with("sqlite_autoindex_");
             let is_primary = name.starts_with("sqlite_autoindex_");
             Some(IndexInfo {
                 name,
                 table_name,
-                columns: String::new(),
+                columns: sqlite_index_columns(&raw_sql),
                 index_type: "btree".to_string(),
                 is_unique,
                 is_primary,
@@ -489,29 +536,57 @@ async fn list_tables_d1(cfg: &super::connection::D1Config) -> Result<Vec<TableIn
         .filter(|(_, t)| t.kind != "view")
         .map(|(i, _)| i)
         .collect();
-    for chunk in count_idx.chunks(SQLITE_COUNT_BATCH) {
-        let sql = chunk
-            .iter()
-            .map(|&i| format!("SELECT COUNT(*) FROM \"{}\"", tables[i].name.replace('"', "\"\"")))
-            .collect::<Vec<_>>()
-            .join(" UNION ALL ");
-        match super::d1::query(cfg, &sql, vec![]).await {
-            Ok(res) if res.rows.len() == chunk.len() => {
-                for (&i, row) in chunk.iter().zip(res.rows.iter()) {
-                    tables[i].row_count = row.first().and_then(|v| v.as_i64()).unwrap_or(0);
+    // Scalar subqueries in ONE select, not a UNION ALL: D1 caps a compound
+    // SELECT at a handful of terms, so the union failed on any real schema and
+    // every table fell back to its own request, one after another (thirteen
+    // tables measured at 3.9s). Chunks, and the per-table fallback when a chunk
+    // still fails (one unreadable table fails its whole statement), run
+    // concurrently.
+    let quoted: Vec<String> = count_idx
+        .iter()
+        .map(|&i| format!("\"{}\"", tables[i].name.replace('"', "\"\"")))
+        .collect();
+    // Owned per-chunk futures: borrowing `cfg` and the names across a closure
+    // makes the command's future fail its Send bound.
+    let mut jobs = Vec::new();
+    for chunk in quoted.chunks(D1_COUNT_BATCH) {
+        let (cfg, chunk) = (cfg.clone(), chunk.to_vec());
+        jobs.push(async move {
+            let sql = format!(
+                "SELECT {}",
+                chunk
+                    .iter()
+                    .enumerate()
+                    .map(|(n, t)| format!("(SELECT COUNT(*) FROM {t}) AS c{n}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            if let Ok(res) = super::d1::query(&cfg, &sql, vec![]).await {
+                if res.rows.first().is_some_and(|r| r.len() == chunk.len()) {
+                    return res.rows[0].iter().map(|v| v.as_i64().unwrap_or(0)).collect::<Vec<i64>>();
                 }
             }
-            _ => {
-                for &i in chunk {
-                    let one = format!("SELECT COUNT(*) FROM \"{}\"", tables[i].name.replace('"', "\"\""));
-                    if let Ok(res) = super::d1::query(cfg, &one, vec![]).await {
-                        if let Some(row) = res.rows.first() {
-                            tables[i].row_count = row.first().and_then(|v| v.as_i64()).unwrap_or(0);
-                        }
-                    }
+            let mut out = Vec::with_capacity(chunk.len());
+            for group in chunk.chunks(D1_FALLBACK_CONCURRENCY) {
+                let mut singles = Vec::new();
+                for t in group {
+                    let (cfg, sql) = (cfg.clone(), format!("SELECT COUNT(*) FROM {t}"));
+                    singles.push(async move {
+                        super::d1::query(&cfg, &sql, vec![])
+                            .await
+                            .ok()
+                            .and_then(|res| res.rows.first().and_then(|r| r.first().and_then(|v| v.as_i64())))
+                            .unwrap_or(0)
+                    });
                 }
+                out.extend(futures::future::join_all(singles).await);
             }
-        }
+            out
+        });
+    }
+    let counts: Vec<Vec<i64>> = futures::future::join_all(jobs).await;
+    for (&i, n) in count_idx.iter().zip(counts.into_iter().flatten()) {
+        tables[i].row_count = n;
     }
     for t in tables.iter_mut() {
         if t.row_count < 0 {
@@ -521,7 +596,7 @@ async fn list_tables_d1(cfg: &super::connection::D1Config) -> Result<Vec<TableIn
     Ok(tables)
 }
 
-async fn list_indexes_d1(cfg: &super::connection::D1Config) -> Result<Vec<IndexInfo>, String> {
+async fn list_indexes_d1_master(cfg: &super::connection::D1Config) -> Result<Vec<IndexInfo>, String> {
     let result = super::d1::query(
         cfg,
         "SELECT name, tbl_name, COALESCE(sql, '') FROM sqlite_master WHERE type = 'index' ORDER BY tbl_name, name",
@@ -539,13 +614,14 @@ async fn list_indexes_d1(cfg: &super::connection::D1Config) -> Result<Vec<IndexI
         .filter_map(|r| {
             let name = r.get(name_idx)?.as_str()?.to_string();
             let table_name = r.get(tbl_idx)?.as_str()?.to_string();
-            let sql = r.get(sql_idx).and_then(|v| v.as_str()).unwrap_or("").to_uppercase();
-            let is_unique = sql.contains("UNIQUE");
+            let raw_sql = r.get(sql_idx).and_then(|v| v.as_str()).unwrap_or("");
+            let sql = raw_sql.to_uppercase();
+            let is_unique = sql.contains("UNIQUE") || name.starts_with("sqlite_autoindex_");
             let is_primary = name.starts_with("sqlite_autoindex_");
             Some(IndexInfo {
                 name,
                 table_name,
-                columns: String::new(),
+                columns: sqlite_index_columns(raw_sql),
                 index_type: "btree".to_string(),
                 is_unique,
                 is_primary,
@@ -615,7 +691,7 @@ async fn list_tables_libsql(cfg: &super::connection::LibSqlConfig) -> Result<Vec
     Ok(tables)
 }
 
-async fn list_indexes_libsql(cfg: &super::connection::LibSqlConfig) -> Result<Vec<IndexInfo>, String> {
+async fn list_indexes_libsql_master(cfg: &super::connection::LibSqlConfig) -> Result<Vec<IndexInfo>, String> {
     let result = super::libsql::query(
         cfg,
         "SELECT name, tbl_name, COALESCE(sql,'') FROM sqlite_master WHERE type='index' ORDER BY tbl_name, name",
@@ -627,10 +703,11 @@ async fn list_indexes_libsql(cfg: &super::connection::LibSqlConfig) -> Result<Ve
     Ok(result.rows.iter().filter_map(|r| {
         let name = r.get(name_idx)?.as_str()?.to_string();
         let table_name = r.get(tbl_idx)?.as_str()?.to_string();
-        let sql = r.get(sql_idx).and_then(|v| v.as_str()).unwrap_or("").to_uppercase();
-        let is_unique = sql.contains("UNIQUE");
+        let raw_sql = r.get(sql_idx).and_then(|v| v.as_str()).unwrap_or("");
+        let sql = raw_sql.to_uppercase();
+        let is_unique = sql.contains("UNIQUE") || name.starts_with("sqlite_autoindex_");
         let is_primary = name.starts_with("sqlite_autoindex_");
-        Some(IndexInfo { name, table_name, columns: String::new(), index_type: "btree".to_string(), is_unique, is_primary, condition: None, comment: None })
+        Some(IndexInfo { name, table_name, columns: sqlite_index_columns(raw_sql), index_type: "btree".to_string(), is_unique, is_primary, condition: None, comment: None })
     }).collect())
 }
 
@@ -1047,6 +1124,8 @@ pub async fn list_schemas(state: State<'_, DbState>) -> Result<Vec<String>, Stri
         ActiveConnection::Clickhouse(cfg) => super::clickhouse::list_schemas(&cfg).await,
         ActiveConnection::Posthog(cfg) => super::posthog::list_schemas(&cfg).await,
         ActiveConnection::Redis(_) => Ok(vec![]),
+        ActiveConnection::Dynamodb(_) => Ok(vec![super::docdb::FLAT_SCHEMA.to_string()]),
+        ActiveConnection::Doc(d) => super::docdb::list_schemas(&d).await,
         ActiveConnection::Mssql(h) => super::mssql::list_schemas(&h).await,
         ActiveConnection::Sqlite(_) | ActiveConnection::D1(_) | ActiveConnection::LibSql(_) | ActiveConnection::Duckdb(_) => Ok(vec!["main".to_string()]),
     }
@@ -1061,7 +1140,12 @@ pub async fn list_tables(state: State<'_, DbState>, schema: String) -> Result<Ve
             // critical path, so a table's first open is one round trip, not two.
             let names: Vec<String> = tables.iter().map(|t| t.name.clone()).collect();
             let (pool, schema) = (pool.clone(), schema.clone());
-            tokio::spawn(async move { super::wide_columns::prefetch_schema(&pool, &schema, &names).await });
+            tokio::spawn(async move {
+                tokio::join!(
+                    super::wide_columns::prefetch_schema(&pool, &schema, &names),
+                    super::query::prefetch_primary_keys(&pool, &schema, &names),
+                );
+            });
             Ok(tables)
         }
         ActiveConnection::Mysql(pool) => list_tables_mysql(&pool, &schema).await,
@@ -1071,12 +1155,30 @@ pub async fn list_tables(state: State<'_, DbState>, schema: String) -> Result<Ve
         ActiveConnection::Clickhouse(cfg) => super::clickhouse::list_tables(&cfg, &schema).await,
         ActiveConnection::Posthog(cfg) => super::posthog::list_tables(&cfg).await,
         ActiveConnection::Redis(cfg) => super::redis::list_tables(&cfg).await,
+        ActiveConnection::Dynamodb(cfg) => super::dynamodb::list_tables(&cfg).await,
+        ActiveConnection::Doc(d) => super::docdb::list_tables_in(&d, &schema).await,
         ActiveConnection::Duckdb(h) => super::duckdb::list_tables(&h).await,
         ActiveConnection::Mssql(h) => super::mssql::list_tables(&h, &schema).await,
     }
 }
 
-pub async fn list_indexes(state: State<'_, DbState>, schema: String) -> Result<Vec<IndexInfo>, String> {
+/// Indexes for a schema, or for one table of it.
+///
+/// The SQL engines answer for the whole schema in one catalog query and ignore
+/// `table` (the caller filters). MongoDB, CouchDB and DynamoDB keep indexes per
+/// collection, with no schema-wide listing, so they answer only when `table` is
+/// given - a schema-wide call would be one request per collection.
+///
+/// Rows with `index_type == "key"` are not indexes but the table's key columns
+/// on engines whose keys are not a single primary key (Cassandra partition and
+/// clustering keys, DynamoDB partition and sort keys): the tree shows them under
+/// Keys, not Indexes.
+pub async fn list_indexes_for(
+    state: State<'_, DbState>,
+    schema: String,
+    table: Option<String>,
+) -> Result<Vec<IndexInfo>, String> {
+    let table = table.filter(|t| !t.is_empty());
     match require_conn(&state)? {
         ActiveConnection::Postgres(pool) => {
             validate_ident(&schema)?;
@@ -1086,9 +1188,14 @@ pub async fn list_indexes(state: State<'_, DbState>, schema: String) -> Result<V
         ActiveConnection::Sqlite(pool) => list_indexes_sqlite(&pool).await,
         ActiveConnection::D1(cfg) => list_indexes_d1(&cfg).await,
         ActiveConnection::LibSql(cfg) => list_indexes_libsql(&cfg).await,
-        ActiveConnection::Clickhouse(cfg) => super::clickhouse::list_indexes(&cfg).await,
+        ActiveConnection::Clickhouse(cfg) => super::clickhouse::list_indexes(&cfg, &schema).await,
         ActiveConnection::Posthog(cfg) => super::posthog::list_indexes(&cfg).await,
         ActiveConnection::Redis(cfg) => super::redis::list_indexes(&cfg).await,
+        ActiveConnection::Dynamodb(cfg) => match table {
+            Some(t) => Ok(super::dynamodb::describe_shape(&cfg, &t).await?.1),
+            None => Ok(vec![]),
+        },
+        ActiveConnection::Doc(d) => super::docdb::indexes_in(&d, &schema, table.as_deref()).await,
         ActiveConnection::Duckdb(h) => super::duckdb::list_indexes(&h).await,
         ActiveConnection::Mssql(h) => super::mssql::list_indexes(&h, &schema).await,
     }
@@ -1234,6 +1341,14 @@ pub async fn get_table_column_structure(
     schema: String,
     table: String,
 ) -> Result<Vec<ColumnStructureRow>, String> {
+    // The NoSQL engines take names as values (a request field, a bound CQL
+    // parameter), never spliced into SQL, and their names are not identifiers:
+    // `fs.files` is an ordinary MongoDB collection.
+    match require_conn(&state)? {
+        ActiveConnection::Dynamodb(cfg) => return Ok(super::dynamodb::describe_shape(&cfg, &table).await?.0),
+        ActiveConnection::Doc(d) => return super::docdb::columns_in(&d, &schema, &table).await,
+        _ => {}
+    }
     validate_ident(&schema)?;
     validate_ident(&table)?;
     match require_conn(&state)? {
@@ -1259,6 +1374,8 @@ pub async fn get_table_column_structure(
         ActiveConnection::Redis(cfg) => {
             super::redis::get_column_structure(&cfg, &table).await
         }
+        // Answered above.
+        ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => Ok(vec![]),
         ActiveConnection::Duckdb(h) => {
             super::duckdb::get_column_structure(&h, &table).await
         }
@@ -1269,6 +1386,16 @@ pub async fn get_table_column_structure(
 }
 
 async fn get_column_structure_sqlite(
+    pool: &sqlx::SqlitePool,
+    table: &str,
+) -> Result<Vec<ColumnStructureRow>, String> {
+    if let Ok(mut v) = sqlite_family_columns(SqliteFamily::Local(pool), Some(table)).await {
+        return Ok(v.pop().map(|t| t.columns).unwrap_or_default());
+    }
+    get_column_structure_sqlite_pragma(pool, table).await
+}
+
+async fn get_column_structure_sqlite_pragma(
     pool: &sqlx::SqlitePool,
     table: &str,
 ) -> Result<Vec<ColumnStructureRow>, String> {
@@ -1338,13 +1465,13 @@ async fn get_column_structure_mysql(
     .await
     .map_err(|e| format!("Failed to get column info: {e}"))?;
 
+    // REFERENCED_TABLE_NAME alone marks a foreign key column. Joining
+    // REFERENTIAL_CONSTRAINTS to say the same thing scanned every constraint in
+    // the schema: 250ms per table on a 5k-table MariaDB, against 0.1ms without.
     let fk_rows = sqlx::query(
         "SELECT kcu.COLUMN_NAME, kcu.REFERENCED_TABLE_SCHEMA, \
                 kcu.REFERENCED_TABLE_NAME, kcu.REFERENCED_COLUMN_NAME, kcu.CONSTRAINT_NAME \
          FROM information_schema.KEY_COLUMN_USAGE kcu \
-         JOIN information_schema.REFERENTIAL_CONSTRAINTS rc \
-           ON rc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME \
-          AND rc.CONSTRAINT_SCHEMA = kcu.TABLE_SCHEMA \
          WHERE kcu.TABLE_SCHEMA = ? AND kcu.TABLE_NAME = ? \
            AND kcu.REFERENCED_TABLE_NAME IS NOT NULL \
          ORDER BY kcu.CONSTRAINT_NAME, kcu.ORDINAL_POSITION",
@@ -1435,6 +1562,9 @@ async fn get_column_structure_d1(
     cfg: &super::connection::D1Config,
     table: &str,
 ) -> Result<Vec<ColumnStructureRow>, String> {
+    if let Ok(mut v) = sqlite_family_columns(SqliteFamily::D1(cfg), Some(table)).await {
+        return Ok(v.pop().map(|t| t.columns).unwrap_or_default());
+    }
     let tq = format!("\"{}\"", table.replace('"', "\"\""));
 
     let info_rows = super::d1::query(cfg, &format!("PRAGMA table_info({tq})"), vec![])
@@ -1453,6 +1583,9 @@ async fn get_column_structure_libsql(
     cfg: &super::connection::LibSqlConfig,
     table: &str,
 ) -> Result<Vec<ColumnStructureRow>, String> {
+    if let Ok(mut v) = sqlite_family_columns(SqliteFamily::LibSql(cfg), Some(table)).await {
+        return Ok(v.pop().map(|t| t.columns).unwrap_or_default());
+    }
     let tq = format!("\"{}\"", table.replace('"', "\"\""));
 
     let info_rows = super::libsql::query(cfg, &format!("PRAGMA table_info({tq})"), vec![])
@@ -1493,25 +1626,8 @@ async fn get_column_structure_pg(
             END,
             NOT a.attnotnull,
             pg_get_expr(ad.adbin, ad.adrelid),
-            (
-                SELECT rns.nspname || '.' || rt.relname || '.' || ra.attname
-                FROM pg_catalog.pg_constraint pc
-                JOIN pg_catalog.pg_class rt ON rt.oid = pc.confrelid
-                JOIN pg_catalog.pg_namespace rns ON rns.oid = rt.relnamespace
-                JOIN pg_catalog.pg_attribute ra ON ra.attrelid = rt.oid AND ra.attnum = pc.confkey[1]
-                WHERE pc.contype = 'f'
-                  AND pc.conrelid = a.attrelid
-                  AND pc.conkey[1] = a.attnum
-                LIMIT 1
-            ),
-            (
-                SELECT pc.conname
-                FROM pg_catalog.pg_constraint pc
-                WHERE pc.contype = 'f'
-                  AND pc.conrelid = a.attrelid
-                  AND pc.conkey[1] = a.attnum
-                LIMIT 1
-            ),
+            fk.ref,
+            fk.conname,
             col_description(a.attrelid, a.attnum),
             EXISTS (
                 SELECT 1 FROM pg_catalog.pg_constraint pk
@@ -1522,6 +1638,19 @@ async fn get_column_structure_pg(
         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
         JOIN pg_catalog.pg_type t ON t.oid = a.atttypid
         LEFT JOIN pg_catalog.pg_attrdef ad ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum
+        -- The foreign key this column is part of, matched by position, so every
+        -- column of a composite key is marked (conkey[1] only marked the first).
+        LEFT JOIN LATERAL (
+            SELECT rns.nspname || '.' || rt.relname || '.' || ra.attname AS ref, pc.conname::text AS conname
+            FROM pg_catalog.pg_constraint pc
+            JOIN pg_catalog.pg_class rt ON rt.oid = pc.confrelid
+            JOIN pg_catalog.pg_namespace rns ON rns.oid = rt.relnamespace
+            JOIN pg_catalog.pg_attribute ra ON ra.attrelid = rt.oid
+                AND ra.attnum = pc.confkey[array_position(pc.conkey, a.attnum)]
+            WHERE pc.contype = 'f' AND pc.conrelid = a.attrelid AND a.attnum = ANY(pc.conkey)
+            ORDER BY pc.conname
+            LIMIT 1
+        ) fk ON true
         WHERE n.nspname = $1 AND c.relname = $2
           AND a.attnum > 0 AND NOT a.attisdropped
         ORDER BY a.attnum
@@ -1558,19 +1687,40 @@ async fn get_column_structure_pg(
 /// The ER diagram needs the full column list for the whole schema before it can
 /// draw anything. Asking table by table cost two catalog queries and one IPC hop
 /// *per table*, so a 120-table schema spent most of its load time on round-trip
-/// latency. Postgres and MySQL answer this from one query; the remaining engines
-/// still loop, but server-side, so the frontend waits on one call either way.
+/// latency. Every SQL engine answers from one catalog statement (SQLite and its
+/// remote flavours through the pragma table functions); an engine that cannot
+/// falls back to a server-side loop, so the frontend waits on one call either way.
+///
+/// MongoDB, CouchDB, Firestore, DynamoDB and Redis have no schema-wide column
+/// catalog: they answer empty at once, and the caller reads per table.
 pub async fn get_schema_column_structure(
     state: State<'_, DbState>,
     schema: String,
 ) -> Result<Vec<TableColumnStructure>, String> {
-    validate_ident(&schema)?;
     match require_conn(&state)? {
-        ActiveConnection::Postgres(pool) => schema_column_structure_pg(&pool, &schema).await,
-        ActiveConnection::Mysql(pool) => schema_column_structure_mysql(&pool, &schema).await,
-        _ => {
-            // No bulk catalog query for this engine: fan out over the per-table
-            // path here rather than making the frontend do it one invoke at a time.
+        ActiveConnection::Doc(d) => return super::docdb::schema_columns_in(&d, &schema).await,
+        ActiveConnection::Dynamodb(_) | ActiveConnection::Redis(_) => return Ok(vec![]),
+        _ => {}
+    }
+    validate_ident(&schema)?;
+    let bulk = match require_conn(&state)? {
+        ActiveConnection::Postgres(pool) => return schema_column_structure_pg(&pool, &schema).await,
+        ActiveConnection::Mysql(pool) => return schema_column_structure_mysql(&pool, &schema).await,
+        ActiveConnection::Sqlite(pool) => sqlite_family_columns(SqliteFamily::Local(&pool), None).await,
+        ActiveConnection::D1(cfg) => sqlite_family_columns(SqliteFamily::D1(&cfg), None).await,
+        ActiveConnection::LibSql(cfg) => sqlite_family_columns(SqliteFamily::LibSql(&cfg), None).await,
+        ActiveConnection::Clickhouse(cfg) => super::clickhouse::schema_column_structure(&cfg, &schema).await,
+        ActiveConnection::Duckdb(h) => super::duckdb::schema_column_structure(&h).await,
+        ActiveConnection::Mssql(h) => super::mssql::schema_column_structure(&h, &schema).await,
+        _ => Err("no bulk catalog query".into()),
+    };
+    match bulk {
+        Ok(v) => Ok(v),
+        Err(_) => {
+            // No bulk catalog query worked (an old SQLite without the pragma
+            // table functions, a view over a dropped table failing the whole
+            // statement): fan out over the per-table path here rather than
+            // making the frontend do it one invoke at a time.
             let tables = list_tables(state.clone(), schema.clone()).await?;
             let mut out = Vec::with_capacity(tables.len());
             for t in tables {
@@ -1620,25 +1770,8 @@ async fn schema_column_structure_pg(
             END,
             NOT a.attnotnull,
             pg_get_expr(ad.adbin, ad.adrelid),
-            (
-                SELECT rns.nspname || '.' || rt.relname || '.' || ra.attname
-                FROM pg_catalog.pg_constraint pc
-                JOIN pg_catalog.pg_class rt ON rt.oid = pc.confrelid
-                JOIN pg_catalog.pg_namespace rns ON rns.oid = rt.relnamespace
-                JOIN pg_catalog.pg_attribute ra ON ra.attrelid = rt.oid AND ra.attnum = pc.confkey[1]
-                WHERE pc.contype = 'f'
-                  AND pc.conrelid = a.attrelid
-                  AND pc.conkey[1] = a.attnum
-                LIMIT 1
-            ),
-            (
-                SELECT pc.conname
-                FROM pg_catalog.pg_constraint pc
-                WHERE pc.contype = 'f'
-                  AND pc.conrelid = a.attrelid
-                  AND pc.conkey[1] = a.attnum
-                LIMIT 1
-            ),
+            fk.ref,
+            fk.conname,
             col_description(a.attrelid, a.attnum),
             EXISTS (
                 SELECT 1 FROM pg_catalog.pg_constraint pk
@@ -1649,6 +1782,19 @@ async fn schema_column_structure_pg(
         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
         JOIN pg_catalog.pg_type t ON t.oid = a.atttypid
         LEFT JOIN pg_catalog.pg_attrdef ad ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum
+        -- The foreign key this column is part of, matched by position, so every
+        -- column of a composite key is marked (conkey[1] only marked the first).
+        LEFT JOIN LATERAL (
+            SELECT rns.nspname || '.' || rt.relname || '.' || ra.attname AS ref, pc.conname::text AS conname
+            FROM pg_catalog.pg_constraint pc
+            JOIN pg_catalog.pg_class rt ON rt.oid = pc.confrelid
+            JOIN pg_catalog.pg_namespace rns ON rns.oid = rt.relnamespace
+            JOIN pg_catalog.pg_attribute ra ON ra.attrelid = rt.oid
+                AND ra.attnum = pc.confkey[array_position(pc.conkey, a.attnum)]
+            WHERE pc.contype = 'f' AND pc.conrelid = a.attrelid AND a.attnum = ANY(pc.conkey)
+            ORDER BY pc.conname
+            LIMIT 1
+        ) fk ON true
         WHERE n.nspname = $1
           AND c.relkind IN ('r','p','v','m','f')
           AND a.attnum > 0 AND NOT a.attisdropped
@@ -1681,32 +1827,30 @@ async fn schema_column_structure_mysql(
 ) -> Result<Vec<TableColumnStructure>, String> {
     use std::collections::HashMap;
 
-    let col_rows = sqlx::query(
+    // The column and foreign key reads go out together (the pool has more than
+    // one connection), so the schema costs one round trip of latency, not two.
+    let cols_q = sqlx::query(
         "SELECT TABLE_NAME, ORDINAL_POSITION, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT, COLUMN_KEY \
          FROM information_schema.COLUMNS \
          WHERE TABLE_SCHEMA = ? \
          ORDER BY TABLE_NAME, ORDINAL_POSITION",
     )
     .bind(schema)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| format!("Failed to get column info: {e}"))?;
+    .fetch_all(pool);
 
     // One FK pass for the whole schema, keyed by (table, column).
-    let fk_rows = sqlx::query(
+    let fk_q = sqlx::query(
         "SELECT kcu.TABLE_NAME, kcu.COLUMN_NAME, kcu.REFERENCED_TABLE_SCHEMA, \
                 kcu.REFERENCED_TABLE_NAME, kcu.REFERENCED_COLUMN_NAME, kcu.CONSTRAINT_NAME \
          FROM information_schema.KEY_COLUMN_USAGE kcu \
-         JOIN information_schema.REFERENTIAL_CONSTRAINTS rc \
-           ON rc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME \
-          AND rc.CONSTRAINT_SCHEMA = kcu.TABLE_SCHEMA \
          WHERE kcu.TABLE_SCHEMA = ? AND kcu.REFERENCED_TABLE_NAME IS NOT NULL \
          ORDER BY kcu.CONSTRAINT_NAME, kcu.ORDINAL_POSITION",
     )
     .bind(schema)
-    .fetch_all(pool)
-    .await
-    .unwrap_or_default();
+    .fetch_all(pool);
+    let (col_rows, fk_rows) = tokio::join!(cols_q, fk_q);
+    let col_rows = col_rows.map_err(|e| format!("Failed to get column info: {e}"))?;
+    let fk_rows = fk_rows.unwrap_or_default();
 
     let mut fk_map: HashMap<(String, String), (String, String)> = Default::default();
     for row in &fk_rows {
@@ -1739,6 +1883,227 @@ async fn schema_column_structure_mysql(
             comment: None,
         })
     }).collect()))
+}
+
+// ── SQLite family: one catalog statement per schema ──────────────────────────
+//
+// SQLite, D1 and libSQL answer the tree's column and index questions through
+// the pragma table functions joined to `sqlite_master`: one statement for every
+// table, where the pragma statements needed two per table. The remote flavours
+// pay a network round trip per statement, so this is the difference between one
+// request and ten thousand on a 5k-table database.
+
+/// Where a SQLite-family statement runs.
+#[derive(Clone, Copy)]
+enum SqliteFamily<'a> {
+    Local(&'a sqlx::SqlitePool),
+    D1(&'a super::connection::D1Config),
+    LibSql(&'a super::connection::LibSqlConfig),
+}
+
+/// One local row as JSON, so the three flavours share one decoder. Reads each
+/// cell by its storage class: guessing a type and catching the mismatch built
+/// an error per text cell, which was most of the time on a large catalog.
+fn sqlite_row_values(r: &sqlx::sqlite::SqliteRow) -> Vec<serde_json::Value> {
+    use sqlx::{TypeInfo, ValueRef};
+    (0..r.len())
+        .map(|i| {
+            let class = match r.try_get_raw(i) {
+                Ok(v) if !v.is_null() => v.type_info().name().to_string(),
+                _ => return serde_json::Value::Null,
+            };
+            match class.as_str() {
+                "INTEGER" | "BOOLEAN" => r.try_get::<i64, _>(i).map(Into::into).unwrap_or_default(),
+                "REAL" => r.try_get::<f64, _>(i).map(Into::into).unwrap_or_default(),
+                _ => r.try_get::<String, _>(i).map(Into::into).unwrap_or_default(),
+            }
+        })
+        .collect()
+}
+
+/// Run one statement with optional text parameters, rows as JSON.
+async fn sqlite_family_rows(
+    at: SqliteFamily<'_>,
+    sql: &str,
+    params: &[&str],
+) -> Result<Vec<Vec<serde_json::Value>>, String> {
+    match at {
+        SqliteFamily::Local(pool) => {
+            let mut q = sqlx::query(sql);
+            for p in params {
+                q = q.bind(p.to_string());
+            }
+            let rows = q.fetch_all(pool).await.map_err(|e| e.to_string())?;
+            Ok(rows.iter().map(sqlite_row_values).collect())
+        }
+        SqliteFamily::D1(cfg) => {
+            let ps = params.iter().map(|p| serde_json::Value::from(*p)).collect();
+            Ok(super::d1::query(cfg, sql, ps).await?.rows)
+        }
+        SqliteFamily::LibSql(cfg) => {
+            let ps = params.iter().map(|p| serde_json::Value::from(*p)).collect();
+            Ok(super::libsql::query(cfg, sql, ps).await?.rows)
+        }
+    }
+}
+
+/// Every result column has its own alias: D1 and libSQL return rows as JSON
+/// objects keyed by column name, so two columns both called `name` collapsed
+/// into one and shifted every value after them (the diagram drew each column
+/// as a table of its own).
+///
+/// Every column of every table and view (`c` rows: table, cid, name, type,
+/// notnull, default, pk), then every foreign key column (`f` rows: table, id,
+/// from, referenced table, to, seq). Two lists in one statement: joining the
+/// foreign keys onto the columns re-ran the foreign key pragma for every
+/// column, eight times slower. `_cf_*` are D1's own tables: reading them is
+/// refused, and one refusal would fail the whole statement. `{one}` narrows
+/// both halves to one table.
+const SQLITE_COLUMNS_SQL: &str = r#"
+    SELECT 'c' AS k, m.name AS t, p.cid AS n, p.name AS c, p.type AS ty, p."notnull" AS nn, p.dflt_value AS dv, p.pk AS pk
+    FROM sqlite_master m JOIN pragma_table_info(m.name) p
+    WHERE m.type IN ('table', 'view') AND m.name NOT LIKE '\_cf\_%' ESCAPE '\'{one}
+    UNION ALL
+    SELECT 'f', m.name, f.id, f."from", f."table", f."to", f.seq, NULL
+    FROM sqlite_master m JOIN pragma_foreign_key_list(m.name) f
+    WHERE m.type = 'table' AND m.name NOT LIKE '\_cf\_%' ESCAPE '\'{one}
+    ORDER BY 1, 2, 3, 7"#;
+
+/// Every index of every table, with its columns in key order, where it came
+/// from (`pk` primary key, `u` UNIQUE constraint, `c` CREATE INDEX) and, for a
+/// partial index, its statement (the WHERE clause is read from it; looked up
+/// only for partial ones, as `sqlite_master` has no index on name).
+const SQLITE_INDEXES_SQL: &str = r#"
+    SELECT m.name AS t, il.name AS i, il."unique" AS u, il.origin AS o, il.partial AS p,
+           (SELECT group_concat(coalesce(ii.name, '(expression)'), ', ')
+              FROM (SELECT name FROM pragma_index_info(il.name) ORDER BY seqno) ii) AS cols,
+           CASE WHEN il.partial THEN (SELECT s.sql FROM sqlite_master s WHERE s.type = 'index' AND s.name = il.name) END AS wh
+    FROM sqlite_master m
+    JOIN pragma_index_list(m.name) il
+    WHERE m.type = 'table' AND m.name NOT LIKE '\_cf\_%' ESCAPE '\'
+    ORDER BY m.name, il.origin = 'pk' DESC, il.name"#;
+
+fn json_text(v: Option<&serde_json::Value>) -> Option<String> {
+    match v? {
+        serde_json::Value::String(s) => Some(s.clone()),
+        serde_json::Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    }
+}
+
+fn json_int(v: Option<&serde_json::Value>) -> Option<i64> {
+    match v? {
+        serde_json::Value::Number(n) => n.as_i64().or_else(|| n.as_f64().map(|f| f as i64)),
+        serde_json::Value::String(s) => s.parse().ok(),
+        serde_json::Value::Bool(b) => Some(*b as i64),
+        _ => None,
+    }
+}
+
+/// SQLite keeps no foreign key names. Name one the way Postgres would, after
+/// its table and columns, so a two-column key reads as one key, not two.
+fn sqlite_fk_name(table: &str, cols: &[String]) -> String {
+    format!("{table}_{}_fkey", cols.join("_"))
+}
+
+/// Rows of `SQLITE_COLUMNS_SQL` as per-table lists.
+fn sqlite_columns_from_rows(rows: &[Vec<serde_json::Value>]) -> Vec<TableColumnStructure> {
+    use std::collections::HashMap;
+    let is = |r: &Vec<serde_json::Value>, k: &str| r.first().and_then(|v| v.as_str()) == Some(k);
+    // Foreign keys first: each column's first key, and each key's columns, so
+    // every column of a composite key carries the same name.
+    let mut fk_cols: HashMap<(String, i64), Vec<String>> = HashMap::new();
+    let mut fk_of: HashMap<(String, String), (i64, String)> = HashMap::new();
+    for r in rows.iter().filter(|r| is(r, "f")) {
+        let (Some(t), Some(id), Some(from)) = (json_text(r.get(1)), json_int(r.get(2)), json_text(r.get(3))) else { continue };
+        let target = format!("main.{}.{}", json_text(r.get(4)).unwrap_or_default(), json_text(r.get(5)).unwrap_or_default());
+        fk_cols.entry((t.clone(), id)).or_default().push(from.clone());
+        fk_of.entry((t, from)).or_insert((id, target));
+    }
+    let flat = rows
+        .iter()
+        .filter(|r| is(r, "c"))
+        .filter_map(|r| {
+            let (table, cid, name) = (json_text(r.get(1))?, json_int(r.get(2))?, json_text(r.get(3))?);
+            let fk = fk_of.get(&(table.clone(), name.clone()));
+            let fk_constraint_name = fk.map(|(id, _)| sqlite_fk_name(&table, fk_cols.get(&(table.clone(), *id)).map(Vec::as_slice).unwrap_or_default()));
+            let column = ColumnStructureRow {
+                ordinal_position: (cid + 1) as i32,
+                data_type: json_text(r.get(4)).unwrap_or_default().to_lowercase(),
+                is_nullable: json_int(r.get(5)).unwrap_or(0) == 0,
+                column_default: json_text(r.get(6)),
+                is_primary_key: json_int(r.get(7)).unwrap_or(0) > 0,
+                foreign_key: fk.map(|(_, target)| target.clone()),
+                fk_constraint_name,
+                comment: None,
+                name,
+            };
+            Some((table, column))
+        })
+        .collect();
+    group_by_table(flat)
+}
+
+/// Rows of `SQLITE_INDEXES_SQL` as index entries.
+fn sqlite_indexes_from_rows(rows: &[Vec<serde_json::Value>]) -> Vec<IndexInfo> {
+    rows.iter()
+        .filter_map(|r| {
+            let table_name = json_text(r.first())?;
+            let name = json_text(r.get(1))?;
+            let origin = json_text(r.get(3)).unwrap_or_default();
+            let partial = json_int(r.get(4)).unwrap_or(0) != 0;
+            let condition = if partial {
+                json_text(r.get(6)).and_then(|sql| {
+                    let at = sql.to_ascii_uppercase().rfind(" WHERE ")?;
+                    Some(sql[at + 7..].trim().trim_end_matches(';').trim().to_string())
+                })
+            } else {
+                None
+            };
+            Some(IndexInfo {
+                name,
+                table_name,
+                columns: json_text(r.get(5)).unwrap_or_default(),
+                index_type: "btree".to_string(),
+                is_unique: json_int(r.get(2)).unwrap_or(0) != 0,
+                is_primary: origin == "pk",
+                condition,
+                comment: None,
+            })
+        })
+        .collect()
+}
+
+/// Columns for every table (or the one named), in one statement.
+async fn sqlite_family_columns(at: SqliteFamily<'_>, table: Option<&str>) -> Result<Vec<TableColumnStructure>, String> {
+    let sql = SQLITE_COLUMNS_SQL.replace("{one}", if table.is_some() { " AND m.name = ?" } else { "" });
+    let params: Vec<&str> = table.map(|t| vec![t, t]).unwrap_or_default();
+    Ok(sqlite_columns_from_rows(&sqlite_family_rows(at, &sql, &params).await?))
+}
+
+async fn sqlite_family_indexes(at: SqliteFamily<'_>) -> Result<Vec<IndexInfo>, String> {
+    Ok(sqlite_indexes_from_rows(&sqlite_family_rows(at, SQLITE_INDEXES_SQL, &[]).await?))
+}
+
+async fn list_indexes_sqlite(pool: &sqlx::SqlitePool) -> Result<Vec<IndexInfo>, String> {
+    match sqlite_family_indexes(SqliteFamily::Local(pool)).await {
+        Ok(v) => Ok(v),
+        Err(_) => list_indexes_sqlite_master(pool).await,
+    }
+}
+
+async fn list_indexes_d1(cfg: &super::connection::D1Config) -> Result<Vec<IndexInfo>, String> {
+    match sqlite_family_indexes(SqliteFamily::D1(cfg)).await {
+        Ok(v) => Ok(v),
+        Err(_) => list_indexes_d1_master(cfg).await,
+    }
+}
+
+async fn list_indexes_libsql(cfg: &super::connection::LibSqlConfig) -> Result<Vec<IndexInfo>, String> {
+    match sqlite_family_indexes(SqliteFamily::LibSql(cfg)).await {
+        Ok(v) => Ok(v),
+        Err(_) => list_indexes_libsql_master(cfg).await,
+    }
 }
 
 // ── Incoming foreign keys (reverse / one-to-many relationships) ───────────────
@@ -1948,7 +2313,45 @@ fn incoming_fks_from_batched(
     Some(result)
 }
 
+/// Every foreign key that points at one table, in a single statement: the
+/// pragma joined onto the table list and filtered on the server. It replaces a
+/// table listing plus a batched scan, and on D1 that scan never worked - it
+/// named the `_cf_*` tables, whose refusal fails the whole statement - so each
+/// table open fell back to one request per table (4s measured). Columns: src,
+/// id, from, to, in key order.
+const SQLITE_INCOMING_FKS_SQL: &str = r#"
+    SELECT m.name, f.id, f."from", f."to"
+    FROM sqlite_master m JOIN pragma_foreign_key_list(m.name) f
+    WHERE m.type = 'table' AND m.name NOT LIKE '\_cf\_%' ESCAPE '\'
+      AND lower(f."table") = lower(?1)
+    ORDER BY m.name, f.id, f.seq"#;
+
+/// Rows of `SQLITE_INCOMING_FKS_SQL` as one entry per constraint.
+fn incoming_fks_from_joined(rows: &[Vec<serde_json::Value>]) -> Vec<IncomingForeignKey> {
+    let mut result: Vec<IncomingForeignKey> = Vec::new();
+    let mut last: Option<(String, i64)> = None;
+    for r in rows {
+        let Some(src) = json_text(r.first()) else { continue };
+        let key = (src, json_int(r.get(1)).unwrap_or(0));
+        if last.as_ref() != Some(&key) {
+            result.push(IncomingForeignKey {
+                from_schema: "main".to_string(), from_table: key.0.clone(),
+                from_columns: Vec::new(), to_columns: Vec::new(), constraint_name: String::new(),
+            });
+            last = Some(key);
+        }
+        if let Some(fk) = result.last_mut() {
+            fk.from_columns.push(json_text(r.get(2)).unwrap_or_default());
+            fk.to_columns.push(json_text(r.get(3)).unwrap_or_default());
+        }
+    }
+    result
+}
+
 async fn get_incoming_fks_d1(cfg: &super::connection::D1Config, table: &str) -> Result<Vec<IncomingForeignKey>, String> {
+    if let Ok(rows) = sqlite_family_rows(SqliteFamily::D1(cfg), SQLITE_INCOMING_FKS_SQL, &[table]).await {
+        return Ok(incoming_fks_from_joined(&rows));
+    }
     let tables: Vec<String> = super::d1::query(
         cfg,
         "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
@@ -1980,6 +2383,9 @@ async fn get_incoming_fks_d1(cfg: &super::connection::D1Config, table: &str) -> 
 }
 
 async fn get_incoming_fks_libsql(cfg: &super::connection::LibSqlConfig, table: &str) -> Result<Vec<IncomingForeignKey>, String> {
+    if let Ok(rows) = sqlite_family_rows(SqliteFamily::LibSql(cfg), SQLITE_INCOMING_FKS_SQL, &[table]).await {
+        return Ok(incoming_fks_from_joined(&rows));
+    }
     let tables: Vec<String> = super::libsql::query(
         cfg,
         "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
@@ -2256,6 +2662,7 @@ pub async fn get_table_ddl(
         ActiveConnection::Clickhouse(cfg) => super::clickhouse::get_ddl(&cfg, &schema, &table).await,
         ActiveConnection::Posthog(cfg) => super::posthog::get_ddl(&cfg, &table).await,
         ActiveConnection::Redis(cfg) => super::redis::get_ddl(&cfg, &table).await,
+        ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => Ok(String::new()),
         ActiveConnection::Duckdb(h) => super::duckdb::get_ddl(&h, &table).await,
         ActiveConnection::Mssql(h) => super::mssql::get_ddl(&h, &schema, &table).await,
     }
@@ -2316,6 +2723,9 @@ pub async fn list_tables_on_conn(
         AnyConnectionConfig::Clickhouse(c) => super::clickhouse::list_tables(&c, &schema).await.map(to_names),
         AnyConnectionConfig::Posthog(c) => super::posthog::list_tables(&c).await.map(to_names),
         AnyConnectionConfig::Redis(c) => super::redis::list_tables(&c).await.map(to_names),
+        AnyConnectionConfig::Dynamodb(c) => super::dynamodb::list_tables(&c).await.map(to_names),
+        AnyConnectionConfig::Couchdb(c) => super::couchdb::list_databases(&c).await,
+        AnyConnectionConfig::Mongodb(_) => Ok(Vec::new()),
         AnyConnectionConfig::Duckdb(c) => {
             let h = super::connection::open_duckdb(&c).await?;
             super::duckdb::list_tables(&h).await.map(to_names)
@@ -2360,6 +2770,7 @@ pub async fn get_table_ddl_on_conn(
         AnyConnectionConfig::Clickhouse(c) => super::clickhouse::get_ddl(&c, &schema, &table).await,
         AnyConnectionConfig::Posthog(c) => super::posthog::get_ddl(&c, &table).await,
         AnyConnectionConfig::Redis(c) => super::redis::get_ddl(&c, &table).await,
+        AnyConnectionConfig::Dynamodb(_) | AnyConnectionConfig::Couchdb(_) | AnyConnectionConfig::Mongodb(_) => Ok(String::new()),
         AnyConnectionConfig::Duckdb(c) => {
             let h = super::connection::open_duckdb(&c).await?;
             super::duckdb::get_ddl(&h, &table).await
@@ -2414,5 +2825,204 @@ mod mysql_metadata_tests {
         assert_eq!(created.len(), 19, "YYYY-MM-DD HH:MM:SS, got {created:?}");
         let ddl = super::get_ddl_mysql(&pool, "shop", "products").await.expect("ddl");
         assert!(ddl.contains("CREATE TABLE"), "SHOW CREATE TABLE returned {ddl:?}");
+    }
+}
+
+/// The tree sidebar's per-schema catalog reads, timed against local throwaway
+/// databases. Ignored; point them somewhere with:
+///   TREE_PG=postgres://postgres@127.0.0.1:55432/tree
+///   TREE_MY=mysql://root@127.0.0.1:53306/tree
+///   TREE_SQLITE=/path/to/file.sqlite
+///   cargo test --lib tree_catalog -- --ignored --nocapture --test-threads=1
+#[cfg(test)]
+mod tree_catalog_live {
+    use std::time::Instant;
+
+    fn env(k: &str) -> Option<String> {
+        std::env::var(k).ok().filter(|v| !v.is_empty())
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn tree_catalog_pg() {
+        let Some(url) = env("TREE_PG") else { return };
+        let pool = sqlx::PgPool::connect(&url).await.expect("pg");
+        for schema in ["public", "big"] {
+            let t = Instant::now();
+            let cols = super::schema_column_structure_pg(&pool, schema).await.expect("cols");
+            let c_ms = t.elapsed().as_millis();
+            let t = Instant::now();
+            let idx = super::list_indexes_pg(&pool, schema).await.expect("idx");
+            let i_ms = t.elapsed().as_millis();
+            eprintln!("[tree pg {schema}] columns {} tables in {c_ms}ms, {} indexes in {i_ms}ms", cols.len(), idx.len());
+            if schema != "public" {
+                let t = Instant::now();
+                let one = super::get_column_structure_pg(&pool, schema, "t4321").await.expect("one");
+                eprintln!("[tree pg {schema}] one table: {} columns in {}ms", one.len(), t.elapsed().as_millis());
+                continue;
+            }
+            // Declared types, and both columns of a composite foreign key.
+            let of = |t: &str| cols.iter().find(|x| x.table == t).map(|x| x.columns.clone()).unwrap_or_default();
+            let users = of("users");
+            let ty = |n: &str| users.iter().find(|c| c.name == n).map(|c| c.data_type.clone()).unwrap_or_default();
+            assert_eq!(
+                ["email", "balance", "tags", "meta", "doc", "uid", "m", "c", "bits"].map(ty),
+                ["varchar(255)", "numeric(10,2)", "text[]", "jsonb", "json", "uuid", "mood", "bpchar(3)", "bit(8)"]
+            );
+            let members = of("members");
+            let fk = |n: &str| members.iter().find(|c| c.name == n).and_then(|c| c.foreign_key.clone());
+            assert_eq!(fk("org_a").as_deref(), Some("public.orgs.a"));
+            assert_eq!(fk("org_b").as_deref(), Some("public.orgs.b"));
+            assert_eq!(fk("user_id").as_deref(), Some("public.users.id"));
+        }
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn tree_catalog_mysql() {
+        let Some(url) = env("TREE_MY") else { return };
+        let pool = sqlx::MySqlPool::connect(&url).await.expect("mysql");
+        for schema in ["tree", "big"] {
+            let t = Instant::now();
+            let cols = super::schema_column_structure_mysql(&pool, schema).await.expect("cols");
+            let c_ms = t.elapsed().as_millis();
+            let t = Instant::now();
+            let idx = super::list_indexes_mysql(&pool, schema).await.expect("idx");
+            let i_ms = t.elapsed().as_millis();
+            eprintln!("[tree mysql {schema}] columns {} tables in {c_ms}ms, {} indexes in {i_ms}ms", cols.len(), idx.len());
+            if schema != "tree" {
+                let t = Instant::now();
+                let one = super::get_column_structure_mysql(&pool, schema, "t4321").await.expect("one");
+                eprintln!("[tree mysql {schema}] one table: {} columns in {}ms", one.len(), t.elapsed().as_millis());
+                continue;
+            }
+            let of = |t: &str| cols.iter().find(|x| x.table == t).map(|x| x.columns.clone()).unwrap_or_default();
+            let users = of("users");
+            assert_eq!(
+                users.iter().map(|c| c.data_type.as_str()).collect::<Vec<_>>(),
+                ["int(11)", "varchar(255)", "decimal(10,2)", "longtext", "enum('a','b')", "int(10) unsigned"]
+            );
+            let members = of("members");
+            assert_eq!(members[3].foreign_key.as_deref(), Some("tree.orgs.b"));
+            assert_eq!(members[3].fk_constraint_name.as_deref(), Some("m_org_fk"));
+            assert!(idx.iter().any(|i| i.table_name == "orgs" && i.is_primary && i.columns == "a, b"));
+        }
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn tree_catalog_sqlite() {
+        let Some(path) = env("TREE_SQLITE") else { return };
+        let pool = sqlx::SqlitePool::connect(&format!("sqlite://{path}?mode=ro")).await.expect("sqlite");
+        let tables = super::list_tables_sqlite(&pool).await.expect("tables");
+        // What `get_schema_column_structure` did for SQLite: one table at a time.
+        let t = Instant::now();
+        let mut n = 0;
+        for tb in &tables {
+            n += super::get_column_structure_sqlite_pragma(&pool, &tb.name).await.expect("cols").len();
+        }
+        eprintln!("[tree sqlite] per-table loop: {} tables, {n} columns in {}ms", tables.len(), t.elapsed().as_millis());
+        // What it does now: one statement.
+        let t = Instant::now();
+        let raw = sqlx::query(&super::SQLITE_COLUMNS_SQL.replace("{one}", "")).fetch_all(&pool).await.expect("raw");
+        eprintln!("[tree sqlite] statement alone: {} rows in {}ms", raw.len(), t.elapsed().as_millis());
+        let t = Instant::now();
+        let all = super::sqlite_family_columns(super::SqliteFamily::Local(&pool), None).await.expect("bulk");
+        let n: usize = all.iter().map(|t| t.columns.len()).sum();
+        eprintln!("[tree sqlite] one statement: {} tables, {n} columns in {}ms", all.len(), t.elapsed().as_millis());
+        let t = Instant::now();
+        let one = super::get_column_structure_sqlite(&pool, "members").await.expect("one");
+        eprintln!("[tree sqlite] one table: {} columns in {}us", one.len(), t.elapsed().as_micros());
+        let t = Instant::now();
+        let idx = super::list_indexes_sqlite(&pool).await.expect("idx");
+        eprintln!("[tree sqlite] {} indexes in {}ms", idx.len(), t.elapsed().as_millis());
+    }
+}
+
+/// The SQLite family's one-statement catalog reads, against an in-memory
+/// database (D1 and libSQL run the same statements and the same decoder).
+#[cfg(test)]
+mod sqlite_tree_catalog {
+    use super::*;
+
+    async fn db() -> sqlx::SqlitePool {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();
+        for sql in [
+            "CREATE TABLE users (id INTEGER PRIMARY KEY, email VARCHAR(255) UNIQUE NOT NULL, balance NUMERIC(10,2) DEFAULT 0, meta JSON)",
+            "CREATE TABLE orgs (a INT, b INT, name TEXT, PRIMARY KEY (a, b)) WITHOUT ROWID",
+            "CREATE TABLE members (id INTEGER PRIMARY KEY, user_id INT REFERENCES users(id), org_a INT, org_b INT, \
+               FOREIGN KEY (org_a, org_b) REFERENCES orgs(a, b))",
+            "CREATE INDEX members_user_idx ON members(user_id)",
+            "CREATE INDEX users_lower ON users(lower(email)) WHERE email IS NOT NULL",
+            "CREATE TABLE \"odd name\" (code TEXT PRIMARY KEY)",
+            "CREATE VIEW v_users AS SELECT id, email FROM users",
+        ] {
+            sqlx::query(sql).execute(&pool).await.unwrap();
+        }
+        pool
+    }
+
+    #[tokio::test]
+    async fn columns_keys_and_types_in_one_statement() {
+        let pool = db().await;
+        let all = sqlite_family_columns(SqliteFamily::Local(&pool), None).await.unwrap();
+        assert_eq!(all.iter().map(|t| t.table.as_str()).collect::<Vec<_>>(), ["members", "odd name", "orgs", "users", "v_users"]);
+        let users = &all[3].columns;
+        assert_eq!(users.iter().map(|c| c.data_type.as_str()).collect::<Vec<_>>(), ["integer", "varchar(255)", "numeric(10,2)", "json"]);
+        assert!(users[0].is_primary_key && !users[1].is_nullable && users[2].is_nullable);
+        assert_eq!(users[2].column_default.as_deref(), Some("0"));
+        // A composite foreign key: both columns, one name, each its own target.
+        let m = &all[0].columns;
+        assert_eq!(m[1].foreign_key.as_deref(), Some("main.users.id"));
+        assert_eq!(m[1].fk_constraint_name.as_deref(), Some("members_user_id_fkey"));
+        assert_eq!(m[2].foreign_key.as_deref(), Some("main.orgs.a"));
+        assert_eq!(m[3].foreign_key.as_deref(), Some("main.orgs.b"));
+        assert_eq!(m[2].fk_constraint_name.as_deref(), Some("members_org_a_org_b_fkey"));
+        assert_eq!(m[3].fk_constraint_name, m[2].fk_constraint_name);
+        assert_eq!(all[2].columns.iter().filter(|c| c.is_primary_key).count(), 2);
+        // One table, and a name the identifier check would have refused.
+        let one = get_column_structure_sqlite(&pool, "members").await.unwrap();
+        assert_eq!(one.len(), 4);
+        let odd = sqlite_family_columns(SqliteFamily::Local(&pool), Some("odd name")).await.unwrap();
+        assert!(odd[0].columns[0].is_primary_key);
+        // The pragma path agrees on names.
+        let legacy = get_column_structure_sqlite_pragma(&pool, "members").await.unwrap();
+        assert_eq!(legacy.iter().map(|c| &c.name).collect::<Vec<_>>(), one.iter().map(|c| &c.name).collect::<Vec<_>>());
+    }
+
+    #[tokio::test]
+    async fn indexes_with_columns_origin_and_condition() {
+        let pool = db().await;
+        let idx = list_indexes_sqlite(&pool).await.unwrap();
+        let find = |n: &str| idx.iter().find(|i| i.name == n).unwrap_or_else(|| panic!("{n} in {idx:?}"));
+        let pk = find("sqlite_autoindex_orgs_1");
+        assert!(pk.is_primary && pk.is_unique && pk.columns == "a, b" && pk.table_name == "orgs");
+        let uq = find("sqlite_autoindex_users_1");
+        assert!(!uq.is_primary && uq.is_unique && uq.columns == "email");
+        let ix = find("members_user_idx");
+        assert!(!ix.is_unique && ix.columns == "user_id");
+        let partial = find("users_lower");
+        assert_eq!(partial.columns, "(expression)");
+        assert_eq!(partial.condition.as_deref(), Some("email IS NOT NULL"));
+        // A rowid table's INTEGER PRIMARY KEY has no index of its own.
+        assert!(!idx.iter().any(|i| i.table_name == "users" && i.is_primary));
+    }
+
+    #[test]
+    fn remote_rows_decode_the_same() {
+        // D1 / libSQL hand rows back as JSON, numbers sometimes as floats.
+        let rows = vec![
+            serde_json::json!(["c", "t", 0, "id", "INTEGER", 1, null, 1]),
+            serde_json::json!(["c", "t", 1.0, "p", "INT", 0, "3", 0]),
+            serde_json::json!(["f", "t", 0, "p", "parent", "id", 0, null]),
+        ]
+        .into_iter()
+        .map(|v| v.as_array().unwrap().clone())
+        .collect::<Vec<_>>();
+        let t = sqlite_columns_from_rows(&rows);
+        assert_eq!(t[0].columns[1].foreign_key.as_deref(), Some("main.parent.id"));
+        assert_eq!(t[0].columns[1].fk_constraint_name.as_deref(), Some("t_p_fkey"));
+        assert_eq!(t[0].columns[1].ordinal_position, 2);
+        assert!(t[0].columns[0].is_primary_key && !t[0].columns[0].is_nullable);
     }
 }

@@ -152,6 +152,7 @@ pub async fn tx_begin(
         }
         ActiveConnection::Posthog(_) => return Err("PostHog does not support transactions".into()),
         ActiveConnection::Redis(_) => return Err("Redis does not support SQL transactions".into()),
+        ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => return Err("DynamoDB does not support SQL transactions here".into()),
     };
 
     run_statement(&mut conn, "BEGIN").await.map_err(|e| format!("Could not begin: {e}"))?;

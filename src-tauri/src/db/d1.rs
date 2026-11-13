@@ -21,7 +21,7 @@ fn client() -> &'static reqwest::Client {
             // Without these, a REST call that never answers (captive portal, dropped
             // route, Cloudflare edge stall) leaves the UI spinning on "Connecting…"
             // forever - the command simply never returns.
-            .connect_timeout(std::time::Duration::from_secs(10))
+            .connect_timeout(std::time::Duration::from_secs(25))
             .timeout(std::time::Duration::from_secs(60))
             .build()
             .expect("failed to build D1 HTTP client")
@@ -132,7 +132,7 @@ pub async fn query(config: &D1Config, sql: &str, params: Vec<Value>) -> Result<S
                 .json(&body)
                 .send()
                 .await
-                .map_err(|e| format!("D1 request failed: {e}"))
+                .map_err(|e| crate::cloudflare::describe_request_error("D1 request", &e))
         }
     };
 
