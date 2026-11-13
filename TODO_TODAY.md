@@ -269,3 +269,35 @@ To count canvas work, patch `CanvasRenderingContext2D.prototype` from the eval
 channel (`measureText`, `fillText`, `fillRect`, `stroke`, and the `font`
 setter), reset the counters, dispatch ~100 wheel events one per animation frame,
 then divide by the draw count. Per-frame counts are the useful unit, not totals.
+
+## Themes: follow-ups (2026-11-12)
+
+Glass (`glass-dark` / `glass-light`) and the Custom theme with opacity below
+100% are macOS-only today: `set_window_glass` in `src-tauri/src/commands.rs`
+is a no-op elsewhere, and every glass rule in `src/lib/themes/app-themes.css`
+is scoped to `html[data-os="macos"]`.
+
+- [ ] **Glass on Windows (Mica / Acrylic).** Needs testing on a real Windows
+      build (`npm run tauri:build:win`), not just a compile.
+  - Create the window with `.transparent(true)` on Windows too
+    (`src-tauri/src/lib.rs`, the window builder).
+  - In `set_window_glass`, add a Windows branch: `Effect::Mica`, with
+    `Effect::Acrylic` as a fallback before Windows 11.
+  - Let the WebView2 backdrop go transparent while glass is on.
+    `set_windows_webview_backdrop` in `lib.rs` currently forces alpha to opaque.
+  - Widen the CSS scope to `html:is([data-os="macos"], [data-os="windows"])`.
+  - Set `data-glass` on Windows too: `syncWindowGlass` in
+    `src/lib/stores/settings.js` only does it for macOS.
+  - Risk: the Windows window is hidden until first paint specifically to avoid
+    a startup flicker. Re-check that it still opens cleanly.
+- [ ] **Page-by-page pass in Glass and in Custom with opacity below 100%.**
+      The structural cases are already fixed:
+  - sticky headers, overlays and fixed panels (frosted rule in
+    `app-themes.css`)
+  - the data grid's erase fills and `withAlpha`
+  - the terminal
+  - the ERD and map colour probes
+
+  What's left are one-off components that paint their own solid colour and
+  stand out as patches over the glass. Go through each page, screenshot the
+  odd ones, and fix them per component.

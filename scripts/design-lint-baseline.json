@@ -1,0 +1,153 @@
+{
+  "src/lib/components/AdvisorPage.svelte": {
+    "rounded-px": 1
+  },
+  "src/lib/components/AiChat.svelte": {
+    "h-px": 2,
+    "rounded-px": 1
+  },
+  "src/lib/components/AiSidebar.svelte": {
+    "rounded-px": 3,
+    "rounded-xl": 2
+  },
+  "src/lib/components/AppLockScreen.svelte": {
+    "h-px": 1
+  },
+  "src/lib/components/AppMenuBar.svelte": {
+    "rounded-px": 1
+  },
+  "src/lib/components/CellEditorPanel.svelte": {
+    "rounded-px": 4
+  },
+  "src/lib/components/ChartView.svelte": {
+    "rounded-px": 1
+  },
+  "src/lib/components/ChartsPage.svelte": {
+    "rounded-px": 2
+  },
+  "src/lib/components/ConnectionModal.svelte": {
+    "rounded-xl": 5,
+    "h-px": 1,
+    "rounded-px": 2
+  },
+  "src/lib/components/DangerousActionDialog.svelte": {
+    "h-px": 1
+  },
+  "src/lib/components/DashboardPage.svelte": {
+    "rounded-px": 1,
+    "h-px": 2
+  },
+  "src/lib/components/DataDiffPage.svelte": {
+    "rounded-px": 3
+  },
+  "src/lib/components/DataTableSkeleton.svelte": {
+    "rounded-px": 2
+  },
+  "src/lib/components/DatabaseSwitcher.svelte": {
+    "rounded-px": 1
+  },
+  "src/lib/components/DropDatabaseDialog.svelte": {
+    "h-px": 1
+  },
+  "src/lib/components/EntityRelationPage.svelte": {
+    "rounded-px": 7
+  },
+  "src/lib/components/ExtensionsPage.svelte": {
+    "h-px": 2,
+    "rounded-px": 1
+  },
+  "src/lib/components/JsonPathSuggest.svelte": {
+    "rounded-px": 1
+  },
+  "src/lib/components/JsonTree.svelte": {
+    "rounded-px": 2
+  },
+  "src/lib/components/LogPanel.svelte": {
+    "rounded-px": 2
+  },
+  "src/lib/components/MongoAggregateView.svelte": {
+    "rounded-xl": 2
+  },
+  "src/lib/components/MongoExplainPanel.svelte": {
+    "rounded-xl": 1
+  },
+  "src/lib/components/MongoIndexesView.svelte": {
+    "rounded-xl": 1
+  },
+  "src/lib/components/NotebookEditor.svelte": {
+    "rounded-px": 1
+  },
+  "src/lib/components/Onboarding.svelte": {
+    "h-px": 1,
+    "rounded-xl": 2
+  },
+  "src/lib/components/OrmRunner.svelte": {
+    "rounded-px": 2
+  },
+  "src/lib/components/RedisInsightsView.svelte": {
+    "rounded-xl": 1
+  },
+  "src/lib/components/RelationTreePage.svelte": {
+    "rounded-px": 2
+  },
+  "src/lib/components/SchemaPage.svelte": {
+    "rounded-px": 1
+  },
+  "src/lib/components/SchemaTimelinePage.svelte": {
+    "rounded-px": 1
+  },
+  "src/lib/components/SearchPage.svelte": {
+    "rounded-px": 1
+  },
+  "src/lib/components/SearchableMenu.svelte": {
+    "rounded-px": 1
+  },
+  "src/lib/components/SelectMenu.svelte": {
+    "rounded-px": 1
+  },
+  "src/lib/components/SettingsDialog.svelte": {
+    "rounded-px": 6
+  },
+  "src/lib/components/Sidebar.svelte": {
+    "h-px": 2,
+    "rounded-px": 2
+  },
+  "src/lib/components/SidebarObjects.svelte": {
+    "rounded-px": 1,
+    "h-px": 1
+  },
+  "src/lib/components/SidebarTree.svelte": {
+    "rounded-px": 1
+  },
+  "src/lib/components/SignInScreen.svelte": {
+    "h-px": 1
+  },
+  "src/lib/components/SqlConsole.svelte": {
+    "rounded-px": 1
+  },
+  "src/lib/components/StructureView.svelte": {
+    "rounded-px": 1
+  },
+  "src/lib/components/StudioShell.svelte": {
+    "rounded-xl": 1
+  },
+  "src/lib/components/TrialExpiredScreen.svelte": {
+    "h-px": 1
+  },
+  "src/lib/components/UrlPreviewTooltip.svelte": {
+    "rounded-px": 1,
+    "h-px": 2
+  },
+  "src/lib/components/VacuumGame.svelte": {
+    "h-px": 1
+  },
+  "src/lib/components/VectorCellViewer.svelte": {
+    "rounded-px": 2
+  },
+  "src/lib/components/WorkspaceMark.svelte": {
+    "rounded-px": 2
+  },
+  "src/lib/stores/settings.js": {
+    "text-px": 1
+  }
+}
