@@ -1,5 +1,5 @@
 <script>
-  import { comboTitle } from '$lib/shortcuts.js'
+  import { withShortcut } from '$lib/stores/keybindings.js'
   import { onMount } from 'svelte'
   import { getAppScale } from '$lib/app-zoom.js'
   import X from '@lucide/svelte/icons/x'
@@ -114,13 +114,13 @@
     <div class="inline-flex h-6 items-center rounded border border-border/60 bg-muted/40 p-px">
       <button
         type="button"
-        class={cn('h-5 rounded-[3px] px-2 font-mono text-ui-2xs transition-all',
+        class={cn('h-5 rounded-[3px] px-2 font-mono text-ui-2xs transition-colors',
           filter === 'all' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}
         onclick={() => { filter = 'all' }}
       >All</button>
       <button
         type="button"
-        class={cn('h-5 rounded-[3px] px-2 font-mono text-ui-2xs transition-all',
+        class={cn('h-5 rounded-[3px] px-2 font-mono text-ui-2xs transition-colors',
           filter === 'error' ? 'bg-card text-destructive shadow-sm' : 'text-muted-foreground hover:text-foreground')}
         onclick={() => { filter = 'error' }}
       >Err</button>
@@ -132,14 +132,14 @@
       title="Clear"
       onclick={() => clearActivityLog()}
       disabled={entries.length === 0}
-    ><Trash2 class="size-3" /></button>
+    ><Trash2 class="size-3 shrink-0" /></button>
 
     <button
       type="button"
       class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground"
-      title={`Close (${comboTitle('Mod+Shift+L')})`}
+      title={withShortcut('Close', 'view.logs')}
       onclick={onclose}
-    ><X class="size-3" /></button>
+    ><X class="size-3 shrink-0" /></button>
   </div>
 
   <!-- Log feed -->
@@ -150,7 +150,7 @@
   >
     {#if displayed.length === 0}
       <div class="flex flex-col items-center justify-center gap-2 py-10 text-center">
-        <CircleDot class="size-7 text-muted-foreground" />
+        <CircleDot class="size-7 shrink-0 text-muted-foreground" />
         <p class="font-mono text-ui-2xs text-muted-foreground">
           {entries.length === 0 ? 'Waiting for activity…' : 'No errors logged'}
         </p>
@@ -170,7 +170,7 @@
           <span class="w-[52px] shrink-0 select-none text-ui-3xs tabular-nums text-muted-foreground">
             {hms(entry.timestamp)}
           </span>
-          <span class={cn('w-7 shrink-0 select-none text-ui-3xs font-bold uppercase tracking-wider', color)}>
+          <span class={cn('w-7 shrink-0 select-none text-ui-3xs font-semibold uppercase tracking-[0.06em]', color)}>
             {tag}
           </span>
           <span class={cn('min-w-0 flex-1 truncate', color)}>
@@ -203,10 +203,10 @@
     {#if !autoScroll}
       <button
         type="button"
-        class="inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-ui-2xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-mono text-ui-2xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         onclick={() => { autoScroll = true; if (logEl) logEl.scrollTop = logEl.scrollHeight }}
       >
-        <ChevronDown class="size-3" />Latest
+        <ChevronDown class="size-3 shrink-0" />Latest
       </button>
     {/if}
   </div>

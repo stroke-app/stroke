@@ -86,9 +86,9 @@ export const SQL_QUOTE_NAMES_OPTIONS = [
 
 /** Text size → the type-scale step it follows, so it still scales with zoom. */
 export const SQL_EDITOR_TEXT_SIZES = [
-  { id: 'small', label: 'Small', css: 'var(--fs-2xs)' },
-  { id: 'default', label: 'Default', css: 'var(--fs-xs)' },
-  { id: 'large', label: 'Large', css: 'var(--fs-base)' },
+  { id: 'small', label: 'Small', css: 'var(--fs-xs)' },
+  { id: 'default', label: 'Default', css: 'var(--fs-sm)' },
+  { id: 'large', label: 'Large', css: 'var(--fs-15)' },
 ]
 
 /** Rows for the settings dialog, so it and the editor read one list. */

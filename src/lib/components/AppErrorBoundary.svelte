@@ -31,8 +31,8 @@
 
   {#snippet failed(error, reset)}
     <div class="flex h-screen w-screen flex-col items-center justify-center gap-5 bg-background px-8 text-center select-none">
-      <div class="flex size-12 items-center justify-center rounded-2xl bg-destructive/10">
-        <TriangleAlert class="size-6 text-destructive" />
+      <div class="flex size-12 items-center justify-center rounded-lg bg-destructive/10">
+        <TriangleAlert class="size-6 shrink-0 text-destructive" />
       </div>
 
       <div class="space-y-1">
@@ -49,9 +49,9 @@
         <button
           type="button"
           onclick={reset}
-          class="inline-flex h-8 items-center gap-1.5 rounded-lg bg-foreground px-3 text-ui-xs font-medium text-background transition-opacity hover:opacity-85"
+          class="inline-flex h-8 items-center gap-1.5 rounded-md bg-foreground px-3 text-ui-xs font-medium text-background transition-opacity hover:opacity-85"
         >
-          <RotateCcw class="size-3.5" /> Try to recover
+          <RotateCcw class="size-3.5 shrink-0" /> Try to recover
         </button>
         <button
           type="button"
@@ -65,7 +65,7 @@
           onclick={() => openReport(error)}
           class= "field-surface inline-flex h-8 items-center gap-1.5 px-3 text-ui-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
         >
-          <Bug class="size-3.5" /> Report issue
+          <Bug class="size-3.5 shrink-0" /> Report issue
         </button>
       </div>
     </div>

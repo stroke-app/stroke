@@ -39,7 +39,7 @@
   <div class="app-scroll min-h-0 flex-1 overflow-y-auto [will-change:transform]">
     {#if enums.length === 0}
       <div class="flex h-full flex-col items-center justify-center gap-3 text-center">
-        <Tags class="size-8 text-muted-foreground" />
+        <Tags class="size-8 shrink-0 text-muted-foreground" />
         <div>
           <p class="font-mono text-ui-sm text-muted-foreground">No enum types</p>
           <p class="mt-0.5 text-ui-xs text-muted-foreground">

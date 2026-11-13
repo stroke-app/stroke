@@ -1,4 +1,5 @@
 <script>
+  import { Button } from '$lib/components/ui/button/index.js'
   import { appSqlEditor } from '$lib/stores/settings.js'
   import * as Dialog from '$lib/components/ui/dialog/index.js'
   import Icon from './Icon.svelte'
@@ -125,19 +126,19 @@
     <!-- Header -->
     <div class="flex h-12 items-center gap-2.5 border-b border-border/60 pl-4 pr-2.5">
       <span class="inline-flex size-6 shrink-0 items-center justify-center rounded-md bg-primary/12 text-primary">
-        <Icon name="code-2" class="size-3.5" />
+        <Icon name="code-2" class="size-3.5 shrink-0" />
       </span>
       <Dialog.Title class="min-w-0 flex-1 truncate text-ui-sm font-medium text-foreground">
         Generate SQL
         <span class="text-muted-foreground">·</span>
         <span class="font-mono text-ui-sm">{table}</span>
       </Dialog.Title>
-      <span class="shrink-0 select-none rounded-md bg-muted/60 px-1.5 py-0.5 font-mono text-ui-3xs uppercase tracking-wide text-muted-foreground">{dialect}</span>
+      <span class="shrink-0 select-none rounded-md bg-muted/60 px-1.5 py-0.5 font-mono text-ui-3xs uppercase tracking-[0.06em] text-muted-foreground">{dialect}</span>
       <Dialog.Close
         class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,scale] hover:bg-accent hover:text-foreground active:scale-[0.96]"
         aria-label="Close"
       >
-        <Icon name="x" class="size-3.5" />
+        <Icon name="x" class="size-3.5 shrink-0" />
       </Dialog.Close>
     </div>
 
@@ -163,8 +164,8 @@
     <!-- SQL body -->
     <div class="flex h-[min(320px,55vh)] min-h-0 flex-col bg-panel">
       {#if loading}
-        <div class="flex flex-1 items-center justify-center">
-          <Icon name="loader-2" class="size-4 animate-spin text-muted-foreground" />
+        <div class="loading-reveal flex flex-1 items-center justify-center">
+          <Icon name="loader-2" class="size-4 shrink-0 animate-spin text-muted-foreground" />
         </div>
       {:else if error}
         <div class="flex flex-1 items-center justify-center px-6 text-center">
@@ -198,15 +199,14 @@
           Copy
         {/if}
       </button>
-      <button
-        type="button"
-        class="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-primary px-3 text-ui-xs font-medium text-primary-foreground transition-[opacity,scale] hover:opacity-90 active:scale-[0.96] disabled:pointer-events-none disabled:opacity-40"
+      <Button
+        class="shrink-0"
         disabled={!currentSql}
         onclick={handleOpenInEditor}
-      >
+>
         <Icon name="terminal" class="size-3.5 shrink-0" />
         Open in SQL editor
-      </button>
+      </Button>
     </div>
   </Dialog.Content>
 </Dialog.Root>

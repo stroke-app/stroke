@@ -379,7 +379,7 @@
         onclick={() => { activeSub = tab.id; objQuery = '' }}
       >
         {#if activeSub === tab.id}
-          <span class="absolute inset-x-1 bottom-0 h-0.5 rounded-full bg-primary transition-all" aria-hidden="true"></span>
+          <span class="absolute inset-x-1 bottom-0 h-0.5 rounded-full bg-primary transition-colors" aria-hidden="true"></span>
         {/if}
         <tab.icon class="size-3.5 shrink-0" />
         {tab.label}
@@ -433,11 +433,11 @@
         {#if objQuery}
           <button
             type="button"
-            class="absolute right-1 inline-flex size-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
+            class="absolute right-1 inline-flex size-5 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
             aria-label="Clear search"
             onclick={() => (objQuery = '')}
           >
-            <X class="size-3.5" />
+            <X class="size-3.5 shrink-0" />
           </button>
         {/if}
       </div>
@@ -448,14 +448,14 @@
   <div class="app-scroll min-h-0 flex-1 overflow-auto [will-change:transform]">
     {#if !currentSupported}
       <div class="flex h-full flex-col items-center justify-center gap-3 py-20 text-center">
-        <Boxes class="size-10 text-muted-foreground" />
+        <Boxes class="size-10 shrink-0 text-muted-foreground" />
         <p class="font-mono text-ui text-muted-foreground">
           {TABS.find((t) => t.id === activeSub)?.label} overview isn't available for {engineLabel} yet
         </p>
       </div>
     {:else if isLoading}
-      <div class="flex items-center justify-center gap-2 py-16 text-muted-foreground">
-        <RefreshCw class="size-4 animate-spin" /><span class="font-mono text-ui-sm">Loading…</span>
+      <div class="loading-reveal flex items-center justify-center gap-2 py-16 text-muted-foreground">
+        <RefreshCw class="size-4 shrink-0 animate-spin" /><span class="font-mono text-ui-sm">Loading…</span>
       </div>
     {:else if slots[activeSub].error}
       <div class="px-4 py-8 text-center">

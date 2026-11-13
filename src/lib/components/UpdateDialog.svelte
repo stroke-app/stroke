@@ -1,4 +1,5 @@
 <script>
+  import { Button } from '$lib/components/ui/button/index.js'
   import { onMount }     from 'svelte'
   import Download        from '@lucide/svelte/icons/download'
   import RefreshCw       from '@lucide/svelte/icons/refresh-cw'
@@ -381,15 +382,15 @@
       <div class="flex items-center gap-3 border-b border-border/40 px-5 py-3.5">
         <div class="shrink-0 rounded-lg bg-muted/50 p-2">
           {#if status === 'ready' || status === 'up-to-date'}
-            <CheckCircle2 class="size-4 text-success" />
+            <CheckCircle2 class="size-4 shrink-0 text-success" />
           {:else if status === 'error'}
-            <AlertCircle class="size-4 text-destructive" />
+            <AlertCircle class="size-4 shrink-0 text-destructive" />
           {:else if checking}
-            <Loader2 class="size-4 animate-spin text-primary" />
+            <Loader2 class="size-4 shrink-0 animate-spin text-primary" />
           {:else if status === 'available'}
-            <Sparkles class="size-4 text-primary" />
+            <Sparkles class="size-4 shrink-0 text-primary" />
           {:else}
-            <Download class="size-4 text-primary" />
+            <Download class="size-4 shrink-0 text-primary" />
           {/if}
         </div>
 
@@ -416,10 +417,10 @@
         <button
           type="button"
           onclick={() => (dismissed = true)}
-          class="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          class="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           aria-label="Dismiss"
         >
-          <X class="size-4" />
+          <X class="size-4 shrink-0" />
         </button>
       </div>
 
@@ -437,14 +438,13 @@
               <ScrollText class="size-3.5 shrink-0" />
               Release Notes
             </button>
-            <button
-              type="button"
+            <Button
               onclick={() => void install()}
-              class="inline-flex h-9 flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg bg-primary px-3 text-ui-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-            >
+              class="flex-1" size="lg"
+>
               <Download class="size-3.5 shrink-0" />
               Install
-            </button>
+            </Button>
           </div>
 
         {:else if status === 'downloading'}
@@ -455,7 +455,7 @@
             </div>
             <div class="h-1.5 w-full overflow-hidden rounded-full bg-muted">
               <div
-                class="h-full rounded-full bg-primary transition-all duration-150"
+                class="h-full rounded-full bg-primary transition-[width] duration-150"
                 style="width:{progress}%"
               ></div>
             </div>
@@ -478,15 +478,14 @@
               >
                 Later
               </button>
-              <button
-                type="button"
+              <Button
                 onclick={() => void restart()}
                 disabled={restarting}
-                class="inline-flex h-9 flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg bg-primary px-3 text-ui-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50"
-              >
+                class="flex-1" size="lg"
+>
                 <RefreshCw class={cn('size-3.5 shrink-0', restarting && 'animate-spin')} />
                 Restart now
-              </button>
+              </Button>
             </div>
           {:else}
             <p class="mb-4 text-ui-sm text-muted-foreground">
@@ -503,15 +502,14 @@
                   What's New
                 </button>
               {/if}
-              <button
-                type="button"
+              <Button
                 onclick={() => void restart()}
                 disabled={restarting}
-                class="inline-flex h-9 flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg bg-primary px-3 text-ui-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50"
-              >
+                class="flex-1" size="lg"
+>
                 <RefreshCw class={cn('size-3.5 shrink-0', restarting && 'animate-spin')} />
                 Restart now
-              </button>
+              </Button>
             </div>
           {/if}
 
@@ -532,14 +530,13 @@
             >
               Not now
             </button>
-            <button
-              type="button"
+            <Button
               onclick={() => void retry()}
-              class="inline-flex h-9 flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg bg-primary px-3 text-ui-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-            >
+              class="flex-1" size="lg"
+>
               <RefreshCw class="size-3.5 shrink-0" />
               Retry
-            </button>
+            </Button>
           </div>
 
         {:else if status === 'up-to-date' || checking}

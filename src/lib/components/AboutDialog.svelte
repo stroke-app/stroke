@@ -78,7 +78,7 @@
         <div class="flex flex-col gap-3">
           <div class="flex items-center gap-2.5">
             <div class="flex size-6 shrink-0 items-center justify-center rounded-full bg-success/12">
-              <ShieldCheck class="size-3 text-success" />
+              <ShieldCheck class="size-3 shrink-0 text-success" />
             </div>
             <span class="text-ui-xs font-medium text-foreground">Pro license active</span>
           </div>
@@ -122,7 +122,7 @@
           <div class="flex items-center justify-between">
             <div class="flex items-center gap-2.5">
               <div class="flex size-6 shrink-0 items-center justify-center rounded-full bg-warning/12">
-                <Clock class="size-3 text-warning" />
+                <Clock class="size-3 shrink-0 text-warning" />
               </div>
               <span class="text-ui-xs font-medium text-foreground">Free trial</span>
             </div>
@@ -135,7 +135,7 @@
             <button
               type="button"
               onclick={() => (showActivate = false)}
-              class="text-ui-2xs text-muted-foreground hover:text-muted-foreground transition-colors text-center"
+              class="text-ui-2xs text-muted-foreground hover:text-foreground transition-colors text-center"
             >Cancel</button>
           {:else}
             <button
@@ -143,7 +143,7 @@
               onclick={() => (showActivate = true)}
               class= "field-surface flex h-8 w-full items-center justify-center gap-1.5 bg-muted/30 text-ui-2xs font-medium text-foreground/70 transition-colors hover:bg-muted/60 hover:text-foreground"
             >
-              <KeyRound class="size-3" />
+              <KeyRound class="size-3 shrink-0" />
               Enter license key
             </button>
           {/if}
@@ -154,7 +154,7 @@
         <div class="flex flex-col gap-3">
           <div class="flex items-center gap-2.5">
             <div class="flex size-6 shrink-0 items-center justify-center rounded-full bg-muted/50">
-              <AlertTriangle class="size-3 text-muted-foreground" />
+              <AlertTriangle class="size-3 shrink-0 text-muted-foreground" />
             </div>
             <div>
               <p class="text-ui-xs font-medium text-foreground">No active license</p>
@@ -166,7 +166,7 @@
             <button
               type="button"
               onclick={() => (showActivate = false)}
-              class="text-ui-2xs text-muted-foreground hover:text-muted-foreground transition-colors text-center"
+              class="text-ui-2xs text-muted-foreground hover:text-foreground transition-colors text-center"
             >Cancel</button>
           {:else}
             <button
@@ -174,7 +174,7 @@
               onclick={() => (showActivate = true)}
               class= "field-surface flex h-8 w-full items-center justify-center gap-1.5 bg-muted/30 text-ui-2xs font-medium text-foreground/70 transition-colors hover:bg-muted/60 hover:text-foreground"
             >
-              <KeyRound class="size-3" />
+              <KeyRound class="size-3 shrink-0" />
               Enter license key
             </button>
           {/if}
@@ -187,7 +187,7 @@
       <button
         type="button"
         onclick={() => { open = false; onopenreport() }}
-        class="text-ui-3xs text-muted-foreground transition-colors hover:text-muted-foreground"
+        class="text-ui-3xs text-muted-foreground transition-colors hover:text-foreground"
       >
         Report an issue
       </button>
@@ -209,7 +209,7 @@
           rel="noopener noreferrer"
           class="inline-flex items-center gap-1 text-ui-3xs text-muted-foreground transition-colors hover:text-foreground"
         >
-          <ExternalLink class="size-3" />
+          <ExternalLink class="size-3 shrink-0" />
           Website
         </a>
       </div>

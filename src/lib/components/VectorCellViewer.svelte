@@ -111,7 +111,7 @@
             type="button"
             onclick={() => (tab = /** @type {'chart'|'values'|'raw'} */ (id))}
             class={cn(
-              'inline-flex h-6 items-center rounded px-2 text-ui-2xs transition-colors',
+              'inline-flex h-6 items-center rounded-md px-2 text-ui-2xs transition-colors',
               tab === id ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
             )}
           >{label}</button>
@@ -122,7 +122,7 @@
         class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none"
         aria-label="Close"
       >
-        <Icon name="x" class="size-3.5" />
+        <Icon name="x" class="size-3.5 shrink-0" />
       </Dialog.Close>
     </div>
 
@@ -207,7 +207,7 @@
           <div class="mt-3 grid grid-cols-[repeat(auto-fit,minmax(96px,1fr))] gap-2">
             {#each stats as s (s.label)}
               <div class="rounded-md border border-border/40 bg-muted/10 px-2.5 py-1.5">
-                <p class="text-ui-3xs uppercase tracking-wider text-muted-foreground">{s.label}</p>
+                <p class="text-ui-3xs uppercase tracking-[0.06em] text-muted-foreground">{s.label}</p>
                 <p class="mt-0.5 font-mono text-ui-sm tabular-nums text-foreground/90">{s.value}</p>
                 {#if s.hint}
                   <p class={cn(
@@ -272,7 +272,7 @@
           onclick={() => { onsave(null); open = false }}>Set NULL</Button>
       {/if}
       <Button variant="ghost" size="sm" class="h-7 gap-1.5 px-2 text-ui-xs text-muted-foreground hover:text-foreground" onclick={copyRaw}>
-        <Icon name="copy" class="size-3.5" />
+        <Icon name="copy" class="size-3.5 shrink-0" />
         Copy
       </Button>
       <span class="ml-auto font-mono text-ui-3xs text-muted-foreground">

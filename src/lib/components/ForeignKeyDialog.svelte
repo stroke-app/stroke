@@ -125,7 +125,7 @@
       <!-- Header -->
       <div class="flex items-center gap-3 border-b border-border/25 px-5 py-3.5">
         <div class="flex size-7 shrink-0 items-center justify-center rounded-lg bg-muted/60">
-          <Link class="size-3.5 text-muted-foreground" />
+          <Link class="size-3.5 shrink-0 text-muted-foreground" />
         </div>
         <div class="min-w-0 flex-1">
           <Dialog.Title class="text-ui-sm font-semibold leading-none text-foreground">
@@ -135,7 +135,7 @@
             {table}.<span class="text-foreground/60">{column}</span>
           </p>
         </div>
-        <Dialog.Close class="ml-2 inline-flex size-6 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted/50 hover:text-muted-foreground focus-visible:outline-none" />
+        <Dialog.Close class="ml-2 inline-flex size-6 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:outline-none" />
       </div>
 
       <!-- Body -->
@@ -161,7 +161,7 @@
           <div>
             <label for="fk-ref-table" class={lbl}>Referenced table</label>
             <div class="relative">
-              <FieldSelect
+              <FieldSelect mono
                 id="fk-ref-table"
                 class="w-full text-ui-xs"
                 bind:value={refTable}
@@ -202,20 +202,20 @@
       <div class="flex items-center gap-2 border-t border-border/25 px-5 py-3">
         {#if constraintName}
           <button type="button" disabled={deleting || saving}
-            class="mr-auto inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 text-ui-xs text-destructive transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-40"
+            class="mr-auto inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-3 text-ui-xs text-destructive transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-40"
             onclick={() => (dropConfirmOpen = true)}>
-            {#if deleting}<Loader class="size-3 animate-spin" />{/if}
+            {#if deleting}<Loader class="size-3 shrink-0 animate-spin" />{/if}
             Remove FK
           </button>
         {/if}
         <div class="ml-auto flex items-center gap-2">
           <button type="button"
-            class="inline-flex h-8 items-center whitespace-nowrap rounded-lg px-3.5 text-ui-sm text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
+            class="inline-flex h-8 items-center whitespace-nowrap rounded-md px-3.5 text-ui-sm text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
             onclick={() => (open = false)}>Cancel</button>
           <button type="button" disabled={!isValid || saving || deleting}
             class="inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg bg-foreground px-4 text-ui-sm font-medium text-background transition-opacity hover:opacity-85 disabled:opacity-40"
             onclick={handleSave}>
-            {#if saving}<Loader class="size-3 animate-spin" />{/if}
+            {#if saving}<Loader class="size-3 shrink-0 animate-spin" />{/if}
             {constraintName ? 'Update FK' : 'Add FK'}
           </button>
         </div>

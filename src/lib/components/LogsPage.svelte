@@ -11,6 +11,7 @@
   import Unplug from "@lucide/svelte/icons/unplug";
   import Database from "@lucide/svelte/icons/database";
   import Search from "@lucide/svelte/icons/search";
+  import Bot from "@lucide/svelte/icons/bot";
   import X from "@lucide/svelte/icons/x";
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
   import CheckCircle2 from "@lucide/svelte/icons/check-circle-2";
@@ -46,6 +47,7 @@
     { id: "row_delete", label: "Deletes" },
     { id: "row_insert", label: "Inserts" },
     { id: "connect", label: "Connections" },
+    { id: "mcp", label: "MCP" },
     { id: "error", label: "Errors" },
   ];
 
@@ -58,6 +60,7 @@
     row_delete: "Delete",
     row_insert: "Insert",
     sql_exec: "SQL",
+    mcp: "MCP",
     export: "Export",
     schema_change: "Schema",
     filter: "Filter",
@@ -104,6 +107,7 @@
     if (e.type === "row_delete") return Trash;
     if (e.type === "row_insert") return Plus;
     if (e.type === "sql_exec") return Terminal;
+    if (e.type === "mcp") return Bot;
     if (e.type === "export") return FileDown;
     if (e.type === "schema_change") return Database;
     return Terminal;
@@ -155,7 +159,7 @@
     class="studio-chrome flex h-9 shrink-0 items-center gap-2 border-b border-border bg-panel px-3"
   >
     <ScrollText class="size-3.5 shrink-0 text-muted-foreground" />
-    <span class="font-mono text-ui-sm font-medium">Activity Log</span>
+    <span class="font-mono text-ui-sm font-medium">Activity log</span>
     {#if entries.length > 0}
       <span
         class="rounded-full bg-muted px-2 py-px font-mono text-ui-2xs text-muted-foreground"
@@ -176,7 +180,7 @@
       onclick={() => clearActivityLog()}
       disabled={entries.length === 0}
     >
-      <Trash2 class="size-3.5" />
+      <Trash2 class="size-3.5 shrink-0" />
     </button>
   </div>
 
@@ -199,10 +203,10 @@
       {#if search}
         <button
           type="button"
-          class="absolute top-1/2 right-1.5 -translate-y-1/2 inline-flex size-4 items-center justify-center rounded text-muted-foreground hover:text-foreground"
+          class="absolute top-1/2 right-1.5 -translate-y-1/2 inline-flex size-4 items-center justify-center rounded-md text-muted-foreground hover:text-foreground"
           onclick={() => {
             search = "";
-          }}><X class="size-3" /></button
+          }}><X class="size-3 shrink-0" /></button
         >
       {/if}
     </div>
@@ -214,7 +218,7 @@
         <button
           type="button"
           class={cn(
-            "inline-flex h-6 items-center rounded-[5px] px-2 font-mono text-ui-2xs transition-all",
+            "inline-flex h-6 items-center rounded-md px-2 font-mono text-ui-2xs transition-colors",
             typeFilter === f.id
               ? "bg-card text-foreground shadow-sm ring-1 ring-border/50"
               : "text-muted-foreground hover:text-foreground",
@@ -233,7 +237,7 @@
       <div
         class="flex h-full flex-col items-center justify-center gap-3 text-center"
       >
-        <ScrollText class="size-10 text-muted-foreground" />
+        <ScrollText class="size-10 shrink-0 text-muted-foreground" />
         <p class="font-mono text-ui text-muted-foreground">
           {entries.length === 0 ? "No activity yet" : "No entries match"}
         </p>
@@ -281,7 +285,7 @@
                 chipClass(entry),
               )}
             >
-              <Icon class="size-3" />
+              <Icon class="size-3 shrink-0" />
               {TYPE_LABEL[entry.type] ?? entry.type}
             </span>
 

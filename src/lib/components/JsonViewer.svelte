@@ -7,7 +7,7 @@
   import JsonWrapToggle from './JsonWrapToggle.svelte'
   import JsonPathSuggest from './JsonPathSuggest.svelte'
   import { appJsonWordWrap } from '$lib/stores/settings.js'
-  import { cn } from '$lib/utils.js'
+  import { cn, plural } from '$lib/utils.js'
   import { evalJsonPath, getCompletionItems, applyCompletion, describeResult } from '$lib/jsonpath.js'
 
   let {
@@ -156,9 +156,9 @@
         <span
           class="select-none px-2 font-mono text-ui-2xs text-warning"
           title="The JSON view is capped to keep it responsive. Export to get every row."
-        >{shownRows.toLocaleString()} of {rowCount.toLocaleString()} rows</span>
+        >{shownRows.toLocaleString()} of {rowCount.toLocaleString()} {plural(rowCount, "row")}</span>
       {:else if rowCount > 0}
-        <span class="select-none px-2 font-mono text-ui-2xs text-muted-foreground">{rowCount} rows</span>
+        <span class="select-none px-2 font-mono text-ui-2xs text-muted-foreground">{rowCount} {plural(rowCount, "row")}</span>
         <div class="h-4 w-px bg-border/60"></div>
       {/if}
 
@@ -183,7 +183,7 @@
         <button
           type="button"
           title="Download JSON"
-          class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           onclick={ondownload}
         >
           <Download class="size-3 shrink-0" />

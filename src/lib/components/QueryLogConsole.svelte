@@ -67,6 +67,14 @@
     try { return new Date(ts).toLocaleTimeString('en-US', { hour12: true, hour: 'numeric', minute: '2-digit', second: '2-digit' }) }
     catch { return '' }
   }
+
+  /** 0.42 ms · 304 ms · 1.86 s: whole milliseconds unless that rounds to zero. */
+  /** @param {number} ms */
+  function fmtDuration(ms) {
+    if (ms >= 1000) return `${(ms / 1000).toFixed(2)} s`
+    if (ms >= 10) return `${Math.round(ms)} ms`
+    return `${ms.toFixed(ms < 1 ? 2 : 1)} ms`
+  }
 </script>
 
 <div class="relative flex shrink-0 flex-col border-t border-border bg-panel" style="height:{height}px">
@@ -84,17 +92,28 @@
   <div class="flex h-9 shrink-0 items-center gap-2 border-b border-border/50 px-3">
     <Terminal class="size-3.5 shrink-0 text-muted-foreground" />
     <span class="text-ui-xs font-medium text-foreground/80">Query log</span>
-      <div class= "field-surface ml-1 inline-flex h-6 items-center bg-muted/30 p-px">
-      <button type="button" class={cn('h-full rounded px-2 text-ui-2xs font-medium transition-colors', scope === 'all' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')} onclick={() => (scope = 'all')}>All</button>
-      <button type="button" disabled={!activeTable} class={cn('h-full rounded px-2 text-ui-2xs font-medium transition-colors disabled:opacity-40', scope === 'table' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')} onclick={() => (scope = 'table')}>This table</button>
+    <div class="ml-1 flex h-7 items-center gap-0.5 rounded-[var(--radius-field)] bg-muted/40 p-0.5" role="radiogroup" aria-label="Which queries to show">
+      {#each [{ id: 'all', label: 'All' }, { id: 'table', label: 'This table' }] as opt (opt.id)}
+        <button
+          type="button"
+          role="radio"
+          aria-checked={scope === opt.id}
+          disabled={opt.id === 'table' && !activeTable}
+          class={cn(
+            'inline-flex h-6 items-center rounded-[calc(var(--radius-field)-2px)] px-2.5 text-ui-2xs font-medium transition-colors disabled:pointer-events-none disabled:opacity-40',
+            scope === opt.id ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+          )}
+          onclick={() => (scope = opt.id === 'table' ? 'table' : 'all')}
+        >{opt.label}</button>
+      {/each}
     </div>
-    <span class="text-ui-2xs text-muted-foreground">{visible.length} {visible.length === 1 ? 'query' : 'queries'}</span>
+    <span class="text-ui-2xs tabular-nums text-muted-foreground">{visible.length} {visible.length === 1 ? 'query' : 'queries'}</span>
     <div class="ml-auto flex items-center gap-0.5">
-      <button type="button" class="inline-flex h-6 items-center gap-1 rounded-md px-2 text-ui-2xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground" onclick={() => clearQueryLog()} title="Clear the query log">
-        <Trash2 class="size-3" /> Clear
+      <button type="button" class="inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-ui-2xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground" onclick={() => clearQueryLog()} title="Clear the query log">
+        <Trash2 class="size-3.5 shrink-0" /> Clear
       </button>
-      <button type="button" class="flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground" onclick={onclose} aria-label="Close query log">
-        <X class="size-3.5" />
+      <button type="button" class="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" onclick={onclose} aria-label="Close query log">
+        <X class="size-3.5 shrink-0" />
       </button>
     </div>
   </div>
@@ -103,7 +122,7 @@
   <div class="app-scroll min-h-0 flex-1 overflow-y-auto px-3 py-2">
     {#if visible.length === 0}
       <div class="flex h-full flex-col items-center justify-center gap-1.5 text-center">
-        <Terminal class="size-4 text-muted-foreground" />
+        <Terminal class="size-4 shrink-0 text-muted-foreground" />
         <p class="text-ui-xs text-muted-foreground">No queries yet, browse a table or run SQL.</p>
       </div>
     {:else}
@@ -111,8 +130,8 @@
         <div class="border-b border-border/15 py-2 last:border-b-0">
           <div class="mb-1 flex items-center gap-2 font-mono text-ui-3xs text-muted-foreground">
             <span>[{fmtTime(e.timestamp)}]</span>
-            {#if e.durationMs != null}<span class="tabular-nums">· {e.durationMs.toFixed(2)} ms</span>{/if}
-            {#if e.source}<span class="rounded bg-muted/40 px-1 text-ui-3xs uppercase tracking-wide text-muted-foreground">{e.source}</span>{/if}
+            {#if e.durationMs != null}<span class="tabular-nums">· {fmtDuration(e.durationMs)}</span>{/if}
+            {#if e.source}<span class="inline-flex h-4 items-center rounded-md bg-muted/50 px-1.5 text-ui-3xs font-medium uppercase tracking-[0.06em] text-muted-foreground">{e.source}</span>{/if}
             {#if !e.success}<span class="text-destructive">· failed</span>{/if}
           </div>
           <pre class="ql-sql whitespace-pre-wrap break-words font-mono text-ui-xs leading-relaxed text-foreground/85">{@html highlight(e.sql)}</pre>

@@ -4,7 +4,7 @@
   const nameWidths = ['72%', '58%', '85%', '64%', '78%', '52%', '90%', '66%', '74%', '48%', '82%', '61%']
 </script>
 
-<ul class="flex w-full min-w-full flex-col gap-0.5 px-1.5 pb-2" role="status" aria-label="Loading tables">
+<ul class="loading-reveal flex w-full min-w-full flex-col gap-0.5 px-1.5 pb-2" role="status" aria-label="Loading tables">
   {#each Array(rows) as _, i}
     <li class="flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5">
       <div class="skeleton size-3 shrink-0 rounded-md" aria-hidden="true"></div>

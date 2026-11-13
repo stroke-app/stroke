@@ -1,5 +1,5 @@
 /**
- * @typedef {'connect' | 'disconnect' | 'table_open' | 'row_fetch' | 'row_save' | 'row_delete' | 'row_insert' | 'sql_exec' | 'export' | 'schema_change' | 'filter' | 'error'} ActivityType
+ * @typedef {'connect' | 'disconnect' | 'table_open' | 'row_fetch' | 'row_save' | 'row_delete' | 'row_insert' | 'sql_exec' | 'export' | 'schema_change' | 'filter' | 'error' | 'mcp'} ActivityType
  */
 
 /**
@@ -69,4 +69,32 @@ export function subscribeActivityLog(fn) {
   _listeners = [..._listeners, fn]
   fn(_log.slice())
   return () => { _listeners = _listeners.filter((l) => l !== fn) }
+}
+
+
+let _mcpListening = false
+/**
+ * Record every MCP tool call (the server's `mcp-activity` event) in the log:
+ * who called, which tool, the SQL, how long, and whether it ran, failed or was
+ * refused by the access gate. Call once at startup.
+ */
+export async function listenMcpActivity() {
+  if (_mcpListening) return
+  _mcpListening = true
+  try {
+    const { listen } = await import('@tauri-apps/api/event')
+    await listen('mcp-activity', (e) => {
+      const a = /** @type {{ client: string, tool: string, detail: string, ok: boolean, refused: boolean, error: string | null, ms: number }} */ (e.payload)
+      recordActivity({
+        type: 'mcp',
+        title: `${a.client} · ${a.tool}${a.refused ? ' (refused)' : ''}`,
+        detail: a.detail || undefined,
+        success: a.ok,
+        durationMs: a.ms,
+        error: a.error ?? undefined,
+      })
+    })
+  } catch {
+    /* outside Tauri */
+  }
 }

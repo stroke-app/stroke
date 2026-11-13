@@ -1,4 +1,6 @@
 <script>
+  import Check from '@lucide/svelte/icons/check'
+  import Copy from '@lucide/svelte/icons/copy'
   import X from '@lucide/svelte/icons/x'
   import ExternalLink from '@lucide/svelte/icons/external-link'
   import ZoomIn from '@lucide/svelte/icons/zoom-in'
@@ -148,6 +150,17 @@
       toast.error(`Could not open URL: ${String(err)}`)
     }
   }
+  const lbBtn = 'inline-flex size-8 shrink-0 items-center justify-center rounded-full text-white/80 hover:bg-white/10 hover:text-white disabled:pointer-events-none disabled:opacity-35'
+  let copied = $state(false)
+  /** The file's own name, for the bar. */
+  const fileName = $derived.by(() => {
+    const raw = (url ?? '').split('/').pop()?.split('?')[0] || 'Image'
+    try { return decodeURIComponent(raw) } catch { return raw }
+  })
+  /** @type {'loading' | 'ready' | 'error'} */
+  let imgState = $state('loading')
+  let imgKey = $state(0)
+  $effect(() => { void url; imgState = 'loading'; imgNatural = { w: 0, h: 0 } })
 </script>
 
 <!-- Global fallback so ESC works even if backdrop loses focus -->
@@ -166,7 +179,7 @@
     role="dialog"
     aria-modal="true"
     aria-label="Media viewer"
-    class="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/90 outline-none"
+    class="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/85 outline-none"
     data-zoom-surface
     onclick={onclose}
     onkeydown={handleKey}
@@ -175,53 +188,34 @@
   >
     <!-- Top toolbar -->
     <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
+    <!-- One floating bar, Quick Look style: what you are looking at, then the
+         zoom, then the actions. It replaces a row of separate black circles. -->
     <div
       role="presentation"
-      class="absolute top-4 right-4 z-10 flex items-center gap-2"
+      class="absolute bottom-6 left-1/2 z-10 flex h-10 max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-0.5 rounded-full border border-white/10 bg-neutral-900/90 px-1.5 text-white shadow-lg"
       onclick={(e) => e.stopPropagation()}
     >
+      <span class="min-w-0 max-w-[24ch] truncate px-2.5 text-ui-xs text-white/80" title={fileName}>{fileName}</span>
+      {#if imgNatural.w > 0}<span class="shrink-0 pr-1 font-mono text-ui-2xs text-white/45">{imgNatural.w} × {imgNatural.h}</span>{/if}
+      <span class="mx-1 h-5 w-px shrink-0 bg-white/15"></span>
       {#if type === 'image'}
-        <button
-          type="button"
-          class="inline-flex size-8 items-center justify-center rounded-full bg-black/50 text-white transition-colors hover:bg-black/70 disabled:opacity-40"
-          title="Zoom out (−)"
-          onclick={() => step(1 / 1.25)}
-          disabled={zoom <= ZOOM_MIN}
-        >
-          <ZoomOut class="size-4" />
+        <button type="button" class={lbBtn} title="Zoom out (−)" aria-label="Zoom out" onclick={() => step(1 / 1.25)} disabled={zoom <= ZOOM_MIN}>
+          <ZoomOut class="size-4 shrink-0" />
         </button>
-        <button
-          type="button"
-          class="min-w-[3rem] rounded-full text-center font-mono text-ui-xs text-white/70 transition-colors hover:text-white"
-          title="Reset to 100% (0)"
-          onclick={reset}
-        >{Math.round(zoom * 100)}%</button>
-        <button
-          type="button"
-          class="inline-flex size-8 items-center justify-center rounded-full bg-black/50 text-white transition-colors hover:bg-black/70 disabled:opacity-40"
-          title="Zoom in (+)"
-          onclick={() => step(1.25)}
-          disabled={zoom >= ZOOM_MAX}
-        >
-          <ZoomIn class="size-4" />
+        <button type="button" class="h-8 min-w-[3.25rem] rounded-full px-2 text-center font-mono text-ui-xs tabular-nums text-white/75 hover:bg-white/10 hover:text-white" title="Fit to window (0)" onclick={reset}>{Math.round(zoom * 100)}%</button>
+        <button type="button" class={lbBtn} title="Zoom in (+)" aria-label="Zoom in" onclick={() => step(1.25)} disabled={zoom >= ZOOM_MAX}>
+          <ZoomIn class="size-4 shrink-0" />
         </button>
-        <span class="h-5 w-px bg-white/20"></span>
+        <span class="mx-1 h-5 w-px shrink-0 bg-white/15"></span>
       {/if}
-      <button
-        type="button"
-        class="inline-flex size-8 items-center justify-center rounded-full bg-black/50 text-white transition-colors hover:bg-black/70"
-        title="Open in browser"
-        onclick={(e) => { e.stopPropagation(); void openExternal() }}
-      >
-        <ExternalLink class="size-4" />
+      <button type="button" class={lbBtn} title="Copy link" aria-label="Copy link" onclick={(e) => { e.stopPropagation(); void navigator.clipboard?.writeText(url); copied = true; setTimeout(() => (copied = false), 1200) }}>
+        {#if copied}<Check class="size-4 shrink-0" />{:else}<Copy class="size-4 shrink-0" />{/if}
       </button>
-      <button
-        type="button"
-        class="inline-flex size-8 items-center justify-center rounded-full bg-black/50 text-white transition-colors hover:bg-black/70"
-        title="Close (Esc)"
-        onclick={(e) => { e.stopPropagation(); onclose() }}
-      >
-        <X class="size-4" />
+      <button type="button" class={lbBtn} title="Open in browser" aria-label="Open in browser" onclick={(e) => { e.stopPropagation(); void openExternal() }}>
+        <ExternalLink class="size-4 shrink-0" />
+      </button>
+      <button type="button" class={lbBtn} title="Close (Esc)" aria-label="Close" onclick={(e) => { e.stopPropagation(); onclose() }}>
+        <X class="size-4 shrink-0" />
       </button>
     </div>
 
@@ -243,18 +237,38 @@
              element does not grow its scroll area, so the old `overflow-auto`
              had nothing to scroll and everything past the edge was simply
              unreachable once you zoomed in. -->
+        <!-- Loading and failure are said, not left as a blank dark screen. -->
+        {#if imgState === 'loading'}
+          <div class="loading-reveal pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-3 text-white/70">
+            <span class="size-6 animate-spin rounded-full border-2 border-white/20 border-t-white/80" aria-hidden="true"></span>
+            <span class="text-ui-xs">Loading image…</span>
+          </div>
+        {:else if imgState === 'error'}
+          <div class="absolute inset-0 flex flex-col items-center justify-center gap-3 text-center text-white" role="alert">
+            <p class="text-ui-sm">Couldn't load this image</p>
+            <p class="max-w-md text-ui-xs text-white/50">The link may be private, expired, or not an image.</p>
+            <div class="mt-1 flex items-center gap-2">
+              <button type="button" class="h-8 rounded-md bg-white/10 px-3 text-ui-xs hover:bg-white/20" onclick={(e) => { e.stopPropagation(); imgState = 'loading'; imgKey++ }}>Retry</button>
+              <button type="button" class="h-8 rounded-md px-3 text-ui-xs text-white/70 hover:text-white" onclick={(e) => { e.stopPropagation(); void openExternal() }}>Open in browser</button>
+            </div>
+          </div>
+        {/if}
+        {#key imgKey}
         <img
           src={url}
           alt=""
-          class={cn('rounded shadow-2xl select-none', animate && 'transition-transform duration-150')}
+          onerror={() => (imgState = 'error')}
+          class={cn('rounded-lg shadow-2xl select-none', animate && 'transition-transform duration-150', imgState !== 'ready' && 'opacity-0')}
           style="transform: translate3d({pan.x}px, {pan.y}px, 0) scale({zoom}); transform-origin: center center; max-width: 90vw; max-height: 85vh; object-fit: contain"
           draggable="false"
           ondblclick={(e) => { animate = true; if (zoom === 1) zoomTo(2, e.clientX, e.clientY); else reset() }}
           onload={(e) => {
             const img = /** @type {HTMLImageElement} */ (e.currentTarget)
             imgNatural = { w: img.naturalWidth, h: img.naturalHeight }
+            imgState = 'ready'
           }}
         />
+        {/key}
       {:else if type === 'pdf'}
         <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
         <div
@@ -278,7 +292,7 @@
             class="inline-flex h-9 items-center gap-2 rounded-lg bg-white/15 px-5 text-ui-sm font-medium text-white transition-colors hover:bg-white/25"
             onclick={() => void openExternal()}
           >
-            <ExternalLink class="size-4" />
+            <ExternalLink class="size-4 shrink-0" />
             Open in system PDF viewer
           </button>
           <p class="text-ui-xs text-white/40">PDFs open in your default application</p>
@@ -288,16 +302,6 @@
 
     <!-- Bottom info bar -->
     <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
-    <div
-      role="presentation"
-      class="absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-2 rounded-full bg-black/50 px-3 py-1.5 backdrop-blur-sm"
-      onclick={(e) => e.stopPropagation()}
-    >
-      {#if imgNatural.w > 0}
-        <span class="font-mono text-ui-3xs text-white/50">{imgNatural.w} × {imgNatural.h}</span>
-        <span class="h-3 w-px bg-white/20"></span>
-      {/if}
-      <p class="max-w-[55ch] truncate font-mono text-ui-3xs text-white/60">{url}</p>
-    </div>
+    
   </div>
 {/if}

@@ -1,5 +1,8 @@
 <script>
+  import { Button } from '$lib/components/ui/button/index.js'
   import GitCompare from '@lucide/svelte/icons/git-compare'
+  import { getAppScale } from '$lib/app-zoom.js'
+  import { appZoom } from '$lib/stores/settings.js'
   import RefreshCw from '@lucide/svelte/icons/refresh-cw'
   import Loader2 from '@lucide/svelte/icons/loader-2'
   import ArrowUpDown from '@lucide/svelte/icons/arrow-up-down'
@@ -77,10 +80,14 @@
   /** @param {string} id @param {MouseEvent} e */
   function openDd(id, e) {
     const rect = /** @type {HTMLElement} */ (e.currentTarget).getBoundingClientRect()
+    // The menu is sized in rem (w-56), so its footprint grows with the zoom;
+    // the flip and edge clamps have to grow with it or it runs off-screen.
+    const scale = getAppScale()
+    const ddHeight = DD_HEIGHT * scale
     const spaceBelow = window.innerHeight - rect.bottom
-    ddFlipUp = spaceBelow < DD_HEIGHT && rect.top > DD_HEIGHT
+    ddFlipUp = spaceBelow < ddHeight && rect.top > ddHeight
     ddTop = ddFlipUp ? rect.top - 4 : rect.bottom + 4
-    ddLeft = Math.min(rect.left, window.innerWidth - 248)
+    ddLeft = Math.min(rect.left, window.innerWidth - 248 * scale)
     openDropdown = id
     dropdownSearch = ''
   }
@@ -118,6 +125,9 @@
 
   // ── Virtual scroll ────────────────────────────────────────────────────────────
   const ROW_HEIGHT = 36
+  // The rows' text and padding are rem, so the row grows with the app zoom; the
+  // virtual window has to use the same height or it drifts off the rows.
+  const rowHeight = $derived(Math.round(ROW_HEIGHT * $appZoom))
   const BUFFER = 10
   let scrollTop = $state(0)
   let clientHeight = $state(600)
@@ -173,10 +183,10 @@
     })
   })
 
-  const vStart = $derived(Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - BUFFER))
-  const vEnd = $derived(Math.min(displayRows.length, Math.ceil((scrollTop + clientHeight) / ROW_HEIGHT) + BUFFER))
-  const topPad = $derived(vStart * ROW_HEIGHT)
-  const bottomPad = $derived(Math.max(0, (displayRows.length - vEnd) * ROW_HEIGHT))
+  const vStart = $derived(Math.max(0, Math.floor(scrollTop / rowHeight) - BUFFER))
+  const vEnd = $derived(Math.min(displayRows.length, Math.ceil((scrollTop + clientHeight) / rowHeight) + BUFFER))
+  const topPad = $derived(vStart * rowHeight)
+  const bottomPad = $derived(Math.max(0, (displayRows.length - vEnd) * rowHeight))
 
   // ── Helpers ───────────────────────────────────────────────────────────────────
   const connById = (/** @type {string} */ id) => connections.find((c) => c.id === id) ?? null
@@ -476,13 +486,13 @@
           : value
             ? 'border-border/40 bg-muted/25 text-foreground/90 hover:bg-muted/45'
             : options.length
-              ? 'border-dashed border-border/40 bg-transparent text-muted-foreground hover:border-border/60 hover:text-muted-foreground'
+              ? 'border-dashed border-border/40 bg-transparent text-muted-foreground hover:border-border/60 hover:text-foreground'
               : 'cursor-default border-border/20 bg-transparent text-muted-foreground pointer-events-none',
         isOpen && 'border-border/70 bg-muted/50 text-foreground',
       )}
     >
       {#if loading}
-        <Loader2 class="size-3 animate-spin text-muted-foreground" />
+        <Loader2 class="size-3 shrink-0 animate-spin text-muted-foreground" />
         <span class="text-muted-foreground">{placeholder}</span>
       {:else}
         <span class={cn('max-w-[140px] truncate', value && 'font-medium')}>{value || placeholder}</span>
@@ -502,7 +512,7 @@
           <Search class="size-3 shrink-0 text-muted-foreground" />
           <input use:focusNode type="text" bind:value={dropdownSearch} placeholder="Search…"
             class="no-focus-ring flex-1 bg-transparent text-ui-xs outline-none placeholder:text-muted-foreground" />
-          {#if dropdownSearch}<button onclick={() => { dropdownSearch = '' }} class="text-muted-foreground hover:text-foreground"><X class="size-3" /></button>{/if}
+          {#if dropdownSearch}<button onclick={() => { dropdownSearch = '' }} class="text-muted-foreground hover:text-foreground"><X class="size-3 shrink-0" /></button>{/if}
         </div>
         <div class="max-h-52 overflow-y-auto py-1">
           {#if filtered.length === 0}
@@ -573,9 +583,9 @@
 {#snippet ModeToggle({ mode, onset })}
   <div class="flex shrink-0 items-center rounded-md border border-border/40 bg-muted/15 p-0.5 text-ui-2xs">
     <button onclick={() => onset('table')}
-      class={cn('rounded px-2 py-0.5 font-medium transition-colors', mode === 'table' ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-muted-foreground')}>Table</button>
+      class={cn('rounded px-2 py-0.5 font-medium transition-colors', mode === 'table' ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground')}>Table</button>
     <button onclick={() => onset('sql')}
-      class={cn('rounded px-2 py-0.5 font-medium transition-colors', mode === 'sql' ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-muted-foreground')}>SQL</button>
+      class={cn('rounded px-2 py-0.5 font-medium transition-colors', mode === 'sql' ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground')}>SQL</button>
   </div>
 {/snippet}
 
@@ -592,7 +602,7 @@
         <div class="flex items-center gap-2.5 px-5 py-2.5">
           <span class="flex w-[74px] shrink-0 items-center gap-1.5">
             <span class="size-1.5 shrink-0 rounded-full bg-info"></span>
-            <span class="text-ui-3xs font-semibold uppercase tracking-wider text-info">Source</span>
+            <span class="text-ui-3xs font-semibold uppercase tracking-[0.06em] text-info">Source</span>
           </span>
           {@render ConnSelect({ id: 'L.conn', value: L.connId, onchange: (v) => { L = { ...L, connId: v }; onConnChange('L') } })}
           {#if L.mode === 'table'}
@@ -618,9 +628,9 @@
             onclick={swapSources}
             title="Swap source and target"
             aria-label="Swap source and target"
-            class="mx-2 flex size-6 items-center justify-center rounded-md border border-border/40 bg-muted/20 text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+            class="mx-2 flex size-6 items-center justify-center rounded-md border border-border/40 bg-muted/20 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           >
-            <ArrowUpDown class="size-3" />
+            <ArrowUpDown class="size-3 shrink-0" />
           </button>
           <div class="h-px flex-1 bg-border/10"></div>
         </div>
@@ -629,7 +639,7 @@
         <div class="flex items-center gap-2.5 px-5 py-2.5">
           <span class="flex w-[74px] shrink-0 items-center gap-1.5">
             <span class="size-1.5 shrink-0 rounded-full bg-success"></span>
-            <span class="text-ui-3xs font-semibold uppercase tracking-wider text-success">Target</span>
+            <span class="text-ui-3xs font-semibold uppercase tracking-[0.06em] text-success">Target</span>
           </span>
           {@render ConnSelect({ id: 'R.conn', value: R.connId, onchange: (v) => { R = { ...R, connId: v }; onConnChange('R') } })}
           {#if R.mode === 'table'}
@@ -659,17 +669,17 @@
 
     <!-- Key cols + compare -->
     <div class="flex items-center gap-2.5 border-t border-border/15 px-5 py-2.5">
-      <span class="w-[74px] shrink-0 text-ui-3xs font-semibold uppercase tracking-wider text-muted-foreground" title="Columns used to match rows between source and target">Key cols</span>
+      <span class="w-[74px] shrink-0 text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground" title="Columns used to match rows between source and target">Key cols</span>
       <div class="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
         {#each [...selectedKeyCols] as col}
           <button onclick={() => toggleKeyCol(col)}
             class="flex items-center gap-1 rounded-full bg-primary/10 px-2.5 py-0.5 text-ui-2xs font-medium text-primary transition-colors hover:bg-primary/20"
-          >{col}<X class="size-2.5" /></button>
+          >{col}<X class="size-3 shrink-0" /></button>
         {/each}
         {#each keyColSuggestions.filter((c) => !selectedKeyCols.has(c)) as col}
           <button onclick={() => toggleKeyCol(col)}
             class="flex items-center gap-1 rounded-full border border-dashed border-border/40 px-2.5 py-0.5 text-ui-2xs text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary"
-          ><Plus class="size-3" />{col}</button>
+          ><Plus class="size-3 shrink-0" />{col}</button>
         {/each}
         {#if !keyColSuggestions.length && !selectedKeyCols.size}
           <span class="text-ui-2xs italic text-muted-foreground">auto, uses first column</span>
@@ -689,12 +699,12 @@
         <RefreshCw class={cn('size-3.5', refreshing && 'animate-spin')} />
         Refresh
       </button>
-      <button onclick={compare} disabled={comparing}
-        class="flex h-7 shrink-0 items-center gap-1.5 rounded-md bg-primary px-4 text-ui-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:pointer-events-none disabled:opacity-50"
-      >
-        {#if comparing}<Loader2 class="size-3.5 animate-spin" />{:else}<GitCompare class="size-3.5" />{/if}
+      <Button onclick={compare} disabled={comparing}
+        class="shrink-0" size="sm"
+>
+        {#if comparing}<Loader2 class="size-3.5 shrink-0 animate-spin" />{:else}<GitCompare class="size-3.5 shrink-0" />{/if}
         Compare
-      </button>
+      </Button>
     </div>
 
     {#if error}
@@ -759,7 +769,7 @@
           {#if searchQuery}
             <button onclick={() => { searchQuery = '' }} aria-label="Clear search"
               class="shrink-0 text-muted-foreground transition-colors hover:text-foreground">
-              <X class="size-3" />
+              <X class="size-3 shrink-0" />
             </button>
           {/if}
         </div>
@@ -832,8 +842,8 @@
               isAdded   ? 'bg-success/35' :
               isRemoved ? 'bg-destructive/35' :
               isModified? 'bg-warning/25' : ''}
-            <tr class="{rowBg || 'hover:bg-foreground/[0.025]'} transition-colors" style="height:{ROW_HEIGHT}px">
-              <td class="relative select-none border-b border-border/8 px-2 text-center font-mono text-ui-3xs font-bold {statusColor}">
+            <tr class="{rowBg || 'hover:bg-foreground/[0.025]'} transition-colors" style="height:{rowHeight}px">
+              <td class="relative select-none border-b border-border/8 px-2 text-center font-mono text-ui-3xs font-semibold {statusColor}">
                 {#if accentColor}<span class="absolute inset-y-0 left-0 w-[2px] {accentColor}"></span>{/if}
                 {statusGlyph}
               </td>
@@ -880,13 +890,13 @@
     </div>
 
   {:else if comparing}
-    <div class="flex flex-1 items-center justify-center">
-      <Loader2 class="size-5 animate-spin text-muted-foreground" />
+    <div class="loading-reveal flex flex-1 items-center justify-center">
+      <Loader2 class="size-5 shrink-0 animate-spin text-muted-foreground" />
     </div>
   {:else}
     <div class="flex flex-1 flex-col items-center justify-center gap-4">
       <div class="flex size-14 items-center justify-center rounded-full border border-border/15 bg-muted/8">
-        <GitCompare class="size-6 opacity-20" />
+        <GitCompare class="size-6 shrink-0 opacity-20" />
       </div>
       <div class="text-center">
         <p class="text-ui-sm font-medium text-foreground/40">Compare any two data sources</p>

@@ -360,7 +360,7 @@
           role="tab"
           aria-selected={mode === "drizzle"}
           class={cn(
-            "inline-flex h-6 items-center rounded-[5px] px-2.5 font-mono text-ui-xs font-medium transition-all",
+            "inline-flex h-6 items-center rounded-md px-2.5 font-mono text-ui-xs font-medium transition-colors",
             mode === "drizzle"
               ? "bg-card text-foreground ring-1 ring-border/50"
               : "text-muted-foreground hover:text-foreground",
@@ -374,7 +374,7 @@
           role="tab"
           aria-selected={mode === "prisma"}
           class={cn(
-            "inline-flex h-6 items-center rounded-[5px] px-2.5 font-mono text-ui-xs font-medium transition-all",
+            "inline-flex h-6 items-center rounded-md px-2.5 font-mono text-ui-xs font-medium transition-colors",
             mode === "prisma"
               ? "bg-card text-foreground ring-1 ring-border/50"
               : "text-muted-foreground hover:text-foreground",
@@ -505,7 +505,7 @@
         </p>
         <button
           type="button"
-          class="inline-flex h-6 shrink-0 items-center gap-1 rounded px-1.5 text-ui-2xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+          class="inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-ui-2xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
           title="Copy error"
           onclick={handleCopyParseError}
         >
@@ -552,7 +552,7 @@
         )}
       />
       <span
-        class="font-mono text-ui-2xs font-medium tracking-wide text-muted-foreground uppercase"
+        class="font-mono text-ui-2xs font-medium tracking-[0.06em] text-muted-foreground uppercase"
         >Generated SQL</span
       >
       {#if generatedSql && !sqlPreviewOpen}
@@ -593,7 +593,7 @@
           <button
             type="button"
             onclick={() => (outputView = "json")}
-            class="pointer-events-auto inline-flex items-center gap-1.5 rounded-md border border-border/50 bg-background/85 px-2 py-1 font-mono text-ui-2xs text-muted-foreground elevate-2-rim backdrop-blur-sm transition-colors hover:text-foreground"
+            class="pointer-events-auto inline-flex items-center gap-1.5 rounded-md border border-border/50 bg-background px-2 py-1 font-mono text-ui-2xs text-muted-foreground elevate-2-rim transition-colors hover:text-foreground"
           >
             <Braces class="size-3 shrink-0" />
             JSON
@@ -617,7 +617,7 @@
             class="min-w-0 flex-1 whitespace-pre-wrap font-mono text-ui-xs leading-relaxed text-destructive">{error}</pre>
           <button
             type="button"
-            class="inline-flex h-6 shrink-0 items-center gap-1 rounded px-1.5 text-ui-2xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+            class="inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-ui-2xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
             title="Copy error"
             onclick={handleCopyError}
           >
@@ -636,8 +636,8 @@
       <div
         class="flex h-full flex-col items-center justify-center gap-2 text-center"
       >
-        <Play class="size-6 text-muted-foreground" />
-        <p class="font-mono text-ui-sm text-muted-foreground">
+        <Play class="size-6 shrink-0 text-muted-foreground" />
+        <p class="text-ui-sm text-muted-foreground">
           Run a query to see results
         </p>
         <p class="font-mono text-ui-xs text-muted-foreground">

@@ -177,7 +177,7 @@
     {#if isContainer}
       <button
         type="button"
-        class="mt-[3px] flex size-4 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+        class="hit-area mt-[3px] flex size-4 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         aria-label={expanded || forceOpen ? "Collapse" : "Expand"}
         aria-expanded={expanded || forceOpen}
         onclick={() => (expanded = !(expanded || forceOpen))}
@@ -243,20 +243,20 @@
         >
           <button
             type="button"
-            class="flex size-4.5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+            class="flex size-4.5 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
             title="Copy value"
             onclick={() => oncopy(value)}
           >
-            <Copy class="size-3" />
+            <Copy class="size-3 shrink-0" />
           </button>
           {#if openable}
             <button
               type="button"
-              class="flex size-4.5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+              class="flex size-4.5 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
               title="Open in JSON viewer"
               onclick={handleOpen}
             >
-              <Maximize2 class="size-3" />
+              <Maximize2 class="size-3 shrink-0" />
             </button>
           {/if}
         </span>

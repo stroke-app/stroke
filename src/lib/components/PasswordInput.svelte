@@ -37,6 +37,6 @@
     tabindex="-1"
     class="absolute right-2 top-1/2 -translate-y-1/2 rounded text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:text-foreground disabled:pointer-events-none disabled:opacity-40"
   >
-    <Icon name={revealed ? 'eye-off' : 'eye'} class="size-3.5" />
+    <Icon name={revealed ? 'eye-off' : 'eye'} class="size-3.5 shrink-0" />
   </button>
 </div>

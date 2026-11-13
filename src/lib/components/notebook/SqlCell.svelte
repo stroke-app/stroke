@@ -99,14 +99,14 @@
     class="flex h-7 shrink-0 items-center gap-2 px-4 transition-opacity"
   >
     <span
-      class="select-none rounded px-1.5 py-px text-ui-3xs font-semibold uppercase tracking-widest text-blue-500/60"
+      class="select-none rounded px-1.5 py-px text-ui-3xs font-semibold uppercase tracking-widest text-info"
     >
       [{cellIndex + 1}] sql
     </span>
     <span class="text-ui-3xs text-muted-foreground">⌘↵ run</span>
     {#if running}
       <span class="flex items-center gap-1 text-ui-3xs text-muted-foreground">
-        <Loader2 class="size-3 animate-spin" />running…
+        <Loader2 class="size-3 shrink-0 animate-spin" />running…
       </span>
     {/if}
     <div class="ml-auto flex items-center gap-1">
@@ -128,7 +128,7 @@
         class="rounded p-0.5 text-muted-foreground opacity-0 transition-opacity group-hover/sql:opacity-100 hover:bg-destructive/10 hover:text-destructive disabled:pointer-events-none disabled:opacity-0"
         title="Delete cell"
       >
-        <Trash2 class="size-3" />
+        <Trash2 class="size-3 shrink-0" />
       </button>
       <button
         onclick={onrun}
@@ -138,7 +138,7 @@
           'bg-primary/90 text-primary-foreground hover:bg-primary disabled:pointer-events-none disabled:opacity-40',
         )}
       >
-        <Play class="size-3" />Run
+        <Play class="size-3 shrink-0" />Run
       </button>
     </div>
   </div>
@@ -193,7 +193,7 @@
               <span class="text-muted-foreground">·</span>
               <span class="text-muted-foreground">{result.queryMs}ms</span>
             {:else if result?.message}
-              <span class="text-emerald-500/80">{result.message}</span>
+              <span class="text-success">{result.message}</span>
             {/if}
           {/if}
         </button>
@@ -204,7 +204,7 @@
             class="ml-auto flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
             title="Export CSV"
           >
-            <Download class="size-3" />
+            <Download class="size-3 shrink-0" />
             <span class="text-ui-3xs">CSV</span>
           </button>
         {/if}
@@ -221,7 +221,7 @@
           <div class="max-h-[360px] overflow-auto border-t border-border/20">
             <table class="w-full min-w-max border-collapse text-ui-xs">
               <thead class="sticky top-0 z-10">
-                <tr class="bg-background/95 backdrop-blur-sm">
+                <tr class="bg-background">
                   <th
                     class="w-8 border-b border-r border-border/30 px-3 py-1.5 text-right font-normal text-muted-foreground select-none"
                   >#</th>

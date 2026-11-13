@@ -14,8 +14,8 @@ export const CATEGORIES = /** @type {const} */ (['security', 'performance', 'sch
 /** Display metadata. Colours are semantic tokens, never raw hex. */
 export const SEVERITY_META = {
   error: { label: 'Errors', dot: 'bg-destructive', text: 'text-destructive', icon: 'circle-alert' },
-  warning: { label: 'Warnings', dot: 'bg-amber-500', text: 'text-amber-500', icon: 'triangle-alert' },
-  info: { label: 'Info', dot: 'bg-emerald-500', text: 'text-emerald-500', icon: 'info' },
+  warning: { label: 'Warnings', dot: 'bg-warning', text: 'text-warning', icon: 'triangle-alert' },
+  info: { label: 'Info', dot: 'bg-info', text: 'text-info', icon: 'info' },
 }
 
 export const CATEGORY_META = {

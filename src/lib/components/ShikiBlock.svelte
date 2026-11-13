@@ -150,13 +150,13 @@
     <button
       type="button"
       onclick={copyCode}
-      class="absolute right-2 top-2 z-10 inline-flex size-6 items-center justify-center rounded border border-border bg-background/80 text-muted-foreground opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100 hover:text-foreground"
+      class="absolute right-2 top-2 z-10 inline-flex size-6 items-center justify-center rounded-md border border-border bg-background text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:text-foreground"
       aria-label="Copy code"
     >
       {#if copied}
-        <Check class="size-3 text-green-500" />
+        <Check class="size-3 shrink-0 text-success" />
       {:else}
-        <Copy class="size-3" />
+        <Copy class="size-3 shrink-0" />
       {/if}
     </button>
   {/if}

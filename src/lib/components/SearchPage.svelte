@@ -256,10 +256,10 @@
           aria-keyshortcuts={SEARCH_OPTION_KEYS.matchCase}
           aria-pressed={matchCase}
           class={cn(
-            'flex size-6 shrink-0 items-center justify-center rounded text-ui-3xs font-mono transition-colors',
+            'flex size-6 shrink-0 items-center justify-center rounded-md text-ui-3xs font-mono transition-colors',
             matchCase
               ? 'bg-primary/15 text-primary ring-1 ring-inset ring-primary/30'
-              : 'text-muted-foreground hover:bg-muted hover:text-muted-foreground',
+              : 'text-muted-foreground hover:bg-accent hover:text-foreground',
           )}
           onclick={() => (matchCase = !matchCase)}
         >Aa</button>
@@ -270,10 +270,10 @@
           aria-keyshortcuts={SEARCH_OPTION_KEYS.wholeWord}
           aria-pressed={wholeWord}
           class={cn(
-            'flex size-6 shrink-0 items-center justify-center rounded text-ui-3xs font-mono transition-colors',
+            'flex size-6 shrink-0 items-center justify-center rounded-md text-ui-3xs font-mono transition-colors',
             wholeWord
               ? 'bg-primary/15 text-primary ring-1 ring-inset ring-primary/30'
-              : 'text-muted-foreground hover:bg-muted hover:text-muted-foreground',
+              : 'text-muted-foreground hover:bg-accent hover:text-foreground',
           )}
           onclick={() => (wholeWord = !wholeWord)}
         ><span class="underline underline-offset-2">ab</span></button>
@@ -284,10 +284,10 @@
           aria-keyshortcuts={SEARCH_OPTION_KEYS.regex}
           aria-pressed={useRegex}
           class={cn(
-            'flex size-6 shrink-0 items-center justify-center rounded text-ui-3xs font-mono transition-colors',
+            'flex size-6 shrink-0 items-center justify-center rounded-md text-ui-3xs font-mono transition-colors',
             useRegex
               ? 'bg-primary/15 text-primary ring-1 ring-inset ring-primary/30'
-              : 'text-muted-foreground hover:bg-muted hover:text-muted-foreground',
+              : 'text-muted-foreground hover:bg-accent hover:text-foreground',
           )}
           onclick={() => { useRegex = !useRegex; regexError = '' }}
         >.*</button>
@@ -297,12 +297,12 @@
       {:else if query}
         <button
           type="button"
-          class="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          class="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           title="Clear (Esc)"
           aria-label="Clear search"
           onclick={() => { query = ''; regexError = '' }}
         >
-          <X class="size-3.5" />
+          <X class="size-3.5 shrink-0" />
         </button>
       {/if}
     </div>
@@ -388,13 +388,13 @@
       </div>
     {:else if searching && progress.done === 0}
       <!-- initial loading state before first result -->
-      <div class="flex flex-col items-center justify-center gap-2 py-12 text-center">
-        <Loader class="size-6 animate-spin text-muted-foreground" />
+      <div class="loading-reveal flex flex-col items-center justify-center gap-2 py-12 text-center">
+        <Loader class="size-6 shrink-0 animate-spin text-muted-foreground" />
         <p class="text-ui-xs text-muted-foreground">Searching…</p>
       </div>
     {:else if searched && !searching}
       <div class="flex flex-col items-center justify-center gap-2 py-12 text-center">
-        <Search class="size-8 text-muted-foreground" />
+        <Search class="size-8 shrink-0 text-muted-foreground" />
         <p class="text-ui-sm text-muted-foreground">
           No matches for <span class="font-mono">"{query}"</span>
         </p>
@@ -404,7 +404,7 @@
       </div>
     {:else if !searching}
       <div class="flex flex-col items-center justify-center gap-2 py-12 text-center">
-        <Search class="size-8 text-muted-foreground" />
+        <Search class="size-8 shrink-0 text-muted-foreground" />
         <p class="text-ui-sm text-muted-foreground">Search across all {tables.length} tables</p>
         <p class="text-ui-xs text-muted-foreground">
           {query.trim().length ? 'Keep typing…' : 'Start typing'}

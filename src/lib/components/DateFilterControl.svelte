@@ -1,4 +1,5 @@
 <script>
+  import { Button } from '$lib/components/ui/button/index.js'
   import FieldSelect from './FieldSelect.svelte';
   /**
    * Unified date/timestamp filter control for the filter bar. One popover with:
@@ -137,10 +138,10 @@
       {/each}
       <!-- In the last N … -->
       <div class="mt-1 flex flex-col gap-1.5 border-t border-border/40 px-1 pt-2">
-        <span class="text-ui-2xs font-medium uppercase tracking-wide text-muted-foreground">In the last</span>
+        <span class="text-ui-2xs font-medium uppercase tracking-[0.06em] text-muted-foreground">In the last</span>
         <div class="flex items-center gap-1">
           <button type="button" class="grid size-6 shrink-0 place-items-center rounded-md border border-border/60 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground active:scale-[0.96]" aria-label="Decrease" onclick={() => (lastN = Math.max(1, lastN - 1))}>
-            <Minus class="size-3" />
+            <Minus class="size-3 shrink-0" />
           </button>
           <input
           class= "field-surface h-6 w-9 min-w-0 bg-input/30 text-center font-mono text-ui-xs tabular-nums outline-none"
@@ -149,7 +150,7 @@
             oninput={(e) => (lastN = Math.max(1, parseInt(e.currentTarget.value.replace(/\D/g, "")) || 1))}
           />
           <button type="button" class="grid size-6 shrink-0 place-items-center rounded-md border border-border/60 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground active:scale-[0.96]" aria-label="Increase" onclick={() => (lastN = lastN + 1)}>
-            <Plus class="size-3" />
+            <Plus class="size-3 shrink-0" />
           </button>
         </div>
         <FieldSelect
@@ -163,11 +164,10 @@
             { value: 'months', label: 'months' },
           ]}
         />
-        <button
-          type="button"
-          class="mt-0.5 inline-flex h-6 items-center justify-center rounded-md bg-primary px-2 text-ui-2xs font-medium text-primary-foreground transition-[background-color,transform] duration-150 hover:bg-primary/90 active:scale-[0.97]"
+        <Button
+          class="mt-0.5" size="sm"
           onclick={applyLastN}
-        >Apply</button>
+>Apply</Button>
       </div>
     </div>
 
