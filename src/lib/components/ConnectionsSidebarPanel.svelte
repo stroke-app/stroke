@@ -8,8 +8,10 @@
   import { cn } from "$lib/utils.js";
   import { Popover, PopoverTrigger, PopoverContent } from "$lib/components/ui/popover/index.js";
   import { Input } from "$lib/components/ui/input/index.js";
-  import { setConnectionGroup } from "$lib/stores/connections.js";
+  import { setConnectionGroup, setConnectionMeta } from "$lib/stores/connections.js";
+  import { workspaces, activeWorkspaceId, inWorkspace, workspaceOf, colorOf } from "$lib/stores/workspaces.js";
   import ConfirmDialog from "./ConfirmDialog.svelte";
+  import ColorSwatches from "./ColorSwatches.svelte";
 
   let {
     /** @type {import('$lib/stores/connections.js').SavedConnection[]} */
@@ -24,7 +26,24 @@
     ondisconnect = () => {},
     /** Fired after a connection's group changes so the shell can refresh its list. @type {(id: string, group: string | null) => void} */
     onsetgroup = (id, group) => {},
+    /** Fired after a connection's colour or workspace changes, with the saved list. @type {(list: import('$lib/stores/connections.js').SavedConnection[]) => void} */
+    onmetachange = (list) => {},
   } = $props();
+
+  // All saved connections feed the switcher's counts; the list shows the
+  // active workspace's.
+  const allConnections = $derived(connections);
+  // Pinned connections first; the sort is stable, so the rest keep their order.
+  const shown = $derived(
+    inWorkspace(allConnections, $activeWorkspaceId, $workspaces)
+      .slice()
+      .sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned)),
+  );
+
+  /** @param {import('$lib/stores/connections.js').SavedConnection} c @param {{ workspaceId?: string | null, color?: string | null, pinned?: boolean }} patch */
+  function applyMeta(c, patch) {
+    onmetachange(setConnectionMeta(c.id, patch));
+  }
 
   // Removing deletes the connection's history and saved work too, so it asks first.
   /** @type {import('$lib/stores/connections.js').SavedConnection | null} */
@@ -36,6 +55,18 @@
   let overrides = $state(/** @type {Record<string, string | null>} */ ({}));
   // Which row's group popover is open, and the draft name for a brand-new group.
   let groupMenuFor = $state(/** @type {string | null} */ (null));
+  /**
+   * The custom-colour swatch opens the OS colour panel, which takes focus from
+   * the window: to the popover that is a focus-outside, and it closed mid-pick.
+   * Stay open while the window has no focus or the colour input is active.
+   * @param {Event} e
+   */
+  function keepOpenWhilePicking(e) {
+    const active = document.activeElement;
+    if (!document.hasFocus() || (active instanceof HTMLInputElement && active.type === "color")) {
+      e.preventDefault();
+    }
+  }
   let draftGroup = $state("");
   // Collapsed group sections, keyed by group name.
   let collapsed = $state(/** @type {Record<string, boolean>} */ ({}));
@@ -53,7 +84,7 @@
   /** Sorted, de-duplicated list of group names currently in use. */
   const groupNames = $derived.by(() => {
     const set = new Set();
-    for (const c of connections) {
+    for (const c of shown) {
       const g = effGroup(c);
       if (g) set.add(g);
     }
@@ -70,7 +101,7 @@
     const named = new Map();
     /** @type {import('$lib/stores/connections.js').SavedConnection[]} */
     const ungrouped = [];
-    for (const c of connections) {
+    for (const c of shown) {
       const g = effGroup(c);
       if (g) {
         const bucket = named.get(g) ?? named.set(g, []).get(g);
@@ -128,24 +159,28 @@
   <div
     class={cn(
       "group/conn flex min-w-0 items-center rounded-md transition-colors",
-      active ? "bg-accent/40" : "hover:bg-accent/20",
+      active ? "bg-sidebar-accent" : "hover:bg-sidebar-accent/60",
     )}
   >
     <button
       type="button"
-      title={active ? `${c.name} (connected)` : `Switch to ${c.name}`}
+      title={`${active ? `${c.name} (connected)` : `Switch to ${c.name}`}${subtitle(c) ? `\n${subtitle(c)}` : ''}`}
       aria-current={active ? "true" : undefined}
       onclick={() => (active ? undefined : onswitch(c))}
       class="flex min-w-0 flex-1 items-center gap-2 px-2.5 py-1.5 text-left"
     >
-      <span class="relative flex size-4 shrink-0 items-center justify-center text-muted-foreground">
-        <Icon name={engineIcon(c.type)} class="size-4" />
+      <span style={colorOf(c.color)?.style} class={cn("relative flex size-4 shrink-0 items-center justify-center", colorOf(c.color)?.text ?? "text-muted-foreground")}>
+        <Icon name={engineIcon(c.type)} class="size-4 shrink-0" />
         {#if active}
           <span class="absolute -bottom-0.5 -right-0.5 size-1.5 rounded-full bg-primary ring-2 ring-sidebar"></span>
         {/if}
       </span>
       <span class="flex min-w-0 flex-1 flex-col">
-        <span class="truncate text-ui-sm font-medium text-sidebar-foreground">{c.name}</span>
+        <span class="flex min-w-0 items-center gap-1.5">
+          {#if colorOf(c.color)}<span style={colorOf(c.color)?.style} class={cn("size-1.5 shrink-0 rounded-full", colorOf(c.color)?.dot)} aria-label={`${colorOf(c.color)?.label} label`}></span>{/if}
+          <span class={cn("truncate text-ui-sm", active ? "font-medium text-foreground" : "text-sidebar-foreground")}>{c.name}</span>
+          {#if c.pinned}<Icon name="pin" class="size-3 shrink-0 text-muted-foreground" aria-label="Pinned" />{/if}
+        </span>
         <span class="truncate text-ui-2xs text-muted-foreground">{subtitle(c)}</span>
       </span>
     </button>
@@ -164,19 +199,49 @@
         }}
       >
         <PopoverTrigger
-          title="Set group"
-          aria-label="Set group"
+          title="Colour, workspace and group"
+          aria-label="Colour, workspace and group"
           class={cn(
             "size-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground",
             groupMenuFor === c.id ? "flex bg-accent text-foreground" : "hidden group-hover/conn:flex",
           )}
         >
-          <Icon name="folder-open" class="size-3.5" />
+          <Icon name="more-horizontal" class="size-3.5 shrink-0" />
         </PopoverTrigger>
-        <PopoverContent align="end" sideOffset={4} class="min-w-56 p-1.5 text-ui-xs">
-          <div class="px-1.5 py-1 text-ui-3xs font-medium uppercase tracking-wider text-muted-foreground">
-            Group
+        <PopoverContent
+          align="end"
+          sideOffset={4}
+          class="min-w-60 p-1.5 text-ui-xs"
+          onFocusOutside={keepOpenWhilePicking}
+          onInteractOutside={keepOpenWhilePicking}
+        >
+          <button
+            type="button"
+            onclick={() => { applyMeta(c, { pinned: !c.pinned }); groupMenuFor = null; }}
+            class="mb-1 flex w-full min-w-0 items-center gap-2 rounded-md px-1.5 py-1.5 text-left text-ui-xs hover:bg-accent hover:text-foreground"
+          >
+            <Icon name={c.pinned ? "pin-off" : "pin"} class="size-3.5 shrink-0 text-muted-foreground" />
+            <span class="min-w-0 flex-1 truncate">{c.pinned ? "Unpin connection" : "Pin connection"}</span>
+          </button>
+          <div class="px-1.5 py-1 text-ui-3xs font-medium text-muted-foreground">Colour</div>
+          <div class="px-1.5 pb-2 pt-0.5">
+            <ColorSwatches value={c.color ?? null} allowNone onchange={(col) => applyMeta(c, { color: col })} />
           </div>
+          {#if $workspaces.length > 1}
+            <div class="border-t border-border/50 px-1.5 pt-2 pb-1 text-ui-3xs font-medium text-muted-foreground">Workspace</div>
+            {#each $workspaces as w (w.id)}
+              <button
+                type="button"
+                onclick={() => { applyMeta(c, { workspaceId: w.id === "default" ? null : w.id }); groupMenuFor = null; }}
+                class="flex w-full min-w-0 items-center gap-2 rounded-md px-1.5 py-1.5 text-left text-ui-xs hover:bg-accent hover:text-foreground"
+              >
+                <span style={colorOf(w.color)?.style} class={cn("size-2 shrink-0 rounded-full", colorOf(w.color)?.dot)}></span>
+                <span class="min-w-0 flex-1 truncate">{w.name}</span>
+                {#if workspaceOf(c, $workspaces) === w.id}<Icon name="check" class="size-3.5 shrink-0 text-foreground" />{/if}
+              </button>
+            {/each}
+          {/if}
+          <div class="border-t border-border/50 px-1.5 pt-2 pb-1 text-ui-3xs font-medium text-muted-foreground">Group</div>
           {#each groupNames as g (g)}
             <button
               type="button"
@@ -217,7 +282,7 @@
         </PopoverContent>
       </Popover>
       {#if active}
-        <span class="text-ui-2xs font-medium text-primary group-hover/conn:hidden">connected</span>
+        <span class="text-ui-2xs text-muted-foreground group-hover/conn:hidden">connected</span>
         <button
           type="button"
           title="Disconnect"
@@ -226,9 +291,9 @@
             e.stopPropagation();
             ondisconnect();
           }}
-          class="hidden size-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground group-hover/conn:flex"
+          class="hidden size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground group-hover/conn:flex"
         >
-          <Icon name="unplug" class="size-3.5" />
+          <Icon name="unplug" class="size-3.5 shrink-0" />
         </button>
       {:else}
         <button
@@ -240,9 +305,9 @@
             pendingRemove = c;
             confirmRemoveOpen = true;
           }}
-          class="hidden size-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground group-hover/conn:flex"
+          class="hidden size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground group-hover/conn:flex"
         >
-          <Icon name="trash-2" class="size-3.5" />
+          <Icon name="trash-2" class="size-3.5 shrink-0" />
         </button>
       {/if}
     </div>
@@ -264,38 +329,36 @@
 
 <div class="flex min-h-0 flex-1 flex-col">
   <!-- Sticky header -->
-  <div class="flex h-9 shrink-0 items-center gap-1 px-2.5">
-    <span class="min-w-0 flex-1 truncate text-ui-3xs font-medium uppercase tracking-wider text-muted-foreground">
-      Connections
-    </span>
+  <div class="flex h-9 shrink-0 items-center gap-1 px-2">
+    <span class="min-w-0 flex-1 truncate px-1.5 text-ui-xs font-medium text-muted-foreground">Connections</span>
+    {#if shown.length}<span class="shrink-0 px-1 font-mono text-ui-2xs tabular-nums text-muted-foreground">{shown.length}</span>{/if}
     <button
       type="button"
       title="Add connection"
       aria-label="Add connection"
       onclick={() => onadd()}
-      class="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground"
+      class="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
     >
-      <Icon name="plus" class="size-4" />
+      <Icon name="plus" class="size-4 shrink-0" />
     </button>
   </div>
 
   <!-- List -->
   <div class="app-scroll min-h-0 w-full flex-1 overflow-y-auto overscroll-y-contain px-1.5 pb-2">
-    {#if connections.length === 0}
+    {#if shown.length === 0}
       <div class="flex flex-col items-center gap-2 px-4 py-10 text-center">
-        <Icon name="database" class="size-5 text-muted-foreground" />
-        <p class="text-ui-xs text-muted-foreground">No saved connections</p>
+        <p class="text-ui-sm text-foreground">{connections.length ? "No connections in this workspace" : "No saved connections"}</p>
         <button
           type="button"
           onclick={() => onadd()}
-          class="mt-1 rounded-md border border-border bg-background/40 px-2.5 py-1 text-ui-xs font-medium transition-colors hover:bg-accent/40 hover:text-foreground"
+          class="h-7 rounded-md px-2.5 text-ui-xs text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground"
         >
           Add connection
         </button>
       </div>
     {:else if grouped.groups.length === 0}
       <!-- No groups in use: flat list, visually unchanged from before. -->
-      {#each connections as c (c.id)}
+      {#each shown as c (c.id)}
         {@render connRow(c)}
       {/each}
     {:else}

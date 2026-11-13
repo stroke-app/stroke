@@ -314,7 +314,7 @@
       aria-label="New folder"
       disabled={!connectionId}
       onclick={() => void newFolder()}
-    ><Icon name="folder-plus" class="size-3.5" /></button>
+    ><Icon name="folder-plus" class="size-3.5 shrink-0" /></button>
     <button
       type="button"
       class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
@@ -322,16 +322,16 @@
       aria-label="New query"
       disabled={!connectionId}
       onclick={() => onnew(null)}
-    ><Icon name="plus" class="size-3.5" /></button>
+    ><Icon name="plus" class="size-3.5 shrink-0" /></button>
   </div>
 
   {#if isEmpty}
     <div class="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
-      <Icon name="file-code" class="size-5 text-muted-foreground" />
+      <Icon name="file-code" class="size-5 shrink-0 text-muted-foreground" />
       <p class="text-ui-sm text-foreground">No saved queries</p>
       <p class="text-ui-xs text-muted-foreground">{modKey}S in a query editor saves its query here.</p>
       <Button variant="outline" size="sm" class="mt-1" disabled={!connectionId} onclick={() => onnew(null)}>
-        <Icon name="plus" class="size-3.5" />New query
+        <Icon name="plus" class="size-3.5 shrink-0" />New query
       </Button>
     </div>
   {:else}
@@ -391,7 +391,7 @@
                     title="New query in {f.name}"
                     aria-label="New query in {f.name}"
                     onclick={() => onnew(f.id)}
-                  ><Icon name="plus" class="size-3.5" /></button>
+                  ><Icon name="plus" class="size-3.5 shrink-0" /></button>
                 </div>
               {/if}
               {#if open}
