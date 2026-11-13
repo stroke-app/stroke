@@ -87,7 +87,9 @@
   /** Above this many tables the whole-page map waits for a click: it is seconds of rendering. */
   const ALL_AUTO_MAX = 80
   let allForce = $state(false)
-  const allGated = $derived(tableMeta.size > ALL_AUTO_MAX && !allForce)
+  // No "draw anyway" step: the viewer renders a big diagram off the frame that
+  // opens it, so the page is never held up waiting for it.
+  const allGated = $derived(false && tableMeta.size > ALL_AUTO_MAX && !allForce)
   /**
    * The whole page, left to right, arrows from the key to what it points at.
    * Links into hub tables (`tenants` from nearly every table) are left out and
@@ -289,11 +291,11 @@
     {#if !embedded}
       <div class="studio-chrome flex h-10 shrink-0 items-center gap-2 border-b border-border/60 px-3" data-studio-chrome>
         <GitBranch class="size-3.5 shrink-0 text-muted-foreground" />
-        <span class="font-mono text-ui-xs font-semibold text-foreground/70">Relation Tree</span>
+        <span class="font-mono text-ui-xs font-semibold text-foreground/70">Relation tree</span>
         <button
           type="button"
           disabled={loading}
-          class="ml-auto flex size-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40"
+          class="ml-auto flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40"
           onclick={() => void load()}
         >
           <RefreshCw class="size-3 {loading ? 'animate-spin' : ''}" />
@@ -318,15 +320,15 @@
     <!-- Progress -->
     {#if loading && totalCount > 0}
       <div class="mx-2 mb-1 h-0.5 overflow-hidden rounded-full bg-muted/30">
-        <div class="h-full rounded-full bg-primary/50 transition-all" style="width:{Math.round(loadedCount/totalCount*100)}%"></div>
+        <div class="h-full rounded-full bg-primary/50 transition-[width]" style="width:{Math.round(loadedCount/totalCount*100)}%"></div>
       </div>
     {/if}
 
     <!-- Table list -->
     <div class="min-h-0 flex-1 overflow-y-auto">
       {#if loading && tableMeta.size === 0}
-        <div class="flex items-center gap-2 px-3 py-3">
-          <Loader class="size-3.5 animate-spin text-muted-foreground" />
+        <div class="loading-reveal flex items-center gap-2 px-3 py-3">
+          <Loader class="size-3.5 shrink-0 animate-spin text-muted-foreground" />
           <span class="font-mono text-ui-xs text-muted-foreground">Loading…</span>
         </div>
       {:else if error}
@@ -345,8 +347,8 @@
             <Table2 class="size-3 shrink-0 {active ? 'text-primary' : 'text-muted-foreground'}" />
             <span class="min-w-0 flex-1 truncate font-mono text-ui-xs">{t.name}</span>
             <span class="flex shrink-0 items-center gap-0.5">
-              {#if hasOut}<ArrowUpRight class="size-3 text-info" />{/if}
-              {#if hasIn}<ArrowDownRight class="size-3 text-success" />{/if}
+              {#if hasOut}<ArrowUpRight class="size-3 shrink-0 text-info" />{/if}
+              {#if hasIn}<ArrowDownRight class="size-3 shrink-0 text-success" />{/if}
             </span>
           </button>
         {:else}
@@ -367,7 +369,7 @@
       aria-pressed={listOpen}
       onclick={() => (listOpen = !listOpen)}
       class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-    >{#if listOpen}<PanelLeftClose class="size-3.5" />{:else}<PanelLeftOpen class="size-3.5" />{/if}</button>
+    >{#if listOpen}<PanelLeftClose class="size-3.5 shrink-0" />{:else}<PanelLeftOpen class="size-3.5 shrink-0" />{/if}</button>
     {#if view === 'all'}
       <span class="min-w-0 truncate font-mono text-ui-xs font-semibold text-foreground/80">{activeSchema}</span>
       <span class="shrink-0 font-mono text-ui-3xs tabular-nums text-muted-foreground">
@@ -395,9 +397,9 @@
     {/if}
     {#if view === 'flow' || view === 'all'}
       <div class="flex items-center gap-0.5">
-        <button type="button" title="Zoom out" onclick={() => flowViewer?.dispatch('diagram:zoomout')} class="flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"><ZoomOut class="size-3.5" /></button>
-        <button type="button" title="Zoom in" onclick={() => flowViewer?.dispatch('diagram:zoomin')} class="flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"><ZoomIn class="size-3.5" /></button>
-        <button type="button" title="Fit" onclick={() => flowViewer?.dispatch('diagram:reset')} class="flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"><Maximize2 class="size-3.5" /></button>
+        <button type="button" title="Zoom out" onclick={() => flowViewer?.dispatch('diagram:zoomout')} class="flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"><ZoomOut class="size-3.5 shrink-0" /></button>
+        <button type="button" title="Zoom in" onclick={() => flowViewer?.dispatch('diagram:zoomin')} class="flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"><ZoomIn class="size-3.5 shrink-0" /></button>
+        <button type="button" title="Fit" onclick={() => flowViewer?.dispatch('diagram:reset')} class="flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"><Maximize2 class="size-3.5 shrink-0" /></button>
       </div>
     {/if}
     <div class="field-surface inline-flex h-6 items-center bg-muted/25 p-0.5">
@@ -427,7 +429,7 @@
   <div class="min-h-0 min-w-0 flex-1 overflow-y-auto p-4">
     {#if !focusedTable || !tableMeta.has(focusedTable)}
       <div class="flex h-full min-h-[200px] flex-col items-center justify-center gap-3">
-        <GitBranch class="size-10 text-muted-foreground" />
+        <GitBranch class="size-10 shrink-0 text-muted-foreground" />
         <p class="font-mono text-ui-xs text-muted-foreground">Select a table to explore its relationships</p>
       </div>
     {:else}
@@ -441,7 +443,7 @@
         <!-- The table: its name, its size, one action. -->
         <header class="flex items-center gap-3">
           <span class="flex size-9 shrink-0 items-center justify-center rounded-lg border border-border bg-panel">
-            <Table2 class="size-4 text-muted-foreground" />
+            <Table2 class="size-4 shrink-0 text-muted-foreground" />
           </span>
           <div class="min-w-0 flex-1">
             <h2 class="truncate font-mono text-ui-lg font-semibold text-foreground">{focusedTable}</h2>
@@ -450,7 +452,7 @@
             </p>
           </div>
           <Button variant="outline" size="sm" onclick={() => onopentable?.(activeSchema, focusedTable)}>
-            <ExternalLink class="size-3.5" />Open table
+            <ExternalLink class="size-3.5 shrink-0" />Open table
           </Button>
         </header>
 
@@ -478,8 +480,8 @@
                   {@const refTable = ref ? (ref.length >= 3 ? ref[1] : ref[0]) : ''}
                   {@const refCol = ref ? ref[ref.length - 1] : ''}
                   <div class="grid h-8 grid-cols-[1rem_minmax(0,1fr)_minmax(0,0.6fr)_minmax(0,1fr)] items-center gap-3 px-3">
-                    {#if isPk}<KeyRound class="size-3.5 text-warning" aria-label="Primary key" />
-                    {:else if ref}<Link class="size-3.5 text-info" aria-label="Foreign key" />
+                    {#if isPk}<KeyRound class="size-3.5 shrink-0 text-warning" aria-label="Primary key" />
+                    {:else if ref}<Link class="size-3.5 shrink-0 text-info" aria-label="Foreign key" />
                     {:else}<span></span>{/if}
                     <span class="truncate font-mono text-ui-xs {isPk ? 'text-warning' : ref ? 'text-info' : 'text-foreground'}">{col.name}</span>
                     <span class="truncate font-mono text-ui-2xs text-muted-foreground">{col.dataType}{col.isNullable ? '' : ' · not null'}</span>

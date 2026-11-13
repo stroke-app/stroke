@@ -78,7 +78,9 @@
   async function _ensureMermaidJs() {
     if (_mermaidJsInit) return _mermaid
     _mermaid = (await import('mermaid')).default
-    _mermaid.initialize({ startOnLoad: false, securityLevel: 'loose' })
+    // The defaults (50k characters, 500 links) reject a whole-schema ER
+    // diagram outright with "Maximum text size exceeded".
+    _mermaid.initialize({ startOnLoad: false, securityLevel: 'loose', maxTextSize: 2_000_000, maxEdges: 20_000 })
     _mermaidJsInit = true
     return _mermaid
   }
@@ -102,6 +104,45 @@
     }
   }
 
+  /**
+   * Finish an ER diagram the renderer leaves square: cards get rounded corners
+   * (the header rounded on top only), links become paths whose bends are
+   * rounded instead of hard right angles, and the two Google Fonts imports go -
+   * the app's own font is already on the page, and they were a network fetch on
+   * every render.
+   * @param {string} svg
+   */
+  function polishErSvg(svg) {
+    const R = 8
+    let out = svg.replace(/\s*@import url\('https:\/\/fonts\.googleapis\.com[^)]*\);/g, '')
+    // Links: polyline → path, each interior corner a quadratic curve.
+    out = out.replace(/<polyline class="(er-relationship|edge)"([^>]*?) points="([^"]+)"([^>]*?)\/>/g, (_m, cls, pre, pts, post) => {
+      const p = pts.trim().split(/\s+/).map((xy) => xy.split(',').map(Number))
+      if (p.length < 2) return _m
+      let d = `M${p[0][0]},${p[0][1]}`
+      for (let i = 1; i < p.length - 1; i++) {
+        const [ax, ay] = p[i - 1], [bx, by] = p[i], [cx, cy] = p[i + 1]
+        const inLen = Math.hypot(bx - ax, by - ay), outLen = Math.hypot(cx - bx, cy - by)
+        const r = Math.min(14, inLen / 2, outLen / 2)
+        const sx = bx - ((bx - ax) / (inLen || 1)) * r, sy = by - ((by - ay) / (inLen || 1)) * r
+        const ex = bx + ((cx - bx) / (outLen || 1)) * r, ey = by + ((cy - by) / (outLen || 1)) * r
+        d += ` L${sx.toFixed(1)},${sy.toFixed(1)} Q${bx},${by} ${ex.toFixed(1)},${ey.toFixed(1)}`
+      }
+      const last = p[p.length - 1]
+      d += ` L${last[0]},${last[1]}`
+      const attrs = `${pre}${post}`.replace(/stroke-width="[^"]*"/, 'stroke-width="1.25"')
+      return `<path class="${cls}"${attrs} d="${d}" stroke-linecap="round" stroke-linejoin="round"/>`
+    })
+    // Cards: the first rect of an entity is its body, the second its header.
+    out = out.replace(/(<g class="entity"[^>]*>\s*)<rect ([^>]*?)rx="0" ry="0"([^>]*)\/>\s*<rect x="([\d.]+)" y="([\d.]+)" width="([\d.]+)" height="([\d.]+)" rx="0" ry="0" fill="([^"]+)"[^>]*\/>/g,
+      (_m, open, a1, a2, x, y, w, h, fill) => {
+        const X = +x, Y = +y, W = +w, H = +h
+        const hdr = `M${X},${Y + H} L${X},${Y + R} Q${X},${Y} ${X + R},${Y} L${X + W - R},${Y} Q${X + W},${Y} ${X + W},${Y + R} L${X + W},${Y + H} Z`
+        return `${open}<rect ${a1}rx="${R}" ry="${R}"${a2}/>\n  <path d="${hdr}" fill="${fill}" stroke="none" />`
+      })
+    return out
+  }
+
   function processMermaidSvg(c) {
     const themeId = normalizeThemeId(document.documentElement.dataset.theme)
     const normalized = normalizeMermaidCode(c)
@@ -114,7 +155,10 @@
         : _asyncDiagrams[asyncKey]
     }
     try {
-      const svg = renderMermaidSync(normalized, { ...resolveMermaidTheme(), font: 'var(--font-sans)', ...(spacing ?? {}) })
+      const raw = renderMermaidSync(normalized, { ...resolveMermaidTheme(), font: 'var(--font-sans)', ...(spacing ?? {}) })
+      // Rounded bends and no font fetch for every diagram; the card shapes
+      // only match ER output and are left alone elsewhere.
+      const svg = polishErSvg(raw)
       if (mermaidCache.size >= MERMAID_CACHE_MAX) mermaidCache.delete(/** @type {string} */ (mermaidCache.keys().next().value))
       mermaidCache.set(cacheKey, svg)
       return svg
@@ -301,12 +345,19 @@
   $effect(() => {
     const c = code
     void spacing
+    // A big diagram is hundreds of milliseconds of synchronous layout: never
+    // on the frame that opens the tab (show the spinner, render on the next),
+    // and edits wait longer the bigger the source is.
+    const big = (c?.length ?? 0) > 12_000
     if (!_renderedOnce) {
       _renderedOnce = true
-      svgContent = processMermaidSvg(c)
-      return
+      if (!big) { svgContent = processMermaidSvg(c); return }
+      svgContent = `<div class="flex items-center gap-2 p-4 text-ui-xs text-muted-foreground"><span class="size-3 animate-spin rounded-full border-2 border-border border-t-muted-foreground inline-block shrink-0"></span>Rendering a large diagram…</div>`
+      const r = requestAnimationFrame(() => { setTimeout(() => { svgContent = processMermaidSvg(c) }, 0) })
+      return () => cancelAnimationFrame(r)
     }
-    const t = setTimeout(() => { svgContent = processMermaidSvg(c) }, 160)
+    const delay = Math.min(700, 160 + Math.floor((c?.length ?? 0) / 200))
+    const t = setTimeout(() => { svgContent = processMermaidSvg(c) }, delay)
     return () => clearTimeout(t)
   })
 

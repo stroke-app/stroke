@@ -141,7 +141,7 @@
       onclick={() => onopentable?.(activeSchema, tableName)}
       title="Open {tableName}"
       aria-label="Open {tableName}"
-    ><ExternalLink class="size-3.5" /></button>
+    ><ExternalLink class="size-3.5 shrink-0" /></button>
   </div>
 
   {#if colsOpen && meta}

@@ -3,7 +3,7 @@ const STORAGE_KEY = 'stroke:erd'
 /**
  * @typedef {'all' | 'keys'} ColumnMode
  * @typedef {'compact' | 'comfortable' | 'spacious'} Spacing
- * @typedef {'smart' | 'direct'} Routing
+ * @typedef {'curved' | 'smart' | 'direct'} Routing
  * @typedef {'badges' | 'lines'} HubLinks
  * @typedef {{ columnMode: ColumnMode, showTypes: boolean, connectedOnly: boolean,
  *   spacing: Spacing, routing: Routing, hubLinks: HubLinks, grid: boolean, touched: string[] }} ErdSettings
@@ -21,7 +21,7 @@ export const DEFAULT_ERD_SETTINGS = {
   showTypes: true,
   connectedOnly: false,
   spacing: 'comfortable',
-  routing: 'smart',
+  routing: 'curved',
   // A table most of the schema points at (tenants, users) is named on each
   // referencing row instead of drawn as a line from every card.
   hubLinks: 'badges',
@@ -32,8 +32,8 @@ export const DEFAULT_ERD_SETTINGS = {
 /** Defaults per view: a focused table diagram is small and wide-open, a whole
  *  schema is dense and needs its lines routed around the cards. */
 export const SCOPE_DEFAULTS = {
-  focused: { spacing: /** @type {Spacing} */ ('spacious'), routing: /** @type {Routing} */ ('direct') },
-  schema:  { spacing: /** @type {Spacing} */ ('comfortable'), routing: /** @type {Routing} */ ('smart') },
+  focused: { spacing: /** @type {Spacing} */ ('spacious'), routing: /** @type {Routing} */ ('curved') },
+  schema:  { spacing: /** @type {Spacing} */ ('comfortable'), routing: /** @type {Routing} */ ('curved') },
 }
 
 /**
@@ -62,7 +62,7 @@ export function loadErdSettings() {
       showTypes: p.showTypes !== false,
       connectedOnly: p.connectedOnly === true,
       spacing: p.spacing in SPACING_PRESETS ? p.spacing : DEFAULT_ERD_SETTINGS.spacing,
-      routing: p.routing === 'direct' ? 'direct' : 'smart',
+      routing: p.routing === 'direct' || p.routing === 'smart' ? p.routing : 'curved',
       hubLinks: p.hubLinks === 'lines' ? 'lines' : 'badges',
       grid: p.grid !== false,
       touched: Array.isArray(p.touched) ? p.touched.filter(k => typeof k === 'string') : [],

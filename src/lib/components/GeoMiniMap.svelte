@@ -265,7 +265,7 @@
   }
 
   const btn =
-    'inline-flex size-6 items-center justify-center rounded-md border border-border/50 bg-background/85 text-muted-foreground backdrop-blur-sm transition-colors hover:bg-muted hover:text-foreground'
+    'inline-flex size-6 items-center justify-center rounded-md border border-border/50 bg-background text-muted-foreground transition-colors hover:bg-muted hover:text-foreground'
 </script>
 
 <div bind:this={host} class={cn('relative overflow-hidden rounded-md border border-border/40', extraClass)} style="height:{height}px">
@@ -287,14 +287,14 @@
   <!-- Basemap picker. Segmented rather than a dropdown: four options, and the
        cost of the choice (offline vs a third-party host) should be visible
        rather than hidden one click deep. -->
-  <div class="absolute left-2 top-2 flex items-center gap-0.5 rounded-md border border-border/50 bg-background/85 p-0.5 backdrop-blur-sm">
+  <div class="absolute left-2 top-2 flex items-center gap-0.5 rounded-md border border-border/50 bg-background p-0.5">
     {#each BASEMAPS as b (b.id)}
       <button
         type="button"
         onclick={() => { basemapId = b.id; tiles.reset(); requestDraw() }}
         title={b.offline ? 'Offline outline - no network requests' : `Tiles from ${b.attribution}`}
         class={cn(
-          'inline-flex h-5 items-center rounded px-1.5 text-ui-3xs transition-colors',
+          'inline-flex h-5 items-center rounded-md px-1.5 text-ui-3xs transition-colors',
           basemapId === b.id ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground',
         )}
       >{b.label}</button>
@@ -303,13 +303,13 @@
 
   <div class="absolute right-2 top-2 flex flex-col gap-1">
     <button type="button" class={btn} onclick={() => zoomBy(2)} title="Zoom in" aria-label="Zoom in">
-      <Icon name="plus" class="size-3" />
+      <Icon name="plus" class="size-3 shrink-0" />
     </button>
     <button type="button" class={btn} onclick={() => zoomBy(0.5)} title="Zoom out" aria-label="Zoom out">
-      <Icon name="minus" class="size-3" />
+      <Icon name="minus" class="size-3 shrink-0" />
     </button>
     <button type="button" class={btn} onclick={frameShape} title="Frame the geometry" aria-label="Frame the geometry">
-      <Icon name="crosshair" class="size-3" />
+      <Icon name="crosshair" class="size-3 shrink-0" />
     </button>
     <button
       type="button"
@@ -318,17 +318,17 @@
       title="Whole world"
       aria-label="Whole world"
     >
-      <Icon name="globe" class="size-3" />
+      <Icon name="globe" class="size-3 shrink-0" />
     </button>
   </div>
 
   <!-- Cursor position, and the attribution the tile providers require. -->
   <div class="pointer-events-none absolute inset-x-2 bottom-2 flex items-end justify-between gap-2">
-    <span class="rounded bg-background/85 px-1.5 py-0.5 font-mono text-ui-3xs tabular-nums text-muted-foreground backdrop-blur-sm">
+    <span class="rounded bg-background px-1.5 py-0.5 font-mono text-ui-3xs tabular-nums text-muted-foreground">
       {cursor ? formatLonLat(cursor.lon, cursor.lat) : 'drag to pan · scroll to zoom'}
     </span>
     {#if !basemap.offline}
-      <span class="truncate rounded bg-background/70 px-1.5 py-0.5 text-ui-3xs text-muted-foreground backdrop-blur-sm">
+      <span class="truncate rounded bg-background px-1.5 py-0.5 text-ui-3xs text-muted-foreground">
         {basemap.attribution}
       </span>
     {/if}

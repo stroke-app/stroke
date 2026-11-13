@@ -189,6 +189,10 @@
     }
     if (!probeCtx) return '128,128,128'
     probeCtx.clearRect(0, 0, 1, 1)
+    // Over the theme's solid surface first, so a translucent Glass token reads
+    // back as the colour it shows as, not as its pure unblended rgb.
+    const base = getComputedStyle(document.documentElement).getPropertyValue('--popover').trim()
+    if (base) { probeCtx.fillStyle = base; probeCtx.fillRect(0, 0, 1, 1) }
     probeCtx.fillStyle = '#808080'
     probeCtx.fillStyle = raw
     probeCtx.fillRect(0, 0, 1, 1)
@@ -1034,7 +1038,7 @@
       </button>
       <button
         type="button"
-        class="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+        class="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
         onclick={() => void fetchFeatures()}
         title="Refresh"
       >
@@ -1050,7 +1054,7 @@
       <TriangleAlert class="size-3.5 shrink-0" />
       <span class="min-w-0 flex-1 truncate">{error}</span>
       <button type="button" class="shrink-0 opacity-70 hover:opacity-100" onclick={() => (error = '')}>
-        <X class="size-3.5" />
+        <X class="size-3.5 shrink-0" />
       </button>
     </div>
   {/if}
@@ -1132,7 +1136,7 @@
               onclick={() => { selected = null; requestDraw() }}
               title="Close (Esc)"
             >
-              <X class="size-3.5" />
+              <X class="size-3.5 shrink-0" />
             </button>
           </div>
           <div class="min-h-0 flex-1 overflow-y-auto p-2.5">
@@ -1156,8 +1160,8 @@
           {#if mode === 'clusters' && features.length > 400}
             <!-- Density legend. The ramp is doing the encoding, so it has to say
                  what it encodes; a heatmap without a scale is decoration. -->
-            <div class="flex w-fit items-center gap-2 rounded-lg border border-border/50 bg-background/80 px-2.5 py-1.5 backdrop-blur">
-              <span class="text-ui-3xs uppercase tracking-[0.08em] text-muted-foreground">Density</span>
+            <div class="flex w-fit items-center gap-2 rounded-lg border border-border/50 bg-background px-2.5 py-1.5">
+              <span class="text-ui-3xs uppercase tracking-[0.06em] text-muted-foreground">Density</span>
               <span
                 class="h-1.5 w-24 rounded-full"
                 style="background:linear-gradient(90deg, rgba({palette.accent},0.35), rgba({palette.accent},0.65), rgb({palette.accent}))"
@@ -1169,7 +1173,7 @@
           {/if}
 
           {#if layer}
-            <div class="flex w-fit items-center gap-2 rounded-lg border border-border/50 bg-background/80 px-2.5 py-1.5 text-ui-2xs backdrop-blur">
+            <div class="flex w-fit items-center gap-2 rounded-lg border border-border/50 bg-background px-2.5 py-1.5 text-ui-2xs">
               {#if loading}
                 <Loader2 class="size-3 shrink-0 animate-spin text-muted-foreground" />
               {:else}
@@ -1200,7 +1204,7 @@
         {#if !basemap.offline}
           <span
             class={cn(
-              'pointer-events-none absolute right-0 -top-5 rounded bg-background/70 px-1.5 py-0.5 text-ui-3xs backdrop-blur',
+              'pointer-events-none absolute right-0 -top-5 rounded bg-background px-1.5 py-0.5 text-ui-3xs',
               tileErrors > 0 ? 'text-muted-foreground' : 'text-muted-foreground',
             )}
           >
@@ -1216,7 +1220,7 @@
           <!-- Signed decimals make you work out which hemisphere you are in.
                Hemisphere letters and a fixed width mean the number stops jumping
                as you move and can be read at a glance. -->
-          <div class="flex shrink-0 items-center gap-2.5 rounded-lg border border-border/50 bg-background/80 px-2.5 py-1.5 font-mono text-ui-2xs tabular-nums backdrop-blur">
+          <div class="flex shrink-0 items-center gap-2.5 rounded-lg border border-border/50 bg-background px-2.5 py-1.5 font-mono text-ui-2xs tabular-nums">
             <span>
               <span class="text-muted-foreground">{cursor.lat >= 0 ? 'N' : 'S'}</span>
               {Math.abs(cursor.lat).toFixed(4)}°

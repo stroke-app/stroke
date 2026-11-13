@@ -255,19 +255,32 @@ function themeInk(isDark) {
   }
 }
 
+/**
+ * The app's own UI font for chart text. Charts hard-coded Inter while the app
+ * is set in Geist, so every axis read as a different product. Read once from
+ * the theme (it follows a font change in Settings on the next render).
+ */
+function chartFont() {
+  try {
+    const f = getComputedStyle(document.documentElement).getPropertyValue('--font-sans').trim()
+    if (f) return f
+  } catch {}
+  return '"Geist Variable", ui-sans-serif, system-ui, sans-serif'
+}
+
 function baseOption(isDark, noTitle = false) {
   const textColor = isDark ? 'rgba(255,255,255,0.50)' : 'rgba(0,0,0,0.42)'
   const lineColor = isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.06)'
   const bg = isDark ? 'rgba(20,20,23,0.97)' : 'rgba(255,255,255,0.97)'
   return {
     backgroundColor: 'transparent',
-    textStyle: { color: textColor, fontFamily: 'Inter Variable, Inter, ui-sans-serif, system-ui, sans-serif', fontSize: 11 },
+    textStyle: { color: textColor, fontFamily: chartFont(), fontSize: 11 },
     tooltip: {
       backgroundColor: bg,
       borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)',
       borderWidth: 1,
       padding: [8, 12],
-      textStyle: { color: themeInk(isDark).strong, fontSize: 12, fontFamily: 'Inter Variable, Inter, ui-sans-serif, system-ui, sans-serif' },
+      textStyle: { color: themeInk(isDark).strong, fontSize: 12, fontFamily: chartFont() },
       extraCssText: 'border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.20);',
       formatter(params) {
         const items = Array.isArray(params) ? params : [params]
@@ -293,14 +306,34 @@ function baseOption(isDark, noTitle = false) {
 
 /** @param {boolean} isDark */
 function axisStyle(isDark) {
-  const textColor = isDark ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0.45)'
-  const lineColor = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.07)'
+  const textColor = isDark ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0.5)'
+  const lineColor = isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.07)'
+  // Quiet chrome: dashed hairline gridlines, no tick marks, a faint baseline.
+  // The data is the subject; the frame should only be found when looked for.
   return {
-    axisLabel: { color: textColor },
-    axisLine: { lineStyle: { color: 'rgba(128,128,128,0.2)' } },
-    splitLine: { lineStyle: { color: lineColor } },
+    axisLabel: { color: textColor, fontSize: 11, margin: 10 },
+    axisLine: { lineStyle: { color: isDark ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.14)' } },
+    axisTick: { show: false },
+    splitLine: { lineStyle: { color: lineColor, type: [3, 4] } },
   }
 }
+
+/** Value labels at the end of each bar, while there are few enough to read. */
+function barValueLabel(isDark, position, count) {
+  return {
+    show: count <= 40,
+    position,
+    distance: 6,
+    color: isDark ? 'rgba(255,255,255,0.72)' : 'rgba(0,0,0,0.66)',
+    fontSize: 11,
+    fontWeight: 500,
+    formatter: (/** @type {any} */ p) => fmtCompact(typeof p.value === 'number' ? p.value : Number(p.value)),
+  }
+}
+
+/** Hovering one bar dims the rest a little, so the hovered value stands out. */
+const BAR_EMPHASIS = { focus: 'self', itemStyle: { opacity: 1 } }
+const BAR_BLUR = { itemStyle: { opacity: 0.45 } }
 
 /** Build the unique x-axis category list, sorted chronologically for date columns */
 function sortedXData(rows, xi) {
@@ -1215,8 +1248,11 @@ export function buildOption({ type, columns, rows, xCol, yCol, zCol, groupCol, i
 
   // ── Bar Horizontal ─────────────────────────────────────────────────────────
   if (type === 'bar-horizontal') {
-    const xData = sortedXData(rows, xi)
+    let xData = sortedXData(rows, xi)
     const dataMap = aggDataMap(rows, xi, yi)
+    // A ranking: largest first (and, with the inverted axis, on top). Dates keep
+    // their chronological order, earliest on top.
+    if (!isTimestampAxis(xData)) xData = [...xData].sort((a, b) => (dataMap[b] ?? 0) - (dataMap[a] ?? 0))
     // Categories are on the Y axis; past ~25 they overflow vertically. Add a
     // vertical scroll/zoom (slider on the right + wheel/drag inside) so many
     // categories stay usable instead of cramming - the generic dataZoom only
@@ -1230,10 +1266,34 @@ export function buildOption({ type, columns, rows, xCol, yCol, zCol, groupCol, i
     return {
       ...base,
       tooltip: { ...base.tooltip, trigger: 'axis', axisPointer: shadowPointer(isDark) },
-      xAxis: { type: 'value', ...axisStyle(isDark) },
-      yAxis: { type: 'category', data: xData, ...axisStyle(isDark) },
-      series: [{ type: 'bar', name: yCol, data: xData.map((x) => dataMap[x] ?? null), itemStyle: { color: PALETTE[0], borderRadius: [0, 3, 3, 0] }, barMaxWidth: 32 }],
-      grid: { ...base.grid, left: 16, right: needsZoom ? 28 : base.grid.right },
+      xAxis: valueYAxis(isDark),
+      yAxis: {
+        type: 'category',
+        data: xData,
+        // Largest on top: the eye starts at the top of a ranked list.
+        inverse: true,
+        ...axisStyle(isDark),
+        axisLine: { show: false },
+        splitLine: { show: false },
+        // Long names were clipped by the window edge: cap the label column and
+        // end a long name with an ellipsis (the tooltip has it whole).
+        axisLabel: { ...axisStyle(isDark).axisLabel, width: 200, overflow: 'truncate', ellipsis: '…' },
+      },
+      series: [{
+        type: 'bar',
+        name: yCol,
+        data: xData.map((x) => dataMap[x] ?? null),
+        itemStyle: { color: PALETTE[0], borderRadius: [0, 4, 4, 0] },
+        barMaxWidth: 22,
+        barCategoryGap: '38%',
+        // A faint track behind each bar shows how far it is from the maximum.
+        showBackground: xData.length <= 40,
+        backgroundStyle: { color: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.025)', borderRadius: [0, 4, 4, 0] },
+        label: barValueLabel(isDark, 'right', xData.length),
+        emphasis: BAR_EMPHASIS,
+        blur: BAR_BLUR,
+      }],
+      grid: { ...base.grid, left: 12, right: needsZoom ? 36 : 40 },
       ...(needsZoom ? { dataZoom } : {}),
       ...titleOpt(title ?? ''),
     }
@@ -1392,6 +1452,7 @@ export function buildOption({ type, columns, rows, xCol, yCol, zCol, groupCol, i
   } else {
     const dataMap = aggDataMap(rows, xi, yi)
     series = [makeSeries(type, yCol, xData.map((x) => dataMap[x] ?? null), PALETTE[0], n)]
+    if (type === 'bar') series[0].label = barValueLabel(isDark, 'top', xData.length > 24 ? Infinity : xData.length)
   }
 
   // Add a scroll/zoom viewport when there are many x-axis categories so the
@@ -1443,8 +1504,10 @@ function makeSeries(type, name, data, color, n = 0) {
   if (type === 'bar') {
     return {
       type: 'bar', name, data,
-      itemStyle: { color, borderRadius: n > 300 ? 0 : [3, 3, 0, 0] },
-      barMaxWidth: 48,
+      itemStyle: { color, borderRadius: n > 300 ? 0 : [4, 4, 0, 0] },
+      barMaxWidth: 40,
+      barCategoryGap: '32%',
+      ...(n <= 300 ? { emphasis: BAR_EMPHASIS, blur: BAR_BLUR } : {}),
       ...prog,
       ...(n > 5000 ? { large: true, largeThreshold: 5000 } : {}),
     }

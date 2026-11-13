@@ -23,7 +23,7 @@
     /** The table the diagram was opened for - drawn with a primary ring + "current" chip. */
     focusId = /** @type {string|null} */ (null),
     /** 'smart' routes edges around cards; 'direct' is the cheap elbow (huge schemas). */
-    routing = /** @type {'smart'|'direct'} */ ('smart'),
+    routing = /** @type {'curved'|'smart'|'direct'} */ ('curved'),
     /** Edge id → the polyline the layout reserved for it, when it routes its own
      *  edges. Present means curves along those corridors and no A* at all. */
     hints = /** @type {Map<string, {x:number,y:number}[]>} */ (new Map()),
@@ -131,6 +131,11 @@
     }
     if (!probeCtx) return '128,128,128'
     probeCtx.clearRect(0, 0, 1, 1)
+    // Over the theme's solid surface first: a translucent token (the Glass
+    // themes' "white at 7%") read back alone comes out as pure white. Blended,
+    // it is the colour it actually shows as. Opaque tokens cover it entirely.
+    const base = getComputedStyle(document.documentElement).getPropertyValue('--popover').trim()
+    if (base) { probeCtx.fillStyle = base; probeCtx.fillRect(0, 0, 1, 1) }
     probeCtx.fillStyle = '#808080' // fallback if `raw` is not a valid color
     probeCtx.fillStyle = raw
     probeCtx.fillRect(0, 0, 1, 1)
@@ -167,10 +172,10 @@
   let FONT_ROW = '', FONT_ROW_PK = '', FONT_TYPE = '', FONT_BADGE = ''
   let PK_NAME = '', FK_NAME = '', PK_WASH = '', FK_WASH = '', PK_INK = '', FK_INK = ''
   function refreshRowStyles() {
-    FONT_ROW = `12px ${FONT_SANS}`
-    FONT_ROW_PK = `600 12px ${FONT_SANS}`
-    FONT_TYPE = `11px ${FONT_MONO}`
-    FONT_BADGE = `700 9px ${FONT_MONO}`
+    FONT_ROW = `13px ${FONT_SANS}`
+    FONT_ROW_PK = `600 13px ${FONT_SANS}`
+    FONT_TYPE = `11.5px ${FONT_MONO}`
+    FONT_BADGE = `700 9.5px ${FONT_MONO}`
     PK_NAME = `rgba(${PK},0.95)`
     FK_NAME = `rgba(${FK},0.95)`
     PK_WASH = `rgba(${PK},0.16)`
@@ -591,7 +596,20 @@
         })
       }
 
-      if (hints.size) {
+      if (routing !== 'direct' && hints.size) {
+        // ELK routed every line around the cards while placing them, port to
+        // port. Draw that route exactly: re-deriving the ends here (side from
+        // the current positions, card middle when zoomed out) disagreed with
+        // ELK's ports, and the joins cut across cards and changed shape at the
+        // zoom threshold. Only a route whose ends no longer sit on their cards
+        // (a card was moved) falls back to following the channel.
+        for (const l of links) {
+          const h = hints.get(l.id)
+          entry.routes.set(l.id, exactRoute(l, h) ?? corridorPathOrtho(l, h))
+        }
+      } else if (routing === 'curved') {
+        for (const l of links) entry.routes.set(l.id, curvedPath(l))
+      } else if (hints.size) {
         // The layout routed these already. 'Direct' keeps the ports and the
         // stubs but ignores the detours, which is the honest reading of the
         // setting: fewer bends, may cross a card.
@@ -665,6 +683,52 @@
     markDirty()
   }
 
+  /**
+   * ELK's own route for a link, when both of its ends still sit on the edges
+   * of their cards; null when either card has moved since the layout.
+   * @param {{ source: string, target: string }} l
+   * @param {{x:number,y:number}[] | undefined} h
+   */
+  function exactRoute(l, h) {
+    if (!h || h.length < 2) return null
+    const s = byId.get(l.source), t = byId.get(l.target)
+    if (!s || !t) return null
+    const onEdge = (/** @type {FlowNode} */ n, /** @type {{x:number,y:number}} */ q) => {
+      const p = n.position, hh = nodeH(n.data)
+      const onSide = Math.abs(q.x - p.x) < 2 || Math.abs(q.x - (p.x + NODE_W)) < 2
+      return onSide && q.y >= p.y - 2 && q.y <= p.y + hh + 2
+    }
+    return onEdge(s, h[0]) && onEdge(t, h[h.length - 1]) ? h : null
+  }
+
+  /**
+   * A relationship as one smooth curve, the way Mermaid draws ER links: it
+   * leaves the foreign key's row along the port direction and bends into the
+   * referenced row. Sampled into points so culling, markers and dragging treat
+   * it exactly like a routed polyline. No search: instant at any size.
+   * @param {{ sx: number, sy: number, tx: number, ty: number, sdx: number, sdy: number, tdx: number, tdy: number }} l
+   */
+  function curvedPath(l) {
+    const dist = Math.hypot(l.tx - l.sx, l.ty - l.sy)
+    const k = Math.min(260, Math.max(48, dist * 0.45))
+    const c1x = l.sx + l.sdx * k, c1y = l.sy + l.sdy * k
+    const c2x = l.tx + l.tdx * k, c2y = l.ty + l.tdy * k
+    const N = Math.min(28, Math.max(10, Math.round(dist / 40)))
+    /** @type {{x:number,y:number}[]} */
+    const pts = []
+    for (let i = 0; i <= N; i++) {
+      const t = i / N, u = 1 - t
+      const a = u * u * u, b = 3 * u * u * t, cc = 3 * u * t * t, d = t * t * t
+      pts.push({ x: a * l.sx + b * c1x + cc * c2x + d * l.tx, y: a * l.sy + b * c1y + cc * c2y + d * l.ty })
+    }
+    return pts
+  }
+  /** The route a line gets when it has no cached one (drags, hubs, glides). */
+  const livePath = (/** @type {any} */ l) => (routing === 'curved' && !hints.size ? curvedPath(l) : corridorPathOrtho(l))
+
+  /** Bend radius: wide in Curved mode, so a routed elbow reads as a curve. */
+  const cornerR = $derived(routing === 'curved' ? CORNER * 3 : CORNER)
+
   /** Add a rounded orthogonal polyline to the current path.
    *  @param {{x:number,y:number}[]} pts */
   function tracePolyline(pts) {
@@ -673,7 +737,7 @@
       const a = pts[i - 1], b = pts[i], d = pts[i + 1]
       const inLen = Math.abs(b.x - a.x) + Math.abs(b.y - a.y)
       const outLen = Math.abs(d.x - b.x) + Math.abs(d.y - b.y)
-      ctx.arcTo(b.x, b.y, d.x, d.y, Math.min(CORNER, inLen / 2, outLen / 2))
+      ctx.arcTo(b.x, b.y, d.x, d.y, Math.min(cornerR, inLen / 2, outLen / 2))
     }
     const last = pts[pts.length - 1]
     ctx.lineTo(last.x, last.y)
@@ -771,7 +835,7 @@
         // different geometry the moment the card is picked up. There is no
         // corridor for a card that has moved off its own, so it turns on its own
         // lane like any unrouted line.
-        pts = corridorPathOrtho(port)
+        pts = livePath(port)
       }
       // Cull: skip when the polyline's bounding box misses the viewport.
       const bb = bboxOf(pts)
@@ -847,7 +911,7 @@
         const s = byId.get(e.source), t = byId.get(e.target)
         if (!s || !t) continue
         const { sx, sy, tx, ty, sdx, sdy, tdx, tdy } = portsOf(e, s, t, rowsShown)
-        const pts = corridorPathOrtho({ sx, sy, tx, ty, sdx, sdy, tdx, tdy })
+        const pts = livePath({ sx, sy, tx, ty, sdx, sdy, tdx, tdy })
         const bb = bboxOf(pts)
         if (bb.x1 < vx0 || bb.x0 > vx1 || bb.y1 < vy0 || bb.y0 > vy1) continue
         live.push({ pts, e })
@@ -952,7 +1016,14 @@
       : hov ? c('border', 1) : c('border', tone.rim)
     ctx.stroke()
 
+    // Zoomed out far enough that a readable name no longer fits the header:
+    // the card becomes a plain label (no header band, no bars, no badges).
+    const overview = zoom < LOD_ROWS
+    const labelSize = Math.max(14.5, 11.5 / zoom)
+    const labelMode = overview && labelSize > HDR_H * 0.62
+
     // Header band.
+    if (!labelMode) {
     ctx.save()
     roundRect(p.x, p.y, NODE_W, Math.min(HDR_H + 8, h), 8)
     ctx.clip()
@@ -967,9 +1038,10 @@
     ctx.beginPath()
     ctx.moveTo(p.x, p.y + HDR_H); ctx.lineTo(p.x + NODE_W, p.y + HDR_H)
     ctx.lineWidth = 1 / zoom; ctx.strokeStyle = isFocus ? c('focus', 0.35) : c('border', tone.rim * 0.8); ctx.stroke()
+    }
 
     ctx.textBaseline = 'middle'
-    if (zoom >= LOD_NAME) {
+    if (zoom >= LOD_NAME && !labelMode) {
       // "current" chip in the header, so the focused table is readable even when
       // the ring is off-screen or the diagram is exported/zoomed out.
       let nameW = NODE_W - 32
@@ -1002,18 +1074,38 @@
         ctx.fillText(label, bx + bw / 2, p.y + HDR_H / 2 + 0.5)
         nameW -= bw + 8
       }
-      setFont(`600 13.5px ${FONT_SANS}`)
-      setFill(c('fg', 1))
-      ctx.textAlign = 'left'
-      fillClipped(d.name ?? '', p.x + 16, p.y + HDR_H / 2, nameW, 13.5)
+      if (zoom >= LOD_ROWS) {
+        setFont(`600 14.5px ${FONT_SANS}`)
+        setFill(c('fg', 1))
+        ctx.textAlign = 'left'
+        fillClipped(d.name ?? '', p.x + 16, p.y + HDR_H / 2, nameW, 14.5)
+        // Column count, quiet, at the header's right edge.
+        if (!isFocus && !inCount && nameW > 120) {
+          setFont(FONT_TYPE)
+          setFill(c('mfg', 0.55))
+          ctx.textAlign = 'right'
+          ctx.fillText(String((d.columns?.length ?? 0) + (d.hiddenCount ?? 0)), p.x + NODE_W - 16, p.y + HDR_H / 2 + 0.5)
+        }
+      }
     }
 
-    if (zoom < LOD_ROWS) {
-      // Row text is sub-pixel down here and rightly skipped - but leaving the
-      // body empty turns a schema-wide view into a field of blank rectangles,
-      // which is what the whole diagram looks like at fit-zoom. The rows are
-      // drawn as bars instead: same rhythm, same PK/FK colour, no glyphs.
-      if (zoom >= LOD_BARS) drawRowBars(d, p, h)
+    if (overview) {
+      // Zoomed out, the name is drawn at one size for every card (about 11px on
+      // screen), left-aligned like the full card, and cut with an ellipsis
+      // rather than shrunk per table - per-card sizing made the overview a
+      // jumble of different type sizes.
+      const size = labelMode ? Math.min(labelSize, (HDR_H + ROW_H) * 0.5) : labelSize
+      setFont(`600 ${size.toFixed(1)}px ${FONT_SANS}`)
+      setFill(c('fg', 0.95))
+      ctx.textAlign = 'left'
+      if (labelMode) {
+        // The card is the label: name centred vertically, nothing under it.
+        fillClipped(d.name ?? '', p.x + 16, p.y + h / 2, NODE_W - 32, size)
+      } else {
+        // Name in the header, rows as bars below it (drawn once, never over it).
+        if (zoom >= LOD_BARS) drawRowBars(d, p, h)
+        fillClipped(d.name ?? '', p.x + 16, p.y + HDR_H / 2, NODE_W - 32, size)
+      }
       ctx.globalAlpha = 1
       return
     }
@@ -1407,19 +1499,19 @@
   <!-- Zoom controls -->
   <div class="absolute left-4 bottom-4 flex flex-col overflow-hidden rounded-lg border border-border/50 bg-panel elevate-2-rim">
     <button type="button" class="flex size-8 items-center justify-center border-b border-border/40 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" onclick={zoomIn} title="Zoom in">
-      <Plus class="size-3.5" />
+      <Plus class="size-3.5 shrink-0" />
     </button>
     <button type="button" class="flex size-8 items-center justify-center border-b border-border/40 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" onclick={zoomOut} title="Zoom out">
-      <Minus class="size-3.5" />
+      <Minus class="size-3.5 shrink-0" />
     </button>
     <button type="button" class="flex size-8 items-center justify-center text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" onclick={() => fit()} title="Fit to view">
-      <Maximize class="size-3.5" />
+      <Maximize class="size-3.5 shrink-0" />
     </button>
   </div>
 
   <!-- Line routing runs in slices across frames; say so while it is landing. -->
   {#if routePct >= 0}
-    <div class="pointer-events-none absolute left-4 top-4 flex h-6 items-center gap-2 rounded-full border border-border/50 bg-panel/85 px-2.5 font-mono text-ui-3xs tabular-nums text-muted-foreground backdrop-blur-sm">
+    <div class="pointer-events-none absolute left-4 top-4 flex h-6 items-center gap-2 rounded-full border border-border/50 bg-panel px-2.5 font-mono text-ui-3xs tabular-nums text-muted-foreground">
       <span class="size-1.5 animate-pulse rounded-full bg-primary"></span>
       Routing lines {routePct}%
     </div>

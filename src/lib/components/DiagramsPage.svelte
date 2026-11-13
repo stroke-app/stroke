@@ -1,4 +1,5 @@
 <script>
+  import { Button } from '$lib/components/ui/button/index.js'
   import { savedDiagrams, saveDiagram, updateDiagram, deleteDiagram, switchDiagramsConnection } from '$lib/stores/saved-diagrams.js'
   import MermaidViewer from './MermaidViewer.svelte'
   import CodeEditor from './CodeEditor.svelte'
@@ -184,14 +185,13 @@
   <!-- Page header -->
   <div class="flex shrink-0 items-center justify-between gap-3 border-b border-border/50 px-4 py-3">
     <h2 class="text-ui-sm font-medium text-foreground">Diagrams</h2>
-    <button
-      type="button"
+    <Button
       onclick={startNew}
-      class="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-ui-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
-    >
-      <Plus class="size-3" />
+       size="sm"
+>
+      <Plus class="size-3 shrink-0" />
       New diagram
-    </button>
+    </Button>
   </div>
 
   <!-- Body: sidebar + main -->
@@ -215,14 +215,14 @@
       <div class="min-h-0 flex-1 overflow-y-auto px-1 py-1">
         {#if filtered.length === 0}
           <div class="flex flex-col items-center gap-1.5 px-3 py-6 text-center">
-            <GitBranch class="size-5 text-muted-foreground" />
+            <GitBranch class="size-5 shrink-0 text-muted-foreground" />
             <p class="text-ui-2xs text-muted-foreground">
               {searchQ ? 'No results' : 'No diagrams yet'}
             </p>
           </div>
         {:else}
           {#each Object.entries(grouped) as [group, items]}
-            <p class="px-2 pb-1 pt-3 text-ui-2xs font-medium uppercase tracking-wide text-muted-foreground first:pt-1">
+            <p class="px-2 pb-1 pt-3 text-ui-2xs font-medium uppercase tracking-[0.06em] text-muted-foreground first:pt-1">
               {group}
             </p>
             {#each items as d (d.id)}
@@ -271,14 +271,13 @@
             placeholder="Group"
             class= "field-surface h-7 w-24 bg-background/50 px-2.5 text-ui-xs text-foreground placeholder:text-muted-foreground focus:outline-none"
           />
-          <button
-            type="button"
+          <Button
             onclick={saveChanges}
-            class="inline-flex h-7 items-center gap-1 rounded-md bg-primary px-3 text-ui-xs font-medium text-primary-foreground hover:opacity-90"
-          >
-            <Check class="size-3" />
+             size="sm"
+>
+            <Check class="size-3 shrink-0" />
             Save
-          </button>
+          </Button>
           <button
             type="button"
             onclick={cancelEdit}
@@ -312,13 +311,13 @@
         <!-- Editor + preview -->
         <div class="flex min-h-0 flex-1 gap-0 overflow-hidden">
           <div class="flex w-1/2 min-w-0 flex-col border-r border-border/40 p-3">
-            <p class="mb-1.5 text-ui-3xs font-medium uppercase tracking-wide text-muted-foreground">Mermaid code</p>
+            <p class="mb-1.5 text-ui-3xs font-medium uppercase tracking-[0.06em] text-muted-foreground">Mermaid code</p>
             <div class="field-surface flex min-h-0 flex-1 flex-col overflow-hidden bg-background/40">
               <CodeEditor bind:value={draftCode} ariaLabel="Mermaid code" placeholder="flowchart TD" />
             </div>
           </div>
           <div class="flex w-1/2 min-w-0 flex-col overflow-hidden">
-            <p class="shrink-0 px-3 pb-1.5 pt-3 text-ui-3xs font-medium uppercase tracking-wide text-muted-foreground">Preview</p>
+            <p class="shrink-0 px-3 pb-1.5 pt-3 text-ui-3xs font-medium uppercase tracking-[0.06em] text-muted-foreground">Preview</p>
             <div class="min-h-0 flex-1 overflow-hidden">
               <MermaidViewer code={draftCode} class="h-full w-full" />
             </div>
@@ -336,25 +335,25 @@
               onclick={startEdit}
               class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
               title="Edit"
-            ><Pencil class="size-3.5" /></button>
+            ><Pencil class="size-3.5 shrink-0" /></button>
             {#if confirmingDelete}
               <button
                 type="button"
                 onclick={confirmDelete}
                 class="inline-flex h-7 items-center gap-1 rounded-md bg-destructive px-2 text-ui-3xs text-destructive-foreground hover:opacity-90"
-              ><Check class="size-3" />Confirm</button>
+              ><Check class="size-3 shrink-0" />Confirm</button>
               <button
                 type="button"
                 onclick={() => confirmingDelete = false}
                 class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
-              ><X class="size-3.5" /></button>
+              ><X class="size-3.5 shrink-0" /></button>
             {:else}
               <button
                 type="button"
                 onclick={() => confirmingDelete = true}
                 class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-destructive"
                 title="Delete"
-              ><Trash2 class="size-3.5" /></button>
+              ><Trash2 class="size-3.5 shrink-0" /></button>
             {/if}
             <div class="mx-1 h-4 w-px bg-border/40"></div>
             <button
@@ -362,45 +361,45 @@
               onclick={() => viewerRef?.dispatch('diagram:zoomin')}
               class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
               title="Zoom in (Ctrl+scroll)"
-            ><ZoomIn class="size-3.5" /></button>
+            ><ZoomIn class="size-3.5 shrink-0" /></button>
             <button
               type="button"
               onclick={() => viewerRef?.dispatch('diagram:zoomout')}
               class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
               title="Zoom out"
-            ><ZoomOut class="size-3.5" /></button>
+            ><ZoomOut class="size-3.5 shrink-0" /></button>
             <button
               type="button"
               onclick={() => viewerRef?.dispatch('diagram:reset')}
               class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
               title="Reset view (double-click)"
-            ><RefreshCw class="size-3.5" /></button>
+            ><RefreshCw class="size-3.5 shrink-0" /></button>
             <div class="mx-1 h-4 w-px bg-border/40"></div>
             <button
               type="button"
               onclick={() => void copyDiagram()}
               class="inline-flex h-7 items-center gap-1 rounded-md px-2 text-ui-3xs text-muted-foreground hover:bg-accent hover:text-foreground"
               title="Copy as PNG"
-            ><Copy class="size-3" />Copy</button>
+            ><Copy class="size-3 shrink-0" />Copy</button>
             <button
               type="button"
               onclick={() => reportExport(viewerRef?.exportSvg(`${selected.name}.svg`), 'diagram as SVG', `${selected.name}.svg`)}
               class="inline-flex h-7 items-center gap-1 rounded-md px-2 text-ui-3xs text-muted-foreground hover:bg-accent hover:text-foreground"
               title="Export SVG"
-            ><Download class="size-3" />SVG</button>
+            ><Download class="size-3 shrink-0" />SVG</button>
             <button
               type="button"
               onclick={() => reportExport(viewerRef?.exportPng(`${selected.name}.png`), 'diagram as PNG', `${selected.name}.png`)}
               class="inline-flex h-7 items-center gap-1 rounded-md px-2 text-ui-3xs text-muted-foreground hover:bg-accent hover:text-foreground"
               title="Export PNG"
-            ><Download class="size-3" />PNG</button>
+            ><Download class="size-3 shrink-0" />PNG</button>
             <div class="mx-1 h-4 w-px bg-border/40"></div>
             <button
               type="button"
               onclick={() => fullscreenCode = selected.code}
               class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
               title="Fullscreen"
-            ><Maximize2 class="size-3.5" /></button>
+            ><Maximize2 class="size-3.5 shrink-0" /></button>
           </div>
         </div>
 
@@ -411,7 +410,7 @@
       {:else}
         <!-- State A: Empty state -->
         <div class="flex flex-1 flex-col items-center justify-center gap-3 text-center">
-          <GitBranch class="size-8 text-muted-foreground" />
+          <GitBranch class="size-8 shrink-0 text-muted-foreground" />
           <div>
             <p class="text-ui-sm font-medium text-muted-foreground">No diagram selected</p>
             <p class="mt-0.5 text-ui-xs text-muted-foreground">Pick one from the list or create a new one</p>
@@ -431,18 +430,18 @@
     tabindex="-1"
     use:focusTrap
   >
-    <div class="flex shrink-0 items-center gap-2 border-b border-border/50 px-4 py-2.5">
+    <div class="window-overlay-head flex shrink-0 items-center gap-2 border-b border-border/50 px-4 py-2.5" data-tauri-drag-region>
       <span class="min-w-0 flex-1 truncate text-ui-sm font-medium text-foreground">{selected?.name ?? 'Diagram'}</span>
-      <button type="button" onclick={() => fullscreenViewerRef?.dispatch('diagram:zoomin')} class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" title="Zoom in"><ZoomIn class="size-3.5" /></button>
-      <button type="button" onclick={() => fullscreenViewerRef?.dispatch('diagram:zoomout')} class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" title="Zoom out"><ZoomOut class="size-3.5" /></button>
-      <button type="button" onclick={() => fullscreenViewerRef?.dispatch('diagram:reset')} class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" title="Reset"><RefreshCw class="size-3.5" /></button>
+      <button type="button" onclick={() => fullscreenViewerRef?.dispatch('diagram:zoomin')} class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" title="Zoom in"><ZoomIn class="size-3.5 shrink-0" /></button>
+      <button type="button" onclick={() => fullscreenViewerRef?.dispatch('diagram:zoomout')} class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" title="Zoom out"><ZoomOut class="size-3.5 shrink-0" /></button>
+      <button type="button" onclick={() => fullscreenViewerRef?.dispatch('diagram:reset')} class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" title="Reset"><RefreshCw class="size-3.5 shrink-0" /></button>
       <div class="mx-1 h-4 w-px bg-border/40"></div>
       <button
         type="button"
         onclick={() => fullscreenCode = null}
         class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
         title="Close (Esc)"
-      ><X class="size-4" /></button>
+      ><X class="size-4 shrink-0" /></button>
     </div>
     <div class="min-h-0 flex-1 overflow-hidden">
       <MermaidViewer bind:this={fullscreenViewerRef} code={fullscreenCode} class="h-full w-full" />

@@ -1,4 +1,5 @@
 <script>
+  import { Button } from '$lib/components/ui/button/index.js'
   import EChartPanel from "./EChartPanel.svelte";
   import AiChartRenderer from "./AiChartRenderer.svelte";
   import {
@@ -202,7 +203,7 @@
 {#if !connection}
   <div class="flex min-h-0 flex-1 items-center justify-center bg-panel">
     <div class="flex flex-col items-center gap-2 text-center">
-      <BarChart2 class="size-8 text-muted-foreground" />
+      <BarChart2 class="size-8 shrink-0 text-muted-foreground" />
       <p class="text-ui-sm text-muted-foreground">Connect to a database to view saved charts</p>
     </div>
   </div>
@@ -210,11 +211,11 @@
 <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
   <!-- ── Header bar ────────────────────────────────────────────────────── -->
   <div
-    class="studio-chrome flex shrink-0 items-center gap-2 border-b border-border/50 bg-panel px-4 py-2"
+    class="studio-chrome flex h-12 shrink-0 items-center gap-2 border-b border-border/40 bg-panel px-4"
     data-studio-chrome
   >
-    <BarChart2 class="size-4 text-muted-foreground" />
-    <span class="font-medium">Saved Charts</span>
+    <BarChart2 class="size-4 shrink-0 text-muted-foreground" />
+    <span class="font-medium">Saved charts</span>
     <span
       class="ml-1 rounded-full bg-muted px-1.5 py-0.5 font-mono text-ui-2xs text-muted-foreground"
     >
@@ -230,7 +231,7 @@
             newGroupInput = "";
           }}
         >
-          <FolderPlus class="size-3.5" />
+          <FolderPlus class="size-3.5 shrink-0" />
           New Group
         </button>
       {:else}
@@ -239,7 +240,7 @@
             type="text"
             placeholder="Group name…"
             bind:value={newGroupInput}
-            class= "field-surface h-6 bg-background/80 px-2 font-mono text-ui-xs outline-none placeholder:text-muted-foreground"
+            class="no-field-frame h-8 rounded-md border-0 bg-sidebar-accent/50 px-2.5 text-ui-sm text-foreground outline-none placeholder:text-muted-foreground focus:bg-sidebar-accent"
             style="width:150px"
             onkeydown={(e) => {
               if (e.key === "Enter") commitNewGroup();
@@ -248,12 +249,8 @@
               }
             }}
           />
-          <button
-            type="button"
-            class="inline-flex h-6 items-center gap-1 rounded-md bg-primary px-2 text-ui-xs font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
-            onclick={commitNewGroup}
-          >
-            <Check class="size-3" />
+          <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-foreground" title="Create group" aria-label="Create group" onclick={commitNewGroup}>
+            <Check class="size-4 shrink-0" />
           </button>
           <button
             type="button"
@@ -262,7 +259,7 @@
               newGroupOpen = false;
             }}
           >
-            <X class="size-3" />
+            <X class="size-3 shrink-0" />
           </button>
         </div>
       {/if}
@@ -279,7 +276,7 @@
         <div
           class="flex size-16 items-center justify-center rounded-lg bg-muted/30"
         >
-          <BarChart2 class="size-8 text-muted-foreground" />
+          <BarChart2 class="size-8 shrink-0 text-muted-foreground" />
         </div>
         <div class="text-center">
           <p class="font-medium text-foreground/60">No saved charts yet</p>
@@ -291,9 +288,9 @@
           class="flex items-center gap-1.5 rounded-lg border border-border/40 bg-muted/20 px-3 py-2 text-ui-sm text-muted-foreground"
         >
           <span>Run a query</span>
-          <ArrowRight class="size-3.5" />
+          <ArrowRight class="size-3.5 shrink-0" />
           <span>Chart tab</span>
-          <ArrowRight class="size-3.5" />
+          <ArrowRight class="size-3.5 shrink-0" />
           <span>Save chart</span>
         </div>
       </div>
@@ -304,13 +301,13 @@
             <section>
               <!-- Group header -->
               <div class="mb-3 flex items-center gap-2">
-                <FolderOpen class="size-3.5 text-muted-foreground" />
+                <FolderOpen class="size-3.5 shrink-0 text-muted-foreground" />
                 {#if renamingGroupName === grpData.group}
                   <div class="flex items-center gap-1">
                     <input
                       type="text"
                       bind:value={renameGroupInput}
-                      class="h-5 rounded-lg border-2 border-border bg-background/80 px-1.5 font-mono text-ui-xs outline-none focus:border-ring/55 focus:ring-2 focus:ring-ring/15"
+                      class="field-surface h-7 bg-background px-2 font-mono text-ui-xs"
                       style="width:130px"
                       onkeydown={(e) => {
                         if (e.key === "Enter") commitRenameGroup();
@@ -323,14 +320,14 @@
                       type="button"
                       class={cn(btnIconSm, "size-5")}
                       onclick={commitRenameGroup}
-                      ><Check class="size-3" /></button
+                      ><Check class="size-3 shrink-0" /></button
                     >
                     <button
                       type="button"
                       class={cn(btnIconSm, "size-5")}
                       onclick={() => {
                         renamingGroupName = null;
-                      }}><X class="size-3" /></button
+                      }}><X class="size-3 shrink-0" /></button
                     >
                   </div>
                 {:else}
@@ -348,7 +345,7 @@
                       title="Rename group"
                       onclick={() => startRenameGroup(grpData.group)}
                     >
-                      <Pencil class="size-3" />
+                      <Pencil class="size-3 shrink-0" />
                     </button>
                     <button
                       type="button"
@@ -356,7 +353,7 @@
                       title="Delete group"
                       onclick={() => handleDeleteGroup(grpData.group)}
                     >
-                      <Trash2 class="size-3" />
+                      <Trash2 class="size-3 shrink-0" />
                     </button>
                   {/if}
                 {/if}
@@ -389,7 +386,7 @@
                         <div
                           class="absolute inset-0 flex items-center justify-center"
                         >
-                          <BarChart2 class="size-8 text-muted-foreground" />
+                          <BarChart2 class="size-8 shrink-0 text-muted-foreground" />
                         </div>
                       {/if}
 
@@ -400,7 +397,7 @@
                         <div class="flex items-center gap-1">
                           <button
                             type="button"
-                            class="inline-flex h-6 items-center gap-1 rounded border border-border/60 bg-card/90 px-1.5 text-ui-2xs text-muted-foreground backdrop-blur-sm transition-colors hover:bg-accent hover:text-foreground"
+                            class="inline-flex h-6 items-center gap-1 rounded-md border border-border/60 bg-card px-1.5 text-ui-2xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                             title="Open SQL in editor"
                             onclick={() => handleRunSql(chart)}
                           >
@@ -410,7 +407,7 @@
                           <div class="relative">
                             <button
                               type="button"
-                              class="inline-flex h-6 items-center gap-1 rounded border border-border/60 bg-card/90 px-1.5 text-ui-2xs text-muted-foreground backdrop-blur-sm transition-colors hover:bg-accent hover:text-foreground"
+                              class="inline-flex h-6 items-center gap-1 rounded-md border border-border/60 bg-card px-1.5 text-ui-2xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                               title="Add to dashboard"
                               onclick={(e) => {
                                 e.stopPropagation();
@@ -470,19 +467,19 @@
                             type="button"
                             class={cn(
                               btnIconSm,
-                              "size-6 bg-card/90 backdrop-blur-sm border border-border/40",
+                              "size-6 bg-card border border-border/40",
                             )}
                             title="Rename"
                             onclick={() => startRenameChart(chart.id)}
                           >
-                            <Pencil class="size-3" />
+                            <Pencil class="size-3 shrink-0" />
                           </button>
                           <div class="relative">
                             <button
                               type="button"
                               class={cn(
                                 btnIconSm,
-                                "size-6 bg-card/90 backdrop-blur-sm border border-border/40",
+                                "size-6 bg-card border border-border/40",
                               )}
                               title="Move to group"
                               onclick={() => {
@@ -490,7 +487,7 @@
                                   moveChartId === chart.id ? null : chart.id;
                               }}
                             >
-                              <FolderOpen class="size-3" />
+                              <FolderOpen class="size-3 shrink-0" />
                             </button>
                             {#if moveChartId === chart.id}
                               <div
@@ -519,7 +516,7 @@
                             type="button"
                             class={cn(
                               btnIconSm,
-                              "size-6 bg-card/90 backdrop-blur-sm border border-border/40",
+                              "size-6 bg-card border border-border/40",
                               confirmDeleteId === chart.id
                                 ? "text-destructive"
                                 : "hover:text-destructive",
@@ -529,7 +526,7 @@
                               : "Delete"}
                             onclick={() => handleDeleteChart(chart.id)}
                           >
-                            <Trash2 class="size-3" />
+                            <Trash2 class="size-3 shrink-0" />
                           </button>
                         </div>
                       </div>
@@ -542,7 +539,7 @@
                           <input
                             type="text"
                             bind:value={renameChartInput}
-                            class="h-5 min-w-0 flex-1 rounded-lg border-2 border-border bg-background/80 px-1.5 font-mono text-ui-xs outline-none focus:border-ring/55 focus:ring-2 focus:ring-ring/15"
+                            class="field-surface h-7 min-w-0 flex-1 bg-background px-2 font-mono text-ui-xs"
                             onkeydown={(e) => {
                               if (e.key === "Enter") commitRenameChart();
                               if (e.key === "Escape") {
@@ -554,14 +551,14 @@
                             type="button"
                             class={cn(btnIconSm, "size-4 shrink-0")}
                             onclick={commitRenameChart}
-                            ><Check class="size-3" /></button
+                            ><Check class="size-3 shrink-0" /></button
                           >
                           <button
                             type="button"
                             class={cn(btnIconSm, "size-4 shrink-0")}
                             onclick={() => {
                               renamingChartId = null;
-                            }}><X class="size-2.5" /></button
+                            }}><X class="size-3 shrink-0" /></button
                           >
                         </div>
                       {:else}
@@ -588,7 +585,7 @@
           {#if grpData.charts.length === 0}
             <section>
               <div class="mb-2 flex items-center gap-2">
-                <FolderOpen class="size-3.5 text-muted-foreground" />
+                <FolderOpen class="size-3.5 shrink-0 text-muted-foreground" />
                 <h3 class="text-ui-sm font-semibold text-foreground/40">
                   {grpData.group}
                 </h3>
@@ -603,7 +600,7 @@
                     title="Delete empty group"
                     onclick={() => handleDeleteGroup(grpData.group)}
                   >
-                    <Trash2 class="size-3" />
+                    <Trash2 class="size-3 shrink-0" />
                   </button>
                 {/if}
               </div>

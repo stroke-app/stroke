@@ -1,4 +1,5 @@
 <script>
+  import { Button } from '$lib/components/ui/button/index.js'
   import { untrack } from 'svelte'
   import EChartPanel from './EChartPanel.svelte'
   import {
@@ -327,13 +328,13 @@
   // token IS the Select trigger, so the border, hover and focus ring are drawn
   // once by the primitive instead of a wrapper and a nested control each
   // painting their own (which is what made the focused state look doubled).
-  const axisToken = 'group h-7 shrink-0 gap-0 overflow-hidden rounded-md border-border/40 bg-muted/20 p-0 pr-1.5 transition-colors hover:border-border/60 hover:bg-muted/30 [&_svg]:size-3 [&_svg]:text-muted-foreground'
-  const axisLabel = 'flex h-full shrink-0 select-none items-center border-r border-border/30 px-2 text-ui-2xs font-semibold uppercase tracking-widest text-muted-foreground'
-  const axisValue = 'truncate px-2 font-mono text-ui-xs text-foreground'
+  const axisToken = 'group h-8 shrink-0 gap-0 overflow-hidden rounded-md border-0 bg-sidebar-accent/40 p-0 pr-2 hover:bg-sidebar-accent [&_svg]:size-3.5 [&_svg]:text-muted-foreground'
+  const axisLabel = 'flex h-full shrink-0 select-none items-center pl-2.5 pr-1.5 text-ui-xs text-muted-foreground'
+  const axisValue = 'truncate pr-1 text-ui-sm text-foreground'
   const axisContent = 'z-[120] max-h-[20rem] min-w-[11rem] p-1'
   // No radius here: Select.Item's own rounded-lg is derived from the panel's
   // radius minus its padding, and overriding it breaks that relationship.
-  const axisItem = 'py-1.5 pl-2 font-mono text-ui-xs'
+  const axisItem = ''
   const iconBtn = 'inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground'
 </script>
 
@@ -341,7 +342,7 @@
 
   {#if !chartable}
     <div class="flex flex-1 flex-col items-center justify-center gap-3 text-center">
-      <BarChart2 class="size-9 text-muted-foreground" />
+      <BarChart2 class="size-9 shrink-0 text-muted-foreground" />
       <p class="text-ui-sm text-muted-foreground">Need at least one numeric column to chart</p>
     </div>
   {:else}
@@ -359,10 +360,8 @@
           type="button"
           onclick={() => { pickerOpen = !pickerOpen; pickerSearch = '' }}
           class={cn(
-            'flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-ui-xs font-medium transition-colors',
-            pickerOpen
-              ? 'border-ring/60 bg-accent text-foreground'
-              : 'border-border/40 bg-muted/20 text-foreground hover:border-border/60 hover:bg-muted/30',
+            'flex h-8 items-center gap-2 rounded-md px-2.5 text-ui-sm text-foreground',
+            pickerOpen ? 'bg-sidebar-accent' : 'bg-sidebar-accent/40 hover:bg-sidebar-accent',
           )}
         >
           <BarChart2 class="size-3.5 shrink-0 text-muted-foreground" />
@@ -377,46 +376,50 @@
             tabindex="-1"
             bind:this={pickerRef}
             onkeydown={onPickerKeydown}
-            class="absolute left-0 top-full z-50 mt-1 w-[480px] overflow-hidden rounded-[10px] border border-border/60 bg-popover/95 elevate-2-rim backdrop-blur-xl"
+            class="absolute left-0 top-full z-50 mt-1 w-[34rem] overflow-hidden rounded-[10px] border border-border/60 bg-popover elevate-2-rim"
           >
             <!-- Search -->
-            <div class="flex items-center gap-2 border-b border-border/40 px-3 py-2">
-              <Search class="size-3.5 shrink-0 text-muted-foreground" />
+            <div data-slot="menu-search" class="flex h-11 items-center gap-2 px-3">
+              <Search class="size-4 shrink-0 text-muted-foreground" />
               <input
                 type="text"
                 placeholder="Search chart types…"
                 bind:value={pickerSearch}
-                class="no-focus-ring flex-1 bg-transparent font-mono text-ui-xs text-foreground outline-none placeholder:text-muted-foreground"
+                class="no-focus-ring flex-1 bg-transparent text-ui-sm text-foreground outline-none placeholder:text-muted-foreground"
               />
               {#if pickerSearch}
-                <button type="button" onclick={() => (pickerSearch = '')} class="text-muted-foreground hover:text-muted-foreground">
-                  <X class="size-3.5" />
+                <button type="button" onclick={() => (pickerSearch = '')} class="text-muted-foreground hover:text-foreground">
+                  <X class="size-3.5 shrink-0" />
                 </button>
               {/if}
             </div>
 
             <!-- Chart grid -->
-            <div class="max-h-72 overflow-y-auto p-2">
+            <div class="max-h-[22rem] overflow-y-auto p-1.5">
               {#if filteredByGroup.length === 0}
                 <p class="py-6 text-center text-ui-xs text-muted-foreground">No charts match "{pickerSearch}"</p>
               {:else}
                 {#each filteredByGroup as grp (grp.group)}
                   <div class="mb-2">
-                    <p class="mb-1 px-1 text-ui-2xs font-semibold uppercase tracking-widest text-muted-foreground">{grp.group}</p>
-                    <div class="flex flex-wrap gap-1">
+                    <p class="px-2 pt-2 pb-1 text-ui-2xs font-medium text-muted-foreground">{grp.group}</p>
+                    <!-- Even tiles, two to a row: the name and what it shows, so
+                         "Pareto" or "Bullet" explain themselves before you click. -->
+                    <div class="grid grid-cols-2 gap-0.5">
                       {#each grp.charts as t (t.id)}
                         <button
                           type="button"
                           title={t.description}
                           onclick={() => selectChartType(t.id)}
                           class={cn(
-                            'flex h-7 items-center rounded-md px-2.5 text-ui-xs transition-colors',
-                            chartType === t.id
-                              ? 'bg-primary text-primary-foreground font-medium'
-                              : 'bg-muted/40 text-muted-foreground hover:bg-accent hover:text-foreground',
+                            'flex min-w-0 items-start gap-2 rounded-md px-2.5 py-2 text-left',
+                            chartType === t.id ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/60',
                           )}
                         >
-                          {t.label}
+                          <span class="min-w-0 flex-1">
+                            <span class={cn('block truncate text-ui-sm', chartType === t.id ? 'text-foreground' : 'text-foreground/85')}>{t.label}</span>
+                            {#if t.description}<span class="block truncate text-ui-2xs text-muted-foreground">{t.description}</span>{/if}
+                          </span>
+                          {#if chartType === t.id}<Check class="mt-0.5 size-3.5 shrink-0 text-foreground" />{/if}
                         </button>
                       {/each}
                     </div>
@@ -491,26 +494,26 @@
       <div class="ml-auto flex items-center gap-0.5">
         <span class="mr-1.5 tabular-nums font-mono text-ui-2xs text-muted-foreground">{loadedRows.length.toLocaleString()}{partial ? ` of ${rows.length.toLocaleString()} loaded` : ' rows'}</span>
         <button type="button" class={iconBtn} title="Save chart" onclick={openSavePanel}>
-          <Bookmark class="size-3.5" />
+          <Bookmark class="size-3.5 shrink-0" />
         </button>
         <button type="button" class={iconBtn} title="Copy ECharts JSON (AI-ready)" onclick={copyConfig}>
-          <Copy class="size-3.5" />
+          <Copy class="size-3.5 shrink-0" />
         </button>
         <button type="button" class={iconBtn} title="Download PNG" onclick={() => void downloadPng()}>
-          <Download class="size-3.5" />
+          <Download class="size-3.5 shrink-0" />
         </button>
       </div>
     </div>
 
     <!-- ── Save panel (inline below toolbar) ─────────────────────────── -->
     {#if saveOpen}
-      <div class="flex shrink-0 items-center gap-2 border-b border-border/40 bg-muted/20 px-3 py-1.5">
-        <span class="text-ui-2xs font-medium text-muted-foreground">Save as</span>
+      <div class="flex h-12 shrink-0 items-center gap-2 border-b border-border/40 px-3">
+        <span class="text-ui-xs text-muted-foreground">Save as</span>
         <input
           type="text"
           placeholder="Chart name…"
           bind:value={saveName}
-          class= "field-surface h-6 w-40 bg-background/80 px-2 font-mono text-ui-xs text-foreground outline-none placeholder:text-muted-foreground"
+          class="no-field-frame h-8 w-40 rounded-md border-0 bg-sidebar-accent/50 px-2.5 text-ui-sm text-foreground outline-none placeholder:text-muted-foreground focus:bg-sidebar-accent"
         />
 
         {#if !newGroupMode}
@@ -518,7 +521,7 @@
             <Select.Trigger
               size="sm"
               aria-label="Chart group"
-              class= "field-surface h-6 gap-1.5 bg-background/60 px-2 font-mono text-ui-xs [&_svg]:size-3 [&_svg]:text-muted-foreground"
+              class="h-8 gap-1.5 rounded-md border-0 bg-sidebar-accent/50 px-2.5 text-ui-sm [&_svg]:size-3.5 [&_svg]:text-muted-foreground"
             >
               <span class="truncate">{saveGroup}</span>
             </Select.Trigger>
@@ -526,28 +529,28 @@
               {#each $chartGroups as g (g)}<Select.Item value={g} label={g} class={axisItem}>{g}</Select.Item>{/each}
             </Select.Content>
           </Select.Root>
-          <button type="button" class="inline-flex size-6 items-center justify-center rounded text-muted-foreground hover:text-foreground" title="New group" onclick={() => { newGroupMode = true }}>
-            <Plus class="size-3.5" />
+          <button type="button" class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:text-foreground" title="New group" onclick={() => { newGroupMode = true }}>
+            <Plus class="size-3.5 shrink-0" />
           </button>
         {:else}
           <input
             type="text"
             placeholder="New group name…"
             bind:value={newGroupName}
-            class= "field-surface h-6 w-36 bg-background/80 px-2 font-mono text-ui-xs text-foreground outline-none placeholder:text-muted-foreground"
+            class="no-field-frame h-8 w-36 rounded-md border-0 bg-sidebar-accent/50 px-2.5 text-ui-sm text-foreground outline-none placeholder:text-muted-foreground focus:bg-sidebar-accent"
           />
-          <button type="button" class="inline-flex size-6 items-center justify-center rounded text-muted-foreground hover:text-foreground" onclick={() => (newGroupMode = false)}>
-            <X class="size-3" />
+          <button type="button" class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:text-foreground" onclick={() => (newGroupMode = false)}>
+            <X class="size-3 shrink-0" />
           </button>
         {/if}
 
-        <button
-          type="button"
+        <Button
           onclick={commitSave}
-          class="inline-flex h-6 items-center gap-1 rounded-md bg-primary px-2.5 text-ui-xs font-medium text-primary-foreground hover:bg-primary/90"
-        >
-          <Check class="size-3" />Save
-        </button>
+          size="sm"
+          variant="secondary"
+>
+          <Check class="size-3 shrink-0" />Save
+        </Button>
         <button
           type="button"
           onclick={() => (saveOpen = false)}
