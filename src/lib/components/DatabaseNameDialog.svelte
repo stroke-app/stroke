@@ -89,7 +89,7 @@
     }
   }
 
-  const lbl = 'mb-1.5 block text-ui-3xs font-semibold uppercase tracking-[0.07em] text-muted-foreground'
+  const lbl = 'mb-1.5 block text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground'
   const inp = 'h-8 w-full rounded-lg border-2 border-border bg-muted/[0.4] px-3 font-mono text-ui-xs outline-none placeholder:text-muted-foreground focus:border-border/50 focus:ring-0'
 </script>
 
@@ -100,7 +100,7 @@
 
       <div class="flex items-start gap-3.5 border-b border-border/25 px-5 pt-5 pb-4">
         <div class="mt-px flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted/50">
-          <Icon name={isRename ? 'pencil' : 'copy'} class="size-3.5 text-muted-foreground" />
+          <Icon name={isRename ? 'pencil' : 'copy'} class="size-3.5 shrink-0 text-muted-foreground" />
         </div>
         <div class="min-w-0 flex-1">
           <Dialog.Title class="text-ui-sm font-semibold text-foreground">{isRename ? 'Rename database' : 'Duplicate database'}</Dialog.Title>
@@ -109,7 +109,7 @@
             {isRename ? 'on this server' : 'with all of its data'}
           </p>
         </div>
-        <Dialog.Close class="inline-flex size-6 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted/50 hover:text-muted-foreground focus-visible:outline-none" />
+        <Dialog.Close class="inline-flex size-6 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:outline-none" />
       </div>
 
       <div class="flex flex-col gap-4 px-5 py-4">
@@ -153,13 +153,13 @@
 
       <div class="flex items-center justify-end gap-2 border-t border-border/25 px-5 py-3">
         <button type="button"
-          class="inline-flex h-8 items-center rounded-lg px-3.5 text-ui-sm text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
+          class="inline-flex h-8 items-center rounded-md px-3.5 text-ui-sm text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
           onclick={() => (open = false)}>Cancel</button>
         <button type="button"
           class="inline-flex h-8 items-center gap-1.5 rounded-lg bg-foreground px-4 text-ui-sm font-medium text-background transition-opacity hover:opacity-85 disabled:opacity-40"
           disabled={!isValid || saving}
           onclick={() => void submit()}>
-          {#if saving}<Icon name="loader-2" class="size-3.5 animate-spin" />{/if}
+          {#if saving}<Icon name="loader-2" class="size-3.5 shrink-0 animate-spin" />{/if}
           {isRename ? 'Rename' : 'Duplicate'}
         </button>
       </div>

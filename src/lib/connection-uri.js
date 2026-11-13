@@ -319,6 +319,9 @@ export function detectConnectionUri(uri) {
     case 'clickhouse':
     case 'clickhouses':
       return { type: 'clickhouse', uriType: 'clickhouse' }
+    case 'mongodb':
+    case 'mongodb+srv':
+      return { type: 'mongodb', uriType: 'mongodb' }
     case 'redis':
     case 'rediss':
       return { type: 'redis', uriType: 'postgres' }

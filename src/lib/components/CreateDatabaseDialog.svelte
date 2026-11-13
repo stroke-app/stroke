@@ -1,4 +1,5 @@
 <script>
+  import { Button } from '$lib/components/ui/button/index.js'
   import FieldSelect from './FieldSelect.svelte';
   import * as Dialog from '$lib/components/ui/dialog/index.js'
   import Database from '@lucide/svelte/icons/database'
@@ -122,8 +123,8 @@
 
     <!-- Header -->
     <div class="flex items-center gap-3 px-5 py-4 border-b border-border/60">
-      <div class="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-muted">
-        <Database class="size-3.5 text-muted-foreground" />
+      <div class="flex size-8 shrink-0 items-center justify-center text-muted-foreground">
+        <Database class="size-3.5 shrink-0 text-muted-foreground" />
       </div>
       <div class="min-w-0">
         <Dialog.Title class="text-ui-sm font-semibold leading-none">Create database</Dialog.Title>
@@ -291,18 +292,18 @@
         >
           Cancel
         </button>
-        <button
+        <Button
           type="submit"
-          class="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-4 text-ui-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+          
           disabled={loading || !name.trim()}
-        >
+>
           {#if loading}
             <span class="inline-block size-3 animate-spin rounded-full border border-primary-foreground border-t-transparent"></span>
             Creating…
           {:else}
             Create database
           {/if}
-        </button>
+        </Button>
       </div>
     </form>
 

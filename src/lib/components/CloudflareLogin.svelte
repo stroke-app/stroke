@@ -1,3 +1,8 @@
+<script module>
+  /** Whether the only D1 database was opened automatically this session. */
+  const d1AutoPicked = { done: false }
+</script>
+
 <script>
   import { onMount } from 'svelte'
   import Check from '@lucide/svelte/icons/check'
@@ -16,6 +21,7 @@
   import { readProviderList, writeProviderList, clearProviderLists } from '$lib/provider-list-cache.js'
   import { cloudflareListAccounts, cloudflareListD1Databases } from '$lib/api.js'
   import { cn } from '$lib/utils.js'
+  import { engineTint } from '$lib/engine-tint.js'
 
   let {
     /**
@@ -46,7 +52,16 @@
   /** @type {Array<{uuid: string, name: string, created_at?: string, num_tables?: number}>} */
   let databases = $state([])
   let selectedDbUuid = $state('')
+  // One D1 database on the account: open it without asking, once per visit.
+  // Only the first time per app session, so coming back keeps the picker.
+  $effect(() => {
+    if (phase !== 'selecting' || d1AutoPicked.done || selectedDbUuid || !selectedAccountId || databases.length !== 1) return
+    d1AutoPicked.done = true
+    void selectDatabase(databases[0].uuid)
+  })
   let loadingDbs = $state(false)
+  /** The refresh button is fetching the list again; the picker stays usable. */
+  let refreshing = $state(false)
 
   // `value` is the uuid because that is what selection needs; SearchableMenu makes
   // the label searchable on its own.
@@ -326,7 +341,7 @@
       {#snippet action()}
         <Button class="group" onclick={startAuth}>
           Sign in
-          <ArrowRight class="size-3.5 transition-transform duration-150 ease-out group-hover:translate-x-0.5" />
+          <ArrowRight class="size-3.5 shrink-0 transition-transform duration-150 ease-out group-hover:translate-x-0.5" />
         </Button>
       {/snippet}
     </ProviderAuthPanel>
@@ -379,7 +394,7 @@
       {#snippet action()}
         <div class="flex shrink-0 items-center gap-2">
           <Button variant="outline" class="group" onclick={() => (signedIn ? loadAccounts() : startAuth())}>
-            <RefreshCw class="size-3.5 transition-transform duration-500 ease-[var(--ease-out)] group-hover:rotate-180" />
+            <RefreshCw class="size-3.5 shrink-0" />
             Try again
           </Button>
           {#if signedIn}
@@ -393,18 +408,18 @@
     </ProviderAuthPanel>
 
   {:else if phase === 'selecting'}
-    <!-- ── Connected header ── -->
-    <div class="flex items-center gap-2.5 rounded-lg border border-border/40 bg-muted/[0.04] px-3 py-2.5">
-      <div class="flex size-7 shrink-0 items-center justify-center rounded-lg border border-border/40 bg-background">
-        <DbIcon id="d1" class="size-4 text-foreground" />
+    <!-- Connected account: brand mark, who you are, sign out. -->
+    <div class="flex items-center gap-3 rounded-lg border border-border/60 bg-muted/20 px-3.5 py-3">
+      <div class="grid size-9 shrink-0 place-items-center rounded-lg border border-border/60 bg-background">
+        <DbIcon id="d1" class={cn('size-4.5 shrink-0', engineTint("d1"))} />
       </div>
       <div class="min-w-0 flex-1">
-        <p class="flex items-center gap-1.5 text-ui-xs font-medium text-foreground">
+        <p class="flex items-center gap-2 text-ui-sm font-medium text-foreground">
           Cloudflare
-          <span class="inline-flex items-center gap-1 text-ui-3xs font-normal text-success"><Check class="size-3" />Connected</span>
+          <span class="inline-flex items-center gap-1.5 text-ui-2xs font-normal text-success"><span class="size-1.5 rounded-full bg-success" aria-hidden="true"></span>Connected</span>
         </p>
         {#if email}
-          <p class="truncate text-ui-3xs text-muted-foreground">{email}</p>
+          <p class="truncate text-ui-xs text-muted-foreground">{email}</p>
         {/if}
       </div>
       <Button variant="ghost" size="sm" class="shrink-0 text-muted-foreground hover:text-foreground" onclick={() => (confirmSignOut = true)}>
@@ -413,9 +428,11 @@
       </Button>
     </div>
 
+    <!-- Account and database side by side, as wide as the card above. -->
+    <div class={cn('grid gap-3', accounts.length > 1 && 'sm:grid-cols-2')}>
     <!-- Account selector -->
     {#if accounts.length > 1}
-      <div class="flex max-w-md flex-col gap-1.5">
+      <div class="flex min-w-0 flex-col gap-1.5">
         <span class="text-ui-xs font-medium text-foreground/80">Account</span>
         <SearchableMenu
           items={accounts.map((a) => ({ value: a.id, label: a.name }))}
@@ -444,13 +461,23 @@
         </SearchableMenu>
       </div>
     {:else if accounts.length === 1}
-      <p class="text-ui-2xs text-muted-foreground">Account · <span class="text-foreground/70">{accounts[0].name}</span></p>
+      <p class="text-ui-xs text-muted-foreground">Account · <span class="text-foreground/80">{accounts[0].name}</span></p>
     {/if}
 
     <!-- Database selector -->
     {#if selectedAccountId}
-      <div class="flex max-w-md flex-col gap-1.5">
-        <span class="flex items-baseline gap-1.5 text-ui-xs font-medium text-foreground/80">D1 database{#if databases.length}<span class="font-mono text-ui-2xs tabular-nums text-muted-foreground">{databases.length}</span>{/if}</span>
+      <div class="flex min-w-0 flex-col gap-1.5">
+        <div class="flex items-center gap-1.5">
+          <span class="flex items-baseline gap-1.5 text-ui-xs font-medium text-foreground/80">D1 database{#if databases.length}<span class="text-ui-2xs tabular-nums text-muted-foreground">{databases.length}</span>{/if}</span>
+          <button
+          type="button"
+          class="ml-auto inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
+          title="Refresh the list"
+          aria-label="Refresh databases"
+          disabled={loadingDbs || refreshing}
+          onclick={async () => { refreshing = true; try { await selectAccount(selectedAccountId) } finally { refreshing = false } }}
+        ><RefreshCw class={cn('size-3.5 shrink-0', (loadingDbs || refreshing) && 'animate-spin')} /></button>
+        </div>
 
         {#if databases.length > 0}
           <SearchableMenu
@@ -468,7 +495,7 @@
                 class="field-surface flex h-9 w-full items-center gap-2 bg-muted/25 pl-3 pr-2.5 text-left text-ui-xs transition-[border-color,box-shadow] hover:border-border focus:outline-none data-[state=open]:border-ring"
               >
                 <DbIcon id="d1" class={cn('size-4 shrink-0', selectedDbName ? 'text-foreground' : 'text-muted-foreground')} />
-                <span class={cn('min-w-0 flex-1 truncate font-mono', !selectedDbName && 'font-sans text-muted-foreground')}>
+                <span class={cn('min-w-0 flex-1 truncate', selectedDbName ? 'font-medium text-foreground' : 'text-muted-foreground')}>
                   {selectedDbName || 'Select a database'}
                 </span>
                 <ChevronDown class="size-3.5 shrink-0 text-muted-foreground" />
@@ -476,7 +503,7 @@
             {/snippet}
             {#snippet item(it)}
               <DbIcon id="d1" class={cn('size-4 shrink-0', it.value === selectedDbUuid ? 'text-foreground' : 'text-muted-foreground')} />
-              <span class="min-w-0 flex-1 truncate font-mono leading-snug">{it.label}</span>
+              <span class="min-w-0 flex-1 truncate leading-snug">{it.label}</span>
               {#if it.value === selectedDbUuid}<Check class="size-3.5 shrink-0 text-primary" />{/if}
             {/snippet}
           </SearchableMenu>
@@ -484,14 +511,14 @@
           <!-- Hold the control's footprint while the list loads so the form does
                not jump once the databases arrive. -->
                  <div class= "field-surface flex h-9 w-full items-center gap-2 bg-muted/15 pl-3 pr-2.5 text-ui-xs text-muted-foreground">
-            <Loader2 class="size-3.5 shrink-0 animate-spin" />
-            <span class="min-w-0 flex-1 truncate">Loading databases…</span>
+            <Loader2 class="loading-reveal size-3.5 shrink-0 animate-spin" />
+            <span class="loading-reveal min-w-0 flex-1 truncate">Loading databases…</span>
           </div>
         {:else}
           <!-- The same shape as the sidebar's empty tabs: a mark in a well, a title, one
          line on what to do, one button. Generous padding, because this block is
          the whole content of the panel when it shows. -->
-          <div class="flex flex-col items-center gap-4 rounded-xl border border-dashed border-border/60 px-6 py-10 text-center">
+          <div class="flex flex-col items-center gap-4 rounded-lg border border-dashed border-border/60 px-6 py-10 text-center">
             <div class="flex size-10 items-center justify-center rounded-lg border border-border/60 bg-muted/30">
               <DbIcon id={"d1"} class="size-5 text-muted-foreground" />
             </div>
@@ -500,13 +527,14 @@
               <p class="text-pretty text-ui-xs leading-relaxed text-muted-foreground">This account has no D1 databases. Create one with <code class="font-mono text-ui-2xs">wrangler d1 create</code> or in the Cloudflare dashboard, then refresh.</p>
             </div>
             <Button variant="outline" size="sm" class="group active:scale-[0.96]" onclick={() => selectAccount(selectedAccountId)}>
-              <RefreshCw class="size-3.5 shrink-0 transition-transform duration-500 ease-[var(--ease-out)] group-hover:rotate-180" aria-hidden="true" />
+              <RefreshCw class="size-3.5 shrink-0" aria-hidden="true" />
               Refresh
             </Button>
           </div>
         {/if}
       </div>
     {/if}
+    </div>
 
   {/if}
 

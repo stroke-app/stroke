@@ -68,7 +68,7 @@
         aria-checked={force}
         aria-label="Close other sessions"
         class={cn(
-          'relative inline-flex h-[18px] w-8 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-all duration-200 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
+          'relative inline-flex h-[18px] w-8 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
           force ? 'bg-destructive' : 'bg-muted',
         )}
         onclick={() => (force = !force)}
@@ -83,7 +83,7 @@
 
   <div class="h-px bg-border/25"></div>
   <div class="px-5 py-4">
-    <p class="mb-2 text-ui-3xs font-semibold tracking-[0.07em] uppercase text-muted-foreground">Will execute</p>
+    <p class="mb-2 text-ui-3xs font-semibold tracking-[0.06em] uppercase text-muted-foreground">Will execute</p>
     <div class="rounded-lg border border-border/20 bg-muted/[0.3] px-3.5 py-2.5">
       <code class="font-mono text-ui-xs break-all text-destructive">{sql}</code>
     </div>

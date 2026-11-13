@@ -42,6 +42,29 @@ const KEY_EMAIL: &str = "__cf_user_email__";
 
 // ── Shared HTTP client ────────────────────────────────────────────────────────
 
+/// A Cloudflare request that never got an answer, said in words.
+///
+/// reqwest's own text ("error sending request for url (...): operation timed
+/// out") names neither the cause nor a next step, and on a slow route to
+/// api.cloudflare.com - measured at 8-11s a request from one network - it was
+/// all a D1 connect ever showed. Timeouts and failed connects get a plain
+/// explanation; anything else keeps the original detail after it.
+pub(crate) fn describe_request_error(what: &str, e: &reqwest::Error) -> String {
+    if e.is_timeout() {
+        format!(
+            "Cloudflare didn't answer in time ({what}). Your connection to api.cloudflare.com \
+             looks slow or blocked - try again, or check your network, VPN or proxy."
+        )
+    } else if e.is_connect() {
+        format!(
+            "Couldn't reach Cloudflare ({what}). api.cloudflare.com is unreachable from this \
+             network - check your connection, VPN or proxy, then try again."
+        )
+    } else {
+        format!("{what} failed: {e}")
+    }
+}
+
 static CF_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
 fn http() -> &'static reqwest::Client {
@@ -58,7 +81,7 @@ fn http() -> &'static reqwest::Client {
             // that never answers - captive portal, dropped route, a stalled edge -
             // leaves the command awaiting forever and the UI on its spinner with no
             // way out. "Loading your Cloudflare accounts…" sat there permanently.
-            .connect_timeout(std::time::Duration::from_secs(10))
+            .connect_timeout(std::time::Duration::from_secs(25))
             .timeout(std::time::Duration::from_secs(30))
             .build()
             .expect("failed to build CF HTTP client")
@@ -174,7 +197,7 @@ async fn refresh_access_token(refresh_token: &str) -> Result<TokenResponse, Stri
         .form(&params)
         .send()
         .await
-        .map_err(|e| format!("Refresh request failed: {e}"))?;
+        .map_err(|e| describe_request_error("Refreshing the Cloudflare sign-in", &e))?;
 
     let status = resp.status().as_u16();
     let body: serde_json::Value = resp
@@ -482,7 +505,7 @@ pub async fn cloudflare_list_accounts(api_token: String) -> Result<Vec<CfAccount
         .header("Content-Type", "application/json")
         .send()
         .await
-        .map_err(|e| format!("Network error: {e}"))?;
+        .map_err(|e| describe_request_error("Cloudflare API", &e))?;
 
     let status = resp.status().as_u16();
     let body: serde_json::Value = resp
@@ -537,7 +560,7 @@ pub async fn cloudflare_list_d1_databases(
         .header("Content-Type", "application/json")
         .send()
         .await
-        .map_err(|e| format!("Network error: {e}"))?;
+        .map_err(|e| describe_request_error("Cloudflare API", &e))?;
 
     let status = resp.status().as_u16();
     let body: serde_json::Value = resp

@@ -157,9 +157,9 @@
       <div class="db-list-scroll app-scroll min-h-0 flex-1 overflow-y-auto p-1">
         {#if loading}
           <div
-            class="flex items-center justify-center gap-2 py-6 text-muted-foreground"
+            class="loading-reveal flex items-center justify-center gap-2 py-6 text-muted-foreground"
           >
-            <RefreshCw class="size-3.5 animate-spin" /><span
+            <RefreshCw class="size-3.5 shrink-0 animate-spin" /><span
               class="font-mono text-ui-xs">Loading…</span
             >
           </div>
@@ -213,7 +213,7 @@
         </p>
         <button
           type="button"
-          class="inline-flex size-5 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground"
+          class="hit-area inline-flex size-5 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground"
           onclick={fetchDatabases}
           title="Refresh"
           ><RefreshCw class={cn("size-3", loading && "animate-spin")} /></button

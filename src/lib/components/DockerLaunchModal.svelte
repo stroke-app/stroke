@@ -1,4 +1,5 @@
 <script>
+  import { Button } from '$lib/components/ui/button/index.js'
   import { onDestroy, tick } from 'svelte'
   import { listen } from '@tauri-apps/api/event'
   import * as Dialog from '$lib/components/ui/dialog/index.js'
@@ -103,7 +104,7 @@
   <Dialog.Content class="sm:max-w-md">
     <Dialog.Header>
       <Dialog.Title class="flex items-center gap-2">
-        <Package class="size-4 text-muted-foreground" />
+        <Package class="size-4 shrink-0 text-muted-foreground" />
         Docker Database
       </Dialog.Title>
       <Dialog.Description>
@@ -164,13 +165,12 @@
             <span class="text-muted-foreground">db</span><span>{connInfo.database}</span>
           </div>
         </div>
-        <button
-          type="button"
-          class="w-full rounded-md bg-primary px-4 py-2 text-ui-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+        <Button
+          class="w-full" size="lg"
           onclick={handleConnect}
-        >
+>
           Connect now
-        </button>
+        </Button>
       </div>
 
     {:else if phase === 'error'}

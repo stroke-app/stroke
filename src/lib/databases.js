@@ -9,7 +9,7 @@ import { executeSql, cloudflareListD1Databases } from '$lib/api.js'
 import { providerListDatabases } from '$lib/providers.js'
 import { engineFamily } from '$lib/stores/connections.js'
 
-/** @typedef {{ key: string, label: string }} DatabaseEntry */
+/** @typedef {{ key: string, label: string, onServer?: boolean }} DatabaseEntry `onServer`: on this provider's server but not in its API; switch by name. */
 /** @typedef {import('$lib/stores/connections.js').SavedConnection} Conn */
 
 /**
@@ -27,7 +27,11 @@ export function dbSwitchKind(conn) {
   if (!conn) return null
   const family = engineFamily(conn.type)
   if (family === 'redis') return null
-  if (conn.provider) return 'provider'
+  // MySQL-family providers (TiDB, PlanetScale) hand back a server or cluster;
+  // the databases worth switching between are the ones inside it, which the
+  // provider API does not list. TiDB connects with none selected, so a database
+  // made there (by you or the AI) was unreachable from the switcher.
+  if (conn.provider && family !== 'mysql') return 'provider'
   if (family === 'postgres') return 'postgres'
   if (family === 'mysql') return 'mysql'
   if (family === 'mssql') return 'mssql'
@@ -49,11 +53,28 @@ export function canSwitchDatabase(conn) {
  */
 export function currentDatabaseKey(conn) {
   if (!conn) return ''
+  // Provider listings key by the provider's own id (Turso "org/name", Neon a
+  // project path), not the database name, so the name never matched and the
+  // database you were in offered to switch to itself.
+  if (dbSwitchKind(conn) === 'provider' && /** @type {any} */ (conn).providerRef) return /** @type {any} */ (conn).providerRef
   if (conn.type === 'd1') return conn.databaseId ?? ''
   // A blank database connects to the server's default, so that row is current.
   if (conn.type === 'mssql') return conn.database || 'master'
   if (conn.type === 'clickhouse') return conn.database || 'default'
   return conn.database ?? conn.filePath ?? ''
+}
+
+/**
+ * Whether a listed database is the one this connection is on. Keys first; a
+ * provider connection saved before it kept its `providerRef` falls back to the
+ * database name.
+ * @param {DatabaseEntry} entry @param {Conn | null | undefined} conn
+ */
+export function isCurrentDatabase(entry, conn) {
+  if (!conn) return false
+  const key = currentDatabaseKey(conn)
+  if (key && entry.key === key) return true
+  return dbSwitchKind(conn) === 'provider' && !(/** @type {any} */ (conn).providerRef) && !!conn.database && entry.label === conn.database
 }
 
 /**
@@ -70,6 +91,9 @@ export function currentDatabaseKey(conn) {
  * @param {T[]} entries
  * @returns {T[]}
  */
+/** Databases on a hosted Postgres server that belong to the platform, not the user. */
+const SERVER_SYSTEM_DBS = new Set(['postgres', 'rdsadmin', 'azure_maintenance', 'azure_sys', 'cloudsqladmin', '_supabase'])
+
 function dedupeByKey(entries) {
   const seen = new Set()
   return entries.filter((e) => {
@@ -92,7 +116,23 @@ export async function listDatabases(conn) {
   try {
     if (kind === 'provider' && conn.provider) {
       const dbs = await providerListDatabases(conn.provider)
-      return sortByLabel((dbs ?? []).map((/** @type {{ db_ref: string, name: string }} */ d) => ({ key: d.db_ref, label: d.name })))
+      /** @type {DatabaseEntry[]} */
+      const listed = (dbs ?? []).map((/** @type {{ db_ref: string, name: string }} */ d) => ({ key: d.db_ref, label: d.name }))
+      // The provider API only knows the databases made through it. One made
+      // with SQL on the same server (by you or the AI) is still reachable over
+      // this login; list it too, switched by name on this server.
+      if (engineFamily(conn.type) === 'postgres') {
+        const names = new Set(listed.map((e) => e.label.split(/[\s/·]+/).pop()))
+        try {
+          const result = await executeSql(`SELECT datname FROM pg_catalog.pg_database WHERE datistemplate = false AND datallowconn ORDER BY datname`)
+          for (const r of result?.rows ?? []) {
+            const name = String(r[0])
+            if (names.has(name) || name === conn.database || SERVER_SYSTEM_DBS.has(name)) continue
+            listed.push({ key: `server:${name}`, label: name, onServer: true })
+          }
+        } catch { /* no rights to pg_database: the provider's list is what we have */ }
+      }
+      return sortByLabel(dedupeByKey(listed))
     }
     if (kind === 'postgres') {
       const result = await executeSql(

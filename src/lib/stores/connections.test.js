@@ -4,10 +4,15 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 // writes instead of calling Tauri.
 const writes = /** @type {string[]} */ ([])
 let diskPayload = /** @type {string | null} */ (null)
+/** The keychain vault's connection-secrets entry, and whether it works. */
+let vault = /** @type {string | null} */ (null)
+let vaultBroken = false
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(async (/** @type {string} */ cmd, /** @type {any} */ args) => {
     if (cmd === 'connections_store_write') { writes.push(args.json); diskPayload = args.json; return null }
     if (cmd === 'connections_store_read') return diskPayload
+    if (cmd === 'conn_secrets_read') { if (vaultBroken) throw new Error('no keychain'); return vault }
+    if (cmd === 'conn_secrets_write') { if (vaultBroken) throw new Error('no keychain'); vault = args.json; return null }
     throw new Error(`unexpected command ${cmd}`)
   }),
 }))
@@ -33,6 +38,8 @@ describe('saved connections', () => {
     installLocalStorage()
     writes.length = 0
     diskPayload = null
+    vault = null
+    vaultBroken = false
     vi.resetModules()
   })
 
@@ -93,5 +100,72 @@ describe('saved connections', () => {
     expect(next.loadSavedConnections().map((c) => c.id)).toEqual(['b'])
     next.upsertConnection({ id: 'a', type: 'postgres' })
     expect(next.loadSavedConnections().map((c) => c.id)).toEqual(['b'])
+  })
+})
+
+describe('connection secrets in the keychain', () => {
+  beforeEach(() => {
+    installLocalStorage()
+    writes.length = 0
+    diskPayload = null
+    vault = null
+    vaultBroken = false
+    vi.resetModules()
+  })
+
+  const legacy = [
+    { id: 'pg', type: 'postgres', name: 'pg', host: 'h', password: 'hunter2' },
+    { id: 'mg', type: 'mongodb', name: 'mg', uri: 'mongodb://u:p@h/db' },
+    { id: 'lite', type: 'sqlite', name: 'lite', filePath: '/x.db' },
+  ]
+
+  it('moves inline secrets to the keychain at startup and strips them from disk', async () => {
+    localStorage.setItem('stroke:connections', JSON.stringify(legacy))
+    const store = await import('./connections.js')
+    await store.hydrateConnectionsFromDisk()
+    await flush()
+    expect(JSON.parse(vault ?? '{}')).toEqual({ pg: { password: 'hunter2' }, mg: { uri: 'mongodb://u:p@h/db' } })
+    // No write to disk ever held a secret.
+    expect(writes.every((w) => !w.includes('hunter2'))).toBe(true)
+    const raw = localStorage.getItem('stroke:connections') ?? ''
+    expect(raw).not.toContain('hunter2')
+    expect(raw).not.toContain('u:p@')
+    expect(diskPayload).not.toContain('hunter2')
+    // Callers still see whole connections.
+    const loaded = store.loadSavedConnections()
+    expect(loaded.find((c) => c.id === 'pg')?.password).toBe('hunter2')
+    expect(loaded.find((c) => c.id === 'mg')?.uri).toBe('mongodb://u:p@h/db')
+  })
+
+  it('saves new secrets to the keychain only, and forgets deleted ones', async () => {
+    const store = await import('./connections.js')
+    await store.hydrateConnectionsFromDisk()
+    store.upsertConnection({ id: 'n', type: 'mysql', name: 'n', password: 's3cret' })
+    await flush()
+    expect(localStorage.getItem('stroke:connections')).not.toContain('s3cret')
+    expect(JSON.parse(vault ?? '{}').n).toEqual({ password: 's3cret' })
+    store.removeConnection('n')
+    await flush()
+    expect(JSON.parse(vault ?? '{}').n).toBeUndefined()
+  })
+
+  it('keeps secrets inline when the keychain is unavailable', async () => {
+    vaultBroken = true
+    localStorage.setItem('stroke:connections', JSON.stringify(legacy))
+    const store = await import('./connections.js')
+    await store.hydrateConnectionsFromDisk()
+    expect(localStorage.getItem('stroke:connections')).toContain('hunter2')
+    store.upsertConnection({ id: 'n', type: 'mysql', name: 'n', password: 'p2' })
+    expect(localStorage.getItem('stroke:connections')).toContain('p2')
+    expect(store.loadSavedConnections().find((c) => c.id === 'pg')?.password).toBe('hunter2')
+  })
+
+  it('a keychain write that fails later puts the secrets back inline', async () => {
+    const store = await import('./connections.js')
+    await store.hydrateConnectionsFromDisk()
+    vaultBroken = true
+    store.upsertConnection({ id: 'n', type: 'mysql', name: 'n', password: 'keepme' })
+    await flush(); await flush()
+    expect(localStorage.getItem('stroke:connections')).toContain('keepme')
   })
 })
