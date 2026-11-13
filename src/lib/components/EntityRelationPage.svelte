@@ -55,7 +55,7 @@
   import { separateCards, wrapTallRanks } from '$lib/erd-layout.js'
   import { layoutWithElk } from '$lib/erd-elk.js'
   import { visibleTables, visibleRels, relatedTo, linkedTables, mergeParallelEdges, hubTables } from '$lib/erd-filter.js'
-  import { cn } from '$lib/utils.js'
+  import { cn, plural } from '$lib/utils.js'
 
   let {
     schema = 'public',
@@ -72,6 +72,8 @@
     hostExports = false,
     /** True when this diagram is rendered inside the focused table's own tab. */
     insideTableTab = false,
+    /** Inside a table tab: back to the rows (the tab's own toolbar is hidden here). @type {(() => void) | null} */
+    onback = null,
   } = $props()
 
   /**
@@ -91,9 +93,9 @@
   ]
 
   // ── Config ────────────────────────────────────────────────────────────────
-  const NODE_W = 268
-  const ROW_H = 28
-  const HDR_H = 42
+  const NODE_W = 300
+  const ROW_H = 30
+  const HDR_H = 48
   const PAD_B = 10
   const WARN_MANY = 60
   /**
@@ -220,7 +222,9 @@
    */
   const MERMAID_AUTO_MAX = 60
   let mermaidForce = $state(false)
-  const mermaidGated = $derived(shownTables.length > MERMAID_AUTO_MAX && !mermaidForce)
+  // No "render anyway" step: a large schema renders keys-only, off the frame
+  // that opens the view (see MermaidViewer), so there is nothing to wait for.
+  const mermaidGated = $derived(false && !mermaidForce)
   /** @type {MermaidViewer | null} */
   let mermaidViewer = $state(null)
   /** The Mermaid code pane. Starts folded: the picture is what the view is
@@ -364,12 +368,22 @@
   /** Every relationship on the page in the shape the Mermaid generators take.
    *  Hub links are in: the source is an export, and "where is `user`" has to be
    *  answerable from it. The canvas keeps them as pills. */
-  const mermaidRels = $derived([...edges, ...hubEdges].map((e) => ({
+  /** @param {any} e */
+  const toRel = (e) => ({
     source: e.source, target: e.target,
     sourceCol: typeof e.sourceHandle === 'string' && e.sourceHandle.startsWith('src-') ? e.sourceHandle.slice(4) : null,
     many: e.many, optional: e.optional,
-  })))
-  const mermaidSource = $derived(erdToMermaid(shownTables, mermaidRels, { keysOnly: view.columnMode === 'keys' }))
+  })
+  const mermaidRels = $derived([...edges, ...hubEdges].map(toRel))
+  /** Drawn links: hubs only when the hub setting asks for lines. */
+  const mermaidDrawn = $derived(view.hubLinks === 'lines' ? mermaidRels : edges.map(toRel))
+  const mermaidHubRels = $derived(view.hubLinks === 'lines' ? [] : hubEdges.map(toRel))
+  /** Above this many tables Mermaid gets key columns only, unless All was chosen on purpose. */
+  const MERMAID_FULL_MAX = 40
+  const mermaidKeysOnly = $derived(
+    view.columnMode === 'keys' || (shownTables.length > MERMAID_FULL_MAX && !settings.touched.includes('columnMode')),
+  )
+  const mermaidSource = $derived(erdToMermaid(shownTables, mermaidDrawn, { keysOnly: mermaidKeysOnly, commentRels: mermaidHubRels }))
   /** The code in the editor. Follows the diagram until the user edits it. */
   let mermaidDraft = $state('')
   let mermaidTouched = $state(false)
@@ -517,6 +531,27 @@
    * whatever the layout produced.
    * @param {any[]} laid @param {string} [pin] a card that must not move
    */
+  /**
+   * Whether any two cards overlap (with a few pixels to spare). A sweep over
+   * the cards sorted by x: only cards whose x ranges meet are compared.
+   * @param {any[]} laid
+   */
+  function anyOverlap(laid) {
+    const boxes = laid
+      .map((n) => ({ x: n.position.x, y: n.position.y, w: NODE_W, h: hOf(n) }))
+      .sort((a, b) => a.x - b.x)
+    const GAP = 6
+    for (let i = 0; i < boxes.length; i++) {
+      const a = boxes[i]
+      for (let j = i + 1; j < boxes.length; j++) {
+        const b = boxes[j]
+        if (b.x >= a.x + a.w + GAP) break
+        if (b.y < a.y + a.h + GAP && a.y < b.y + b.h + GAP) return true
+      }
+    }
+    return false
+  }
+
   function enforceSpacing(laid, pin) {
     if (laid.length < 2) return laid
     const pos = separateCards(
@@ -825,10 +860,18 @@
     }))
 
     const combined = [...laidHubs, ...laidConn, ...laidOrphans]
-    // Dagre separates the cards it places, and the orphan grid below uses a
-    // uniform cell, so both are clear by construction. Nudging them now would
-    // move cards off the corridors their edge points describe.
-    return { nodes: hints.size ? combined : enforceSpacing(combined), hints }
+    // The layout engines separate the cards they place and the orphan grid
+    // uses a uniform cell, so this is usually clear by construction - but
+    // "usually" left overlapping cards on screen whenever it was not (an engine
+    // given stale sizes, a component packed into a shelf it did not fit). The
+    // cards are checked every time; when any two overlap they are separated, and
+    // the layout's line hints are dropped with it, since they describe the
+    // positions the cards just left.
+    if (!hints.size || anyOverlap(combined)) {
+      hints.clear()
+      return { nodes: enforceSpacing(combined), hints }
+    }
+    return { nodes: combined, hints }
   }
 
   // ── Edge list ─────────────────────────────────────────────────────────────
@@ -1640,7 +1683,7 @@
   <!-- Wide enough for its placeholder in a monospace UI font, and the right
        padding only makes room for the clear button when there is something
        to clear, so an empty box never cuts its own hint short. -->
-  <div class={cn('relative flex min-w-0 shrink items-center', o.wide ? 'w-72' : 'w-52')}>
+  <div class={cn('relative flex min-w-[10rem] shrink items-center', o.wide ? 'w-80' : 'w-64')}>
     <Search class="pointer-events-none absolute left-2.5 size-3.5 text-muted-foreground" />
     <input
       type="text"
@@ -1656,7 +1699,7 @@
       title="{o.label} ({keycaps('Mod+F').join(IS_MAC ? '' : '+')})"
       spellcheck="false"
       autocomplete="off"
-      class={cn('field-surface h-7 w-full min-w-0 bg-input/30 pl-8 text-ui-sm text-foreground outline-none placeholder:text-muted-foreground', value ? 'pr-7' : 'pr-2.5')}
+      class={cn('field-surface h-8 w-full min-w-0 pl-8 text-ui-sm text-foreground shadow-none outline-none placeholder:text-muted-foreground', value ? 'pr-7' : 'pr-2.5')}
     />
     {#if value}
       <button
@@ -1664,8 +1707,8 @@
         onclick={() => { set(''); searchEl?.focus() }}
         aria-label="Clear"
         title="Clear (Esc)"
-        class="absolute right-1 inline-flex size-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-      ><X class="size-3" /></button>
+        class="absolute right-1 inline-flex size-5 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+      ><X class="size-3 shrink-0" /></button>
     {/if}
   </div>
 {/snippet}
@@ -1725,13 +1768,25 @@
   style={fullscreen ? 'top: var(--app-titlebar-h, 38px)' : ''}
 >
   <!-- ── Toolbar ──────────────────────────────────────────────────────────── -->
-  <div class="studio-chrome flex h-9 shrink-0 items-center gap-2 border-b border-border bg-panel px-3" data-studio-chrome>
+  <div class="studio-chrome flex h-11 shrink-0 items-center gap-2 border-b border-border/40 bg-panel px-3" data-studio-chrome>
+    {#if onback}
+      <button
+        type="button"
+        onclick={onback}
+        title="Back to the table's rows"
+        class="field-surface inline-flex h-8 shrink-0 items-center gap-1.5 px-2.5 text-ui-sm text-foreground/85 shadow-none transition-colors hover:bg-accent hover:text-foreground"
+      >
+        <ChevronDown class="size-3.5 shrink-0 rotate-90" />
+        Rows
+      </button>
+      <span class="mx-0.5 h-4 w-px shrink-0 bg-border/60" aria-hidden="true"></span>
+    {/if}
     <Network class="size-3.5 shrink-0 text-muted-foreground" aria-label="Schema diagram" />
 
     {#if schemas.length > 1}
       <Popover bind:open={schemaOpen}>
         <PopoverTrigger
-        class= "field-surface ml-1 flex h-7 shrink-0 items-center gap-1.5 bg-input/30 px-2.5 text-ui-sm font-medium text-foreground transition-colors hover:bg-accent focus:outline-none data-[state=open]:bg-accent"
+        class= "field-surface ml-1 flex h-8 shrink-0 items-center gap-1.5 px-2.5 text-ui-sm font-medium text-foreground shadow-none transition-colors hover:bg-accent focus:outline-none data-[state=open]:border-ring"
         >
           {activeSchema}
           <ChevronDown class="size-3 shrink-0 text-muted-foreground" />
@@ -1770,7 +1825,7 @@
         aria-pressed={treeListOpen}
         onclick={() => (treeListOpen = !treeListOpen)}
         class={cn('inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground', treeListOpen && 'bg-accent text-foreground')}
-      >{#if treeListOpen}<PanelLeftClose class="size-3.5" />{:else}<PanelLeftOpen class="size-3.5" />{/if}</button>
+      >{#if treeListOpen}<PanelLeftClose class="size-3.5 shrink-0" />{:else}<PanelLeftOpen class="size-3.5 shrink-0" />{/if}</button>
       <!-- Typing opens the list it filters. -->
       {@render searchBox(treeSearch, (v) => (treeSearch = v), { label: 'Filter tables', placeholder: 'Filter tables', oninput: () => (treeListOpen = true) })}
     {:else}
@@ -1780,7 +1835,7 @@
         aria-label="Find in the code"
         onclick={() => void focusSearch()}
         class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-      ><Search class="size-3.5" /></button>
+      ><Search class="size-3.5 shrink-0" /></button>
     {/if}
 
     {#if filterApplies}
@@ -1863,7 +1918,7 @@
                   on ? 'border-primary bg-primary text-primary-foreground' : 'border-input dark:bg-input/30',
                   locked && 'opacity-60',
                 )}>
-                  {#if on}<Check class="size-3" />{/if}
+                  {#if on}<Check class="size-3 shrink-0" />{/if}
                 </span>
                 <span class={cn('min-w-0 flex-1 truncate font-mono text-ui-xs', on ? 'text-foreground' : 'text-muted-foreground')}>{row.name}</span>
                 {#if locked}
@@ -1926,7 +1981,7 @@
         aria-label="Clear the table filter"
         onclick={() => setPicked([])}
         class="hit-area -ml-1 inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-      ><X class="size-3" /></button>
+      ><X class="size-3 shrink-0" /></button>
     {/if}
     {/if}
 
@@ -1949,9 +2004,9 @@
                   : 'text-muted-foreground hover:text-foreground',
               )}
             >
-              {#if s.id === 'self'}<Square class="size-3.5" />
-              {:else if s.id === 'related'}<Network class="size-3.5" />
-              {:else}<LayoutGrid class="size-3.5" />{/if}
+              {#if s.id === 'self'}<Square class="size-3.5 shrink-0" />
+              {:else if s.id === 'related'}<Network class="size-3.5 shrink-0" />
+              {:else}<LayoutGrid class="size-3.5 shrink-0" />{/if}
             </button>
           {/each}
         </div>
@@ -1961,7 +2016,7 @@
             class="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,transform] duration-150 ease-out hover:bg-accent hover:text-foreground active:scale-[0.97]"
             title="Clear focus on {focusTable}"
             onclick={onclearfocus}
-          ><X class="size-3" /></button>
+          ><X class="size-3 shrink-0" /></button>
         {/if}
       </div>
     {/if}
@@ -1970,17 +2025,17 @@
       <!-- The view's own numbers and actions. -->
       {#if tableMeta.size > 0 && !loading}
         {#if erdView === 'canvas'}
-          <span class="whitespace-nowrap pr-1 font-mono text-ui-2xs tabular-nums text-muted-foreground">
-            {nodes.length}/{tableMeta.size} tables · {fkCount} fk{layingOut ? ' · laying out…' : ''}
+          <span class="whitespace-nowrap pr-1 text-ui-xs tabular-nums text-muted-foreground">
+            {#if nodes.length === tableMeta.size}{tableMeta.size} {plural(tableMeta.size, 'table')}{:else}{nodes.length} of {tableMeta.size} tables{/if} · {fkCount} {plural(fkCount, 'relation')}{layingOut ? ' · laying out…' : ''}
           </span>
         {:else if erdView === 'dictionary'}
-          <span class="whitespace-nowrap pr-1 font-mono text-ui-2xs tabular-nums text-muted-foreground">
+          <span class="whitespace-nowrap pr-1 text-ui-xs tabular-nums text-muted-foreground">
             {dictRows.length} column{dictRows.length === 1 ? '' : 's'} · {shownTables.length} tables
           </span>
         {:else if erdView === 'ddl'}
           <span class="inline-flex items-center gap-1.5 whitespace-nowrap pr-1 font-mono text-ui-2xs tabular-nums text-muted-foreground">
             {#if ddlLoading}<Loader class="size-3 shrink-0 animate-spin" />{/if}
-            {shownTables.length} tables{ddlLoading ? ' · reading…' : ''}
+            {shownTables.length} {plural(shownTables.length, "table")}{ddlLoading ? ' · reading…' : ''}
           </span>
           <button
             type="button"
@@ -1988,13 +2043,13 @@
             aria-label="Copy every statement"
             onclick={copyAllDdl}
             class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          >{#if copiedAllDdl}<Check class="size-3.5 text-success" />{:else}<Copy class="size-3.5" />{/if}</button>
+          >{#if copiedAllDdl}<Check class="size-3.5 shrink-0 text-success" />{:else}<Copy class="size-3.5 shrink-0" />{/if}</button>
           <Button
             variant="outline"
             size="sm"
             title="Save as a .sql file"
             onclick={() => void saveExport(ddlSource, `${activeSchema}-schema.sql`, { name: 'SQL', extensions: ['sql'] }, 'DDL')}
-          ><Download class="size-3.5" />Export .sql</Button>
+          ><Download class="size-3.5 shrink-0" />Export .sql</Button>
         {:else if erdView === 'hierarchy'}
           {#if hierSummary}
             <span class="min-w-0 truncate whitespace-nowrap pr-1 font-mono text-ui-2xs tabular-nums text-muted-foreground">{hierSummary}</span>
@@ -2016,9 +2071,9 @@
             ><Waypoints class="size-3.5 shrink-0" />Hub lines</button>
           {/if}
           <div class="flex shrink-0 items-center">
-            <button type="button" title="Zoom out" aria-label="Zoom out" onclick={() => hierPage?.zoom('out')} class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"><ZoomOut class="size-3.5" /></button>
-            <button type="button" title="Zoom in" aria-label="Zoom in" onclick={() => hierPage?.zoom('in')} class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"><ZoomIn class="size-3.5" /></button>
-            <button type="button" title="Fit" aria-label="Fit" onclick={() => hierPage?.zoom('fit')} class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"><Scan class="size-3.5" /></button>
+            <button type="button" title="Zoom out" aria-label="Zoom out" onclick={() => hierPage?.zoom('out')} class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"><ZoomOut class="size-3.5 shrink-0" /></button>
+            <button type="button" title="Zoom in" aria-label="Zoom in" onclick={() => hierPage?.zoom('in')} class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"><ZoomIn class="size-3.5 shrink-0" /></button>
+            <button type="button" title="Fit" aria-label="Fit" onclick={() => hierPage?.zoom('fit')} class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"><Scan class="size-3.5 shrink-0" /></button>
           </div>
         {:else if erdView === 'tree'}
           {#if treeSummary}
@@ -2033,9 +2088,9 @@
           {/if}
           {#if treeView !== 'list'}
             <div class="flex shrink-0 items-center">
-              <button type="button" title="Zoom out" aria-label="Zoom out" onclick={() => treePage?.zoom('out')} class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"><ZoomOut class="size-3.5" /></button>
-              <button type="button" title="Zoom in" aria-label="Zoom in" onclick={() => treePage?.zoom('in')} class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"><ZoomIn class="size-3.5" /></button>
-              <button type="button" title="Fit" aria-label="Fit" onclick={() => treePage?.zoom('fit')} class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"><Scan class="size-3.5" /></button>
+              <button type="button" title="Zoom out" aria-label="Zoom out" onclick={() => treePage?.zoom('out')} class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"><ZoomOut class="size-3.5 shrink-0" /></button>
+              <button type="button" title="Zoom in" aria-label="Zoom in" onclick={() => treePage?.zoom('in')} class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"><ZoomIn class="size-3.5 shrink-0" /></button>
+              <button type="button" title="Fit" aria-label="Fit" onclick={() => treePage?.zoom('fit')} class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"><Scan class="size-3.5 shrink-0" /></button>
             </div>
           {/if}
           {@render segmented(TREE_VIEWS, treeView, (v) => (treeView = /** @type {'flow'|'all'|'list'} */ (v)))}
@@ -2048,7 +2103,7 @@
         aria-pressed={fullscreen}
         onclick={() => (fullscreen = !fullscreen)}
         class={cn('inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground', fullscreen && 'bg-accent text-foreground')}
-      >{#if fullscreen}<Minimize2 class="size-3.5" />{:else}<Maximize2 class="size-3.5" />{/if}</button>
+      >{#if fullscreen}<Minimize2 class="size-3.5 shrink-0" />{:else}<Maximize2 class="size-3.5 shrink-0" />{/if}</button>
 
       <!-- Which view of the map: one line each, the description on hover. -->
       <DropdownMenu.Root>
@@ -2081,7 +2136,7 @@
           class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,transform] duration-150 ease-out hover:bg-accent hover:text-foreground active:scale-[0.97] focus:outline-none data-[state=open]:bg-accent data-[state=open]:text-foreground"
           title="Diagram settings"
         >
-          <SlidersHorizontal class="size-3.5" />
+          <SlidersHorizontal class="size-3.5 shrink-0" />
         </PopoverTrigger>
         <PopoverContent class="w-64 p-1" align="end">
           {#snippet columnsCtl()}
@@ -2101,11 +2156,12 @@
           {#snippet routingCtl()}
             {@render segmented(
               [
+                { value: 'curved', label: 'Curved', hint: 'Smooth curves from column to column, like Mermaid - instant on any size' },
                 { value: 'smart', label: 'Routed', hint: 'Follow the corridors the layout kept clear of the cards' },
                 { value: 'direct', label: 'Direct', hint: 'Straight lines - fastest on a huge diagram' },
               ],
               view.routing,
-              (v) => updateSettings({ routing: /** @type {'smart'|'direct'} */ (v) }),
+              (v) => updateSettings({ routing: /** @type {'curved'|'smart'|'direct'} */ (v) }),
             )}
           {/snippet}
           {#snippet hubCtl()}
@@ -2173,7 +2229,7 @@
         onclick={reLayout}
         title="Re-run automatic layout"
       >
-        <LayoutDashboard class="size-3.5" />
+        <LayoutDashboard class="size-3.5 shrink-0" />
       </button>
       {/if}
 
@@ -2194,8 +2250,8 @@
   <div class="flex min-h-0 flex-1">
   <div class="relative min-h-0 min-w-0 flex-1">
     {#if loading && tableMeta.size === 0}
-      <div class="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-background">
-        <Loader class="size-6 animate-spin text-muted-foreground" />
+      <div class="loading-reveal absolute inset-0 flex flex-col items-center justify-center gap-3 bg-background">
+        <Loader class="size-6 shrink-0 animate-spin text-muted-foreground" />
         <p class="font-mono text-ui-xs text-muted-foreground">Loading schema structure…</p>
       </div>
 
@@ -2217,7 +2273,7 @@
                 title="Show the Mermaid code"
                 onclick={() => (mermaidCodeOpen = true)}
                 class="flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-              ><PanelLeftOpen class="size-3.5" /></button>
+              ><PanelLeftOpen class="size-3.5 shrink-0" /></button>
             </div>
           {:else}
           <div class="flex w-[42%] min-w-[280px] shrink-0 flex-col border-r border-border/60 bg-panel" style={mermaidCodeW ? `width:${mermaidCodeW}px` : ''}>
@@ -2226,11 +2282,11 @@
                 type="button"
                 title="Hide the code, keep the preview"
                 onclick={() => (mermaidCodeOpen = false)}
-                class="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-              ><PanelLeftClose class="size-3.5" /></button>
+                class="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              ><PanelLeftClose class="size-3.5 shrink-0" /></button>
               <span class="shrink-0 text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground">Mermaid</span>
               <span class="min-w-0 truncate font-mono text-ui-3xs tabular-nums text-muted-foreground" title="{shownTables.length} tables, {mermaidRels.length} relationships">
-                {shownTables.length} tables · {mermaidRels.length} links
+                {shownTables.length} {plural(shownTables.length, "table")} · {mermaidRels.length} {plural(mermaidRels.length, "link")}
               </span>
               <span class="ml-auto"></span>
               {#if mermaidTouched}
@@ -2239,28 +2295,28 @@
                   title="Throw the edits away and generate the code from the diagram again"
                   onclick={() => { mermaidTouched = false; mermaidDraft = mermaidSource }}
                   class="inline-flex h-6 shrink-0 items-center gap-1 whitespace-nowrap rounded-md px-1.5 text-ui-2xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                ><RefreshCw class="size-3" />Regenerate</button>
+                ><RefreshCw class="size-3 shrink-0" />Regenerate</button>
               {/if}
               <button
                 type="button"
                 title="Wrap long lines"
                 aria-pressed={mermaidWrap}
                 onclick={() => (mermaidWrap = !mermaidWrap)}
-                class={cn('inline-flex size-6 shrink-0 items-center justify-center rounded-md transition-colors hover:bg-accent hover:text-foreground', mermaidWrap ? 'bg-accent text-foreground' : 'text-muted-foreground')}
-              ><WrapText class="size-3.5" /></button>
+                class={cn('inline-flex size-7 shrink-0 items-center justify-center rounded-md transition-colors hover:bg-accent hover:text-foreground', mermaidWrap ? 'bg-accent text-foreground' : 'text-muted-foreground')}
+              ><WrapText class="size-3.5 shrink-0" /></button>
               <button
                 type="button"
                 title="Copy the Mermaid code"
                 onclick={copyMermaid}
                 class="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-              >{#if copiedCode}<Check class="size-3.5 text-success" />{:else}<Copy class="size-3.5" />{/if}</button>
+              >{#if copiedCode}<Check class="size-3.5 shrink-0 text-success" />{:else}<Copy class="size-3.5 shrink-0" />{/if}</button>
               {#if onopendiagrams}
                 <button
                   type="button"
                   title="Save this as a diagram of the connection and open it in the Diagrams page"
                   onclick={editInDiagrams}
                   class="field-surface inline-flex h-6 shrink-0 items-center gap-1 whitespace-nowrap bg-input/20 px-2 text-ui-2xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                ><GitBranch class="size-3" />Edit in Diagrams</button>
+                ><GitBranch class="size-3 shrink-0" />Edit in Diagrams</button>
               {/if}
             </div>
             <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -2280,9 +2336,9 @@
             <div class="flex h-9 shrink-0 items-center gap-2 border-b border-border/40 bg-panel px-2.5">
               <span class="text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground">Preview</span>
               <span class="ml-auto"></span>
-              <button type="button" title="Zoom out" onclick={() => mermaidViewer?.dispatch('diagram:zoomout')} class="flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"><ZoomOut class="size-3.5" /></button>
-              <button type="button" title="Zoom in" onclick={() => mermaidViewer?.dispatch('diagram:zoomin')} class="flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"><ZoomIn class="size-3.5" /></button>
-              <button type="button" title="Fit" onclick={() => mermaidViewer?.dispatch('diagram:reset')} class="flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"><Maximize2 class="size-3.5" /></button>
+              <button type="button" title="Zoom out" onclick={() => mermaidViewer?.dispatch('diagram:zoomout')} class="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"><ZoomOut class="size-3.5 shrink-0" /></button>
+              <button type="button" title="Zoom in" onclick={() => mermaidViewer?.dispatch('diagram:zoomin')} class="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"><ZoomIn class="size-3.5 shrink-0" /></button>
+              <button type="button" title="Fit" onclick={() => mermaidViewer?.dispatch('diagram:reset')} class="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"><Maximize2 class="size-3.5 shrink-0" /></button>
             </div>
             <div class="min-h-0 flex-1 overflow-hidden bg-background">
               {#if mermaidGated}
@@ -2292,7 +2348,7 @@
                   <Button size="sm" onclick={() => (mermaidForce = true)}>Render {shownTables.length} tables</Button>
                 </div>
               {:else}
-                <MermaidViewer bind:this={mermaidViewer} code={mermaidDraft} spacing={{ nodeSpacing: 32, layerSpacing: 72 }} class="h-full w-full" />
+                <MermaidViewer bind:this={mermaidViewer} code={mermaidDraft} spacing={{ nodeSpacing: 44, layerSpacing: 96, componentSpacing: 64, padding: 48 }} class="h-full w-full" />
               {/if}
             </div>
           </div>
@@ -2406,24 +2462,23 @@
              seconds of work, and the result is a wall nobody reads - so the
              diagram waits for a filter, or for an explicit go-ahead. -->
         <div class="absolute inset-0 flex items-center justify-center bg-background p-6">
-          <div class="max-w-sm rounded-xl border border-border/60 bg-panel p-5 text-center elevate-2-rim">
-            <Network class="mx-auto size-5 text-muted-foreground" />
+          <div class="max-w-sm rounded-lg border border-border/60 bg-panel p-5 text-center elevate-2-rim">
+            <Network class="mx-auto size-5 shrink-0 text-muted-foreground" />
             <p class="mt-2.5 text-ui-sm font-medium text-foreground">
-              {gatedCount} tables in <span class="font-mono">{activeSchema}</span>
+              {gatedCount} {plural(gatedCount, "table")} in <span class="font-mono">{activeSchema}</span>
             </p>
             <p class="mt-1.5 text-ui-xs leading-relaxed text-muted-foreground">
               A diagram this wide takes seconds to lay out and is hard to read once it lands.
               Pick the tables worth seeing, or draw the whole schema anyway.
             </p>
             <div class="mt-4 flex items-center justify-center gap-2">
-              <button
-                type="button"
+              <Button
                 onclick={() => (pickerOpen = true)}
-                class="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-ui-xs font-medium text-primary-foreground transition-transform duration-150 ease-out active:scale-[0.98]"
-              >
+                
+>
                 <ListFilter class="size-3.5 shrink-0" />
                 Pick tables
-              </button>
+              </Button>
               <button
                 type="button"
                 onclick={() => (drawAll = true)}
@@ -2436,7 +2491,7 @@
 
       {#if tableMeta.size === 0 && !loading}
         <div class="pointer-events-none absolute inset-x-0 top-4 flex justify-center">
-          <div class="rounded-lg border border-border/50 bg-panel px-4 py-3 font-mono text-ui-xs text-muted-foreground">
+          <div class="rounded-lg border border-border/50 bg-panel px-4 py-3 text-ui-sm text-muted-foreground">
             No tables found in <span class="text-foreground/70">{activeSchema}</span>
           </div>
         </div>
@@ -2445,7 +2500,7 @@
       <!-- ── Legend ───────────────────────────────────────────────────────── -->
       {#if nodes.length > 0}
         <div class="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center">
-          <div class="flex h-6 items-center gap-2.5 rounded-full border border-border/40 bg-panel/75 px-2.5 text-ui-3xs text-muted-foreground backdrop-blur-sm">
+          <div class="flex h-7 items-center gap-3 rounded-md border border-border/40 bg-panel/95 px-3 text-ui-2xs text-muted-foreground">
             <span class="flex items-center gap-1"><span class="size-1.5 rounded-full" style="background:{ink.pk}"></span>PK</span>
             <span class="flex items-center gap-1"><span class="size-1.5 rounded-full" style="background:{ink.fk}"></span>FK</span>
             <span class="h-2.5 w-px bg-border/60"></span>
@@ -2481,97 +2536,112 @@
 
   <!-- ── Inspector: docked, not floating over the diagram ────────────────── -->
   {#if selMeta}
-    <aside class="flex w-72 shrink-0 flex-col overflow-hidden border-l border-border bg-panel">
-      <div class="flex h-9 shrink-0 items-center gap-2 border-b border-border/60 px-3">
-        <span class="min-w-0 flex-1 truncate font-mono text-ui-xs font-semibold text-foreground">{selMeta.name}</span>
+    <aside class="flex w-80 shrink-0 flex-col overflow-hidden border-l border-border/40 bg-panel">
+      <div class="flex h-11 shrink-0 items-center gap-2 border-b border-border/40 px-3">
+        <span class="grid size-6 shrink-0 place-items-center rounded-md bg-muted/50"><Network class="size-3.5 text-muted-foreground" /></span>
+        <div class="min-w-0 flex-1">
+          <p class="truncate font-mono text-ui-sm font-medium text-foreground">{selMeta.name}</p>
+          <p class="truncate text-ui-2xs text-muted-foreground">{selMeta.columns.length} {plural(selMeta.columns.length, 'column')} · {selFks.length} out · {refBy.length} in</p>
+        </div>
         <button
           type="button"
-          class="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,transform] duration-150 ease-out hover:bg-accent hover:text-foreground active:scale-[0.97]"
+          class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,transform] duration-150 ease-out hover:bg-accent hover:text-foreground active:scale-[0.97]"
           title="Copy CREATE statement"
           onclick={() => void copyDdl(selMeta.name)}
         >
           {#if copiedDdl === selMeta.name}
-            <Check class="size-3.5 text-success" />
+            <Check class="size-3.5 shrink-0 text-success" />
           {:else}
-            <Copy class="size-3.5" />
+            <Copy class="size-3.5 shrink-0" />
           {/if}
         </button>
         <button
           type="button"
-          class="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,transform] duration-150 ease-out hover:bg-accent hover:text-foreground active:scale-[0.97]"
+          class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,transform] duration-150 ease-out hover:bg-accent hover:text-foreground active:scale-[0.97]"
           title="Close inspector"
           onclick={() => (selectedTable = null)}
-        ><X class="size-3.5" /></button>
+        ><X class="size-3.5 shrink-0" /></button>
       </div>
 
-      <div class="min-h-0 flex-1 overflow-y-auto">
-        <p class="px-3 pt-2.5 pb-1 text-ui-3xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-          Columns <span class="font-normal tabular-nums text-muted-foreground">{selMeta.columns.length}</span>
-        </p>
+      <div class="app-scroll min-h-0 flex-1 overflow-y-auto pb-2">
+        <div class="mx-1.5 mt-2 mb-0.5 flex items-center gap-2 px-1.5 py-1">
+          <h4 class="text-ui-xs text-muted-foreground">Columns</h4>
+          <span class="text-ui-xs tabular-nums text-muted-foreground/70">{selMeta.columns.length}</span>
+          <span class="ml-1 h-px flex-1 bg-border/50" aria-hidden="true"></span>
+        </div>
         {#each selMeta.columns as col (col.name)}
           {@const isPk = selMeta.pkCols.has(col.name)}
           {@const isFk = !!col.foreignKey}
-          <div class="flex items-center gap-2 px-3 py-1">
-            {#if isPk}<KeyRound class="size-3 shrink-0" style="color:{ink.pk}" />
-            {:else if isFk}<Link class="size-3 shrink-0" style="color:{ink.fk}" />
-            {:else}<span class="size-3 shrink-0"></span>{/if}
-            <span class="min-w-0 flex-1 truncate font-mono text-ui-2xs {isPk ? 'font-medium text-foreground' : 'text-foreground/75'}">{col.name}</span>
-            <span class="shrink-0 font-mono text-ui-3xs text-muted-foreground">{col.dataType}</span>
+          <div class="mx-1.5 flex h-7 items-center gap-2 rounded-md px-1.5 transition-colors hover:bg-muted/25" title="{col.name} · {col.dataType}{isFk ? ` → ${col.foreignKey}` : ''}">
+            {#if isPk}<KeyRound class="size-3.5 shrink-0" style="color:{ink.pk}" />
+            {:else if isFk}<Link class="size-3.5 shrink-0" style="color:{ink.fk}" />
+            {:else}<span class="size-1 shrink-0 translate-x-1.5 rounded-full bg-muted-foreground/40"></span><span class="w-1.5 shrink-0"></span>{/if}
+            <span class="min-w-0 flex-1 truncate font-mono text-ui-xs {isPk ? 'font-medium text-foreground' : 'text-foreground/85'}">{col.name}</span>
+            <span class="shrink-0 truncate text-ui-2xs text-muted-foreground/80">{col.dataType}</span>
           </div>
         {/each}
 
         {#if selFks.length > 0}
-          <p class="mt-2 border-t border-border/40 px-3 pt-2.5 pb-1 text-ui-3xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">References</p>
+          <div class="mx-1.5 mt-2 mb-0.5 flex items-center gap-2 px-1.5 py-1">
+          <h4 class="text-ui-xs text-muted-foreground">References</h4>
+          <span class="text-ui-xs tabular-nums text-muted-foreground/70">{selFks.length}</span>
+          <span class="ml-1 h-px flex-1 bg-border/50" aria-hidden="true"></span>
+        </div>
           {#each selFks as fk (fk.name)}
             {@const ref = fk.foreignKey?.split('.') ?? []}
             <button
               type="button"
-              class="flex w-full items-baseline gap-1.5 px-3 py-1 text-left transition-colors hover:bg-accent/60"
+              class="mx-1.5 flex h-7 w-[calc(100%-0.75rem)] items-center gap-2 rounded-md px-1.5 text-left transition-colors hover:bg-muted/30"
               onclick={() => { selectedTable = ref[1] ?? null }}
             >
-              <span class="min-w-0 truncate font-mono text-ui-2xs text-muted-foreground">{fk.name}</span>
-              <span class="shrink-0 text-ui-3xs text-muted-foreground">→</span>
-              <span class="min-w-0 truncate font-mono text-ui-2xs text-foreground/80">{ref[1]}.{ref[2]}</span>
+              <Link class="size-3.5 shrink-0" style="color:{ink.fk}" />
+              <span class="min-w-0 truncate font-mono text-ui-xs text-foreground/85">{fk.name}</span>
+              <span class="shrink-0 text-ui-2xs text-muted-foreground">→</span>
+              <span class="ml-auto min-w-0 truncate font-mono text-ui-xs text-muted-foreground">{ref[1]}.{ref[2]}</span>
             </button>
           {/each}
         {/if}
 
         {#if refBy.length > 0}
-          <p class="mt-2 border-t border-border/40 px-3 pt-2.5 pb-1 text-ui-3xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">Referenced by</p>
+          <div class="mx-1.5 mt-2 mb-0.5 flex items-center gap-2 px-1.5 py-1">
+          <h4 class="text-ui-xs text-muted-foreground">Referenced by</h4>
+          <span class="text-ui-xs tabular-nums text-muted-foreground/70">{refBy.length}</span>
+          <span class="ml-1 h-px flex-1 bg-border/50" aria-hidden="true"></span>
+        </div>
           {#each refBy as t (t.name)}
             <button
               type="button"
-              class="flex w-full items-center gap-1.5 px-3 py-1 text-left transition-colors hover:bg-accent/60"
+              class="mx-1.5 flex h-7 w-[calc(100%-0.75rem)] items-center gap-2 rounded-md px-1.5 text-left transition-colors hover:bg-muted/30"
               onclick={() => { selectedTable = t.name }}
             >
-              <span class="shrink-0 text-ui-3xs text-muted-foreground">←</span>
-              <span class="min-w-0 truncate font-mono text-ui-2xs text-muted-foreground">{t.name}</span>
+              <span class="shrink-0 text-ui-2xs text-muted-foreground">←</span>
+              <span class="min-w-0 truncate font-mono text-ui-xs text-foreground/85">{t.name}</span>
             </button>
           {/each}
         {/if}
       </div>
 
-      <div class="flex shrink-0 items-center gap-1.5 border-t border-border/60 p-2">
+      <div class="flex shrink-0 items-center gap-1.5 border-t border-border/40 p-2.5">
         <button
           type="button"
-          class= "field-surface inline-flex h-8 min-w-0 flex-1 items-center justify-center gap-1.5 bg-input/20 text-ui-xs font-medium text-foreground transition-[background-color,transform] duration-150 ease-out hover:bg-accent active:scale-[0.99]"
+          class="inline-flex h-8 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-md bg-foreground text-ui-sm font-medium text-background transition-[opacity,transform] duration-150 ease-out hover:opacity-90 active:scale-[0.99]"
           onclick={() => openTable(selMeta.name)}
         >Open table</button>
         <button
           type="button"
           title="Show only {selMeta.name} and what it links to"
-          class="inline-flex size-8 shrink-0 items-center justify-center rounded-md border border-border/60 bg-input/20 text-muted-foreground transition-[background-color,color,transform] duration-150 ease-out hover:bg-accent hover:text-foreground active:scale-[0.97]"
+          class="field-surface inline-flex size-8 shrink-0 items-center justify-center text-muted-foreground shadow-none transition-[background-color,color,transform] duration-150 ease-out hover:bg-accent hover:text-foreground active:scale-[0.97]"
           onclick={() => isolate(selMeta.name)}
-        ><Crosshair class="size-3.5" /></button>
+        ><Crosshair class="size-3.5 shrink-0" /></button>
         <button
           type="button"
           disabled={selMeta.name === focusTable}
           title={selMeta.name === focusTable
             ? 'This is the table the diagram belongs to'
             : `Take ${selMeta.name} off the diagram`}
-          class="inline-flex size-8 shrink-0 items-center justify-center rounded-md border border-border/60 bg-input/20 text-muted-foreground transition-[background-color,color,transform] duration-150 ease-out hover:bg-accent hover:text-foreground active:scale-[0.97] disabled:pointer-events-none disabled:opacity-40"
+          class="field-surface inline-flex size-8 shrink-0 items-center justify-center text-muted-foreground shadow-none transition-[background-color,color,transform] duration-150 ease-out hover:bg-accent hover:text-foreground active:scale-[0.97] disabled:pointer-events-none disabled:opacity-40"
           onclick={() => hideTable(selMeta.name)}
-        ><EyeOff class="size-3.5" /></button>
+        ><EyeOff class="size-3.5 shrink-0" /></button>
       </div>
     </aside>
   {/if}

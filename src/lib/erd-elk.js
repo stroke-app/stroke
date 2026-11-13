@@ -40,8 +40,6 @@ import { STUB } from './erd-routing.js'
 export const EDGE_NODE_GAP = STUB + 4
 /** Parallel lines in one channel sit this far apart. */
 export const EDGE_EDGE_GAP = 10
-/** Up to this many links every line has its own track; above, lines into one row share a trunk. */
-export const TRACKS_UP_TO = 60
 
 /** @type {any} */
 let _elk = null
@@ -156,11 +154,19 @@ export function buildElkGraph(cards, links, opts) {
       'elk.layered.nodePlacement.strategy': 'BRANDES_KOEPF',
       'elk.layered.nodePlacement.bk.fixedAlignment': 'BALANCED',
       'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
-      'elk.layered.thoroughness': '3',
+      // A post-pass that swaps neighbours while that removes crossings: cheap,
+      // and what takes the last few X's out of a layered drawing.
+      'elk.layered.crossingMinimization.greedySwitch.type': 'TWO_SIDED',
+      // More sweeps where it is affordable (the 17s figure above was 135 cards
+      // in one component with network-simplex; layer sweep scales far better).
+      'elk.layered.thoroughness': cards.length <= 60 ? '10' : '3',
       'elk.layered.unnecessaryBendpoints': 'true',
       'elk.layered.mergeEdges': 'false',
-      // Stable: the same schema lays out the same way twice.
-      'elk.layered.considerModelOrder.strategy': 'NODES_AND_EDGES',
+      // Model order no longer constrains crossing minimisation: holding every
+      // card to the schema's input order is what left lines crossing that a
+      // reorder would have untangled. Still stable - ELK's seed is fixed, so
+      // the same schema lays out the same way twice.
+      'elk.layered.considerModelOrder.strategy': 'NONE',
       'elk.layered.cycleBreaking.strategy': 'GREEDY_MODEL_ORDER',
     },
     children: cards.map((c) => ({
@@ -204,7 +210,10 @@ export async function layoutWithElk(cards, links, opts) {
   const perLayer = opts.perLayer ?? cardsPerLayer(cards.length)
   // A track per line is readable up to a point; past it the channels are
   // bands of parallel lines wider than the cards. Big pages get trunks.
-  const sharedPorts = links.length > TRACKS_UP_TO
+  // Lines that land on the same row share its port, so ELK merges them into
+  // one trunk that splits only where the lines part ways - far less ink and far
+  // fewer crossings than a separate track per line running side by side.
+  const sharedPorts = true
   const base = { rankSep: opts.rankSep, nodeSep: opts.nodeSep, perLayer, sharedPorts }
 
   const run = async (/** @type {Map<string, 1 | -1> | null} */ sides) =>

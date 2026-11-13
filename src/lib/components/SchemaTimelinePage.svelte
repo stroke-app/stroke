@@ -1,7 +1,6 @@
 <script>
   import Camera from '@lucide/svelte/icons/camera'
   import Trash2 from '@lucide/svelte/icons/trash-2'
-  import GitCompare from '@lucide/svelte/icons/git-compare'
   import ArrowLeftRight from '@lucide/svelte/icons/arrow-left-right'
   import ChevronDown from '@lucide/svelte/icons/chevron-down'
   import ChevronRight from '@lucide/svelte/icons/chevron-right'
@@ -463,38 +462,38 @@
 <div class="flex h-full min-h-0 overflow-hidden">
 
   <!-- ── Sidebar ────────────────────────────────────────────────────────── -->
-  <div class="flex w-52 shrink-0 flex-col overflow-hidden border-r border-border/40 bg-background">
+  <div class="flex w-64 shrink-0 flex-col overflow-hidden border-r border-border/30 bg-panel">
 
     <!-- Sidebar header -->
-    <div class="flex h-9 shrink-0 items-center gap-1.5 border-b border-border/30 px-3">
-      <span class="flex-1 text-ui-2xs font-medium text-foreground/65">Snapshots</span>
+    <div class="flex h-12 shrink-0 items-center gap-2 px-4">
+      <span class="text-ui-sm font-medium text-foreground">Snapshots</span>
+      {#if snapshots.length > 0}
+        <span class="rounded-full bg-muted px-1.5 text-ui-3xs tabular-nums text-muted-foreground">{snapshots.length}</span>
+      {/if}
+      <span class="flex-1"></span>
 
       {#if snapshots.length > 0}
-        <span class="text-ui-3xs tabular-nums text-muted-foreground">{snapshots.length}</span>
-
-        <!-- More menu -->
         <div class="relative">
           {#if moreMenuOpen}
             <div class="fixed inset-0 z-10" role="presentation" onclick={() => { moreMenuOpen = false }}></div>
           {/if}
           <button
             onclick={() => { moreMenuOpen = !moreMenuOpen }}
-            class="rounded p-1 text-muted-foreground hover:text-muted-foreground"
+            class="flex size-7 items-center justify-center rounded-full text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+            aria-label="More"
           >
-            <Ellipsis class="size-3" />
+            <Ellipsis class="size-3.5 shrink-0" />
           </button>
           {#if moreMenuOpen}
             <div class="absolute right-0 top-full z-20 mt-1 min-w-40 overflow-hidden rounded-[10px] border border-border/60 bg-popover p-1 elevate-2-rim">
               <button
                 onclick={onClearClick}
                 class={cn(
-                  'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-ui-sm hover:bg-accent',
-                  clearStep === 1
-                    ? 'text-destructive'
-                    : 'text-muted-foreground hover:text-destructive',
+                  'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-ui-xs hover:bg-accent',
+                  clearStep === 1 ? 'text-destructive' : 'text-muted-foreground hover:text-destructive',
                 )}
               >
-                <Trash2 class="size-3 shrink-0" />
+                <Trash2 class="size-3.5 shrink-0" />
                 {clearStep === 1 ? 'Confirm clear all' : 'Clear all'}
               </button>
             </div>
@@ -502,37 +501,32 @@
         </div>
       {/if}
 
-      <!-- Capture button -->
       <button
         onclick={openCaptureModal}
         disabled={capturing}
-        class="flex items-center gap-1 rounded px-1.5 py-1 text-ui-2xs font-medium text-foreground/65 hover:bg-muted/40 hover:text-foreground/80 disabled:opacity-40"
+        class="flex h-7 items-center gap-1.5 rounded-full bg-muted/60 px-3 text-ui-xs text-foreground/85 hover:bg-accent hover:text-foreground disabled:opacity-40"
         title="Capture snapshot"
       >
         {#if capturing}
-          <Loader2 class="size-3 animate-spin" />
+          <Loader2 class="size-3.5 shrink-0 animate-spin" />
         {:else}
-          <Camera class="size-3" />
+          <Camera class="size-3.5 shrink-0" />
         {/if}
         New
       </button>
     </div>
 
     <!-- Snapshot list -->
-    <div class="min-h-0 flex-1 overflow-y-auto">
+    <div class="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
       {#if loading}
-        <div class="flex items-center justify-center py-12">
-          <Loader2 class="size-3.5 animate-spin text-muted-foreground" />
+        <div class="loading-reveal flex items-center justify-center py-12">
+          <Loader2 class="size-3.5 shrink-0 animate-spin text-muted-foreground" />
         </div>
 
       {:else if snapshots.length === 0}
-        <div class="flex flex-col items-center px-5 py-14 text-center">
-          <Camera class="mb-2.5 size-5 text-muted-foreground" />
-          <p class="text-ui-2xs text-foreground/55">No snapshots yet</p>
-          <p class="mt-1 text-ui-3xs leading-relaxed text-muted-foreground">
-            Capture your schema to track changes over time
-          </p>
-        </div>
+        <p class="px-2 py-6 text-ui-xs leading-relaxed text-muted-foreground">
+          No snapshots yet. Capture the schema to start a timeline.
+        </p>
 
       {:else}
         {#each snapshots as snap (snap.id)}
@@ -543,60 +537,43 @@
           {@const displayName = snap.title || shortName(snap.connectionLabel)}
 
           <div class={cn(
-            'group relative border-b border-border/15 last:border-b-0',
-            isActive ? 'bg-muted/[0.07]' : 'hover:bg-muted/[0.04]',
+            'group mb-0.5 rounded-lg px-2.5 py-2 transition-colors',
+            isActive ? 'bg-accent' : 'hover:bg-accent/50',
           )}>
-            <!-- Neutral left accent when active -->
-            {#if isActive}
-              <span class="absolute inset-y-0 left-0 w-[2px] bg-foreground/20"></span>
-            {/if}
-
-            <div class="px-3 py-2.5 pl-4">
-              <!-- Name + slot markers + delete -->
-              <div class="flex min-w-0 items-center gap-1">
-                <span class="min-w-0 flex-1 truncate text-ui-2xs font-medium text-foreground/70" title={snap.connectionLabel}>
-                  {displayName}
-                </span>
-
-                <!-- ← before slot button -->
-                <button
-                  onclick={() => { beforeId = snap.id }}
-                  class={cn(
-                    'shrink-0 rounded px-1 py-0.5 text-ui-3xs leading-none',
-                    isBefore
-                      ? 'bg-muted text-foreground/70'
-                      : 'text-muted-foreground hover:text-muted-foreground',
-                  )}
-                  title="Set as Before (baseline)"
-                >←</button>
-
-                <!-- → after slot button -->
-                <button
-                  onclick={() => { afterId = snap.id }}
-                  class={cn(
-                    'shrink-0 rounded px-1 py-0.5 text-ui-3xs leading-none',
-                    isAfter
-                      ? 'bg-muted text-foreground/70'
-                      : 'text-muted-foreground hover:text-muted-foreground',
-                  )}
-                  title="Set as After (compare target)"
-                >→</button>
-
-                <!-- Delete -->
-                <button
-                  onclick={() => remove(snap.id)}
-                  class="shrink-0 text-transparent group-hover:text-muted-foreground hover:!text-destructive"
-                  aria-label="Delete"
-                >
-                  <X class="size-3" />
-                </button>
-              </div>
-
-              <!-- Meta row -->
-              <div class="mt-0.5 flex items-center gap-1 text-ui-3xs text-muted-foreground">
-                <span class="flex-1 truncate">{fmtDate(snap.capturedAt)}</span>
-                <span class="shrink-0 tabular-nums">{tableCount} tbl</span>
-              </div>
+            <div class="flex min-w-0 items-center gap-2">
+              <span class="min-w-0 flex-1 truncate text-ui-xs font-medium text-foreground" title={snap.connectionLabel}>
+                {displayName}
+              </span>
+              <button
+                onclick={() => remove(snap.id)}
+                class="flex size-5 shrink-0 items-center justify-center rounded text-transparent group-hover:text-muted-foreground hover:!text-destructive"
+                aria-label="Delete snapshot"
+              >
+                <X class="size-3 shrink-0" />
+              </button>
+            </div>
+            <div class="mt-1 flex items-center gap-1.5 text-ui-2xs text-muted-foreground">
+              <span class="truncate">{fmtDate(snap.capturedAt)}</span>
+              <span aria-hidden="true">·</span>
+              <span class="shrink-0 tabular-nums">{tableCount} tables</span>
+              <span class="flex-1"></span>
+              <!-- Base / Compare slots -->
+              <button
+                onclick={() => { beforeId = snap.id }}
+                class={cn(
+                  'h-5 shrink-0 rounded-full px-2 text-ui-3xs transition-colors',
+                  isBefore ? 'bg-foreground text-background' : 'text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-background/60 hover:text-foreground',
+                )}
+                title="Use as the baseline"
+              >Base</button>
+              <button
+                onclick={() => { afterId = snap.id }}
+                class={cn(
+                  'h-5 shrink-0 rounded-full px-2 text-ui-3xs transition-colors',
+                  isAfter ? 'bg-foreground text-background' : 'text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-background/60 hover:text-foreground',
+                )}
+                title="Compare against the baseline"
+              >Compare</button>
             </div>
           </div>
         {/each}
@@ -607,20 +584,37 @@
   <!-- ── Right: comparison ──────────────────────────────────────────────── -->
   <div class="flex min-w-0 flex-1 flex-col overflow-hidden">
     {#if !beforeSnap || !afterSnap}
-      <div class="flex flex-1 flex-col items-center justify-center gap-3">
-        <GitCompare class="size-8 text-muted-foreground" />
-        <div class="text-center">
-          <p class="text-ui-sm font-medium text-foreground/55">No comparison active</p>
-          <p class="mt-1 text-ui-xs text-muted-foreground">Mark one snapshot as B and another as A</p>
+      <div class="flex flex-1 flex-col items-center justify-center px-8">
+        <div class="w-full max-w-sm">
+          <h2 class="text-ui-lg font-semibold tracking-tight text-foreground">Compare schema snapshots</h2>
+          <p class="mt-1.5 text-ui-xs leading-relaxed text-muted-foreground">
+            {#if snapshots.length === 0}
+              Capture the schema now, change it, then capture again to see what moved.
+            {:else if snapshots.length === 1}
+              One snapshot so far. Capture another after a change, then compare the two.
+            {:else}
+              Hover a snapshot and pick <span class="text-foreground">Base</span>, then another as <span class="text-foreground">Compare</span>.
+            {/if}
+          </p>
+          {#if snapshots.length < 2}
+            <button
+              onclick={openCaptureModal}
+              disabled={capturing}
+              class="mt-4 inline-flex h-8 items-center gap-1.5 rounded-full bg-foreground px-3.5 text-ui-xs font-medium text-background hover:bg-foreground/90 disabled:opacity-40"
+            >
+              <Camera class="size-3.5 shrink-0" />
+              Capture snapshot
+            </button>
+          {/if}
         </div>
       </div>
 
     {:else}
       <!-- Comparison header bar -->
-      <div class="flex h-9 shrink-0 items-center gap-2 overflow-hidden border-b border-border/30 px-4 text-ui-2xs">
+      <div class="flex h-12 shrink-0 items-center gap-2 overflow-hidden border-b border-border/30 px-5 text-ui-xs">
         <div class="flex min-w-0 shrink items-center gap-1.5">
-          <span class="shrink-0 text-ui-3xs text-muted-foreground">←</span>
-          <span class="min-w-0 truncate text-foreground/55" title={beforeSnap.connectionLabel}>
+          <span class="shrink-0 text-ui-2xs text-muted-foreground">Base</span>
+          <span class="min-w-0 truncate font-medium text-foreground" title={beforeSnap.connectionLabel}>
             {beforeSnap.title || shortName(beforeSnap.connectionLabel)}
           </span>
           <span class="shrink-0 text-muted-foreground">{fmtDate(beforeSnap.capturedAt)}</span>
@@ -628,15 +622,15 @@
 
         <button
           onclick={swapSnapshots}
-          title="Swap Before ↔ After"
-          class="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted/40 hover:text-foreground/70"
+          title="Swap base and compare"
+          class="flex size-7 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-accent/50 hover:text-foreground"
         >
-          <ArrowLeftRight class="size-3" />
+          <ArrowLeftRight class="size-3.5 shrink-0" />
         </button>
 
         <div class="flex min-w-0 shrink items-center gap-1.5">
-          <span class="shrink-0 text-ui-3xs text-muted-foreground">→</span>
-          <span class="min-w-0 truncate text-foreground/55" title={afterSnap.connectionLabel}>
+          <span class="shrink-0 text-ui-2xs text-muted-foreground">Compare</span>
+          <span class="min-w-0 truncate font-medium text-foreground" title={afterSnap.connectionLabel}>
             {afterSnap.title || shortName(afterSnap.connectionLabel)}
           </span>
           <span class="shrink-0 text-muted-foreground">{fmtDate(afterSnap.capturedAt)}</span>
@@ -672,14 +666,14 @@
       </div>
 
       {#if !diff}
-        <div class="flex flex-1 items-center justify-center">
-          <Loader2 class="size-4 animate-spin text-muted-foreground" />
+        <div class="loading-reveal flex flex-1 items-center justify-center">
+          <Loader2 class="size-4 shrink-0 animate-spin text-muted-foreground" />
         </div>
 
       {:else if isDiffEmpty(diff)}
         <div class="flex flex-1 flex-col items-center justify-center gap-4">
           <div class="flex size-14 items-center justify-center rounded-lg border border-success/20 bg-success/5">
-            <Check class="size-6 text-success" />
+            <Check class="size-6 shrink-0 text-success" />
           </div>
           <div class="text-center">
             <p class="text-ui-sm font-semibold text-foreground/65">Schemas are identical</p>
@@ -728,12 +722,12 @@
       <!-- Modal header -->
       <div class="flex shrink-0 items-center gap-2.5 px-5 pt-5 pb-4">
         <Camera class="size-4 shrink-0 text-foreground/40" />
-        <p class="flex-1 text-ui-sm font-semibold text-foreground/85">New Snapshot</p>
+        <p class="flex-1 text-ui-sm font-semibold text-foreground/85">New snapshot</p>
         <button
           onclick={() => { captureOpen = false }}
-          class="rounded p-1 text-muted-foreground hover:text-muted-foreground"
+          class="rounded p-1 text-muted-foreground hover:text-foreground"
         >
-          <X class="size-3.5" />
+          <X class="size-3.5 shrink-0" />
         </button>
       </div>
 
@@ -803,7 +797,7 @@
             <div class="w-44 shrink-0">
               <div class="flex items-center border-b border-border/20 px-4 py-2">
                 <span class="text-ui-3xs font-semibold uppercase tracking-widest text-muted-foreground">Database</span>
-                {#if captureLoadingDbs}<Loader2 class="ml-auto size-3 animate-spin text-muted-foreground" />{/if}
+                {#if captureLoadingDbs}<Loader2 class="ml-auto size-3 shrink-0 animate-spin text-muted-foreground" />{/if}
               </div>
               <div class="max-h-44 overflow-y-auto py-1">
                 {#if !captureLoadingDbs && captureDatabases.length === 0}
@@ -835,7 +829,7 @@
               <div class="flex items-center gap-2 border-b border-border/20 px-4 py-2">
                 <span class="text-ui-3xs font-semibold uppercase tracking-widest text-muted-foreground">Schemas</span>
                 {#if captureLoadingSchemas}
-                  <Loader2 class="ml-auto size-3 animate-spin text-muted-foreground" />
+                  <Loader2 class="ml-auto size-3 shrink-0 animate-spin text-muted-foreground" />
                 {:else if captureSchemaList.length > 0}
                   <div class="ml-auto flex items-center gap-2">
                     <button onclick={() => { captureChecked = new Set(captureSchemaList) }} class="text-ui-3xs text-muted-foreground hover:text-foreground/60">All</button>
@@ -866,7 +860,7 @@
                         ? 'border-primary/40 bg-primary/15'
                         : 'border-border/40',
                     )}>
-                      {#if captureChecked.has(schema)}<Check class="size-3 text-primary" />{/if}
+                      {#if captureChecked.has(schema)}<Check class="size-3 shrink-0 text-primary" />{/if}
                     </span>
                     <span class="truncate font-mono text-ui-2xs">{schema}</span>
                   </button>
@@ -896,7 +890,7 @@
             disabled={captureLoadingSchemas || captureLoadingDbs || (!connectionId && !captureConn)}
             class="flex items-center gap-1.5 rounded-lg bg-foreground px-4 py-1.5 text-ui-xs font-medium text-background hover:opacity-85 disabled:opacity-30"
           >
-            <Camera class="size-3" />
+            <Camera class="size-3 shrink-0" />
             Capture
           </button>
         </div>
@@ -959,7 +953,7 @@
               !collapsed && 'rotate-90',
             )}
           />
-          <span class="min-w-0 flex-1 truncate font-mono text-ui-2xs font-medium uppercase tracking-wide text-muted-foreground">
+          <span class="min-w-0 flex-1 truncate font-mono text-ui-2xs font-medium uppercase tracking-[0.06em] text-muted-foreground">
             {schema}
           </span>
           <span class="ml-1 shrink-0 font-mono text-ui-2xs text-muted-foreground tabular-nums">{items.length}</span>
@@ -986,7 +980,7 @@
                   )}
                 >
                   <!-- Status glyph col -->
-                  <span class={cn('w-3 shrink-0 text-center font-mono text-ui-3xs font-bold leading-none', statusColor)}>
+                  <span class={cn('w-3 shrink-0 text-center font-mono text-ui-3xs font-semibold leading-none', statusColor)}>
                     {item.status === 'added' ? '+' : item.status === 'removed' ? '−' : '~'}
                   </span>
                   <!-- Table name col -->
@@ -1008,7 +1002,7 @@
   {@const removeCount = selectedDdlDiff?.filter((l) => l.type === 'remove').length ?? 0}
 
   <div class="flex h-8 shrink-0 items-center gap-2 border-b border-border/40 px-4">
-    <span class={cn('font-mono text-ui-xs font-bold', statusColor)}>
+    <span class={cn('font-mono text-ui-xs font-semibold', statusColor)}>
       {status === 'added' ? '+' : status === 'removed' ? '−' : '~'}
     </span>
     <span class="min-w-0 flex-1 truncate font-mono text-ui-xs font-medium text-foreground/75">{tableKey}</span>

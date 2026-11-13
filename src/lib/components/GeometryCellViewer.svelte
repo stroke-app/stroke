@@ -165,7 +165,7 @@
             type="button"
             onclick={() => (tab = /** @type {'shape'|'coords'|'raw'} */ (id))}
             class={cn(
-              'inline-flex h-6 items-center rounded px-2 text-ui-2xs transition-colors',
+              'inline-flex h-6 items-center rounded-md px-2 text-ui-2xs transition-colors',
               tab === id ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
             )}
           >{label}</button>
@@ -176,7 +176,7 @@
         class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none"
         aria-label="Close"
       >
-        <Icon name="x" class="size-3.5" />
+        <Icon name="x" class="size-3.5 shrink-0" />
       </Dialog.Close>
     </div>
 
@@ -251,7 +251,7 @@
           {#if position}
             <div class="mt-2.5 flex items-center gap-1.5 rounded-md border border-border/40 bg-muted/10 px-2.5 py-1.5">
               <Icon name="crosshair" class="size-3.5 shrink-0 text-primary" />
-              <span class="text-ui-3xs uppercase tracking-wider text-muted-foreground">{position.label}</span>
+              <span class="text-ui-3xs uppercase tracking-[0.06em] text-muted-foreground">{position.label}</span>
               <span class="ml-1 truncate font-mono text-ui-sm tabular-nums text-foreground/90">{position.text}</span>
               {#if geoShape?.assumed}
                 <span class="ml-auto shrink-0 text-ui-3xs text-warning">no SRID · read as WGS 84</span>
@@ -265,7 +265,7 @@
           <div class="mt-2 grid grid-cols-[repeat(auto-fit,minmax(108px,1fr))] gap-2">
             {#each stats as s (s.label)}
               <div class="rounded-md border border-border/40 bg-muted/10 px-2.5 py-1.5">
-                <p class="text-ui-3xs uppercase tracking-wider text-muted-foreground">{s.label}</p>
+                <p class="text-ui-3xs uppercase tracking-[0.06em] text-muted-foreground">{s.label}</p>
                 <p class="mt-0.5 truncate font-mono text-ui-sm tabular-nums text-foreground/90">{s.value}</p>
                 {#if s.hint}
                   <p class={cn('mt-0.5 truncate text-ui-3xs', s.warn ? 'text-warning' : 'text-muted-foreground')}>{s.hint}</p>
@@ -280,7 +280,7 @@
         <div class="max-h-[22rem] overflow-y-auto px-4 pt-3">
           {#each coordParts as part, pi (pi)}
             {#if coordParts.length > 1}
-              <p class="mt-2 mb-1 text-ui-3xs uppercase tracking-wider text-muted-foreground first:mt-0">{part.title}</p>
+              <p class="mt-2 mb-1 text-ui-3xs uppercase tracking-[0.06em] text-muted-foreground first:mt-0">{part.title}</p>
             {/if}
             <div class="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-x-2">
               {#each part.vertices.slice(0, COORD_CAP) as v, i (i)}
@@ -320,7 +320,7 @@
           onclick={() => { onsave(null); open = false }}>Set NULL</Button>
       {/if}
       <Button variant="ghost" size="sm" class="h-7 gap-1.5 px-2 text-ui-xs text-muted-foreground hover:text-foreground" onclick={copyRaw}>
-        <Icon name="copy" class="size-3.5" />
+        <Icon name="copy" class="size-3.5 shrink-0" />
         Copy
       </Button>
       <span class="ml-auto font-mono text-ui-3xs text-muted-foreground">

@@ -33,7 +33,7 @@ export function mermaidType(dataType) {
  * @param {MermaidRel[]} rels
  * @param {{ keysOnly?: boolean }} [opts] keysOnly lists PK and FK columns only
  */
-export function erdToMermaid(tables, rels, opts = {}) {
+export function erdToMermaid(tables, rels, opts = /** @type {{ keysOnly?: boolean, commentRels?: MermaidRel[] }} */ ({})) {
   const keysOnly = opts.keysOnly === true
   const names = new Set(tables.map((t) => t.name))
   const out = ['erDiagram']
@@ -51,12 +51,24 @@ export function erdToMermaid(tables, rels, opts = {}) {
     }
     out.push('    }')
   }
-  for (const r of rels) {
-    if (!names.has(r.source) || !names.has(r.target)) continue
+  /** @param {MermaidRel} r */
+  const line = (r) => {
     const parent = r.optional ? '|o' : '||'
     const child = r.many === false ? '||' : 'o{'
     const label = r.sourceCol ? mermaidId(r.sourceCol) : 'references'
-    out.push(`    ${mermaidId(r.target)} ${parent}--${child} ${mermaidId(r.source)} : ${label}`)
+    return `${mermaidId(r.target)} ${parent}--${child} ${mermaidId(r.source)} : ${label}`
+  }
+  for (const r of rels) {
+    if (!names.has(r.source) || !names.has(r.target)) continue
+    out.push(`    ${line(r)}`)
+  }
+  // Links into hub tables (users, tenants) as comments: still in the export,
+  // so the source says what points at them, but not drawn - a hub's dozens of
+  // lines are one wall of verticals that hides every other relationship.
+  const hubRels = (opts.commentRels ?? []).filter((r) => names.has(r.source) && names.has(r.target))
+  if (hubRels.length) {
+    out.push('', `    %% ${hubRels.length} links into hub tables, not drawn (Hub links: Lines draws them)`)
+    for (const r of hubRels) out.push(`    %% ${line(r)}`)
   }
   return out.join('\n')
 }

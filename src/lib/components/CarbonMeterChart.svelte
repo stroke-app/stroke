@@ -49,7 +49,7 @@
     <div class="flex h-6 w-full overflow-hidden rounded-md bg-muted/20">
       {#each pct as seg (seg.name)}
         <div
-          class="h-full transition-all duration-500"
+          class="h-full transition-[width] duration-200"
           style="width:{seg.width}%; background:{seg.color};"
           title="{seg.name}: {seg.value.toLocaleString()} ({seg.width.toFixed(1)}%)"
         ></div>

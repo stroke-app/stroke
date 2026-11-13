@@ -239,16 +239,16 @@
     <div bind:this={el} class="h-full w-full"></div>
 
     {#if loadError}
-      <div class="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-background/80 backdrop-blur-sm">
+      <div class="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-background/80">
         <p class="text-ui-xs text-destructive">{loadError}</p>
         <button
           type="button"
-          class="rounded border border-border/50 px-3 py-1.5 font-mono text-ui-3xs text-muted-foreground hover:bg-accent"
+          class="rounded-md border border-border/50 px-3 py-1.5 font-mono text-ui-3xs text-muted-foreground hover:bg-accent"
           onclick={() => { loadError = ''; if (el) void initChart(el) }}
         >Retry</button>
       </div>
     {:else if loading}
-      <div class="absolute inset-0 flex items-center justify-center gap-2 text-ui-xs text-muted-foreground">
+      <div class="loading-reveal absolute inset-0 flex items-center justify-center gap-2 text-ui-xs text-muted-foreground">
         <span class="inline-block animate-spin">⟳</span> Loading map…
       </div>
     {/if}

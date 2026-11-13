@@ -52,19 +52,14 @@ test('a hub schema lays out with clear cards and lines that miss every card', as
     }
   }
 
-  // Lines leaving the same layer get their own vertical track in the channel.
-  /** @type {Map<number, Set<number>>} */
-  const tracks = new Map()
-  for (const l of links) {
+  // Lines into the same row share one port, so ELK merges them into a trunk:
+  // every line into the hub's `id` row ends on the same point.
+  const ends = new Set(links.map((l) => {
     const pts = routes.get(l.id) ?? []
-    const first = pts.findIndex((p, i) => i > 0 && Math.abs(p.x - pts[i - 1].x) < 0.01 && Math.abs(p.y - pts[i - 1].y) > 0.01)
-    if (first < 0) continue
-    const layerX = boxes.find((b) => b.id === l.source)?.x ?? 0
-    const set = tracks.get(layerX) ?? new Set()
-    expect(set.has(pts[first].x), `${l.id} shares a track`).toBe(false)
-    set.add(pts[first].x)
-    tracks.set(layerX, set)
-  }
+    const z = pts[pts.length - 1]
+    return z ? `${Math.round(z.x)},${Math.round(z.y)}` : ''
+  }).filter(Boolean))
+  expect(ends.size).toBeLessThanOrEqual(2) // one per side of the hub at most
 })
 
 test('the first pass carries no ports and the second pins every line to a row', () => {

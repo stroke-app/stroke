@@ -4,8 +4,11 @@
   import { formatTableRowCount, normalizeTableRowCount } from '$lib/table-list.js'
   import { hubTables } from '$lib/erd-filter.js'
   import { adjacency, layoutRoadmap, lineage, roadmapEdges, roundedPath, LOOSE_LABEL } from '$lib/erd-roadmap.js'
-  import { cn } from '$lib/utils.js'
+  import { cn, plural } from '$lib/utils.js'
   import Loader from '@lucide/svelte/icons/loader'
+  import Table2 from '@lucide/svelte/icons/table-2'
+  import X from '@lucide/svelte/icons/x'
+  import ExternalLink from '@lucide/svelte/icons/external-link'
 
   /**
    * @typedef {{ name: string, columns: { name: string }[] }} TableMeta
@@ -40,6 +43,12 @@
   /** Tables pointing at each hub, for the pill on its card. */
   const hubRefs = $derived(new Map([...hubs].map((h) => [h, adj.down.get(h)?.size ?? 0])))
   const colCount = $derived(new Map(tables.map((t) => [t.name, t.columns?.length ?? 0])))
+  /** root: points at nothing but is pointed at · linked: points at something · loose: neither. @param {string} id */
+  function roleOf(id) {
+    const up = adj.up.get(id)?.size ?? 0, down = adj.down.get(id)?.size ?? 0
+    return up === 0 && down > 0 ? 'root' : up > 0 ? 'linked' : 'loose'
+  }
+  const ROLE_STRIP = /** @type {Record<string, string>} */ ({ root: 'bg-warning/80', linked: 'bg-info/80', loose: 'bg-muted-foreground/30' })
 
   // ── Row counts ────────────────────────────────────────────────────────────
   // The listing's numbers first, as the sidebar does: an estimate for a table
@@ -118,14 +127,17 @@
     const family = root.getPropertyValue('--font-mono').trim() || 'monospace'
     measureCtx ??= document.createElement('canvas').getContext('2d')
     if (measureCtx) measureCtx.font = `500 ${fs} ${family}`
-    const pad = rem * 0.75 // px-3 on each side
-    const minW = rem * 7.5, maxW = rem * 14
-    const h = Math.round(rem * 2.75)
+    // pl-4 + pr-3, the 14px icon and its gap: what sits beside the name.
+    const chrome = rem * 1.75 + 14 + rem * 0.375
+    // Wide enough for the stats line ("17 cols · 1.2k rows  ↑3 ↓2") on one
+    // line: a card sized to its name alone wrapped it into "2 / cols".
+    const minW = rem * 12, maxW = rem * 17
+    const h = Math.round(rem * 3.25)
     return {
       h,
       w: (/** @type {string} */ name) => {
         const text = measureCtx ? measureCtx.measureText(name).width : name.length * rem * 0.5
-        return Math.round(Math.min(maxW, Math.max(minW, text + pad * 2 + 2)))
+        return Math.round(Math.min(maxW, Math.max(minW, text + chrome + 4)))
       },
     }
   }
@@ -316,7 +328,7 @@
     const down = adj.down.get(id)?.size ?? 0
     const lines = [id]
     if (n !== undefined) lines.push(`about ${n.toLocaleString()} row${n === 1 ? '' : 's'}`)
-    lines.push(`${colCount.get(id) ?? 0} columns`)
+    lines.push(`${colCount.get(id) ?? 0} ${plural(colCount.get(id) ?? 0, "column")}`)
     if (up.length) lines.push(`points at ${up.join(', ')}`)
     if (down) lines.push(`${down} table${down === 1 ? '' : 's'} point at it`)
     lines.push('Double-click or Enter to open')
@@ -430,7 +442,7 @@
             <path d="M0,1 L9,5 L0,9 z" style="fill: var(--muted-foreground)" />
           </marker>
           <marker id="rm-arrow-lit-{uid}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto">
-            <path d="M0,1 L9,5 L0,9 z" style="fill: var(--foreground)" />
+            <path d="M0,1 L9,5 L0,9 z" style="fill: var(--primary)" />
           </marker>
         </defs>
         {#each edgesBack as e (e.id)}
@@ -440,7 +452,7 @@
             stroke-width="1.5"
             stroke-linejoin="round"
             marker-end="url(#rm-arrow-{uid})"
-            style="stroke: var(--muted-foreground); opacity: {dimEdge(e) ? 0.16 : 0.85}; transition: opacity 150ms"
+            style="stroke: var(--muted-foreground); opacity: {dimEdge(e) ? 0.12 : 0.55}; transition: opacity 150ms"
           />
         {/each}
         {#each edgesFront as e (e.id)}
@@ -450,7 +462,7 @@
             stroke-width="2"
             stroke-linejoin="round"
             marker-end="url(#rm-arrow-lit-{uid})"
-            style="stroke: var(--foreground)"
+            style="stroke: var(--primary)"
           />
         {/each}
       </svg>
@@ -469,12 +481,15 @@
           {@const n = rowCounts.get(t.name)}
           {@const isSel = selected === t.name}
           {@const refs = hideHubs ? hubRefs.get(t.name) : undefined}
+          {@const role = roleOf(t.name)}
+          {@const upN = adj.up.get(t.name)?.size ?? 0}
+          {@const downN = adj.down.get(t.name)?.size ?? 0}
           <button
             type="button"
             data-card
             class={cn(
-              'absolute flex cursor-pointer flex-col justify-center gap-1.5 rounded-md px-3 text-left elevate-1 transition-[opacity,background-color,color] duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring',
-              isSel ? 'bg-info text-info-foreground' : 'bg-primary text-primary-foreground',
+              'group/card absolute flex cursor-pointer flex-col justify-center gap-1.5 overflow-hidden rounded-lg border bg-card pl-4 pr-3 text-left text-foreground transition-[opacity,border-color,box-shadow,background-color] duration-150 hover:border-foreground/30 hover:bg-accent/40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring',
+              isSel ? 'border-primary ring-2 ring-primary/30' : lit?.has(t.name) ? 'border-primary/50' : 'border-border/70',
               dimCard(t.name) && 'opacity-25',
             )}
             style="left: {p.x}px; top: {p.y}px; width: {s.w}px; height: {s.h}px"
@@ -489,20 +504,22 @@
             onfocus={() => (hovered = t.name)}
             onblur={() => { if (hovered === t.name) hovered = null }}
           >
-            <span class="block truncate text-center font-mono text-ui-xs font-medium leading-tight">{t.name}</span>
-            {#if n !== undefined}
-              <span class="flex items-center gap-2">
-                <span class="h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-current/25">
-                  <span class="block h-full rounded-full bg-current" style="width: {barPct(n)}%"></span>
-                </span>
-                <span class="shrink-0 font-mono text-ui-2xs leading-none tabular-nums">{formatTableRowCount(n)}</span>
+            <!-- Role strip: roots (point at nothing) amber, linked blue, loose grey. -->
+            <span class="absolute inset-y-0 left-0 w-1 {ROLE_STRIP[role]}" aria-hidden="true"></span>
+            <span class="flex min-w-0 items-center gap-1.5">
+              <Table2 class="size-3.5 shrink-0 text-muted-foreground" />
+              <span class="min-w-0 truncate font-mono text-ui-xs font-medium leading-tight">{t.name}</span>
+            </span>
+            <span class="flex min-w-0 items-center gap-1.5 whitespace-nowrap pl-5 text-ui-2xs leading-none text-muted-foreground">
+              <span class="min-w-0 truncate tabular-nums">{colCount.get(t.name) ?? 0} {plural(colCount.get(t.name) ?? 0, 'col')}{#if n !== undefined} · {formatTableRowCount(n)} {plural(n, 'row')}{/if}</span>
+              <span class="ml-auto flex shrink-0 items-center gap-1.5 tabular-nums" title="Points at {upN}, pointed at by {downN}">
+                {#if upN}<span>↑{upN}</span>{/if}
+                {#if downN}<span>↓{downN}</span>{/if}
               </span>
-            {:else}
-              <span class="block truncate text-center font-mono text-ui-2xs leading-none">{colCount.get(t.name) ?? 0} columns</span>
-            {/if}
+            </span>
             {#if refs}
               <span
-                class="pointer-events-none absolute bottom-full right-0 mb-1 rounded-full border border-border bg-background px-1.5 font-mono text-ui-2xs leading-4 tabular-nums text-muted-foreground"
+                class="pointer-events-none absolute right-2 top-1.5 rounded-sm bg-info/15 px-1 font-mono text-ui-3xs leading-4 tabular-nums text-info"
                 title="{refs} tables point at {t.name}; their lines are hidden"
               >← {refs}</span>
             {/if}
@@ -512,21 +529,56 @@
     </div>
   {/if}
 
+  {#if selected && ids.has(selected)}
+    {@const upList = [...(adj.up.get(selected) ?? [])]}
+    {@const downList = [...(adj.down.get(selected) ?? [])]}
+    <!-- What the selected table links to, both ways, each one a jump. -->
+    <div class="pointer-events-none absolute inset-x-0 bottom-4 z-10 flex justify-center px-4">
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div data-card class="pointer-events-auto flex max-w-3xl min-w-0 items-center gap-3 rounded-lg border border-border/60 bg-panel/95 px-3 py-2 elevate-2" onpointerdown={(e) => e.stopPropagation()}>
+        <Table2 class="size-4 shrink-0 text-muted-foreground" />
+        <span class="shrink-0 font-mono text-ui-sm font-medium text-foreground">{selected}</span>
+        <span class="h-4 w-px shrink-0 bg-border/60"></span>
+        <div class="flex min-w-0 flex-1 items-center gap-3 overflow-x-auto text-ui-xs">
+          {#if upList.length}
+            <span class="flex shrink-0 items-center gap-1 text-muted-foreground">↑
+              {#each upList.slice(0, 6) as u (u)}<button type="button" class="rounded-sm px-1 font-mono text-foreground/85 hover:bg-accent hover:text-foreground" onclick={() => { selected = u; centerOn(u) }}>{u}</button>{/each}
+              {#if upList.length > 6}<span>+{upList.length - 6}</span>{/if}
+            </span>
+          {/if}
+          {#if downList.length}
+            <span class="flex shrink-0 items-center gap-1 text-muted-foreground">↓
+              {#each downList.slice(0, 6) as d (d)}<button type="button" class="rounded-sm px-1 font-mono text-foreground/85 hover:bg-accent hover:text-foreground" onclick={() => { selected = d; centerOn(d) }}>{d}</button>{/each}
+              {#if downList.length > 6}<span>+{downList.length - 6}</span>{/if}
+            </span>
+          {/if}
+          {#if !upList.length && !downList.length}<span class="text-muted-foreground">No foreign keys either way</span>{/if}
+        </div>
+        <button type="button" class="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md bg-foreground px-2.5 text-ui-xs font-medium text-background hover:opacity-90" onclick={() => onopen(selected)}>
+          <ExternalLink class="size-3.5 shrink-0" /> Open table
+        </button>
+        <button type="button" class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" aria-label="Clear selection" onclick={() => (selected = null)}>
+          <X class="size-3.5 shrink-0" />
+        </button>
+      </div>
+    </div>
+  {/if}
+
   {#if !tables.length}
     <div class="absolute inset-0 flex items-center justify-center">
       <p class="text-ui-sm text-muted-foreground">No tables on the page</p>
     </div>
   {:else if layoutError}
     <div class="absolute inset-0 flex items-center justify-center p-6">
-      <p class="max-w-md text-center font-mono text-ui-xs text-destructive">{layoutError}</p>
+      <p class="max-w-md text-center text-ui-sm text-destructive">{layoutError}</p>
     </div>
   {:else if laying && !layout}
-    <div class="absolute inset-0 flex items-center justify-center gap-2">
+    <div class="loading-reveal absolute inset-0 flex items-center justify-center gap-2">
       <Loader class="size-3.5 shrink-0 animate-spin text-muted-foreground" />
       <span class="text-ui-xs text-muted-foreground">Laying out {tables.length} tables…</span>
     </div>
   {:else if laying}
-    <div class="pointer-events-none absolute left-4 top-4 flex h-6 items-center gap-2 rounded-full border border-border/50 bg-panel/85 px-2.5 text-ui-2xs text-muted-foreground backdrop-blur-sm">
+    <div class="pointer-events-none absolute left-4 top-4 flex h-6 items-center gap-2 rounded-full border border-border/50 bg-panel px-2.5 text-ui-2xs text-muted-foreground">
       <span class="size-1.5 animate-pulse rounded-full bg-primary"></span>
       Laying out…
     </div>
