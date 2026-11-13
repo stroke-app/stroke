@@ -29,7 +29,7 @@
 		     the label on the row icons' edge (the list's px-1.5 plus the item's
 		     px-2.5), which is also where the search icon sits. -->
 		<CommandPrimitive.GroupHeading
-			class="px-2.5 pt-2 pb-1 text-ui-2xs font-medium text-muted-foreground"
+			class="px-2.5 pt-3 pb-1.5 text-ui-xs font-medium text-muted-foreground"
 		>
 			{heading}
 		</CommandPrimitive.GroupHeading>

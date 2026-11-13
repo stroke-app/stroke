@@ -128,6 +128,7 @@ import PanelLeftOpen from '@lucide/svelte/icons/panel-left-open'
 import Link2 from '@lucide/svelte/icons/link-2'
 import ListFilter from '@lucide/svelte/icons/list-filter'
 import Network from '@lucide/svelte/icons/network'
+import ListTree from '@lucide/svelte/icons/list-tree'
 import Package from '@lucide/svelte/icons/package'
 import Pin from '@lucide/svelte/icons/pin'
 import PinOff from '@lucide/svelte/icons/pin-off'
@@ -294,6 +295,7 @@ export const ICON_MAP = {
   'link-2':         { lucide: Link2,          huge: Link01Icon },
   'list-filter':    { lucide: ListFilter,     huge: FilterIcon },
   'network':        { lucide: Network,        huge: WorkflowSquare01Icon },
+  'list-tree':      { lucide: ListTree },
   'package':        { lucide: Package,        huge: PackageIcon },
   'pin':            { lucide: Pin,            huge: PinLocation01Icon },
   'pin-off':        { lucide: PinOff,         huge: PinOffIcon },

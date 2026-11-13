@@ -152,7 +152,7 @@
   aria-hidden={!shown}
   class={cn(
     'pointer-events-none fixed z-[300] max-w-xs rounded-lg border border-border/60 bg-popover px-2.5 py-1.5',
-    'text-ui-xs leading-snug text-popover-foreground shadow-md',
+    'text-ui-xs leading-snug text-popover-foreground elevate-2-rim',
     'origin-[var(--tt-origin)] transition-[opacity,transform] duration-[130ms] ease-out',
     'motion-reduce:transition-none',
     shown ? 'scale-100 opacity-100' : 'scale-[0.96] opacity-0',

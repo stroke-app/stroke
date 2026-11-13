@@ -27,13 +27,13 @@
       <RangeCalendarPrimitive.PrevButton
         class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
       >
-        <ChevronLeft class="size-4" />
+        <ChevronLeft class="size-4 shrink-0" />
       </RangeCalendarPrimitive.PrevButton>
       <RangeCalendarPrimitive.Heading class="text-ui-sm font-medium text-foreground" />
       <RangeCalendarPrimitive.NextButton
         class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
       >
-        <ChevronRight class="size-4" />
+        <ChevronRight class="size-4 shrink-0" />
       </RangeCalendarPrimitive.NextButton>
     </RangeCalendarPrimitive.Header>
 

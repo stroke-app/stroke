@@ -1,5 +1,6 @@
 import { clsx } from 'clsx'
 import { extendTailwindMerge } from 'tailwind-merge'
+import { createTV } from 'tailwind-variants'
 
 /**
  * `text-ui-*` are this app's font sizes (see the scale in app.css / DESIGN_SYSTEM
@@ -16,7 +17,7 @@ import { extendTailwindMerge } from 'tailwind-merge'
  * Registering the scale as font sizes makes size and colour independent again,
  * while still collapsing two sizes (or two colours) to the last one.
  */
-const twMerge = extendTailwindMerge({
+const twMergeConfig = {
   extend: {
     classGroups: {
       'font-size': [
@@ -24,7 +25,17 @@ const twMerge = extendTailwindMerge({
       ],
     },
   },
-})
+}
+const twMerge = extendTailwindMerge(twMergeConfig)
+
+/**
+ * `tv()` for the ui/* variant components. tailwind-variants runs its own
+ * tailwind-merge with the default config, so it had the same bug as above one
+ * level down: a size variant's `text-ui-xs` knocked out the colour variant's
+ * `text-primary-foreground`, and every `size="sm"` primary button rendered as a
+ * blank slab on the dark themes. Same config, so both merges agree.
+ */
+export const tv = createTV({ twMergeConfig })
 
 // The pool on this side is gone (closed by a reconnect, a disconnect, or a
 // dropped peer) - the host itself may be perfectly reachable. Rebuilding the
@@ -93,6 +104,15 @@ export function connectionErrorKind(msg) {
   const lower = String(msg ?? '').toLowerCase()
   if (POOL_LOST_PATTERNS.some((p) => lower.includes(p))) return 'dropped'
   return NETWORK_ERROR_PATTERNS.some((p) => lower.includes(p)) ? 'unreachable' : null
+}
+
+/**
+ * The noun for a count: `plural(1, 'row')` is "row", anything else "rows".
+ * Pass `many` for irregular nouns (`plural(n, 'index', 'indexes')`).
+ * @param {number} n @param {string} one @param {string} [many]
+ */
+export function plural(n, one, many = one + 's') {
+  return n === 1 ? one : many
 }
 
 /** @param {...import('clsx').ClassValue} inputs */

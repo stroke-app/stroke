@@ -35,19 +35,21 @@
      schemes. 36% measures ~2.4:1 on dark and ~2.6:1 on light, so it misses WCAG
      1.4.11's 3:1 for a control boundary - a deliberate call for the hairline
      look, with the visible-state burden carried by the focus outline (4.63:1). */
-  --field-border: color-mix(in oklch, var(--foreground) 36%, var(--background));
-  /* 2px. A 1px edge at a 10px radius antialiases the corner arcs lighter than
-     the straight runs, so the border reads as four dashes with gaps at the
-     corners; 1.5px filled the arcs in but still sat back too far at rest. Two
-     whole pixels land on the device grid at 1x, so the edge is the same weight
-     all the way round and present without focus. */
-  --field-border-width: 2px;
+  --field-border: color-mix(in oklch, var(--foreground) 16%, transparent);
+  /* Filled, hairline fields (the macOS / SQL Studio look): a 1px edge at low
+     contrast over a faint fill, so a form reads as quiet surfaces rather than a
+     stack of outlined pills. The fill carries the "this is a field" signal the
+     2px border used to; translucent so it sits right on any surface (panel,
+     popover, dialog) without a per-surface value. Focus brightens the edge
+     toward the accent and adds a soft halo (see the focus rule below). */
+  --field-bg: color-mix(in oklch, var(--foreground) 5%, transparent);
+  --field-border-width: 1px;
   /* Fields, dropdown triggers and buttons all share ONE corner, and it is the
      same one `rounded-lg` resolves to - a second radius for fields is how an
      input ended up rounder than the button beside it. Absolute px, not rem: a
      corner is a physical size and has no reason to grow when the type scale
      does. */
-  --radius-field: calc(var(--radius) + 2px);
+  --radius-field: var(--radius);
   /* No fill. A field is its border and its radius - a gradient made the edge
      look brighter along the top than along the bottom, which reads as a badly
      drawn border rather than as depth. */
@@ -149,7 +151,7 @@ html {
   --json-boolean: oklch(0.76 0.13 310);/* true/false - purple */
   --json-null: var(--muted-foreground);
 }
-html[data-theme="light"] {
+html:not(.dark) {
   --json-key: oklch(0.5 0.16 250);
   --json-string: oklch(0.48 0.13 150);
   --json-number: oklch(0.55 0.13 60);
@@ -167,8 +169,8 @@ html[data-theme="light"] {
   --json-number: oklch(0.85 0.17 80);
   --json-boolean: oklch(0.78 0.21 320);
 }
-html[data-theme="light"][data-json-theme="vivid"],
-html[data-theme="light"] [data-json-theme="vivid"] {
+html:not(.dark)[data-json-theme="vivid"],
+html:not(.dark) [data-json-theme="vivid"] {
   --json-key: oklch(0.48 0.21 255);
   --json-string: oklch(0.45 0.18 150);
   --json-number: oklch(0.5 0.17 60);
@@ -181,8 +183,8 @@ html[data-theme="light"] [data-json-theme="vivid"] {
   --json-number: oklch(0.82 0.09 160);
   --json-boolean: oklch(0.72 0.13 265);
 }
-html[data-theme="light"][data-json-theme="ocean"],
-html[data-theme="light"] [data-json-theme="ocean"] {
+html:not(.dark)[data-json-theme="ocean"],
+html:not(.dark) [data-json-theme="ocean"] {
   --json-key: oklch(0.46 0.14 235);
   --json-string: oklch(0.45 0.11 200);
   --json-number: oklch(0.48 0.1 165);
@@ -204,8 +206,8 @@ html[data-theme="light"] [data-json-theme="ocean"] {
   --json-number: oklch(0.76 0.13 45); /* orange  */
   --json-boolean: oklch(0.7 0.16 20); /* red     */
 }
-html[data-theme="light"][data-json-theme="github"],
-html[data-theme="light"] [data-json-theme="github"] {
+html:not(.dark)[data-json-theme="github"],
+html:not(.dark) [data-json-theme="github"] {
   --json-key: oklch(0.45 0.19 285);
   --json-string: oklch(0.42 0.15 240);
   --json-number: oklch(0.5 0.15 45);
@@ -270,18 +272,33 @@ html[data-icon-style="bold"]  svg.lucide { stroke-width: 2.5px; }
    aria-invalid fields keep their own destructive ring. */
 .field-surface:not([aria-invalid="true"]):not(.no-focus-ring):focus-visible,
 .cell-quiet:focus-visible,
-[data-slot="select-trigger"]:not([aria-invalid="true"]):focus-visible,
-[data-slot="select-trigger"][data-state="open"] {
+[data-slot="select-trigger"].field-surface:not([aria-invalid="true"]):focus-visible {
   /* The border is deliberately NOT touched here: a field's edge looks identical
      whether it has focus or not. The indicator is an outline just outside that
      edge - no shadow, no ring stacked on the border, no layout shift, and it
      follows the corner radius. --ring measures 4.63:1 against --background. */
-  outline: 2px solid var(--ring);
-  /* Offset 0: the ring sits directly against the outside of the border with no
-     gap between them. An outline never participates in layout, so it costs no
-     shift either way. */
-  outline-offset: 0;
+  /* Filled-hairline focus: the edge takes the accent and a soft 3px halo sits
+     outside it. A box-shadow follows the radius and never shifts layout. */
+  /* A crisp 1px accent edge and nothing else, the way native search fields
+     show focus: no halo outside the field, no layout shift. */
+  outline: none;
+  border-color: var(--ring);
   box-shadow: none;
+}
+/* Bare text fields wear the same frame (the rule below), so the same focus. */
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="color"]):not([type="submit"]):not([type="button"]):not(.no-focus-ring):not(.no-field-frame):focus-visible,
+textarea:not(.no-focus-ring):not(.no-field-frame):focus-visible {
+  outline: none;
+  border-color: var(--ring);
+}
+
+/* The search row at the top of a dropdown: borderless, with the hairline under
+   it turning accent while you type in it. */
+[data-slot="menu-search"] {
+  border-bottom: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
+}
+[data-slot="menu-search"]:focus-within {
+  border-bottom-color: var(--ring);
 }
 
 /* ── One frame for every text field in the app ───────────────────────────────
@@ -301,6 +318,7 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="
 textarea:not(.no-focus-ring):not(.no-field-frame) {
   border-radius: var(--radius-field);
   border: var(--field-border-width) solid var(--field-border);
+  background-color: var(--field-bg);
 }
 .studio-data-table tbody td :is(input, textarea),
 .sql-editor-host :is(input, textarea) {
@@ -791,6 +809,36 @@ html[data-os="linux"]   { --window-radius: 8px; }
     font-size: var(--fs-xs);
   }
 
+  /* In a menu or palette row a shortcut is plain glyphs - ⇧⌘N in the row's
+     muted ink, the way macOS menus print it - not a run of keycaps. Caps in
+     every row turned a list into a wall of little boxes competing with the
+     labels. Keycaps stay where a key is the subject: legends, dialogs, hints. */
+  :is([data-slot="command-item"], [data-slot="dropdown-menu-item"], [data-slot="dropdown-menu-sub-trigger"],
+      [data-slot="context-menu-item"], [role="menuitem"], [role="option"]) kbd {
+    min-width: 0;
+    height: auto;
+    padding: 0;
+    background: none;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    /* The system face: its ⌘ ⇧ ⌥ ⌃ are drawn to sit with its letters at one
+       size and on one baseline. In the mono or UI face the symbols came out
+       smaller than the letter beside them and spaced apart. */
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, var(--font-sans);
+    font-size: var(--fs-sm);
+    font-weight: 500;
+    letter-spacing: 0;
+    line-height: 1;
+    min-width: 0.85em;
+    text-align: center;
+    color: var(--muted-foreground);
+  }
+  :is([data-slot="command-item"], [data-slot="dropdown-menu-item"], [data-slot="dropdown-menu-sub-trigger"],
+      [data-slot="context-menu-item"], [role="menuitem"], [role="option"]) span:has(> kbd) {
+    gap: 1px;
+  }
+
   /* kbd inside a primary-coloured surface (e.g. Save button) */
   kbd.kbd-on-primary {
     color: color-mix(in oklch, var(--primary-foreground) 80%, transparent);
@@ -904,6 +952,7 @@ html[data-os="linux"]   { --window-radius: 8px; }
   .field-surface {
     border-radius: var(--radius-field);
     border: var(--field-border-width) solid var(--field-border);
+    background-color: var(--field-bg);
   }
 
   /* A picker tile, not a field. Same geometry as .field-surface, so the two sit
@@ -1321,4 +1370,206 @@ button:disabled,
 }
 .app-scroll-x::-webkit-scrollbar {
   display: none;
+}
+
+/* ── Native feel ────────────────────────────────────────────────────────────
+   Desktop apps use the arrow over controls; the pointing hand is the web's
+   "this is a link" and made every button feel like a page. Links keep it.
+   Unlayered so it wins over a stray `cursor-pointer` utility. */
+button,
+[role='button'],
+[role='menuitem'],
+[role='menuitemcheckbox'],
+[role='menuitemradio'],
+[role='option'],
+[role='tab'],
+[role='switch'],
+[role='checkbox'],
+[role='radio'],
+[role='treeitem'],
+[data-slot='select-trigger'],
+summary,
+label,
+.cursor-pointer:not(a) {
+  cursor: default;
+}
+
+/* Hover and press colour changes snap, the way native controls do. A 150ms
+   fade on every hover reads as the UI lagging behind the pointer. Explicit
+   `duration-*` classes (panels, progress) keep their timing. */
+@layer base {
+  :root {
+    --default-transition-duration: 0ms;
+  }
+}
+
+/* A full-window viewer (diagram, fullscreen chart) covers the title bar, and on
+   macOS the OS still draws the traffic lights over its top-left corner. Its
+   header takes the title bar's place: the same 38px row, the lights' room on
+   the left (they end at ~66px), and it drags the window like the bar it hides. */
+html[data-os='macos'] .window-overlay-head {
+  min-height: 52px;
+  padding-left: 92px;
+}
+
+/* ── Icon scale (T3-sized) ───────────────────────────────────────────────────
+   Every icon one step up: 12→14, 14→16, 16→18px. Icons read as the controls
+   rather than as specks beside the text. One rule, so every icon in the app
+   moves together; rem, so it follows the zoom. Unlayered so it wins over the
+   `size-*` utilities on the icons themselves. */
+svg.size-3 { width: calc(14px * var(--app-scale, 1)); height: calc(14px * var(--app-scale, 1)); }
+svg.size-3\.5 { width: calc(17px * var(--app-scale, 1)); height: calc(17px * var(--app-scale, 1)); }
+svg.size-4 { width: calc(19px * var(--app-scale, 1)); height: calc(19px * var(--app-scale, 1)); }
+
+/* The sidebar's tab row, moved into the macOS title bar: it fills the bar's
+   height and the slot's width, with no padding of its own. */
+.titlebar-tabs { height: 100% !important; flex: 1 1 0%; min-width: 0; padding: 0 calc(8px * var(--app-scale, 1)) 0 calc(4px * var(--app-scale, 1)) !important; }
+
+/* The tab strip living in the title row: fills it, no surface of its own. */
+.titlebar-tabstrip > header[role="tablist"] { flex: 1 1 0%; min-width: 0; height: 100%; background: transparent; padding-left: 0.5rem; }
+
+/* The new-tab hero reads in the system face, as T3 and native Mac apps do,
+   whatever the app font: a mono headline made it read like a terminal. */
+.welcome-hero, .welcome-hero :where(h1, h2, p, span, div, button, a, label) { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; }
+
+/* Structure grid: dropdown arrows only on the row you are on, not on every
+   cell of every row - the value is the content, the arrow is the affordance. */
+.cell-fields tbody tr:not(:hover):not(:focus-within) [data-slot="select-trigger"] > svg { opacity: 0; }
+.cell-fields tbody tr:not(:hover):not(:focus-within) [data-slot="dropdown-menu-trigger"] > svg:last-child { opacity: 0; }
+
+/* Terminal scrollbar. xterm 6 draws its own (VS Code's scrollable element), so
+   the native-scrollbar rules no longer reached it: it was a 14px square slab.
+   Now a thin rounded thumb inset from the edge that widens while it is used,
+   with the theme's slider colours (terminal-theme.js), and no hard black shadow
+   along the top edge once the output scrolls. */
+.xterm .xterm-viewport { background-color: transparent !important; }
+.xterm .xterm-scrollable-element > .shadow { display: none !important; }
+.xterm .xterm-scrollable-element > .scrollbar.vertical { width: 10px !important; }
+.xterm .xterm-scrollable-element > .scrollbar.vertical > .slider {
+  left: 3px !important;
+  width: 4px !important;
+  border-radius: 9999px;
+  transition: left 120ms var(--ease-out), width 120ms var(--ease-out);
+}
+.xterm .xterm-scrollable-element > .scrollbar.vertical:hover > .slider,
+.xterm .xterm-scrollable-element > .scrollbar.vertical > .slider.active {
+  left: 2px !important;
+  width: 6px !important;
+}
+
+/* ── Grain ─────────────────────────────────────────────────────────────────
+   Film grain over the whole window, set from the theme builder's dial
+   (custom-theme.js applyNoise). Fixed, above everything, never hit-testable;
+   `overlay` blending lightens light areas and darkens dark ones, so it reads
+   as texture on any theme rather than as a grey haze. The turbulence tile is
+   inline SVG, so there is no image request and it is crisp at every zoom. */
+html[data-noise] body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  pointer-events: none;
+  opacity: var(--noise-opacity, 0);
+  mix-blend-mode: overlay;
+  /* Grey-scale grain spread on both sides of mid-grey, fully opaque. The first
+     version was a flat 50% grey with noisy alpha, and `overlay` with 50% grey
+     is a no-op - the grain was there and changed nothing. */
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0.6 0.6 0.6 0 -0.4  0.6 0.6 0.6 0 -0.4  0.6 0.6 0.6 0 -0.4  0 0 0 0 1'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  background-size: 180px 180px;
+}
+
+/* ── Read-only code shows its real characters ────────────────────────────────
+   The Fira Code preset's ligatures belong in the editor, where they are chosen.
+   In code that is read rather than typed (AI answers, query cards, Shiki
+   blocks) they disguise the source: `-- === Schema ===` drew as a struck-
+   through bar and `--` as one long dash, shifting the line. */
+pre,
+pre code,
+.shiki,
+.shiki code {
+  font-variant-ligatures: none;
+  font-feature-settings: "liga" 0, "calt" 0;
+}
+
+/* ── Workspace mark grain ────────────────────────────────────────────────────
+   The solid workspace tile gets the same inline grain as the window (above),
+   plus a soft light falling from the top edge, so the tile reads as a small
+   physical object rather than a flat swatch. Both layers sit under the letter
+   (z-index -1 inside an isolated tile) and never take a click. */
+.mark-grain {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+}
+.mark-grain::before,
+.mark-grain::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  border-radius: inherit;
+}
+.mark-grain::before {
+  background: linear-gradient(to bottom, rgb(255 255 255 / 0.22), rgb(255 255 255 / 0) 55%, rgb(0 0 0 / 0.12));
+}
+.mark-grain::after {
+  opacity: 0.32;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='1.1' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0.6 0.6 0.6 0 -0.4  0.6 0.6 0.6 0 -0.4  0.6 0.6 0.6 0 -0.4  0 0 0 0 1'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  background-size: 120px 120px;
+}
+
+/* ── Loading states never flash ───────────────────────────────────────────────
+   A region's loader (a page, panel or list waiting on a fetch) stays invisible
+   for its first 200ms and then fades in. Most fetches land before that, and a
+   spinner that appears for 80ms and vanishes reads as the layout flickering.
+   The element is laid out from the start, so nothing shifts when it does show.
+   Button spinners do not use this: a click wants its feedback at once. */
+@keyframes stroke-loading-reveal {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.loading-reveal {
+  animation: stroke-loading-reveal 140ms ease-out 200ms both;
+}
+
+/* Every spinner on its own compositor layer. A transform animation the
+   compositor owns keeps turning while the main thread is busy - streaming an
+   AI reply, painting a big grid - where a main-thread one visibly stutters. */
+.animate-spin {
+  will-change: transform;
+}
+
+/* ── AI: a chart or diagram being generated (AiChat generatingCard) ─────────
+   Transform and opacity only, so every one of these runs on the compositor
+   and keeps moving while a streaming reply holds the main thread. */
+.ai-gen-sweep {
+  background: linear-gradient(100deg, transparent 20%, color-mix(in oklch, var(--foreground) 7%, transparent) 50%, transparent 80%);
+  transform: translateX(-100%);
+  animation: ai-gen-sweep 1.8s ease-in-out infinite;
+  will-change: transform;
+}
+@keyframes ai-gen-sweep { to { transform: translateX(100%); } }
+.ai-gen-bar {
+  transform-origin: bottom;
+  animation: ai-gen-bar 1.4s ease-in-out infinite;
+  will-change: transform;
+}
+@keyframes ai-gen-bar { 0%, 100% { transform: scaleY(0.45); } 50% { transform: scaleY(1); } }
+.ai-gen-node { animation: ai-gen-fade 1.6s ease-in-out infinite; }
+.ai-gen-line { animation: ai-gen-fade 1.6s ease-in-out infinite; }
+@keyframes ai-gen-fade { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
+.ai-gen-dots i {
+  display: block;
+  width: 3px;
+  height: 3px;
+  border-radius: 9999px;
+  background: currentColor;
+  animation: ai-gen-fade 1.2s ease-in-out infinite;
+}
+.ai-gen-dots i:nth-child(2) { animation-delay: 0.2s; }
+.ai-gen-dots i:nth-child(3) { animation-delay: 0.4s; }
+@media (prefers-reduced-motion: reduce) {
+  .ai-gen-sweep, .ai-gen-bar, .ai-gen-node, .ai-gen-line, .ai-gen-dots i { animation: none; }
 }

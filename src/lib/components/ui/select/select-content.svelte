@@ -15,7 +15,7 @@
 	} = $props();
 </script>
 
-<!-- rounded-xl (12px) against the viewport's p-1 (4px) puts items at 8px - outer
+<!-- rounded-[10px] against the viewport's p-1 (4px) puts rounded-sm items at 6px - outer
 	 radius minus padding - so item corners sit concentric inside the panel
 	 instead of leaving a crescent of gap at each one.
 	 The exit runs quicker than the enter: a menu should get out of the way faster
@@ -27,7 +27,7 @@
 		{preventScroll}
 		data-slot="select-content"
 		class={cn(
-			"bg-popover text-popover-foreground data-open:animate-in data-closed:animate-out data-closed:fade-out-0 data-open:fade-in-0 data-open:zoom-in-[0.96] data-closed:zoom-out-[0.96] [transform-origin:var(--bits-floating-transform-origin)] ease-out duration-150 data-closed:duration-100 border border-border/60 min-w-36 max-w-(--menu-max-w) rounded-xl elevate-2-rim relative isolate z-50 overflow-x-hidden overflow-y-auto",
+			"bg-popover text-popover-foreground data-closed:animate-out data-closed:fade-out-0 [transform-origin:var(--bits-floating-transform-origin)] ease-out data-closed:duration-100 border border-border/60 min-w-36 max-w-(--menu-max-w) rounded-[10px] elevate-2-rim relative isolate z-50 overflow-x-hidden overflow-y-auto",
 			className
 		)}
 		{...restProps}

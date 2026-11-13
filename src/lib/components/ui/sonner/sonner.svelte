@@ -75,15 +75,15 @@
   })
 
   const base =
-    'group/toast pointer-events-auto relative flex w-full items-start gap-2 overflow-hidden rounded-xl border border-border/40 bg-popover px-2.5 py-2 text-popover-foreground shadow-[0_0_0_0.5px_rgba(0,0,0,0.03),0_10px_38px_-8px_rgba(0,0,0,0.14),0_2px_10px_-3px_rgba(0,0,0,0.06)] dark:border-white/[0.07] dark:shadow-[0_0_0_0.5px_rgba(255,255,255,0.05),0_16px_48px_-10px_rgba(0,0,0,0.55),0_4px_14px_-4px_rgba(0,0,0,0.35)]'
+    'group/toast pointer-events-auto relative flex w-full items-start gap-2.5 overflow-hidden rounded-xl border border-border/50 bg-popover px-3.5 py-3 text-popover-foreground elevate-2-rim'
 
-  const iconWrap = 'flex size-5 shrink-0 items-center justify-center rounded-md'
+  const iconWrap = 'flex h-[1.15rem] shrink-0 items-center justify-center'
 
   const iconClass = {
-    success: 'bg-success/12 text-success',
-    error: 'bg-destructive/10 text-destructive dark:bg-destructive/15',
-    info: 'bg-info/10 text-info dark:bg-info/12',
-    warning: 'bg-warning/12 text-warning',
+    success: 'text-success',
+    error: 'text-destructive',
+    info: 'text-info',
+    warning: 'text-warning',
   }
 
   /** @param {string} pos @param {string | Record<string, string | number>} off */
@@ -163,28 +163,28 @@
       {#if t.type !== 'message'}
         <span class="{iconWrap} {iconClass[t.type]}" aria-hidden="true">
           {#if t.type === 'success'}
-            <CircleCheck class="size-3" strokeWidth={2.25} />
+            <CircleCheck class="size-4 shrink-0" strokeWidth={2} />
           {:else if t.type === 'error'}
-            <OctagonX class="size-3" strokeWidth={2.25} />
+            <OctagonX class="size-4 shrink-0" strokeWidth={2} />
           {:else if t.type === 'info'}
-            <Info class="size-3" strokeWidth={2.25} />
+            <Info class="size-4 shrink-0" strokeWidth={2} />
           {:else if t.type === 'warning'}
-            <TriangleAlert class="size-3" strokeWidth={2.25} />
+            <TriangleAlert class="size-4 shrink-0" strokeWidth={2} />
           {/if}
         </span>
       {/if}
 
       <div class="flex min-w-0 flex-1 flex-col {t.action ? 'pr-2' : 'pr-5'}">
         <div
-          class="text-ui-xs font-medium capitalize leading-tight tracking-[-0.01em] text-foreground"
+          class="text-ui-sm font-medium leading-snug text-foreground"
         >
           {t.title}
         </div>
         {#if t.description}
           {#if t.code}
-            <pre class="app-scroll mt-1 max-h-52 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border/40 bg-muted/30 px-2 py-1.5 font-mono text-ui-2xs leading-snug text-foreground/85">{t.description}</pre>
+            <pre class="app-scroll mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono text-ui-2xs leading-relaxed text-muted-foreground">{t.description}</pre>
           {:else}
-            <div class="mt-0.5 text-ui-2xs leading-snug text-muted-foreground">
+            <div class="mt-0.5 text-ui-xs leading-snug text-muted-foreground">
               {t.description}
             </div>
           {/if}
@@ -192,7 +192,7 @@
         {#if t.action}
           <button
             type="button"
-            class="mt-1.5 self-start rounded-md border border-border/50 bg-background/60 px-2 py-0.5 text-ui-2xs font-medium text-foreground transition-colors hover:bg-muted/80"
+            class="mt-2 self-start rounded-full bg-muted/70 px-3 py-1 text-ui-2xs font-medium text-foreground transition-colors hover:bg-accent"
             onclick={() => { t.action?.onClick(); toast.dismiss(t.id) }}
           >
             {t.action.label}
@@ -203,10 +203,10 @@
       <button
         type="button"
         aria-label="Close"
-        class="absolute right-1.5 top-1.5 z-10 flex size-5 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-[opacity,background-color,color,transform] duration-200 hover:bg-foreground/[0.06] hover:text-foreground active:scale-95 group-hover/toast:opacity-100 dark:hover:bg-white/[0.08]"
+        class="absolute right-2 top-2 z-10 flex size-6 items-center justify-center rounded-full text-muted-foreground opacity-0 transition-[opacity,background-color,color,transform] duration-200 hover:bg-foreground/[0.06] hover:text-foreground active:scale-95 group-hover/toast:opacity-100 dark:hover:bg-white/[0.08]"
         onclick={() => toast.dismiss(t.id)}
       >
-        <X class="size-3" strokeWidth={2.25} />
+        <X class="size-3 shrink-0" strokeWidth={2.25} />
       </button>
     </div>
   {/each}

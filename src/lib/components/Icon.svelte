@@ -3,7 +3,7 @@
   // for a stable semantic `name`. Falls back to Lucide when the current set has
   // no mapping for that name, so switching sets never leaves a hole.
   //
-  //   <Icon name="search" class="size-4 text-muted-foreground" />
+  //   <Icon name="search" class="size-4 shrink-0 text-muted-foreground" />
   //
   // Sizing + color come from `class` (size-*, text-*), matching how Lucide icons
   // are used across the app - so this is a drop-in replacement for a bare glyph.

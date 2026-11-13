@@ -25,13 +25,13 @@
 	{value}
 	data-slot="select-item"
 	class={cn(
-		"focus:bg-accent focus:text-foreground gap-1.5 rounded-sm py-1 pr-7 pl-1.5 text-ui-2xs [&_svg:not([class*='size-'])]:size-3.5 *:[span]:last:flex *:[span]:last:items-center *:[span]:last:gap-2 data-highlighted:bg-accent data-highlighted:text-foreground data-selected:font-medium data-selected:text-foreground active:bg-accent/70 relative flex w-full min-w-0 cursor-default items-center outline-hidden select-none data-[disabled]:pointer-events-none data-[disabled]:opacity-40 [&_svg]:pointer-events-none [&_svg]:shrink-0",
+		"focus:bg-accent focus:text-foreground min-h-7 gap-2 rounded-sm py-1 pr-7 pl-2 text-ui-xs text-foreground/85 [&_svg:not([class*='size-'])]:size-3.5 *:[span]:last:flex *:[span]:last:items-center *:[span]:last:gap-2 data-highlighted:bg-accent data-highlighted:text-foreground data-selected:font-medium data-selected:text-foreground active:bg-accent/70 relative flex w-full min-w-0 cursor-default items-center outline-hidden select-none data-[disabled]:pointer-events-none data-[disabled]:opacity-40 [&_svg]:pointer-events-none [&_svg]:shrink-0",
 		className
 	)}
 	{...restProps}
 >
 	{#snippet children({ selected, highlighted })}
-		<span class="absolute end-1.5 flex size-3.5 items-center justify-center text-primary">
+		<span class="absolute end-2 flex size-3.5 items-center justify-center text-muted-foreground">
 			{#if selected}
 				<CheckIcon class="cn-select-item-indicator-icon" />
 			{/if}

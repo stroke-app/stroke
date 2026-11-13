@@ -1,5 +1,5 @@
 <script module>
-	import { tv } from "tailwind-variants";
+	import { tv } from "$lib/utils.js";
 
 	const inputGroupButtonVariants = tv({
 		base: "gap-2 text-ui-sm flex items-center shadow-none",
