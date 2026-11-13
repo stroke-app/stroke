@@ -68,7 +68,7 @@ pub fn set_process_title(_name: String) -> Result<(), String> {
 /// Sample this process's memory and CPU usage and return the values to the
 /// frontend. The first call after startup may show 0% CPU (sysinfo needs two
 /// samples to compute a delta); subsequent calls will be accurate.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_app_metrics() -> Result<AppMetrics, String> {
     let pid = std::process::id();
     let sysinfo_pid = Pid::from(pid as usize);
