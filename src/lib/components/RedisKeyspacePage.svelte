@@ -1,282 +1,255 @@
 <script>
-  import FieldSelect from './FieldSelect.svelte';
-  import { executeSql, connectRedis, redisScan } from '$lib/api.js'
-  import { engineFamily } from '$lib/stores/connections.js'
-  import { cn } from '$lib/utils.js'
-  import { readOnlyMode, guardWrite, READ_ONLY_HINT } from '$lib/stores/read-only.js'
-  import { tick, onDestroy } from 'svelte'
+  // Redis keys as an editable table. One row per key (type, TTL, size, length,
+  // value preview), loaded a page at a time with SCAN. Edits to values, TTLs
+  // and names, new keys and deletes are staged and sent together in one
+  // MULTI/EXEC when the user applies them. The selected key's full value opens
+  // in a side panel; a redis-cli console docks underneath.
+  import FieldSelect from './FieldSelect.svelte'
   import ResizeHandle from './ResizeHandle.svelte'
+  import RedisValuePanel from './RedisValuePanel.svelte'
+  import { redisNav, registerRedisNav, terminalDockOpen, toggleTerminalDock } from '$lib/stores/redis-nav.js'
+  import RedisInsightsView from './RedisInsightsView.svelte'
+  import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js'
+  import { Button } from '$lib/components/ui/button/index.js'
+  import { executeSql, connectRedis, redisKeyPage, redisKeyRows, redisApply, redisCommand } from '$lib/api.js'
+  import { engineFamily } from '$lib/stores/connections.js'
+  import { readOnlyMode, guardWrite, READ_ONLY_HINT } from '$lib/stores/read-only.js'
+  import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
   import { getAppScale } from '$lib/app-zoom.js'
+  import { cn, plural } from '$lib/utils.js'
+  import { Checkbox } from '$lib/components/ui/checkbox/index.js'
+  import {
+    CREATABLE_TYPES, stage, unstage, stagedFor, toOps, createOps, ttlOps, toPattern,
+    humanBytes, ttlLabel, commandLine,
+  } from '$lib/redis-staging.js'
+  import { tick } from 'svelte'
   import Search from '@lucide/svelte/icons/search'
   import X from '@lucide/svelte/icons/x'
   import RefreshCw from '@lucide/svelte/icons/refresh-cw'
-  import ChevronRight from '@lucide/svelte/icons/chevron-right'
-  import KeyRound from '@lucide/svelte/icons/key-round'
-  import Database from '@lucide/svelte/icons/database'
-  import TerminalIcon from '@lucide/svelte/icons/terminal'
-  import CornerDownLeft from '@lucide/svelte/icons/corner-down-left'
-  import Copy from '@lucide/svelte/icons/copy'
-  import Check from '@lucide/svelte/icons/check'
+  import Plus from '@lucide/svelte/icons/plus'
   import Trash2 from '@lucide/svelte/icons/trash-2'
-  import Timer from '@lucide/svelte/icons/timer'
-  import Eraser from '@lucide/svelte/icons/eraser'
+  import Undo2 from '@lucide/svelte/icons/undo-2'
+  import Check from '@lucide/svelte/icons/check'
+  import ChevronUp from '@lucide/svelte/icons/chevron-up'
+  import ChevronDown from '@lucide/svelte/icons/chevron-down'
+  import LoaderCircle from '@lucide/svelte/icons/loader-circle'
+  import TerminalIcon from '@lucide/svelte/icons/terminal'
+  import KeyRound from '@lucide/svelte/icons/key-round'
+  import Server from '@lucide/svelte/icons/server'
   import Type from '@lucide/svelte/icons/type'
   import Hash from '@lucide/svelte/icons/hash'
   import List from '@lucide/svelte/icons/list'
   import Braces from '@lucide/svelte/icons/braces'
   import ListOrdered from '@lucide/svelte/icons/list-ordered'
   import Radio from '@lucide/svelte/icons/radio'
-  import Server from '@lucide/svelte/icons/server'
-  import HardDrive from '@lucide/svelte/icons/hard-drive'
-  import Users from '@lucide/svelte/icons/users'
-  import Activity from '@lucide/svelte/icons/activity'
-  import Gauge from '@lucide/svelte/icons/gauge'
-  import Plus from '@lucide/svelte/icons/plus'
-  import Pencil from '@lucide/svelte/icons/pencil'
+  import FileJson from '@lucide/svelte/icons/file-json'
+  import CircleHelp from '@lucide/svelte/icons/circle-help'
+
+  /**
+   * @typedef {import('$lib/api.js').RedisKeyRow} RedisKeyRow
+   * @typedef {RedisKeyRow & { at: number, isNew?: boolean }} Row
+   * @typedef {import('$lib/redis-staging.js').Staged} Staged
+   */
 
   /** @type {{ active?: boolean, connection?: import('$lib/stores/connections.js').SavedConnection | null }} */
   let { active = false, connection = null } = $props()
 
-  const isRedisConn = $derived(engineFamily(connection?.type) === 'redis')
-
-  // ── Type styling ────────────────────────────────────────────────────────────
-  // Per Redis value type: a lucide glyph + accent color for the tree glyph and
-  // the type tag. Type colors are a deliberate, semantic exception to the token
-  // palette (like syntax highlighting) - kept restrained: color lives on the
-  // glyph and a small tag only, never as loud filled chips.
-  /**
-   * @typedef {{ short: string, label: string, icon: any, color: string }} TypeMeta
-   * @type {Record<string, TypeMeta>}
-   */
-  const TYPE_META = {
-    string: { short: 'STR',    label: 'string', icon: Type,        color: 'text-sky-600 dark:text-sky-400' },
-    hash:   { short: 'HASH',   label: 'hash',   icon: Hash,        color: 'text-violet-600 dark:text-violet-400' },
-    list:   { short: 'LIST',   label: 'list',   icon: List,        color: 'text-amber-600 dark:text-amber-400' },
-    set:    { short: 'SET',    label: 'set',    icon: Braces,      color: 'text-emerald-600 dark:text-emerald-400' },
-    zset:   { short: 'ZSET',   label: 'zset',   icon: ListOrdered, color: 'text-rose-600 dark:text-rose-400' },
-    stream: { short: 'STREAM', label: 'stream', icon: Radio,       color: 'text-cyan-600 dark:text-cyan-400' },
-  }
-  const CREATABLE = ['string', 'hash', 'list', 'set', 'zset']
-
-  // Canonical icon-button recipe (§6). Add a `size-*` per call site.
-  const iconBtn =
-    'inline-flex items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40'
-
-  // ── Reply parsing ─────────────────────────────────────────────────────────
-  // Every Redis reply comes back as a SqlResult with one column named `result`
-  // and one row per reply element. Flatten to the first column's values.
-  /** @param {{ rows?: unknown[][] } | null} res */
-  function replyValues(res) {
-    if (!res?.rows) return /** @type {string[]} */ ([])
-    return res.rows.map((r) => {
-      const v = Array.isArray(r) ? r[0] : r
-      return v == null ? '' : String(v)
-    })
-  }
-
-  /** Fold a flat [a, b, c, d] reply into [[a, b], [c, d]] pairs (HGETALL, ZRANGE WITHSCORES). */
-  function toPairs(/** @type {string[]} */ values) {
-    const out = /** @type {[string, string][]} */ ([])
-    for (let i = 0; i + 1 < values.length; i += 2) out.push([values[i], values[i + 1]])
-    return out
-  }
-
-  /** Quote a key/arg for the command line when it isn't a bare token. */
-  function quoteArg(/** @type {string} */ s) {
-    if (/^[A-Za-z0-9:_\-.\/@]+$/.test(s)) return s
-    return '"' + s.replace(/(["\\])/g, '\\$1') + '"'
-  }
-
-  /** Humanize a byte count into "1.2 MB". */
-  function humanBytes(/** @type {number | null} */ n) {
-    if (n == null || !Number.isFinite(n)) return ''
-    if (n < 1024) return `${n} B`
-    const units = ['KB', 'MB', 'GB', 'TB']
-    let v = n / 1024
-    let i = 0
-    while (v >= 1024 && i < units.length - 1) {
-      v /= 1024
-      i++
+  // ── Sidebar: databases, views, namespaces ───────────────────────────────
+  /** @typedef {'keys' | 'insights' | 'slowlog' | 'clients' | 'pubsub'} RedisView */
+  let view = $state(/** @type {RedisView} */ ('keys'))
+  /** Keys per logical db, from INFO's keyspace section. */
+  const dbKeys = $derived.by(() => {
+    /** @type {Record<number, number>} */
+    const m = {}
+    for (const [k, v] of Object.entries(info ?? {})) {
+      const mm = /^db(\d+)$/.exec(k)
+      if (mm) m[Number(mm[1])] = Number(/keys=(\d+)/.exec(v)?.[1] ?? 0)
     }
-    return `${v < 10 ? v.toFixed(1) : Math.round(v)} ${units[i]}`
-  }
-
-  // ── Resizable key list ────────────────────────────────────────────────────
-  const KEYS_WIDTH_KEY = 'stroke:redis:keysWidth'
-  const KEYS_MIN = 220
-  const KEYS_MAX = 520
-  /** @param {number} w */
-  const clampKeysWidth = (w) => Math.round(Math.min(KEYS_MAX, Math.max(KEYS_MIN, w)))
-  function loadKeysWidth() {
-    try {
-      const n = Number(localStorage.getItem(KEYS_WIDTH_KEY))
-      return Number.isFinite(n) && n > 0 ? clampKeysWidth(n) : 280
-    } catch {
-      return 280
-    }
-  }
-  let keysWidth = $state(loadKeysWidth())
-  let resizeStartWidth = 0
-  /** App scale sampled at drag start - `dx` is screen px, `keysWidth` is px at 100%. */
-  let resizeScale = 1
-
-  // ── Key list state ──────────────────────────────────────────────────────────
-  let keys = $state(/** @type {string[]} */ ([]))
-  let keysLoading = $state(false)
-  let keysError = $state('')
-  let filter = $state('')
-  let loadedConnId = $state(/** @type {string | null} */ (null))
-  let collapsed = $state(/** @type {Set<string>} */ (new Set()))
-
-  // Per-key type cache, filled concurrently after the key names load.
-  const TYPE_CAP = 500
-  let typeMap = $state(/** @type {Map<string, string>} */ (new Map()))
-  let typesLoading = $state(false)
-  let typesTruncated = $state(false)
-
-  /** Fully iterate the keyspace via non-blocking SCAN, deduped + sorted. */
-  async function scanAllKeys() {
-    const seen = new Set()
-    let cursor = '0'
-    let iterations = 0
-    do {
-      const r = await redisScan(cursor, '*', 1000)
-      cursor = r.cursor
-      for (const k of r.keys) seen.add(k)
-      iterations++
-    } while (cursor !== '0' && seen.size < 100000 && iterations < 5000)
-    return [...seen].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
-  }
-
-  async function loadKeys() {
-    if (!active || !isRedisConn) return
-    keysLoading = true
-    keysError = ''
-    try {
-      keys = await scanAllKeys()
-    } catch {
-      // SCAN unavailable/failed - fall back to the (blocking) KEYS *.
-      try {
-        const res = await executeSql('KEYS *')
-        keys = replyValues(res).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
-      } catch (e2) {
-        keysError = String(e2).replace(/^Error:\s*/, '')
-        keys = []
-      }
-    } finally {
-      keysLoading = false
-    }
-    void loadTypes(keys)
-  }
-
-  /** Resolve each key's TYPE concurrently (capped) so the tree can badge it. */
-  async function loadTypes(/** @type {string[]} */ keyList) {
-    if (!active || !isRedisConn) return
-    typesTruncated = keyList.length > TYPE_CAP
-    const subset = keyList.slice(0, TYPE_CAP)
-    if (subset.length === 0) {
-      typeMap = new Map()
-      return
-    }
-    typesLoading = true
-    try {
-      // Bounded worker pool - firing all 500 TYPE commands at once floods the
-      // IPC bridge with simultaneous invokes (each opens a Redis command).
-      const CONCURRENCY = 8
-      /** @type {[string, string][]} */
-      const entries = []
-      let i = 0
-      async function worker() {
-        while (i < subset.length) {
-          const k = subset[i++]
-          try {
-            const t = String(replyValues(await executeSql(`TYPE ${quoteArg(k)}`))[0] ?? '')
-            entries.push([k, t])
-          } catch {
-            entries.push([k, ''])
-          }
-        }
-      }
-      await Promise.all(Array.from({ length: Math.min(CONCURRENCY, subset.length) }, worker))
-      typeMap = new Map(entries)
-    } finally {
-      typesLoading = false
-    }
-  }
-
-  // ── Server info (Redis Insight-style overview strip) ──────────────────────
-  let serverInfo = $state(/** @type {Record<string, string> | null} */ (null))
-  let infoLoading = $state(false)
-
-  /** Parse the flat `field:value` lines of an INFO reply into a map. */
-  function parseInfo(/** @type {string} */ text) {
-    /** @type {Record<string, string>} */
-    const map = {}
-    for (const line of text.split(/\r?\n/)) {
-      if (!line || line[0] === '#') continue
-      const idx = line.indexOf(':')
-      if (idx < 0) continue
-      map[line.slice(0, idx)] = line.slice(idx + 1)
-    }
-    return map
-  }
-
-  async function loadInfo() {
-    if (!active || !isRedisConn) return
-    infoLoading = true
-    try {
-      serverInfo = parseInfo(replyValues(await executeSql('INFO'))[0] ?? '')
-    } catch {
-      serverInfo = null
-    } finally {
-      infoLoading = false
-    }
-  }
-
-  const stats = $derived.by(() => {
-    const i = serverInfo
-    if (!i) return null
-    const hits = Number(i.keyspace_hits ?? 0)
-    const misses = Number(i.keyspace_misses ?? 0)
-    const total = hits + misses
-    return {
-      version: i.redis_version ?? '',
-      mode: i.redis_mode ?? 'standalone',
-      memory: i.used_memory_human?.trim() ?? '',
-      memoryPeak: i.used_memory_peak_human?.trim() ?? '',
-      clients: i.connected_clients ?? '',
-      ops: i.instantaneous_ops_per_sec ?? '',
-      uptime: Number(i.uptime_in_seconds ?? 0),
-      hitRate: total > 0 ? Math.round((hits / total) * 100) : null,
-    }
+    return m
   })
-
-  // Load once per connection when this page first becomes active.
+  /** Top-level prefixes of the loaded keys (up to the first : / . separator). */
+  const namespaces = $derived.by(() => {
+    /** @type {Map<string, number>} */
+    const m = new Map()
+    for (const r of rows) {
+      const i = r.key.search(/[:/.]/)
+      if (i > 0) m.set(r.key.slice(0, i + 1), (m.get(r.key.slice(0, i + 1)) ?? 0) + 1)
+    }
+    return [...m].sort((a, b) => b[1] - a[1]).slice(0, 30)
+  })
+  // Publish what the sidebar shows, and take its clicks.
   $effect(() => {
-    const cid = connection?.id ?? null
-    if (!active || !isRedisConn) return
-    if (loadedConnId === cid) return
-    loadedConnId = cid
-    currentDb = Number(connection?.db) || 0
-    selectedKey = null
-    valueData = null
-    valueError = ''
-    typeMap = new Map()
-    typesTruncated = false
-    confirmingDelete = false
-    serverInfo = null
-    newKeyOpen = false
-    void loadKeys()
-    void loadInfo()
+    redisNav.set({
+      view, currentDb, dbKeys, namespaces, filter: filterInput, consoleOpen, switching: switchingDb, locked: staged.length > 0,
+      server: info ? {
+        version: [info.redis_version ? `Redis ${info.redis_version}` : info.valkey_version ? `Valkey ${info.valkey_version}` : '', info.redis_mode && info.redis_mode !== 'standalone' ? info.redis_mode : ''].filter(Boolean).join(' · '),
+        memory: info.used_memory_human ?? '',
+        clients: info.connected_clients ?? '',
+        ops: info.instantaneous_ops_per_sec ?? '',
+      } : null,
+    })
+  })
+  $effect(() => {
+    if (!active) return
+    return registerRedisNav({
+      setView: (/** @type {RedisView} */ v) => (view = v),
+      switchDb: (/** @type {number} */ n) => { view = 'keys'; void switchDb(n) },
+      filterTo: (/** @type {string} */ p) => filterTo(p),
+    })
   })
 
-  // ── Logical DB switching (0-15) ─────────────────────────────────────────────
-  // Redis exposes 16 numbered logical DBs. The backend opens a fresh connection
-  // per command at cfg.db, so switching = reconnect the active connection at the
-  // new db (reusing connect_redis_db), then reload the keyspace.
+  /** @param {string} pattern */
+  function filterTo(pattern) {
+    view = 'keys'
+    filterInput = pattern
+    onFilterInput()
+  }
+
+  const isRedisConn = $derived(engineFamily(connection?.type) === 'redis')
+  const readOnly = $derived($readOnlyMode)
+
+  // Type colors are a deliberate exception to the token palette (like syntax
+  // highlighting): on the glyph and label only, never as filled chips.
+  /** @type {Record<string, { short: string, label: string, icon: any, color: string }>} */
+  const TYPE_META = {
+    string: { short: 'STR', label: 'string', icon: Type, color: 'text-sky-600 dark:text-sky-400' },
+    hash: { short: 'HASH', label: 'hash', icon: Hash, color: 'text-violet-600 dark:text-violet-400' },
+    list: { short: 'LIST', label: 'list', icon: List, color: 'text-amber-600 dark:text-amber-400' },
+    set: { short: 'SET', label: 'set', icon: Braces, color: 'text-emerald-600 dark:text-emerald-400' },
+    zset: { short: 'ZSET', label: 'sorted set', icon: ListOrdered, color: 'text-rose-600 dark:text-rose-400' },
+    stream: { short: 'STREAM', label: 'stream', icon: Radio, color: 'text-cyan-600 dark:text-cyan-400' },
+    'ReJSON-RL': { short: 'JSON', label: 'JSON', icon: FileJson, color: 'text-orange-600 dark:text-orange-400' },
+  }
+  /** @param {string} t */
+  const metaFor = (t) => TYPE_META[t] ?? { short: t.slice(0, 6).toUpperCase(), label: t, icon: CircleHelp, color: 'text-muted-foreground' }
+
+  const TYPE_FILTERS = [
+    { value: '', label: 'All types' },
+    ...['string', 'hash', 'list', 'set', 'zset', 'stream'].map((t) => ({ value: t, label: TYPE_META[t].label })),
+  ]
+  /** @param {string} t */
+  const typeLabel = (t) => (t === 'zset' ? 'Sorted set' : t === 'ReJSON-RL' ? 'JSON' : (TYPE_META[t]?.label ?? t).replace(/^./, (c) => c.toUpperCase()))
+  const DB_OPTIONS = Array.from({ length: 16 }, (_, n) => ({ value: String(n), label: `db${n}` }))
+
+  // ── Rows ──────────────────────────────────────────────────────────────────
+  let rows = $state.raw(/** @type {Row[]} */ ([]))
+  let cursor = $state('0')
+  let done = $state(false)
+  let loading = $state(false)
+  let error = $state('')
+  let scanned = $state(0)
+  let dbSize = $state(/** @type {number | null} */ (null))
+  let filterInput = $state('')
+  let typeFilter = $state('')
   let currentDb = $state(0)
   let switchingDb = $state(false)
-  const DB_OPTIONS = Array.from({ length: 16 }, (_, n) => n)
+  let loadedConnId = $state(/** @type {string | null} */ (null))
+  let loadSeq = 0
+
+  const PAGE_TARGET = 200
+
+  /** @param {boolean} reset */
+  async function loadPage(reset) {
+    if (!active || !isRedisConn) return
+    if (!reset && (loading || done)) return
+    const seq = reset ? ++loadSeq : loadSeq
+    loading = true
+    if (reset) error = ''
+    try {
+      const page = await redisKeyPage(reset ? '0' : cursor, {
+        pattern: toPattern(filterInput),
+        type: typeFilter,
+        target: PAGE_TARGET,
+      })
+      if (seq !== loadSeq) return
+      const at = Date.now()
+      const fresh = page.rows.map((r) => ({ ...r, at }))
+      if (reset) {
+        rows = fresh
+        scanned = page.scanned
+      } else {
+        // SCAN can repeat a key across pages.
+        const have = new Set(rows.map((r) => r.key))
+        rows = [...rows, ...fresh.filter((r) => !have.has(r.key))]
+        scanned += page.scanned
+      }
+      cursor = page.cursor
+      done = page.cursor === '0'
+    } catch (e) {
+      if (seq !== loadSeq) return
+      error = String(e).replace(/^Error:\s*/, '')
+      if (reset) rows = []
+      done = true
+    } finally {
+      if (seq === loadSeq) loading = false
+    }
+  }
+
+  function reload() {
+    cursor = '0'
+    done = false
+    void loadPage(true)
+    void loadServer()
+  }
+
+  // ── Server info (footer) ──────────────────────────────────────────────────
+  let info = $state(/** @type {Record<string, string> | null} */ (null))
+
+  /** @param {{ rows?: unknown[][] } | null} res */
+  const firstValue = (res) => {
+    const r = res?.rows?.[0]
+    const v = Array.isArray(r) ? r[0] : r
+    return v == null ? '' : String(v)
+  }
+
+  async function loadServer() {
+    if (!active || !isRedisConn) return
+    // Straight to the server, not through the SQL console path (which records
+    // history and flattens replies): INFO came back empty there for some setups.
+    const [size, raw] = await Promise.all([
+      redisCommand(['DBSIZE']).then((v) => (v == null ? '' : String(v))).catch(() => ''),
+      redisCommand(['INFO']).then((v) => (v == null ? '' : String(v))).catch(() => ''),
+    ])
+    dbSize = size === '' ? null : Number(size)
+    /** @type {Record<string, string>} */
+    const map = {}
+    for (const line of raw.split(/\r?\n/)) {
+      const i = line.indexOf(':')
+      if (line && line[0] !== '#' && i > 0) map[line.slice(0, i)] = line.slice(i + 1).trim()
+    }
+    info = raw ? map : null
+  }
+
+  // Load once per connection when the page first becomes active.
+  $effect(() => {
+    const cid = connection?.id ?? null
+    if (!active || !isRedisConn || loadedConnId === cid) return
+    loadedConnId = cid
+    currentDb = Number(connection?.db) || 0
+    staged = []
+    checked = new Set()
+    selectedKey = null
+    reload()
+  })
+
+  // Debounced server-side filtering: the filter is a SCAN MATCH, not a filter
+  // over what happens to be loaded.
+  /** @type {ReturnType<typeof setTimeout> | null} */
+  let filterTimer = null
+  function onFilterInput() {
+    if (filterTimer) clearTimeout(filterTimer)
+    filterTimer = setTimeout(() => { cursor = '0'; done = false; void loadPage(true) }, 250)
+  }
+  $effect(() => () => { if (filterTimer) clearTimeout(filterTimer) })
+
+  /** @param {string} t */
+  function setTypeFilter(t) {
+    if (t === typeFilter) return
+    typeFilter = t
+    cursor = '0'
+    done = false
+    void loadPage(true)
+  }
 
   /** @param {number} n */
   async function switchDb(n) {
@@ -286,1260 +259,732 @@
       await connectRedis({ ...connection, db: n })
       currentDb = n
       selectedKey = null
-      valueData = null
-      valueError = ''
-      typeMap = new Map()
-      typesTruncated = false
-      await loadKeys()
-      void loadInfo()
+      checked = new Set()
+      reload()
     } catch (e) {
-      keysError = String(e).replace(/^Error:\s*/, '')
+      error = String(e).replace(/^Error:\s*/, '')
     } finally {
       switchingDb = false
     }
   }
 
-  const filteredKeys = $derived.by(() => {
-    const q = filter.trim().toLowerCase()
-    if (!q) return keys
-    return keys.filter((k) => k.toLowerCase().includes(q))
-  })
+  // ── Staged changes ────────────────────────────────────────────────────────
+  let staged = $state.raw(/** @type {Staged[]} */ ([]))
+  let applying = $state(false)
+  let reviewOpen = $state(false)
+  let panelReload = $state(0)
 
-  /** Group keys by their first ":"-delimited segment; unprefixed keys go under "keys". */
-  const groups = $derived.by(() => {
-    /** @type {Map<string, string[]>} */
-    const map = new Map()
-    for (const k of filteredKeys) {
-      const idx = k.indexOf(':')
-      const g = idx > 0 ? k.slice(0, idx) : 'keys'
-      const arr = map.get(g)
-      if (arr) arr.push(k)
-      else map.set(g, [k])
-    }
-    return [...map.entries()]
-      .map(([name, items]) => ({ name, items }))
-      .sort((a, b) => a.name.localeCompare(b.name))
-  })
-
-  /** @param {string} g */
-  function toggleGroup(g) {
-    const next = new Set(collapsed)
-    if (next.has(g)) next.delete(g)
-    else next.add(g)
-    collapsed = next
+  /** List-delete cleanups only matter while a tombstoned element is staged. */
+  function dropOrphans(/** @type {Staged[]} */ list) {
+    return list.filter((s) => !s.cell.startsWith('post:') || list.some((o) => o.key === s.key && o.deleted && o.cell.startsWith('e:i:')))
   }
 
-  // ── Value panel state ───────────────────────────────────────────────────────
+  /** @param {Omit<Staged, 'id'>} item */
+  function onstage(item) {
+    if (!guardWrite('edit keys')) return
+    staged = dropOrphans(stage(staged, item))
+  }
+  /** @param {string} key @param {string} [cell] */
+  function onunstage(key, cell) {
+    staged = dropOrphans(unstage(staged, key, cell))
+  }
+
+  /** Staged edits by key, then cell; rebuilt once per staging change. */
+  const stagedByKey = $derived.by(() => {
+    /** @type {Map<string, { cells: Map<string, Staged>, entries: boolean }>} */
+    const m = new Map()
+    for (const s of staged) {
+      let e = m.get(s.key)
+      if (!e) m.set(s.key, (e = { cells: new Map(), entries: false }))
+      e.cells.set(s.cell, s)
+      if (s.cell.startsWith('e:')) e.entries = true
+    }
+    return m
+  })
+
+  const pendingCount = $derived(staged.filter((s) => !s.cell.startsWith('post:')).length)
+  const failed = $derived(staged.filter((s) => s.error))
+
+  async function apply() {
+    if (!staged.length || applying) return
+    if (!guardWrite('apply changes')) return
+    applying = true
+    const sent = staged
+    const { ops, owner } = toOps(sent)
+    try {
+      const outcomes = await redisApply(ops)
+      /** @type {Map<number, string>} */
+      const errors = new Map()
+      outcomes.forEach((o, i) => { if (!o.ok && !errors.has(owner[i])) errors.set(owner[i], o.error ?? 'failed') })
+      // Keep what failed staged (with its error); anything staged while the
+      // apply was in flight stays too.
+      const sentIds = new Set(sent.map((s) => s.id))
+      staged = [
+        ...sent.filter((s) => errors.has(s.id)).map((s) => ({ ...s, error: errors.get(s.id) })),
+        ...staged.filter((s) => !sentIds.has(s.id)),
+      ]
+      const okCount = sent.filter((s) => !errors.has(s.id) && !s.cell.startsWith('post:')).length
+      await refreshKeys(sent.filter((s) => !errors.has(s.id)))
+      panelReload++
+      if (errors.size) {
+        toast.error(`${errors.size} change${errors.size === 1 ? '' : 's'} failed`, {
+          description: `${[...errors.values()][0]}${okCount ? ` · ${okCount} applied` : ''}`,
+        })
+      } else {
+        toast.success(`Applied ${okCount} change${okCount === 1 ? '' : 's'}`)
+        reviewOpen = false
+      }
+    } catch (e) {
+      toast.error('Nothing was applied', { description: String(e).replace(/^Error:\s*/, '') })
+    } finally {
+      applying = false
+    }
+  }
+
+  function discard() {
+    staged = []
+    reviewOpen = false
+  }
+
+  /** Re-read the rows an apply touched; drop deleted keys, add new ones. @param {Staged[]} applied */
+  async function refreshKeys(applied) {
+    /** @type {Map<string, boolean>} */
+    const keys = new Map()
+    /** @type {Map<string, string>} */
+    const renamed = new Map()
+    for (const s of applied) {
+      keys.set(s.key, s.binary)
+      if (s.cell === 'key') {
+        const to = s.ops[0][2]
+        keys.set(to, false)
+        renamed.set(s.key, to)
+      }
+    }
+    if (!keys.size) return
+    let fresh
+    try {
+      fresh = await redisKeyRows([...keys].map(([key, binary]) => ({ key, binary })))
+    } catch {
+      return reload()
+    }
+    const at = Date.now()
+    /** @type {Map<string, Row>} */
+    const byKey = new Map(fresh.map((r) => [r.key, { ...r, at }]))
+    const next = []
+    const seen = new Set()
+    for (const r of rows) {
+      const target = renamed.get(r.key) ?? r.key
+      const f = byKey.get(target) ?? (keys.has(r.key) ? null : r)
+      if (f && f.type !== 'none' && !seen.has(f.key)) {
+        next.push(f)
+        seen.add(f.key)
+      }
+    }
+    // Keys that are new to the table (creates) go on top.
+    const created = fresh.filter((r) => r.type !== 'none' && !seen.has(r.key)).map((r) => ({ ...r, at }))
+    rows = [...created, ...next]
+    if (selectedKey && renamed.has(selectedKey)) selectedKey = renamed.get(selectedKey) ?? null
+    if (selectedKey && !rows.some((r) => r.key === selectedKey)) selectedKey = null
+    checked = new Set([...checked].filter((k) => rows.some((r) => r.key === k)))
+    void loadServer()
+  }
+
+  // ── Display rows (staged creates first) + sorting ─────────────────────────
+  /** @type {{ col: 'key'|'type'|'ttl'|'memory'|'length', dir: 1|-1 } | null} */
+  let sort = $state(null)
+
+  /** @param {'key'|'type'|'ttl'|'memory'|'length'} col */
+  function toggleSort(col) {
+    if (sort?.col !== col) sort = { col, dir: 1 }
+    else if (sort.dir === 1) sort = { col, dir: -1 }
+    else sort = null
+  }
+
+  const creates = $derived(
+    staged
+      .filter((s) => s.cell === 'create' && s.create)
+      .map((s) => /** @type {Row} */ ({
+        key: s.key, binary: false, type: s.create?.type ?? 'string', ttl_ms: -1, memory: null,
+        length: null, preview: s.create?.preview ?? '', truncated: false, at: Date.now(), isNew: true,
+      })),
+  )
+
+  const displayRows = $derived.by(() => {
+    let list = rows
+    if (sort) {
+      const { col, dir } = sort
+      /** @param {Row} r */
+      const val = (r) => col === 'key' ? r.key : col === 'type' ? r.type : col === 'ttl' ? (r.ttl_ms < 0 ? Infinity : r.ttl_ms) : (r[col] ?? -1)
+      list = rows.slice().sort((a, b) => {
+        const x = val(a)
+        const y = val(b)
+        return (typeof x === 'string' ? x.localeCompare(String(y), undefined, { numeric: true }) : Number(x) - Number(y)) * dir
+      })
+    }
+    return creates.length ? [...creates, ...list] : list
+  })
+
+  // ── Selection ─────────────────────────────────────────────────────────────
   let selectedKey = $state(/** @type {string | null} */ (null))
-  let selectedType = $state('')
-  let selectedTtl = $state(/** @type {number | null} */ (null))
-  let keyMemory = $state(/** @type {number | null} */ (null))
-  let keyEncoding = $state('')
-  let valueData = $state(/** @type {any} */ (null))
-  let valueLoading = $state(false)
-  let valueError = $state('')
-  let jsonView = $state(true)
-  let confirmingDelete = $state(false)
-  let deleting = $state(false)
+  let checked = $state(/** @type {Set<string>} */ (new Set()))
+  const selectedRow = $derived(displayRows.find((r) => r.key === selectedKey) ?? null)
+  const allChecked = $derived(displayRows.length > 0 && displayRows.every((r) => checked.has(r.key)))
 
   /** @param {string} key */
-  async function selectKey(key) {
-    selectedKey = key
-    confirmingDelete = false
-    editingTtl = false
-    await loadValue(key)
+  function toggleCheck(key) {
+    const next = new Set(checked)
+    if (next.has(key)) next.delete(key)
+    else next.add(key)
+    checked = next
+  }
+  function toggleAll() {
+    checked = allChecked ? new Set() : new Set(displayRows.map((r) => r.key))
   }
 
-  /** @param {string} key */
-  async function loadValue(key) {
-    if (!active || !isRedisConn) return
-    valueLoading = true
-    valueError = ''
-    valueData = null
-    selectedType = ''
-    selectedTtl = null
-    keyMemory = null
-    keyEncoding = ''
-    jsonView = true
-    editingString = false
-    addOpen = false
-    valueCapped = false
-    const q = quoteArg(key)
-    try {
-      const t = String(replyValues(await executeSql(`TYPE ${q}`))[0] ?? '')
-      selectedType = t
-      // Metadata in parallel - none of these block the value render meaningfully.
-      const [ttlRes, memRes, encRes] = await Promise.all([
-        executeSql(`TTL ${q}`).catch(() => null),
-        executeSql(`MEMORY USAGE ${q}`).catch(() => null),
-        executeSql(`OBJECT ENCODING ${q}`).catch(() => null),
-      ])
-      const ttl = Number(replyValues(ttlRes)[0])
-      selectedTtl = Number.isFinite(ttl) ? ttl : null
-      const mem = Number(replyValues(memRes)[0])
-      keyMemory = Number.isFinite(mem) ? mem : null
-      keyEncoding = replyValues(encRes)[0] ?? ''
+  function stageDeleteChecked() {
+    const targets = checked.size ? displayRows.filter((r) => checked.has(r.key)) : selectedRow ? [selectedRow] : []
+    if (!targets.length || !guardWrite('delete keys')) return
+    let next = staged
+    for (const r of targets) {
+      next = stage(next, { key: r.key, binary: r.binary, cell: 'row', label: 'delete key', deleted: true, ops: [['UNLINK', r.key]] })
+    }
+    staged = dropOrphans(next)
+    checked = new Set()
+  }
 
-      if (t === 'string') {
-        const v = replyValues(await executeSql(`GET ${q}`))[0] ?? ''
-        valueData = { kind: 'string', value: v }
-      } else if (t === 'hash') {
-        const pairs = toPairs(replyValues(await executeSql(`HGETALL ${q}`)))
-        valueCapped = pairs.length > VALUE_CAP
-        valueData = { kind: 'hash', pairs: pairs.slice(0, VALUE_CAP) }
-      } else if (t === 'list') {
-        const items = replyValues(await executeSql(`LRANGE ${q} 0 ${VALUE_CAP - 1}`))
-        valueCapped = items.length >= VALUE_CAP
-        valueData = { kind: 'list', items }
-      } else if (t === 'set') {
-        const items = replyValues(await executeSql(`SMEMBERS ${q}`))
-        valueCapped = items.length > VALUE_CAP
-        valueData = { kind: 'set', items: items.slice(0, VALUE_CAP) }
-      } else if (t === 'zset') {
-        const pairs = toPairs(replyValues(await executeSql(`ZRANGE ${q} 0 ${VALUE_CAP - 1} WITHSCORES`)))
-        valueCapped = pairs.length >= VALUE_CAP
-        valueData = { kind: 'zset', pairs }
-      } else if (t === 'stream') {
-        valueData = { kind: 'stream', entries: replyValues(await executeSql(`XRANGE ${q} - + COUNT 100`)) }
-      } else if (t === 'none' || t === '') {
-        valueError = 'Key does not exist'
-      } else {
-        valueData = { kind: 'other', type: t }
+  // ── Inline cell editing ───────────────────────────────────────────────────
+  /** @type {{ key: string, col: 'key'|'ttl'|'value' } | null} */
+  let editing = $state(null)
+  let draft = $state('')
+  let editError = $state('')
+
+  /** @param {Row} r @param {'key'|'ttl'|'value'} col */
+  function canEdit(r, col) {
+    if (readOnly || r.isNew || stagedFor(staged, r.key, 'row')) return false
+    if (col === 'value') return r.type === 'string' && !r.truncated
+    return true
+  }
+
+  /** @param {Row} r @param {'key'|'ttl'|'value'} col */
+  function startEdit(r, col) {
+    if (!canEdit(r, col)) {
+      if (col === 'value') selectedKey = r.key
+      return
+    }
+    const s = stagedFor(staged, r.key, col)
+    editError = ''
+    draft = s?.display ?? (col === 'key' ? r.key : col === 'ttl' ? (r.ttl_ms > 0 ? ttlLabel(r.ttl_ms, r.at, Date.now()).replace(/\s+/g, '') : '') : r.preview)
+    editing = { key: r.key, col }
+  }
+
+  /** @param {Row} r */
+  function commitEdit(r) {
+    if (!editing) return
+    const { col } = editing
+    const k = r.key
+    if (col === 'key') {
+      const to = draft.trim()
+      if (!to || to === k) onunstage(k, 'key')
+      else onstage({ key: k, binary: r.binary, cell: 'key', label: `rename to ${to}`, display: to, ops: [['RENAMENX', k, to]] })
+    } else if (col === 'ttl') {
+      const parsed = ttlOps(k, draft)
+      if (!parsed) {
+        editError = 'Use seconds or 30s, 15m, 2h, 1d. Leave blank for no expiry.'
+        return
       }
-    } catch (e) {
-      valueError = String(e)
-    } finally {
-      valueLoading = false
+      const unchanged = parsed.seconds == null ? r.ttl_ms === -1 : false
+      if (unchanged) onunstage(k, 'ttl')
+      else onstage({ key: k, binary: r.binary, cell: 'ttl', label: parsed.seconds == null ? 'remove expiry' : `expire in ${draft.trim()}`, display: parsed.seconds == null ? '' : draft.trim(), ops: parsed.ops })
+    } else {
+      if (draft === r.preview) onunstage(k, 'value')
+      else onstage({ key: k, binary: r.binary, cell: 'value', label: 'set value', display: draft, ops: [['SET', k, draft]] })
+    }
+    editing = null
+    editError = ''
+    gridEl?.focus()
+  }
+
+  /** @param {KeyboardEvent} e @param {Row} r */
+  function onEditKey(e, r) {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      commitEdit(r)
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      e.stopPropagation()
+      editing = null
+      editError = ''
+      gridEl?.focus()
     }
   }
 
-  async function deleteSelectedKey() {
-    if (!selectedKey || deleting) return
-    const key = selectedKey
-    deleting = true
-    try {
-      await executeSql(`DEL ${quoteArg(key)}`)
-      confirmingDelete = false
-      selectedKey = null
-      valueData = null
-      selectedType = ''
-      selectedTtl = null
-      valueError = ''
-      await loadKeys()
-      void loadInfo()
-    } catch (e) {
-      valueError = String(e)
-    } finally {
-      deleting = false
-    }
-  }
-
-  // ── TTL editing ─────────────────────────────────────────────────────────────
-  let editingTtl = $state(false)
-  let ttlInput = $state('')
-  let savingTtl = $state(false)
-
-  function openTtlEditor() {
-    ttlInput = selectedTtl != null && selectedTtl > 0 ? String(selectedTtl) : ''
-    editingTtl = true
-  }
-
-  /** @param {boolean} persist */
-  async function applyTtl(persist) {
-    if (!selectedKey || savingTtl) return
-    const key = selectedKey
-    savingTtl = true
-    try {
-      if (persist) {
-        await executeSql(`PERSIST ${quoteArg(key)}`)
-      } else {
-        const n = parseInt(ttlInput, 10)
-        if (!Number.isFinite(n) || n <= 0) {
-          savingTtl = false
-          return
-        }
-        await executeSql(`EXPIRE ${quoteArg(key)} ${n}`)
-      }
-      editingTtl = false
-      await loadValue(key)
-    } catch (e) {
-      valueError = String(e)
-    } finally {
-      savingTtl = false
-    }
+  /** @param {HTMLInputElement} node */
+  function focusSelect(node) {
+    node.focus()
+    node.select()
   }
 
   // ── New key ───────────────────────────────────────────────────────────────
-  let newKeyOpen = $state(false)
-  let nkName = $state('')
-  let nkType = $state('string')
-  let nkValue = $state('')
-  let nkField = $state('')
-  let nkScore = $state('')
-  let creatingKey = $state(false)
-  let newKeyError = $state('')
+  let creating = $state(false)
+  let nk = $state({ key: '', type: 'string', field: '', score: '', value: '', ttl: '' })
+  let nkError = $state('')
 
-  function resetNewKey() {
-    nkName = ''
-    nkValue = ''
-    nkField = ''
-    nkScore = ''
-    newKeyError = ''
+  function openCreate() {
+    if (!guardWrite('create keys')) return
+    creating = true
+    nkError = ''
+    nk = { key: '', type: 'string', field: '', score: '', value: '', ttl: '' }
   }
 
-  async function createKey() {
-    const name = nkName.trim()
-    if (!name || creatingKey) return
-    creatingKey = true
-    newKeyError = ''
-    const q = quoteArg(name)
-    const v = quoteArg(nkValue)
-    try {
-      if (nkType === 'string') await executeSql(`SET ${q} ${v}`)
-      else if (nkType === 'list') await executeSql(`RPUSH ${q} ${v}`)
-      else if (nkType === 'set') await executeSql(`SADD ${q} ${v}`)
-      else if (nkType === 'hash') await executeSql(`HSET ${q} ${quoteArg(nkField.trim() || 'field')} ${v}`)
-      else if (nkType === 'zset') await executeSql(`ZADD ${q} ${quoteArg((nkScore.trim() || '0'))} ${v}`)
-      newKeyOpen = false
-      resetNewKey()
-      await loadKeys()
-      void loadInfo()
-      await selectKey(name)
-    } catch (e) {
-      newKeyError = String(e).replace(/^Error:\s*/, '')
-    } finally {
-      creatingKey = false
+  function stageCreate() {
+    const key = nk.key.trim()
+    if (!key) return
+    if (rows.some((r) => r.key === key) || creates.some((r) => r.key === key)) {
+      nkError = `"${key}" already exists`
+      return
     }
-  }
-
-  // ── Value editing (CRUD) ────────────────────────────────────────────────────
-  let editingString = $state(false)
-  let stringEdit = $state('')
-  let savingValue = $state(false)
-  let addOpen = $state(false)
-  let addField = $state('')
-  let addScore = $state('')
-  let addValue = $state('')
-  let rowBusy = $state('')
-  const VALUE_CAP = 2000
-  let valueCapped = $state(false)
-
-  function startStringEdit() {
-    if (valueData?.kind !== 'string') return
-    stringEdit = valueData.value
-    editingString = true
-  }
-
-  async function saveString() {
-    if (!selectedKey || savingValue) return
-    const key = selectedKey
-    savingValue = true
-    try {
-      await executeSql(`SET ${quoteArg(key)} ${quoteArg(stringEdit)}`)
-      editingString = false
-      await loadValue(key)
-      void loadKeys()
-    } catch (e) {
-      valueError = String(e).replace(/^Error:\s*/, '')
-    } finally {
-      savingValue = false
+    const ttl = nk.ttl.trim() ? ttlOps(key, nk.ttl) : null
+    if (nk.ttl.trim() && !ttl?.seconds) {
+      nkError = 'TTL: use seconds or 30s, 15m, 2h, 1d'
+      return
     }
+    const preview = nk.type === 'hash' ? `{${nk.field || 'field'}: ${nk.value}}` : nk.type === 'string' ? nk.value : `[${nk.value}]`
+    onstage({
+      key, binary: false, cell: 'create', label: `create ${nk.type}`,
+      ops: createOps(key, nk.type, { value: nk.value, field: nk.field, score: nk.score, ttl: ttl?.seconds ?? null }),
+      create: { type: nk.type, preview },
+    })
+    creating = false
   }
 
-  /** Remove one field/member/element from the selected collection key. */
-  async function deleteEntry(/** @type {string} */ kind, /** @type {string} */ member) {
-    if (!selectedKey || rowBusy) return
-    if (!guardWrite('delete entries from this key')) return
-    const key = selectedKey
-    const q = quoteArg(key)
-    rowBusy = member
-    try {
-      if (kind === 'hash') await executeSql(`HDEL ${q} ${quoteArg(member)}`)
-      else if (kind === 'set') await executeSql(`SREM ${q} ${quoteArg(member)}`)
-      else if (kind === 'zset') await executeSql(`ZREM ${q} ${quoteArg(member)}`)
-      else if (kind === 'list') await executeSql(`LREM ${q} 1 ${quoteArg(member)}`)
-      await loadValue(key)
-      void loadKeys()
-    } catch (e) {
-      valueError = String(e).replace(/^Error:\s*/, '')
-    } finally {
-      rowBusy = ''
-    }
-  }
-
-  /** Add a field/member/element to the selected collection key. */
-  async function addEntry() {
-    if (!selectedKey || savingValue) return
-    const key = selectedKey
-    const kind = valueData?.kind
-    const q = quoteArg(key)
-    const v = quoteArg(addValue)
-    savingValue = true
-    try {
-      if (kind === 'hash') await executeSql(`HSET ${q} ${quoteArg(addField.trim() || 'field')} ${v}`)
-      else if (kind === 'set') await executeSql(`SADD ${q} ${v}`)
-      else if (kind === 'zset') await executeSql(`ZADD ${q} ${quoteArg(addScore.trim() || '0')} ${v}`)
-      else if (kind === 'list') await executeSql(`RPUSH ${q} ${v}`)
-      addField = ''
-      addScore = ''
-      addValue = ''
-      addOpen = false
-      await loadValue(key)
-      void loadKeys()
-    } catch (e) {
-      valueError = String(e).replace(/^Error:\s*/, '')
-    } finally {
-      savingValue = false
-    }
-  }
-
-  // ── Copy feedback ─────────────────────────────────────────────────────────
-  let copiedId = $state('')
-  /** @type {ReturnType<typeof setTimeout> | null} */
-  let copiedTimer = null
-  onDestroy(() => { if (copiedTimer) clearTimeout(copiedTimer) })
-  /** @param {string} text @param {string} id */
-  function copyText(text, id) {
-    navigator.clipboard
-      .writeText(text)
-      .then(() => {
-        copiedId = id
-        if (copiedTimer) clearTimeout(copiedTimer)
-        copiedTimer = setTimeout(() => (copiedId = ''), 1400)
-      })
-      .catch(() => {})
-  }
-
-  /** Parse a string value as JSON when it looks like an object/array, else null. */
-  function tryParseJson(/** @type {string} */ v) {
-    const t = (v ?? '').trim()
-    if (!t || (t[0] !== '{' && t[0] !== '[')) return null
-    try {
-      return JSON.parse(t)
-    } catch {
-      return null
-    }
-  }
-
-  const stringJson = $derived(valueData?.kind === 'string' ? tryParseJson(valueData.value) : null)
-  const stringDisplay = $derived.by(() => {
-    if (valueData?.kind !== 'string') return ''
-    if (stringJson !== null && jsonView) return JSON.stringify(stringJson, null, 2)
-    return valueData.value
-  })
-
-  /** Humanize a positive duration (seconds) into a compact "1d 2h" / "5m" label. */
-  function humanDuration(/** @type {number} */ s) {
-    if (s < 60) return `${s}s`
-    const d = Math.floor(s / 86400)
-    let r = s % 86400
-    const h = Math.floor(r / 3600)
-    r %= 3600
-    const m = Math.floor(r / 60)
-    const sec = r % 60
-    const parts = []
-    if (d) parts.push(`${d}d`)
-    if (h) parts.push(`${h}h`)
-    if (m) parts.push(`${m}m`)
-    if (sec && !d && !h) parts.push(`${sec}s`)
-    return parts.slice(0, 2).join(' ') || `${s}s`
-  }
-
-  const hasExpiry = $derived(selectedTtl != null && selectedTtl > 0)
-  const ttlLabel = $derived(
-    selectedTtl == null
-      ? ''
-      : selectedTtl === -1
-        ? 'no expiry'
-        : selectedTtl === -2
-          ? 'expired'
-          : humanDuration(selectedTtl),
-  )
-
-  // Live TTL countdown - tick the remaining seconds down while a key with an
-  // expiry is selected, so the label decays without a manual reload.
-  $effect(() => {
-    if (!hasExpiry || editingTtl) return
-    const id = setInterval(() => {
-      // Skip while the window is backgrounded so we don't churn reactivity
-      // every second when nothing is visible; the label resyncs on reload.
-      if (typeof document !== 'undefined' && document.hidden) return
-      if (selectedTtl != null && selectedTtl > 0) selectedTtl -= 1
-    }, 1000)
-    return () => clearInterval(id)
-  })
-
-  const sizeLabel = $derived.by(() => {
-    const d = valueData
-    if (!d) return ''
-    if (d.kind === 'string') return `${d.value.length} ${d.value.length === 1 ? 'char' : 'chars'}`
-    if (d.kind === 'hash') return `${d.pairs.length} ${d.pairs.length === 1 ? 'field' : 'fields'}`
-    if (d.kind === 'zset') return `${d.pairs.length} ${d.pairs.length === 1 ? 'member' : 'members'}`
-    if (d.kind === 'list') return `${d.items.length} ${d.items.length === 1 ? 'item' : 'items'}`
-    if (d.kind === 'set') return `${d.items.length} ${d.items.length === 1 ? 'member' : 'members'}`
-    return ''
-  })
-
-  // ── Command console ─────────────────────────────────────────────────────────
-  let consoleOpen = $state(true)
-  let consoleInput = $state('')
-  /** @type {{ cmd: string, lines: string[], isError: boolean, pending?: boolean }[]} */
-  let scrollback = $state([])
-  /** @type {string[]} */
-  let history = []
-  let historyIdx = $state(0)
+  // ── Virtualized grid ──────────────────────────────────────────────────────
   /** @type {HTMLElement | null} */
-  let scrollbackEl = $state(null)
+  let gridEl = $state(null)
+  /** @type {HTMLElement | null} */
+  let headerEl = $state(null)
+  let scrollTop = $state(0)
+  let viewportH = $state(0)
+  const rowH = $derived(headerEl?.offsetHeight || 28)
+  const OVERSCAN = 8
+  const first = $derived(Math.max(0, Math.floor(scrollTop / rowH) - OVERSCAN))
+  const last = $derived(Math.min(displayRows.length, Math.ceil((scrollTop + viewportH) / rowH) + OVERSCAN))
+  const visible = $derived(displayRows.slice(first, last))
 
-  const WRITE_VERBS = new Set([
-    'set', 'setex', 'setnx', 'getset', 'append', 'del', 'unlink', 'expire', 'pexpire',
-    'expireat', 'persist', 'rename', 'renamenx', 'hset', 'hmset', 'hsetnx', 'hdel',
-    'lpush', 'rpush', 'lpop', 'rpop', 'lset', 'lrem', 'ltrim', 'sadd', 'srem', 'spop',
-    'zadd', 'zrem', 'zincrby', 'incr', 'decr', 'incrby', 'decrby', 'incrbyfloat',
-    'flushdb', 'flushall', 'move', 'copy', 'restore',
-  ])
+  let scrollRaf = 0
+  function onScroll() {
+    if (scrollRaf) return
+    scrollRaf = requestAnimationFrame(() => {
+      scrollRaf = 0
+      syncScroll()
+    })
+  }
+  $effect(() => () => { if (scrollRaf) cancelAnimationFrame(scrollRaf) })
 
-  /** The idiomatic read command for each Redis value type. */
-  const TYPE_READ = /** @type {Record<string, (k: string) => string>} */ ({
-    string: (k) => `GET ${k}`,
-    hash: (k) => `HGETALL ${k}`,
-    list: (k) => `LRANGE ${k} 0 -1`,
-    set: (k) => `SMEMBERS ${k}`,
-    zset: (k) => `ZRANGE ${k} 0 -1 WITHSCORES`,
-    stream: (k) => `XRANGE ${k} - +`,
+  function syncScroll() {
+    if (!gridEl) return
+    scrollTop = gridEl.scrollTop
+    if (!done && !loading && gridEl.scrollTop + gridEl.clientHeight > gridEl.scrollHeight - rowH * 20) void loadPage(false)
+  }
+
+  // Keep the grid filled: if the first page didn't fill the viewport and the
+  // keyspace has more, fetch on.
+  $effect(() => {
+    if (active && !loading && !done && !error && displayRows.length * rowH < viewportH) void loadPage(false)
   })
 
-  /** On a WRONGTYPE error, resolve the key's real type and suggest the right
-   * command (e.g. `get` on a hash → "try HGETALL"). Returns '' if unavailable. */
-  async function wrongTypeHint(/** @type {string} */ cmd) {
-    const key = cmd.split(/\s+/)[1]
-    if (!key) return ''
-    const bare = key.replace(/^["']|["']$/g, '')
-    try {
-      const t = String(replyValues(await executeSql(`TYPE ${quoteArg(bare)}`))[0] ?? '')
-      if (!t || t === 'none') return ''
-      const suggest = TYPE_READ[t]?.(key)
-      return `→ ${key} holds a ${t}${suggest ? `, try: ${suggest}` : ''}`
-    } catch {
-      return ''
-    }
-  }
-
-  /** Format a flattened reply the way redis-cli prints it. */
-  function formatReply(/** @type {string[]} */ values) {
-    if (values.length === 0) return ['(nil)']
-    if (values.length === 1) {
-      const v = values[0]
-      if (v === 'OK' || v === 'PONG' || v === 'QUEUED') return [v]
-      if (/^-?\d+$/.test(v)) return [`(integer) ${v}`]
-      return [`"${v}"`]
-    }
-    const width = String(values.length).length
-    return values.map((v, i) => `${String(i + 1).padStart(width)}) "${v}"`)
-  }
-
-  async function runCommand() {
-    const cmd = consoleInput.trim()
-    if (!cmd) return
-    history.push(cmd)
-    historyIdx = history.length
-    consoleInput = ''
-    // `clear` clears the console, like a terminal (not sent to Redis).
-    if (/^clear$/i.test(cmd)) { scrollback = []; return }
-    // Push a pending entry, then replace it IMMUTABLY once the reply lands -
-    // mutating the pushed object in place bypasses the $state proxy so the reply
-    // never renders.
-    const idx = scrollback.length
-    scrollback = [...scrollback, { cmd, lines: [], isError: false, pending: true }]
-    await scrollConsoleToBottom()
-    let lines /** @type {string[]} */
-    let isError = false
-    try {
-      lines = formatReply(replyValues(await executeSql(cmd)))
-    } catch (e) {
-      isError = true
-      const msg = String(e).replace(/^Error:\s*/, '')
-      lines = [`(error) ${msg}`]
-      if (/WRONGTYPE/i.test(msg)) {
-        const hint = await wrongTypeHint(cmd)
-        if (hint) lines.push(hint)
-      }
-    }
-    scrollback = scrollback.map((e, k) => (k === idx ? { cmd: e.cmd, lines, isError, pending: false } : e))
-    await scrollConsoleToBottom()
-    // A mutating command may have changed the keyspace / current value - refresh.
-    const verb = cmd.split(/\s+/)[0]?.toLowerCase() ?? ''
-    if (WRITE_VERBS.has(verb)) {
-      void loadKeys()
-      void loadInfo()
-      if (selectedKey) void loadValue(selectedKey)
-    }
-  }
-
-  async function scrollConsoleToBottom() {
+  /** @param {number} delta */
+  async function moveSelection(delta) {
+    const list = displayRows
+    if (!list.length) return
+    const i = list.findIndex((r) => r.key === selectedKey)
+    const next = Math.max(0, Math.min(list.length - 1, i < 0 ? 0 : i + delta))
+    selectedKey = list[next].key
     await tick()
-    if (scrollbackEl) scrollbackEl.scrollTop = scrollbackEl.scrollHeight
+    if (!gridEl) return
+    const top = next * rowH
+    const bottom = top + rowH * 2
+    if (top < gridEl.scrollTop + rowH) gridEl.scrollTop = Math.max(0, top - rowH)
+    else if (bottom > gridEl.scrollTop + gridEl.clientHeight) gridEl.scrollTop = bottom - gridEl.clientHeight
   }
 
   /** @param {KeyboardEvent} e */
-  function onConsoleKeydown(e) {
-    if (e.key === 'Enter') {
+  function onGridKey(e) {
+    if (editing) return
+    if (e.key === 'ArrowDown') { e.preventDefault(); void moveSelection(1) }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); void moveSelection(-1) }
+    else if (e.key === 'Enter' && selectedRow) { e.preventDefault(); startEdit(selectedRow, 'value') }
+    else if ((e.key === 'Delete' || e.key === 'Backspace') && (checked.size || selectedRow)) { e.preventDefault(); stageDeleteChecked() }
+    else if (e.key === ' ' && selectedRow) { e.preventDefault(); toggleCheck(selectedRow.key) }
+  }
+
+  /** @param {KeyboardEvent} e */
+  function onPageKey(e) {
+    if (!active) return
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
       e.preventDefault()
-      void runCommand()
-    } else if (e.key === 'ArrowUp') {
-      if (history.length === 0) return
+      void apply()
+    } else if ((e.metaKey || e.ctrlKey) && e.key === '`') {
       e.preventDefault()
-      historyIdx = Math.max(0, historyIdx - 1)
-      consoleInput = history[historyIdx] ?? ''
-    } else if (e.key === 'ArrowDown') {
-      if (history.length === 0) return
-      e.preventDefault()
-      historyIdx = Math.min(history.length, historyIdx + 1)
-      consoleInput = history[historyIdx] ?? ''
+      toggleTerminalDock()
     }
   }
 
-  const totalKeys = $derived(keys.length)
+  // One clock for every TTL countdown on screen.
+  let now = $state(Date.now())
+  const anyCountdown = $derived(visible.some((r) => r.ttl_ms > 0) || (selectedRow?.ttl_ms ?? -1) > 0)
+  $effect(() => {
+    if (!active || !anyCountdown) return
+    now = Date.now()
+    const id = setInterval(() => { if (!document.hidden) now = Date.now() }, 1000)
+    return () => clearInterval(id)
+  })
+
+  // ── Layout: side panel + console sizes ────────────────────────────────────
+  const PANEL_KEY = 'stroke:redis:panelWidth'
+  const CONSOLE_KEY = 'stroke:redis:consoleHeight'
+  /** @param {string} k @param {number} d */
+  function loadNum(k, d) {
+    try {
+      const n = Number(localStorage.getItem(k))
+      return Number.isFinite(n) && n > 0 ? n : d
+    } catch {
+      return d
+    }
+  }
+  /** @param {string} k @param {number} v */
+  function saveNum(k, v) {
+    try { localStorage.setItem(k, String(Math.round(v))) } catch {}
+  }
+  let panelWidth = $state(Math.min(720, Math.max(300, loadNum(PANEL_KEY, 420))))
+  let consoleHeight = $state(Math.min(600, Math.max(120, loadNum(CONSOLE_KEY, 220))))
+  let consoleOpen = $state(false)
+  let searchFocused = $state(false)
+  let consoleMounted = $state(false)
+  $effect(() => { if (consoleOpen) consoleMounted = true })
+  // The real redis-cli, pointed at the database this page is browsing.
+  const terminalConnection = $derived(connection ? { ...connection, db: currentDb } : null)
+  let dragStart = 0
+  let dragScale = 1
+
+  /** @type {{ col: 'key'|'type'|'ttl'|'memory'|'length', label: string, align: string }[]} */
+  const SORT_COLS = [
+    { col: 'key', label: 'Key', align: '' },
+    { col: 'type', label: 'Type', align: '' },
+    { col: 'ttl', label: 'TTL', align: 'justify-end' },
+    { col: 'memory', label: 'Size', align: 'justify-end' },
+    { col: 'length', label: 'Length', align: 'justify-end' },
+  ]
+  const GRID_COLS = 'grid-cols-[32px_minmax(200px,1.4fr)_84px_88px_76px_76px_minmax(240px,2fr)]'
+  const pendingTitle = $derived(readOnly ? READ_ONLY_HINT : 'Apply staged changes in one transaction (⌘S)')
+  const loadedLabel = $derived(
+    dbSize == null ? `${rows.length.toLocaleString()} ${plural(rows.length, "key")}`
+    : filterInput.trim() || typeFilter ? `${rows.length.toLocaleString()} matching${done ? '' : '+'}`
+    : `${rows.length.toLocaleString()} of ${dbSize.toLocaleString()} ${plural(dbSize, "key")}`,
+  )
 </script>
 
-<div class="flex min-h-0 flex-1 flex-col overflow-hidden bg-panel">
-  <!-- ── Server overview strip ─────────────────────────────────────────────── -->
-  {#if stats}
-    <div class="flex h-8 shrink-0 items-center gap-3 overflow-x-auto border-b border-border px-3 text-ui-2xs text-muted-foreground">
-      <span class="flex shrink-0 items-center gap-1.5 font-medium text-foreground/80">
-        <Server class="size-3.5 shrink-0 text-muted-foreground" />
-        Redis {stats.version}
-      </span>
-      {#if stats.mode && stats.mode !== 'standalone'}
-        <span class="shrink-0 rounded bg-muted/60 px-1.5 py-0.5 font-mono uppercase tracking-wide">{stats.mode}</span>
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div class="flex min-h-0 flex-1 overflow-hidden bg-panel" onkeydown={onPageKey}>
+
+  {#if view !== 'keys'}
+    <RedisInsightsView view={view} active={active && view !== 'keys'} onfilter={filterTo} />
+  {/if}
+  <div class={cn('flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden', view !== 'keys' && 'hidden')}>
+  <!-- Toolbar -->
+  <div class="flex h-11 shrink-0 items-center gap-1.5 border-b border-border/40 bg-panel px-3">
+    <!-- Same field as the SQL table toolbar's search: frameless soft fill,
+         w-64 → w-80 while in use, shrinkable down to a floor. -->
+    <div class={cn('relative flex h-8 min-w-[7.5rem] shrink items-center transition-[width] duration-200', searchFocused || filterInput ? 'w-80' : 'w-64')}>
+      <Search class="pointer-events-none absolute left-2.5 size-3.5 shrink-0 text-muted-foreground" />
+      <input
+        type="text"
+        bind:value={filterInput}
+        oninput={onFilterInput}
+        placeholder="Filter keys, e.g. user:* or session"
+        aria-label="Filter keys"
+        spellcheck="false"
+        autocapitalize="off"
+        autocomplete="off"
+        onfocus={() => (searchFocused = true)}
+        onblur={() => (searchFocused = false)}
+        onkeydown={(e) => { if (e.key === 'Escape' && filterInput) { e.preventDefault(); e.stopPropagation(); filterInput = ''; onFilterInput() } }}
+        class="field-surface h-8 w-full min-w-0 pl-8 pr-7 text-ui-sm text-foreground shadow-none outline-none placeholder:text-muted-foreground"
+      />
+      {#if filterInput}
+        <button type="button" class="hit-area absolute right-1.5 inline-flex size-5 items-center justify-center rounded-sm text-muted-foreground transition-[background-color,color] duration-150 ease-out hover:bg-accent hover:text-foreground" aria-label="Clear filter" title="Clear filter (Esc)" onclick={() => { filterInput = ''; onFilterInput() }}>
+          <X class="size-3 shrink-0" />
+        </button>
       {/if}
-      <span class="shrink-0 tabular-nums">
-        <KeyRound class="mr-1 inline size-3 shrink-0 align-[-2px] text-muted-foreground" />{totalKeys} keys
-      </span>
-      {#if stats.memory}
-        <span class="shrink-0 font-mono tabular-nums" title={stats.memoryPeak ? `peak ${stats.memoryPeak}` : undefined}>
-          <HardDrive class="mr-1 inline size-3 shrink-0 align-[-2px] text-muted-foreground" />{stats.memory}
-        </span>
-      {/if}
-      <span class="shrink-0 font-mono tabular-nums">
-        <Users class="mr-1 inline size-3 shrink-0 align-[-2px] text-muted-foreground" />{stats.clients}
-      </span>
-      <span class="shrink-0 font-mono tabular-nums">
-        <Activity class="mr-1 inline size-3 shrink-0 align-[-2px] text-muted-foreground" />{stats.ops}/s
-      </span>
-      {#if stats.hitRate != null}
-        <span class="shrink-0 font-mono tabular-nums" title="Keyspace hit rate">
-          <Gauge class="mr-1 inline size-3 shrink-0 align-[-2px] text-muted-foreground" />{stats.hitRate}%
-        </span>
-      {/if}
-      {#if stats.uptime}
-        <span class="hidden shrink-0 font-mono tabular-nums sm:inline">up {humanDuration(stats.uptime)}</span>
-      {/if}
-      <button
-        type="button"
-        class={cn(iconBtn, 'ml-auto size-6 shrink-0')}
-        title="Refresh server info"
-        aria-label="Refresh server info"
-        onclick={() => void loadInfo()}
-      >
-        <RefreshCw class={cn('size-3.5', infoLoading && 'animate-spin')} />
-      </button>
+    </div>
+    <!-- Type: one compact menu instead of seven pills that ran off the edge. -->
+    <DropdownMenu.Root>
+      <DropdownMenu.Trigger class={cn('inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-ui-sm transition-colors', typeFilter ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground')} aria-label="Filter by type">
+        {#if typeFilter && TYPE_META[typeFilter]}
+          {@const G = TYPE_META[typeFilter].icon}
+          <G class={cn('size-3.5 shrink-0', TYPE_META[typeFilter].color)} />{typeLabel(typeFilter)}
+        {:else}All types{/if}
+        <ChevronDown class="size-3.5 shrink-0 opacity-60" />
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Content align="start" class="min-w-44">
+        {#each TYPE_FILTERS as t (t.value)}
+          {@const m = t.value ? TYPE_META[t.value] : null}
+          <DropdownMenu.Item onSelect={() => setTypeFilter(t.value)}>
+            {#if m}{@const G = m.icon}<G class={cn('size-3.5 shrink-0', m.color)} />{:else}<span class="size-3.5 shrink-0"></span>{/if}
+            <span data-slot="menu-label">{t.value ? typeLabel(t.value) : 'All types'}</span>
+            {#if typeFilter === t.value}<Check class="ml-auto size-3.5 shrink-0" />{/if}
+          </DropdownMenu.Item>
+        {/each}
+      </DropdownMenu.Content>
+    </DropdownMenu.Root>
+    <span class="hidden min-w-0 truncate pl-1 text-ui-xs tabular-nums text-muted-foreground lg:inline" title={done ? 'Every matching key is loaded' : 'More keys load as you scroll'}>{loadedLabel}</span>
+
+    <span class="flex-1"></span>
+
+    {#if checked.size > 0}
+      <Button variant="destructive" size="sm" onclick={stageDeleteChecked} disabled={readOnly} title={readOnly ? READ_ONLY_HINT : 'Stage deletion (Delete)'}>
+        <Trash2 /> Delete {checked.size}
+      </Button>
+    {/if}
+    {#if pendingCount > 0}
+      <Button variant="ghost" size="sm" onclick={() => (reviewOpen = !reviewOpen)} aria-expanded={reviewOpen}>
+        {pendingCount} pending{#if failed.length}<span class="text-destructive"> · {failed.length} failed</span>{/if}
+      </Button>
+      <Button variant="ghost" size="sm" onclick={discard} disabled={applying}>Discard</Button>
+      <Button size="sm" onclick={() => void apply()} disabled={applying || readOnly} title={pendingTitle}>
+        {#if applying}<LoaderCircle class="animate-spin" />{:else}<Check />{/if}
+        Apply
+      </Button>
+      <span class="mx-0.5 h-4 w-px bg-border"></span>
+    {/if}
+    <Button variant="ghost" size="icon-sm" onclick={reload} title="Reload keys" aria-label="Reload keys">
+      <RefreshCw class={cn(loading && 'animate-spin')} />
+    </Button>
+    <Button variant="ghost" size="icon-sm" onclick={toggleTerminalDock} aria-pressed={$terminalDockOpen} title="redis-cli (⌘J)" aria-label="Toggle redis-cli" class={cn($terminalDockOpen && 'bg-accent text-foreground')}>
+      <TerminalIcon />
+    </Button>
+    <Button variant="outline" size="sm" onclick={openCreate} disabled={readOnly} title={readOnly ? READ_ONLY_HINT : 'New key'}>
+      <Plus /> Key
+    </Button>
+  </div>
+
+  <!-- Staged changes, as the commands that will run -->
+  {#if reviewOpen && staged.length}
+    <div class="app-scroll max-h-48 shrink-0 overflow-auto border-b border-border bg-muted/20 py-1">
+      {#each staged as s (s.id)}
+        <div class="group/op flex min-h-7 items-start gap-2 px-3 py-0.5">
+          <div class="min-w-0 flex-1">
+            {#each s.ops as args, i (i)}
+              <div class="truncate font-mono text-ui-2xs text-foreground" title={commandLine(args)}>{commandLine(args)}</div>
+            {/each}
+            {#if s.error}<div class="font-mono text-ui-2xs text-destructive">{s.error}</div>{/if}
+          </div>
+          {#if !s.cell.startsWith('post:')}
+            <button type="button" class="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover/op:opacity-100 focus-visible:opacity-100" aria-label="Undo this change" title="Undo" onclick={() => onunstage(s.key, s.cell)}>
+              <Undo2 class="size-3.5 shrink-0" />
+            </button>
+          {/if}
+        </div>
+      {/each}
     </div>
   {/if}
 
   <div class="flex min-h-0 flex-1 overflow-hidden">
-    <!-- ── Key list ─────────────────────────────────────────────────────── -->
-    <div class="flex shrink-0 flex-col border-r border-border bg-panel" style:width="calc({keysWidth}px * var(--app-scale, 1))">
-      <!-- Header -->
-      <div class="flex h-8 shrink-0 items-center gap-2 border-b border-border px-3">
-        <KeyRound class="size-4 shrink-0 text-muted-foreground" />
-        <span class="text-ui-sm font-medium text-foreground">Keys</span>
-        <span class="rounded bg-muted/60 px-1.5 py-0.5 font-mono text-ui-2xs tabular-nums text-muted-foreground">
-          {#if keysLoading}…{:else}{totalKeys}{/if}
-        </span>
-        <FieldSelect
-          size="sm"
-          class="h-6 shrink-0 bg-input/30 px-1 text-ui-2xs"
-          value={String(currentDb)}
-          disabled={switchingDb}
-          onchange={(v) => void switchDb(Number(v))}
-          title="Switch logical database"
-          aria-label="Logical database"
-          options={DB_OPTIONS.map((n) => ({ value: String(n), label: `db ${n}` }))}
-        />
-        <button
-          type="button"
-          class={cn(iconBtn, 'ml-auto size-7', newKeyOpen && 'bg-accent text-foreground')}
-          title="New key"
-          aria-label="New key"
-          onclick={() => {
-            newKeyOpen = !newKeyOpen
-            if (!newKeyOpen) resetNewKey()
-          }}
-        >
-          <Plus class="size-3.5" />
-        </button>
-        <button
-          type="button"
-          class={cn(iconBtn, 'size-7')}
-          title="Refresh keys"
-          aria-label="Refresh keys"
-          onclick={() => void loadKeys()}
-        >
-          <RefreshCw class={cn('size-3.5', keysLoading && 'animate-spin')} />
-        </button>
-      </div>
-
-      <!-- New key form -->
-      {#if newKeyOpen}
-        <div class="shrink-0 space-y-2 border-b border-border bg-muted/20 p-2.5">
-          <input
-            type="text"
-            bind:value={nkName}
-            placeholder="key name (e.g. user:1)"
-            spellcheck="false"
-            autocapitalize="off"
-            autocomplete="off"
-            class= "field-surface h-7 w-full bg-input/30 px-2 font-mono text-ui-sm text-foreground placeholder:text-muted-foreground outline-none transition-colors"
-          />
-          <div class="flex flex-wrap gap-1">
-            {#each CREATABLE as t (t)}
-              {@const m = TYPE_META[t]}
-              {@const Glyph = m.icon}
-              <button
-                type="button"
-                class={cn(
-                  'inline-flex h-6 items-center gap-1 rounded-md border px-1.5 text-ui-2xs font-medium transition-colors',
-                  nkType === t
-                    ? 'border-border bg-accent text-foreground'
-                    : 'border-transparent text-muted-foreground hover:bg-accent/50 hover:text-foreground',
-                )}
-                onclick={() => (nkType = t)}
-              >
-                <Glyph class={cn('size-3 shrink-0', nkType === t ? m.color : '')} />{m.label}
+    <div class="flex min-w-0 flex-1 flex-col">
+      <!-- Grid -->
+      <div
+        bind:this={gridEl}
+        bind:clientHeight={viewportH}
+        class="app-scroll relative min-h-0 flex-1 overflow-auto outline-none"
+        role="grid"
+        aria-label="Redis keys"
+        aria-rowcount={displayRows.length}
+        tabindex="0"
+        onscroll={onScroll}
+        onkeydown={onGridKey}
+      >
+        <div class="min-w-[880px]">
+          <!-- Header -->
+          <div bind:this={headerEl} role="row" class={cn('sticky top-0 z-20 grid h-7 items-center border-b border-border bg-panel text-ui-2xs font-medium text-muted-foreground', GRID_COLS)}>
+            <span class="flex justify-center" role="columnheader">
+              <Checkbox checked={allChecked} onCheckedChange={toggleAll} aria-label="Select all loaded keys" />
+            </span>
+            {#each SORT_COLS as { col, label, align } (col)}
+              <button type="button" role="columnheader" class={cn('flex h-full items-center gap-1 px-2 hover:text-foreground', align)} onclick={() => toggleSort(col)} aria-sort={sort?.col === col ? (sort.dir === 1 ? 'ascending' : 'descending') : 'none'}>
+                {label}
+                {#if sort?.col === col}
+                  {#if sort.dir === 1}<ChevronUp class="size-3 shrink-0" />{:else}<ChevronDown class="size-3 shrink-0" />{/if}
+                {/if}
               </button>
             {/each}
+            <span class="px-2" role="columnheader">Value</span>
           </div>
-          {#if nkType === 'hash'}
-            <input
-              type="text"
-              bind:value={nkField}
-              placeholder="field"
-              spellcheck="false"
-              autocomplete="off"
-              class= "field-surface h-7 w-full bg-input/30 px-2 font-mono text-ui-sm text-foreground placeholder:text-muted-foreground outline-none transition-colors"
-            />
-          {:else if nkType === 'zset'}
-            <input
-              type="text"
-              bind:value={nkScore}
-              placeholder="score (e.g. 1)"
-              spellcheck="false"
-              autocomplete="off"
-              class= "field-surface h-7 w-full bg-input/30 px-2 font-mono text-ui-sm text-foreground placeholder:text-muted-foreground outline-none transition-colors"
-            />
-          {/if}
-          <input
-            type="text"
-            bind:value={nkValue}
-            placeholder={nkType === 'hash' || nkType === 'zset' ? 'value' : nkType === 'list' || nkType === 'set' ? 'first element' : 'value'}
-            spellcheck="false"
-            autocomplete="off"
-            onkeydown={(e) => e.key === 'Enter' && void createKey()}
-            class= "field-surface h-7 w-full bg-input/30 px-2 font-mono text-ui-sm text-foreground placeholder:text-muted-foreground outline-none transition-colors"
-          />
-          {#if newKeyError}
-            <p class="font-mono text-ui-3xs text-destructive">{newKeyError}</p>
-          {/if}
-          <div class="flex items-center gap-1.5">
-            <button
-              type="button"
-              class="inline-flex h-7 flex-1 items-center justify-center gap-1 rounded-md bg-primary px-2 text-ui-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
-              disabled={!nkName.trim() || creatingKey}
-              onclick={() => void createKey()}
-            >
-              {creatingKey ? 'Creating…' : 'Create key'}
-            </button>
-            <button
-              type="button"
-              class="inline-flex h-7 items-center rounded-md px-2 text-ui-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-              onclick={() => {
-                newKeyOpen = false
-                resetNewKey()
-              }}
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      {/if}
 
-      <!-- Filter -->
-      <div class="shrink-0 border-b border-border/50 p-2">
-        <div class="relative flex h-7 items-center">
-          <Search class="pointer-events-none absolute left-2 size-3.5 shrink-0 text-muted-foreground" />
-          <input
-            type="text"
-            bind:value={filter}
-            placeholder="Filter keys…"
-            spellcheck="false"
-            autocapitalize="off"
-            autocomplete="off"
-            class= "field-surface h-7 w-full bg-input/30 pl-7 pr-7 text-ui-sm text-foreground placeholder:text-muted-foreground outline-none transition-colors"
-          />
-          {#if filter}
-            <button
-              type="button"
-              class="absolute right-1 inline-flex size-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
-              aria-label="Clear filter"
-              onclick={() => (filter = '')}
+          {#if creating}
+            <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+            <form
+              class="sticky top-7 z-10 flex flex-wrap items-center gap-1.5 border-b border-border bg-panel px-3 py-2 shadow-sm"
+              onsubmit={(e) => { e.preventDefault(); stageCreate() }}
+              onkeydown={(e) => { if (e.key === 'Escape') { e.preventDefault(); creating = false } }}
             >
-              <X class="size-3.5" />
-            </button>
-          {/if}
-        </div>
-        {#if (filter.trim() && !keysLoading) || typesTruncated}
-          <p class="mt-1.5 px-0.5 font-mono text-ui-3xs text-muted-foreground">
-            {#if filter.trim() && !keysLoading}{filteredKeys.length} of {totalKeys} match{/if}
-            {#if typesTruncated}{filter.trim() && !keysLoading ? ' · ' : ''}types shown for first {TYPE_CAP}{/if}
-          </p>
-        {/if}
-      </div>
-
-      <!-- Groups -->
-      <div class="app-scroll min-h-0 flex-1 overflow-auto py-1">
-        {#if keysError}
-          <div class="px-3 py-8 text-center">
-            <p class="font-mono text-ui-xs text-destructive">{keysError}</p>
-            <button
-              type="button"
-              class="mt-2 font-mono text-ui-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
-              onclick={() => void loadKeys()}>Retry</button
-            >
-          </div>
-        {:else if !keysLoading && filteredKeys.length === 0}
-          <div class="flex h-full flex-col items-center justify-center gap-3 py-16 text-center">
-            <KeyRound class="size-10 text-muted-foreground" />
-            <p class="text-ui-xs text-muted-foreground">
-              {filter.trim() ? 'No matching keys' : 'No keys in this database'}
-            </p>
-          </div>
-        {:else}
-          {#each groups as group (group.name)}
-            {@const isCollapsed = collapsed.has(group.name)}
-            <div>
-              <button
-                type="button"
-                class="flex w-full items-center gap-1.5 px-2 py-1 text-left transition-colors hover:bg-accent/50"
-                onclick={() => toggleGroup(group.name)}
-              >
-                <ChevronRight class={cn('size-3.5 shrink-0 text-muted-foreground transition-transform', !isCollapsed && 'rotate-90')} />
-                <span class="min-w-0 flex-1 truncate font-mono text-ui-xs font-medium text-muted-foreground">{group.name}</span>
-                <span class="shrink-0 font-mono text-ui-3xs tabular-nums text-muted-foreground">{group.items.length}</span>
-              </button>
-              {#if !isCollapsed}
-                {#each group.items as key (key)}
-                  {@const meta = TYPE_META[typeMap.get(key) ?? '']}
-                  <!-- content-visibility keeps huge keyspaces (up to 100k rows) cheap
-                       to paint - offscreen rows skip layout entirely. -->
-                  <button
-                    type="button"
-                    class={cn(
-                      'group/key flex w-full items-center gap-2 py-1 pl-7 pr-2 text-left transition-colors',
-                      '[contain-intrinsic-size:auto_26px] [content-visibility:auto]',
-                      selectedKey === key
-                        ? 'bg-accent text-foreground'
-                        : 'text-foreground/80 hover:bg-accent/50',
-                    )}
-                    onclick={() => void selectKey(key)}
-                    title={key}
-                  >
-                    {#if meta}
-                      {@const Glyph = meta.icon}
-                      <Glyph class={cn('size-3.5 shrink-0', meta.color)} />
-                    {:else}
-                      <span class="flex size-3.5 shrink-0 items-center justify-center">
-                        <span class={cn('size-1.5 rounded-full bg-muted-foreground/30', typesLoading && 'animate-pulse')}></span>
-                      </span>
-                    {/if}
-                    <span class="min-w-0 flex-1 truncate font-mono text-ui-xs">{key}</span>
-                    {#if meta}
-                      <span class={cn('shrink-0 font-mono text-ui-3xs font-medium tracking-wide opacity-0 transition-opacity group-hover/key:opacity-60', selectedKey === key && 'opacity-60')}>{meta.short}</span>
-                    {/if}
-                  </button>
-                {/each}
+              <input use:focusSelect bind:value={nk.key} placeholder="key name" aria-label="Key name" spellcheck="false" autocomplete="off" class="field-surface shadow-none h-7 w-48 min-w-0 px-2 font-mono text-ui-xs text-foreground placeholder:text-muted-foreground" />
+              <FieldSelect size="sm" class="w-28" bind:value={nk.type} aria-label="Key type" options={CREATABLE_TYPES.map((t) => ({ value: t, label: TYPE_META[t].label }))} />
+              {#if nk.type === 'hash'}
+                <input bind:value={nk.field} placeholder="field" aria-label="Field" spellcheck="false" autocomplete="off" class="field-surface shadow-none h-7 w-28 min-w-0 px-2 font-mono text-ui-xs text-foreground placeholder:text-muted-foreground" />
+              {:else if nk.type === 'zset'}
+                <input bind:value={nk.score} placeholder="score" aria-label="Score" inputmode="decimal" autocomplete="off" class="field-surface shadow-none h-7 w-20 min-w-0 px-2 font-mono text-ui-xs text-foreground placeholder:text-muted-foreground" />
               {/if}
-            </div>
-          {/each}
-        {/if}
-      </div>
-    </div>
-
-    <ResizeHandle
-      axis="x"
-      edge="end"
-      onresizestart={() => { resizeStartWidth = keysWidth; resizeScale = getAppScale() }}
-      onresize={(dx) => (keysWidth = clampKeysWidth(resizeStartWidth + dx / resizeScale))}
-      onresizeend={() => {
-        resizeStartWidth = keysWidth
-        try {
-          localStorage.setItem(KEYS_WIDTH_KEY, String(keysWidth))
-        } catch {}
-      }}
-    />
-
-    <!-- ── Value panel ──────────────────────────────────────────────────── -->
-    <div class="flex min-w-0 flex-1 flex-col overflow-hidden bg-panel">
-      {#if !selectedKey}
-        <div class="flex h-full flex-col items-center justify-center gap-3 text-center">
-          <Database class="size-10 text-muted-foreground" />
-          <p class="text-ui-sm text-muted-foreground">Select a key to inspect</p>
-        </div>
-      {:else}
-        <!-- Header -->
-        <div class="flex h-9 shrink-0 items-center gap-2 border-b border-border/60 bg-panel px-3">
-          {#if selectedType && TYPE_META[selectedType]}
-            {@const Glyph = TYPE_META[selectedType].icon}
-            <Glyph class={cn('size-4 shrink-0', TYPE_META[selectedType].color)} />
-          {:else}
-            <KeyRound class="size-4 shrink-0 text-muted-foreground" />
-          {/if}
-          <span class="min-w-0 flex-1 truncate font-mono text-ui-sm font-medium text-foreground" title={selectedKey}>{selectedKey}</span>
-
-          <button
-            type="button"
-            class={cn(iconBtn, 'size-7')}
-            title="Copy key name"
-            aria-label="Copy key name"
-            onclick={() => selectedKey && copyText(selectedKey, 'key')}
-          >
-            {#if copiedId === 'key'}
-              <Check class="size-3.5 text-success" />
-            {:else}
-              <Copy class="size-3.5" />
-            {/if}
-          </button>
-
-          <button
-            type="button"
-            class={cn(iconBtn, 'size-7')}
-            title="Reload value"
-            aria-label="Reload value"
-            onclick={() => selectedKey && void loadValue(selectedKey)}
-          >
-            <RefreshCw class={cn('size-3.5', valueLoading && 'animate-spin')} />
-          </button>
-
-          {#if confirmingDelete}
-            <div class="flex shrink-0 items-center gap-1">
-              <button
-                type="button"
-                class="inline-flex h-6 items-center gap-1 rounded-md bg-destructive px-2 text-ui-2xs font-medium text-destructive-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
-                disabled={deleting}
-                onclick={() => void deleteSelectedKey()}
-              >
-                <Trash2 class="size-3 shrink-0" />{deleting ? 'Deleting…' : 'Delete'}
-              </button>
-              <button
-                type="button"
-                class="inline-flex h-6 items-center rounded-md px-2 text-ui-2xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                onclick={() => (confirmingDelete = false)}
-              >
-                Cancel
-              </button>
-            </div>
-          {:else}
-            <button
-              type="button"
-              class={cn(iconBtn, 'size-7 hover:bg-destructive/10 hover:text-destructive')}
-              title={$readOnlyMode ? READ_ONLY_HINT : 'Delete key'}
-              aria-label="Delete key"
-              disabled={$readOnlyMode}
-              onclick={() => (confirmingDelete = true)}
-            >
-              <Trash2 class="size-3.5" />
-            </button>
-          {/if}
-        </div>
-
-        <!-- Metadata row -->
-        <div class="flex h-7 shrink-0 items-center gap-x-3 gap-y-0 overflow-x-auto border-b border-border/50 px-3 font-mono text-ui-2xs text-muted-foreground">
-          {#if selectedType}
-            <span class={cn('shrink-0 font-semibold uppercase tracking-wide', TYPE_META[selectedType]?.color ?? 'text-muted-foreground')}>{selectedType}</span>
-          {/if}
-          {#if sizeLabel}
-            <span class="shrink-0 tabular-nums">{sizeLabel}</span>
-          {/if}
-          {#if valueCapped}
-            <span class="shrink-0 rounded bg-warning/10 px-1 text-warning" title="Large value, showing the first {VALUE_CAP} entries">first {VALUE_CAP}</span>
-          {/if}
-          {#if keyMemory != null}
-            <span class="shrink-0 tabular-nums" title="Memory used by this key">
-              <HardDrive class="mr-1 inline size-3 shrink-0 align-[-2px] text-muted-foreground" />{humanBytes(keyMemory)}
-            </span>
-          {/if}
-          {#if keyEncoding}
-            <span class="shrink-0" title="Internal encoding">{keyEncoding}</span>
+              <input bind:value={nk.value} placeholder={nk.type === 'string' || nk.type === 'hash' ? 'value' : 'first element'} aria-label="Value" spellcheck="false" autocomplete="off" class="field-surface shadow-none h-7 min-w-40 flex-1 px-2 font-mono text-ui-xs text-foreground placeholder:text-muted-foreground" />
+              <input bind:value={nk.ttl} placeholder="TTL, e.g. 1h" aria-label="TTL" spellcheck="false" autocomplete="off" class="field-surface shadow-none h-7 w-24 min-w-0 px-2 font-mono text-ui-xs text-foreground placeholder:text-muted-foreground" />
+              <Button type="submit" size="sm" disabled={!nk.key.trim()}>Stage</Button>
+              <Button type="button" variant="ghost" size="sm" onclick={() => (creating = false)}>Cancel</Button>
+              {#if nkError}<p class="w-full text-ui-2xs text-destructive">{nkError}</p>{/if}
+            </form>
           {/if}
 
-          <!-- TTL (editable) -->
-          <div class="ml-auto flex shrink-0 items-center">
-            {#if editingTtl}
-              <div class="flex items-center gap-1">
-                <input
-                  type="number"
-                  min="1"
-                  bind:value={ttlInput}
-                  placeholder="seconds"
-                  onkeydown={(e) => {
-                    if (e.key === 'Enter') { e.preventDefault(); void applyTtl(false) }
-                    else if (e.key === 'Escape') editingTtl = false
-                  }}
-                  class= "field-surface h-6 w-24 bg-input/30 px-1.5 text-ui-2xs tabular-nums text-foreground placeholder:text-muted-foreground outline-none"
-                />
-                <button
-                  type="button"
-                  class="inline-flex h-6 items-center rounded-md bg-primary px-1.5 text-ui-2xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
-                  disabled={savingTtl || !ttlInput}
-                  onclick={() => void applyTtl(false)}
-                >
-                  Set
-                </button>
-                {#if hasExpiry}
-                  <button
-                    type="button"
-                    class={cn(iconBtn, 'h-6 px-1.5 text-ui-2xs')}
-                    disabled={savingTtl}
-                    onclick={() => void applyTtl(true)}
-                  >
-                    Persist
-                  </button>
-                {/if}
-                <button
-                  type="button"
-                  class={cn(iconBtn, 'size-6')}
-                  aria-label="Cancel"
-                  onclick={() => (editingTtl = false)}
-                >
-                  <X class="size-3.5" />
-                </button>
-              </div>
-            {:else}
-              <button
-                type="button"
+          <!-- Rows (windowed) -->
+          <div class="relative" style:height="{displayRows.length * rowH}px">
+            {#each visible as r, i (r.key)}
+              {@const m = metaFor(r.type)}
+              {@const Glyph = m.icon}
+              {@const st = stagedByKey.get(r.key)}
+              {@const del = st?.cells.get('row')}
+              {@const sKey = st?.cells.get('key')}
+              {@const sTtl = st?.cells.get('ttl')}
+              {@const sVal = st?.cells.get('value')}
+              {@const entryEdits = st?.entries ?? false}
+              {@const ttl = r.ttl_ms >= 0 ? ttlLabel(r.ttl_ms, r.at, now) : ''}
+              <!-- svelte-ignore a11y_click_events_have_key_events -->
+              <div
+                role="row"
+                tabindex="-1"
+                aria-rowindex={first + i + 1}
+                aria-selected={selectedKey === r.key}
                 class={cn(
-                  'group/ttl inline-flex items-center gap-1 rounded px-1.5 py-0.5 transition-colors hover:bg-accent',
-                  hasExpiry ? 'text-warning' : 'text-muted-foreground',
+                  'absolute inset-x-0 grid items-center border-b border-border/40 font-mono text-ui-xs',
+                  GRID_COLS,
+                  del ? 'bg-destructive/5 text-destructive' : r.isNew ? 'bg-success/10' : selectedKey === r.key ? 'bg-accent' : 'hover:bg-accent/40',
                 )}
-                title={$readOnlyMode ? READ_ONLY_HINT : 'Edit TTL'}
-                disabled={$readOnlyMode}
-                onclick={openTtlEditor}
+                style:top="{(first + i) * rowH}px"
+                style:height="{rowH}px"
+                onclick={() => (selectedKey = r.key)}
               >
-                <Timer class="size-3 shrink-0" />
-                <span class="tabular-nums">{ttlLabel || 'no expiry'}</span>
-                <Pencil class="size-3 shrink-0 opacity-0 transition-opacity group-hover/ttl:opacity-70" />
-              </button>
-            {/if}
-          </div>
-        </div>
+                <span class="flex justify-center" role="gridcell">
+                  <Checkbox checked={checked.has(r.key)} onclick={(e) => e.stopPropagation()} onCheckedChange={() => toggleCheck(r.key)} aria-label={`Select ${r.key}`} />
+                </span>
 
-        <!-- Body -->
-        <div class="min-h-0 flex-1 overflow-hidden">
-          {#if valueLoading}
-            <div class="flex h-full items-center justify-center gap-2 text-muted-foreground">
-              <RefreshCw class="size-4 animate-spin" /><span class="text-ui-sm">Loading…</span>
-            </div>
-          {:else if valueError}
-            <div class="p-3">
-              <p class="font-mono text-ui-xs text-destructive">{valueError}</p>
-            </div>
-          {:else if valueData?.kind === 'string'}
-            <div class="flex h-full flex-col p-3">
-              <div class="mb-2 flex shrink-0 items-center gap-2">
-                {#if stringJson !== null}
-                  <div class="inline-flex overflow-hidden rounded-md border border-border">
-                    <button
-                      type="button"
-                      class={cn('h-6 px-2 text-ui-2xs font-medium transition-colors', jsonView ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground')}
-                      onclick={() => (jsonView = true)}
-                    >JSON</button>
-                    <button
-                      type="button"
-                      class={cn('h-6 border-l border-border px-2 text-ui-2xs font-medium transition-colors', !jsonView ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground')}
-                      onclick={() => (jsonView = false)}
-                    >Raw</button>
-                  </div>
-                  <span class="font-mono text-ui-3xs text-muted-foreground">valid JSON</span>
-                {/if}
-                {#if !editingString}
-                  <button
-                    type="button"
-                    class={cn(iconBtn, 'ml-auto h-6 gap-1 px-2 text-ui-2xs')}
-                    title={$readOnlyMode ? READ_ONLY_HINT : 'Edit value'}
-                    disabled={$readOnlyMode}
-                    onclick={startStringEdit}
-                  >
-                    <Pencil class="size-3" />Edit
-                  </button>
-                {/if}
-                <button
-                  type="button"
-                  class={cn(iconBtn, 'h-6 gap-1 px-2 text-ui-2xs', editingString && 'ml-auto')}
-                  title="Copy value"
-                  onclick={() => copyText(valueData.value, 'val')}
-                >
-                  {#if copiedId === 'val'}
-                    <Check class="size-3 text-success" />Copied
+                <!-- Key -->
+                <!-- svelte-ignore a11y_no_static_element_interactions -->
+                <span role="gridcell" tabindex="-1" class={cn('flex h-full min-w-0 items-center gap-1.5 px-2', sKey && 'bg-warning/10')} ondblclick={() => startEdit(r, 'key')}>
+                  {#if editing?.key === r.key && editing.col === 'key'}
+                    <input use:focusSelect bind:value={draft} aria-label="Rename key" class="no-field-frame no-focus-ring -mx-2 h-full w-[calc(100%+1rem)] rounded-none border-0 bg-accent/70 px-2 font-mono text-ui-xs text-foreground shadow-none outline-none" onkeydown={(e) => onEditKey(e, r)} onblur={() => commitEdit(r)} />
                   {:else}
-                    <Copy class="size-3" />Copy
+                    <span class={cn('truncate', del ? 'line-through' : 'text-foreground')} title={r.key}>{sKey?.display ?? r.key}</span>
+                    {#if r.binary}<span class="shrink-0 rounded bg-muted px-1 text-ui-3xs text-muted-foreground" title="Key name contains binary bytes, shown escaped">BIN</span>{/if}
+                    {#if r.isNew}<span class="shrink-0 text-ui-3xs font-medium text-success">NEW</span>{/if}
                   {/if}
-                </button>
+                </span>
+
+                <!-- Type -->
+                <span role="gridcell" class="flex min-w-0 items-center gap-1.5 px-2">
+                  <Glyph class={cn('size-3.5 shrink-0', m.color)} />
+                  <span class={cn('truncate text-ui-2xs font-medium tracking-wide', m.color)}>{m.short}</span>
+                </span>
+
+                <!-- TTL -->
+                <!-- svelte-ignore a11y_no_static_element_interactions -->
+                <span role="gridcell" tabindex="-1" class={cn('flex h-full items-center justify-end px-2 tabular-nums', sTtl ? 'bg-warning/10 text-foreground' : 'text-muted-foreground')} ondblclick={() => startEdit(r, 'ttl')}>
+                  {#if editing?.key === r.key && editing.col === 'ttl'}
+                    <input use:focusSelect bind:value={draft} placeholder="none" aria-label="TTL" aria-invalid={!!editError} class="no-field-frame no-focus-ring -mx-2 h-full w-[calc(100%+1rem)] rounded-none border-0 bg-accent/70 px-2 text-right shadow-none outline-none font-mono text-ui-xs text-foreground" onkeydown={(e) => onEditKey(e, r)} onblur={() => commitEdit(r)} />
+                  {:else if sTtl}
+                    {sTtl.display || 'none'}
+                  {:else}
+                    {ttl || '—'}
+                  {/if}
+                </span>
+
+                <span role="gridcell" class="px-2 text-right tabular-nums text-muted-foreground">{humanBytes(r.memory)}</span>
+                <span role="gridcell" class="px-2 text-right tabular-nums text-muted-foreground">{r.length?.toLocaleString() ?? ''}</span>
+
+                <!-- Value -->
+                <!-- svelte-ignore a11y_no_static_element_interactions -->
+                <span role="gridcell" tabindex="-1" class={cn('flex h-full min-w-0 items-center px-2', (sVal || entryEdits) && 'bg-warning/10')} ondblclick={() => startEdit(r, 'value')}>
+                  {#if editing?.key === r.key && editing.col === 'value'}
+                    <input use:focusSelect bind:value={draft} aria-label="Edit value" class="no-field-frame no-focus-ring -mx-2 h-full w-[calc(100%+1rem)] rounded-none border-0 bg-accent/70 px-2 font-mono text-ui-xs text-foreground shadow-none outline-none" onkeydown={(e) => onEditKey(e, r)} onblur={() => commitEdit(r)} />
+                  {:else}
+                    <span class={cn('truncate', del ? 'line-through' : 'text-foreground/80')} title={sVal?.display ?? r.preview}>{sVal?.display ?? r.preview}</span>
+                  {/if}
+                </span>
               </div>
-              {#if editingString}
-                <textarea
-                  bind:value={stringEdit}
-                  spellcheck="false"
-                  class="no-focus-ring app-scroll min-h-0 flex-1 resize-none rounded-lg border-2 border-border bg-input/30 p-3 font-mono text-ui-sm leading-relaxed text-foreground outline-none focus:border-ring/55 focus:ring-2 focus:ring-ring/15"
-                ></textarea>
-                <div class="mt-2 flex shrink-0 items-center gap-1.5">
-                  <button
-                    type="button"
-                    class="inline-flex h-7 items-center gap-1 rounded-md bg-primary px-2.5 text-ui-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
-                    disabled={savingValue}
-                    onclick={() => void saveString()}
-                  >{savingValue ? 'Saving…' : 'Save'}</button>
-                  <button
-                    type="button"
-                    class="inline-flex h-7 items-center rounded-md px-2.5 text-ui-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                    onclick={() => (editingString = false)}
-                  >Cancel</button>
-                </div>
-              {:else}
-                <pre class="app-scroll min-h-0 flex-1 select-text overflow-auto whitespace-pre-wrap [overflow-wrap:anywhere] rounded-md border border-border/50 bg-background/50 p-3 font-mono text-ui-sm leading-relaxed text-foreground/90">{stringDisplay}</pre>
+            {/each}
+          </div>
+
+          {#if editError}
+            <p class="sticky bottom-0 border-t border-border bg-panel px-3 py-1 text-ui-2xs text-destructive">{editError}</p>
+          {/if}
+
+          {#if error}
+            <div class="px-4 py-10 text-center">
+              <p class="text-ui-xs text-destructive">{error}</p>
+              <Button variant="ghost" size="sm" class="mt-2" onclick={reload}>Retry</Button>
+            </div>
+          {:else if !loading && displayRows.length === 0}
+            <div class="flex flex-col items-center gap-2 py-16 text-center">
+              <KeyRound class="size-8 shrink-0 text-muted-foreground" />
+              <p class="text-ui-sm text-muted-foreground">{filterInput.trim() || typeFilter ? 'No keys match' : 'This database is empty'}</p>
+            </div>
+          {:else if !done || loading}
+            <div class="loading-reveal flex h-8 items-center justify-center gap-2 text-ui-2xs text-muted-foreground">
+              {#if loading}<LoaderCircle class="size-3.5 shrink-0 animate-spin" /> Scanning…{:else}
+                <button type="button" class="hover:text-foreground" onclick={() => void loadPage(false)}>Load more</button>
               {/if}
-            </div>
-          {:else if valueData?.kind === 'hash' || valueData?.kind === 'zset'}
-            {@const isZset = valueData.kind === 'zset'}
-            <div class="app-scroll h-full overflow-auto">
-              <table class="w-full border-collapse text-ui-sm">
-                <thead>
-                  <tr class="sticky top-0 z-10 bg-panel">
-                    <th class="border-b border-border/50 px-3 py-1.5 text-left font-mono text-ui-2xs font-semibold uppercase tracking-wide text-muted-foreground">{isZset ? 'member' : 'field'}</th>
-                    <th class="border-b border-border/50 px-3 py-1.5 text-left font-mono text-ui-2xs font-semibold uppercase tracking-wide text-muted-foreground">{isZset ? 'score' : 'value'}</th>
-                    <th class="w-16 border-b border-border/50"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {#each valueData.pairs as pair, i (i)}
-                    <tr class="group/row border-b border-border/50 last:border-0 hover:bg-accent/40">
-                      <td class="max-w-[20rem] truncate px-3 py-1.5 align-top font-mono font-medium text-foreground" title={pair[0]}>{pair[0]}</td>
-                      <td class={cn('px-3 py-1.5 align-top font-mono [overflow-wrap:anywhere] text-foreground/80', isZset && 'tabular-nums')} title={pair[1]}>{pair[1]}</td>
-                      <td class="w-16 px-1 align-top">
-                        <div class="flex items-center justify-end gap-0.5">
-                          <button
-                            type="button"
-                            class={cn(iconBtn, 'size-6 opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100')}
-                            title={isZset ? 'Copy member' : 'Copy value'}
-                            aria-label="Copy"
-                            onclick={() => copyText(isZset ? pair[0] : pair[1], `row-${i}`)}
-                          >
-                            {#if copiedId === `row-${i}`}<Check class="size-3 text-success" />{:else}<Copy class="size-3" />{/if}
-                          </button>
-                          <button
-                            type="button"
-                            class={cn(iconBtn, 'size-6 opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100 hover:bg-destructive/10 hover:text-destructive')}
-                            title={isZset ? 'Remove member' : 'Remove field'}
-                            aria-label="Remove"
-                            disabled={rowBusy === pair[0]}
-                            onclick={() => void deleteEntry(valueData.kind, pair[0])}
-                          >
-                            <Trash2 class="size-3" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  {/each}
-                </tbody>
-              </table>
-            </div>
-          {:else if valueData?.kind === 'list' || valueData?.kind === 'set'}
-            {@const isList = valueData.kind === 'list'}
-            <div class="app-scroll h-full overflow-auto">
-              <table class="w-full border-collapse text-ui-sm">
-                <thead>
-                  <tr class="sticky top-0 z-10 bg-panel">
-                    {#if isList}
-                      <th class="w-14 border-b border-border/50 px-3 py-1.5 text-right font-mono text-ui-2xs font-semibold uppercase tracking-wide text-muted-foreground">#</th>
-                    {/if}
-                    <th class="border-b border-border/50 px-3 py-1.5 text-left font-mono text-ui-2xs font-semibold uppercase tracking-wide text-muted-foreground">{isList ? 'value' : 'member'}</th>
-                    <th class="w-16 border-b border-border/50"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {#each valueData.items as item, i (i)}
-                    <tr class="group/row border-b border-border/50 last:border-0 hover:bg-accent/40">
-                      {#if isList}
-                        <td class="w-14 px-3 py-1.5 text-right align-top font-mono text-ui-xs tabular-nums text-muted-foreground">{i}</td>
-                      {/if}
-                      <td class="px-3 py-1.5 align-top font-mono [overflow-wrap:anywhere] text-foreground/85" title={item}>{item}</td>
-                      <td class="w-16 px-1 align-top">
-                        <div class="flex items-center justify-end gap-0.5">
-                          <button
-                            type="button"
-                            class={cn(iconBtn, 'size-6 opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100')}
-                            title="Copy value"
-                            aria-label="Copy value"
-                            onclick={() => copyText(item, `row-${i}`)}
-                          >
-                            {#if copiedId === `row-${i}`}<Check class="size-3 text-success" />{:else}<Copy class="size-3" />{/if}
-                          </button>
-                          <button
-                            type="button"
-                            class={cn(iconBtn, 'size-6 opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100 hover:bg-destructive/10 hover:text-destructive')}
-                            title={isList ? 'Remove first occurrence' : 'Remove member'}
-                            aria-label="Remove"
-                            disabled={rowBusy === item}
-                            onclick={() => void deleteEntry(valueData.kind, item)}
-                          >
-                            <Trash2 class="size-3" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  {/each}
-                </tbody>
-              </table>
-            </div>
-          {:else if valueData?.kind === 'stream'}
-            <div class="app-scroll h-full overflow-auto">
-              <table class="w-full border-collapse text-ui-sm">
-                <thead>
-                  <tr class="sticky top-0 z-10 bg-panel">
-                    <th class="w-14 border-b border-border/50 px-3 py-1.5 text-right font-mono text-ui-2xs font-semibold uppercase tracking-wide text-muted-foreground">#</th>
-                    <th class="border-b border-border/50 px-3 py-1.5 text-left font-mono text-ui-2xs font-semibold uppercase tracking-wide text-muted-foreground">entry (id · fields)</th>
-                    <th class="w-9 border-b border-border/50"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {#each valueData.entries as entry, i (i)}
-                    <tr class="group/row border-b border-border/50 last:border-0 hover:bg-accent/40">
-                      <td class="w-14 px-3 py-1.5 text-right align-top font-mono text-ui-xs tabular-nums text-muted-foreground">{i + 1}</td>
-                      <td class="px-3 py-1.5 align-top font-mono [overflow-wrap:anywhere] text-foreground/85" title={entry}>{entry}</td>
-                      <td class="w-9 px-1 align-top">
-                        <button type="button" class={cn(iconBtn, 'size-6 opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100')} title="Copy entry" aria-label="Copy entry" onclick={() => copyText(entry, `row-${i}`)}>
-                          {#if copiedId === `row-${i}`}<Check class="size-3 text-success" />{:else}<Copy class="size-3" />{/if}
-                        </button>
-                      </td>
-                    </tr>
-                  {/each}
-                  {#if valueData.entries.length === 0}
-                    <tr><td colspan="3" class="px-3 py-6 text-center text-ui-xs text-muted-foreground">Empty stream</td></tr>
-                  {/if}
-                </tbody>
-              </table>
-            </div>
-          {:else if valueData?.kind === 'other'}
-            <div class="p-3">
-              <p class="text-ui-sm text-muted-foreground">
-                Preview for <span class="font-mono text-foreground/80">{valueData.type}</span> values isn't supported yet, use the console below.
-              </p>
             </div>
           {/if}
         </div>
-      {/if}
-    </div>
-  </div>
-
-  <!-- ── Command console ────────────────────────────────────────────────── -->
-  <div class={cn('flex shrink-0 flex-col border-t border-border bg-panel', consoleOpen && 'h-[200px]')}>
-    <div class="flex h-8 shrink-0 items-center gap-1.5 border-b border-border/50 px-3">
-      <button
-        type="button"
-        class="flex min-w-0 flex-1 items-center gap-1.5 text-left"
-        onclick={() => (consoleOpen = !consoleOpen)}
-      >
-        <TerminalIcon class="size-3.5 shrink-0 text-muted-foreground" />
-        <span class="text-ui-xs font-medium text-foreground/80">Console</span>
-        <span class="font-mono text-ui-3xs text-muted-foreground">redis-cli</span>
-      </button>
-      {#if consoleOpen && scrollback.length > 0}
-        <button
-          type="button"
-          class={cn(iconBtn, 'size-6')}
-          title="Clear console"
-          aria-label="Clear console"
-          onclick={() => (scrollback = [])}
-        >
-          <Eraser class="size-3.5" />
-        </button>
-      {/if}
-      <button
-        type="button"
-        class={cn(iconBtn, 'size-6')}
-        aria-label={consoleOpen ? 'Collapse console' : 'Expand console'}
-        onclick={() => (consoleOpen = !consoleOpen)}
-      >
-        <ChevronRight class={cn('size-3.5 transition-transform', consoleOpen ? '-rotate-90' : 'rotate-90')} />
-      </button>
-    </div>
-
-    {#if consoleOpen}
-      <div bind:this={scrollbackEl} class="app-scroll min-h-0 flex-1 overflow-auto px-3 py-2 font-mono text-ui-xs leading-relaxed" data-studio-selectable="text">
-        {#if scrollback.length === 0}
-          <div class="space-y-1 text-muted-foreground">
-            <p>
-              Type a Redis command and press
-              <span class="rounded bg-muted/60 px-1 py-0.5 text-foreground/70">Enter</span>, e.g.
-              <span class="text-foreground/70">KEYS *</span>,
-              <span class="text-foreground/70">GET app:name</span>,
-              <span class="text-foreground/70">HGETALL user:1</span>
-            </p>
-            <p>
-              <span class="text-foreground/70">clear</span> resets the console · <span class="text-foreground/70">↑</span>/<span class="text-foreground/70">↓</span> browse history
-            </p>
-          </div>
-        {:else}
-          {#each scrollback as entry, i (i)}
-            <div class="mb-1.5">
-              <div class="flex items-start gap-1.5">
-                <span class="shrink-0 select-none text-muted-foreground">&gt;</span>
-                <span class="min-w-0 flex-1 [overflow-wrap:anywhere] text-foreground/90">{entry.cmd}</span>
-              </div>
-              {#if entry.pending}
-                <div class="pl-3.5 text-muted-foreground">…</div>
-              {:else}
-                {#each entry.lines as line, j (j)}
-                  <div class={cn('select-text whitespace-pre-wrap [overflow-wrap:anywhere] pl-3.5', entry.isError ? 'text-destructive' : 'text-muted-foreground')}>{line}</div>
-                {/each}
-              {/if}
-            </div>
-          {/each}
-        {/if}
       </div>
 
-      <div class="flex h-9 shrink-0 items-center gap-1.5 border-t border-border/50 bg-background/40 px-3">
-        <span class="shrink-0 select-none font-mono text-ui-sm text-muted-foreground">&gt;</span>
-        <input
-          type="text"
-          bind:value={consoleInput}
-          onkeydown={onConsoleKeydown}
-          placeholder="Enter Redis command…"
-          spellcheck="false"
-          autocapitalize="off"
-          autocomplete="off"
-          class="no-focus-ring h-7 min-w-0 flex-1 bg-transparent font-mono text-ui-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
+
+      {#if consoleMounted}
+{#if consoleOpen}
+        <ResizeHandle
+          axis="y"
+          edge="start"
+          onresizestart={() => { dragStart = consoleHeight; dragScale = getAppScale() }}
+          onresize={(d) => (consoleHeight = Math.min(600, Math.max(120, dragStart + d / dragScale)))}
+          onresizeend={() => saveNum(CONSOLE_KEY, consoleHeight)}
         />
-        <button
-          type="button"
-          class={cn(iconBtn, 'size-6')}
-          disabled={!consoleInput.trim()}
-          title="Run command (Enter)"
-          aria-label="Run command"
-          onclick={() => void runCommand()}
-        >
-          <CornerDownLeft class="size-3.5" />
-        </button>
+        {/if}
+        <!-- Stays mounted once opened, so hiding and showing it keeps the
+             running redis-cli (and its scrollback) instead of restarting it. -->
+        <div class={cn('relative flex shrink-0 flex-col border-t border-border/30', !consoleOpen && 'hidden')} inert={!consoleOpen || undefined} style:height="calc({consoleHeight}px * var(--app-scale, 1))">
+          {#await import('./TerminalPage.svelte') then { default: TerminalPage }}
+            <TerminalPage active={active && consoleOpen} connection={terminalConnection} dbType="redis" docked onclose={() => (consoleOpen = false)} />
+          {/await}
+        </div>
+      {/if}
+    </div>
+
+    {#if selectedRow && !selectedRow.isNew}
+      <ResizeHandle
+        axis="x"
+        edge="start"
+        onresizestart={() => { dragStart = panelWidth; dragScale = getAppScale() }}
+        onresize={(d) => (panelWidth = Math.min(720, Math.max(300, dragStart + d / dragScale)))}
+        onresizeend={() => saveNum(PANEL_KEY, panelWidth)}
+      />
+      <div class="shrink-0 border-l border-border/30" style:width="calc({panelWidth}px * var(--app-scale, 1))">
+        <RedisValuePanel
+          row={selectedRow}
+          meta={metaFor(selectedRow.type)}
+          {staged}
+          {now}
+          reloadToken={panelReload}
+          {readOnly}
+          {onstage}
+          {onunstage}
+          onclose={() => (selectedKey = null)}
+        />
       </div>
     {/if}
+  </div>
   </div>
 </div>
