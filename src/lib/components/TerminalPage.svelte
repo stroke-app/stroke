@@ -14,10 +14,15 @@
   import { onDestroy, onMount, untrack } from 'svelte'
   import { Terminal } from '@xterm/xterm'
   import { FitAddon } from '@xterm/addon-fit'
-  import { WebglAddon } from '@xterm/addon-webgl'
   import { WebLinksAddon } from '@xterm/addon-web-links'
+  import { SearchAddon } from '@xterm/addon-search'
+  import Search from '@lucide/svelte/icons/search'
+  import ChevronUp from '@lucide/svelte/icons/chevron-up'
+  import ChevronDown from '@lucide/svelte/icons/chevron-down'
+  import CaseSensitive from '@lucide/svelte/icons/case-sensitive'
   import '@xterm/xterm/css/xterm.css'
-  import SquareTerminal from '@lucide/svelte/icons/square-terminal'
+  import Command from '@lucide/svelte/icons/command'
+  import X from '@lucide/svelte/icons/x'
   import RotateCw from '@lucide/svelte/icons/rotate-cw'
   import Eraser from '@lucide/svelte/icons/eraser'
   import Copy from '@lucide/svelte/icons/copy'
@@ -37,8 +42,10 @@
   import { sqlEditorFontSize } from '$lib/sql-editor-options.js'
   import { IS_MAC } from '$lib/shortcuts.js'
   import { detectOs } from '$lib/platform.js'
-  import { terminalClient, terminalOpen, terminalClose } from '$lib/api.js'
-  import { terminalTheme, terminalFont } from '$lib/terminal-theme.js'
+  import Icon from './Icon.svelte'
+  import { terminalClient, terminalInstallClient, terminalOpen, terminalClose, executeSqlMulti, dynamoRequest } from '$lib/api.js'
+  import { createSqlRepl } from '$lib/sql-repl.js'
+  import { terminalTheme, terminalIsTranslucent, terminalFont } from '$lib/terminal-theme.js'
   import { createHighlighter } from '$lib/terminal-highlight.js'
   import { suggest, keystrokesFor } from '$lib/terminal-complete.js'
   import { lineEditorFor, clearLineKeys, consoleKeystrokes, consoleInput, consoleClearCommand } from '$lib/terminal-keys.js'
@@ -53,12 +60,123 @@
     dbType = '',
     /** The schema's tables and columns, for suggestions (StudioShell's SQL hints). @type {(() => any) | undefined} */
     getHints = undefined,
+    /** Docked under another page: a slimmer bar with a close button instead of the tab header. */
+    docked = false,
+    /** Start the session while still hidden, so it is logged in before it is shown. */
+    prewarm = false,
+    /** @type {(() => void) | undefined} */
+    onclose = undefined,
   } = $props()
 
   /** @typedef {'idle' | 'checking' | 'unsupported' | 'missing' | 'failed' | 'starting' | 'running' | 'exited'} Phase */
 
   let phase = $state(/** @type {Phase} */ ('idle'))
+  /** The CLI that is missing while the built-in prompt stands in for it. */
+  let missingClient = $state(/** @type {{ name: string, hint?: string } | null} */ (null))
+  let installing = $state(false)
+  let installError = $state('')
   let client = $state(/** @type {import('$lib/api.js').TerminalClient | null} */ (null))
+  /** Engines with no interactive CLI get the app's own SQL prompt instead. */
+  const BUILTIN_REPL = new Set(['d1', 'dynamodb'])
+  /** Engines whose CLI is not SQL: no SQL prompt to fall back to. */
+  const NON_SQL = new Set(['redis', 'valkey', 'keydb', 'dragonfly', 'mongodb', 'couchdb', 'cassandra', 'firestore'])
+
+  /** A result set from executeSqlMulti as the prompt's table shape. @param {string} sql */
+  async function sqlRows(sql) {
+    const r = (await executeSqlMulti(sql))?.[0] ?? {}
+    return { columns: r.columns ?? [], rows: r.rows ?? [] }
+  }
+  /** `'x'` with quotes doubled. @param {string} v */
+  const lit = (v) => `'${v.replace(/'/g, "''")}'`
+
+  /** `.tables` / `.schema` for engines that are not SQLite-shaped. */
+  function catalogFor(/** @type {string} */ type) {
+    if (type === 'dynamodb') return { language: 'PartiQL', listTables: dynamoTables, describe: dynamoDescribe }
+    if (type === 'mysql' || type === 'mariadb') return {
+      listTables: () => sqlRows('SHOW TABLES'),
+      describe: (/** @type {string} */ t) => sqlRows(`DESCRIBE \`${t.replace(/`/g, '``')}\``),
+    }
+    if (type === 'mssql') return {
+      listTables: () => sqlRows("SELECT s.name + '.' + t.name AS [table] FROM sys.tables t JOIN sys.schemas s ON s.schema_id = t.schema_id ORDER BY 1"),
+      describe: (/** @type {string} */ t) => sqlRows(`SELECT column_name, data_type, is_nullable, column_default FROM information_schema.columns WHERE table_name = ${lit(t)} ORDER BY ordinal_position`),
+    }
+    if (type === 'sqlite' || type === 'd1' || type === 'libsql') return {}
+    // Postgres and its wire-compatible engines.
+    return {
+      listTables: () => sqlRows("SELECT CASE WHEN table_schema = current_schema() THEN table_name ELSE table_schema || '.' || table_name END AS table FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog', 'information_schema') ORDER BY table_schema <> current_schema(), 1"),
+      describe: (/** @type {string} */ t) => sqlRows(`SELECT column_name, data_type, is_nullable, column_default FROM information_schema.columns WHERE table_name = ${lit(t.split('.').pop() ?? t)} ORDER BY ordinal_position`),
+    }
+  }
+
+  /**
+   * The app's own SQL prompt in this panel: for engines with no CLI, or when
+   * the CLI is not installed. Nothing is spawned; statements run over the
+   * connection the app already holds.
+   * @param {string} [note] a dim first line, e.g. why the real client is not used
+   */
+  function startBuiltinPrompt(note) {
+    if (!term || !connection) return
+    void endSession()
+    term.reset()
+    client = { name: 'SQL prompt', path: null, version: null }
+    repl = createSqlRepl({
+      write: (s) => term?.write(s),
+      cols: () => term?.cols ?? 120,
+      run: (sql) => executeSqlMulti(sql),
+      name: dbType === 'dynamodb' ? (connection.name || connection.region || 'dynamodb') : (connection.database || connection.name || dbType),
+      historyKey: `stroke:sql-repl:${connectionKey}`,
+      ...catalogFor(dbType),
+    })
+    phase = 'running'
+    fit()
+    if (note) term.write(`\x1b[2m${note}\x1b[0m\r\n`)
+    repl.start()
+    if (active) term.focus()
+  }
+
+  /** Install the missing CLI, then restart on it. */
+  async function installClient() {
+    if (!connection || installing) return
+    installing = true
+    installError = ''
+    try {
+      await terminalInstallClient({ ...connection, type: dbType })
+      missingClient = null
+      await start()
+    } catch (e) {
+      installError = String(e)
+    } finally {
+      installing = false
+    }
+  }
+
+  /** DynamoDB: every table name, paging through ListTables. */
+  async function dynamoTables() {
+    /** @type {string[]} */
+    const names = []
+    /** @type {string | undefined} */
+    let start
+    do {
+      const out = await dynamoRequest('ListTables', start ? { ExclusiveStartTableName: start } : {})
+      names.push(...(out?.TableNames ?? []))
+      start = out?.LastEvaluatedTableName
+    } while (start)
+    return { columns: [{ name: 'table' }], rows: names.map((n) => [n]) }
+  }
+
+  /** DynamoDB: a table's keys, indexes and size, one row per key or index. @param {string} table */
+  async function dynamoDescribe(table) {
+    const t = (await dynamoRequest('DescribeTable', { TableName: table }))?.Table ?? {}
+    const types = Object.fromEntries((t.AttributeDefinitions ?? []).map((/** @type {any} */ a) => [a.AttributeName, a.AttributeType]))
+    /** @param {any[]} keys */
+    const keyText = (keys) => (keys ?? []).map((k) => `${k.AttributeName} (${k.KeyType === 'HASH' ? 'partition' : 'sort'}, ${types[k.AttributeName] ?? '?'})`).join(', ')
+    const rows = [['table', table, keyText(t.KeySchema), `${t.ItemCount ?? '?'} items · ${t.TableStatus ?? ''}`]]
+    for (const g of t.GlobalSecondaryIndexes ?? []) rows.push(['GSI', g.IndexName, keyText(g.KeySchema), g.Projection?.ProjectionType ?? ''])
+    for (const l of t.LocalSecondaryIndexes ?? []) rows.push(['LSI', l.IndexName, keyText(l.KeySchema), l.Projection?.ProjectionType ?? ''])
+    return { columns: [{ name: 'kind' }, { name: 'name' }, { name: 'key' }, { name: 'detail' }], rows }
+  }
+  /** @type {ReturnType<typeof createSqlRepl> | null} */
+  let repl = null
   let hintCopied = $state(false)
   /** Why the client could not start, for the failure card. */
   let failure = $state('')
@@ -99,6 +217,29 @@
     const db = connection.database ? `/${connection.database}` : connection.db ? `/${connection.db}` : ''
     return `${user}${host}${db}`
   })
+
+  /**
+   * The header's visible label: `host:port/db`, without the user. psql's own
+   * prompt already says who you are, and some hosts make the user a key - a
+   * Prisma Postgres user is 64 hex characters - which filled the header with a
+   * secret-looking string and pushed the database name off the end. The full
+   * `user@host/db` stays in the tooltip.
+   */
+  const targetShort = $derived.by(() => {
+    if (!connection || connection.filePath) return target
+    const user = connection.user ? `${connection.user}@` : ''
+    return user && target.startsWith(user) ? target.slice(user.length) : target
+  })
+
+  // The common-commands strip is opt-in: a terminal is the screen and a
+  // prompt. Remembered across sessions.
+  const QUICK_BAR_KEY = 'stroke:terminal-quick-bar'
+  let showQuickBar = $state((() => { try { return localStorage.getItem(QUICK_BAR_KEY) === '1' } catch { return false } })())
+  function toggleQuickBar() {
+    showQuickBar = !showQuickBar
+    try { localStorage.setItem(QUICK_BAR_KEY, showQuickBar ? '1' : '0') } catch { /* only the preference is lost */ }
+    requestAnimationFrame(() => term?.focus())
+  }
 
   const IS_WINDOWS = detectOs() === 'windows'
   /** How the client edits its line, which decides how the page's edits are spelled (terminal-keys.js). */
@@ -161,9 +302,9 @@
   /** The target split for the header: everything muted except the database. */
   const targetParts = $derived.by(() => {
     if (!connection) return { lead: '', db: '' }
-    if (connection.filePath) return { lead: '', db: target }
+    if (connection.filePath) return { lead: '', db: targetShort }
     const db = connection.database ? String(connection.database) : connection.db ? String(connection.db) : ''
-    return { lead: db ? target.slice(0, target.length - db.length) : target, db }
+    return { lead: db ? targetShort.slice(0, targetShort.length - db.length) : targetShort, db }
   })
 
   const installLooksLikeCommand = $derived(/^(brew|winget|sudo|apt|pacman|dnf) /.test(client?.hint ?? ''))
@@ -183,8 +324,9 @@
     const config = { ...connection, type: dbType }
     // A restart on the same connection keeps the scrollback; a new connection
     // starts on a clean screen.
-    if (sameConnection) term.write('\r\n')
+    if (sameConnection && !docked) term.write('\r\n')
     else term.reset()
+    if (BUILTIN_REPL.has(dbType)) { startBuiltinPrompt(); return }
     let info
     try {
       info = await terminalClient(config)
@@ -196,11 +338,25 @@
     if (gen !== generation) return
     client = info
     if (!info.name) { phase = 'unsupported'; return }
-    if (!info.path) { phase = 'missing'; return }
+    if (!info.path) {
+      // A SQL engine works without its CLI: drop straight into the built-in
+      // prompt rather than stopping on a "not installed" page, and offer the
+      // install alongside. Engines with no built-in prompt keep the page.
+      if (!NON_SQL.has(dbType)) {
+        missingClient = { name: info.name, hint: info.hint }
+        startBuiltinPrompt(`${info.name} is not installed, so this is the built-in prompt. Install ${info.name} (corner button) for its own commands.`)
+        return
+      }
+      phase = 'missing'
+      return
+    }
+    missingClient = null
 
     phase = 'starting'
     fit()
-    term.write(`\x1b[2mConnecting to ${target} with ${info.name}\x1b[0m\r\n`)
+    // Docked, the prompt owns the first row: the shell's own output is the
+    // only thing in the panel, with the actions floating over the corner.
+    if (!docked) term.write(`\x1b[2mConnecting to ${target} with ${info.name}\x1b[0m\r\n`)
     const highlight = createHighlighter((bytes) => term?.write(bytes), { client: info.name })
     highlighter = highlight
     resetPromptState()
@@ -269,6 +425,7 @@
   async function endSession() {
     highlighter?.flush()
     highlighter = null
+    repl = null
     hideSuggest()
     const id = sessionId
     sessionId = null
@@ -306,7 +463,24 @@
   }
 
   function sendResize() {
-    if (socket?.readyState === WebSocket.OPEN && term) socket.send(JSON.stringify({ resize: [term.cols, term.rows] }))
+    if (socket?.readyState === WebSocket.OPEN && term) {
+      socket.send(JSON.stringify({ resize: [term.cols, term.rows] }))
+      lastSent = `${term.cols}x${term.rows}`
+    }
+  }
+  /** @type {ReturnType<typeof setTimeout> | undefined} */
+  let resizeSendTimer
+  let lastSent = ''
+  /** The PTY hears about a new size once, after it stops changing. */
+  function sendResizeSoon() {
+    clearTimeout(resizeSendTimer)
+    resizeSendTimer = setTimeout(() => {
+      if (!term) return
+      const key = `${term.cols}x${term.rows}`
+      if (key === lastSent) return
+      lastSent = key
+      sendResize()
+    }, 140)
   }
 
   // Keystroke-to-echo latency, written to the app log every 40 keys: the number
@@ -334,7 +508,7 @@
         const at = (/** @type {number} */ p) => sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))].toFixed(1)
         return `p50 ${at(0.5)}ms, p95 ${at(0.95)}ms, max ${at(1)}ms`
       }
-      const renderer = detectOs() === 'linux' ? 'dom' : 'webgl'
+      const renderer = 'dom'
       socket?.send(JSON.stringify({ trace: `keystroke to echo: ${stats(echoSamples)}; to screen: ${stats(paintSamples)} (${renderer})` }))
       echoSamples = []
       paintSamples = []
@@ -347,6 +521,7 @@
       if (data.includes('\r')) void start()
       return
     }
+    if (repl) { repl.input(data); return }
     if (!sessionId) return
     if (lineEditor === 'console') {
       data = consoleInput(data)
@@ -400,6 +575,9 @@
     'redis-cli': /^[^\s>]+> /,
     'valkey-cli': /^[^\s>]+> /,
     sqlcmd: /^\d+> /,
+    // `test> `, `rs0 [direct: primary] app> `, `Atlas atlas-x [primary] app> `.
+    mongosh: /^[^>\n]*?> /,
+    mongo: /^[^>\n]*?> /,
   })
 
   /** The same clients' continuation prompts: a statement is still open. */
@@ -589,6 +767,83 @@
 
   /** The view is scrolled up from the latest output: offer the way back down. */
   let scrolledUp = $state(false)
+
+  // ── Find in scrollback (⌘F / Ctrl+Shift+F) ─────────────────────────────────
+  /** @type {SearchAddon | null} */
+  let searchAddon = null
+  let findOpen = $state(false)
+  let findQuery = $state('')
+  let findCase = $state(false)
+  /** Current match (1-based) and total; -1 total means "more than xterm counts". */
+  let findIndex = $state(0)
+  let findTotal = $state(0)
+  /** @type {HTMLInputElement | null} */
+  let findInput = $state(null)
+
+  /**
+   * Match highlights. xterm only takes opaque `#RRGGBB` here (anything else is
+   * silently dropped, which is why matches were counted but never drawn), so
+   * each colour is the terminal's own blue or yellow blended into its
+   * background: a tint the text stays readable on, in every theme.
+   */
+  function findDecorations() {
+    const t = termEl ? terminalTheme(termEl) : null
+    const bg = /^#[0-9a-f]{6}/i.test(t?.background ?? '') && !/^#0{6}00$/i.test(t?.background ?? '') ? t.background.slice(0, 7) : (t?.cursorAccent ?? '#0a0a0a').slice(0, 7)
+    /** @param {string} a @param {string} b @param {number} k */
+    const mix = (a, b, k) => {
+      const p = (/** @type {string} */ h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16))
+      const [x, y] = [p(a), p(b)]
+      return '#' + x.map((v, i) => Math.round(v + (y[i] - v) * k).toString(16).padStart(2, '0')).join('')
+    }
+    const blue = (t?.blue ?? '#3b82f6').slice(0, 7)
+    const yellow = (t?.yellow ?? '#eab308').slice(0, 7)
+    return {
+      matchBackground: mix(bg, blue, 0.35),
+      matchBorder: mix(bg, blue, 0.6),
+      matchOverviewRuler: blue,
+      activeMatchBackground: mix(bg, yellow, 0.55),
+      activeMatchBorder: yellow,
+      activeMatchColorOverviewRuler: yellow,
+    }
+  }
+
+  /** @param {'next' | 'prev'} dir @param {boolean} [incremental] */
+  function findStep(dir, incremental = false) {
+    if (!searchAddon) return
+    if (!findQuery) { searchAddon.clearDecorations(); findIndex = 0; findTotal = 0; return }
+    const opts = { caseSensitive: findCase, incremental, decorations: findDecorations() }
+    if (dir === 'next') searchAddon.findNext(findQuery, opts)
+    else searchAddon.findPrevious(findQuery, opts)
+  }
+
+  function openFind() {
+    findOpen = true
+    // Seed with the selection, as editors do.
+    const sel = term?.getSelection()?.trim()
+    if (sel && !sel.includes('\n') && sel.length <= 200) findQuery = sel
+    queueMicrotask(() => { findInput?.focus(); findInput?.select(); if (findQuery) findStep('next', true) })
+  }
+
+  function closeFind() {
+    findOpen = false
+    searchAddon?.clearDecorations()
+    term?.clearSelection()
+    findIndex = 0
+    findTotal = 0
+    term?.focus()
+  }
+
+  /** @param {KeyboardEvent} e */
+  function onFindKey(e) {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeFind() }
+    else if (e.key === 'Enter') { e.preventDefault(); findStep(e.shiftKey ? 'prev' : 'next') }
+  }
+
+  /** ⌘F on macOS; Ctrl+Shift+F elsewhere, since plain Ctrl+F is readline's forward-char. @param {KeyboardEvent} e */
+  function isFindChord(e) {
+    if (e.type !== 'keydown' || e.altKey || e.key.toLowerCase() !== 'f') return false
+    return IS_MAC ? e.metaKey && !e.ctrlKey && !e.shiftKey : e.ctrlKey && e.shiftKey && !e.metaKey
+  }
   function trackScroll() {
     if (!term) return
     const buf = term.buffer.active
@@ -608,17 +863,39 @@
     try { fitAddon.fit() } catch { /* not laid out yet */ }
   }
 
+  /**
+   * Make xterm measure its cells again. It caches the character size from the
+   * first measure; if the editor web font was still loading then, it measured
+   * the narrower fallback and every later fit thought more columns and rows
+   * fit than do: lines ran off the right edge, the client wrapped its output
+   * at the wrong width, and the last row hid under the bottom edge.
+   */
+  async function remeasure() {
+    if (!term || !termEl) return
+    const { fontFamily, fontSize } = terminalFont(termEl)
+    try { await document.fonts?.load(`${fontSize}px ${fontFamily}`) } catch { /* no FontFaceSet */ }
+    if (!term) return
+    // Changing the option is what triggers xterm's re-measure; set it away and back.
+    term.options.fontFamily = 'monospace'
+    term.options.fontFamily = fontFamily
+    fit()
+  }
+
   /** Font and colours from the editor setting and the app theme. */
   function applyAppearance() {
     if (!term || !termEl) return
     const { fontFamily, fontSize } = terminalFont(termEl)
+    const fontChanged = term.options.fontFamily !== fontFamily || term.options.fontSize !== fontSize
     if (term.options.fontFamily !== fontFamily) term.options.fontFamily = fontFamily
     if (term.options.fontSize !== fontSize) term.options.fontSize = fontSize
+    if (fontChanged) void remeasure()
     const theme = terminalTheme(termEl)
     const key = JSON.stringify(theme)
     // <html> attributes change for more than the theme; repaint only when it did.
     if (key !== themeKey) {
       themeKey = key
+      const clear = terminalIsTranslucent(termEl)
+      if (term.options.allowTransparency !== clear) term.options.allowTransparency = clear
       term.options.theme = theme
     }
     fit()
@@ -629,8 +906,17 @@
    * and the app's own shortcuts kept reachable from inside the terminal.
    * Returning false hands the key to the browser and the app instead of xterm.
    */
-  /** Clients that edit their line with readline or editline, which know the Meta word keys. */
-  const READLINE_CLIENTS = new Set(['psql', 'mysql', 'mariadb', 'sqlite3'])
+  /**
+   * Clients whose line editor knows the Meta word keys (ESC DEL, ESC b, ESC f,
+   * ESC d): readline and editline (psql, mysql, sqlite3), Node's readline
+   * (mongosh) and the Go readline in the Turso shell.
+   */
+  const READLINE_CLIENTS = new Set(['psql', 'mysql', 'mariadb', 'sqlite3', 'mongosh', 'mongo', 'turso'])
+  /**
+   * redis-cli's linenoise: Ctrl+W deletes the word before the cursor, Ctrl+U the
+   * line, Ctrl+A / Ctrl+E jump to its ends, and it has no word-jump keys at all.
+   */
+  const LINENOISE_CLIENTS = new Set(['redis-cli', 'valkey-cli', 'memurai-cli'])
 
   /** Cmd+Left, Cmd+Right and Cmd+Backspace, as in a macOS text field: start and end of the line, delete back to its start. */
   const MAC_COMMAND_KEYS = /** @type {Record<string, string>} */ ({ ArrowLeft: '\x01', ArrowRight: '\x05', Backspace: '\x15' })
@@ -649,8 +935,20 @@
     if (e.shiftKey) return null
     if (e.metaKey) return IS_MAC && !e.ctrlKey && !e.altKey ? MAC_COMMAND_KEYS[e.key] ?? null : null
     if (lineEditor === 'console') return consoleKeystrokes(e)
-    const word = READLINE_CLIENTS.has(client?.name ?? '')
+    // The built-in prompt (sql-repl.js) has its own line editor that speaks
+    // the same word keys as readline.
+    const word = !!repl || READLINE_CLIENTS.has(client?.name ?? '')
     const mod = e.ctrlKey || e.altKey
+    if (LINENOISE_CLIENTS.has(client?.name ?? '')) {
+      switch (e.key) {
+        case 'Backspace': return mod ? '\x17' : null
+        // No word motion in linenoise: drop the key rather than print escape junk.
+        case 'ArrowLeft': case 'ArrowRight': case 'Delete': return mod ? '' : null
+        case 'Home': return mod ? null : '\x01'
+        case 'End': return mod ? null : '\x05'
+      }
+      return null
+    }
     switch (e.key) {
       // On macOS these clients usually link editline, where ^W cuts back to
       // the start of the line; ESC DEL deletes a word there and in readline alike.
@@ -720,6 +1018,7 @@
    * runs `cls` instead, when no typed line would be lost to it.
    */
   function clearConsole() {
+    if (repl) { repl.input('\x0c'); return }
     const cls = consoleClearCommand(client?.name ?? '')
     if (cls && !continuing && typedLine()?.text === '') send(`${cls}\r`)
   }
@@ -731,6 +1030,12 @@
   }
 
   function handleKey(/** @type {KeyboardEvent} */ e) {
+    if (isFindChord(e)) {
+      e.preventDefault()
+      e.stopPropagation()
+      openFind()
+      return false
+    }
     if (e.type === 'keydown' && consumeKey(e)) {
       e.preventDefault()
       // Handled here: the app's own shortcuts on the same key (Escape, Alt+Backspace) must not run as well.
@@ -746,6 +1051,12 @@
 
   /** Keys the page handles itself; true when it did. @param {KeyboardEvent} e */
   function consumeKey(e) {
+    // The built-in prompt edits its own line: Tab completes there, and the
+    // PTY clients' suggestion keys, Enter handling and line shortcuts stay out.
+    if (repl) {
+      if (e.key === 'Tab' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) { repl.input('\t'); return true }
+      return false
+    }
     if (phase === 'running') {
       const keys = editorKeystrokes(e)
       if (keys !== null) {
@@ -817,6 +1128,8 @@
     }
   }
 
+  /** @type {ReturnType<typeof setTimeout> | undefined} */
+  let fitTimer
   /** @type {ResizeObserver | null} */
   let resizeObserver = null
   /** @type {MutationObserver | null} */
@@ -833,36 +1146,34 @@
       // table borders join from row to row. Any taller and the DOM renderer
       // leaves a gap in every vertical line.
       lineHeight: 1,
+      // A blinking block: what Terminal.app, iTerm and every shell default to.
       cursorBlink: true,
-      cursorStyle: 'bar',
-      cursorWidth: 2,
+      cursorStyle: 'block',
       cursorInactiveStyle: 'outline',
       scrollback: 25_000,
       // Alt+wheel scrolls a page at a time through long results.
       fastScrollSensitivity: 10,
-      allowProposedApi: false,
+      // The search add-on's match highlights use the decorations API.
+      allowProposedApi: true,
+      // Only under a Glass theme: transparency costs xterm its subpixel text.
+      allowTransparency: terminalIsTranslucent(termEl),
       theme: terminalTheme(termEl),
     })
     fitAddon = new FitAddon()
     term.loadAddon(fitAddon)
     term.loadAddon(new WebLinksAddon((_event, uri) => void openLink(uri)))
+    searchAddon = new SearchAddon({ highlightLimit: 2000 })
+    term.loadAddon(searchAddon)
+    searchAddon.onDidChangeResults(({ resultIndex, resultCount }) => {
+      findIndex = resultIndex + 1
+      findTotal = resultCount
+    })
     term.open(termEl)
-    // Not on Linux. The app's webview there paints in software
-    // (WEBKIT_DISABLE_DMABUF_RENDERER, lib.rs), so a WebGL canvas is read back
-    // from the GPU every frame: with it on, typing lagged in the app although
-    // every echo reached the page within 2ms (the trace in the log). A headless
-    // benchmark missed it, having no real GPU behind it. The DOM renderer is the
-    // one that was smooth there.
-    if (detectOs() !== 'linux') {
-      try {
-        const webgl = new WebglAddon()
-        // A lost GPU context falls back to the DOM renderer instead of going blank.
-        webgl.onContextLoss(() => webgl.dispose())
-        term.loadAddon(webgl)
-      } catch {
-        // No WebGL here: xterm's DOM renderer draws instead.
-      }
-    }
+    // DOM renderer everywhere. The WebGL canvas was stretched and blanked by the
+    // browser on every size change before xterm repainted it: while the dock was
+    // dragged that read as flicker, overlapping lines and blank bands. The DOM
+    // renderer reflows with the layout in the same frame, and a database shell
+    // never prints fast enough to need the GPU path.
     term.attachCustomKeyEventHandler(handleKey)
     // psql's prompt marks (OSC 133, set in db/terminal.rs): A starts a prompt,
     // `A;k=s` a continuation one, B is where typing starts. Not on Windows:
@@ -902,11 +1213,26 @@
     // A click starts a selection of its own; the typed line is no longer what is selected.
     termEl.addEventListener('mousedown', () => { inputSelected = false })
     term.textarea?.addEventListener('blur', hideSuggest)
-    term.onResize(() => sendResize())
+    term.onResize(() => sendResizeSoon())
     fit()
 
+    // Native behaviour: the grid reflows with the panel on every frame, so the
+    // text never stretches or gets cut while dragging. What used to flicker was
+    // the client redrawing its prompt on each PTY resize; that is now sent
+    // once the size settles (sendResizeSoon), not per frame.
+    // While a panel is dragged, refit a few times a second (and once at the
+    // end) instead of every frame: each fit re-lays every row of the grid, and
+    // doing that per frame is what made the drag feel heavy.
+    let lastFitAt = 0
     resizeObserver = new ResizeObserver(() => {
       cancelAnimationFrame(fitFrame)
+      clearTimeout(fitTimer)
+      if (document.documentElement.hasAttribute('data-resizing')) {
+        const since = performance.now() - lastFitAt
+        if (since > 50) { lastFitAt = performance.now(); fitFrame = requestAnimationFrame(fit) }
+        fitTimer = setTimeout(() => { lastFitAt = performance.now(); fitFrame = requestAnimationFrame(fit) }, 50)
+        return
+      }
       fitFrame = requestAnimationFrame(fit)
     })
     resizeObserver.observe(termEl)
@@ -914,7 +1240,8 @@
     themeObserver = new MutationObserver(() => applyAppearance())
     themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class', 'style'] })
     // The editor font is a web font: measure the cells again once it is in.
-    void document.fonts?.ready.then(() => applyAppearance())
+    void remeasure()
+    void document.fonts?.ready.then(() => void remeasure())
 
     sync()
   })
@@ -923,12 +1250,13 @@
   function sync() {
     if (!term) return
     if (!connectionKey) { if (phase !== 'idle') stop(); return }
-    if (active && connectionKey !== startedKey) void start()
+    if ((active || prewarm) && connectionKey !== startedKey) void start()
   }
 
   $effect(() => {
     void connectionKey
     void active
+    void prewarm
     untrack(sync)
   })
 
@@ -978,61 +1306,141 @@
   )
 </script>
 
-<div class="flex min-h-0 flex-1 flex-col overflow-hidden bg-panel">
-  <!-- Header: which client, against what, and its state. -->
-  <div class="studio-chrome flex h-9 shrink-0 items-center gap-2.5 border-b border-border bg-panel px-3">
-    <div class="flex shrink-0 items-center gap-1.5">
-      <SquareTerminal class="size-3.5 shrink-0 text-muted-foreground" />
-      <span class="font-mono text-ui-sm font-medium text-foreground">{client?.name || 'Terminal'}</span>
-      {#if shortVersion}
-        <span class="font-mono text-ui-2xs text-muted-foreground tabular-nums" title={client?.version ?? ''}>{shortVersion}</span>
+<div class="group/term relative flex min-h-0 flex-1 flex-col overflow-hidden bg-panel">
+  {#if docked}
+    <!-- Docked under a page (⌘J): no bar at all. The output starts at the top
+         left like a real terminal; the four actions float in the corner. -->
+    <div class="absolute top-1 right-2 z-20 flex items-center gap-0.5 rounded-full bg-panel/95 p-0.5 shadow-sm opacity-0 transition-opacity duration-150 group-hover/term:opacity-100 focus-within:opacity-100">
+      <button type="button" class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40" title="Clear" aria-label="Clear scrollback" disabled={phase !== 'running' && phase !== 'exited'} onclick={() => { term?.clear(); term?.focus() }}><Eraser class="size-3.5 shrink-0" /></button>
+      <button type="button" class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40" title="Restart {client?.name || 'the client'}" aria-label="Restart" disabled={!connection || phase === 'checking' || phase === 'starting'} onclick={() => void start()}><RotateCw class="size-3.5 shrink-0" /></button>
+      {#if onclose}
+        <button type="button" class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" title="Hide (⌘J)" aria-label="Hide the terminal" onclick={onclose}><X class="size-3.5 shrink-0" /></button>
       {/if}
     </div>
+  {:else}
+  <!-- One slim strip, like a terminal window's title bar: which client
+       against what, a status dot, and the few actions. It was a 36px header
+       with a "Running" label and a 32px command bar under the screen, so a
+       third of a short pane was chrome before any output. -->
+  <div class="studio-chrome flex h-7 shrink-0 items-center gap-2 border-b border-border/50 bg-panel ps-2.5 pe-1">
+    <span
+      class={['size-1.5 shrink-0 rounded-full', statusDot]}
+      title={statusLabel || undefined}
+      aria-label={statusLabel || undefined}
+      role={statusLabel ? 'status' : undefined}
+    ></span>
+    <span class="shrink-0 font-mono text-ui-2xs font-medium text-foreground">{client?.name || 'Terminal'}</span>
+    {#if shortVersion}
+      <span class="shrink-0 font-mono text-ui-3xs text-muted-foreground tabular-nums" title={client?.version ?? ''}>{shortVersion}</span>
+    {/if}
     {#if target}
-      <span class="h-3.5 w-px shrink-0 bg-border"></span>
-      <span class="min-w-0 truncate font-mono text-ui-xs" title={target}>
-        <span class="text-muted-foreground">{targetParts.lead}</span><span class="text-foreground">{targetParts.db}</span>
+      <span class="min-w-0 truncate font-mono text-ui-2xs" title={target}>
+        <span class="text-muted-foreground/70">{targetParts.lead}</span><span class="text-muted-foreground">{targetParts.db}</span>
       </span>
     {/if}
     <div class="flex-1"></div>
-    {#if statusLabel}
-      <span class="flex shrink-0 items-center gap-1.5 text-ui-2xs text-muted-foreground">
-        <span class={['size-1.5 shrink-0 rounded-full', statusDot]}></span>
-        {statusLabel}
+    {#if continuing && phase === 'running'}
+      <!-- An open statement, said in the strip (fixed height) rather than by a
+           bar that appears below the screen and moves it. -->
+      <span class="hidden shrink-0 items-center gap-2 text-ui-3xs text-muted-foreground sm:flex">
+        <span class="size-1.5 shrink-0 rounded-full bg-warning" aria-hidden="true"></span>
+        <span class="text-foreground">Statement open</span>
+        <span class="flex items-center gap-1"><Kbd combo="Enter" /> run</span>
+        <span class="flex items-center gap-1"><Kbd combo="Ctrl+C" /> discard</span>
       </span>
     {/if}
-    <div class="flex shrink-0 items-center gap-1">
+    <div class="flex shrink-0 items-center gap-0.5">
+      {#if quickCommands.length}
+        <button
+          type="button"
+          class={['inline-flex size-6 items-center justify-center rounded-md transition-colors hover:bg-accent hover:text-foreground', showQuickBar ? 'text-foreground' : 'text-muted-foreground']}
+          title={showQuickBar ? 'Hide common commands' : 'Show common commands'}
+          aria-label="Common commands"
+          aria-pressed={showQuickBar}
+          onclick={toggleQuickBar}
+        >
+          <Command class="size-3.5 shrink-0" />
+        </button>
+      {/if}
       <button
         type="button"
-        class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+        class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
         title="Clear scrollback"
         aria-label="Clear scrollback"
         disabled={phase !== 'running' && phase !== 'exited'}
         onclick={() => { term?.clear(); term?.focus() }}
       >
-        <Eraser class="size-3.5" />
+        <Eraser class="size-3.5 shrink-0" />
       </button>
       <button
         type="button"
-        class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+        class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
         title="Restart {client?.name || 'the client'}"
         aria-label="Restart {client?.name || 'the client'}"
         disabled={!connection || phase === 'checking' || phase === 'starting'}
         onclick={() => void start()}
       >
-        <RotateCw class="size-3.5" />
+        <RotateCw class="size-3.5 shrink-0" />
       </button>
+      {#if onclose}
+        <button
+          type="button"
+          class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          title="Hide (⌘`)"
+          aria-label="Hide {client?.name || 'terminal'}"
+          onclick={onclose}
+        >
+          <X class="size-3.5 shrink-0" />
+        </button>
+      {/if}
     </div>
   </div>
+  {/if}
 
   <div bind:this={bodyEl} class="relative min-h-0 flex-1">
     <!-- The padding lives on this wrapper: FitAddon sizes the grid from the
          terminal's parent, padding included. -->
-    <div class="absolute inset-0 pt-3 pr-1 pb-1 pl-4">
+    <!-- Tight inset and text a touch under the SQL editor's: a terminal is
+         dense - Terminal.app and iTerm sit a few px from the window edge - and
+         at the editor's size psql's tables read like a document. -->
+    {#if findOpen}
+      <div
+        class="absolute top-2 right-3 z-30 flex h-8 items-center gap-0.5 rounded-lg border border-border/60 bg-popover ps-2.5 pe-1 shadow-md"
+        role="search"
+      >
+        <Search class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+        <input
+          bind:this={findInput}
+          bind:value={findQuery}
+          oninput={() => findStep('next', true)}
+          onkeydown={onFindKey}
+          placeholder="Find"
+          aria-label="Find in terminal"
+          spellcheck="false"
+          autocomplete="off"
+          class="no-field-frame no-focus-ring h-full w-44 min-w-0 border-0 bg-transparent px-1.5 font-mono text-ui-xs text-foreground shadow-none outline-none placeholder:font-sans placeholder:text-muted-foreground"
+        />
+        <span class="min-w-[4.5rem] shrink-0 pe-1 text-right text-ui-2xs tabular-nums text-muted-foreground" aria-live="polite">
+          {#if !findQuery}{''}{:else if findTotal === 0}No results{:else if findTotal < 0}{findIndex} of many{:else}{findIndex} of {findTotal}{/if}
+        </span>
+        <button
+          type="button"
+          class={['inline-flex size-6 items-center justify-center rounded-md transition-colors hover:bg-accent hover:text-foreground', findCase ? 'bg-accent text-foreground' : 'text-muted-foreground']}
+          title="Match case"
+          aria-label="Match case"
+          aria-pressed={findCase}
+          onclick={() => { findCase = !findCase; findStep('next', true); findInput?.focus() }}
+        ><CaseSensitive class="size-3.5 shrink-0" /></button>
+        <button type="button" class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40" title="Previous match (Shift+Enter)" aria-label="Previous match" disabled={!findQuery} onclick={() => findStep('prev')}><ChevronUp class="size-3.5 shrink-0" /></button>
+        <button type="button" class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40" title="Next match (Enter)" aria-label="Next match" disabled={!findQuery} onclick={() => findStep('next')}><ChevronDown class="size-3.5 shrink-0" /></button>
+        <button type="button" class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" title="Close (Esc)" aria-label="Close find" onclick={closeFind}><X class="size-3.5 shrink-0" /></button>
+      </div>
+    {/if}
+    <div class="absolute inset-0 pt-2 pr-1 pb-1 pl-3">
       <div
         bind:this={termEl}
         class="size-full"
-        style="font-family: var(--editor-font-family, var(--font-mono)); font-size: {sqlEditorFontSize($appSqlEditor.textSize)};"
+        style="font-family: var(--editor-font-family, var(--font-mono)); font-size: calc({sqlEditorFontSize($appSqlEditor.textSize)} * 0.9);"
       ></div>
     </div>
 
@@ -1075,6 +1483,27 @@
       </button>
     {/if}
 
+    {#if missingClient && phase === 'running'}
+      <div class="absolute right-3 bottom-3 z-10 flex max-w-sm flex-col items-end gap-1.5">
+        {#if installError}
+          <p class="rounded-md border border-destructive/30 bg-popover px-2.5 py-1.5 text-left font-mono text-ui-2xs whitespace-pre-wrap text-destructive elevate-2-rim">{installError}</p>
+        {/if}
+        <button
+          type="button"
+          disabled={installing}
+          class="inline-flex h-7 items-center gap-1.5 rounded-md border border-border/60 bg-popover px-2.5 text-ui-xs text-foreground elevate-2-rim transition-colors hover:bg-accent disabled:opacity-60"
+          title={missingClient.hint ?? ''}
+          onclick={() => void installClient()}
+        >
+          {#if installing}
+            <Icon name="loader-2" class="size-3.5 shrink-0 animate-spin" /> Installing {missingClient.name}…
+          {:else}
+            <Icon name="download" class="size-3.5 shrink-0" /> Install {missingClient.name}
+          {/if}
+        </button>
+      </div>
+    {/if}
+
     {#if phase === 'unsupported' || phase === 'missing' || phase === 'failed'}
       <div class="absolute inset-0 flex items-center justify-center bg-panel p-6">
         <div class="flex w-full max-w-md flex-col items-center gap-3 text-center">
@@ -1084,8 +1513,13 @@
             </div>
             <p class="text-ui-lg font-semibold text-foreground">{client?.name} is not installed</p>
             <p class="text-ui-sm text-muted-foreground">
-              This tab runs the real {client?.name}, so every command works the way it does in a terminal. Install it, then check again.
+              This tab runs the real {client?.name}, so every command works the way it does in a terminal. Install it, then check again, or use the built-in prompt for now.
             </p>
+            {#if !NON_SQL.has(dbType)}
+            <Button size="sm" variant="outline" onclick={() => startBuiltinPrompt(`${client?.name ?? 'The client'} is not installed: using the built-in prompt. Install it for ${client?.name ?? 'its'} own commands.`)}>
+              Use the built-in SQL prompt
+            </Button>
+            {/if}
             {#if client?.hint}
               <div class="flex w-full items-center gap-2 rounded-lg border border-border bg-muted/30 py-1 pr-1 pl-3 text-left">
                 <span class={['min-w-0 flex-1 text-ui-xs', installLooksLikeCommand ? 'font-mono text-foreground' : 'text-muted-foreground']}>{client.hint}</span>
@@ -1097,11 +1531,15 @@
                     aria-label="Copy install command"
                     onclick={copyHint}
                   >
-                    {#if hintCopied}<Check class="size-3.5 text-success" />{:else}<Copy class="size-3.5" />{/if}
+                    {#if hintCopied}<Check class="size-3.5 shrink-0 text-success" />{:else}<Copy class="size-3.5 shrink-0" />{/if}
                   </button>
                 {/if}
               </div>
             {/if}
+            <Button size="sm" disabled={installing} onclick={() => void installClient()}>
+              {installing ? `Installing ${client?.name ?? ''}…` : `Install ${client?.name ?? 'it'}`}
+            </Button>
+            {#if installError}<p class="w-full whitespace-pre-wrap text-left font-mono text-ui-2xs text-destructive">{installError}</p>{/if}
             <Button variant="outline" size="sm" onclick={() => void start()}>
               <RotateCw class="size-3.5 shrink-0" />
               Check again
@@ -1129,7 +1567,11 @@
   </div>
 
   <!-- Footer: the commands people reach for most, one click each. -->
-  {#if quickCommands.length && (phase === 'starting' || phase === 'running' || phase === 'exited')}
+  <!-- Shown only when turned on, and then whatever the session is doing: a bar
+       that came and went with an open statement or a phase change resized the
+       terminal under the cursor - a refit and a redraw on the keystroke that
+       opened or closed a statement, which read as flicker. -->
+  {#if quickCommands.length && showQuickBar}
     <div class="studio-chrome app-scroll-x flex h-8 shrink-0 items-center gap-1 overflow-x-auto border-t border-border bg-panel px-2">
       {#if continuing && phase === 'running'}
         <!-- An open statement: the commands below would only join it, so the

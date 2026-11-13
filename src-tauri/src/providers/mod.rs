@@ -1144,6 +1144,14 @@ pub async fn provider_logout(app: tauri::AppHandle, provider: String) -> Result<
     clear_tokens(&app, Provider::parse(&provider)?).await
 }
 
+/// Stroke's Turso sign-in, for the Turso CLI: it is the same platform token the
+/// CLI's own `turso auth login` stores, so the terminal can hand it over as
+/// `TURSO_API_TOKEN` and the shell starts without a second login. None when
+/// Stroke is not signed in to Turso; the CLI then falls back to its own login.
+pub(crate) async fn turso_cli_token(app: &tauri::AppHandle) -> Option<String> {
+    valid_token(app, Provider::Turso, None).await.ok()
+}
+
 #[tauri::command]
 pub async fn provider_list_databases(
     app: tauri::AppHandle,

@@ -91,9 +91,23 @@ describe('suggest', () => {
     expect(suggest({ client: 'psql', line: 'select * from users', hints }).items.map((i) => i.label)).not.toContain('users')
   })
 
-  it('completes redis-cli commands on the first word only', () => {
+  it('completes redis-cli commands, subcommands and options, never key names', () => {
     expect(labels(suggest({ client: 'redis-cli', line: 'hg' }))).toEqual(['HGETALL', 'HGET'])
     expect(suggest({ client: 'redis-cli', line: 'GET us' }).items).toEqual([])
+    expect(labels(suggest({ client: 'redis-cli', line: 'client li' }))).toEqual(['LIST'])
+    expect(labels(suggest({ client: 'redis-cli', line: 'set k v e' }))).toEqual(['EX', 'EXAT'])
+    expect(labels(suggest({ client: 'redis-cli', line: 'config get maxm' }))).toEqual(['maxmemory', 'maxmemory-policy'])
+  })
+
+  it('completes mongosh: db methods, collections, collection and cursor methods, operators, fields', () => {
+    const hints = { tables: ['users', 'orders'], schemas: ['app'], columnsByTable: { users: ['name', 'age'] } }
+    const L = (/** @type {string} */ line) => labels(suggest({ client: 'mongosh', line, hints }))
+    expect(L('show c')).toEqual(['collections'])
+    expect(L('use a')).toEqual(['app'])
+    expect(L('db.us')).toEqual(['users'])
+    expect(L('db.users.find({ na')).toEqual(['name'])
+    expect(L('db.users.find({}).so')).toEqual(['sort('])
+    expect(L('db.users.find({ age: { $gt')).toEqual(['$gt', '$gte'])
   })
 })
 
