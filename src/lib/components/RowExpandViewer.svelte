@@ -267,7 +267,7 @@
     {/if}
     <button
       type="button"
-      class="inline-flex items-center gap-1.5 rounded px-2 py-0.5 font-mono text-ui-xs text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground"
+      class="inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 font-mono text-ui-xs text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground"
       onclick={copyJson}
     >
       {#if copied}
@@ -331,10 +331,10 @@
         type="button"
         title="Close (Esc)"
         aria-label="Close expanded row"
-        class="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+        class="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         onclick={onclose}
       >
-        <X class="size-3.5" />
+        <X class="size-3.5 shrink-0" />
       </button>
     {/if}
   </div>
@@ -354,7 +354,7 @@
       oncontextmenu={handleContextMenu}
     >
       {#if !html}
-        <p class="font-mono text-ui-xs text-muted-foreground">Loading…</p>
+        <p class="loading-reveal font-mono text-ui-xs text-muted-foreground">Loading…</p>
       {:else}
         <div
           class="[&_pre]:m-0 [&_pre]:bg-transparent! [&_pre]:p-0 [&_pre]:font-mono [&_pre]:text-ui-xs [&_pre]:leading-relaxed [&_.json-inspector-url]:text-link [&_.json-inspector-url]:hover:underline [&_.json-inspector-url]:underline-offset-2 {wrapClass === 'whitespace-pre-wrap break-all' ? '[&_pre]:whitespace-pre-wrap [&_pre]:break-all' : '[&_pre]:whitespace-pre'}"

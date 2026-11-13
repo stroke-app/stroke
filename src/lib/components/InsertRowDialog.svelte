@@ -165,7 +165,7 @@
                         title="Generate UUID v4"
                         onclick={() => setDraft(col.name, generateUuid())}
                       >
-                        <Hash class="size-3 opacity-70" />
+                        <Hash class="size-3 shrink-0 opacity-70" />
                         UUID
                       </button>
                     {/if}
@@ -177,7 +177,7 @@
                         title="Generate CUID"
                         onclick={() => setDraft(col.name, generateCuid())}
                       >
-                        <Fingerprint class="size-3 opacity-70" />
+                        <Fingerprint class="size-3 shrink-0 opacity-70" />
                         CUID
                       </button>
                     {/if}
@@ -227,7 +227,7 @@
                     title="Set to current date and time"
                     onclick={() => setDraft(col.name, nowDateTimeLocal())}
                   >
-                    <CalendarClock class="size-3.5 opacity-70" />
+                    <CalendarClock class="size-3.5 shrink-0 opacity-70" />
                     Now
                   </button>
                 </div>

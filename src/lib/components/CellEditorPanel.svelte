@@ -1,4 +1,5 @@
 <script>
+  import { Button } from '$lib/components/ui/button/index.js'
   /**
    * The focused cell, full size, docked under the grid.
    *
@@ -629,7 +630,7 @@
         disabled={!canWrap}
         aria-pressed={wrap}
         class={cn(
-          'inline-flex size-7 items-center justify-center rounded-md transition-colors hover:bg-muted/40 hover:text-foreground disabled:opacity-40 disabled:hover:bg-transparent',
+          'inline-flex size-7 items-center justify-center rounded-md transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40 disabled:hover:bg-transparent',
           wrap ? 'text-foreground' : 'text-muted-foreground',
         )}
         onclick={toggleWrap}
@@ -645,7 +646,7 @@
         type="button"
         aria-pressed={showGutter}
         class={cn(
-          'inline-flex size-7 items-center justify-center rounded-md transition-colors hover:bg-muted/40 hover:text-foreground',
+          'inline-flex size-7 items-center justify-center rounded-md transition-colors hover:bg-accent hover:text-foreground',
           showGutter ? 'text-foreground' : 'text-muted-foreground',
         )}
         onclick={toggleGutter}
@@ -658,7 +659,7 @@
            row has to fit a find box, three actions and a close button. -->
       <button
         type="button"
-        class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
+        class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         onclick={copy}
         title="Copy the value as text"
         aria-label="Copy the value as text"
@@ -668,7 +669,7 @@
       {#if !readOnly}
         <button
           type="button"
-          class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground disabled:opacity-40 disabled:hover:bg-transparent"
+          class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40 disabled:hover:bg-transparent"
           disabled={!dirty}
           onclick={revert}
           title="Revert to the stored value (Alt+R)"
@@ -689,11 +690,11 @@
       {/if}
       <button
         type="button"
-        class="ms-2 flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
+        class="ms-2 flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         onclick={dismiss}
         aria-label="Close cell editor"
       >
-        <X class="size-3.5" />
+        <X class="size-3.5 shrink-0" />
       </button>
     </div>
   </div>
@@ -709,19 +710,18 @@
     <div class="flex shrink-0 items-start gap-3 border-b border-border/30 bg-muted/15 px-3 py-2">
       <p class="min-w-0 flex-1 text-ui-2xs leading-normal text-muted-foreground text-pretty">{notice.error}</p>
       {#if oversize && onloadfull}
-        <button
-          type="button"
+        <Button
           disabled={loadingFull}
-          class="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md bg-primary px-2.5 text-ui-2xs font-medium text-primary-foreground transition-[opacity,transform] hover:opacity-90 active:scale-[0.97] disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+          class="shrink-0" size="sm"
           onclick={() => void loadFull()}
-        >
+>
           {#if loadingFull}
             <span class="size-3 shrink-0 animate-spin rounded-full border border-current border-t-transparent"></span>
             Loading {formatBytes(oversize?.bytes ?? 0)}
           {:else}
             Load {formatBytes(oversize?.bytes ?? 0)}
           {/if}
-        </button>
+        </Button>
       {/if}
     </div>
   {/if}

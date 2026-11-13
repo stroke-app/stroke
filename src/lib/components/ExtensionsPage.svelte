@@ -1,6 +1,8 @@
 <script>
   import { untrack } from "svelte";
   import { cn } from "$lib/utils.js";
+  import { Button } from "$lib/components/ui/button/index.js";
+  import { revealInFolder } from "$lib/api.js";
   import * as Select from "$lib/components/ui/select/index.js";
   import SearchableMenu from "./SearchableMenu.svelte";
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
@@ -21,6 +23,8 @@
   import Sparkles from "@lucide/svelte/icons/sparkles";
   import Wand2 from "@lucide/svelte/icons/wand-2";
   import Blocks from "@lucide/svelte/icons/blocks";
+  import Search from "@lucide/svelte/icons/search";
+  import FolderOpen from "@lucide/svelte/icons/folder-open";
   import DollarSign from "@lucide/svelte/icons/dollar-sign";
   import Timer from "@lucide/svelte/icons/timer";
   import Tag from "@lucide/svelte/icons/tag";
@@ -43,6 +47,14 @@
   import RefreshCw from "@lucide/svelte/icons/refresh-cw";
   import Trash2 from "@lucide/svelte/icons/trash-2";
   import Loader2 from "@lucide/svelte/icons/loader-2";
+  import KeyRound from "@lucide/svelte/icons/key-round";
+  import Fingerprint from "@lucide/svelte/icons/fingerprint";
+  import HardDrive from "@lucide/svelte/icons/hard-drive";
+  import Network from "@lucide/svelte/icons/network";
+  import Copy from "@lucide/svelte/icons/copy";
+  import TrendingUp from "@lucide/svelte/icons/trending-up";
+  import MapPin from "@lucide/svelte/icons/map-pin";
+  import Link from "@lucide/svelte/icons/link";
   import { toast } from "$lib/components/ui/sonner/toast.svelte.js";
   import {
     externalPlugins,
@@ -80,6 +92,14 @@
     freshness: Thermometer,
     "nullish-values": CircleSlash,
     "data-gen": Dices,
+    "fk-labels": Link,
+    "id-decoder": Fingerprint,
+    "token-decoder": KeyRound,
+    "byte-size": HardDrive,
+    "ip-address": Network,
+    duplicates: Copy,
+    "row-change": TrendingUp,
+    "geo-pair": MapPin,
   };
 
   const SECTIONS = [
@@ -176,6 +196,10 @@
     "freshness": { type: "timestamptz", values: [new Date(Date.now() - 120 * 1000).toISOString(), "2024-01-15 10:30:00+00"] },
     "heatmap": { type: "int4", values: [12, 480, 1290] },
     "validators": { type: "text", values: ["ada@example.com", "not-an-email", "550e8400-e29b-41d4-a716-446655440000"] },
+    "byte-size": { type: "int8", values: [512, 4404019, 1073741824, 3298534883328] },
+    "id-decoder": { type: "uuid", values: ["01890a5d-ac96-774b-bcce-b302099a8057", "01ARZ3NDEKTSV4RRFFQ69G5FAV", "507f1f77bcf86cd799439011"] },
+    "token-decoder": { type: "text", values: ["eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhZGEiLCJleHAiOjE3MDAwMDAwMDB9.x"] },
+    "ip-address": { type: "inet", values: ["192.168.1.20", "8.8.8.8", "::1", "fd12:3456::1"] },
   };
 
   /**
@@ -204,7 +228,37 @@
   const CONFIGURABLE = new Set([
     "better-time", "number-format", "money-format", "duration-format",
     "boolean-glyph", "mask-sensitive", "heatmap", "linkify",
+    "fk-labels", "id-decoder", "byte-size", "row-change", "geo-pair",
   ]);
+
+  /**
+   * Settings of the extensions that only need a choice or a switch, as data:
+   * one row each, drawn by the same two controls.
+   * @type {Record<string, Array<{ key: string, label: string, hint: string, def: string | boolean, options?: { value: string, label: string }[] }>>}
+   */
+  const SIMPLE_SETTINGS = {
+    "fk-labels": [
+      { key: "style", label: "Show as", hint: "Keep the id and add the label, or show only the label", def: "trail",
+        options: [{ value: "trail", label: "8 · Electronics" }, { value: "replace", label: "Electronics" }] },
+    ],
+    "id-decoder": [
+      { key: "inline", label: "Age in the cell", hint: "Show how old the id is after it, not only on hover", def: false },
+      { key: "snowflake", label: "Snowflake ids", hint: "Numeric ids are only decoded with their service's epoch", def: "none",
+        options: [{ value: "none", label: "Don't decode" }, { value: "twitter", label: "Twitter / X" }, { value: "discord", label: "Discord" }, { value: "instagram", label: "Instagram" }] },
+    ],
+    "byte-size": [
+      { key: "units", label: "Units", hint: "Binary (1 KiB = 1024 bytes) or decimal (1 KB = 1000)", def: "binary",
+        options: [{ value: "binary", label: "Binary · KiB, MiB" }, { value: "decimal", label: "Decimal · KB, MB" }] },
+    ],
+    "row-change": [
+      { key: "mode", label: "Change as", hint: "Percent of the row above, or the difference itself", def: "percent",
+        options: [{ value: "percent", label: "Percent · ▲ 12%" }, { value: "absolute", label: "Difference · ▲ 120" }] },
+    ],
+    "geo-pair": [
+      { key: "provider", label: "Open in", hint: "The map a coordinate opens in", def: "openstreetmap",
+        options: [{ value: "openstreetmap", label: "OpenStreetMap" }, { value: "google", label: "Google Maps" }, { value: "apple", label: "Apple Maps" }] },
+    ],
+  };
 
   // Short "how to use" steps, keyed by extension kind.
   const USAGE = {
@@ -252,6 +306,15 @@
 
   /** null → grid overview; an id → drilled into that extension's detail page.
    *  Seeded once from the prop (a fresh instance mounts per detail tab). */
+  /** Overview filter: free text over name and description, and All / On. */
+  let query = $state("");
+  let show = $state(/** @type {'all' | 'on'} */ ("all"));
+  /** @param {{ id: string, name: string, description?: string }} e */
+  function matches(e) {
+    if (show === "on" && !isOn(e.id)) return false;
+    const q = query.trim().toLowerCase();
+    return !q || e.name.toLowerCase().includes(q) || (e.description ?? "").toLowerCase().includes(q);
+  }
   let selectedId = $state(/** @type {string | null} */ (untrack(() => initialExtensionId) || null));
   const selected = $derived(selectedId ? (EXTENSIONS.find((e) => e.id === selectedId) ?? null) : null);
   const enabledCount = $derived(EXTENSIONS.filter((e) => pluginEnabledIn($pluginState, e.id)).length);
@@ -348,7 +411,7 @@
 
 <!-- Group label + hairline-bordered list -->
 {#snippet sectionLabel(text)}
-  <h3 class="mb-2 px-0.5 text-ui-2xs font-medium uppercase tracking-[0.08em] text-muted-foreground">{text}</h3>
+  <h3 class="mb-2 px-0.5 text-ui-2xs font-medium uppercase tracking-[0.06em] text-muted-foreground">{text}</h3>
 {/snippet}
 
 <div class="app-scroll min-h-0 flex-1 overflow-y-auto bg-background">
@@ -359,153 +422,205 @@
          the grid resolves to four or five. `mx-auto` + equal `px` is what keeps
          the two gutters identical at every width. -->
     <div class="mx-auto w-full max-w-[72rem] px-8 py-8">
-      <div class="flex items-center gap-2.5">
-        <span class="grid size-6 shrink-0 place-items-center rounded-md border border-border/60 bg-muted/40 text-muted-foreground">
-          <Blocks class="size-3.5" />
+      <!-- Header: what this page is, how many are on, and a way to find one. -->
+      <div class="flex items-start gap-3">
+        <span class="grid size-9 shrink-0 place-items-center rounded-lg border border-border/60 bg-muted/40 text-foreground/80">
+          <Blocks class="size-4 shrink-0" />
         </span>
-        <h1 class="text-ui-lg font-semibold tracking-tight text-foreground">Extensions</h1>
-        <span
-          class="ml-auto flex shrink-0 items-center gap-1.5 rounded-full bg-muted/60 px-2 py-0.5 text-ui-3xs font-medium tabular-nums text-muted-foreground"
-          title="{enabledCount} of {EXTENSIONS.length} extensions enabled"
-        >
-          {#if enabledCount > 0}<span class="size-1.5 rounded-full bg-primary"></span>{/if}
-          {enabledCount} on
-        </span>
+        <div class="min-w-0 flex-1">
+          <h1 class="text-ui-xl font-semibold tracking-tight text-foreground">Extensions</h1>
+          <p class="mt-0.5 text-ui-sm text-muted-foreground text-pretty">
+            Formatters, links and cell tools for the data grid. Open one to configure it.
+          </p>
+        </div>
       </div>
-      <p class="mt-1.5 text-ui-xs text-muted-foreground">
-        Display formatters, linkifiers and cell tools for the data grid. Click a card to configure it.
-      </p>
+
+      <div class="mt-6 flex flex-wrap items-center gap-2">
+        <div class="relative min-w-0 flex-1 basis-56">
+          <Search class="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <input
+            type="search"
+            bind:value={query}
+            placeholder="Search {EXTENSIONS.length} extensions"
+            aria-label="Search extensions"
+            class="field-surface h-8 w-full bg-transparent pl-8 pr-3 text-ui-sm text-foreground placeholder:text-muted-foreground"
+          />
+        </div>
+        <!-- All / On: a segmented control, the current option raised. -->
+        <div class="flex h-8 shrink-0 items-center gap-0.5 rounded-md bg-muted/50 p-0.5" role="group" aria-label="Show">
+          {#each [["all", `All`, EXTENSIONS.length], ["on", "On", enabledCount]] as [v, label, n] (v)}
+            <button
+              type="button"
+              aria-pressed={show === v}
+              class={cn(
+                "inline-flex h-full items-center gap-1.5 rounded-sm px-2.5 text-ui-xs transition-colors",
+                show === v ? "bg-background text-foreground shadow-sm ring-1 ring-border/50" : "text-muted-foreground hover:text-foreground",
+              )}
+              onclick={() => (show = /** @type {'all' | 'on'} */ (v))}
+            >
+              {label}<span class="tabular-nums text-muted-foreground">{n}</span>
+            </button>
+          {/each}
+        </div>
+      </div>
 
       <!-- ── Installed from a folder ─────────────────────────────────────────
            Plugins loaded off disk. Each runs in its own Worker with the network
            globals removed, so a broken one stops formatting and nothing else. -->
-      <div class="mt-7 flex items-center gap-2">
-        <h3 class="px-0.5 text-ui-2xs font-medium uppercase tracking-[0.08em] text-muted-foreground">Installed</h3>
-        {#if $externalPlugins.length > 0}
-          <span class="text-ui-2xs tabular-nums text-muted-foreground">{$externalPlugins.length}</span>
-        {/if}
-        <button
-          type="button"
-          class="field-surface ml-auto inline-flex h-7 shrink-0 items-center gap-1.5 bg-card px-3 text-ui-2xs font-medium text-foreground transition-colors hover:bg-accent/40 disabled:opacity-50"
-          onclick={installPlugin}
-          disabled={installing}
-        >
-          {#if installing}<Loader2 class="size-3.5 animate-spin" />{:else}<Plus class="size-3.5" />{/if}
-          Install from folder
-        </button>
-        <button
-          type="button"
-          class="field-surface inline-flex size-7 shrink-0 items-center justify-center bg-card text-muted-foreground transition-colors hover:bg-accent/40 hover:text-foreground"
-          title="Rescan the plugins folder"
-          aria-label="Rescan the plugins folder"
-          onclick={() => void refreshExternalPlugins()}
-        >
-          <RefreshCw class="size-3.5" />
-        </button>
-      </div>
+      {#if !query.trim() && show === "all"}
+        <section class="mt-8" aria-labelledby="ext-installed">
+          <div class="mb-2.5 flex items-center gap-2">
+            <h2 id="ext-installed" class="text-ui-sm font-medium text-foreground">Installed</h2>
+            {#if $externalPlugins.length > 0}
+              <span class="text-ui-xs tabular-nums text-muted-foreground">{$externalPlugins.length}</span>
+            {/if}
+            <span class="flex-1"></span>
+            <button
+              type="button"
+              class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              title="Rescan the plugins folder"
+              aria-label="Rescan the plugins folder"
+              onclick={() => void refreshExternalPlugins()}
+            >
+              <RefreshCw class="size-3.5 shrink-0" />
+            </button>
+            <Button variant="outline" size="sm" onclick={installPlugin} disabled={installing}>
+              {#if installing}<Loader2 class="size-3.5 shrink-0 animate-spin" />{:else}<Plus class="size-3.5 shrink-0" />{/if}
+              Install from folder
+            </Button>
+          </div>
 
-      {#if $externalPlugins.length === 0}
-        <div class="mt-2.5 rounded-lg border border-dashed border-border/60 bg-card/40 px-4 py-3.5">
-          <p class="text-ui-xs text-foreground/80">Nothing installed yet.</p>
-          <p class="mt-1 text-ui-2xs leading-relaxed text-muted-foreground">
-            A plugin is a folder holding a <code class="font-mono">manifest.json</code> and one
-            <code class="font-mono">.js</code> file. Install one above, or drop the folder in
-            {#if pluginsDir}<code class="font-mono text-muted-foreground">{pluginsDir}</code>{:else}the app's plugins folder{/if}
-            and hit rescan. See <code class="font-mono">docs/PLUGIN_API.md</code> for the contract.
-          </p>
-        </div>
-      {:else}
-        <div class="mt-2.5 grid grid-cols-[repeat(auto-fill,minmax(13.5rem,1fr))] gap-2">
-          {#each $externalPlugins as p (p.id)}
-            {@const on = pluginEnabledIn($pluginState, pluginKey(p.id))}
-            {@const err = $externalPluginErrors[p.id] ?? ""}
-            <div class="group relative flex h-full flex-col gap-2 rounded-lg border border-border/60 bg-card py-2 pl-2.5 pr-12">
-              <div class="flex min-w-0 items-center gap-2.5">
-                <Blocks class={cn("size-4 shrink-0", on && p.loadable ? "text-foreground" : "text-muted-foreground")} />
-                <span class="flex min-w-0 flex-1 flex-col">
-                  <span class="truncate text-ui-xs font-medium leading-tight text-foreground" title={p.description || p.name}>{p.name}</span>
-                  <span class="truncate text-ui-2xs leading-tight text-muted-foreground">
-                    {p.version ? `v${p.version}` : p.id}{p.author ? ` · ${p.author}` : ""}
-                  </span>
-                </span>
-              </div>
-              {#if p.error || err}
-                <p class="text-ui-2xs leading-snug text-destructive">{p.error || err}</p>
+          {#if $externalPlugins.length === 0}
+            <div class="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg bg-muted/25 px-4 py-3">
+              <p class="min-w-0 flex-1 text-ui-xs text-muted-foreground text-pretty">
+                No plugins yet. A plugin is a folder with a <code class="font-mono text-foreground/80">manifest.json</code> and one script; see
+                <code class="font-mono text-foreground/80">docs/PLUGIN_API.md</code>.
+              </p>
+              {#if pluginsDir}
+                <button
+                  type="button"
+                  class="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-ui-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  title={pluginsDir}
+                  onclick={() => void revealInFolder(pluginsDir).catch(() => {})}
+                >
+                  <FolderOpen class="size-3.5 shrink-0" /> Open plugins folder
+                </button>
               {/if}
-              <div class="mt-auto flex items-center gap-1">
-                <button
-                  type="button"
-                  class="hit-area inline-flex size-5 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground"
-                  title="Reload from disk"
-                  aria-label="Reload {p.name}"
-                  onclick={() => void reloadPlugin(p)}
-                >
-                  <RefreshCw class="size-3" />
-                </button>
-                <button
-                  type="button"
-                  class="hit-area inline-flex size-5 items-center justify-center rounded text-muted-foreground transition-colors hover:text-destructive"
-                  title="Remove, deleting its folder"
-                  aria-label="Remove {p.name}"
-                  onclick={() => void removePlugin(p)}
-                >
-                  <Trash2 class="size-3" />
-                </button>
-                {#if p.permissions.length > 0}
-                  <span class="ml-auto truncate text-ui-2xs text-muted-foreground" title="Permissions: {p.permissions.join(', ')}">
-                    {p.permissions.length} permission{p.permissions.length === 1 ? "" : "s"}
-                  </span>
-                {/if}
-              </div>
-              <div class="absolute right-3 top-2.5 flex h-[18px] items-center">
-                {#if p.loadable}
-                  {@render toggle(on, () => void setExternalEnabled(p.id, !on), `Toggle ${p.name}`)}
-                {:else}
-                  <span class="rounded bg-destructive/10 px-1.5 py-0.5 text-ui-2xs font-medium text-destructive">Broken</span>
-                {/if}
-              </div>
             </div>
-          {/each}
-        </div>
+          {:else}
+        <div class="mt-2.5 grid grid-cols-[repeat(auto-fill,minmax(13.5rem,1fr))] gap-2">
+              {#each $externalPlugins as p (p.id)}
+                {@const on = pluginEnabledIn($pluginState, pluginKey(p.id))}
+                {@const err = $externalPluginErrors[p.id] ?? ""}
+                <div class="group relative flex h-full flex-col gap-2 rounded-lg border border-border/60 bg-card py-2 pl-2.5 pr-12">
+                  <div class="flex min-w-0 items-center gap-2.5">
+                    <Blocks class={cn("size-4 shrink-0", on && p.loadable ? "text-foreground" : "text-muted-foreground")} />
+                    <span class="flex min-w-0 flex-1 flex-col">
+                      <span class="truncate text-ui-xs font-medium leading-tight text-foreground" title={p.description || p.name}>{p.name}</span>
+                      <span class="truncate text-ui-2xs leading-tight text-muted-foreground">
+                        {p.version ? `v${p.version}` : p.id}{p.author ? ` · ${p.author}` : ""}
+                      </span>
+                    </span>
+                  </div>
+                  {#if p.error || err}
+                    <p class="text-ui-2xs leading-snug text-destructive">{p.error || err}</p>
+                  {/if}
+                  <div class="mt-auto flex items-center gap-1">
+                    <button
+                      type="button"
+                      class="hit-area inline-flex size-5 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground"
+                      title="Reload from disk"
+                      aria-label="Reload {p.name}"
+                      onclick={() => void reloadPlugin(p)}
+                    >
+                      <RefreshCw class="size-3 shrink-0" />
+                    </button>
+                    <button
+                      type="button"
+                      class="hit-area inline-flex size-5 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-destructive"
+                      title="Remove, deleting its folder"
+                      aria-label="Remove {p.name}"
+                      onclick={() => void removePlugin(p)}
+                    >
+                      <Trash2 class="size-3 shrink-0" />
+                    </button>
+                    {#if p.permissions.length > 0}
+                      <span class="ml-auto truncate text-ui-2xs text-muted-foreground" title="Permissions: {p.permissions.join(', ')}">
+                        {p.permissions.length} permission{p.permissions.length === 1 ? "" : "s"}
+                      </span>
+                    {/if}
+                  </div>
+                  <div class="absolute right-3 top-2.5 flex h-[18px] items-center">
+                    {#if p.loadable}
+                      {@render toggle(on, () => void setExternalEnabled(p.id, !on), `Toggle ${p.name}`)}
+                    {:else}
+                      <span class="rounded bg-destructive/10 px-1.5 py-0.5 text-ui-2xs font-medium text-destructive">Broken</span>
+                    {/if}
+                  </div>
+                </div>
+              {/each}
+            </div>
+          {/if}
+        </section>
       {/if}
 
       {#each SECTIONS as section (section.title)}
-        {@const items = EXTENSIONS.filter((e) => section.kinds.includes(e.kind))}
-        <h3 class="mb-2.5 mt-7 px-0.5 text-ui-2xs font-medium uppercase tracking-[0.08em] text-muted-foreground">{section.title}</h3>
-        <!-- Columns come from the width, not from three hand-picked breakpoints:
-             at 2/3/4 fixed columns the last row stretched its cards to twice the
-             width of the row above whenever the count did not divide evenly.
-             Cards are rows now - icon, name, kind, switch on one line - because
-             the tile had the icon on its own line and a 30px hole in the middle,
-             which is what made a 20-item grid read as unfinished. -->
-        <div class="grid grid-cols-[repeat(auto-fill,minmax(13.5rem,1fr))] gap-2">
-          {#each items as ext (ext.id)}
-            {@const Icon = ICONS[ext.id] ?? Blocks}
-            {@const on = isOn(ext.id)}
-            <div class="relative">
-              <button
-                type="button"
-                onclick={() => (selectedId = ext.id)}
-                title="{ext.name} - {KIND_LABEL[ext.kind] ?? 'Extension'}"
-                class="group flex h-full w-full items-center gap-2.5 rounded-lg border border-border/60 bg-card py-2 pl-2.5 pr-12 text-left transition-[border-color,background-color] hover:border-border hover:bg-accent/40"
-              >
-                <Icon class={cn("size-4 shrink-0 transition-colors", on ? "text-foreground" : "text-muted-foreground group-hover:text-foreground")} />
-                <span class="flex min-w-0 flex-1 flex-col">
-                  <span class="truncate text-ui-xs font-medium leading-tight text-foreground">{ext.name}</span>
-                  <span class="truncate text-ui-2xs leading-tight text-muted-foreground">{KIND_LABEL[ext.kind] ?? "Extension"}</span>
-                </span>
-              </button>
-              <!-- Layered over the card so it is not a button inside a button.
-                   `pr-12` above is what keeps the label clear of it. -->
-              <div class="pointer-events-none absolute inset-y-0 right-3 flex items-center">
-                <span class="pointer-events-auto">
-                  {@render toggle(on, () => setPluginEnabled(ext.id, !on), `Toggle ${ext.name}`)}
-                </span>
-              </div>
+        {@const items = EXTENSIONS.filter((e) => section.kinds.includes(e.kind) && matches(e))}
+        {#if items.length}
+          <section class="mt-8" aria-labelledby="ext-{section.title}">
+            <div class="mb-2.5 flex items-baseline gap-2">
+              <h2 id="ext-{section.title}" class="text-ui-sm font-medium text-foreground">{section.title}</h2>
+              <span class="text-ui-xs tabular-nums text-muted-foreground">{items.length}</span>
             </div>
-          {/each}
-        </div>
+            <!-- Columns come from the width, so the last row never stretches. Each
+                 card says what the extension does, not its kind: the section
+                 heading already names the kind. -->
+            <div class="grid grid-cols-[repeat(auto-fill,minmax(17rem,1fr))] gap-2">
+              {#each items as ext (ext.id)}
+                {@const Icon = ICONS[ext.id] ?? Blocks}
+                {@const on = isOn(ext.id)}
+                <div class="relative">
+                  <button
+                    type="button"
+                    onclick={() => (selectedId = ext.id)}
+                    title="Configure {ext.name}"
+                    class="group flex h-full w-full items-start gap-3 rounded-lg bg-muted/25 p-3 pr-14 text-left transition-[background-color,scale] duration-150 ease-out hover:bg-accent/50 active:scale-[0.99] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+                  >
+                    <span
+                      class={cn(
+                        "grid size-8 shrink-0 place-items-center rounded-md transition-colors",
+                        on ? "bg-primary/15 text-primary" : "bg-muted/60 text-muted-foreground group-hover:text-foreground",
+                      )}
+                    >
+                      <Icon class="size-4 shrink-0" />
+                    </span>
+                    <span class="flex min-w-0 flex-1 flex-col gap-0.5">
+                      <span class="truncate text-ui-sm font-medium text-foreground">{ext.name}</span>
+                      <span class="line-clamp-2 text-ui-xs leading-snug text-muted-foreground">{ext.description ?? KIND_LABEL[ext.kind] ?? "Extension"}</span>
+                    </span>
+                  </button>
+                  <!-- Layered over the card so it is not a button inside a button. -->
+                  <div class="pointer-events-none absolute right-3 top-3 flex h-8 items-center">
+                    <span class="pointer-events-auto">
+                      {@render toggle(on, () => setPluginEnabled(ext.id, !on), `Toggle ${ext.name}`)}
+                    </span>
+                  </div>
+                </div>
+              {/each}
+            </div>
+          </section>
+        {/if}
       {/each}
+
+      {#if !SECTIONS.some((sec) => EXTENSIONS.some((e) => sec.kinds.includes(e.kind) && matches(e)))}
+        <div class="mt-10 flex flex-col items-center gap-2 text-center">
+          <p class="text-ui-sm text-foreground">{show === "on" && !query.trim() ? "No extensions are on" : "No extension matches"}</p>
+          <p class="text-ui-xs text-muted-foreground">
+            {show === "on" && !query.trim() ? "Turn one on below to change how the grid shows data." : "Try a different word, or clear the search."}
+          </p>
+          <Button variant="ghost" size="sm" onclick={() => { query = ""; show = "all" }}>Show all</Button>
+        </div>
+      {/if}
     </div>
   {:else}
     <!-- ── Detail (drill-in) ─────────────────────────────────────────────── -->
@@ -523,7 +638,7 @@
           class="-ml-1.5 mb-4 flex items-center gap-1.5 rounded-md px-1.5 py-1 text-ui-xs text-muted-foreground transition-[background-color,color] hover:bg-muted/50 hover:text-foreground"
           onclick={() => (selectedId = null)}
         >
-          <ArrowLeft class="size-3.5" />
+          <ArrowLeft class="size-3.5 shrink-0" />
           All extensions
         </button>
         <!-- No card. The page is already a panel and this is its heading, so a
@@ -539,7 +654,7 @@
                  sitting next to the toggle that already says on or off. The
                  icon is an identifier, not a status light. -->
             <span class="grid size-10 shrink-0 place-items-center rounded-lg border border-border/60 bg-muted/30 text-foreground/70">
-              {#if Icon}<Icon class="size-5" />{/if}
+              {#if Icon}<Icon class="size-5 shrink-0" />{/if}
             </span>
             <div class="min-w-0 flex-1 pt-0.5">
               <h2 class="text-ui-lg font-semibold tracking-tight text-foreground">{selected.name}</h2>
@@ -753,6 +868,24 @@
                 {@const c = cfg(selected.id, { revealOnHover: true })}
                 {#snippet ctl()}{@render toggle(c.revealOnHover !== false, () => setPluginConfig(selected.id, { revealOnHover: c.revealOnHover === false }), "Toggle reveal on hover")}{/snippet}
                 {@render settingRow("Reveal on hover", "Show the real value while hovering the cell", ctl)}
+              {:else if SIMPLE_SETTINGS[selected.id]}
+                {@const defs = SIMPLE_SETTINGS[selected.id]}
+                {@const c = cfg(selected.id, Object.fromEntries(defs.map((d) => [d.key, d.def])))}
+                {#each defs as d (d.key)}
+                  {#snippet ctl()}
+                    {#if d.options}
+                      <Select.Root type="single" value={String(c[d.key] ?? d.def)} onValueChange={(v) => v !== undefined && setPluginConfig(selected.id, { [d.key]: v })}>
+                        <Select.Trigger size="sm" class={selTrigger} aria-label={d.label}><span class="truncate">{d.options.find((o) => o.value === String(c[d.key] ?? d.def))?.label ?? d.options[0].label}</span></Select.Trigger>
+                        <Select.Content class="z-[120] min-w-[12rem] p-1" sideOffset={6}>
+                          {#each d.options as o (o.value)}<Select.Item value={o.value} label={o.label} class="py-1.5 pl-2 text-ui-xs">{o.label}</Select.Item>{/each}
+                        </Select.Content>
+                      </Select.Root>
+                    {:else}
+                      {@render toggle(c[d.key] === true, () => setPluginConfig(selected.id, { [d.key]: !(c[d.key] === true) }), d.label)}
+                    {/if}
+                  {/snippet}
+                  {@render settingRow(d.label, d.hint, ctl)}
+                {/each}
               {:else if selected.id === "heatmap"}
                 {@const c = cfg(selected.id, { palette: "blue" })}
                 {#snippet ctl()}
@@ -776,13 +909,13 @@
                         <input class={ruleInput} placeholder="^cus_" value={rule.pattern} oninput={(e) => updateRule(i, { pattern: e.currentTarget.value })} />
                         <input class={ruleInput} placeholder={"https://…/{value}"} value={rule.template} oninput={(e) => updateRule(i, { template: e.currentTarget.value })} />
                         <button type="button" class="grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground" aria-label="Remove rule" onclick={() => removeRule(i)}>
-                          <X class="size-3.5" />
+                          <X class="size-3.5 shrink-0" />
                         </button>
                       </div>
                     {/each}
                   </div>
                   <button type="button" class="mt-2.5 flex items-center gap-1.5 rounded-md px-1.5 py-1 text-ui-xs text-muted-foreground hover:text-foreground" onclick={addRule}>
-                    <Plus class="size-3.5" /> Add rule
+                    <Plus class="size-3.5 shrink-0" /> Add rule
                   </button>
                 </div>
               {/if}

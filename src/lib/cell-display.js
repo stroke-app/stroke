@@ -1,4 +1,8 @@
 const URL_RE = /^https?:\/\/\S+$/i
+// File URLs whose name has spaces in it (`…/photo 1 (5).jpg`), as uploads often
+// do. Spaces are only accepted when the text ends in a file extension, so a
+// sentence that starts with a link is still plain text. Encoded before use.
+const SPACED_FILE_URL_RE = /^https?:\/\/\S+(?: +\S+)*\.(jpe?g|png|gif|webp|svg|avif|bmp|ico|pdf)(\?\S*)?$/i
 const IMAGE_EXT_RE = /\.(jpe?g|png|gif|webp|svg|avif|bmp|ico)(\?.*)?$/i
 const PDF_EXT_RE = /\.pdf(\?.*)?$/i
 // Many image URLs carry no file extension (CDNs, signed/S3 URLs, image hosts).
@@ -16,7 +20,7 @@ const IMAGE_HOST_RE =
 export function cellLinkHref(text) {
   const t = text.trim()
   if (!t) return null
-  if (!URL_RE.test(t)) return null
+  if (!URL_RE.test(t) && !SPACED_FILE_URL_RE.test(t)) return null
   // Percent-encode before the value is ever fetched (image preview) or opened.
   // `new URL().href` normalizes unsafe characters - spaces, unicode, brackets -
   // and is idempotent, so an already-encoded URL is left untouched (no

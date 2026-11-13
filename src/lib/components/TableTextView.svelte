@@ -1,5 +1,13 @@
+<script module>
+  // Column picks per table, module-scoped like the JSON view's JSONPath: they
+  // survive switching views and tabs, and never leak from one table to another.
+  /** @type {Map<string, string[]>} */
+  const hiddenByTable = new Map()
+</script>
+
 <script>
   import { onDestroy } from 'svelte'
+  import { Popover, PopoverTrigger, PopoverContent } from '$lib/components/ui/popover/index.js'
   import Icon from './Icon.svelte'
   import { cn } from '$lib/utils.js'
   import CodeTextView from './CodeTextView.svelte'
@@ -8,6 +16,8 @@
     rowsToTsv,
     rowsToMarkdown,
     rowsToJsonl,
+    rowsToJson,
+    rowsToSql,
     buildExportFilename,
     saveExportFile,
   } from '$lib/export.js'
@@ -29,17 +39,20 @@
   } = $props()
 
 
-  /** @type {Array<{ id: 'csv' | 'tsv' | 'md' | 'jsonl', label: string, lang: string }>} */
+  /** @typedef {'csv' | 'tsv' | 'md' | 'jsonl' | 'json' | 'sql'} Format */
+  /** @type {Array<{ id: Format, label: string, lang: string, header: boolean }>} */
   const FORMATS = [
-    { id: 'csv', label: 'CSV', lang: 'csv' },
-    { id: 'tsv', label: 'TSV', lang: 'tsv' },
-    { id: 'md', label: 'Markdown', lang: 'markdown' },
-    { id: 'jsonl', label: 'JSON Lines', lang: 'json' },
+    { id: 'csv', label: 'CSV', lang: 'csv', header: true },
+    { id: 'tsv', label: 'TSV', lang: 'tsv', header: true },
+    { id: 'md', label: 'Markdown', lang: 'markdown', header: true },
+    { id: 'json', label: 'JSON', lang: 'json', header: false },
+    { id: 'jsonl', label: 'JSON Lines', lang: 'json', header: false },
+    { id: 'sql', label: 'SQL', lang: 'sql', header: false },
   ]
 
   const STORAGE_KEY = 'stroke:text-view-format'
 
-  /** @returns {'csv' | 'tsv' | 'md' | 'jsonl'} */
+  /** @returns {Format} */
   function loadFormat() {
     try {
       const v = localStorage.getItem(STORAGE_KEY)
@@ -52,7 +65,7 @@
 
   let format = $state(loadFormat())
 
-  /** @param {'csv' | 'tsv' | 'md' | 'jsonl'} next */
+  /** @param {Format} next */
   function setFormat(next) {
     format = next
     try {
@@ -76,13 +89,85 @@
   const truncated = $derived(rows.length > PREVIEW_ROWS)
   const previewRows = $derived(truncated ? rows.slice(0, PREVIEW_ROWS) : rows)
 
+  // ── Options: which columns, header row, wrap ──────────────────────────────
+  const OPTS_KEY = 'stroke:text-view-opts'
+  function loadOpts() {
+    try {
+      const o = JSON.parse(localStorage.getItem(OPTS_KEY) ?? '{}')
+      return { header: o.header !== false, wrap: o.wrap === true }
+    } catch {
+      return { header: true, wrap: false }
+    }
+  }
+  const _opts = loadOpts()
+  let includeHeader = $state(_opts.header)
+  let wrap = $state(_opts.wrap)
+  $effect(() => {
+    const v = JSON.stringify({ header: includeHeader, wrap })
+    try { localStorage.setItem(OPTS_KEY, v) } catch {}
+  })
+
+  const tableKey = $derived(tableName ?? '')
+  let hidden = $state(/** @type {Set<string>} */ (new Set()))
+  // Restore this table's picks whenever the table changes.
+  $effect(() => {
+    hidden = new Set(hiddenByTable.get(tableKey) ?? [])
+  })
+  /** @param {Set<string>} next */
+  function setHidden(next) {
+    hidden = next
+    hiddenByTable.set(tableKey, [...next])
+  }
+  /** @param {string} name */
+  function toggleColumn(name) {
+    const next = new Set(hidden)
+    if (next.has(name)) next.delete(name)
+    else next.add(name)
+    setHidden(next)
+  }
+  let columnQuery = $state('')
+  const pickable = $derived(
+    columnQuery.trim()
+      ? columns.filter((c) => c.name.toLowerCase().includes(columnQuery.trim().toLowerCase()))
+      : columns,
+  )
+
+  /** Indices of the columns that are shown, in table order. */
+  const keep = $derived(columns.map((c, i) => (hidden.has(c.name) ? -1 : i)).filter((i) => i >= 0))
+  const shownColumns = $derived(keep.length === columns.length ? columns : keep.map((i) => columns[i]))
+  /** @param {unknown[][]} src */
+  function project(src) {
+    if (keep.length === columns.length) return src
+    return src.map((r) => keep.map((i) => r[i]))
+  }
+
+  const formatHasHeader = $derived(FORMATS.find((f) => f.id === format)?.header ?? false)
+
+  /** Drop the first `n` lines without splitting the whole document. @param {string} t @param {number} n */
+  function dropLines(t, n) {
+    let at = 0
+    for (let k = 0; k < n; k++) {
+      const nl = t.indexOf('\n', at)
+      if (nl < 0) return ''
+      at = nl + 1
+    }
+    return t.slice(at)
+  }
+
   /** @param {unknown[][]} src */
   function serialise(src) {
-    if (columns.length === 0) return ''
-    if (format === 'tsv') return rowsToTsv(columns, src)
-    if (format === 'md') return rowsToMarkdown(columns, src)
-    if (format === 'jsonl') return rowsToJsonl(columns, src)
-    return rowsToCsv(columns, src)
+    if (shownColumns.length === 0) return ''
+    const rowsOut = project(src)
+    /** @type {string} */
+    let out
+    if (format === 'tsv') out = rowsToTsv(shownColumns, rowsOut)
+    else if (format === 'md') out = rowsToMarkdown(shownColumns, rowsOut)
+    else if (format === 'jsonl') out = rowsToJsonl(shownColumns, rowsOut)
+    else if (format === 'json') out = rowsToJson(shownColumns, rowsOut)
+    else if (format === 'sql') out = rowsToSql(shownColumns, rowsOut, tableName ?? 'exported_table')
+    else out = rowsToCsv(shownColumns, rowsOut)
+    if (formatHasHeader && !includeHeader) out = dropLines(out, format === 'md' ? 2 : 1)
+    return out
   }
 
   const text = $derived(serialise(previewRows))
@@ -132,10 +217,11 @@
         <button
           type="button"
           class={cn(
-            'inline-flex h-full items-center rounded-md px-2.5 text-ui-xs font-medium transition-colors',
+            // rounded-sm: concentric with the 10px frame and its 2px inset.
+            'inline-flex h-full items-center rounded-sm px-2.5 text-ui-xs font-medium transition-colors',
             'focus-visible:ring-2 focus-visible:ring-ring/18 focus-visible:outline-none',
             format === f.id
-              ? 'bg-background text-foreground shadow-sm'
+              ? 'bg-background text-foreground elevate-1'
               : 'text-muted-foreground hover:text-foreground',
           )}
           aria-pressed={format === f.id}
@@ -146,11 +232,91 @@
       {/each}
     </div>
 
+    <Popover>
+      <PopoverTrigger
+        class={cn(
+          'inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-ui-xs transition-colors hover:bg-accent hover:text-foreground',
+          hidden.size ? 'text-foreground' : 'text-muted-foreground',
+        )}
+        title="Choose columns"
+      >
+        <Icon name="columns-3" class="size-3.5 shrink-0" />
+        Columns
+        {#if hidden.size}
+          <span class="rounded-sm bg-muted px-1 text-ui-3xs tabular-nums">{columns.length - hidden.size}/{columns.length}</span>
+        {/if}
+      </PopoverTrigger>
+      <PopoverContent align="start" sideOffset={4} class="w-64 p-1">
+        <div data-slot="menu-search" class="flex items-center gap-1.5 px-2 pb-1.5 pt-1">
+          <Icon name="search" class="size-3.5 shrink-0 text-muted-foreground" />
+          <input
+            type="text"
+            bind:value={columnQuery}
+            placeholder="Find column"
+            aria-label="Find column"
+            class="no-focus-ring h-6 min-w-0 flex-1 bg-transparent text-ui-xs text-foreground placeholder:text-muted-foreground focus:outline-none"
+          />
+        </div>
+        <div class="flex items-center gap-1 px-1 py-1 text-ui-2xs">
+          <button type="button" class="rounded-sm px-1.5 py-0.5 text-muted-foreground hover:bg-accent hover:text-foreground" onclick={() => setHidden(new Set())}>All</button>
+          <button type="button" class="rounded-sm px-1.5 py-0.5 text-muted-foreground hover:bg-accent hover:text-foreground" onclick={() => setHidden(new Set(columns.map((c) => c.name)))}>None</button>
+          <span class="ml-auto pr-1 tabular-nums text-muted-foreground">{columns.length - hidden.size} of {columns.length}</span>
+        </div>
+        <div class="max-h-72 overflow-y-auto">
+          {#each pickable as c (c.name)}
+            <button
+              type="button"
+              role="checkbox"
+              aria-checked={!hidden.has(c.name)}
+              class="flex min-h-7 w-full min-w-0 items-center gap-2 rounded-sm px-2 py-1 text-left text-ui-xs hover:bg-accent"
+              onclick={() => toggleColumn(c.name)}
+            >
+              <span class={cn('flex size-3.5 shrink-0 items-center justify-center rounded-sm border', hidden.has(c.name) ? 'border-muted-foreground/40' : 'border-primary bg-primary text-primary-foreground')}>
+                {#if !hidden.has(c.name)}<Icon name="check" class="size-2.5 shrink-0" />{/if}
+              </span>
+              <span class="min-w-0 flex-1 truncate font-mono">{c.name}</span>
+            </button>
+          {:else}
+            <p class="px-2 py-2 text-ui-xs text-muted-foreground">No column matches.</p>
+          {/each}
+        </div>
+      </PopoverContent>
+    </Popover>
+
+    {#if formatHasHeader}
+      <button
+        type="button"
+        aria-pressed={includeHeader}
+        title={includeHeader ? 'Header row included' : 'Header row left out'}
+        class={cn(
+          'inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-ui-xs transition-colors hover:bg-accent hover:text-foreground',
+          includeHeader ? 'text-foreground' : 'text-muted-foreground',
+        )}
+        onclick={() => (includeHeader = !includeHeader)}
+      >
+        <Icon name={includeHeader ? 'check' : 'minus'} class="size-3.5 shrink-0" />
+        Header
+      </button>
+    {/if}
+    <button
+      type="button"
+      aria-pressed={wrap}
+      title="Wrap long lines"
+      class={cn(
+        'inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-ui-xs transition-colors hover:bg-accent hover:text-foreground',
+        wrap ? 'text-foreground' : 'text-muted-foreground',
+      )}
+      onclick={() => (wrap = !wrap)}
+    >
+      <Icon name="wrap-text" class="size-3.5 shrink-0" />
+      Wrap
+    </button>
+
     <div class="ml-auto flex shrink-0 items-center gap-1">
       {#if rows.length > 0}
         <span class="select-none px-1 text-ui-2xs tabular-nums text-muted-foreground">
           {rows.length.toLocaleString('en-US')}
-          {rows.length === 1 ? 'row' : 'rows'}
+          {rows.length === 1 ? 'row' : 'rows'}{#if hidden.size} · {shownColumns.length} of {columns.length} columns{/if}
         </span>
         <div class="mx-0.5 h-4 w-px bg-border"></div>
       {/if}
@@ -201,6 +367,12 @@
         {rows.length.toLocaleString()} rows. Copy and Download use all of them.
       </p>
     {/if}
-    <CodeTextView {text} {language} />
+    {#if shownColumns.length === 0}
+      <div class="flex min-h-0 flex-1 items-center justify-center bg-panel">
+        <p class="text-ui-sm text-muted-foreground">No columns selected.</p>
+      </div>
+    {:else}
+      <CodeTextView {text} {language} wordWrap={wrap ? 'on' : 'off'} />
+    {/if}
   {/if}
 </div>

@@ -4,6 +4,8 @@
   import Icon from './Icon.svelte'
   import { cn } from '$lib/utils.js'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
+  import { formatCellValue, anyDisplayExtEnabled } from '$lib/plugins/registry.js'
+  import { pluginState } from '$lib/stores/plugins.js'
   import {
     normalizeCellValue,
     formatJsonValue,
@@ -116,6 +118,18 @@
    * @type {number | null}
    */
   let editingIdx = $state(null)
+  /** Grow a textarea with its content (up to 8 lines, then scroll). @param {HTMLTextAreaElement} node */
+  function autosize(node) {
+    const fit = () => {
+      node.style.height = 'auto'
+      const max = 8 * 20 + 6
+      node.style.height = `${Math.min(node.scrollHeight + 2, max)}px`
+      node.style.overflowY = node.scrollHeight + 2 > max ? 'auto' : 'hidden'
+    }
+    fit()
+    node.addEventListener('input', fit)
+    return { destroy: () => node.removeEventListener('input', fit) }
+  }
   /** @param {HTMLElement} node */
   function focusOnMount(node) {
     const el = /** @type {HTMLInputElement | HTMLTextAreaElement} */ (
@@ -127,6 +141,41 @@
   // Leaving a record closes the editor with it; the draft is already committed
   // by the blur handler, so there is nothing to carry across.
   $effect(() => { void idx; editingIdx = null })
+
+  /** Unix seconds or milliseconds, in a column named like a time. */
+  const TIME_NAME = /(_at|_on|_time|_ts|^ts|timestamp|date|_seen|expires|expiry)$/i
+  /** @param {number} ms */
+  function ago(ms) {
+    const s = Math.round((Date.now() - ms) / 1000)
+    const a = Math.abs(s)
+    const w = a < 60 ? 'just now' : a < 3600 ? `${Math.floor(a / 60)} min` : a < 86400 ? `${Math.floor(a / 3600)}h` : a < 86400 * 60 ? `${Math.floor(a / 86400)}d` : a < 86400 * 730 ? `${Math.floor(a / (86400 * 30))}mo` : `${Math.floor(a / (86400 * 365))}y`
+    return w === 'just now' ? w : s >= 0 ? `${w} ago` : `in ${w}`
+  }
+  /**
+   * A readable second line for a value: what the display extensions make of
+   * it (when any are on), else a date for an epoch number in a time column.
+   * @param {unknown} raw @param {string} type @param {string} name @param {number} colIdx @param {unknown[]} row
+   * @returns {string}
+   */
+  function hintFor(raw, type, name, colIdx, row) {
+    if (raw === null || raw === undefined || typeof raw === 'object') return ''
+    if (extOn) {
+      const d = formatCellValue(raw, type, name, { row, colIdx, fk: null })
+      const shown = d?.display != null && String(d.display) !== String(raw) ? String(d.display) : ''
+      const trail = typeof d?.trail?.text === 'string' ? d.trail.text : ''
+      const text = [shown, trail].filter(Boolean).join(' ')
+      if (text) return text
+    }
+    if (TIME_NAME.test(name)) {
+      const t = String(raw).trim()
+      const ms = /^\d{13}$/.test(t) ? Number(t) : /^\d{10}$/.test(t) ? Number(t) * 1000 : NaN
+      if (Number.isFinite(ms)) {
+        return `${new Date(ms).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })} · ${ago(ms)}`
+      }
+    }
+    return ''
+  }
+  const extOn = $derived.by(() => { void $pluginState; return anyDisplayExtEnabled() })
 
   const fields = $derived.by(() => {
     if (columns.length === 0 || rows.length === 0) return []
@@ -165,6 +214,7 @@
         // render, allocating an array each time just to count lines.
         textRows: Math.min(8, Math.max(2, (valueToEditString(raw).match(/\n/g)?.length ?? 0) + 1)),
         nullable: col.nullable !== false,
+        hint: hintFor(raw, dataType, col.name, i, row),
       })
     })
     return out
@@ -336,73 +386,90 @@
   }
 
   const navBtn =
-    'inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-30'
+    'inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-30'
+  /** Where this record sits in the result, 0..1, for the position bar. */
+  const position = $derived(total > 0 ? Math.min(1, (offset + idx + 1) / total) : rows.length ? (idx + 1) / rows.length : 0)
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
 <div
-  class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden outline-none"
+  class="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-panel outline-none"
   role="group"
   aria-label="Record view"
   tabindex={0}
   onkeydown={handleKeydown}
 >
-  <!-- Navigation bar -->
-  <div class="studio-chrome flex h-8 shrink-0 items-center gap-0.5 border-b border-border bg-panel px-2">
-    <button type="button" class={navBtn} title="First record on page" disabled={idx === 0 || rows.length === 0} onclick={() => setIdx(0)}>
-      <Icon name="chevrons-left" class="size-3.5" />
-    </button>
-    <button type="button" class={navBtn} title="Previous record (←)" disabled={!canPrev} onclick={goPrev}>
-      <Icon name="chevron-left" class="size-3.5" />
-    </button>
-    <span class="min-w-28 select-none rounded-full bg-accent/40 px-2.5 py-0.5 text-center font-mono text-ui-2xs tabular-nums text-foreground/80">
-      {recordLabel}
-    </span>
-    <button type="button" class={navBtn} title="Next record (→)" disabled={!canNext} onclick={goNext}>
-      <Icon name="chevron-right" class="size-3.5" />
-    </button>
+  <!-- Navigation bar: the table toolbar's height and fields. -->
+  <div class="studio-chrome relative flex h-11 shrink-0 items-center gap-1.5 border-b border-border/40 bg-panel px-3">
+    <div class="flex items-center gap-0.5">
+      <button type="button" class={navBtn} title="First record on page" aria-label="First record on page" disabled={idx === 0 || rows.length === 0} onclick={() => setIdx(0)}>
+        <Icon name="chevrons-left" class="size-3.5 shrink-0" />
+      </button>
+      <button type="button" class={navBtn} title="Previous record (←)" aria-label="Previous record" disabled={!canPrev} onclick={goPrev}>
+        <Icon name="chevron-left" class="size-4 shrink-0" />
+      </button>
+      <span class="min-w-[7.5rem] select-none px-1.5 text-center text-ui-sm tabular-nums text-muted-foreground">
+        {#if rows.length}Record <span class="font-medium text-foreground">{(offset + idx + 1).toLocaleString('en-US')}</span> of {total < 0 ? '…' : total.toLocaleString('en-US')}{:else}No records{/if}
+      </span>
+      <button type="button" class={navBtn} title="Next record (→)" aria-label="Next record" disabled={!canNext} onclick={goNext}>
+        <Icon name="chevron-right" class="size-4 shrink-0" />
+      </button>
+      <button type="button" class={navBtn} title="Last record on page" aria-label="Last record on page" disabled={rows.length === 0 || idx === rows.length - 1} onclick={() => setIdx(rows.length - 1)}>
+        <Icon name="chevrons-right" class="size-3.5 shrink-0" />
+      </button>
+    </div>
+
+    <span class="flex-1"></span>
+
+    <div class="relative flex h-8 w-64 min-w-[10rem] shrink items-center">
+      <Icon name="search" class="pointer-events-none absolute left-2.5 size-3.5 shrink-0 text-muted-foreground" />
+      <input
+        type="text"
+        placeholder="Search fields and values"
+        aria-label="Search fields"
+        bind:value={fieldSearch}
+        onkeydown={(e) => { if (e.key === 'Escape' && fieldSearch) { e.preventDefault(); e.stopPropagation(); fieldSearch = '' } }}
+        class="field-surface h-8 w-full min-w-0 pl-8 pr-7 text-ui-sm text-foreground shadow-none outline-none placeholder:text-muted-foreground"
+      />
+      {#if fieldSearch}
+        <button type="button" class="hit-area absolute right-1.5 inline-flex size-5 items-center justify-center rounded-sm text-muted-foreground hover:bg-accent hover:text-foreground" aria-label="Clear search" onclick={() => (fieldSearch = '')}>
+          <Icon name="x" class="size-3 shrink-0" />
+        </button>
+      {/if}
+    </div>
     <button
       type="button"
-      class={navBtn}
-      title="Last record on page"
-      disabled={rows.length === 0 || idx === rows.length - 1}
-      onclick={() => setIdx(rows.length - 1)}
+      title="Copy record as JSON"
+      class="field-surface inline-flex h-8 shrink-0 items-center gap-1.5 px-2.5 text-ui-sm text-foreground/85 shadow-none transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40"
+      disabled={rows.length === 0}
+      onclick={copyRecordJson}
     >
-      <Icon name="chevrons-right" class="size-3.5" />
+      <Icon name="braces" class="size-3.5 shrink-0" />
+      Copy JSON
     </button>
 
-    <div class="ml-auto flex min-w-0 shrink-0 items-center gap-0.5">
-      <div class="relative flex h-6 w-40 items-center">
-        <Icon name="search" class="pointer-events-none absolute left-2 size-3 text-muted-foreground" />
-        <input
-          type="text"
-          placeholder="Search fields…"
-          bind:value={fieldSearch}
-          class="h-6 w-full min-w-0 rounded-md border border-transparent bg-accent/40 pl-6.5 pr-2 font-mono text-ui-2xs placeholder:text-muted-foreground focus:border-ring/55 focus:ring-2 focus:ring-ring/15 focus:outline-none"
-        />
-      </div>
-      <div class="mx-1 h-4 w-px bg-border/60"></div>
-      <button
-        type="button"
-        title="Copy record as JSON"
-        class="inline-flex items-center gap-1.5 rounded-md px-2 py-1 font-mono text-ui-2xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-        disabled={rows.length === 0}
-        onclick={copyRecordJson}
-      >
-        <Icon name="copy" class="size-3 shrink-0" />
-        <span>Copy</span>
-      </button>
+    <!-- Where this record sits in the result. -->
+    <div class="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-transparent" aria-hidden="true">
+      <div class="h-full bg-primary/60 transition-[width] duration-200 ease-out" style="width: {position * 100}%"></div>
     </div>
   </div>
 
   <!-- Field list -->
-  <div class="app-scroll min-h-0 flex-1 overflow-y-auto bg-panel">
+  <div class="app-scroll min-h-0 flex-1 overflow-y-auto">
     {#if rows.length === 0}
       <div class="flex h-full items-center justify-center">
-        <p class="font-mono text-ui-sm text-muted-foreground">No rows on this page</p>
+        <p class="text-ui-sm text-muted-foreground">No rows on this page</p>
       </div>
     {:else}
-      <div class="mx-auto w-full max-w-3xl px-6 py-5">
+      <div class="mx-auto w-full max-w-4xl px-5 pb-5 pt-3">
+        <!-- Icon, name, count, then a hairline to the edge: the list header the
+             Config and Activity pages use. -->
+        <div class="mb-1 flex items-center gap-2 px-3 py-1.5">
+          <Icon name="columns-3" class="size-4 shrink-0 text-muted-foreground" />
+          <h3 class="text-ui-sm text-muted-foreground">{fieldSearch ? 'Matching fields' : 'Fields'}</h3>
+          <span class="text-ui-sm tabular-nums text-muted-foreground/70">{filteredFields.length}{fieldSearch ? ` of ${fields.length}` : ''}</span>
+          <span class="ml-2 h-px flex-1 bg-border/50" aria-hidden="true"></span>
+        </div>
         <!-- A label/value list, not a form. Every value used to sit in its own
              bordered box whether or not it was editable, which made twelve rows
              read as twelve inputs and gave the panel a ragged right edge: the
@@ -410,18 +477,17 @@
              where a read-only one has one, so every row ended at a different x.
              Values are text now, the control appears when you click one, and the
              actions column is a fixed width so the value column is too. -->
-        <dl class="divide-y divide-border/30 overflow-hidden rounded-lg border border-border/50 bg-card/40">
+        <dl class="flex flex-col gap-px">
           {#each filteredFields as field (field.colIdx)}
             {@const editing = editingIdx === field.colIdx}
-            <div class="group/field grid grid-cols-[minmax(8.5rem,12rem)_minmax(0,1fr)_3.25rem] items-start gap-x-4 px-4 py-2 transition-colors [contain-intrinsic-size:auto_44px] [content-visibility:auto] hover:bg-accent/20">
-              <dt class="flex min-w-0 flex-col pt-1.5">
-                <span class="flex items-center gap-1 truncate font-mono text-ui-xs text-foreground">
-                  <span class="truncate">{field.name}</span>
-                  {#if field.isPk}
-                    <Icon name="key-round" class="size-3 shrink-0 text-warning" title="Primary key, cannot be changed" />
-                  {/if}
-                </span>
-                <span class="truncate font-mono text-ui-3xs text-muted-foreground" title={field.dataType}>{field.dataType}</span>
+            <div class={cn("group/field grid grid-cols-[minmax(8rem,13rem)_minmax(0,1fr)_3rem] items-start gap-x-4 rounded-md px-2.5 py-1 transition-colors [contain-intrinsic-size:auto_30px] [content-visibility:auto] hover:bg-muted/25", editing && "bg-muted/30")}>
+              <!-- One line: name, key, and the type as a muted suffix. -->
+              <dt class="flex min-w-0 items-baseline gap-1.5 py-1" title="{field.name} · {field.dataType || 'unknown'}{field.nullable ? '' : ' · not null'}">
+                <span class="min-w-0 truncate font-mono text-ui-xs text-foreground">{field.name}</span>
+                {#if field.isPk}
+                  <Icon name="key-round" class="size-3 shrink-0 self-center text-warning" aria-label="Primary key" />
+                {/if}
+                <span class="ml-auto min-w-0 shrink truncate text-ui-2xs text-muted-foreground/70">{field.dataType}</span>
               </dt>
 
               <dd class="relative min-w-0">
@@ -429,7 +495,7 @@
                   {#if field.isBoolean || field.enumValues}
                     <div use:focusOnMount>
                       <FieldSelect
-                        class="w-full bg-transparent text-ui-xs"
+                        class="h-6 w-full bg-transparent text-ui-xs"
                         value={field.initialEditStr}
                         disabled={savingFields[field.colIdx]}
                         onchange={(v) => { void saveField(field.colIdx, v); editingIdx = null }}
@@ -449,7 +515,7 @@
                       disabled={savingFields[field.colIdx]}
                       placeholder={field.isNull ? 'NULL' : ''}
                       class={cn(
-                        'field-surface w-full resize-none bg-transparent px-2.5 py-1.5 font-mono text-ui-xs text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-50',
+                        'no-field-frame block w-full resize-none rounded-sm border border-ring/70 bg-background/60 px-1.5 py-0.5 font-mono text-ui-xs leading-5 text-foreground shadow-none outline-none placeholder:text-muted-foreground disabled:opacity-50',
                         fieldErrors[field.colIdx] && 'border-destructive',
                       )}
                       oninput={(e) => scheduleFieldSave(field.colIdx, /** @type {HTMLTextAreaElement} */ (e.currentTarget).value)}
@@ -457,20 +523,24 @@
                       onkeydown={(e) => handleFieldKeydown(field.colIdx, e)}
                     ></textarea>
                   {:else}
-                    <input
+                    <!-- A textarea sized to its text, in the read-only value's exact
+                         box (border, padding, line height): clicking a value no
+                         longer changes the row's height. Enter still saves. -->
+                    <textarea
                       use:focusOnMount
-                      type="text"
+                      use:autosize
+                      rows="1"
                       value={field.initialEditStr}
                       disabled={savingFields[field.colIdx]}
                       placeholder={field.isNull ? 'NULL' : ''}
                       class={cn(
-                        'field-surface w-full bg-transparent px-2.5 py-1.5 font-mono text-ui-xs text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-50',
+                        'no-field-frame block w-full resize-none overflow-hidden rounded-sm border border-ring/70 bg-background/60 px-1.5 py-0.5 font-mono text-ui-xs leading-5 break-all text-foreground shadow-none outline-none placeholder:text-muted-foreground disabled:opacity-50',
                         fieldErrors[field.colIdx] && 'border-destructive',
                       )}
-                      oninput={(e) => scheduleFieldSave(field.colIdx, /** @type {HTMLInputElement} */ (e.currentTarget).value)}
+                      oninput={(e) => scheduleFieldSave(field.colIdx, /** @type {HTMLTextAreaElement} */ (e.currentTarget).value)}
                       onblur={(e) => { handleFieldBlur(field.colIdx, e); editingIdx = null }}
                       onkeydown={(e) => handleFieldKeydown(field.colIdx, e)}
-                    />
+                    ></textarea>
                   {/if}
                 {:else}
                   <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -479,10 +549,10 @@
                     tabindex={field.editable ? 0 : undefined}
                     aria-label={field.editable ? `Edit ${field.name}` : undefined}
                     class={cn(
-                      'w-full rounded-md border border-transparent px-2.5 py-1.5 font-mono text-ui-xs',
-                      field.editable && 'cursor-text hover:border-field-border',
-                      field.isNull || field.isEmpty ? 'italic text-muted-foreground' : 'text-foreground',
-                      field.isMultiline ? 'line-clamp-3 break-all whitespace-pre-wrap' : 'truncate',
+                      'w-full rounded-sm border border-transparent px-1.5 py-0.5 font-mono text-ui-xs leading-5',
+                      field.editable && 'cursor-text hover:border-field-border hover:bg-background/40',
+                      field.isNull || field.isEmpty ? 'text-muted-foreground/70' : 'text-foreground',
+                      field.isMultiline ? 'line-clamp-3 break-all whitespace-pre-wrap' : 'line-clamp-2 break-all',
                     )}
                     title={field.displayValue}
                     onclick={() => { if (field.editable) editingIdx = field.colIdx }}
@@ -492,11 +562,11 @@
                       e.preventDefault()
                       editingIdx = field.colIdx
                     }}
-                  >{field.displayValue}</div>
+                  >{#if field.isNull}<span class="rounded-sm bg-muted/60 px-1 text-ui-2xs">NULL</span>{:else if field.isEmpty}<span class="rounded-sm bg-muted/60 px-1 text-ui-2xs">empty</span>{:else}{field.displayValue}{/if}{#if field.hint}<span class="ml-2 font-sans text-ui-2xs text-muted-foreground" title={field.hint}>{field.hint}</span>{/if}</div>
                 {/if}
 
                 {#if savingFields[field.colIdx]}
-                  <Icon name="loader-2" class="absolute -left-5 top-2.5 size-3 animate-spin text-muted-foreground" />
+                  <Icon name="loader-2" class="absolute -left-4 top-1.5 size-3 animate-spin text-muted-foreground" />
                 {/if}
                 {#if fieldErrors[field.colIdx]}
                   <p class="mt-0.5 font-mono text-ui-3xs text-destructive">{fieldErrors[field.colIdx]}</p>
@@ -505,26 +575,26 @@
 
               <!-- Fixed width, so a row with a Set-NULL button and one without
                    still end their value column at the same x. -->
-              <div class="flex items-center justify-end gap-0.5 pt-1">
+              <div class="flex items-center justify-end gap-0.5 pt-0.5">
                 <button
                   type="button"
-                  class="opacity-0 inline-flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-opacity hover:bg-accent hover:text-foreground group-hover/field:opacity-100"
+                  class="hit-area opacity-0 inline-flex size-5 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-opacity hover:bg-accent hover:text-foreground group-hover/field:opacity-100"
                   title="Copy value"
                   aria-label="Copy {field.name}"
                   onclick={() => void copyFieldValue(field)}
                 >
-                  <Icon name="copy" class="size-3" />
+                  <Icon name="copy" class="size-3 shrink-0" />
                 </button>
                 {#if field.editable && field.nullable}
                   <button
                     type="button"
-                    class="opacity-0 inline-flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground transition-opacity hover:bg-accent hover:text-foreground group-hover/field:opacity-100"
+                    class="hit-area opacity-0 inline-flex size-5 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-opacity hover:bg-accent hover:text-foreground group-hover/field:opacity-100"
                     title="Set NULL"
                     aria-label="Set {field.name} to NULL"
                     disabled={field.isNull || savingFields[field.colIdx]}
                     onclick={() => void commitValue(field.colIdx, null)}
                   >
-                    <Icon name="eraser" class="size-3" />
+                    <Icon name="eraser" class="size-3 shrink-0" />
                   </button>
                 {/if}
               </div>
@@ -532,11 +602,16 @@
           {/each}
 
           {#if filteredFields.length === 0 && fieldSearch}
-            <p class="px-4 py-8 text-center font-mono text-ui-xs text-muted-foreground">No fields match "{fieldSearch}"</p>
+            <p class="px-3 py-10 text-center text-ui-sm text-muted-foreground">No fields match "{fieldSearch}"</p>
           {/if}
         </dl>
-        <p class="mt-3 select-none text-center text-ui-3xs text-muted-foreground">
-          ← → to navigate records{onsave && !readonly ? ' · Enter saves a field · Esc reverts' : ''}
+        <p class="mt-4 flex select-none flex-wrap items-center justify-center gap-x-3 gap-y-1 text-ui-xs text-muted-foreground/80">
+          <span><kbd class="rounded-sm border border-border/60 px-1 font-sans text-ui-2xs">←</kbd> <kbd class="rounded-sm border border-border/60 px-1 font-sans text-ui-2xs">→</kbd> records</span>
+          {#if onsave && !readonly}
+            <span>Click a value to edit</span>
+            <span><kbd class="rounded-sm border border-border/60 px-1 font-sans text-ui-2xs">Enter</kbd> saves</span>
+            <span><kbd class="rounded-sm border border-border/60 px-1 font-sans text-ui-2xs">Esc</kbd> reverts</span>
+          {/if}
         </p>
       </div>
     {/if}

@@ -115,12 +115,29 @@ function _computeAlpha(/** @type {string} */ color, /** @type {number} */ a) {
   if (fnMatch) {
     const fn = fnMatch[1].toLowerCase();
     let inner = fnMatch[2];
+    // A colour that already has an alpha keeps it as a factor: `a` scales it
+    // rather than replacing it. The Glass themes' surfaces are "white at 7%",
+    // and replacing that with 0.38 painted the grid header in solid light grey.
+    let base = 1;
     const slash = inner.lastIndexOf("/");
-    if (slash !== -1) inner = inner.slice(0, slash).trim(); // drop existing alpha
+    if (slash !== -1) {
+      const raw = inner.slice(slash + 1).trim();
+      const v = parseFloat(raw);
+      if (Number.isFinite(v)) base = raw.endsWith("%") ? v / 100 : v;
+      inner = inner.slice(0, slash).trim();
+    }
     /** @type {Record<string, string>} */
     const commaFns = { rgb: "rgba", rgba: "rgba", hsl: "hsla", hsla: "hsla" };
-    if (commaFns[fn] && inner.includes(",")) return `${commaFns[fn]}(${inner}, ${a})`;
-    return `${fn}(${inner} / ${a})`;
+    if (commaFns[fn] && inner.includes(",")) {
+      const parts = inner.split(",").map((x) => x.trim());
+      if (parts.length === 4) {
+        const v = parseFloat(parts[3]);
+        if (Number.isFinite(v)) base = parts[3].endsWith("%") ? v / 100 : v;
+        parts.length = 3;
+      }
+      return `${commaFns[fn]}(${parts.join(", ")}, ${+(a * base).toFixed(4)})`;
+    }
+    return `${fn}(${inner} / ${+(a * base).toFixed(4)})`;
   }
   if (c[0] === "#") {
     let hex = c.slice(1);

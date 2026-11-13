@@ -111,7 +111,9 @@ export function isImageUrl(v) {
   // Accept data:image URIs and any http(s) URL - the transform is opt-in per
   // column, so being lenient means it works for extension-less avatar URLs
   // (Google/GitHub/CDNs). A non-image URL just shows a broken-image tile.
-  return /^data:image\//i.test(s) || /^https?:\/\/\S+$/i.test(s)
+  return /^data:image\//i.test(s) || /^https?:\/\/\S+$/i.test(s) ||
+    // A file name with spaces in it (`…/photo 1 (5).jpg`); encoded before loading.
+    /^https?:\/\/\S+(?: +\S+)*\.(jpe?g|png|gif|webp|svg|avif|bmp|ico)(\?\S*)?$/i.test(s)
 }
 /** @param {number} bytes */
 function humanBytes(bytes) {
