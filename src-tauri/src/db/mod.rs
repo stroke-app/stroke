@@ -14,6 +14,12 @@ pub mod live;
 pub mod mysql;
 pub mod objects;
 pub mod redis;
+pub mod dynamodb;
+pub mod couchdb;
+pub mod cassandra;
+pub mod firestore;
+pub mod mongo;
+pub mod docdb;
 #[cfg(test)]
 mod dialect_matrix;
 mod query;
@@ -46,11 +52,11 @@ pub use ssh_tunnel::TunnelState;
 pub use query::{
     delete_table_row, delete_table_rows, execute_ddl, execute_sql, execute_sql_multi, execute_sql_on_conn, execute_sql_script, StatementOutcome,
     fetch_cell_value, CellValueResult, get_column_stats, get_table_rows, count_table_rows, insert_table_row, update_table_cell, ping_connection,
-    ColumnStats, InsertRowResult, KeysetCursor, RowChunk, RowFilter, RowSink, SortSpec, SqlResult, TableRows,
+    ColumnStats, InsertRowResult, KeysetCursor, apply_table_changes, ApplyChangesResult, RowUpdate, RowChunk, RowFilter, RowSink, SortSpec, SqlResult, TableRows,
 };
 pub use schema::{
     list_schemas, list_tables, list_schemas_on_conn, list_tables_on_conn,
-    list_indexes, list_enums, list_functions, list_triggers, list_sequences,
+    list_indexes_for, list_enums, list_functions, list_triggers, list_sequences,
     table_row_counts, truncate_table, drop_table, get_table_column_structure, get_schema_column_structure, get_incoming_foreign_keys,
     get_table_ddl, get_table_ddl_on_conn,
     TableInfo, TableRowCount, IndexInfo, EnumInfo, FunctionInfo, TriggerInfo, SequenceInfo, ColumnStructureRow, TableColumnStructure, IncomingForeignKey,

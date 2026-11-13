@@ -298,14 +298,22 @@ pub enum AnyConnectionConfig {
     Libsql(LibSqlConfig),
     #[serde(rename = "clickhouse")]
     Clickhouse(ClickhouseConfig),
-    #[serde(rename = "redis")]
+    // Valkey speaks the Redis protocol; saved Valkey connections use this path.
+    #[serde(rename = "redis", alias = "valkey")]
     Redis(RedisConfig),
+    #[serde(rename = "dynamodb")]
+    Dynamodb(crate::db::dynamodb::DynamoConfig),
+    #[serde(rename = "couchdb")]
+    Couchdb(crate::db::couchdb::CouchConfig),
     #[serde(rename = "duckdb")]
     Duckdb(DuckdbConfig),
     #[serde(rename = "mssql")]
     Mssql(MssqlConfig),
     #[serde(rename = "posthog")]
     Posthog(PosthogConfig),
+    /// Only the terminal (mongosh) uses this path; queries go through db::mongo.
+    #[serde(rename = "mongodb")]
+    Mongodb(crate::db::mongo::MongoConfig),
 }
 
 // ── Active connection ─────────────────────────────────────────────────────────
@@ -319,6 +327,9 @@ pub enum ActiveConnection {
     LibSql(LibSqlConfig),
     Clickhouse(ClickhouseConfig),
     Redis(RedisConfig),
+    Dynamodb(crate::db::dynamodb::DynamoConfig),
+    /// CouchDB, Cassandra, Firestore: see `db::docdb`.
+    Doc(crate::db::docdb::DocConn),
     Duckdb(DuckdbHandle),
     Mssql(MssqlHandle),
     Posthog(PosthogConfig),
@@ -334,6 +345,8 @@ impl ActiveConnection {
             Self::LibSql(_) => "libsql",
             Self::Clickhouse(_) => "clickhouse",
             Self::Redis(_) => "redis",
+            Self::Dynamodb(_) => "dynamodb",
+            Self::Doc(d) => d.driver(),
             Self::Duckdb(_) => "duckdb",
             Self::Mssql(_) => "mssql",
             Self::Posthog(_) => "posthog",
@@ -757,6 +770,72 @@ macro_rules! ping_if_stale {
             }
         }
     }};
+}
+
+/// Ping every idle pooled connection, and drop the ones that no longer answer.
+///
+/// The 30s health check used to run one `SELECT 1` through the pool, which
+/// kept exactly one connection alive. The rest sat idle for minutes, and a
+/// router/NAT idle timeout kills those one by one, silently: the socket still
+/// looks open. `ping_if_stale` then trusts them (`recently_verified` says the
+/// path is fine, because the heartbeat connection is) or waits out a ~10x RTT
+/// deadline on each in turn before reconnecting - several seconds per dead
+/// connection, queued, which is the "app open a while, tables crawl" slowdown
+/// (log: acquires of ~5s, 10-25s row fetches after a long session).
+///
+/// Touching every idle connection on the heartbeat keeps each NAT mapping alive
+/// and keeps idle time under `STALE_AFTER`, so table opens skip the ping
+/// entirely. A connection that doesn't answer is detached (socket dropped, no
+/// graceful Terminate to wait on) so the pool opens a fresh one in its place.
+pub(crate) async fn keepalive_idle<DB>(pool: &sqlx::Pool<DB>) -> Result<(), String>
+where
+    DB: sqlx::Database,
+    for<'c> &'c mut DB::Connection: sqlx::Executor<'c, Database = DB>,
+    for<'q> <DB as sqlx::Database>::Arguments<'q>: sqlx::IntoArguments<'q, DB>,
+{
+    const PING_DEADLINE: Duration = Duration::from_secs(5);
+    // Never compete with real work: if any connection is checked out the user
+    // is doing something, and holding the idle ones for a round trip would make
+    // their next query wait or open a fresh connection. A busy pool is also
+    // proof the path is alive; the next quiet heartbeat sweeps instead.
+    if pool.num_idle() < pool.size() as usize {
+        return Ok(());
+    }
+    // try_acquire takes idle connections only (never opens one, never runs
+    // before_acquire), and holding them all makes each one distinct.
+    let mut idle = Vec::new();
+    while let Some(conn) = pool.try_acquire() {
+        idle.push(conn);
+    }
+    if idle.is_empty() {
+        // Everything is busy, which already proves the connections are live;
+        // still prove the path with one pooled round trip.
+        return sqlx::query("SELECT 1").execute(pool).await.map(|_| ()).map_err(|e| e.to_string());
+    }
+    let results = futures::future::join_all(idle.into_iter().map(|mut conn| async move {
+        match tokio::time::timeout(PING_DEADLINE, sqlx::query("SELECT 1").execute(&mut *conn)).await {
+            Ok(Ok(_)) => Ok(()),
+            Ok(Err(e)) => {
+                drop(conn.detach());
+                Err(e.to_string())
+            }
+            Err(_) => {
+                drop(conn.detach());
+                Err(format!("no answer within {}s", PING_DEADLINE.as_secs()))
+            }
+        }
+    }))
+    .await;
+    let dead = results.iter().filter(|r| r.is_err()).count();
+    if dead > 0 {
+        log::info!("keepalive: dropped {dead} of {} idle connection(s) that stopped answering", results.len());
+    }
+    // The connection is healthy if any one answered; dead ones were replaced.
+    if dead < results.len() {
+        Ok(())
+    } else {
+        results.into_iter().find_map(Result::err).map_or(Ok(()), Err)
+    }
 }
 
 /// Measured handshake cost per `host:port`, in ms, remembered across restarts.
@@ -1409,6 +1488,35 @@ pub async fn connect_posthog(state: State<'_, DbState>, config: PosthogConfig) -
     test_posthog_connection(config.clone()).await?;
     close_existing(&state).await;
     set_conn(&state, Some(ActiveConnection::Posthog(config)))
+}
+
+// ── DynamoDB connect / test ───────────────────────────────────────────────────
+
+pub async fn connect_dynamodb(state: State<'_, DbState>, config: crate::db::dynamodb::DynamoConfig) -> Result<(), String> {
+    crate::db::dynamodb::ping(&config).await?;
+    set_conn(&state, Some(ActiveConnection::Dynamodb(config)))
+}
+
+// ── Document engines connect ──────────────────────────────────────────────────
+
+pub async fn connect_cassandra(state: State<'_, DbState>, config: crate::db::cassandra::CassandraConfig) -> Result<(), String> {
+    let session = crate::db::cassandra::connect(&config).await?;
+    set_conn(&state, Some(ActiveConnection::Doc(crate::db::docdb::DocConn::Cassandra(session))))
+}
+
+pub async fn connect_mongo(state: State<'_, DbState>, config: crate::db::mongo::MongoConfig) -> Result<(), String> {
+    let handle = crate::db::mongo::connect(&config).await?;
+    set_conn(&state, Some(ActiveConnection::Doc(crate::db::docdb::DocConn::Mongo(handle))))
+}
+
+pub async fn connect_firestore(state: State<'_, DbState>, config: crate::db::firestore::FirestoreConfig) -> Result<(), String> {
+    crate::db::firestore::ping(&config).await?;
+    set_conn(&state, Some(ActiveConnection::Doc(crate::db::docdb::DocConn::Firestore(config))))
+}
+
+pub async fn connect_couchdb(state: State<'_, DbState>, config: crate::db::couchdb::CouchConfig) -> Result<(), String> {
+    crate::db::couchdb::ping(&config).await?;
+    set_conn(&state, Some(ActiveConnection::Doc(crate::db::docdb::DocConn::Couch(config))))
 }
 
 // ── Redis connect / test ──────────────────────────────────────────────────────

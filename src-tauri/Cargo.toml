@@ -55,6 +55,9 @@ hmac = "0.12"
 base64 = "0.22"
 hex = "0.4"
 getrandom = "0.2"
+# End-to-end encrypted sync (src/sync.rs): XChaCha20-Poly1305 records, Argon2id key wrap.
+chacha20poly1305 = "0.10"
+argon2 = "0.5"
 # Secure credential storage in the OS keychain (macOS Keychain, Windows
 # Credential Manager, Linux Secret Service via D-Bus). A backend feature MUST be
 # enabled per platform — without one, keyring v3 silently uses an in-memory mock
@@ -68,6 +71,14 @@ tokio-util = { version = "0.7.18", features = ["compat"] }
 # The SQL terminal: the engine's own CLI (psql, mysql, sqlite3...) in a
 # pseudo-terminal. ConPTY on Windows, openpty everywhere else.
 portable-pty = "0.9"
+# MongoDB: official driver; json5 reads mongosh-style object literals in the query console.
+mongodb = "3"
+json5 = "0.4"
+# Cassandra / ScyllaDB (CQL native protocol).
+scylla = "1"
+async-trait = "0.1"
+# RS256 signing for Firestore service-account sign-in (already in the tree via rustls).
+ring = "0.17"
 redis = { version = "1", features = ["tokio-comp", "tls-rustls", "tokio-rustls-comp", "tls-rustls-webpki-roots"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
