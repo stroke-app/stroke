@@ -21,6 +21,8 @@
     size = 'default',
     class: className = '',
     contentClass = '',
+    /** Mono for identifier values (column types, encodings); the UI font otherwise. */
+    mono = false,
     /** Shown instead of the raw value, e.g. to add a unit. */
     format = /** @type {((v: string) => string) | undefined} */ (undefined),
     onchange = /** @type {(v: string) => void} */ (() => {}),
@@ -41,7 +43,8 @@
        trigger so swapping between states never shifts the row. -->
   <span
     class={cn(
-      'inline-flex max-w-full items-center truncate font-mono',
+      'inline-flex max-w-full items-center truncate',
+      mono && 'font-mono',
       size === 'sm' ? 'h-7' : 'h-8',
       className,
       !label && 'text-muted-foreground',
@@ -58,16 +61,16 @@
     onchange(v)
   }}
 >
-  <Select.Trigger {size} class={cn('font-mono', className)} {...rest}>
+  <Select.Trigger {size} class={cn(mono && 'font-mono', className)} {...rest}>
     <span class={cn('truncate', !label && 'text-muted-foreground')}>{label || placeholder}</span>
   </Select.Trigger>
-  <Select.Content class={cn('z-[130] max-h-[18rem] min-w-[10rem] p-1', contentClass)} sideOffset={6}>
+  <Select.Content class={cn('z-[130] max-h-[18rem] min-w-[10rem]', contentClass)} sideOffset={4}>
     {#each options as opt (opt.value)}
       <Select.Item
         value={String(opt.value)}
         label={opt.label ?? String(opt.value)}
         disabled={opt.disabled}
-        class="rounded-md py-1.5 pl-2 font-mono text-ui-xs"
+        class={cn(mono && 'font-mono')}
       >{opt.label ?? opt.value}</Select.Item>
     {/each}
   </Select.Content>

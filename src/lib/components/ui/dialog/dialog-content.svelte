@@ -70,10 +70,10 @@
 			<DialogPrimitive.Close data-slot="dialog-close">
 				{#snippet child({ props })}
 					<button
-						class="absolute right-3.5 top-3.5 inline-flex size-6 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted/50 hover:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+						class="absolute right-3 top-3 inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/18"
 						{...props}
 					>
-						<X class="size-3.5" />
+						<X class="size-3.5 shrink-0" />
 						<span class="sr-only">Close</span>
 					</button>
 				{/snippet}

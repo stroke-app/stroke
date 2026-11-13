@@ -1,6 +1,5 @@
 <script module>
-	import { cn } from "$lib/utils.js";
-	import { tv } from "tailwind-variants";
+	import { cn, tv } from "$lib/utils.js";
 
 	export const buttonVariants = tv({
 		base: "focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-ring aria-invalid:border-destructive dark:aria-invalid:border-destructive/50 rounded-[var(--radius-field)] border-[length:var(--field-border-width)] border-transparent bg-clip-padding text-ui-sm font-medium active:not-aria-[haspopup]:translate-y-px [&_svg:not([class*='size-'])]:size-4 group/button inline-flex shrink-0 items-center justify-center whitespace-nowrap transition-[transform,color,background-color,border-color,box-shadow] duration-150 ease-out outline-none select-none disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0",
