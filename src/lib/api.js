@@ -1,5 +1,6 @@
 import { invoke, Channel } from '@tauri-apps/api/core'
 import { loadSettings } from '$lib/stores/settings.js'
+import { traceIpc, traceRows } from '$lib/perf.js'
 import { recordQuery } from '$lib/stores/query-log.js'
 import { assertWritable } from '$lib/stores/read-only.js'
 import { getLastConnection } from '$lib/stores/connections.js'
@@ -77,9 +78,13 @@ async function healD1Auth(msg) {
 }
 
 async function inv(command, args = {}) {
+  const t0 = performance.now()
   try {
-    return await invoke(command, args)
+    const r = await invoke(command, args)
+    traceIpc(command, performance.now() - t0, true)
+    return r
   } catch (err) {
+    traceIpc(command, performance.now() - t0, false)
     const msg = formatInvokeError(err)
     if (await healD1Auth(msg)) {
       try {
@@ -447,6 +452,435 @@ export async function redisScan(cursor, pattern, count = 1000) {
   return inv('redis_scan', { cursor: String(cursor), pattern: pattern || null, count })
 }
 
+/**
+ * @typedef {{ key: string, binary: boolean, type: string, ttl_ms: number, memory: number | null,
+ *   length: number | null, preview: string, truncated: boolean }} RedisKeyRow
+ * @typedef {{ key: string, binary?: boolean }} RedisKeyRef
+ * @typedef {{ field: string | null, value: string, score: string | null, index: number | null }} RedisValueEntry
+ * @typedef {{ type: string, ttl_ms: number, memory: number | null, encoding: string, length: number | null,
+ *   text: string | null, text_truncated: boolean, entries: RedisValueEntry[], next: string | null }} RedisKeyValue
+ */
+
+/**
+ * One page of the keys table: SCAN until ~`target` keys match, then type, TTL,
+ * memory, length and preview for each, in two pipelined round trips.
+ * @param {string} cursor "0" to start
+ * @param {{ pattern?: string, type?: string, target?: number }} [opts]
+ * @returns {Promise<{ cursor: string, rows: RedisKeyRow[], scanned: number }>}
+ */
+export async function redisKeyPage(cursor, opts = {}) {
+  return inv('redis_key_page', {
+    cursor: String(cursor),
+    pattern: opts.pattern || null,
+    keyType: opts.type || null,
+    target: opts.target ?? 200,
+  })
+}
+
+/** @param {RedisKeyRef[]} keys @returns {Promise<RedisKeyRow[]>} */
+export async function redisKeyRows(keys) {
+  return inv('redis_key_rows', { keys })
+}
+
+/**
+ * @param {RedisKeyRef} key
+ * @param {string | null} [cursor] next-page cursor from a previous call
+ * @param {number} [count]
+ * @returns {Promise<RedisKeyValue>}
+ */
+export async function redisKeyValue(key, cursor = null, count = 200) {
+  return inv('redis_key_value', { key, cursor, count })
+}
+
+/**
+ * Apply staged writes in one MULTI/EXEC. Returns each op's outcome.
+ * @param {{ args: string[], binary_key?: boolean }[]} ops
+ * @returns {Promise<{ ok: boolean, error: string | null }[]>}
+ */
+/** One Redis command, reply as JSON (nested arrays kept). @param {string[]} args */
+export async function redisCommand(args) {
+  return inv('redis_command', { args: args.map(String) })
+}
+
+/**
+ * Subscribe to channels and/or patterns. Calls onmessage for each message until
+ * the returned stop function runs.
+ * @param {string[]} channels @param {string[]} patterns
+ * @param {(m: { channel: string, pattern: string | null, payload: string, at: number }) => void} onmessage
+ */
+export async function redisSubscribe(channels, patterns, onmessage) {
+  const id = `sub-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+  const { listen } = await import('@tauri-apps/api/event')
+  const off = await listen(`redis-pubsub-${id}`, (e) => onmessage(/** @type {any} */ (e.payload)))
+  try {
+    await inv('redis_subscribe', { id, channels, patterns })
+  } catch (e) {
+    off()
+    throw e
+  }
+  return async () => {
+    off()
+    await inv('redis_unsubscribe', { id }).catch(() => {})
+  }
+}
+
+export async function redisApply(ops) {
+  return inv('redis_apply', { ops })
+}
+
+// ── DynamoDB ──────────────────────────────────────────────────────────────────
+
+/**
+ * @typedef {{ name?: string, region?: string, profile?: string, accessKeyId?: string,
+ *   secretAccessKey?: string, sessionToken?: string, endpoint?: string }} DynamoConnConfig
+ */
+
+const DYNAMO_WRITES = new Set(['PutItem', 'UpdateItem', 'DeleteItem', 'BatchWriteItem', 'TransactWriteItems'])
+
+/** @param {DynamoConnConfig} config */
+function normalizeDynamo(config) {
+  /** @param {string | undefined} s */
+  const opt = (s) => (s && String(s).trim()) || null
+  return {
+    type: 'dynamodb',
+    name: String(config.name || 'DynamoDB'),
+    region: String(config.region || '').trim(),
+    profile: opt(config.profile),
+    accessKeyId: opt(config.accessKeyId),
+    secretAccessKey: opt(config.secretAccessKey),
+    sessionToken: opt(config.sessionToken),
+    endpoint: opt(config.endpoint),
+  }
+}
+
+/** @param {DynamoConnConfig} config */
+export async function testDynamo(config) {
+  return inv('test_dynamodb', { config: normalizeDynamo(config) })
+}
+
+/** @param {DynamoConnConfig} config */
+export async function connectDynamo(config) {
+  return connectInv('connect_dynamodb_db', { config: normalizeDynamo(config) })
+}
+
+/** Profile names from ~/.aws/config and ~/.aws/credentials. @returns {Promise<string[]>} */
+export async function dynamoProfiles() {
+  return inv('dynamodb_profiles')
+}
+
+/**
+ * One DynamoDB API call on the active connection, e.g. `('Scan', { TableName })`.
+ * Only read/item-write operations are allowed by the backend.
+ * @param {string} op
+ * @param {Record<string, any>} [body]
+ * @returns {Promise<any>}
+ */
+export async function dynamoRequest(op, body = {}) {
+  if (DYNAMO_WRITES.has(op)) assertWritable('change items')
+  return inv('dynamodb_request', { op, body })
+}
+
+// ── CouchDB ───────────────────────────────────────────────────────────────────
+
+/** @typedef {{ name?: string, url?: string, user?: string, password?: string }} CouchConnConfig */
+
+/** @param {CouchConnConfig} config */
+function normalizeCouch(config) {
+  return {
+    type: 'couchdb',
+    name: String(config.name || 'CouchDB'),
+    url: String(config.url || 'http://localhost:5984').trim(),
+    user: (config.user && String(config.user).trim()) || null,
+    password: config.password || null,
+  }
+}
+
+/** @param {CouchConnConfig} config */
+export async function testCouch(config) {
+  return inv('test_couchdb', { config: normalizeCouch(config) })
+}
+
+/** @param {CouchConnConfig} config */
+export async function connectCouch(config) {
+  return connectInv('connect_couchdb_db', { config: normalizeCouch(config) })
+}
+
+/**
+ * One CouchDB HTTP call on the active connection (`path` relative to the
+ * server). Server administration and dropping databases are refused.
+ * @param {'GET'|'POST'|'PUT'|'DELETE'} method @param {string} path @param {any} [body]
+ * @returns {Promise<any>}
+ */
+export async function couchRequest(method, path, body) {
+  if (method !== 'GET' && !path.endsWith('/_find')) assertWritable('change documents')
+  return inv('couchdb_request', { method, path, body: body ?? null })
+}
+
+// ── MongoDB ───────────────────────────────────────────────────────────────────
+
+/** @typedef {{ name?: string, uri?: string, database?: string }} MongoConnConfig */
+
+/** @param {MongoConnConfig} config */
+function normalizeMongo(config) {
+  return {
+    type: 'mongodb',
+    name: String(config.name || 'MongoDB'),
+    uri: String(config.uri || 'mongodb://localhost:27017').trim(),
+    database: (config.database && String(config.database).trim()) || null,
+  }
+}
+
+/** @param {MongoConnConfig} config */
+export async function testMongo(config) {
+  return inv('test_mongo', { config: normalizeMongo(config) })
+}
+
+/** @param {MongoConnConfig} config */
+export async function connectMongo(config) {
+  return connectInv('connect_mongo_db', { config: normalizeMongo(config) })
+}
+
+/** Every user collection as `db.collection`. @returns {Promise<string[]>} */
+export async function mongoCollections() {
+  return inv('mongo_collections')
+}
+
+/** @param {string} collection @returns {Promise<{ count: number, indexes: string[], size: number | null, capped: boolean }>} */
+export async function mongoDescribe(collection) {
+  return inv('mongo_describe', { collection })
+}
+
+/**
+ * One page of documents. `filter`, `sort` and `projection` are objects in shell syntax.
+ * @param {string} collection @param {string} filter @param {number} skip
+ * @param {{ limit?: number, sort?: string, projection?: string }} [opts]
+ * @returns {Promise<{ docs: Record<string, any>[], next: number | null }>}
+ */
+export async function mongoFind(collection, filter, skip, opts = {}) {
+  return inv('mongo_find', {
+    collection,
+    filter,
+    sort: opts.sort || null,
+    projection: opts.projection || null,
+    skip,
+    limit: opts.limit ?? 20,
+  })
+}
+
+/** Documents matching `filter` (the cheap estimate when it is empty). @param {string} collection @param {string} filter @returns {Promise<number>} */
+export async function mongoCount(collection, filter) {
+  return inv('mongo_count', { collection, filter })
+}
+
+/**
+ * Point the query editor at the sidebar's schema (MongoDB database, Cassandra
+ * keyspace). A no-op for engines without one.
+ * @param {string} schema
+ */
+export async function docUseSchema(schema) {
+  return inv('doc_use_schema', { schema })
+}
+
+/** @param {string} collection @param {Record<string, any>} doc @param {any} prevId @returns {Promise<Record<string, any>>} */
+export async function mongoSave(collection, doc, prevId) {
+  assertWritable('change documents')
+  return inv('mongo_save', { collection, doc, prevId: prevId ?? null })
+}
+
+/** @param {string} collection @param {any} id */
+export async function mongoDelete(collection, id) {
+  assertWritable('delete documents')
+  return inv('mongo_delete', { collection, id })
+}
+
+/**
+ * Explain a find (executionStats): the stage tree, totals and a one-line verdict.
+ * @param {string} collection @param {string} filter @param {{ sort?: string, projection?: string }} [opts]
+ * @returns {Promise<import('$lib/doc-adapters.js').MongoExplain>}
+ */
+export async function mongoExplain(collection, filter, opts = {}) {
+  return inv('mongo_explain', { collection, filter, sort: opts.sort || null, projection: opts.projection || null })
+}
+
+/**
+ * Field paths inferred from a `$sample` of up to `size` documents.
+ * @param {string} collection @param {string} filter @param {number} [size]
+ * @returns {Promise<import('$lib/doc-adapters.js').MongoSchema>}
+ */
+export async function mongoSchema(collection, filter, size = 1000) {
+  return inv('mongo_schema', { collection, filter, size })
+}
+
+/** @param {string} collection @returns {Promise<import('$lib/doc-adapters.js').MongoIndex[]>} */
+export async function mongoIndexes(collection) {
+  return inv('mongo_indexes', { collection })
+}
+
+/**
+ * @param {string} collection @param {string} keys `{field: 1, other: -1}` in shell syntax
+ * @param {{ name?: string, unique?: boolean, sparse?: boolean, hidden?: boolean, ttlSeconds?: number | null, partialFilter?: string }} options
+ * @returns {Promise<string>} the index name
+ */
+export async function mongoCreateIndex(collection, keys, options) {
+  assertWritable('create indexes')
+  return inv('mongo_create_index', { collection, keys, options })
+}
+
+/** @param {string} collection @param {string} name */
+export async function mongoDropIndex(collection, name) {
+  assertWritable('drop indexes')
+  return inv('mongo_drop_index', { collection, name })
+}
+
+/**
+ * `$set` one field (or `$unset` it); returns the stored document.
+ * @param {string} collection @param {any} id @param {string} path @param {any} value
+ * @param {{ typeHint?: string, unset?: boolean }} [opts]
+ * @returns {Promise<Record<string, any>>}
+ */
+export async function mongoUpdateField(collection, id, path, value, opts = {}) {
+  assertWritable('change documents')
+  return inv('mongo_update_field', { collection, id, path, value: value ?? null, typeHint: opts.typeHint || null, unset: !!opts.unset })
+}
+
+/**
+ * Run a pipeline (shell syntax) and return at most `limit` documents.
+ * @param {string} collection @param {string} pipeline @param {number} [limit]
+ * @returns {Promise<Record<string, any>[]>}
+ */
+export async function mongoAggregate(collection, pipeline, limit = 10) {
+  return inv('mongo_aggregate', { collection, pipeline, limit })
+}
+
+/** Native picker for a JSON / JSON Lines / CSV file. @returns {Promise<string | null>} */
+export async function pickImportFile() {
+  const { open } = await import('@tauri-apps/plugin-dialog')
+  const path = await open({ multiple: false, filters: [{ name: 'Data', extensions: ['json', 'jsonl', 'ndjson', 'csv'] }] })
+  return typeof path === 'string' ? path : null
+}
+
+/**
+ * @param {string} path @param {{ format?: string, infer?: boolean }} [opts]
+ * @returns {Promise<{ fileName: string, format: string, total: number, preview: Record<string, any>[] }>}
+ */
+export async function mongoImportPreview(path, opts = {}) {
+  return inv('mongo_import_preview', { path, format: opts.format || null, infer: opts.infer ?? true })
+}
+
+/**
+ * @param {string} collection @param {string} path @param {{ format?: string, infer?: boolean }} [opts]
+ * @returns {Promise<{ inserted: number, failed: number, errors: string[] }>}
+ */
+export async function mongoImport(collection, path, opts = {}) {
+  assertWritable('import documents')
+  return inv('mongo_import', { collection, path, format: opts.format || null, infer: opts.infer ?? true })
+}
+
+// ── Firestore ─────────────────────────────────────────────────────────────────
+
+/**
+ * @typedef {{ name?: string, projectId?: string, database?: string, auth?: 'emulator' | 'serviceAccount' | 'gcloud',
+ *   keyFile?: string, emulatorHost?: string }} FirestoreConnConfig
+ */
+
+/** @param {FirestoreConnConfig} config */
+function normalizeFirestore(config) {
+  /** @param {string | undefined} s */
+  const opt = (s) => (s && String(s).trim()) || null
+  return {
+    type: 'firestore',
+    name: String(config.name || 'Firestore'),
+    projectId: String(config.projectId || '').trim(),
+    database: opt(config.database),
+    auth: config.auth || 'serviceAccount',
+    keyFile: opt(config.keyFile),
+    emulatorHost: opt(config.emulatorHost),
+  }
+}
+
+/** @param {FirestoreConnConfig} config */
+export async function testFirestore(config) {
+  return inv('test_firestore', { config: normalizeFirestore(config) })
+}
+
+/** @param {FirestoreConnConfig} config */
+export async function connectFirestore(config) {
+  return connectInv('connect_firestore_db', { config: normalizeFirestore(config) })
+}
+
+/**
+ * One Firestore REST call on the active connection; `path` starts with
+ * `projects/...`. Only this database's documents are reachable.
+ * @param {'GET'|'POST'|'PATCH'|'DELETE'} method @param {string} path @param {any} [body]
+ */
+export async function firestoreRequest(method, path, body) {
+  const read = method === 'GET' || (method === 'POST' && /:(runQuery|listCollectionIds|runAggregationQuery)$/.test(path))
+  if (!read) assertWritable('change documents')
+  return inv('firestore_request', { method, path, body: body ?? null })
+}
+
+// ── Cassandra ─────────────────────────────────────────────────────────────────
+
+/** @typedef {{ name?: string, hosts?: string, user?: string, password?: string, keyspace?: string }} CassandraConnConfig */
+
+/** @param {CassandraConnConfig} config */
+function normalizeCassandra(config) {
+  /** @param {string | undefined} s */
+  const opt = (s) => (s && String(s).trim()) || null
+  return {
+    type: 'cassandra',
+    name: String(config.name || 'Cassandra'),
+    hosts: String(config.hosts || '127.0.0.1').trim(),
+    user: opt(config.user),
+    password: config.password || null,
+    keyspace: opt(config.keyspace),
+  }
+}
+
+/** @param {CassandraConnConfig} config */
+export async function testCassandra(config) {
+  return inv('test_cassandra', { config: normalizeCassandra(config) })
+}
+
+/** @param {CassandraConnConfig} config */
+export async function connectCassandra(config) {
+  return connectInv('connect_cassandra_db', { config: normalizeCassandra(config) })
+}
+
+/** `keyspace.table` for every user table. @returns {Promise<string[]>} */
+export async function cassandraTables() {
+  return inv('cassandra_tables')
+}
+
+/**
+ * @param {string} table keyspace.table
+ * @returns {Promise<{ keyspace: string, table: string, keys: string[], partition_keys: string[], columns: [string, string][] }>}
+ */
+export async function cassandraDescribe(table) {
+  return inv('cassandra_describe', { table })
+}
+
+/**
+ * One page of rows as JSON (`SELECT JSON`), optionally filtered by a CQL WHERE clause.
+ * @param {string} table @param {string} filter @param {string | null} cursor @param {number} [size]
+ * @returns {Promise<{ rows: Record<string, any>[], next: string | null }>}
+ */
+export async function cassandraPage(table, filter, cursor, size = 100) {
+  return inv('cassandra_page', { table, filter, cursor, size })
+}
+
+/** @param {string} table @param {Record<string, any>} row @param {Record<string, any> | null} prev */
+export async function cassandraSave(table, row, prev) {
+  assertWritable('change rows')
+  return inv('cassandra_save', { table, row, prev })
+}
+
+/** @param {string} table @param {Record<string, any>} row */
+export async function cassandraDelete(table, row) {
+  assertWritable('delete rows')
+  return inv('cassandra_delete', { table, row })
+}
+
 // ── DuckDB ──────────────────────────────────────────────────────────────────────
 
 /** @param {{ name: string, filePath: string }} config */
@@ -636,9 +1070,15 @@ export async function getTableRowCounts(schema, tables) {
   return inv('pg_table_row_counts', { schema, tables })
 }
 
-/** @param {string} schema */
-export async function listIndexes(schema) {
-  return inv('pg_list_indexes', { schema })
+/**
+ * A schema's indexes. MongoDB, CouchDB and DynamoDB keep indexes per
+ * collection and answer only when `table` is given; the SQL engines answer for
+ * the whole schema either way. Rows with `indexType: 'key'` are an engine's key
+ * columns (Cassandra partition / clustering, DynamoDB partition / sort).
+ * @param {string} schema @param {string} [table]
+ */
+export async function listIndexes(schema, table) {
+  return inv('pg_list_indexes', table ? { schema, table } : { schema })
 }
 
 /**
@@ -839,6 +1279,7 @@ export async function getTableRows(schema, table, limit, offset, query = {}) {
     previewWide: (() => { try { return loadSettings().lazyWideColumns !== false } catch { return true } })(),
   })
   recordQuery({ sql: r?.sql, durationMs: r?.queryMs ?? Math.round(performance.now() - _t0), schema, table, source: 'browse', success: true })
+  traceRows('pg_get_table_rows', r, performance.now() - _t0)
   return r
 }
 
@@ -1195,6 +1636,26 @@ export async function insertTableRow(schema, table, values) {
   return inv('pg_insert_table_row', { schema, table, values })
 }
 
+/**
+ * Apply a grid's staged changes as one transaction (PostgreSQL, MySQL, SQLite): every update,
+ * delete and the insert lands, or none of them does. Each update or delete must
+ * hit exactly one row, so a row deleted or re-keyed since the page loaded fails
+ * the whole apply instead of reporting a write that never happened. A MySQL
+ * table on a non-transactional engine (MyISAM, MEMORY) is refused with an error
+ * containing "does not support transactions", having written nothing.
+ *
+ * @param {string} schema
+ * @param {string} table
+ * @param {{ primaryKey: Record<string, unknown>, values: Record<string, unknown> }[]} updates one entry per edited row
+ * @param {Record<string, unknown>[]} deletes primary keys of rows to delete
+ * @param {Record<string, unknown> | null} insert
+ * @returns {Promise<{ updated: number, deleted: number, inserted: unknown[] | null }>}
+ */
+export async function applyTableChanges(schema, table, updates, deletes, insert) {
+  assertWritable('apply changes')
+  return inv('pg_apply_table_changes', { schema, table, updates, deletes, insert })
+}
+
 // ── MCP Server ────────────────────────────────────────────────────────────────
 
 /** @returns {Promise<{ running: boolean, port: number, url: string, token: string }>} */
@@ -1219,8 +1680,19 @@ export async function mcpUpdateConnections(connections, activeId) {
     ...(database ? { database } : {}),
     ...(filePath ? { file_path: filePath } : {}),
   }))
-  return inv('mcp_update_connections', { connections: safe, activeId: activeId ?? null })
+  // The caller is an effect that re-runs whenever the saved list is re-read
+  // (every connect, every upsert), mostly with an identical payload. Skip those.
+  const args = { connections: safe, activeId: activeId ?? null }
+  const sig = JSON.stringify(args)
+  if (sig === _mcpConnSig) return
+  _mcpConnSig = sig
+  return inv('mcp_update_connections', args).catch((e) => {
+    _mcpConnSig = ''
+    throw e
+  })
 }
+/** Last payload sent by mcpUpdateConnections. */
+let _mcpConnSig = ''
 
 export async function mcpStop() {
   return inv('mcp_stop')
@@ -1239,27 +1711,76 @@ export async function mcpSetReadonly(readonly) {
 // ── Backup / Restore ──────────────────────────────────────────────────────────
 
 /**
- * Export the connected database as a SQL dump string.
- * @param {string | null} schema - Filter to one schema (PostgreSQL/MySQL only)
- * @returns {Promise<{ sql: string, tableCount: number, rowCount: number }>}
+ * @typedef {{ includeSchema?: boolean, includeData?: boolean, includeSequences?: boolean, includeEnums?: boolean, includeFunctions?: boolean, includeTriggers?: boolean, includeViews?: boolean }} BackupOptions
+ * @typedef {{ sql: string, tableCount: number, rowCount: number, cancelled: boolean, path: string | null, bytes: number, failedTables: number, elapsedMs: number }} BackupExportResult
+ * @typedef {{ statementsOk: number, statementsErr: number, statementsSkipped: number, cancelled: boolean, errors: string[], elapsedMs: number }} BackupImportResult
+ * @typedef {{ size: number, engine: string | null, stroke: boolean, incomplete: boolean }} BackupFileInfo
  */
+
 /**
- * @param {string | null} schema
+ * Export the connected database. With `path` the dump streams straight to that
+ * file from Rust (no 100 MB string crossing IPC twice) and `sql` comes back
+ * empty; without it the script is returned as `sql`.
+ *
+ * Progress arrives as `backup-progress` events (`kind: 'plan' | 'table'`) and
+ * notable lines as `backup-log`.
+ * @param {string | null} schema Filter to one schema (PostgreSQL/MySQL only)
  * @param {string[] | null} tables
- * @param {{ includeSchema?: boolean, includeData?: boolean, includeSequences?: boolean, includeEnums?: boolean, includeFunctions?: boolean, includeTriggers?: boolean, includeViews?: boolean } | null} options
+ * @param {BackupOptions | null} options
+ * @param {string | null} [path]
+ * @returns {Promise<BackupExportResult>}
  */
-export async function backupExport(schema = null, tables = null, options = null) {
-  return inv('backup_export', { schema, tables, options })
+export async function backupExport(schema = null, tables = null, options = null, path = null) {
+  return inv('backup_export', { schema, tables, options, path })
 }
 
 /**
- * Execute a SQL restore script against the connected database.
- * @param {string} sql
- * @returns {Promise<{ statementsOk: number, statementsErr: number, statementsSkipped: number, cancelled: boolean, errors: string[] }>}
+ * Restore a dump into the connected database: a file `path` (read in Rust) or
+ * a `sql` string. Progress arrives as `restore-progress` events.
+ * @param {{ sql?: string | null, path?: string | null }} source
+ * @returns {Promise<BackupImportResult>}
  */
-export async function backupImport(sql) {
+export async function backupImport({ sql = null, path = null }) {
   assertWritable('restore a backup')
-  return inv('backup_import', { sql })
+  return inv('backup_import', { sql, path })
+}
+
+/**
+ * Size and origin (engine, Stroke or not, cancelled export) of a dump file.
+ * @param {string} path
+ * @returns {Promise<BackupFileInfo>}
+ */
+export async function backupInspectFile(path) {
+  return inv('backup_inspect_file', { path })
+}
+
+/**
+ * Native save dialog for a backup. Returns the chosen path, or null.
+ * @param {string} defaultName
+ * @returns {Promise<string | null>}
+ */
+export async function pickBackupSavePath(defaultName) {
+  const { save } = await import('@tauri-apps/plugin-dialog')
+  return (await save({ defaultPath: defaultName, filters: [{ name: 'SQL', extensions: ['sql'] }] })) || null
+}
+
+/**
+ * Native open dialog for a backup file. Returns the chosen path, or null.
+ * @returns {Promise<string | null>}
+ */
+export async function pickBackupFile() {
+  const { open } = await import('@tauri-apps/plugin-dialog')
+  const path = await open({ multiple: false, filters: [{ name: 'SQL', extensions: ['sql', 'txt'] }] })
+  return typeof path === 'string' ? path : null
+}
+
+/**
+ * Show a file in Finder / Explorer / the file manager.
+ * @param {string} path
+ */
+export async function revealInFolder(path) {
+  const { revealItemInDir } = await import('@tauri-apps/plugin-opener')
+  await revealItemInDir(path)
 }
 
 /**
@@ -1363,6 +1884,17 @@ export async function txExecuteQuiet(sessionId, sql) {
  */
 export async function terminalClient(config) {
   return inv('terminal_client', { config })
+}
+
+/**
+ * Install the connection's CLI with the OS package manager (brew, winget, or
+ * the Linux one through pkexec). Resolves to where it landed; rejects with
+ * the reason, or with install advice when there is no one-line install.
+ * @param {Record<string, unknown>} config
+ * @returns {Promise<string>}
+ */
+export async function terminalInstallClient(config) {
+  return inv('terminal_install_client', { config })
 }
 
 /**

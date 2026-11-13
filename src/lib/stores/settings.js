@@ -1,3 +1,4 @@
+import { applyCustomTheme, applyNoise, customTheme, customIsGlass } from '$lib/stores/custom-theme.js'
 import { writable, get } from 'svelte/store'
 import { setMode } from 'mode-watcher'
 import {
@@ -10,6 +11,7 @@ import {
 } from '$lib/themes/registry.js'
 import { zoomState, ZOOM_MIN, ZOOM_MAX } from '$lib/stores/canvas-zoom.svelte.js'
 import { detectOs } from '$lib/platform.js'
+import { notifyLocalChange } from '$lib/sync/changes.js'
 import {
   UI_TYPE_SCALE,
   TYPE_SCALE_REF,
@@ -105,7 +107,7 @@ const markQualifyDefaultApplied = () => {
 /** @typedef {'claude' | 'geist' | 'serif' | 'apple' | 'inter' | 'mono' | 'fira' | 'plex' | 'space' | 'source'} FontId */
 /** @typedef {'regular' | 'light' | 'bold'} IconStyleId */
 /** @typedef {'lucide' | 'hugeicons' | 'phosphor'} IconSetId */
-/** @typedef {{ theme: ThemeId, zoom: number, font: FontId, iconStyle: IconStyleId, iconSet: IconSetId, tableStyle: TableStyleId, jsonTheme: JsonThemeId, editorTheme: import('$lib/themes/editor-themes.js').EditorThemeId, mcpAutoStart: boolean, launchAtLogin: boolean, autoUpdate: boolean, autoReconnectOnStartup: boolean, previewDmlBeforeApply: boolean, defaultDataView: string, paginationMode: string, maxQueryHistory: number, connectTimeoutMs: number, socketTimeoutMs: number, maxAllowedPacket: number, sessionTimezone: string, vimMode: boolean, cmdkAiEnabled: boolean, liveModeEnabled: boolean, lazyWideColumns: boolean, nullSortOrder: string, agentChatFontSize: number, agentCodeFontSize: number, agentThinkingStyle: string, agentShowQueryCards: boolean, agentWebAccess: boolean, tableTextAlign: string, telemetry: boolean, jsonWordWrap: boolean, nativeScroll: boolean, rowSpacing: RowSpacingId, motion: MotionId, zebraRows: boolean, showRowNumbers: boolean, showMenuBar: boolean, numberGrouping: boolean, imagePreview: boolean, openUrlsOnClick: boolean, highlightActiveRow: boolean, fkAutoExpandJson: boolean, gridFontSize: number, autoSaveQueries: boolean, streamResults: boolean, sqlUndo: boolean, sidebarComments: boolean, sidebarRememberGroups: boolean, sqlFormat: import('$lib/sql-format-options.js').SqlFormatOptions, sqlEditor: import('$lib/sql-editor-options.js').SqlEditorOptions }} AppSettings */
+/** @typedef {{ theme: ThemeId, zoom: number, font: FontId, iconStyle: IconStyleId, iconSet: IconSetId, tableStyle: TableStyleId, jsonTheme: JsonThemeId, editorTheme: import('$lib/themes/editor-themes.js').EditorThemeId, mcpAutoStart: boolean, launchAtLogin: boolean, autoUpdate: boolean, autoReconnectOnStartup: boolean, previewDmlBeforeApply: boolean, defaultDataView: string, paginationMode: string, maxQueryHistory: number, connectTimeoutMs: number, socketTimeoutMs: number, maxAllowedPacket: number, sessionTimezone: string, vimMode: boolean, cmdkAiEnabled: boolean, liveModeEnabled: boolean, sidebarStyle: SidebarStyleId, lazyWideColumns: boolean, nullSortOrder: string, agentChatFontSize: number, agentCodeFontSize: number, agentThinkingStyle: string, agentShowQueryCards: boolean, agentWebAccess: boolean, tableTextAlign: string, telemetry: boolean, jsonWordWrap: boolean, nativeScroll: boolean, rowSpacing: RowSpacingId, motion: MotionId, zebraRows: boolean, showRowNumbers: boolean, showMenuBar: boolean, numberGrouping: boolean, imagePreview: boolean, openUrlsOnClick: boolean, highlightActiveRow: boolean, fkAutoExpandJson: boolean, gridFontSize: number, autoSaveQueries: boolean, streamResults: boolean, sqlUndo: boolean, sidebarComments: boolean, sidebarRememberGroups: boolean, sqlFormat: import('$lib/sql-format-options.js').SqlFormatOptions, sqlEditor: import('$lib/sql-editor-options.js').SqlEditorOptions }} AppSettings */
 
 /**
  * UI type scale in design pixels: `[step, font-size, line-height?]`, matching
@@ -117,6 +119,8 @@ const markQualifyDefaultApplied = () => {
  */
 
 export { ZOOM_STEPS }
+// 100%. The 110% default (v2) read oversized next to native Mac apps, so
+// it is back to 1; ⌘0 returns here.
 const DEFAULT_ZOOM = 1
 
 /**
@@ -214,7 +218,8 @@ export const FONT_PRESETS = {
  * who has since picked their own font should keep it.
  * @type {FontId}
  */
-export const DEFAULT_FONT = 'geist'
+// The system face on macOS, as T3 and native Mac apps use; Geist elsewhere.
+export const DEFAULT_FONT = typeof navigator !== 'undefined' && detectOs() === 'macos' ? 'apple' : 'geist'
 /** @returns {FontId} */
 function normalizeFont(/** @type {unknown} */ id) {
   return FONT_PRESETS[/** @type {FontId} */ (id)] ? /** @type {FontId} */ (id) : DEFAULT_FONT
@@ -284,6 +289,8 @@ function normalizeIconSet(/** @type {unknown} */ id) {
  * @type {Record<TableStyleId, TableStyleDef>}
  */
 export const TABLE_STYLES = {
+  // Faint row rules, no column rules: data reads as a calm list (T3-style).
+  calm:     { label: 'Calm',     description: 'Faint row rules, no column lines',  rows: true,  cols: false, dash: null,   dots: false, soft: true },
   lines:    { label: 'Lines',    description: 'Solid grid lines (classic)',        rows: true,  cols: true,  dash: null,   dots: false },
   double:   { label: 'Double',   description: 'Twin rules - a ledger/print feel',  rows: true,  cols: true,  dash: null,   dots: false, double: true },
   hairline: { label: 'Hairline', description: 'The finest dash - barely there',    rows: true,  cols: true,  dash: [1, 5], dots: false },
@@ -304,7 +311,7 @@ export const TABLE_STYLES = {
   columns:  { label: 'Columns',  description: 'Vertical rails only, open rows',    rows: false, cols: true,  dash: null,   dots: false },
 }
 /** @type {TableStyleId} */
-export const DEFAULT_TABLE_STYLE = 'lines'
+export const DEFAULT_TABLE_STYLE = 'calm'
 
 /**
  * Row spacing for the data grid, as a row height in CSS pixels at 100% zoom.
@@ -590,6 +597,9 @@ export const DEFAULT_SETTINGS = {
   // or anything about a connection. See src/lib/telemetry.js.
   telemetry: true,
   liveModeEnabled: false,
+  // Beta: 'tree' swaps the sidebar's Tables / Objects / Databases tabs for one
+  // explorer tree (connection > database > schema > groups > objects > columns).
+  sidebarStyle: 'classic',
   // On by default. A column averaging half a megabyte a row is fetched as a
   // size, and its value is loaded per cell on demand - the difference between a
   // table opening in a second and in eleven. Off restores the old behaviour:
@@ -699,6 +709,10 @@ export const appNativeScroll = writable(false)
 
 /** Reactive: experimental Live mode (auto-refresh) status-bar toggle enabled (off by default). */
 export const appLiveMode = writable(false)
+
+/** @typedef {'classic' | 'tree'} SidebarStyleId */
+/** Reactive: which sidebar style is showing - the tab strip, or the Tree (beta). */
+export const appSidebarStyle = writable(/** @type {SidebarStyleId} */ ('classic'))
 
 /** Whether the agent transcript shows a card per executed query. */
 export const appAgentQueryCards = writable(true)
@@ -814,6 +828,23 @@ export function loadSettings() {
       if (Number.isFinite(fs) && fs >= 10 && fs <= 24) zoom = fs / 14
     }
     if (!Number.isFinite(zoom)) zoom = DEFAULT_ZOOM
+    // One-time: anyone still on the old default (1) moves to the new one.
+    try {
+      if (localStorage.getItem('stroke:zoom-default-v2') !== '1') {
+        if (zoom === 1) zoom = DEFAULT_ZOOM
+        localStorage.setItem('stroke:zoom-default-v2', '1')
+      }
+      // One-time: anyone still on the 110% default moves back to 100%.
+      if (localStorage.getItem('stroke:zoom-default-v3') !== '1') {
+        if (zoom === 1.1) {
+          zoom = DEFAULT_ZOOM
+          // Written back at once: index.html sizes the first frame from the
+          // stored value, before this code runs.
+          localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...parsed, zoom }))
+        }
+        localStorage.setItem('stroke:zoom-default-v3', '1')
+      }
+    } catch {}
     if (!ZOOM_STEPS.includes(zoom)) {
       zoom = ZOOM_STEPS.reduce((prev, step) =>
         Math.abs(step - zoom) < Math.abs(prev - zoom) ? step : prev,
@@ -825,6 +856,14 @@ export function loadSettings() {
     const autoReconnectOnStartup = parsed.autoReconnectOnStartup !== false
     const previewDmlBeforeApply = parsed.previewDmlBeforeApply !== false
     let font = normalizeFont(parsed.font)
+    // One-time, by request: the all-monospace preset made the UI read like a
+    // terminal; move it to the system sans (code and the grid stay mono).
+    try {
+      if (localStorage.getItem('stroke:font-sans-v1') !== '1') {
+        if (font === 'mono' || font === 'geist') font = DEFAULT_FONT
+        localStorage.setItem('stroke:font-sans-v1', '1')
+      }
+    } catch {}
     if (!fontDefaultApplied()) {
       // Only the OLD default is rewritten. Any other value is a choice, and the
       // whole point of the marker is that this cannot run twice - so someone who
@@ -850,7 +889,14 @@ export function loadSettings() {
     }
     const iconStyle = normalizeIconStyle(parsed.iconStyle)
     const iconSet = normalizeIconSet(parsed.iconSet)
-    const tableStyle = normalizeTableStyle(parsed.tableStyle)
+    // One-time move to the calm grid for anyone still on the old default.
+    let tableStyle = normalizeTableStyle(parsed.tableStyle)
+    try {
+      if (localStorage.getItem('stroke:table-style-calm-v1') !== '1') {
+        if (tableStyle === 'lines') tableStyle = 'calm'
+        localStorage.setItem('stroke:table-style-calm-v1', '1')
+      }
+    } catch {}
     const jsonTheme = normalizeJsonTheme(parsed.jsonTheme)
     const editorTheme = normalizeEditorTheme(parsed.editorTheme)
     const defaultDataView = DATA_VIEW_IDS.includes(parsed.defaultDataView) ? parsed.defaultDataView : DEFAULT_DATA_VIEW
@@ -905,6 +951,7 @@ export function loadSettings() {
     const sidebarComments = parsed.sidebarComments === true
     const sidebarRememberGroups = parsed.sidebarRememberGroups !== false
     const liveModeEnabled = parsed.liveModeEnabled === true
+    const sidebarStyle = parsed.sidebarStyle === 'tree' ? 'tree' : 'classic'
     const lazyWideColumns = parsed.lazyWideColumns !== false
     const nullSortOrder = NULL_SORT_IDS.includes(parsed.nullSortOrder) ? parsed.nullSortOrder : DEFAULT_NULL_SORT
     const agentChatFontSize = migrateAgentFont(parsed.agentChatFontSize, LEGACY_AGENT_CHAT_FONT, DEFAULT_AGENT_CHAT_FONT)
@@ -913,7 +960,7 @@ export function loadSettings() {
     const agentShowQueryCards = parsed.agentShowQueryCards !== false
     const agentWebAccess = parsed.agentWebAccess === true
     const tableTextAlign = TABLE_ALIGN_IDS.includes(parsed.tableTextAlign) ? parsed.tableTextAlign : DEFAULT_TABLE_ALIGN
-    _settingsCache = { theme, zoom, font, iconStyle, iconSet, tableStyle, jsonTheme, editorTheme, mcpAutoStart, launchAtLogin, autoUpdate, autoReconnectOnStartup, previewDmlBeforeApply, defaultDataView, paginationMode, maxQueryHistory, connectTimeoutMs, socketTimeoutMs, maxAllowedPacket, sessionTimezone, vimMode, cmdkAiEnabled, liveModeEnabled, lazyWideColumns, nullSortOrder, agentChatFontSize, agentCodeFontSize, agentThinkingStyle, agentShowQueryCards, agentWebAccess, tableTextAlign, telemetry, jsonWordWrap, nativeScroll, rowSpacing, motion, zebraRows, showRowNumbers, showMenuBar, numberGrouping, imagePreview, openUrlsOnClick, highlightActiveRow, fkAutoExpandJson, gridFontSize, autoSaveQueries, streamResults, sqlUndo, sidebarComments, sidebarRememberGroups, sqlFormat, sqlEditor }
+    _settingsCache = { theme, zoom, font, iconStyle, iconSet, tableStyle, jsonTheme, editorTheme, mcpAutoStart, launchAtLogin, autoUpdate, autoReconnectOnStartup, previewDmlBeforeApply, defaultDataView, paginationMode, maxQueryHistory, connectTimeoutMs, socketTimeoutMs, maxAllowedPacket, sessionTimezone, vimMode, cmdkAiEnabled, liveModeEnabled, sidebarStyle, lazyWideColumns, nullSortOrder, agentChatFontSize, agentCodeFontSize, agentThinkingStyle, agentShowQueryCards, agentWebAccess, tableTextAlign, telemetry, jsonWordWrap, nativeScroll, rowSpacing, motion, zebraRows, showRowNumbers, showMenuBar, numberGrouping, imagePreview, openUrlsOnClick, highlightActiveRow, fkAutoExpandJson, gridFontSize, autoSaveQueries, streamResults, sqlUndo, sidebarComments, sidebarRememberGroups, sqlFormat, sqlEditor }
     if (fontMigrated) {
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify(_settingsCache)) } catch {}
     }
@@ -933,6 +980,7 @@ export function saveSettings(settings) {
   } catch (err) {
     console.error('Failed to persist settings:', err)
   }
+  notifyLocalChange('settings')
 }
 
 // ── Change-aware appliers ─────────────────────────────────────────────────────
@@ -987,6 +1035,64 @@ function rememberBootSurface(root, theme) {
   } catch { /* no storage: the boot falls back to the base light/dark colour */ }
 }
 
+/** The native glass state last asked for, so a re-apply sends nothing. */
+let _glassApplied = /** @type {string | null} */ (null)
+/** Settles once the last glass change has reached the window. */
+let _glassPending = /** @type {Promise<unknown>} */ (Promise.resolve())
+
+/**
+ * Resolves when the window's glass matches the theme - what app-reveal.js
+ * waits on before showing the window, so it appears already frosted instead
+ * of opening solid and switching a moment later (the launch flicker). Capped:
+ * a slow or failed call never holds the window back for long.
+ */
+export function windowGlassReady(maxMs = 400) {
+  return Promise.race([_glassPending.catch(() => {}), new Promise((r) => setTimeout(r, maxMs))])
+}
+
+/**
+ * Turn the window's native translucency on for the Glass themes and off for
+ * every other (set_window_glass in commands.rs; macOS only, a no-op elsewhere).
+ * @param {string} theme
+ */
+function syncWindowGlass(theme) {
+  const glass = theme === 'glass-dark' || theme === 'glass-light' || (theme === 'custom' && customIsGlass())
+  const dark = isDarkTheme(/** @type {any} */ (theme))
+  // The page-side half of glass: every structural Glass rule in
+  // app-themes.css (frosted headers, panels, menus, overlays) keys off this,
+  // so the Custom theme at alpha < 1 gets them too. macOS only, where the
+  // native material exists to show through.
+  if (typeof document !== 'undefined') {
+    const root = document.documentElement
+    const want = glass && root.dataset.os === 'macos' ? (dark ? 'dark' : 'light') : ''
+    if ((root.dataset.glass ?? '') !== want) {
+      if (want) root.dataset.glass = want
+      else delete root.dataset.glass
+    }
+  }
+  const key = glass ? `${theme}:${dark ? 'd' : 'l'}` : 'off'
+  // The first call with an opaque theme is skipped: the window starts opaque.
+  if (key === _glassApplied || (_glassApplied === null && !glass)) {
+    _glassApplied = key
+    return
+  }
+  _glassApplied = key
+  if (typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window)) return
+  _glassPending = import('@tauri-apps/api/core')
+    .then(({ invoke }) => invoke('set_window_glass', { enabled: glass, dark }))
+    .catch((e) => console.warn('Window glass unavailable:', e))
+}
+
+// A Custom theme in Auto mode follows macOS between light and dark live.
+if (typeof window !== 'undefined' && window.matchMedia) {
+  try {
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+      const s = loadSettings()
+      if (s.theme === 'custom' && get(customTheme).mode === 'auto') applySettings(s)
+    })
+  } catch {}
+}
+
 /** @param {AppSettings} settings */
 export function applySettings(settings) {
   const root = document.documentElement
@@ -994,8 +1100,13 @@ export function applySettings(settings) {
   const zoom = settings.zoom
   const dark = isDarkTheme(theme)
 
+  // The custom theme's stylesheet (and the grain, which applies to any theme)
+  // has to be in place before anything reads the tokens below.
+  if (theme === 'custom') applyCustomTheme()
+  else applyNoise(get(customTheme).noise)
   setAttr(root, 'data-theme', theme)
   if (root.classList.contains('dark') !== dark) root.classList.toggle('dark', dark)
+  syncWindowGlass(theme)
   rememberBootSurface(root, theme)
   setMode(dark ? 'dark' : 'light')
   setStore(appThemeId, theme)
@@ -1073,7 +1184,9 @@ export function applySettings(settings) {
   setStore(appVimMode, settings.vimMode === true)
   setStore(appCmdkAi, settings.cmdkAiEnabled === true)
   setStore(appJsonWordWrap, settings.jsonWordWrap === true)
-  setStore(appNativeScroll, settings.nativeScroll === true)
+  // macOS always scrolls natively: its trackpad momentum and rubber-banding are
+  // what native feels like, and eased JS scrolling on top of them reads as lag.
+  setStore(appNativeScroll, settings.nativeScroll === true || detectOs() === 'macos')
   setStore(appRowSpacing, normalizeRowSpacing(settings.rowSpacing))
   // Push formatter prefs into the shared option holder that format-sql.js reads.
   setSqlFormatOptions(settings.sqlFormat)
@@ -1096,6 +1209,7 @@ export function applySettings(settings) {
   setStore(appSidebarComments, settings.sidebarComments === true)
   setStore(appSidebarRememberGroups, settings.sidebarRememberGroups !== false)
   setStore(appLiveMode, settings.liveModeEnabled === true)
+  setStore(appSidebarStyle, settings.sidebarStyle === 'tree' ? 'tree' : 'classic')
   setStore(appAgentQueryCards, settings.agentShowQueryCards !== false)
   setStore(appAgentWebAccess, settings.agentWebAccess === true)
   setStore(appTableAlign, TABLE_ALIGN_IDS.includes(settings.tableTextAlign) ? settings.tableTextAlign : DEFAULT_TABLE_ALIGN)
@@ -1331,6 +1445,45 @@ export function restorePreviousTheme() {
   } finally {
     restoringTheme = false
   }
+}
+
+/**
+ * Paint a theme without choosing it, for the picker's live preview. Writes
+ * nothing: not the settings, not the theme history, not last-dark/last-light,
+ * not the boot surface. The theme-following stores move with it so charts,
+ * the logo and the editor preview too. `endThemePreview` puts the saved theme
+ * back; choosing one goes through `updateSettings` as usual.
+ * @param {ThemeId} id
+ */
+export function previewTheme(id) {
+  const root = document.documentElement
+  const theme = normalizeThemeId(id)
+  const dark = isDarkTheme(theme)
+  if (theme === 'custom') applyCustomTheme(undefined, { persist: false })
+  setAttr(root, 'data-theme', theme)
+  if (root.classList.contains('dark') !== dark) root.classList.toggle('dark', dark)
+  syncWindowGlass(theme)
+  // index.html's inline boot colour would otherwise outlive the preview.
+  root.style.backgroundColor = ''
+  // Everything CSS-driven repaints from the attribute above, right away. The
+  // JS-driven followers (mode-watcher, charts, editor, logo) are settled once
+  // the highlight rests: holding an arrow key walks a row per key repeat, and
+  // re-rendering those on every step is what made it lag behind the highlight.
+  clearTimeout(_previewStoresTimer)
+  _previewStoresTimer = setTimeout(() => {
+    setMode(dark ? 'dark' : 'light')
+    setStore(appThemeId, theme)
+    setStore(isCurrentThemeDark, dark)
+  }, 120)
+}
+
+/** @type {ReturnType<typeof setTimeout> | undefined} */
+let _previewStoresTimer
+
+/** Drop any preview and repaint the saved theme. */
+export function endThemePreview() {
+  clearTimeout(_previewStoresTimer)
+  applySettings(loadSettings())
 }
 
 export function canIncreaseZoom(zoom) {

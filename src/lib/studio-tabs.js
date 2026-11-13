@@ -1,4 +1,4 @@
-/** @typedef {'table' | 'sql' | 'ddl' | 'welcome' | 'ai' | 'schema' | 'orm' | 'security' | 'logs' | 'extensions' | 'extension-detail' | 'backup' | 'json' | 'charts' | 'dashboard' | 'erd' | 'reltree' | 'diagrams' | 'search' | 'notebook' | 'schema-timeline' | 'data-diff' | 'insights' | 'objects' | 'redis' | 'license' | 'orm-schema' | 'map' | 'advisor' | 'golf' | 'terminal'} StudioTabKind */
+/** @typedef {'table' | 'sql' | 'ddl' | 'welcome' | 'ai' | 'schema' | 'orm' | 'security' | 'logs' | 'extensions' | 'extension-detail' | 'backup' | 'json' | 'charts' | 'dashboard' | 'erd' | 'reltree' | 'diagrams' | 'search' | 'notebook' | 'schema-timeline' | 'data-diff' | 'insights' | 'objects' | 'redis' | 'dynamodb' | 'docs' | 'license' | 'orm-schema' | 'map' | 'advisor' | 'golf' | 'terminal'} StudioTabKind */
 
 import { loadDefaultPageSize } from '$lib/table-query.js'
 
@@ -208,29 +208,31 @@ export function createWelcomeTab() {
 // mapping lives here once; tabDisplayTitle falls back to the same map.
 /** @type {Partial<Record<StudioTabKind, string>>} */
 const SINGLETON_TAB_TITLES = {
-  ai: 'AI Chat',
-  schema: 'Schema Explorer',
-  orm: 'ORM Runner',
+  ai: 'AI chat',
+  schema: 'Schema explorer',
+  orm: 'ORM runner',
   'orm-schema': 'Codegen',
   security: 'Security',
-  logs: 'Activity Log',
-  insights: 'Instance Insights',
+  logs: 'Activity log',
+  insights: 'Instance insights',
   advisor: 'Advisor',
-  objects: 'Database Objects',
+  objects: 'Database objects',
   redis: 'Redis',
+  dynamodb: 'DynamoDB',
+  docs: 'Browse',
   map: 'Map',
   extensions: 'Extensions',
-  backup: 'Backup & Restore',
-  json: 'JSON Viewer',
+  backup: 'Backup & restore',
+  json: 'JSON viewer',
   charts: 'Charts',
   dashboard: 'Dashboard',
-  reltree: 'Relation Tree',
+  reltree: 'Relation tree',
   diagrams: 'Diagrams',
-  erd: 'Schema Diagram',
-  license: 'Stroke Pro',
+  erd: 'Schema diagram',
+  license: 'Account',
   search: 'Find in database',
-  'schema-timeline': 'Schema Timeline',
-  'data-diff': 'Data Diff',
+  'schema-timeline': 'Schema timeline',
+  'data-diff': 'Data diff',
   golf: 'VACUUM',
   terminal: 'Terminal',
 }
@@ -262,6 +264,8 @@ export const createAdvisorTab = () => createKindTab('advisor')
 export const createGolfTab = () => createKindTab('golf')
 export const createObjectsTab = () => createKindTab('objects')
 export const createRedisTab = () => createKindTab('redis')
+export const createDynamoTab = () => createKindTab('dynamodb')
+export const createDocsTab = () => createKindTab('docs')
 export const createMapTab = () => createKindTab('map')
 export const createExtensionsTab = () => createKindTab('extensions')
 export const createBackupTab = () => createKindTab('backup')
@@ -301,6 +305,10 @@ export const findGolfTab = (tabs) => findTabByKind(tabs, 'golf')
 export const findObjectsTab = (tabs) => findTabByKind(tabs, 'objects')
 /** @type {(tabs: StudioTab[]) => StudioTab | null} */
 export const findRedisTab = (tabs) => findTabByKind(tabs, 'redis')
+/** @type {(tabs: StudioTab[]) => StudioTab | null} */
+export const findDynamoTab = (tabs) => findTabByKind(tabs, 'dynamodb')
+/** @type {(tabs: StudioTab[]) => StudioTab | null} */
+export const findDocsTab = (tabs) => findTabByKind(tabs, 'docs')
 /** @type {(tabs: StudioTab[]) => StudioTab | null} */
 export const findMapTab = (tabs) => findTabByKind(tabs, 'map')
 /** @type {(tabs: StudioTab[]) => StudioTab | null} */

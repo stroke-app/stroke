@@ -132,7 +132,7 @@ pub async fn ai_fetch(
 /// needs no second identity and no signup. It is NOT a secret and NOT a
 /// credential: it identifies a device to our gateway for rate limiting, nothing
 /// more, and the gateway must never let it authorise anything else.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn ai_device_id() -> String {
     crate::license::device_id()
 }
@@ -306,7 +306,8 @@ pub async fn open_new_window(app: tauri::AppHandle) -> Result<(), String> {
     {
         builder = builder
             .title_bar_style(tauri::TitleBarStyle::Overlay)
-            .hidden_title(true);
+            .hidden_title(true)
+            .traffic_light_position(crate::mac_chrome::traffic_light_position());
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -360,12 +361,13 @@ pub fn toggle_devtools(window: tauri::WebviewWindow) {
 use crate::db::{
     connect, connect_clickhouse, connect_d1, connect_duckdb, connect_libsql, connect_mssql, connect_mysql, connect_redis, connect_sqlite, disconnect,
     delete_table_row, delete_table_rows, execute_ddl, execute_sql, execute_sql_multi, get_table_rows, count_table_rows, insert_table_row,
-    list_schemas, list_tables, list_indexes, list_enums, list_functions, list_triggers, list_sequences, ping_connection, table_row_counts,
+    list_schemas, list_tables, list_indexes_for, list_enums, list_functions, list_triggers, list_sequences, ping_connection, table_row_counts,
     truncate_table, drop_table, get_table_column_structure, get_schema_column_structure, get_incoming_foreign_keys, get_table_ddl as db_get_table_ddl,
     test_clickhouse_connection, test_connection, test_d1_connection, test_duckdb_connection, test_libsql_connection, test_mssql_connection, test_mysql_connection, test_redis_connection, test_sqlite_connection,
     update_table_cell, fetch_cell_value, ConnectionConfig, D1Config, DbState, EnumInfo, FunctionInfo, ExplainResult, IndexInfo, LibSqlConfig,
     SqlResult, SqliteConfig, TableInfo, TableRowCount, TableRows, TriggerInfo, SequenceInfo,
     ColumnStructureRow, TableColumnStructure, IncomingForeignKey, InsertRowResult, TunnelState,
+    apply_table_changes, ApplyChangesResult, RowUpdate,
     explain_pg, explain_mysql, explain_sqlite, explain_from_text_lines, explain_from_sqlite_plan,
 };
 use crate::db::connection::{require_conn, ClickhouseConfig, DuckdbConfig, MssqlConfig, MysqlConfig, RedisConfig};
@@ -500,6 +502,407 @@ pub async fn redis_scan(
         ActiveConnection::Redis(cfg) => crate::db::redis::scan(&cfg, &cursor, pattern, count).await,
         _ => Err("Not connected to a Redis database".into()),
     }
+}
+
+fn require_redis(state: &State<'_, DbState>) -> Result<RedisConfig, String> {
+    match require_conn(state)? {
+        ActiveConnection::Redis(cfg) => Ok(cfg),
+        _ => Err("Not connected to a Redis database".into()),
+    }
+}
+
+/// One page of the Redis keys table (keys with type, TTL, size and preview).
+#[tauri::command]
+pub async fn redis_key_page(
+    state: State<'_, DbState>,
+    cursor: String,
+    pattern: Option<String>,
+    key_type: Option<String>,
+    target: u32,
+) -> Result<crate::db::redis::KeyPage, String> {
+    let cfg = require_redis(&state)?;
+    crate::db::redis::scan_rows(&cfg, &cursor, pattern, key_type, target).await
+}
+
+/// Fresh keys-table rows for specific keys.
+#[tauri::command]
+pub async fn redis_key_rows(
+    state: State<'_, DbState>,
+    keys: Vec<crate::db::redis::KeyRef>,
+) -> Result<Vec<crate::db::redis::KeyRow>, String> {
+    let cfg = require_redis(&state)?;
+    crate::db::redis::key_rows(&cfg, keys).await
+}
+
+/// A key's value, paged for collections.
+#[tauri::command]
+pub async fn redis_key_value(
+    state: State<'_, DbState>,
+    key: crate::db::redis::KeyRef,
+    cursor: Option<String>,
+    count: u32,
+) -> Result<crate::db::redis::KeyValue, String> {
+    let cfg = require_redis(&state)?;
+    crate::db::redis::get_value(&cfg, key, cursor, count).await
+}
+
+/// One Redis command as structured JSON, for the insight views.
+#[tauri::command]
+pub async fn redis_command(state: State<'_, DbState>, args: Vec<String>) -> Result<serde_json::Value, String> {
+    let cfg = require_redis(&state)?;
+    crate::db::redis::command_json(&cfg, args).await
+}
+
+/// Start a Pub/Sub subscription; messages arrive as `redis-pubsub-<id>` events.
+#[tauri::command]
+pub async fn redis_subscribe(
+    app: tauri::AppHandle,
+    state: State<'_, DbState>,
+    id: String,
+    channels: Vec<String>,
+    patterns: Vec<String>,
+) -> Result<(), String> {
+    use tauri::Emitter;
+    let cfg = require_redis(&state)?;
+    let event = format!("redis-pubsub-{id}");
+    crate::db::redis::subscribe(&cfg, id, channels, patterns, move |m| {
+        app.emit(&event, m).ok();
+    })
+    .await
+}
+
+/// Stop a Pub/Sub subscription.
+#[tauri::command]
+pub fn redis_unsubscribe(id: String) {
+    crate::db::redis::unsubscribe(&id);
+}
+
+/// Apply staged Redis writes in one MULTI/EXEC transaction.
+#[tauri::command]
+pub async fn redis_apply(
+    state: State<'_, DbState>,
+    ops: Vec<crate::db::redis::RedisOp>,
+) -> Result<Vec<crate::db::redis::OpOutcome>, String> {
+    let cfg = require_redis(&state)?;
+    crate::db::redis::apply(&cfg, ops).await
+}
+
+// ── DynamoDB ──────────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn test_dynamodb(config: crate::db::dynamodb::DynamoConfig) -> Result<(), String> {
+    crate::db::dynamodb::ping(&config).await
+}
+
+#[tauri::command]
+pub async fn connect_dynamodb_db(
+    state: State<'_, DbState>,
+    config: crate::db::dynamodb::DynamoConfig,
+) -> Result<(), String> {
+    crate::db::connection::connect_dynamodb(state, config).await
+}
+
+/// Profiles in ~/.aws, for the connection form's picker.
+#[tauri::command(async)]
+pub fn dynamodb_profiles() -> Vec<String> {
+    crate::db::dynamodb::list_profiles()
+}
+
+/// One DynamoDB API call (`op` from an allowlist) on the active connection.
+#[tauri::command]
+pub async fn dynamodb_request(
+    state: State<'_, DbState>,
+    op: String,
+    body: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let cfg = match require_conn(&state)? {
+        ActiveConnection::Dynamodb(cfg) => cfg,
+        _ => return Err("Not connected to DynamoDB".into()),
+    };
+    crate::db::dynamodb::request(&cfg, &op, &body).await
+}
+
+// ── CouchDB ───────────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn test_couchdb(config: crate::db::couchdb::CouchConfig) -> Result<(), String> {
+    crate::db::couchdb::ping(&config).await
+}
+
+#[tauri::command]
+pub async fn connect_couchdb_db(state: State<'_, DbState>, config: crate::db::couchdb::CouchConfig) -> Result<(), String> {
+    crate::db::connection::connect_couchdb(state, config).await
+}
+
+/// One CouchDB HTTP call (path allowlisted) on the active connection.
+#[tauri::command]
+pub async fn couchdb_request(
+    state: State<'_, DbState>,
+    method: String,
+    path: String,
+    body: Option<serde_json::Value>,
+) -> Result<serde_json::Value, String> {
+    let cfg = match require_conn(&state)? {
+        ActiveConnection::Doc(crate::db::docdb::DocConn::Couch(cfg)) => cfg,
+        _ => return Err("Not connected to CouchDB".into()),
+    };
+    crate::db::couchdb::request(&cfg, &method, &path, body.as_ref()).await
+}
+
+// ── MongoDB ───────────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn test_mongo(config: crate::db::mongo::MongoConfig) -> Result<(), String> {
+    crate::db::mongo::connect(&config).await.map(|_| ())
+}
+
+#[tauri::command]
+pub async fn connect_mongo_db(state: State<'_, DbState>, config: crate::db::mongo::MongoConfig) -> Result<(), String> {
+    crate::db::connection::connect_mongo(state, config).await
+}
+
+fn require_mongo(state: &State<'_, DbState>) -> Result<crate::db::mongo::MongoHandle, String> {
+    match require_conn(state)? {
+        ActiveConnection::Doc(crate::db::docdb::DocConn::Mongo(m)) => Ok(m),
+        _ => Err("Not connected to MongoDB".into()),
+    }
+}
+
+/// Point the query editor at the sidebar's schema: MongoDB's `db`, Cassandra's
+/// keyspace for unqualified table names. A no-op for the other engines.
+#[tauri::command]
+pub async fn doc_use_schema(state: State<'_, DbState>, schema: String) -> Result<(), String> {
+    match require_conn(&state)? {
+        ActiveConnection::Doc(d) => crate::db::docdb::use_schema(&d, &schema).await,
+        _ => Ok(()),
+    }
+}
+
+#[tauri::command]
+pub async fn mongo_collections(state: State<'_, DbState>) -> Result<Vec<String>, String> {
+    let m = require_mongo(&state)?;
+    crate::db::mongo::list_collections(&m).await
+}
+
+#[tauri::command]
+pub async fn mongo_describe(state: State<'_, DbState>, collection: String) -> Result<crate::db::mongo::CollInfo, String> {
+    let m = require_mongo(&state)?;
+    crate::db::mongo::describe(&m, &collection).await
+}
+
+#[tauri::command]
+pub async fn mongo_find(
+    state: State<'_, DbState>,
+    collection: String,
+    filter: String,
+    sort: Option<String>,
+    projection: Option<String>,
+    skip: Option<u64>,
+    limit: Option<i64>,
+) -> Result<crate::db::mongo::DocPage, String> {
+    let m = require_mongo(&state)?;
+    crate::db::mongo::find_page_with(
+        &m,
+        &collection,
+        &filter,
+        sort.as_deref().unwrap_or(""),
+        projection.as_deref().unwrap_or(""),
+        skip.unwrap_or(0),
+        limit.unwrap_or(20),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn mongo_count(state: State<'_, DbState>, collection: String, filter: String) -> Result<u64, String> {
+    let m = require_mongo(&state)?;
+    crate::db::mongo::count(&m, &collection, &filter).await
+}
+
+#[tauri::command]
+pub async fn mongo_save(
+    state: State<'_, DbState>,
+    collection: String,
+    doc: serde_json::Value,
+    prev_id: Option<serde_json::Value>,
+) -> Result<serde_json::Value, String> {
+    let m = require_mongo(&state)?;
+    crate::db::mongo::save(&m, &collection, &doc, prev_id.as_ref()).await
+}
+
+#[tauri::command]
+pub async fn mongo_delete(state: State<'_, DbState>, collection: String, id: serde_json::Value) -> Result<(), String> {
+    let m = require_mongo(&state)?;
+    crate::db::mongo::delete(&m, &collection, &id).await
+}
+
+#[tauri::command]
+pub async fn mongo_explain(
+    state: State<'_, DbState>,
+    collection: String,
+    filter: String,
+    sort: Option<String>,
+    projection: Option<String>,
+) -> Result<crate::db::mongo::ExplainSummary, String> {
+    let m = require_mongo(&state)?;
+    crate::db::mongo::explain(&m, &collection, &filter, sort.as_deref().unwrap_or(""), projection.as_deref().unwrap_or("")).await
+}
+
+#[tauri::command]
+pub async fn mongo_schema(state: State<'_, DbState>, collection: String, filter: String, size: Option<i64>) -> Result<crate::db::mongo::SchemaSample, String> {
+    let m = require_mongo(&state)?;
+    crate::db::mongo::schema_sample(&m, &collection, &filter, size.unwrap_or(1000)).await
+}
+
+#[tauri::command]
+pub async fn mongo_indexes(state: State<'_, DbState>, collection: String) -> Result<Vec<crate::db::mongo::IndexDetail>, String> {
+    let m = require_mongo(&state)?;
+    crate::db::mongo::index_details(&m, &collection).await
+}
+
+#[tauri::command]
+pub async fn mongo_create_index(
+    state: State<'_, DbState>,
+    collection: String,
+    keys: String,
+    options: Option<crate::db::mongo::NewIndexOptions>,
+) -> Result<String, String> {
+    let m = require_mongo(&state)?;
+    crate::db::mongo::create_index(&m, &collection, &keys, options.unwrap_or_default()).await
+}
+
+#[tauri::command]
+pub async fn mongo_drop_index(state: State<'_, DbState>, collection: String, name: String) -> Result<(), String> {
+    let m = require_mongo(&state)?;
+    crate::db::mongo::drop_index(&m, &collection, &name).await
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn mongo_update_field(
+    state: State<'_, DbState>,
+    collection: String,
+    id: serde_json::Value,
+    path: String,
+    value: serde_json::Value,
+    type_hint: Option<String>,
+    unset: Option<bool>,
+) -> Result<serde_json::Value, String> {
+    let m = require_mongo(&state)?;
+    crate::db::mongo::update_field(&m, &collection, &id, &path, &value, type_hint.as_deref(), unset.unwrap_or(false)).await
+}
+
+#[tauri::command]
+pub async fn mongo_aggregate(state: State<'_, DbState>, collection: String, pipeline: String, limit: Option<i64>) -> Result<Vec<serde_json::Value>, String> {
+    let m = require_mongo(&state)?;
+    crate::db::mongo::aggregate_preview(&m, &collection, &pipeline, limit.unwrap_or(10)).await
+}
+
+#[tauri::command]
+pub async fn mongo_import_preview(path: String, format: Option<String>, infer: Option<bool>) -> Result<crate::db::mongo::ImportPreview, String> {
+    let fmt = format.unwrap_or_default();
+    tokio::task::spawn_blocking(move || crate::db::mongo::import_preview(&path, &fmt, infer.unwrap_or(true)))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn mongo_import(
+    state: State<'_, DbState>,
+    collection: String,
+    path: String,
+    format: Option<String>,
+    infer: Option<bool>,
+) -> Result<crate::db::mongo::ImportResult, String> {
+    let m = require_mongo(&state)?;
+    crate::db::mongo::import_file(&m, &collection, &path, format.as_deref().unwrap_or(""), infer.unwrap_or(true)).await
+}
+
+// ── Firestore ─────────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn test_firestore(config: crate::db::firestore::FirestoreConfig) -> Result<(), String> {
+    crate::db::firestore::ping(&config).await
+}
+
+#[tauri::command]
+pub async fn connect_firestore_db(state: State<'_, DbState>, config: crate::db::firestore::FirestoreConfig) -> Result<(), String> {
+    crate::db::connection::connect_firestore(state, config).await
+}
+
+/// One Firestore REST call (document paths of this database only).
+#[tauri::command]
+pub async fn firestore_request(
+    state: State<'_, DbState>,
+    method: String,
+    path: String,
+    body: Option<serde_json::Value>,
+) -> Result<serde_json::Value, String> {
+    let cfg = match require_conn(&state)? {
+        ActiveConnection::Doc(crate::db::docdb::DocConn::Firestore(cfg)) => cfg,
+        _ => return Err("Not connected to Firestore".into()),
+    };
+    crate::db::firestore::request(&cfg, &method, &path, body.as_ref()).await
+}
+
+// ── Cassandra ─────────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn test_cassandra(config: crate::db::cassandra::CassandraConfig) -> Result<(), String> {
+    crate::db::cassandra::connect(&config).await.map(|_| ())
+}
+
+#[tauri::command]
+pub async fn connect_cassandra_db(state: State<'_, DbState>, config: crate::db::cassandra::CassandraConfig) -> Result<(), String> {
+    crate::db::connection::connect_cassandra(state, config).await
+}
+
+fn require_cassandra(state: &State<'_, DbState>) -> Result<crate::db::cassandra::CassandraHandle, String> {
+    match require_conn(state)? {
+        ActiveConnection::Doc(crate::db::docdb::DocConn::Cassandra(s)) => Ok(s),
+        _ => Err("Not connected to Cassandra".into()),
+    }
+}
+
+#[tauri::command]
+pub async fn cassandra_tables(state: State<'_, DbState>) -> Result<Vec<String>, String> {
+    let s = require_cassandra(&state)?;
+    crate::db::cassandra::list_tables(&s).await
+}
+
+#[tauri::command]
+pub async fn cassandra_describe(state: State<'_, DbState>, table: String) -> Result<crate::db::cassandra::TableShape, String> {
+    let s = require_cassandra(&state)?;
+    crate::db::cassandra::describe(&s, &table).await
+}
+
+#[tauri::command]
+pub async fn cassandra_page(
+    state: State<'_, DbState>,
+    table: String,
+    filter: String,
+    cursor: Option<String>,
+    size: Option<i32>,
+) -> Result<crate::db::cassandra::JsonPage, String> {
+    let s = require_cassandra(&state)?;
+    crate::db::cassandra::page(&s, &table, &filter, cursor, size.unwrap_or(100)).await
+}
+
+#[tauri::command]
+pub async fn cassandra_save(
+    state: State<'_, DbState>,
+    table: String,
+    row: serde_json::Value,
+    prev: Option<serde_json::Value>,
+) -> Result<(), String> {
+    let s = require_cassandra(&state)?;
+    crate::db::cassandra::save(&s, &table, &row, prev.as_ref()).await
+}
+
+#[tauri::command]
+pub async fn cassandra_delete(state: State<'_, DbState>, table: String, row: serde_json::Value) -> Result<(), String> {
+    let s = require_cassandra(&state)?;
+    crate::db::cassandra::delete(&s, &table, &row).await
 }
 
 // ── DuckDB ────────────────────────────────────────────────────────────────────
@@ -733,8 +1136,9 @@ pub async fn pg_table_row_counts(
 pub async fn pg_list_indexes(
     state: State<'_, DbState>,
     schema: String,
+    table: Option<String>,
 ) -> Result<Vec<IndexInfo>, String> {
-    list_indexes(state, schema).await
+    list_indexes_for(state, schema, table).await
 }
 
 #[tauri::command]
@@ -1270,6 +1674,19 @@ pub async fn pg_delete_table_rows(
     delete_table_rows(state, schema, table, primary_keys).await
 }
 
+/// Staged grid changes as one transaction (Postgres, MySQL, SQLite) - see `apply_table_changes`.
+#[tauri::command]
+pub async fn pg_apply_table_changes(
+    state: State<'_, DbState>,
+    schema: String,
+    table: String,
+    updates: Vec<RowUpdate>,
+    deletes: Vec<HashMap<String, Value>>,
+    insert: Option<HashMap<String, Value>>,
+) -> Result<ApplyChangesResult, String> {
+    apply_table_changes(state, schema, table, updates, deletes, insert).await
+}
+
 #[tauri::command]
 pub async fn pg_insert_table_row(
     state: State<'_, DbState>,
@@ -1328,7 +1745,11 @@ pub fn connections_store_write(app: tauri::AppHandle, json: String) -> Result<()
 #[tauri::command(async)]
 pub fn check_license_status(app: tauri::AppHandle) -> crate::license::LicenseStatus {
     match app.path().app_data_dir() {
-        Ok(dir) => crate::license::check_status(&dir),
+        Ok(dir) => {
+            // Before check_status starts a trial, so a new install is told apart.
+            crate::account::note_install_state(&dir);
+            crate::account::apply_account(&dir, crate::license::check_status(&dir))
+        }
         Err(e) => crate::license::LicenseStatus::Error {
             message: e.to_string(),
         },
@@ -1346,7 +1767,7 @@ pub async fn activate_license(
 
     // 2. Register with server. Blocks on seat_limit_exceeded / revoked.
     //    On network failure api_activate returns Ok(None) - we allow offline activation.
-    match crate::license::api_activate(&key, &device_id).await {
+    match crate::license::api_activate(&key, &device_id, &app.package_info().version.to_string()).await {
         Ok(None) => {} // offline - proceed with local-only activation
         Ok(Some(_)) => {} // server accepted
         Err(e) => {
@@ -1400,8 +1821,10 @@ pub async fn deactivate_license(app: tauri::AppHandle) -> Result<(), String> {
 
 /// Validates the license against the server on every launch.
 /// - valid: true  → update last_check_at, return Valid
-/// - valid: false → delete local license, return Trial/TrialExpired
-/// - network error → fall back to local signature (offline grace)
+/// - revoked / expired → delete local license, return Trial/TrialExpired
+/// - device_not_activated → re-activate this device, keep the license
+/// - any other error or network failure → keep the license (local signature
+///   is the grace; the next launch checks again)
 /// - no license → local trial check only (no network call)
 #[tauri::command]
 pub async fn run_license_check(
@@ -1411,6 +1834,7 @@ pub async fn run_license_check(
         Ok(d) => d,
         Err(e) => return crate::license::LicenseStatus::Error { message: e.to_string() },
     };
+    crate::account::note_install_state(&dir);
 
     if let Some(mut lic) = crate::license::load_license(&dir) {
         let now = std::time::SystemTime::now()
@@ -1418,18 +1842,35 @@ pub async fn run_license_check(
             .map(|d| d.as_secs())
             .unwrap_or(0);
 
-        match crate::license::api_check(&lic.key, &lic.device_id).await {
-            Some(true) => {
+        use crate::license::CheckOutcome;
+        let version = app.package_info().version.to_string();
+        let mut ended = false;
+        match crate::license::api_check(&lic.key, &lic.device_id, &version).await {
+            Some(CheckOutcome::Valid) => {
                 lic.last_check_at = now;
                 let _ = crate::license::save_license(&dir, &lic);
             }
-            Some(false) => {
-                // Server says invalid/revoked - remove local license
-                let _ = crate::license::delete_license(&dir);
+            Some(CheckOutcome::Ended) => ended = true,
+            Some(CheckOutcome::NotActivated) => {
+                // Activated offline, so the server never saw this device (or its
+                // seat was released). Register it now rather than dropping Pro.
+                match crate::license::api_activate(&lic.key, &lic.device_id, &version).await {
+                    Ok(Some(_)) => {
+                        lic.last_check_at = now;
+                        let _ = crate::license::save_license(&dir, &lic);
+                    }
+                    Err(e) if e == "revoked" || e == "expired" => ended = true,
+                    // Offline, seat limit, or anything else: keep the key and
+                    // try again on the next check.
+                    _ => {}
+                }
             }
-            None => {
-                // Network unreachable - use local signature as offline grace
-            }
+            // `not_found`, unknown errors, a bad deploy, or offline: keep the key;
+            // the local signature is the grace.
+            Some(CheckOutcome::Unknown) | None => {}
+        }
+        if ended {
+            let _ = crate::license::delete_license(&dir);
         }
     }
 
@@ -1440,7 +1881,9 @@ pub async fn run_license_check(
         crate::license::reconcile_trial(&dir).await;
     }
 
-    crate::license::check_status(&dir)
+    // A signed-in account's cached, signature-checked entitlement can grant Pro;
+    // it never takes Pro away from a valid key (see account::combine).
+    crate::account::apply_account(&dir, crate::license::check_status(&dir))
 }
 
 // ── License debug helpers (debug builds only) ─────────────────────────────────
@@ -1510,7 +1953,10 @@ pub async fn disable_autostart(app: tauri::AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub async fn get_autostart_status(app: tauri::AppHandle) -> Result<bool, String> {
     use tauri_plugin_autostart::ManagerExt;
-    app.autolaunch().is_enabled().map_err(|e| e.to_string())
+    // On macOS this runs osascript (~300 ms measured): keep it off the async workers.
+    tokio::task::spawn_blocking(move || app.autolaunch().is_enabled().map_err(|e| e.to_string()))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 async fn seed_sample_database(pool: &sqlx::SqlitePool) -> Result<(), String> {
@@ -1653,5 +2099,52 @@ async fn seed_sample_database(pool: &sqlx::SqlitePool) -> Result<(), String> {
             .map_err(|e| format!("Seed error: {e}"))?;
     }
     tx.commit().await.map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+
+/// Turn the window's native translucency on or off - the Glass themes.
+///
+/// macOS: an `NSVisualEffectView` behind the (transparent) webview, using the
+/// Sidebar material - the frosted desktop-behind look of Finder's sidebar - in
+/// the appearance the theme asks for, kept active whether or not the window
+/// has focus. The page
+/// then paints translucent surfaces over it. Off restores the opaque surface.
+/// Other platforms keep an opaque window; the Glass palettes still apply.
+#[tauri::command]
+pub fn set_window_glass(window: tauri::WebviewWindow, enabled: bool, dark: bool) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        use tauri::window::{Color, Effect, EffectState, EffectsBuilder};
+        let theme = if dark { tauri::Theme::Dark } else { tauri::Theme::Light };
+        if enabled {
+            // The material takes its light/dark look from the window's
+            // appearance. Drop the old effect view first: switching Glass Dark
+            // to Glass Light otherwise kept the dark material's view in place.
+            let _ = window.set_effects(None);
+            window.set_theme(Some(theme)).map_err(|e| e.to_string())?;
+            window
+                .set_effects(
+                    EffectsBuilder::new()
+                        .effect(Effect::Sidebar)
+                        // Always frosted. Following the window's active state
+                        // turned the glass into flat grey whenever another app
+                        // had focus - which read as the theme not working, most
+                        // of all in light, where the inactive material is a
+                        // plain pale grey.
+                        .state(EffectState::Active)
+                        .build(),
+                )
+                .map_err(|e| e.to_string())?;
+            window.set_background_color(Some(Color(0, 0, 0, 0))).map_err(|e| e.to_string())?;
+        } else {
+            window.set_effects(None).map_err(|e| e.to_string())?;
+            window.set_theme(None).map_err(|e| e.to_string())?;
+            let surface = crate::surface_for_theme(theme);
+            window.set_background_color(Some(surface)).map_err(|e| e.to_string())?;
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = (window, enabled, dark);
     Ok(())
 }

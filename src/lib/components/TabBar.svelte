@@ -86,6 +86,35 @@
   /** @type {HTMLElement | null} */
   let scrollEl = $state(null)
 
+  // Which edges have hidden tabs: those edges fade out instead of cutting a
+  // title in half, and only while there is actually more to scroll to.
+  let fadeLeft = $state(false)
+  let fadeRight = $state(false)
+  function updateFades() {
+    const el = scrollEl
+    if (!el) return
+    fadeLeft = el.scrollLeft > 1
+    fadeRight = el.scrollLeft + el.clientWidth < el.scrollWidth - 1
+  }
+  $effect(() => {
+    const el = scrollEl
+    if (!el) return
+    const _n = tabs.length
+    updateFades()
+    const ro = new ResizeObserver(updateFades)
+    ro.observe(el)
+    return () => ro.disconnect()
+  })
+
+  /** A plain mouse wheel scrolls the strip sideways. @param {WheelEvent} e */
+  function onStripWheel(e) {
+    const el = scrollEl
+    if (!el || e.shiftKey || Math.abs(e.deltaX) >= Math.abs(e.deltaY)) return
+    if (el.scrollWidth <= el.clientWidth) return
+    e.preventDefault()
+    el.scrollLeft += e.deltaY
+  }
+
   $effect(() => {
     const _id = activeTabId
     let raf = requestAnimationFrame(() => {
@@ -118,7 +147,7 @@
 </script>
 
 <header
-  class="studio-chrome flex h-9 shrink-0 items-stretch border-b border-border bg-background"
+  class="studio-chrome flex h-10 shrink-0 items-center bg-panel px-2"
   data-studio-chrome
   data-tauri-drag-region
   role="tablist"
@@ -128,12 +157,19 @@
 >
   <div
     bind:this={scrollEl}
-    class="app-scroll flex min-w-0 flex-1 items-stretch overflow-x-auto"
+    class={cn(
+      // scroll-px keeps a tab scrolled into view clear of the edge fade.
+      'app-scroll flex h-full min-w-0 flex-1 items-center gap-0.5 overflow-x-auto scroll-px-8 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
+      fadeLeft && fadeRight && '[mask-image:linear-gradient(to_right,transparent,black_2rem,black_calc(100%-2rem),transparent)]',
+      fadeLeft && !fadeRight && '[mask-image:linear-gradient(to_right,transparent,black_2rem)]',
+      !fadeLeft && fadeRight && '[mask-image:linear-gradient(to_right,black_calc(100%-2rem),transparent)]',
+    )}
+    onscroll={updateFades}
+    onwheel={onStripWheel}
   >
     {#each tabs as tab, i (tab.id)}
       {@const tabIconName = tabIcon(tab)}
       {@const active = tab.id === activeTabId}
-      {@const nextActive = i + 1 < tabs.length && tabs[i + 1].id === activeTabId}
 
       <ContextMenu.Root>
         <ContextMenu.Trigger>
@@ -146,12 +182,15 @@
                 if (e.button === 1 && !tab.pinned) { e.preventDefault(); onclose(tab.id) }
               }}
               class={cn(
-                'group/tab relative flex min-w-0 max-w-[200px] shrink-0 items-stretch transition-colors duration-100',
-                active ? 'bg-panel' : 'hover:bg-muted/20',
+                // rem, not px: a px cap held less text at every zoom step up, and the
+                // floor keeps a short title from being squeezed to "New t…".
+                // A pill, not a folder tab: the active one is a soft lighter fill,
+                // the rest are just text until you hover them.
+                'group/tab relative flex h-7 min-w-24 max-w-50 shrink-0 items-stretch rounded-md transition-colors duration-100',
+                active
+                  ? 'bg-sidebar-accent shadow-[inset_0_0_0_1px_var(--color-border)]'
+                  : 'hover:bg-sidebar-accent/50',
               )}
-              style={active
-                ? 'box-shadow: 0 1px 0 0 var(--color-panel)'
-                : ''}
             >
               <!-- Tab button, font-medium on ALL states to prevent layout shift on activation -->
               <button
@@ -160,12 +199,16 @@
                 aria-selected={active}
                 title={tabDisplayTitle(tab)}
                 class={cn(
-                  'flex min-w-0 flex-1 items-center gap-1.5 pl-3 pr-1 text-left text-ui-2xs font-medium leading-none transition-colors duration-100',
+                  'flex min-w-0 flex-1 items-center gap-2 pl-2.5 text-left text-ui-xs leading-none transition-colors duration-100',
+                  // Inactive, unpinned tabs don't reserve the close button's width
+                  // (that left a dead gap after every title); the button overlays
+                  // the title's end on hover, which fades out beneath it.
+                  active || tab.pinned ? 'pr-1' : 'pr-3 group-hover/tab:[mask-image:linear-gradient(to_right,black_calc(100%-2.25rem),transparent_calc(100%-1rem))]',
                   active ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
                 )}
                 onclick={() => { if (_suppressTabClick) { _suppressTabClick = false; return } onselect(tab.id) }}
               >
-                <Icon name={tabIconName} class={cn('size-3.5 shrink-0', active ? 'opacity-100' : 'opacity-70')} />
+                <Icon name={tabIconName} class={cn('size-3.5 shrink-0', active ? 'text-foreground' : 'text-muted-foreground')} />
                 <span class="truncate">{tabDisplayTitle(tab)}</span>
               </button>
 
@@ -174,37 +217,35 @@
                 <button
                   type="button"
                   class={cn(
-                    'hit-area mr-1.5 inline-flex size-[18px] shrink-0 self-center items-center justify-center rounded transition-opacity duration-100',
-                    'text-muted-foreground hover:bg-muted hover:text-foreground',
+                    'hit-area mr-1.5 inline-flex size-5 shrink-0 self-center items-center justify-center rounded-md transition-opacity duration-100',
+                    'text-muted-foreground hover:bg-accent hover:text-foreground',
                     active ? 'opacity-100' : 'opacity-70 group-hover/tab:opacity-100',
                   )}
                   title={$t('tabs.unpin')}
                   aria-label={$t('tabs.unpin')}
                   onclick={(e) => { e.stopPropagation(); onpintoggle(tab.id) }}
                 >
-                  <Icon name="pin" class="size-3 rotate-45" />
+                  <Icon name="pin" class="size-3 shrink-0 rotate-45" />
                 </button>
               {:else}
                 <!-- Close button -->
                 <button
                   type="button"
                   class={cn(
-                    'hit-area mr-1.5 inline-flex size-[18px] shrink-0 self-center items-center justify-center rounded transition-opacity duration-100',
-                    'text-muted-foreground hover:bg-muted hover:text-foreground',
-                    active ? 'opacity-100' : 'opacity-0 group-hover/tab:opacity-100',
+                    'hit-area inline-flex size-5 shrink-0 self-center items-center justify-center rounded-md transition-opacity duration-100',
+                    'text-muted-foreground hover:bg-accent hover:text-foreground',
+                    active
+                      ? 'mr-1.5 opacity-100'
+                      : 'absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover/tab:opacity-100 focus-visible:opacity-100',
                   )}
                   title={$t('tabs.close')}
                   aria-label={$t('tabs.close')}
                   onclick={(e) => { e.stopPropagation(); onclose(tab.id) }}
                 >
-                  <Icon name="x" class="size-3" />
+                  <Icon name="x" class="size-3 shrink-0" />
                 </button>
               {/if}
 
-              <!-- Separator: hidden adjacent to any active tab -->
-              {#if !active && !nextActive}
-                <span class="pointer-events-none absolute inset-y-[25%] right-0 w-px bg-field-border/50"></span>
-              {/if}
             </div>
           {/snippet}
         </ContextMenu.Trigger>
@@ -215,74 +256,63 @@
         <ContextMenu.Content class="min-w-52">
           <ContextMenu.Item onSelect={() => onpintoggle(tab.id)}>
             {#if tab.pinned}
-              <Icon name="pin-off" class="size-3.5" />
+              <Icon name="pin-off" class="size-3.5 shrink-0" />
               Unpin Tab
             {:else}
-              <Icon name="pin" class="size-3.5" />
+              <Icon name="pin" class="size-3.5 shrink-0" />
               Pin Tab
             {/if}
           </ContextMenu.Item>
           {#if tab.kind === 'table' || tab.kind === 'sql'}
             <ContextMenu.Item onSelect={() => onduplicate(tab.id)}>
-              <Icon name="copy" class="size-3.5" />
+              <Icon name="copy" class="size-3.5 shrink-0" />
               Duplicate Tab
             </ContextMenu.Item>
           {/if}
           {#if tab.kind === 'table'}
             <ContextMenu.Item onSelect={() => onresettable(tab.id)}>
-              <Icon name="rotate-ccw" class="size-3.5" />
+              <Icon name="rotate-ccw" class="size-3.5 shrink-0" />
               Reset Table View
             </ContextMenu.Item>
           {/if}
           <ContextMenu.Separator />
           <ContextMenu.Item onSelect={() => onclose(tab.id)}>
-            <Icon name="x" class="size-3.5" />
+            <Icon name="x" class="size-3.5 shrink-0" />
             Close Tab
-            <ContextMenu.Shortcut combo="Mod+W" />
+            <ContextMenu.Shortcut command="tab.close" />
           </ContextMenu.Item>
           <ContextMenu.Item disabled={!hasOtherClosable} onSelect={() => oncloseothers(tab.id)}>
-            <Icon name="circle-slash" class="size-3.5" />
+            <Icon name="circle-slash" class="size-3.5 shrink-0" />
             Close Other Tabs
           </ContextMenu.Item>
           <ContextMenu.Item
             disabled={leftClosable.length === 0}
             onSelect={() => onclosemany(leftClosable.map((t) => t.id), tab.id)}
           >
-            <Icon name="arrow-left-to-line" class="size-3.5" />
+            <Icon name="arrow-left-to-line" class="size-3.5 shrink-0" />
             Close Tabs to Left
           </ContextMenu.Item>
           <ContextMenu.Item
             disabled={rightClosable.length === 0}
             onSelect={() => onclosemany(rightClosable.map((t) => t.id), tab.id)}
           >
-            <Icon name="arrow-right-to-line" class="size-3.5" />
+            <Icon name="arrow-right-to-line" class="size-3.5 shrink-0" />
             Close Tabs to Right
           </ContextMenu.Item>
           <ContextMenu.Separator />
           <ContextMenu.Item disabled={!canreopenclosed} onSelect={onreopenclosed}>
-            <Icon name="history" class="size-3.5" />
+            <Icon name="history" class="size-3.5 shrink-0" />
             Reopen last tab
-            <ContextMenu.Shortcut combo="Mod+Shift+T" />
+            <ContextMenu.Shortcut command="tab.reopen" />
           </ContextMenu.Item>
           <ContextMenu.Separator />
           <ContextMenu.Item onSelect={oncloseall}>
-            <Icon name="x" class="size-3.5" />
+            <Icon name="x" class="size-3.5 shrink-0" />
             Close All Tabs
-            <ContextMenu.Shortcut combo="Mod+Shift+W" />
+            <ContextMenu.Shortcut command="tab.closeAll" />
           </ContextMenu.Item>
         </ContextMenu.Content>
       </ContextMenu.Root>
     {/each}
   </div>
-  <!-- Outside the scroller on purpose: a `+` that scrolls away with the tabs is
-       a `+` you cannot find once the strip is full. -->
-  <button
-    type="button"
-    class="hit-area inline-flex w-8 shrink-0 items-center justify-center self-stretch text-muted-foreground transition-colors hover:bg-muted/30 hover:text-foreground"
-    title="New query editor"
-    aria-label="New query editor"
-    onclick={onnewsql}
-  >
-    <Icon name="plus" class="size-3.5" />
-  </button>
 </header>

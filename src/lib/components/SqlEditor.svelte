@@ -282,6 +282,11 @@
     provide: (f) => EditorView.decorations.from(f, (v) => v.deco),
   })
 
+  // Query languages that aren't SQL: the SQL lint and formatter would mark
+  // valid statements as errors (db.users.find(...)) or rewrite them.
+  const NOT_SQL = new Set(['redis', 'valkey', 'mongodb', 'couchdb', 'firestore'])
+  const isSql = $derived(!NOT_SQL.has(dialect))
+
   /** @param {import('@codemirror/state').EditorState} state */
   function lintFor(state) {
     const text = state.doc.toString()
@@ -294,8 +299,8 @@
     const typing = (/** @type {import('$lib/sql-statements.js').SqlDiagnostic} */ d) =>
       !!d.fix && d.fix.insert === ';' && d.fix.from === d.end &&
       caret >= d.end && d.end >= caretLine.from && !text.slice(d.end, caret).trim()
-    let diags = readOnly || !$appSqlEditor.lint ? [] : lintSql(text).filter((d) => !typing(d))
-    if (!readOnly && $appSqlEditor.lint) {
+    let diags = readOnly || !$appSqlEditor.lint || !isSql ? [] : lintSql(text).filter((d) => !typing(d))
+    if (!readOnly && $appSqlEditor.lint && isSql) {
       // A trigger, routine or view naming a table or column the schema lacks:
       // the engine would create it and fail when it runs.
       const objects = checkObjectSql(text, schemaHints, dialect)
@@ -733,7 +738,10 @@
         document.removeEventListener('mousedown', outside, true)
         document.removeEventListener('keydown', onKey, true)
       }
-      const outside = (/** @type {MouseEvent} */ e) => { if (!anchor.contains(/** @type {Node} */ (e.target))) close() }
+      const outside = (/** @type {MouseEvent} */ e) => {
+        const t = /** @type {Node} */ (e.target)
+        if (!anchor.contains(t) && !menu?.contains(t)) close()
+      }
       const onKey = (/** @type {KeyboardEvent} */ e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); view.focus() } }
       const more = button(
         '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="3.5" cy="8" r="1.3" fill="currentColor"/><circle cx="8" cy="8" r="1.3" fill="currentColor"/><circle cx="12.5" cy="8" r="1.3" fill="currentColor"/></svg>',
@@ -749,7 +757,26 @@
             item.setAttribute('role', 'menuitem')
             menu.append(item)
           }
-          anchor.append(menu)
+          // On the page, not inside the editor: the editor scrolls and clipped
+          // the menu to a few items with a scrollbar. Placed under the button.
+          const r = more.getBoundingClientRect()
+          Object.assign(menu.style, {
+            position: 'fixed', top: `${Math.round(r.bottom + 4)}px`, right: `${Math.round(window.innerWidth - r.right)}px`,
+            zIndex: '300', display: 'flex', flexDirection: 'column', minWidth: '11rem', padding: '4px',
+            borderRadius: '10px', border: '1px solid color-mix(in oklch, var(--border) 60%, transparent)',
+            backgroundColor: 'var(--popover)', color: 'var(--popover-foreground)',
+            boxShadow: '0 10px 30px rgba(0,0,0,.35)', fontFamily: 'var(--font-sans)', fontSize: 'var(--fs-xs)',
+          })
+          for (const b of menu.querySelectorAll('button')) {
+            Object.assign(/** @type {HTMLElement} */ (b).style, {
+              height: '2rem', padding: '0 10px', border: 'none', borderRadius: '6px', background: 'none',
+              color: 'inherit', font: 'inherit', textAlign: 'left', cursor: 'default',
+            })
+            b.addEventListener('mouseenter', () => { /** @type {HTMLElement} */ (b).style.background = 'color-mix(in oklch, var(--foreground) 8%, transparent)' })
+            b.addEventListener('mouseleave', () => { /** @type {HTMLElement} */ (b).style.background = 'none' })
+          }
+          menu.dataset.lensMenu = '1'
+          document.body.append(menu)
           more.setAttribute('aria-expanded', 'true')
           document.addEventListener('mousedown', outside, true)
           document.addEventListener('keydown', onKey, true)
@@ -766,6 +793,7 @@
     destroy(dom) {
       // A menu left open when the chip moves to another statement goes with it.
       dom.querySelector('.cm-sql-lens-menu')?.remove()
+      for (const m of document.querySelectorAll('[data-lens-menu]')) m.remove()
     }
   }
 
@@ -1125,16 +1153,16 @@
       height: '1.7em',
       paddingLeft: 'max(0px, calc(var(--cm-font-size, 13px) * 0.5 - 6px))',
       fontFamily: 'var(--font-sans)',
-      fontSize: 'var(--fs-2xs)',
+      fontSize: 'var(--fs-xs)',
       lineHeight: '1',
       color: 'var(--muted-foreground)',
       userSelect: 'none',
     },
     '.cm-sql-lens button': {
-      height: '1.45em',
-      padding: '0 6px',
+      height: '1.6em',
+      padding: '0 8px',
       border: 'none',
-      borderRadius: '4px',
+      borderRadius: '999px',
       background: 'none',
       color: 'inherit',
       font: 'inherit',
@@ -1161,8 +1189,8 @@
     // being pushed. A solid chip, because the editor is transparent over
     // whatever surface holds it and a fade could not match every one.
     '.cm-sql-lens-anchor': { position: 'relative', height: '0', overflow: 'visible' },
-    '.cm-sql-lens-float button': { display: 'inline-flex', alignItems: 'center', gap: '3px' },
-    '.cm-sql-lens-float svg': { width: '0.95em', height: '0.95em', flex: 'none' },
+    '.cm-sql-lens-float button': { display: 'inline-flex', alignItems: 'center', gap: '5px' },
+    '.cm-sql-lens-float svg': { width: '1em', height: '1em', flex: 'none' },
     '.cm-sql-lens-run': { color: 'var(--foreground) !important' },
     '.cm-sql-lens-run svg': { color: 'var(--success)' },
     '.cm-sql-lens-revert': { color: 'var(--foreground) !important' },
@@ -1182,7 +1210,7 @@
       backgroundColor: 'var(--popover)',
       boxShadow: '0 8px 24px rgba(0, 0, 0, 0.35), 0 1px 3px rgba(0, 0, 0, 0.2)',
       fontFamily: 'var(--font-sans)',
-      fontSize: 'var(--fs-2xs)',
+      fontSize: 'var(--fs-xs)',
     },
     '.cm-sql-lens-menu button': {
       height: '1.9em',
@@ -1198,11 +1226,11 @@
     '.cm-sql-lens-menu button:hover': { backgroundColor: 'color-mix(in oklch, var(--foreground) 8%, transparent)' },
     '.cm-sql-lens-float': {
       position: 'absolute',
-      top: '0.1em',
-      right: '6px',
-      height: '1.5em',
-      padding: '0 2px',
-      borderRadius: '6px',
+      top: '-0.05em',
+      right: '8px',
+      height: '1.8em',
+      padding: '0 3px',
+      borderRadius: '999px',
       border: '1px solid color-mix(in oklch, var(--border) 80%, transparent)',
       backgroundColor: 'var(--popover)',
       zIndex: '1',
@@ -1211,7 +1239,7 @@
     '.cm-sql-run-info': {
       marginLeft: '1.5ch',
       fontFamily: 'var(--font-sans)',
-      fontSize: 'var(--fs-2xs)',
+      fontSize: 'var(--fs-xs)',
       color: 'var(--success)',
       userSelect: 'none',
       pointerEvents: 'none',
@@ -1323,6 +1351,7 @@
     const view = editorRef?.getView()
     if (!view) return
     const text = view.state.doc.toString()
+    if (!isSql) return
     const formatted = formatSql(text, undefined, dialect)
     if (formatted !== text) view.dispatch({ changes: { from: 0, to: text.length, insert: formatted } })
   }

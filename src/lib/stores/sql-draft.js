@@ -22,6 +22,26 @@ function loadAll() {
 }
 
 /**
+ * Keys are `<connection id>::<database>`, so each database of one saved
+ * connection keeps its own editor. Before that they were the connection id
+ * alone, shared by every database. The first database opened after the change
+ * takes over that old entry (moved, not copied, so no other database gets it).
+ * @param {Record<string, unknown>} all @param {string | null | undefined} key @param {string} storageKey
+ */
+function adoptLegacy(all, key, storageKey) {
+  if (!key || !key.includes('::')) return undefined
+  const legacy = key.slice(0, key.indexOf('::'))
+  if (!(legacy in all)) return undefined
+  const value = all[legacy]
+  all[key] = value
+  delete all[legacy]
+  try {
+    localStorage.setItem(storageKey, JSON.stringify(all))
+  } catch {}
+  return value
+}
+
+/**
  * The saved draft for a connection, or null when there's nothing meaningful to
  * restore (missing or whitespace-only).
  * @param {string | null | undefined} connId
@@ -29,7 +49,7 @@ function loadAll() {
  */
 export function loadSqlDraft(connId) {
   const all = loadAll()
-  const v = all[connId || '_default']
+  const v = all[connId || '_default'] ?? adoptLegacy(all, connId, KEY)
   return typeof v === 'string' && v.trim() ? v : null
 }
 
@@ -79,7 +99,8 @@ function loadAllTabs() {
  * @returns {StoredSqlTab[]}
  */
 export function loadSqlTabs(connId) {
-  const list = loadAllTabs()[connId || '_default']
+  const all = loadAllTabs()
+  const list = all[connId || '_default'] ?? adoptLegacy(all, connId, TABS_KEY)
   if (!Array.isArray(list)) return []
   return list
     .filter((t) => t && typeof t === 'object' && typeof t.sql === 'string')

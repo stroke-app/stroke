@@ -51,6 +51,11 @@ export const NAV_SIDEBAR_MIN = 320
 // Long, prefix-heavy table names (django_/invoicing_/bots_…) truncate well past
 // 420px, so the nav sidebar can be dragged much wider.
 export const NAV_SIDEBAR_MAX = 720
+// The stored width is px at 100% and grows with the zoom, so at 150% in a
+// narrow window the 320 floor alone became half the screen. The rendered width
+// is also capped to this share of the window; the stored value is kept, so the
+// sidebar returns to it once the window (or the zoom) gives it room again.
+export const NAV_SIDEBAR_MAX_VW = 36
 export const INSPECTOR_MIN = 220
 export const INSPECTOR_MAX = 640
 export const SQL_EDITOR_MIN = 120
@@ -144,4 +149,21 @@ export function saveLayout(patch) {
     console.error('Failed to persist layout:', err)
   }
   return next
+}
+
+
+/**
+ * One width for the window's left column, whichever sidebar fills it: the
+ * table sidebar and the full-window AI chat list. A resize of either is saved
+ * as the layout's navSidebarWidth and announced, so the other (which may be
+ * mounted but hidden) follows without a remount.
+ */
+export const NAV_WIDTH_EVENT = 'stroke:nav-width'
+
+/** Save and announce a new left-column width. @param {number} width */
+export function setNavSidebarWidth(width) {
+  const w = clampNavSidebarWidth(width)
+  saveLayout({ navSidebarWidth: w })
+  try { window.dispatchEvent(new CustomEvent(NAV_WIDTH_EVENT, { detail: w })) } catch {}
+  return w
 }

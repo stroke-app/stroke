@@ -9,6 +9,7 @@
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+mod account;
 mod agents;
 mod app_lock;
 mod cloudflare;
@@ -18,6 +19,8 @@ mod copilot;
 mod db;
 mod docker;
 mod license;
+#[cfg(target_os = "macos")]
+mod mac_chrome;
 mod mcp;
 mod oauth_page;
 mod omniroute;
@@ -26,6 +29,7 @@ mod metrics;
 mod proc;
 mod providers;
 mod secrets;
+mod sync;
 mod updates;
 mod web_search;
 
@@ -458,6 +462,11 @@ pub fn run() {
         .manage(db::result_store::ResultStore::default())
         .manage(updates::UpdateState::default())
         .setup(move |app| {
+            // The terminal finds its clients on the login shell's PATH; reading
+            // that spawns the shell once, so do it now rather than on first open.
+            tauri::async_runtime::spawn(async {
+                let _ = crate::omniroute::user_path().await;
+            });
             // Load or generate a stable MCP token from the app data directory.
             app.state::<McpState>().init_token(app.handle());
             // Park a handle and the shared connection Arc for the two code
@@ -504,8 +513,19 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             {
                 window_builder = window_builder
+                    // Translucency has to be allowed when the window is made;
+                    // whether it shows is up to the theme (set_window_glass).
+                    // Opaque themes paint an opaque page, so nothing changes
+                    // for them, and the window colour still covers pre-paint.
+                    .transparent(true)
+                    // A click on Stroke while another app is in front acts on
+                    // what it lands on (opens the table), instead of only
+                    // bringing the window forward - the "first click does
+                    // nothing" in the sidebar.
+                    .accept_first_mouse(true)
                     .title_bar_style(tauri::TitleBarStyle::Overlay)
-                    .hidden_title(true);
+                    .hidden_title(true)
+                    .traffic_light_position(mac_chrome::traffic_light_position());
             }
             #[cfg(not(target_os = "macos"))]
             {
@@ -559,13 +579,11 @@ pub fn run() {
                 // already running at the display's rate.
                 unlock_macos_webview_frame_rate(&window);
 
-                // Install the standard macOS application menu. WKWebView text
-                // fields rely on the app menu's Edit items for the standard editing
-                // shortcuts - ⌘Z undo, ⌘⇧Z redo, ⌘X/⌘C/⌘V, ⌘A select-all, and
-                // ⌥⌫ / ⌘⌫ word/line delete. Install the standard menu so native
-                // text editing works everywhere (inputs, textareas, cell editors).
-                let menu = tauri::menu::Menu::default(app.handle())?;
-                app.set_menu(menu)?;
+                // The native application menu: the in-window File/Edit/View/
+                // Tools/Help bar moves here on macOS (see mac_chrome.rs). Its Edit
+                // menu keeps the standard text-editing items WKWebView inputs rely
+                // on for ⌘Z / ⌘⇧Z / ⌘X / ⌘C / ⌘V / ⌘A.
+                mac_chrome::install(app.handle())?;
             }
 
             // Logging is installed in release too, not just dev. Connection
@@ -627,6 +645,7 @@ pub fn run() {
             updates::update_status,
             updates::update_restart,
             commands::toggle_devtools,
+            commands::set_window_glass,
             commands::test_postgres_connection,
             commands::connect_postgres,
             commands::disconnect_postgres,
@@ -647,6 +666,48 @@ pub fn run() {
             commands::test_redis,
             commands::connect_redis_db,
             commands::redis_scan,
+            commands::redis_key_page,
+            commands::redis_key_rows,
+            commands::redis_key_value,
+            commands::redis_apply,
+            commands::redis_command,
+            commands::redis_subscribe,
+            commands::redis_unsubscribe,
+            commands::test_dynamodb,
+            commands::connect_dynamodb_db,
+            commands::dynamodb_profiles,
+            commands::dynamodb_request,
+            commands::test_couchdb,
+            commands::connect_couchdb_db,
+            commands::couchdb_request,
+            commands::test_cassandra,
+            commands::connect_cassandra_db,
+            commands::cassandra_tables,
+            commands::cassandra_describe,
+            commands::cassandra_page,
+            commands::cassandra_save,
+            commands::cassandra_delete,
+            commands::test_firestore,
+            commands::connect_firestore_db,
+            commands::firestore_request,
+            commands::test_mongo,
+            commands::connect_mongo_db,
+            commands::doc_use_schema,
+            commands::mongo_collections,
+            commands::mongo_describe,
+            commands::mongo_find,
+            commands::mongo_count,
+            commands::mongo_save,
+            commands::mongo_delete,
+            commands::mongo_explain,
+            commands::mongo_schema,
+            commands::mongo_indexes,
+            commands::mongo_create_index,
+            commands::mongo_drop_index,
+            commands::mongo_update_field,
+            commands::mongo_aggregate,
+            commands::mongo_import_preview,
+            commands::mongo_import,
             commands::test_duckdb,
             commands::connect_duckdb_db,
             commands::test_mssql,
@@ -700,6 +761,7 @@ pub fn run() {
             commands::pg_delete_table_row,
             commands::pg_delete_table_rows,
             commands::pg_insert_table_row,
+            commands::pg_apply_table_changes,
             mcp::mcp_start,
             mcp::mcp_stop,
             mcp::mcp_status,
@@ -751,6 +813,7 @@ pub fn run() {
             db::backup::backup_export,
             db::backup::backup_import,
             db::backup::backup_cancel,
+            db::backup::backup_inspect_file,
             db::import::import_rows,
             db::import::import_cancel,
             db::tx::tx_begin,
@@ -760,14 +823,30 @@ pub fn run() {
             db::tx::tx_status,
             db::terminal::terminal_client,
             db::terminal::terminal_open,
+            db::terminal::terminal_install_client,
             db::terminal::terminal_close,
             commands::check_license_status,
             commands::activate_license,
             commands::deactivate_license,
             commands::run_license_check,
+            account::account_sign_in,
+            account::account_cancel_sign_in,
+            account::account_status,
+            account::account_sign_out,
+            account::account_skip_onboarding,
+            account::account_paste_code,
+            sync::sync_state,
+            sync::sync_setup,
+            sync::sync_unlock,
+            sync::sync_reset,
+            sync::sync_pull,
+            sync::sync_push,
+            sync::sync_forget,
             commands::init_sample_db,
             commands::connections_store_read,
             commands::connections_store_write,
+            secrets::conn_secrets_read,
+            secrets::conn_secrets_write,
             metrics::get_app_metrics,
             metrics::set_process_title,
             commands::enable_autostart,
