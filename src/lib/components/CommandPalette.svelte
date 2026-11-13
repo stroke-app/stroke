@@ -1,18 +1,20 @@
 <script>
+  import Kbd from './Kbd.svelte'
   import Icon from './Icon.svelte'
   import * as Command from '$lib/components/ui/command/index.js'
   import { formatTableRowCount } from '$lib/table-list.js'
   import { get } from 'svelte/store'
-  import AiMarkdown from './AiMarkdown.svelte'
   import { chatCompletionStream, buildSystemPrompt, AI_TOOLS, isDestructiveSql, classifyDbError } from '$lib/ai.js'
   import { aiSettings, isAiConfigured } from '$lib/stores/ai-settings.js'
   import { pinEnabled, lockNow } from '$lib/stores/app-lock.js'
-  import { appCmdkAi } from '$lib/stores/settings.js'
+  import { appCmdkAi, appThemeId, appSidebarStyle, previewTheme, endThemePreview, updateSettings } from '$lib/stores/settings.js'
   import { executeSql } from '$lib/api.js'
+  import { themesByGroup, getThemeDefinition } from '$lib/themes/registry.js'
+  import ThemeSwatchStrip from './ThemeSwatchStrip.svelte'
 
   let {
     open = $bindable(false),
-    /** @type {'root' | 'docker' | 'connections' | 'tables' | 'pages' | 'ask'} */
+    /** @type {'root' | 'docker' | 'connections' | 'tables' | 'pages' | 'ask' | 'theme'} */
     page = $bindable('root'),
     connected = false,
     schemas = [],
@@ -43,8 +45,18 @@
     onopensecurity = () => {},
     hasSchemaExplorer = true,
     hasSecurity = true,
+    /** Engine can show Instance Insights (see db-capabilities.js). */
+    hasInsights = true,
+    /** Engine can run the Advisor's checks. */
+    hasAdvisor = true,
     /** Redis (key-value) connection - hides SQL-only pages, shows the keyspace. */
     isRedis = false,
+    /** Any key-value engine (Redis, DynamoDB): hides the SQL-only entries. */
+    isKeyValue = isRedis,
+    isDynamo = false,
+    onopendynamo = () => {},
+    isDoc = false,
+    onopendocs = () => {},
     /** PostGIS present on this connection - gates the Map entry. */
     geoAvailable = false,
     onopenredis = () => {},
@@ -63,6 +75,8 @@
     onopenmap = () => {},
     onopenJsonViewer = () => {},
     onopenshortcuts = () => {},
+    /** Settings ▸ Keybindings, where shortcuts are remapped. */
+    onopenkeybindings = () => {},
     onopenabout = () => {},
     onopenreport = () => {},
     oncheckupdate = () => {},
@@ -97,37 +111,141 @@
     page = target
   }
 
+  // ── Theme page: live preview while the highlight moves ──────────────────────
+  // The highlighted row is painted with previewTheme(), which writes nothing.
+  // Enter/click commits through updateSettings, so theme history and the
+  // last-dark/last-light memory see one change from the original theme. Leaving
+  // the page any other way (Esc, Back, Backspace, closing) puts the original back.
+  /** @typedef {import('$lib/themes/registry.js').ThemeId} ThemeId */
+
+  /** Value of the highlighted command row (bound to the palette). */
+  let highlighted = $state('')
+  /** The theme in effect when the page opened; null when no preview is live. */
+  let themeOrigin = $state(/** @type {ThemeId | null} */ (null))
+  /** Off until the page has highlighted the current theme, so the first row is never flashed. */
+  let themePreviewArmed = false
+
+  // Dark first; visibleThemes() inside keeps the easter egg out until found.
+  const themePageGroups = $derived(page === 'theme' ? [...themesByGroup()].reverse() : [])
+
+  /** @param {{ id: ThemeId, name: string, description: string }} t @param {string} groupLabel */
+  const themeRowValue = (t, groupLabel) => `theme:${t.id} ${t.name} ${groupLabel} ${t.description}`
+
+  /** @param {string} value @returns {ThemeId | null} */
+  function themeIdFromValue(value) {
+    const m = /^theme:([\w-]+)/.exec(value ?? '')
+    return m ? /** @type {ThemeId} */ (m[1]) : null
+  }
+
+  function openThemePage() {
+    themePreviewArmed = false
+    themeOrigin = get(appThemeId)
+    paletteSearch = ''
+    page = 'theme'
+  }
+
+  /** @param {ThemeId} id */
+  function commitTheme(id) {
+    themePreviewArmed = false
+    themeOrigin = null
+    cancelAnimationFrame(previewFrame)
+    // Settle the preview first (drops its pending store sync), then choose the
+    // theme normally. Same task, so nothing paints in between.
+    endThemePreview()
+    updateSettings({ theme: id })
+    open = false
+  }
+
+  // Opened straight onto the theme page (the title-bar menu's Theme…): record
+  // the theme to come back to, as openThemePage does from inside.
+  $effect(() => {
+    if (open && page === 'theme' && themeOrigin === null && !themePreviewArmed) {
+      themeOrigin = get(appThemeId)
+      paletteSearch = ''
+    }
+  })
+
+  // Start on the current theme rather than the first row, then arm the preview.
+  // Two frames: bits-ui selects the first row a tick after the rows mount.
+  $effect(() => {
+    if (!open || page !== 'theme') return
+    const origin = themeOrigin
+    let inner = 0
+    const outer = requestAnimationFrame(() => {
+      inner = requestAnimationFrame(() => {
+        const t = origin ? getThemeDefinition(origin) : null
+        const group = themePageGroups.find((g) => g.themes.some((x) => x.id === t?.id))
+        if (t && group) highlighted = themeRowValue(t, group.label)
+        themePreviewArmed = true
+        document
+          .querySelector('[data-slot="command-item"][data-selected]')
+          ?.scrollIntoView({ block: 'nearest' })
+      })
+    })
+    return () => {
+      cancelAnimationFrame(outer)
+      cancelAnimationFrame(inner)
+    }
+  })
+
+  // Arrow keys (held down included) and hover both move `highlighted`. At most
+  // one repaint per frame: key repeat can outrun the display, and painting a
+  // theme the next frame replaces anyway is the lag you would see.
+  let previewFrame = 0
+  $effect(() => {
+    const value = highlighted
+    if (page !== 'theme' || !themePreviewArmed) return
+    const id = themeIdFromValue(value)
+    if (!id) return
+    cancelAnimationFrame(previewFrame)
+    previewFrame = requestAnimationFrame(() => {
+      if (page !== 'theme' || !themePreviewArmed) return
+      if (document.documentElement.getAttribute('data-theme') !== id) previewTheme(id)
+    })
+  })
+
+  // Any way off the page without committing restores the saved theme.
+  $effect(() => {
+    if (page === 'theme' || !themeOrigin) return
+    themePreviewArmed = false
+    themeOrigin = null
+    cancelAnimationFrame(previewFrame)
+    endThemePreview()
+  })
+
   // Single source of truth for page destinations - rendered both in the root
   // "Views" group and in the dedicated "Go to page" navigator (Ctrl/⌘+Shift+P). Add a
   // page once here and it shows up in both. `keys` is an optional shortcut hint.
   const pageItems = $derived([
-    { icon: 'key-round',       label: 'Redis Keyspace',                action: onopenredis,      show: connected && isRedis, value: 'redis keyspace keys browse key value store console cli' },
-    { icon: 'table-2',         label: 'Table data',       keys: '⌘⇧D', action: onopentable,      show: connected && !isRedis, value: 'open table data browser rows' },
-    { icon: 'search',          label: 'Find in database', keys: '⌘⇧G', action: onglobalsearch,   show: connected && !isRedis, value: 'find search rows data across all tables global database' },
-    { icon: 'terminal',        label: 'SQL editor',       keys: '⌘⇧S', action: onopensql,        show: connected && !isRedis, value: 'open sql editor query console' },
-    { icon: 'plus',            label: 'New SQL Editor',                action: onnewsql,         show: connected && !isRedis, value: 'new sql editor tab additional multiple query console open another' },
-    { icon: 'square-terminal', label: 'Terminal',         keys: '⌃`',  action: onopenterminal,   show: connected, value: 'terminal shell cli command line psql mysql mariadb sqlite3 sqlcmd redis-cli console repl meta commands' },
-    { icon: 'code-2',          label: 'ORM Runner',       keys: '⌘⇧O', action: onopenorm,        show: connected && !isRedis, value: 'open orm runner drizzle prisma query builder' },
-    { icon: 'network',         label: 'Schema Diagram',                action: onopenerd,        show: connected && !isRedis, value: 'open schema diagram data model er diagram erd entity relationship foreign key pk fk graph hierarchy roadmap mermaid tree dictionary ddl schema map' },
-    { icon: 'layout-template', label: 'Schema Explorer',               action: onopenSchema,     show: connected && hasSchemaExplorer, value: 'open schema explorer indexes enums views materialized' },
+    { icon: 'key-round',       label: 'Redis keyspace',                action: onopenredis,      show: connected && isRedis, value: 'redis keyspace keys browse key value store console cli' },
+    { icon: 'database',        label: 'DynamoDB tables',               action: onopendynamo,     show: connected && isDynamo, value: 'dynamodb tables items scan query partiql aws' },
+    { icon: 'database',        label: 'Browse documents',              action: onopendocs,       show: connected && isDoc, value: 'browse collections documents mongodb mongo couchdb cassandra firestore tables rows' },
+    { icon: 'table-2',         label: 'Table data',       keys: '⌘⇧D', action: onopentable,      show: connected && !isKeyValue, value: 'open table data browser rows' },
+    { icon: 'search',          label: 'Find in database', keys: '⌘⇧G', action: onglobalsearch,   show: connected && !isKeyValue, value: 'find search rows data across all tables global database' },
+    { icon: 'terminal',        label: 'SQL editor',       keys: '⌘⇧S', action: onopensql,        show: connected && (!isKeyValue || isDynamo || isDoc), value: 'open sql editor query console' },
+    { icon: 'plus',            label: 'New SQL editor',                action: onnewsql,         show: connected && (!isKeyValue || isDynamo || isDoc), value: 'new sql editor tab additional multiple query console open another' },
+    { icon: 'square-terminal', label: 'Terminal',         keys: '⌘J',  action: onopenterminal,   show: connected, value: 'terminal shell cli command line psql mysql mariadb sqlite3 sqlcmd redis-cli console repl meta commands' },
+    { icon: 'code-2',          label: 'ORM runner',       keys: '⌘⇧O', action: onopenorm,        show: connected && !isKeyValue, value: 'open orm runner drizzle prisma query builder' },
+    { icon: 'network',         label: 'Schema diagram',                action: onopenerd,        show: connected && !isKeyValue, value: 'open schema diagram data model er diagram erd entity relationship foreign key pk fk graph hierarchy roadmap mermaid tree dictionary ddl schema map' },
+    { icon: 'layout-template', label: 'Schema explorer',               action: onopenSchema,     show: connected && hasSchemaExplorer, value: 'open schema explorer indexes enums views materialized' },
     { icon: 'shield-check',    label: 'Security',                      action: onopensecurity,   show: connected && hasSecurity, value: 'open security roles users policies rls row level' },
-    { icon: 'shield-check',    label: 'Advisor',                       action: onopenadvisor,    show: connected && !isRedis, value: 'open advisor lint audit checks security performance schema rls unused index foreign key bloat' },
-    { icon: 'database',        label: 'Instance Insights',             action: onopeninsights,   show: connected && !isRedis, value: 'open instance insights monitoring sessions locks replication config pg_settings' },
-    { icon: 'layout-dashboard',label: 'Dashboard',                     action: onopendashboard,  show: connected && !isRedis, value: 'open dashboard saved metrics overview widgets' },
-    { icon: 'bar-chart-2',     label: 'Charts',                        action: onopencharts,     show: connected && !isRedis, value: 'open charts visualize query results graphs plots' },
-    { icon: 'git-branch',      label: 'Diagrams',                      action: onopendiagrams,   show: connected && !isRedis, value: 'open diagrams draw erd relationship map' },
-    { icon: 'table-2',         label: 'Database Objects',              action: onopenobjects,    show: connected && !isRedis, value: 'open database objects overview tables views functions routines triggers sizes rows stats' },
-    { icon: 'code-2',          label: 'Codegen',                       action: onopenormschema,  show: connected && !isRedis, value: 'codegen open schema as code prisma drizzle orm model relations types generate dml psl' },
-    { icon: 'history',         label: 'Activity Log',                  action: onopenlogs,       show: connected, value: 'open activity log events history operations' },
-    { icon: 'terminal',        label: 'Query Log console', keys: '⌘⇧K', action: ontogglequerylog, show: connected && !isRedis, value: 'toggle query log console sql executed statements bottom panel' },
+    { icon: 'shield-check',    label: 'Advisor',                       action: onopenadvisor,    show: connected && hasAdvisor, value: 'open advisor lint audit checks security performance schema rls unused index foreign key bloat' },
+    { icon: 'database',        label: 'Instance insights',             action: onopeninsights,   show: connected && hasInsights, value: 'open instance insights monitoring sessions locks replication config pg_settings' },
+    { icon: 'layout-dashboard',label: 'Dashboard',                     action: onopendashboard,  show: connected && !isKeyValue, value: 'open dashboard saved metrics overview widgets' },
+    { icon: 'bar-chart-2',     label: 'Charts',                        action: onopencharts,     show: connected && !isKeyValue, value: 'open charts visualize query results graphs plots' },
+    { icon: 'git-branch',      label: 'Diagrams',                      action: onopendiagrams,   show: connected && !isKeyValue, value: 'open diagrams draw erd relationship map' },
+    { icon: 'table-2',         label: 'Database objects',              action: onopenobjects,    show: connected && !isKeyValue, value: 'open database objects overview tables views functions routines triggers sizes rows stats' },
+    { icon: 'code-2',          label: 'Codegen',                       action: onopenormschema,  show: connected && !isKeyValue, value: 'codegen open schema as code prisma drizzle orm model relations types generate dml psl' },
+    { icon: 'history',         label: 'Activity log',                  action: onopenlogs,       show: connected, value: 'open activity log events history operations' },
+    { icon: 'terminal',        label: 'Query log console', keys: '⌘⇧K', action: ontogglequerylog, show: connected && !isKeyValue, value: 'toggle query log console sql executed statements bottom panel' },
     { icon: 'globe',           label: 'Map',                           action: onopenmap, show: connected && geoAvailable, value: 'open map geo postgis spatial geometry geography world plot points' },
-    { icon: 'blocks',          label: 'Extensions',                    action: onopenextensions, show: connected && !isRedis, value: 'open extensions plugins formatters generators transforms better time uuid' },
-    { icon: 'archive',         label: 'Backup & Restore',              action: onopenbackup,     show: connected && !isRedis, value: 'backup restore export import dump data' },
-    { icon: 'braces',          label: 'JSON Viewer',                   action: onopenJsonViewer, show: connected, value: 'open json viewer explorer jsonpath tool' },
-    { icon: 'git-branch',      label: 'Schema Timeline',               action: openschematimeline, show: connected && !isRedis, value: 'schema timeline drift detection history changes diff' },
-    { icon: 'git-compare',     label: 'Data Diff',                     action: opendatadiff,     show: connected && !isRedis, value: 'data diff compare tables rows changes' },
-    { icon: 'file-text',       label: 'New Notebook',                  action: onopennotebook,   show: connected && !isRedis, value: 'new sql notebook jupyter cells sql markdown' },
-    { icon: 'file-text',       label: 'Open Notebook…',                action: onopennotebookfile, show: connected && !isRedis, value: 'open notebook file sqlnb' },
+    { icon: 'blocks',          label: 'Extensions',                    action: onopenextensions, show: connected && !isKeyValue, value: 'open extensions plugins formatters generators transforms better time uuid' },
+    { icon: 'archive',         label: 'Backup & restore',              action: onopenbackup,     show: connected && !isKeyValue, value: 'backup restore export import dump data' },
+    { icon: 'braces',          label: 'JSON viewer',                   action: onopenJsonViewer, show: connected, value: 'open json viewer explorer jsonpath tool' },
+    { icon: 'git-branch',      label: 'Schema timeline',               action: openschematimeline, show: connected && !isKeyValue, value: 'schema timeline drift detection history changes diff' },
+    { icon: 'git-compare',     label: 'Data diff',                     action: opendatadiff,     show: connected && !isKeyValue, value: 'data diff compare tables rows changes' },
+    { icon: 'file-text',       label: 'New notebook',                  action: onopennotebook,   show: connected && !isKeyValue, value: 'new sql notebook jupyter cells sql markdown' },
+    { icon: 'file-text',       label: 'Open notebook…',                action: onopennotebookfile, show: connected && !isKeyValue, value: 'open notebook file sqlnb' },
   ].filter((i) => i.show))
 
   function goBack() {
@@ -575,18 +693,20 @@
     tables: 'Tables',
     ask: 'Ask AI',
     pages: 'Go to page',
+    theme: 'Theme',
   })
 </script>
 
 <Command.Dialog
   bind:open
+  bind:value={highlighted}
   filter={commandFilter}
   shouldFilter={shouldFilter}
   title="Command menu"
   description="Search tables, schemas, and commands"
   class={page === 'ask'
     ? 'w-[min(51.25rem,calc(100vw-3rem))] sm:max-w-none'
-    : 'w-[min(33.75rem,calc(100vw-2rem))] sm:max-w-none'}
+    : 'w-[min(36rem,calc(100vw-2rem))] sm:max-w-none'}
 >
   {#snippet children()}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -602,6 +722,7 @@
           : page === 'tables' ? 'Search tables and views…'
           : page === 'ask' ? 'Ask a follow-up…'
           : page === 'pages' ? 'Go to page…'
+          : page === 'theme' ? 'Select a theme…'
           : `Search ${pageLabel[page]}…`
         }
       />
@@ -613,7 +734,7 @@
             class="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-ui-2xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground focus-visible:outline-none"
             onclick={goBack}
           >
-            <Icon name="chevron-left" class="size-3" />
+            <Icon name="chevron-left" class="size-3 shrink-0" />
             Back
           </button>
           <span class="text-muted-foreground text-ui-2xs">/</span>
@@ -623,7 +744,13 @@
 
       <!-- Taller on the Ask AI page: a transcript scrolled inside 440px shows about
            one exchange at a time, so answers and their result tables get clipped. -->
-      <Command.List class={page === 'ask' ? 'h-[min(640px,74vh)] max-h-[min(640px,74vh)]' : 'max-h-[min(440px,58vh)]'}>
+      <!-- The last rows fade into the footer (a mask, so it works on every
+           theme's surface) and the thin scrollbar says there is more below. -->
+      <Command.List
+        class={page === 'ask'
+          ? 'h-[min(640px,74vh)] max-h-[min(640px,74vh)]'
+          : 'show-scrollbar max-h-[min(420px,56vh)] pb-5 [mask-image:linear-gradient(to_bottom,black_calc(100%-32px),transparent)]'}
+      >
         {#if page !== 'ask'}
           <Command.Empty class="py-8 text-center text-ui-xs text-muted-foreground">No results.</Command.Empty>
         {/if}
@@ -631,7 +758,7 @@
         <!-- Shared page-destination row (root "Views" + "Go to page" navigator) -->
         {#snippet pageRow(/** @type {typeof pageItems[number]} */ it)}
           <Command.Item value={it.value} onSelect={() => run(it.action)}>
-            <Icon name={it.icon} class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
+            <Icon name={it.icon} class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
             <span data-slot="command-label" class="truncate">{it.label}</span>
             {#if it.keys}<Command.Shortcut keys={it.keys} />{/if}
           </Command.Item>
@@ -649,9 +776,9 @@
               {:else if turn.role === 'tool'}
                 <div class="mb-1.5 ml-[22px] flex flex-col gap-1">
                   <div class="flex items-center gap-1.5 text-ui-2xs {turn.status === 'error' ? 'text-destructive' : 'text-muted-foreground'}">
-                    {#if turn.status === 'running'}<Icon name="sparkles" class="size-3 animate-pulse" />
-                    {:else if turn.status === 'error'}<Icon name="x" class="size-3" />
-                    {:else}<Icon name="check" class="size-3 text-success" />{/if}
+                    {#if turn.status === 'running'}<Icon name="sparkles" class="size-3 shrink-0 animate-pulse" />
+                    {:else if turn.status === 'error'}<Icon name="x" class="size-3 shrink-0" />
+                    {:else}<Icon name="check" class="size-3 shrink-0 text-success" />{/if}
                     <span class="truncate">{turn.label}</span>
                   </div>
                   {#if turn.result && turn.result.columns.length}
@@ -661,7 +788,7 @@
                           <thead>
                             <tr class="bg-muted/25">
                               {#each turn.result.columns.slice(0, 5) as c}
-                                <th class="whitespace-nowrap border-b border-border/40 px-2.5 py-1 text-left text-ui-3xs font-medium uppercase tracking-wide text-muted-foreground">{c}</th>
+                                <th class="whitespace-nowrap border-b border-border/40 px-2.5 py-1 text-left text-ui-3xs font-medium uppercase tracking-[0.06em] text-muted-foreground">{c}</th>
                               {/each}
                             </tr>
                           </thead>
@@ -677,7 +804,7 @@
                         </table>
                       </div>
                       {#if turn.result.total > turn.result.rows.length}
-                        <div class="border-t border-border/30 bg-muted/10 px-2.5 py-1 text-ui-3xs text-muted-foreground">showing {turn.result.rows.length} of {turn.result.total} rows</div>
+                        <div class="border-t border-border/30 bg-muted/10 px-2.5 py-1 text-ui-3xs tabular-nums text-muted-foreground">showing {turn.result.rows.length} of {turn.result.total} rows</div>
                       {/if}
                     </div>
                   {/if}
@@ -685,15 +812,15 @@
               {:else}
                 <div class="mb-2 ml-[22px]">
                   {#if turn.streaming && !turn.text}
-                    <div class="flex items-center gap-2 py-1 text-ui-xs text-muted-foreground"><Icon name="sparkles" class="size-3.5 animate-pulse" /> Thinking…</div>
+                    <div class="flex items-center gap-2 py-1 text-ui-xs text-muted-foreground"><Icon name="sparkles" class="size-3.5 shrink-0 animate-pulse" /> Thinking…</div>
                   {:else}
-                    <AiMarkdown content={turn.text} streaming={turn.streaming} debounceMs={120} class="text-ui-xs" />
+                    {#await import('./AiMarkdown.svelte') then { default: AiMarkdown }}<AiMarkdown content={turn.text} streaming={turn.streaming} debounceMs={120} class="text-ui-xs" />{/await}
                   {/if}
                   {#if !turn.streaming && turn.sqls?.length}
                     <div class="mt-1.5 flex flex-wrap gap-1.5">
                       {#each turn.sqls as s, i}
-                        <button type="button" class={askBtnPrimary} onclick={() => void runAskSql(s)}>
-                          <Icon name="terminal" class="size-3" /> Run{turn.sqls.length > 1 ? ` #${i + 1}` : ''}
+                        <button type="button" class={i === 0 ? askBtnPrimary : askBtn} onclick={() => void runAskSql(s)}>
+                          <Icon name="terminal" class="size-3 shrink-0" /> Run{turn.sqls.length > 1 ? ` #${i + 1}` : ''}
                         </button>
                         <button type="button" class={askBtn} onclick={() => { const sql = s; open = false; onqueryselect(sql) }}>
                           Insert
@@ -709,10 +836,10 @@
             {/if}
             <div class="ml-[22px] mt-2 flex flex-wrap items-center gap-1.5">
               {#if askStreaming}
-                <button type="button" class={askBtn} onclick={stopAsk}><Icon name="square" class="size-3" /> Stop</button>
+                <button type="button" class={askBtn} onclick={stopAsk}><Icon name="square" class="size-3 shrink-0" /> Stop</button>
               {:else if askTurns.length}
-                <button type="button" class={askBtn} onclick={() => navigator.clipboard?.writeText([...askTurns].reverse().find((t) => t.role === 'assistant')?.text ?? '')}><Icon name="copy" class="size-3" /> Copy</button>
-                <button type="button" class={askBtn} onclick={() => { const q = lastAskQuestion; open = false; onaskcontinue(q) }}><Icon name="bot" class="size-3" /> Continue in chat</button>
+                <button type="button" class={askBtn} onclick={() => navigator.clipboard?.writeText([...askTurns].reverse().find((t) => t.role === 'assistant')?.text ?? '')}><Icon name="copy" class="size-3 shrink-0" /> Copy</button>
+                <button type="button" class={askBtn} onclick={() => { const q = lastAskQuestion; open = false; onaskcontinue(q) }}><Icon name="bot" class="size-3 shrink-0" /> Continue in chat</button>
               {/if}
             </div>
             <div class="ml-[22px] mt-1.5 text-ui-3xs text-muted-foreground">Type below and press ↵ to follow up</div>
@@ -742,7 +869,7 @@
               <Command.Group heading="Schemas">
                 {#each schemas as schema (schema)}
                   <Command.Item value="schema {schema}" onSelect={() => run(() => onschemachange(schema))}>
-                    <Icon name="database" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
+                    <Icon name="database" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                     <span data-slot="command-label" class="truncate font-mono">{schema}</span>
                     {#if schema === activeSchema}
                       <span data-slot="command-trailing" class="shrink-0 text-ui-xs text-muted-foreground">current</span>
@@ -756,14 +883,14 @@
               <Command.Group heading="Tables">
                 {#each regularTables.slice(0, 8) as table (table.name)}
                   <Command.Item value="table {activeSchema} {table.name}" onSelect={() => run(() => ontableselect(table.name))}>
-                    <Icon name="table-2" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
+                    <Icon name="table-2" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                     <span data-slot="command-label" class="truncate font-mono">{table.name}</span>
                     <span data-slot="command-trailing" class="shrink-0 font-mono text-ui-xs tabular-nums text-muted-foreground">{formatTableRowCount(table.rowCount)}</span>
                   </Command.Item>
                 {/each}
                 {#each viewTables.slice(0, 4) as table (table.name)}
                   <Command.Item value="view {activeSchema} {table.name}" onSelect={() => run(() => ontableselect(table.name))}>
-                    <Icon name="eye" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
+                    <Icon name="eye" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                     <span data-slot="command-label" class="truncate font-mono">{table.name}</span>
                     <span data-slot="command-trailing" class="shrink-0 text-ui-xs text-muted-foreground">view</span>
                   </Command.Item>
@@ -780,27 +907,27 @@
 
             <Command.Group heading="AI">
               <Command.Item value="ask ai assistant chat query" onSelect={() => run(onopenai)}>
-                <Icon name="bot" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
+                <Icon name="bot" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">Ask AI</span>
-                <Command.Shortcut keys="⌘⇧E" />
+                <Command.Shortcut command="ai.panel" />
               </Command.Item>
               <Command.Item value="toggle ai sidebar inline assistant context" onSelect={() => run(onopenaisidebar)}>
-                <Icon name="sparkles" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
+                <Icon name="sparkles" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">AI sidebar</span>
-                <Command.Shortcut keys="⌘I" />
+                <Command.Shortcut command="ai.sidebar" />
               </Command.Item>
               <Command.Item
                 value={aiMode ? "close ai panel hide assistant" : "open ai panel show assistant chat"}
                 onSelect={() => run(ontoggleaimode)}
               >
-                <Icon name="arrow-left-right" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
+                <Icon name="arrow-left-right" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">{aiMode ? 'Close AI panel' : 'Open AI panel'}</span>
               </Command.Item>
             </Command.Group>
 
             <Command.Group heading="Queries">
               <Command.Item value="open query history sql statements" onSelect={() => run(onopenqueryhistory)}>
-                <Icon name="history" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
+                <Icon name="history" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">Query history</span>
               </Command.Item>
             </Command.Group>
@@ -809,8 +936,8 @@
               <Command.Group heading="Saved queries">
                 {#each savedQueries as entry (entry.id)}
                   <Command.Item value="saved query {entry.name} {entry.sql}" onSelect={() => run(() => onqueryselect(entry.sql))}>
-                    <Icon name="bookmark" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
-                    <span data-slot="command-label" class="min-w-0 truncate font-mono text-ui-xs">{entry.name}</span>
+                    <Icon name="bookmark" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                    <span data-slot="command-label" class="min-w-0 truncate text-ui-xs">{entry.name}</span>
                   </Command.Item>
                 {/each}
               </Command.Group>
@@ -820,7 +947,7 @@
               <Command.Group heading="Recent queries">
                 {#each queryHistory.slice(0, 20) as entry (entry.id)}
                   <Command.Item value="recent query {entry.title} {entry.sql}" onSelect={() => run(() => onqueryselect(entry.sql))}>
-                    <Icon name="history" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
+                    <Icon name="history" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                     <span data-slot="command-label" class="min-w-0 truncate font-mono text-ui-xs">{entry.title}</span>
                   </Command.Item>
                 {/each}
@@ -829,42 +956,51 @@
 
             <Command.Group heading="Actions">
               <Command.Item value="refresh schema tables" onSelect={() => run(onrefresh)}>
-                <Icon name="refresh-cw" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
+                <Icon name="refresh-cw" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">Refresh tables</span>
               </Command.Item>
               <Command.Item value="read only read-only lock mode protect prevent edits writes inserts deletes writable" onSelect={() => run(onreadonlytoggle)}>
-                <Icon name={readonly ? 'lock-open' : 'lock'} class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
+                <Icon name={readonly ? 'lock-open' : 'lock'} class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">{readonly ? 'Disable read-only mode' : 'Enable read-only mode'}</span>
               </Command.Item>
               <Command.Item value="open settings preferences" onSelect={() => run(onopensettings)}>
-                <Icon name="settings" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
+                <Icon name="settings" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">Settings</span>
+              </Command.Item>
+              <Command.Item value="toggle tree sidebar beta explorer classic hierarchy folders" onSelect={() => run(() => updateSettings({ sidebarStyle: $appSidebarStyle === 'tree' ? 'classic' : 'tree' }))}>
+                <Icon name="list-tree" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                <span data-slot="command-label" class="truncate">Toggle tree sidebar (beta)</span>
+                <span data-slot="command-trailing" class="shrink-0 text-ui-xs text-muted-foreground">{$appSidebarStyle === 'tree' ? 'on' : 'off'}</span>
               </Command.Item>
               {#if $pinEnabled}
                 <Command.Item value="lock app pin screen secure" onSelect={() => run(lockNow)}>
-                  <Icon name="lock" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
+                  <Icon name="lock" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                   <span data-slot="command-label" class="truncate">Lock Stroke</span>
                 </Command.Item>
               {/if}
-              <Command.Item value="keyboard shortcuts keybindings hotkeys help" onSelect={() => run(onopenshortcuts)}>
-                <Icon name="keyboard" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
+              <Command.Item value="keyboard shortcuts keybindings remap customize change rebind hotkeys" onSelect={() => run(onopenkeybindings)}>
+                <Icon name="keyboard" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">Keyboard shortcuts</span>
-                <Command.Shortcut keys="?" />
+              </Command.Item>
+              <Command.Item value="shortcut reference cheat sheet keys help" onSelect={() => run(onopenshortcuts)}>
+                <Icon name="command" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                <span data-slot="command-label" class="truncate">Shortcut reference</span>
+                <Command.Shortcut command="help.shortcutsKey" />
               </Command.Item>
               <Command.Item value="about license version info app" onSelect={() => run(onopenabout)}>
-                <Icon name="info" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
+                <Icon name="info" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">About and license</span>
               </Command.Item>
               <Command.Item value="report issue bug crash problem feedback github" onSelect={() => run(onopenreport)}>
-                <Icon name="bug" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
+                <Icon name="bug" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">Report an issue</span>
               </Command.Item>
               <Command.Item value="check for updates upgrade version" onSelect={() => run(oncheckupdate)}>
-                <Icon name="arrow-down-to-line" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
+                <Icon name="arrow-down-to-line" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">Check for updates</span>
               </Command.Item>
               <Command.Item value="disconnect database" onSelect={() => run(ondisconnect)}>
-                <Icon name="unplug" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
+                <Icon name="unplug" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">Disconnect</span>
               </Command.Item>
             </Command.Group>
@@ -879,13 +1015,13 @@
                   value="switch database connection {conn.name} {connSubtitle(conn)} {conn.type}"
                   onSelect={() => run(() => onswitchdatabase(conn))}
                 >
-                  <Icon name={driverIcon(conn.type ?? 'postgres')} class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
+                  <Icon name={driverIcon(conn.type ?? 'postgres')} class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                   <div data-slot="command-label" class="flex min-w-0 flex-1 flex-col">
                     <span class="truncate">{conn.name}</span>
                     <span class="truncate font-mono text-ui-2xs text-muted-foreground">{connSubtitle(conn)}</span>
                   </div>
                   {#if savedConnections.indexOf(conn) < 9}
-                    <Command.Shortcut keys="⌘⌥{savedConnections.indexOf(conn) + 1}" />
+                    <Command.Shortcut command="connection.switchTo.{savedConnections.indexOf(conn) + 1}" />
                   {/if}
                 </Command.Item>
               {/each}
@@ -898,10 +1034,10 @@
               value="connections switch database connect postgres mysql sqlite saved {savedConnections.map(c => c.name).join(' ')}"
               onSelect={() => navigate('connections')}
             >
-              <Icon name="database" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
+              <Icon name="database" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
               <span data-slot="command-label" class="truncate">Connections</span>
               {#if savedConnections.length > 0}
-                <span class="shrink-0 font-mono text-ui-xs text-muted-foreground">{savedConnections.length}</span>
+                <span class="shrink-0 text-ui-xs tabular-nums text-muted-foreground">{savedConnections.length}</span>
               {/if}
               <Icon name="chevron-right" class="size-3.5 shrink-0 text-muted-foreground" />
             </Command.Item>
@@ -910,9 +1046,21 @@
           <!-- ── Drill-in: Docker ───────────────────────────────────── -->
           <Command.Group heading="Launch">
             <Command.Item value="docker containers postgresql mysql launch run" onSelect={() => navigate('docker')}>
-              <Icon name="package" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
+              <Icon name="package" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
               <span data-slot="command-label" class="truncate">Docker</span>
               <Icon name="chevron-right" class="size-3.5 shrink-0 text-muted-foreground" />
+            </Command.Item>
+          </Command.Group>
+
+          <!-- ── Drill-in: Theme ────────────────────────────────────── -->
+          <Command.Group heading="Appearance">
+            <Command.Item value="theme appearance colour color scheme palette dark light mode switch change" onSelect={openThemePage}>
+              <Icon name={getThemeDefinition($appThemeId)?.isDark ? 'moon' : 'sun'} class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+              <span data-slot="command-label" class="truncate">Theme…</span>
+              <span data-slot="command-trailing" class="flex shrink-0 items-center gap-2">
+                <span class="text-ui-xs text-muted-foreground">{getThemeDefinition($appThemeId)?.name}</span>
+                <Icon name="chevron-right" class="size-3.5 shrink-0 text-muted-foreground" />
+              </span>
             </Command.Item>
           </Command.Group>
 
@@ -922,7 +1070,7 @@
             <Command.Group heading="Tables">
               {#each tablesPageRegular.items as table (table.name)}
                 <Command.Item value="table {activeSchema} {table.name} {table.name}" onSelect={() => run(() => ontableselect(table.name))}>
-                  <Icon name="table-2" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
+                  <Icon name="table-2" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                   <span data-slot="command-label" class="truncate font-mono">{table.name}</span>
                   <span
                     data-slot="command-trailing"
@@ -942,7 +1090,7 @@
             <Command.Group heading="Views">
               {#each tablesPageViews.items as table (table.name)}
                 <Command.Item value="view {activeSchema} {table.name} {table.name}" onSelect={() => run(() => ontableselect(table.name))}>
-                  <Icon name="eye" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
+                  <Icon name="eye" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                   <span data-slot="command-label" class="truncate font-mono">{table.name}</span>
                 </Command.Item>
               {/each}
@@ -957,7 +1105,7 @@
             <Command.Group heading="Materialized views">
               {#each tablesPageMatViews.items as table (table.name)}
                 <Command.Item value="materialized view {activeSchema} {table.name} {table.name}" onSelect={() => run(() => ontableselect(table.name))}>
-                  <Icon name="eye" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
+                  <Icon name="eye" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                   <span data-slot="command-label" class="truncate font-mono">{table.name}</span>
                   <span
                     data-slot="command-trailing"
@@ -980,7 +1128,7 @@
               value="launch postgresql postgres container pull run 5433"
               onSelect={() => run(() => ondockerlaunch('postgres'))}
             >
-              <Icon name="package" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
+              <Icon name="package" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
               <span data-slot="command-label" class="truncate">PostgreSQL container</span>
               <span data-slot="command-trailing" class="shrink-0 font-mono text-ui-2xs text-muted-foreground">:5433</span>
             </Command.Item>
@@ -988,7 +1136,7 @@
               value="launch mysql container pull run 3307"
               onSelect={() => run(() => ondockerlaunch('mysql'))}
             >
-              <Icon name="package" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
+              <Icon name="package" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
               <span data-slot="command-label" class="truncate">MySQL container</span>
               <span data-slot="command-trailing" class="shrink-0 font-mono text-ui-2xs text-muted-foreground">:3307</span>
             </Command.Item>
@@ -1006,7 +1154,7 @@
                   onSelect={() => run(() => onswitchdatabase(conn))}
                   disabled={isActive}
                 >
-                  <Icon name={driverIconName} class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
+                  <Icon name={driverIconName} class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                   <div data-slot="command-label" class="flex min-w-0 flex-1 flex-col">
                     <span class="truncate">{conn.name}</span>
                     <span class="truncate font-mono text-ui-2xs text-muted-foreground">{connSubtitle(conn)}</span>
@@ -1020,7 +1168,7 @@
           {/if}
           <Command.Group heading="Add">
             <Command.Item value="new connection add connect database" onSelect={() => run(onopenconnection)}>
-              <Icon name="database" class="size-4 shrink-0 text-muted-foreground transition-colors group-data-[selected]/command-item:text-foreground" />
+              <Icon name="database" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
               <span data-slot="command-label" class="truncate">New connection…</span>
             </Command.Item>
           </Command.Group>
@@ -1032,9 +1180,42 @@
               {@render pageRow(it)}
             {/each}
           </Command.Group>
+
+        <!-- ── THEME PAGE ─────────────────────────────────────────────── -->
+        {:else if page === 'theme'}
+          {#each themePageGroups as group (group.id)}
+            <Command.Group heading={group.label}>
+              {#each group.themes as t (t.id)}
+                <Command.Item value={themeRowValue(t, group.label)} onSelect={() => commitTheme(t.id)}>
+                  <span data-slot="command-label" class="truncate">{t.name}</span>
+                  <span data-slot="command-trailing" class="flex shrink-0 items-center gap-2.5">
+                    {#if t.id === themeOrigin}
+                      <Icon name="check" class="size-3.5 shrink-0 text-primary" />
+                      <span class="sr-only">(current)</span>
+                    {/if}
+                    <ThemeSwatchStrip themeId={t.id} />
+                  </span>
+                </Command.Item>
+              {/each}
+            </Command.Group>
+          {/each}
         {/if}
 
       </Command.List>
+      <!-- The keys, said once at the bottom, as the palette's own legend. -->
+      {#if page === 'theme'}
+        <div class="flex h-10 shrink-0 items-center gap-4 border-t border-border/50 bg-muted/25 px-3.5 text-ui-2xs text-muted-foreground shadow-[inset_0_1px_0_rgb(255_255_255/0.03),0_-10px_20px_-12px_rgb(0_0_0/0.45)]">
+          <span class="flex items-center gap-1.5"><Kbd keys={['↑']} /><Kbd keys={['↓']} /> Preview</span>
+          <span class="ml-auto flex items-center gap-1.5">Select theme <Kbd keys={['↵']} /></span>
+          <span class="flex items-center gap-1.5">Cancel <Kbd keys={['esc']} /></span>
+        </div>
+      {:else if page !== 'ask'}
+        <div class="flex h-10 shrink-0 items-center gap-4 border-t border-border/50 bg-muted/25 px-3.5 text-ui-2xs text-muted-foreground shadow-[inset_0_1px_0_rgb(255_255_255/0.03),0_-10px_20px_-12px_rgb(0_0_0/0.45)]">
+          <span class="flex items-center gap-1.5"><Kbd keys={['↑']} /><Kbd keys={['↓']} /> Navigate</span>
+          <span class="flex items-center gap-1.5"><Kbd keys={['↵']} /> Select</span>
+          <span class="flex items-center gap-1.5"><Kbd keys={['esc']} /> Close</span>
+        </div>
+      {/if}
     </div>
   {/snippet}
 </Command.Dialog>

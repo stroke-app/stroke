@@ -53,13 +53,13 @@
 {#if isTauri && !isMac}
   <div class="flex shrink-0 items-center gap-2.5">
     <button type="button" class={winBtn} onclick={minimizeWindow} title="Minimize">
-      <Minus class="size-3.5" />
+      <Minus class="size-3.5 shrink-0" />
     </button>
     <button type="button" class={winBtn} onclick={toggleMaximizeWindow} title={isMaximized ? 'Restore' : 'Maximize'}>
       {#if isMaximized}
-        <Copy class="size-3" />
+        <Copy class="size-3 shrink-0" />
       {:else}
-        <Square class="size-3" />
+        <Square class="size-3 shrink-0" />
       {/if}
     </button>
     <button
@@ -68,7 +68,7 @@
       onclick={closeWindow}
       title="Close"
     >
-      <X class="size-3.5" />
+      <X class="size-3.5 shrink-0" />
     </button>
   </div>
 {/if}

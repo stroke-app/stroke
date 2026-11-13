@@ -23,6 +23,7 @@
   import { Menubar } from "bits-ui";
   import Icon from "./Icon.svelte";
   import Kbd from "./Kbd.svelte";
+  import { COMMAND_BY_ID } from "$lib/shortcuts.js";
 
   let { connected = false, actions = /** @type {Record<string, () => void>} */ ({}) } = $props();
   /** @param {string} name */
@@ -33,7 +34,7 @@
   // h-6 on the control scale, not an off-scale 22px; normal weight so the five
   // words read as a quiet menu row, not five buttons competing with the tabs.
   const triggerCls =
-    "inline-flex h-6 shrink-0 items-center rounded-md px-2.5 text-ui-2xs text-muted-foreground outline-none transition-colors " +
+    "inline-flex h-6 max-h-[calc(28px*var(--app-scale))] shrink-0 items-center rounded-md px-2.5 text-ui-2xs text-muted-foreground outline-none transition-colors " +
     "hover:bg-foreground/[0.06] hover:text-foreground focus-visible:bg-foreground/[0.06] focus-visible:text-foreground " +
     "data-[state=open]:bg-foreground/[0.08] data-[state=open]:text-foreground";
 
@@ -52,15 +53,17 @@
   const sepCls = "-mx-1 my-1 h-px bg-border/50";
 </script>
 
-<!-- `combo` is a chord in the grammar `createHotkey` parses (`Mod+Shift+T`),
+<!-- `combo` is a remappable command id (`tab.close`, printed as whatever the
+     user bound it to) or a fixed chord in the grammar `createHotkey` parses (`Mod+Shift+T`),
      rendered by <Kbd> as one cap per key. The rows used to print the glyphs
      butted together as a single string - "Mod+Shift+T" gave `⌘⇧T`, three
      symbols with no shape at all, at 10px. -->
 {#snippet item(/** @type {string} */ icon, /** @type {string} */ label, /** @type {string} */ action, /** @type {string} */ combo = "", /** @type {boolean} */ disabled = false)}
   <Menubar.Item class={itemCls} {disabled} onSelect={() => run(action)}>
-    <Icon name={icon} class="size-3.5 text-muted-foreground" />
+    <Icon name={icon} class="size-3.5 shrink-0 text-muted-foreground" />
     <span data-slot="menu-label" class="min-w-0 truncate">{label}</span>
-    {#if combo}<Kbd {combo} class="ml-auto shrink-0 ps-6 text-muted-foreground/80" />{/if}
+    {#if COMMAND_BY_ID.has(combo)}<Kbd command={combo} class="ml-auto shrink-0 ps-6 text-muted-foreground/80" />
+    {:else if combo}<Kbd {combo} class="ml-auto shrink-0 ps-6 text-muted-foreground/80" />{/if}
   </Menubar.Item>
 {/snippet}
 
@@ -71,16 +74,16 @@
     <Menubar.Trigger class={triggerCls}>File</Menubar.Trigger>
     <Menubar.Portal>
       <Menubar.Content class={contentCls} align="start" sideOffset={6}>
-        {@render item("file-text", "New tab", "newTab", "Mod+Shift+T")}
+        {@render item("file-text", "New tab", "newTab", "tab.new")}
         {@render item("terminal", "New query editor", "newSql", "", !connected)}
-        {@render item("copy", "New window", "newWindow", "Mod+Shift+N")}
+        {@render item("copy", "New window", "newWindow", "window.new")}
         <Menubar.Separator class={sepCls} />
         {@render item("database", "Connect…", "openConnection")}
-        {@render item("plug", "Disconnect", "disconnect", "Mod+Shift+D", !connected)}
+        {@render item("plug", "Disconnect", "disconnect", "connection.disconnect", !connected)}
         <Menubar.Separator class={sepCls} />
-        {@render item("settings", "Settings…", "openSettings", "Mod+,")}
-        {@render item("x", "Close tab", "closeTab", "Mod+W")}
-        {@render item("x", "Close all tabs", "closeAllTabs", "Mod+Shift+W")}
+        {@render item("settings", "Settings…", "openSettings", "settings.open")}
+        {@render item("x", "Close tab", "closeTab", "tab.close")}
+        {@render item("x", "Close all tabs", "closeAllTabs", "tab.closeAll")}
       </Menubar.Content>
     </Menubar.Portal>
   </Menubar.Menu>
@@ -91,12 +94,12 @@
     <Menubar.Trigger class={triggerCls}>Edit</Menubar.Trigger>
     <Menubar.Portal>
       <Menubar.Content class={contentCls} align="start" sideOffset={6}>
-        {@render item("search", "Search rows", "search", "Mod+F", !connected)}
-        {@render item("replace", "Find & replace…", "findReplace", "Mod+Alt+F", !connected)}
+        {@render item("search", "Search rows", "search", "table.search", !connected)}
+        {@render item("replace", "Find & replace…", "findReplace", "table.findReplaceAlt", !connected)}
         {@render item("list-filter", "Find in database…", "findInDatabase", "", !connected)}
         <Menubar.Separator class={sepCls} />
-        {@render item("check", "Apply staged changes", "applyEdits", "Mod+S", !connected)}
-        {@render item("clipboard-copy", "Copy staged changes as SQL", "copyEditsSql", "Mod+Alt+S", !connected)}
+        {@render item("check", "Apply staged changes", "applyEdits", "table.apply", !connected)}
+        {@render item("clipboard-copy", "Copy staged changes as SQL", "copyEditsSql", "table.copySql", !connected)}
         {@render item("undo-2", "Discard staged changes", "resetEdits", "", !connected)}
       </Menubar.Content>
     </Menubar.Portal>
@@ -108,15 +111,15 @@
     <Menubar.Trigger class={triggerCls}>View</Menubar.Trigger>
     <Menubar.Portal>
       <Menubar.Content class={contentCls} align="start" sideOffset={6}>
-        {@render item("layout-list", "Toggle sidebar", "toggleSidebar", "Mod+B")}
-        {@render item("bot", "Toggle chat", "toggleChat", "Mod+I")}
+        {@render item("layout-list", "Toggle sidebar", "toggleSidebar", "view.sidebar")}
+        {@render item("bot", "Toggle chat", "toggleChat", "ai.sidebar")}
         <Menubar.Separator class={sepCls} />
         {@render item("plus", "Zoom in", "zoomIn", "Mod+Plus")}
         {@render item("minus", "Zoom out", "zoomOut", "Mod+Minus")}
         {@render item("rotate-ccw", "Reset zoom", "zoomReset", "Mod+0")}
         <Menubar.Separator class={sepCls} />
-        {@render item("maximize-2", "Toggle full screen", "fullscreen", "F11")}
-        {@render item("command", "Command palette…", "commandPalette", "Mod+K")}
+        {@render item("maximize-2", "Toggle full screen", "fullscreen", "view.fullscreen")}
+        {@render item("command", "Command palette…", "commandPalette", "palette.open")}
       </Menubar.Content>
     </Menubar.Portal>
   </Menubar.Menu>
@@ -134,9 +137,9 @@
         <Menubar.Separator class={sepCls} />
         {@render item("git-compare", "Data diff", "dataDiff", "", !connected)}
         {@render item("layout-dashboard", "Dashboard", "dashboard", "", !connected)}
-        {@render item("history", "Activity log", "logs", "Mod+Shift+L", !connected)}
+        {@render item("history", "Activity log", "logs", "view.logs", !connected)}
         <Menubar.Separator class={sepCls} />
-        {@render item("blocks", "Extensions", "extensions", "Mod+Shift+X")}
+        {@render item("blocks", "Extensions", "extensions", "view.extensions")}
       </Menubar.Content>
     </Menubar.Portal>
   </Menubar.Menu>
@@ -147,7 +150,7 @@
     <Menubar.Trigger class={triggerCls}>Help</Menubar.Trigger>
     <Menubar.Portal>
       <Menubar.Content class={contentCls} align="start" sideOffset={6}>
-        {@render item("command", "Keyboard shortcuts", "shortcuts", "Mod+/")}
+        {@render item("command", "Keyboard shortcuts", "shortcuts", "help.shortcuts")}
         {@render item("external-link", "What's new", "changelog")}
         <Menubar.Separator class={sepCls} />
         {@render item("alert-triangle", "Report an issue…", "reportIssue")}

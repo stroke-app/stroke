@@ -16,6 +16,12 @@ let revealed = false
 /** Show the native window. No-op outside Tauri (browser dev). */
 async function showWindow() {
   try {
+    // A glass theme turns the window translucent through an async call; show
+    // the window only once that has landed, or it opens solid and flips.
+    const { windowGlassReady } = await import('$lib/stores/settings.js')
+    await windowGlassReady()
+  } catch { /* settings unavailable: show anyway */ }
+  try {
     const { invoke } = await import('@tauri-apps/api/core')
     await invoke('reveal_window')
   } catch { /* browser dev, or the window is already up */ }

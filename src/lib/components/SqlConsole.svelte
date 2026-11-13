@@ -1,4 +1,5 @@
 <script>
+  import { IS_MAC } from '$lib/shortcuts.js'
   import { rowsToCsv, rowsToJson, rowsToSql, rowsToTsv, rowsToMarkdown, rowsToJsonl, rowsToObjects, saveExportFile, buildExportFilename } from '$lib/export.js'
   import Play from "@lucide/svelte/icons/play";
   import WifiOff from "@lucide/svelte/icons/wifi-off";
@@ -818,7 +819,7 @@
 <div class="flex min-h-0 flex-1 overflow-hidden">
   <div bind:this={consoleEl} class="flex min-h-0 min-w-0 flex-1 flex-col">
   <div
-    class="studio-chrome flex h-9 shrink-0 items-center gap-1.5 border-b border-border bg-panel px-2"
+    class="studio-chrome flex h-11 shrink-0 items-center gap-2 border-b border-border/40 bg-panel px-3"
     data-studio-chrome
   >
     <!-- Run leads: it is what this toolbar is for. Stop takes its place in the
@@ -828,10 +829,10 @@
       <!-- Split button: one wrapper owns the radius + shadow; the halves are
            plain buttons (the Button component's transparent border,
            bg-clip-padding and elevate shadow would each paint a seam). -->
-      <div class={cn('col-start-1 row-start-1 flex shrink-0 items-stretch overflow-hidden rounded-md elevate-1', loading && 'invisible')}>
+      <div class={cn('col-start-1 row-start-1 flex shrink-0 items-stretch overflow-hidden rounded-md', loading && 'invisible')}>
         <button
           type="button"
-          class="inline-flex h-7 shrink-0 select-none items-center gap-2 bg-primary pl-2.5 pr-2 text-ui-2xs font-medium text-primary-foreground transition-[background-color,opacity] hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50"
+          class="inline-flex h-7 shrink-0 select-none items-center gap-2 bg-foreground pl-2.5 pr-2 text-ui-xs font-medium text-background transition-[background-color,opacity] hover:bg-foreground/90 disabled:pointer-events-none disabled:opacity-50"
           disabled={!sql.trim()}
           onclick={() => handleRun(undefined)}
           title={tipText(
@@ -845,13 +846,16 @@
         </button>
         <DropdownMenu.Root bind:open={runMenuOpen} onOpenChange={captureRunPreviews}>
           <DropdownMenu.Trigger
-            class="inline-flex h-7 w-6 shrink-0 items-center justify-center border-l border-primary-foreground/20 bg-primary text-primary-foreground transition-opacity hover:opacity-90 disabled:pointer-events-none disabled:opacity-50"
+            class="inline-flex h-7 w-6 shrink-0 items-center justify-center border-l border-background/20 bg-foreground text-background transition-opacity hover:opacity-90 disabled:pointer-events-none disabled:opacity-50"
             disabled={!sql.trim()}
             aria-label="Run options"
           >
             <ChevronDown class="size-3" />
           </DropdownMenu.Trigger>
-          <DropdownMenu.Content align="start" class="min-w-72 text-ui-sm">
+          <!-- The menu primitive's own type size: a call-site size made these
+               items larger than every other menu, and the SQL preview line
+               competed with the label it explains. -->
+          <DropdownMenu.Content align="start" class="min-w-64">
             <DropdownMenu.Item onSelect={() => handleRun(undefined)}>
               <Play class="size-3.5 shrink-0 text-muted-foreground" />
               <span class="whitespace-nowrap">Run all statements</span>
@@ -869,7 +873,7 @@
                   <DropdownMenu.Shortcut combo="Mod+R" />
                 </span>
                 {#if cursorStmtPreview}
-                  <span class="truncate font-mono text-ui-2xs leading-4 text-muted-foreground">{clipSql(cursorStmtPreview)}</span>
+                  <span class="truncate font-mono text-ui-3xs leading-4 text-muted-foreground/80">{clipSql(cursorStmtPreview)}</span>
                 {/if}
               </div>
             </DropdownMenu.Item>
@@ -878,7 +882,7 @@
                 <TextSelect class="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
                 <div class="flex w-full min-w-0 flex-col gap-0.5">
                   <span class="whitespace-nowrap">Run selection</span>
-                  <span class="truncate font-mono text-ui-2xs leading-4 text-muted-foreground">{clipSql(selectionPreview)}</span>
+                  <span class="truncate font-mono text-ui-3xs leading-4 text-muted-foreground/80">{clipSql(selectionPreview)}</span>
                 </div>
               </DropdownMenu.Item>
             {/if}
@@ -948,9 +952,9 @@
       </Button>
     {:else}
       <Button
-        variant="outline"
+        variant="ghost"
         size="sm"
-        class="h-7 shrink-0"
+        class="h-7 shrink-0 px-2 font-normal text-muted-foreground hover:text-foreground"
         disabled={txBusy || loading}
         onclick={() => onbegintransaction()}
         title={tipText(
@@ -976,7 +980,7 @@
       >
         <Variable class="size-3.5 shrink-0" />
         Variables
-        <span class="rounded bg-muted/70 px-1 font-mono text-ui-3xs tabular-nums text-muted-foreground">{sqlParams.length}</span>
+        <span class="rounded-sm bg-muted/70 px-1 font-mono text-ui-3xs tabular-nums text-muted-foreground">{sqlParams.length}</span>
       </Button>
     {/if}
 
@@ -1101,9 +1105,9 @@
            keeps work, and an icon alone read as a bookmark toggle. -->
       <Button
         type="button"
-        variant="outline"
+        variant="ghost"
         size="sm"
-        class="h-7 shrink-0 gap-1.5"
+        class="h-7 shrink-0 gap-1.5 px-2 font-normal text-muted-foreground hover:text-foreground"
         disabled={!sql.trim() || savingQuery}
         onclick={(e) => (e.shiftKey ? openSaveDialog() : void saveQuery())}
         title={savedQueryName
@@ -1269,7 +1273,7 @@
   <div class={outputVisible ? "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" : "flex shrink-0 flex-col"}>
     <!-- Output tab bar -->
     <div
-      class="studio-chrome flex h-8 shrink-0 items-stretch border-b border-border bg-panel"
+      class="studio-chrome flex h-10 shrink-0 items-stretch border-b border-border/30 bg-panel px-2"
       data-studio-chrome
     >
       <!-- Result-set selector tabs (only when multi-result) -->
@@ -1287,7 +1291,7 @@
               onclick={() => { activeResultIdx = i; resultSort = null; selected = new Set(); if (listView) outputView = 'table' }}
               title={rs.error ? rs.error.replace(/^Error:\s*/, '') : rs.sql}
               class={cn(
-                'flex h-6 shrink-0 items-center gap-1 rounded-md px-2 text-ui-2xs font-medium whitespace-nowrap transition-colors',
+                'flex h-7 shrink-0 items-center gap-1 rounded-md px-3 text-ui-xs whitespace-nowrap transition-colors',
                 rs.error
                   ? rsActive ? 'bg-destructive/12 text-destructive' : 'text-destructive/80 hover:bg-destructive/10 hover:text-destructive'
                   : rsActive ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground',
@@ -1303,12 +1307,15 @@
             </button>
           {/each}
         </div>
-        <div class="mx-1 h-4 w-px shrink-0 self-center bg-border"></div>
       {/if}
 
       <!-- View tabs (icon-only). The Error tab appears with a label only after a
            failed run, tinted destructive so it reads at a glance. -->
-      <div class="flex items-center gap-0.5 px-1">
+      <!-- One segmented control: the views are one choice, so they share a
+           track and the chosen one is raised out of it (the radius steps in by
+           the track's padding). -->
+      <div class="flex items-center">
+      <div class="flex items-center gap-0.5 px-1" role="group" aria-label="Result view">
         {#each [
           { id: 'table',   label: 'Table',   Icon: Table2,     pro: false },
           { id: 'chart',   label: 'Chart',   Icon: BarChart2,  pro: true },
@@ -1327,25 +1334,48 @@
               if (tab.id === 'explain') { void handleExplain() }
               else { outputView = /** @type {'table'|'chart'|'json'|'error'} */ (tab.id); if (!outputVisible) toggleOutput() }
             }}
+            aria-pressed={tabActive}
+            aria-label="{tab.label} view"
             class={cn(
-              'flex size-7 items-center justify-center rounded transition-colors',
+              'flex h-7 min-w-7 items-center justify-center gap-1 rounded-md transition-colors', tab.id === 'error' && 'px-2.5',
               locked
                 ? 'cursor-not-allowed opacity-40 text-muted-foreground'
                 : isError
-                  ? tabActive ? 'bg-muted/70 text-destructive' : 'text-destructive hover:bg-muted/40 hover:text-destructive'
-                  : tabActive ? 'bg-muted/70 text-foreground' : 'text-muted-foreground hover:bg-muted/40 hover:text-muted-foreground',
+                  ? tabActive ? 'bg-destructive/12 text-destructive' : 'text-destructive hover:bg-destructive/10'
+                  : tabActive ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
             )}
             title="{tab.label} view{locked ? ' · Stroke Pro' : ''}"
           >
             <Icon class="size-3.5 shrink-0" />
+            {#if tab.id === 'error'}<span class="text-ui-xs">{tab.label}</span>{/if}
           </button>
         {/each}
       </div>
+      </div>
+
+
+      <!-- Right: what the run returned, then its actions. The facts read as one
+           quiet line (`56k rows · 523 ms`); "Unordered" is a note about that
+           line, not another number, so it is plain text after a dot. -->
+      <div class="ml-auto flex shrink-0 items-center gap-3 pr-1.5">
+        {#if resultShown && (currentDisplay.rows.length > 0 || currentDisplay.queryMs > 0 || currentDisplay.message)}
+          <div class="flex min-w-0 items-center gap-1.5 text-ui-xs text-muted-foreground">
+            {#if currentDisplay.rows.length > 0}
+              <span class="tabular-nums">{formatCompactCount(currentDisplay.rows.length)} {currentDisplay.rows.length === 1 ? 'row' : 'rows'}</span>
+            {/if}
+            {#if currentDisplay.queryMs > 0}
+              {#if currentDisplay.rows.length > 0}<span aria-hidden="true" class="text-muted-foreground/50">·</span>{/if}
+              <span class="tabular-nums">{currentDisplay.queryMs} ms</span>
+            {/if}
+            {#if currentDisplay.message}
+              <span class="max-w-[160px] truncate">{currentDisplay.message}</span>
+            {/if}
+          </div>
+        {/if}
 
       <!-- The lists, beside the result views. They are the connection's, so
            every editor tab shows the same ones. -->
-      <div class="mx-0.5 h-4 w-px shrink-0 self-center bg-border" aria-hidden="true"></div>
-      <div class="flex items-center gap-0.5 px-1">
+      <div class="flex items-center gap-1">
         {#each LIST_VIEWS as lv (lv.id)}
           {@const on = outputVisible && outputView === lv.id}
           <button
@@ -1353,41 +1383,23 @@
             aria-pressed={on}
             onclick={() => toggleList(lv.id)}
             class={cn(
-              'flex h-7 items-center rounded-md px-2 text-ui-2xs font-medium whitespace-nowrap transition-colors',
-              on ? 'bg-muted/70 text-foreground' : 'text-muted-foreground hover:bg-muted/40 hover:text-foreground',
+              'flex h-7 items-center rounded-md px-3 text-ui-xs whitespace-nowrap transition-colors',
+              on ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
             )}
             title={lv.id === 'history' ? tipText(lv.label, lv.hint, [mod, '⇧', 'B']) : tipText(lv.label, lv.hint)}
           >{lv.label}</button>
         {/each}
       </div>
 
-      <!-- Right: metadata + toggle -->
-      <div class="ml-auto flex shrink-0 items-center gap-3 pr-1.5">
-        {#if resultShown && currentDisplay.rows.length > 1 && !resultSort && !hasOrderBy}
-          <!-- Without ORDER BY the database returns rows in whatever order it
-               reads them (storage order, roughly), which is rarely id or time
-               order. Said once, quietly, where the row count is. -->
-          <span
-            class="font-mono text-ui-2xs text-muted-foreground/70"
-            title="The query has no ORDER BY, so rows come back in the order the database read them. Add ORDER BY, or click a column header to sort."
-          >unordered</span>
-        {/if}
-        {#if resultShown && currentDisplay.rows.length > 0}
-          <span class="font-mono text-ui-2xs tabular-nums text-muted-foreground">{formatCompactCount(currentDisplay.rows.length)} rows</span>
-        {/if}
-        {#if resultShown && currentDisplay.queryMs > 0}
-          <span class="font-mono text-ui-2xs tabular-nums text-muted-foreground">{currentDisplay.queryMs}ms</span>
-        {/if}
-        {#if resultShown && currentDisplay.message}
-          <span class="max-w-[160px] truncate font-mono text-ui-2xs text-muted-foreground">{currentDisplay.message}</span>
-        {/if}
 
+        <div class="flex items-center gap-0.5">
         <!-- Export dropdown, only when there are results -->
         {#if resultShown && currentDisplay.rows.length > 0}
           <DropdownMenu.Root>
             <DropdownMenu.Trigger
-              class="flex size-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+              class="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
               title="Export results"
+              aria-label="Export results"
             >
               <Download class="size-3.5" />
             </DropdownMenu.Trigger>
@@ -1417,11 +1429,12 @@
         <button
           type="button"
           onclick={toggleOutput}
-          class="inline-flex size-5 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+          class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
           title={tipText(outputVisible ? 'Hide results' : 'Show results', 'Collapse the results panel to give the editor the full height.', [mod, 'J'])}
         >
           <ChevronDown class={cn('size-3.5 transition-transform duration-150', outputVisible ? '' : 'rotate-180')} />
         </button>
+        </div>
       </div>
     </div>
 
@@ -1456,7 +1469,7 @@
             {:else if isNetworkError(shownError)}
               <div class="flex h-full flex-col items-center justify-center gap-2.5 px-6 text-center">
                 <WifiOff class="size-6 text-muted-foreground" />
-                <p class="font-mono text-ui-sm text-muted-foreground">Cannot reach database, check your connection and try again.</p>
+                <p class="text-ui-sm text-muted-foreground">Cannot reach database, check your connection and try again.</p>
               </div>
             {:else}
               <!-- The failed statement as a console prints it: the message, where
@@ -1494,7 +1507,7 @@
             {:else}
               <div class="flex h-full flex-col items-center justify-center gap-2 text-center">
                 <ScanSearch class="size-6 text-muted-foreground" />
-                <p class="font-mono text-ui-sm text-muted-foreground">Click Explain to analyze the query plan</p>
+                <p class="text-ui-sm text-muted-foreground">Click Explain to analyze the query plan</p>
               </div>
             {/if}
           {:else if currentDisplay.columns.length > 0}
@@ -1527,9 +1540,13 @@
           {:else if loading}
             <TableLoading />
           {:else}
-            <div class="flex h-full flex-col items-center justify-center gap-2 text-center">
-              <Play class="size-6 text-muted-foreground" />
-              <p class="font-mono text-ui-sm text-muted-foreground">Run a query to see results</p>
+            <!-- T3-style empty state: one light line, one quiet hint. -->
+            <div class="flex h-full flex-col items-center justify-center gap-1.5 text-center">
+              <p class="text-ui-lg font-normal tracking-tight text-foreground/90">Run a query</p>
+              <p class="flex items-center gap-1.5 text-ui-xs text-muted-foreground">
+                <kbd class="rounded bg-sidebar-accent px-1.5 py-0.5 font-sans text-ui-2xs">{IS_MAC ? '⌘' : 'Ctrl'} ↵</kbd>
+                runs the statement at the cursor
+              </p>
             </div>
           {/if}
         {/key}

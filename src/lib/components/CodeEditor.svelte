@@ -48,8 +48,6 @@
     snippetKeymap, nextSnippetField, prevSnippetField, clearSnippet, completionKeymap,
   } from '@codemirror/autocomplete'
   import { sqlCompletionSource, enterPastTypedWord } from '$lib/cm-sql-complete.js'
-  import { ArrowDown01Icon, ArrowRight01Icon } from '@hugeicons/core-free-icons'
-  import { hugeSvg } from '$lib/cm-huge-icon.js'
   import { tags as t } from '@lezer/highlight'
   import { get } from 'svelte/store'
   import { appEditorTheme } from '$lib/stores/settings.js'
@@ -74,6 +72,12 @@
     acceptOnEnter = true,
     /** Called with the new text on every edit (the same string `value` gets). */
     onchange = /** @type {((text: string) => void) | undefined} */ (undefined),
+    /**
+     * SQL: replace the statement-aware completion with another source - for a
+     * field that holds a fragment, not a statement (the grid's WHERE filter).
+     * @type {import('@codemirror/autocomplete').CompletionSource | null}
+     */
+    completionSource = null,
     extensions = [],
   } = $props()
 
@@ -83,6 +87,7 @@
   let view = null
 
   const wrapC = new Compartment()
+  const placeholderC = new Compartment()
   const gutterC = new Compartment()
   const readOnlyC = new Compartment()
   const langC = new Compartment()
@@ -182,7 +187,7 @@
       color: 'var(--foreground)',
       // A surface can set these on an ancestor: the SQL console follows the
       // editor font setting, the docks stay at the UI's code size.
-      fontSize: 'var(--cm-font-size, var(--fs-2xs))',
+      fontSize: 'var(--cm-font-size, var(--fs-sm))',
     },
     '&.cm-focused': { outline: 'none' },
     '.cm-scroller': {
@@ -212,7 +217,7 @@
       border: 'none',
       borderRight: '1px solid color-mix(in oklch, var(--border) 40%, transparent)',
       fontFamily: 'var(--cm-font-family, var(--font-mono))',
-      fontSize: 'var(--cm-font-size, var(--fs-2xs))',
+      fontSize: 'var(--cm-font-size, var(--fs-sm))',
       fontVariantNumeric: 'tabular-nums',
     },
     // Five digits reserved up front. The gutter sizes to the widest number, so
@@ -221,26 +226,44 @@
     // elements are border-box, hence the padding added in. Past 99,999 lines
     // it still grows, once.
     '.cm-lineNumbers .cm-gutterElement': {
-      padding: '0 6px 0 12px',
-      minWidth: 'calc(5ch + 18px)',
+      padding: '0 4px 0 12px',
+      minWidth: 'calc(5ch + 16px)',
       textAlign: 'right',
     },
     '.cm-activeLineGutter': { backgroundColor: 'transparent', color: 'var(--muted-foreground)' },
     // Fold arrows only where they apply and only while the gutter is hovered,
     // so an unfoldable plain-text value has no blank strip beside its numbers.
+    // A real column for the markers (18px, 4px clear of the numbers) instead
+    // of a 12px sliver that made each chevron read as part of its number.
     '.cm-foldGutter .cm-gutterElement': {
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
-      padding: '0',
-      width: '12px',
+      padding: '0 4px 0 2px',
+      width: '18px',
       cursor: 'pointer',
       opacity: '0',
       transition: 'opacity 120ms',
     },
-    '.cm-fold-marker': { display: 'inline-flex', color: 'var(--muted-foreground)' },
-    '.cm-fold-marker:hover': { color: 'var(--foreground)' },
-    '.cm-fold-marker svg': { width: '12px', height: '12px' },
+    '.cm-fold-marker': {
+      display: 'inline-flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      width: '14px',
+      height: '14px',
+      borderRadius: '4px',
+      color: 'color-mix(in oklch, var(--muted-foreground) 80%, transparent)',
+      transition: 'background-color 100ms, color 100ms',
+    },
+    '.cm-fold-marker:hover': {
+      color: 'var(--foreground)',
+      backgroundColor: 'color-mix(in oklch, var(--foreground) 10%, transparent)',
+    },
+    '.cm-fold-marker svg': { width: '12px', height: '12px', transition: 'transform 120ms ease-out' },
+    // Folded: the chevron points right and stays visible, so what is collapsed
+    // can be seen without hovering the gutter first.
+    '.cm-fold-marker[data-folded] svg': { transform: 'rotate(-90deg)' },
+    '.cm-foldGutter .cm-gutterElement:has([data-folded])': { opacity: '1' },
     '.cm-gutters:hover .cm-foldGutter .cm-gutterElement': { opacity: '1' },
     '.cm-foldPlaceholder': {
       backgroundColor: 'color-mix(in oklch, var(--muted) 60%, transparent)',
@@ -347,7 +370,7 @@
     // focus language. 28px controls, 6px radius, the field hairline, one ring.
     '.cm-panels': { backgroundColor: 'var(--background)', color: 'var(--foreground)' },
     '.cm-panels-top': { borderBottom: '1px solid color-mix(in oklch, var(--border) 45%, transparent)' },
-    '.cm-find': { display: 'flex', flexDirection: 'column', gap: '4px', padding: '6px 8px' },
+    '.cm-find': { display: 'flex', flexDirection: 'column', gap: '6px', padding: '8px 10px', fontFamily: 'var(--font-sans)' },
     '.cm-find-row': { display: 'flex', alignItems: 'center', gap: '2px', minWidth: '0' },
     '.cm-find-row[hidden]': { display: 'none' },
     '.cm-find-field': {
@@ -356,18 +379,21 @@
       gap: '6px',
       flex: '1 1 auto',
       minWidth: '0',
-      maxWidth: '340px',
-      height: '28px',
-      marginInlineEnd: '4px',
-      paddingInlineStart: '8px',
-      paddingInlineEnd: '3px',
+      maxWidth: '380px',
+      height: '32px',
+      marginInlineEnd: '6px',
+      paddingInlineStart: '10px',
+      paddingInlineEnd: '4px',
       color: 'var(--muted-foreground)',
-      backgroundColor: 'color-mix(in oklch, var(--muted) 25%, transparent)',
-      border: 'var(--field-border-width) solid var(--field-border)',
-      borderRadius: 'var(--radius-field)',
+      // Frameless, as the app's other search fields: a soft fill that firms up
+      // while you type, a 1px accent edge only when focused - no glow ring.
+      backgroundColor: 'color-mix(in oklch, var(--sidebar-accent) 55%, transparent)',
+      border: '1px solid transparent',
+      borderRadius: '8px',
       cursor: 'text',
     },
-    '.cm-find-field:focus-within': { outline: '2px solid var(--ring)', outlineOffset: '1px' },
+    // Focus firms the fill only; no colored outline (T3-style quiet field).
+    '.cm-find-field:focus-within': { backgroundColor: 'var(--sidebar-accent)' },
     '.cm-find-invalid': { borderColor: 'var(--destructive)' },
     '.cm-find-field svg': { flexShrink: '0' },
     // The app's global input styles (border, radius, fill, focus ring) reach
@@ -386,8 +412,8 @@
       boxShadow: 'none !important',
       outline: 'none !important',
       color: 'var(--foreground)',
-      fontFamily: 'var(--font-mono)',
-      fontSize: 'var(--fs-2xs)',
+      fontFamily: 'var(--font-sans)',
+      fontSize: 'var(--fs-xs)',
     },
     '.cm-find-field input::placeholder': { color: 'var(--muted-foreground)' },
     '.cm-find-none': { color: 'var(--destructive) !important' },
@@ -395,8 +421,8 @@
       flexShrink: '0',
       minWidth: '10ch',
       paddingInline: '4px 6px',
-      fontFamily: 'var(--font-mono)',
-      fontSize: 'var(--fs-3xs)',
+      fontFamily: 'var(--font-sans)',
+      fontSize: 'var(--fs-2xs)',
       fontVariantNumeric: 'tabular-nums',
       color: 'var(--muted-foreground)',
       whiteSpace: 'nowrap',
@@ -706,12 +732,15 @@
     return true
   }
 
+  /** A thin chevron (the app's Lucide stroke), turned for the folded state by CSS. */
+  const CHEVRON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>'
   const foldMarkers = foldGutter({
     markerDOM(open) {
       const el = document.createElement('span')
       el.className = 'cm-fold-marker'
       el.title = open ? 'Fold' : 'Unfold'
-      el.append(hugeSvg(open ? ArrowDown01Icon : ArrowRight01Icon))
+      if (!open) el.dataset.folded = ''
+      el.innerHTML = CHEVRON_SVG
       return el
     },
   })
@@ -735,7 +764,7 @@
   /** @param {boolean} onTyping @param {boolean} [enterAccepts] */
   const completionConfig = (onTyping, enterAccepts = true) => [
     autocompletion({
-      override: [sqlCompletionSource(() => sqlHints, () => dialect)],
+      override: [completionSource ?? sqlCompletionSource(() => sqlHints, () => dialect)],
       activateOnTyping: onTyping,
       icons: false,
       addToOptions: [kindDot],
@@ -831,7 +860,7 @@
         colorC.of(colorsFor(get(appEditorTheme))),
         theme,
         sqlEditing(),
-        placeholderExt(placeholder),
+        placeholderC.of(placeholderExt(placeholder)),
         EditorView.contentAttributes.of({ 'aria-label': ariaLabel, spellcheck: 'false' }),
         wrapC.of(wrap ? EditorView.lineWrapping : []),
         readOnlyC.of(EditorState.readOnly.of(readOnly)),
@@ -878,7 +907,23 @@
     probe.style.cssText = 'position:absolute;top:0;left:0;visibility:hidden;pointer-events:none;white-space:pre;font-family:var(--cm-font-family, var(--font-mono))'
     view.scrollDOM.append(probe)
     let raf = 0
-    const ro = new ResizeObserver(() => {
+    // Only a real change of text metrics re-measures. The observer also reports
+    // when the editor is hidden (the probe drops to 0x0: a background SQL tab,
+    // the cell dock's collapsed raw view) and again when it is shown at the size
+    // it already had - and every one of those used to swap the theme facet,
+    // which makes CodeMirror re-read line heights from scratch. With several
+    // editors mounted, one layout change sent all of them through that at once
+    // (the "Measure loop restarted more than 5 times" warnings, four together).
+    // CodeMirror measures a shown editor by itself; metrics it can't see change
+    // (zoom, font setting) still change the probe's box and still get here.
+    let lastW = 0
+    let lastH = 0
+    const ro = new ResizeObserver((entries) => {
+      const box = entries[entries.length - 1]?.contentRect
+      if (!box || box.width === 0 || box.height === 0) return
+      if (box.width === lastW && box.height === lastH) return
+      lastW = box.width
+      lastH = box.height
       cancelAnimationFrame(raf)
       raf = requestAnimationFrame(remeasure)
     })
@@ -906,28 +951,45 @@
     const next = value
     if (!view || next === emitted) return
     if (next !== view.state.doc.toString()) view.setState(freshState(next))
+    // The doc now holds `next`, so that is what a value equal to it means from
+    // here on. Without this, `emitted` kept the last text typed even after an
+    // outside value replaced the doc, and the next outside value equal to that
+    // stale text was skipped as an echo: the SQL editor, shared by every tab,
+    // came back to a tab and kept showing the previous tab's query (and saved
+    // it into this one) whenever this tab's text was the last thing typed or
+    // inserted - a sidebar CREATE template always was.
+    emitted = next
   })
-  $effect(() => { const w = wrap; view?.dispatch({ effects: wrapC.reconfigure(w ? EditorView.lineWrapping : []) }) })
-  $effect(() => {
-    const g = gutter
-    const f = folding
-    view?.dispatch({ effects: gutterC.reconfigure(gutterExt(g, f)) })
-  })
-  $effect(() => { const r = readOnly; view?.dispatch({ effects: readOnlyC.reconfigure(EditorState.readOnly.of(r)) }) })
+  /**
+   * Reconfigure when a prop CHANGES, not on the effect's first pass: freshState
+   * has just built every compartment from these same props. The first passes
+   * were seven reconfigures per editor per mount - the language one a full
+   * reparse of the document - each a CodeMirror update and measure on top of
+   * the one the mount already scheduled.
+   * @template T @param {() => T} read @param {(v: T) => void} apply
+   */
+  function onPropChange(read, apply) {
+    let first = true
+    $effect(() => {
+      const v = read()
+      if (first) { first = false; return }
+      apply(v)
+    })
+  }
+  onPropChange(() => wrap, (w) => view?.dispatch({ effects: wrapC.reconfigure(w ? EditorView.lineWrapping : []) }))
+  onPropChange(() => placeholder, (p) => view?.dispatch({ effects: placeholderC.reconfigure(placeholderExt(p)) }))
+  onPropChange(() => [gutter, folding], ([g, f]) => view?.dispatch({ effects: gutterC.reconfigure(gutterExt(g, f)) }))
+  onPropChange(() => readOnly, (r) => view?.dispatch({ effects: readOnlyC.reconfigure(EditorState.readOnly.of(r)) }))
   // A new dialect's keywords, without resetting the doc. Tables and columns
   // are read by the completion source on every query and need nothing here.
   // Another language for the same editor (a view switching CSV to Markdown).
-  $effect(() => {
-    void dialect
-    void lang
-    if (lang) view?.dispatch({ effects: langC.reconfigure(languageFor(view.state.doc.toString())) })
+  onPropChange(() => [dialect, lang], () => {
+    if (lang && view) view.dispatch({ effects: langC.reconfigure(languageFor(view.state.doc.toString())) })
   })
 
-  $effect(() => { const x = extensions; view?.dispatch({ effects: extraC.reconfigure(x) }) })
-  $effect(() => { const id = $appEditorTheme; view?.dispatch({ effects: colorC.reconfigure(colorsFor(id)) }) })
-  $effect(() => {
-    const t = suggestWhileTyping
-    const e = acceptOnEnter
+  onPropChange(() => extensions, (x) => view?.dispatch({ effects: extraC.reconfigure(x) }))
+  onPropChange(() => $appEditorTheme, (id) => view?.dispatch({ effects: colorC.reconfigure(colorsFor(id)) }))
+  onPropChange(() => [suggestWhileTyping, acceptOnEnter], ([t, e]) => {
     if (lang === 'sql') view?.dispatch({ effects: completeC.reconfigure(completionConfig(t, e)) })
   })
 

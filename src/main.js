@@ -4,6 +4,7 @@ import App from './App.svelte'
 import { applySettings, installZoomShortcuts, loadSettings, resetWebviewZoom } from '$lib/stores/settings.js'
 import { armRevealFailsafe } from '$lib/app-reveal.js'
 import { hydrateConnectionsFromDisk } from '$lib/stores/connections.js'
+import { installSelectAll } from '$lib/select-all.js'
 
 // Clear all local storage when VITE_FRESH_START=1 (used by `npm run tauri:fresh`)
 if (import.meta.env.VITE_FRESH_START === '1') {
@@ -99,6 +100,8 @@ document.addEventListener('click', async (e) => {
 // them (see hydrateConnectionsFromDisk). A fresh-start run skips it, or the
 // file would put back everything it just cleared.
 if (import.meta.env.VITE_FRESH_START !== '1') await hydrateConnectionsFromDisk()
+
+installSelectAll()
 
 const app = mount(App, {
   target: document.getElementById('app'),

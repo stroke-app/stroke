@@ -1,6 +1,9 @@
 <script>
+  import ThemeBuilder from './ThemeBuilder.svelte';
   import { comboTitle } from '$lib/shortcuts.js'
   import Kbd from './Kbd.svelte'
+  import KeybindingsSettings from './KeybindingsSettings.svelte'
+  import { bindingFor } from '$lib/stores/keybindings.js'
   import { startTelemetry, stopTelemetry } from "$lib/telemetry.js";
   import Minus from "@lucide/svelte/icons/minus";
   import Plus from "@lucide/svelte/icons/plus";
@@ -8,6 +11,7 @@
   import { Button } from "$lib/components/ui/button/index.js";
   import * as Dialog from "$lib/components/ui/dialog/index.js";
   import ThemeSwatch from "$lib/components/ThemeSwatch.svelte";
+  import ThemeSwatchStrip from "$lib/components/ThemeSwatchStrip.svelte";
   import SearchableMenu from "$lib/components/SearchableMenu.svelte";
   import SelectMenu from "$lib/components/SelectMenu.svelte";
   import EditorThemePicker from "$lib/components/EditorThemePicker.svelte";
@@ -16,6 +20,7 @@
   import { pluginState, isPluginEnabled, setPluginEnabled } from "$lib/stores/plugins.js";
   import { t, locale, LOCALES, setLocale } from "$lib/i18n.js";
   import { licenseStatus } from "$lib/stores/license.js";
+  import AccountCard from "./AccountCard.svelte";
   import {
     appThemeId,
     loadSettings,
@@ -81,6 +86,8 @@
     onopenabout = () => {},
     onopenextensions = () => {},
     onopenlicense = () => {},
+    /** Open on this category instead of General (consumed on open). */
+    section = $bindable(''),
   } = $props();
 
   let settings = $state(loadSettings());
@@ -92,6 +99,7 @@
     { id: 'appearance',   label: 'Appearance',   icon: 'sparkles' },
     { id: 'agent',        label: 'Agent',        icon: 'bot' },
     { id: 'integrations', label: 'Integrations', icon: 'blocks' },
+    { id: 'keybindings',  label: 'Keybindings',  icon: 'keyboard' },
     { id: 'about',        label: 'About',        icon: 'info' },
   ];
   let category = $state('general');
@@ -102,6 +110,12 @@
   const show = (/** @type {string} */ title, /** @type {string} */ desc = '') =>
     !q || `${title} ${desc}`.toLowerCase().includes(q);
   const activeCategory = $derived(CATEGORIES.find((c) => c.id === category) ?? CATEGORIES[0]);
+  // A caller asking for a page (the command palette's "Keyboard shortcuts")
+  // sets `section` and opens the dialog programmatically, which may not go
+  // through onOpenChange.
+  $effect(() => {
+    if (open && section) { category = section; query = ''; section = ''; }
+  });
 
   const themeGroups = $derived(themesByGroup());
   /** Kept in sync with applySettings / ⌘M via appThemeId store */
@@ -154,10 +168,12 @@
 
   /** @param {boolean} next */
   function handleOpenChange(next) {
-    if (next) { refreshSettings(); category = 'general'; query = ''; void refreshLockStatus(); }
+    if (next) { refreshSettings(); category = section || 'general'; section = ''; query = ''; void refreshLockStatus(); }
   }
 
   /** @param {import('$lib/themes/registry.js').ThemeId} themeId */
+  let themeBuilderOpen = $state(false);
+
   function setTheme(themeId) {
     if (themeId === $appThemeId) return;
     settings = updateSettings({ theme: themeId });
@@ -375,6 +391,9 @@
     settings = updateSettings({ cmdkAiEnabled: !settings.cmdkAiEnabled });
   }
 
+  function toggleTreeSidebar() {
+    settings = updateSettings({ sidebarStyle: settings.sidebarStyle === 'tree' ? 'classic' : 'tree' });
+  }
   function toggleLiveMode() {
     settings = updateSettings({ liveModeEnabled: !settings.liveModeEnabled });
   }
@@ -486,8 +505,10 @@
   /** @type {boolean | null} */
   let launchAtLogin = $state(null);
 
+  // Asked on first open, not at startup: on macOS this shells out to
+  // AppleScript (~300 ms) and the dialog is mounted for the app's lifetime.
   $effect(() => {
-    if (launchAtLogin === null) {
+    if (open && launchAtLogin === null) {
       getAutostartStatus()
         .then((v) => { launchAtLogin = v; })
         .catch(() => { launchAtLogin = false; });
@@ -582,6 +603,8 @@
                 {@render appearanceContent()}
               {:else if category === 'agent'}
                 {@render agentContent()}
+              {:else if category === 'keybindings'}
+                <KeybindingsSettings />
               {:else if category === 'integrations'}
                 {@render integrationsContent()}
               {:else}
@@ -651,7 +674,7 @@
         : 'cursor-default border-transparent text-muted-foreground',
     )}
   >
-    <RotateCcw class="size-3.5" />
+    <RotateCcw class="size-3.5 shrink-0" />
   </button>
 {/snippet}
 
@@ -858,11 +881,11 @@
             {:else}
               <div class="flex items-center gap-1">
                 <Button type="button" variant="ghost" size="icon" class="size-7" aria-label={`Decrease ${field.label}`} onclick={() => bumpSqlFormat(field, -1)}>
-                  <Minus class="size-3.5" />
+                  <Minus class="size-3.5 shrink-0" />
                 </Button>
                 <span class="min-w-10 text-center font-mono text-ui-xs tabular-nums text-foreground">{sqlFmt[field.key]}</span>
                 <Button type="button" variant="ghost" size="icon" class="size-7" aria-label={`Increase ${field.label}`} onclick={() => bumpSqlFormat(field, 1)}>
-                  <Plus class="size-3.5" />
+                  <Plus class="size-3.5 shrink-0" />
                 </Button>
               </div>
             {/if}
@@ -1013,6 +1036,9 @@
   {#if show('Live mode', 'Experimental, auto-refresh the active table when its data changes')}
     {@render switchRow('Live mode (experimental)', 'Experimental, show the Live auto-refresh toggle in the status bar. Off by default.', settings.liveModeEnabled, toggleLiveMode)}
   {/if}
+  {#if show('Tree sidebar', 'Beta, browse connections, schemas, tables and columns as one explorer tree')}
+    {@render switchRow('Tree sidebar (beta)', 'Beta, one explorer tree in the sidebar: connection, database, schema, tables, views and routines, columns. Replaces the Tables, Objects and Databases tabs; Queries, Recent and Find & replace stay. Off by default.', settings.sidebarStyle === 'tree', toggleTreeSidebar)}
+  {/if}
   {#if show('Load large values on demand', 'Fetch a column that averages megabytes as a size, and load a cell when you open it')}
     {@render switchRow('Load large values on demand', 'A column averaging half a megabyte a row arrives as its size, and the value loads when you open the cell. Off fetches every value with the page, which is what it did before, and what makes such a table take ten seconds to open. PostgreSQL.', settings.lazyWideColumns, toggleLazyWideColumns)}
   {/if}
@@ -1104,7 +1130,7 @@
       </div>
       <SearchableMenu
         align="end"
-        contentClass="w-64"
+        contentClass="min-w-72"
         placeholder="Search themes…"
         items={themeGroups.flatMap((g) => g.themes.map((t) => ({ value: t.id, label: t.name, keywords: [g.label], bg: t.preview.bg, accent: t.preview.accent })))}
         onselect={(it) => setTheme(/** @type {import('$lib/themes/registry.js').ThemeId} */ (it.value))}
@@ -1126,13 +1152,24 @@
           </button>
         {/snippet}
         {#snippet item(it)}
-          <span class="flex min-w-0 flex-1 items-center gap-2">
-            <ThemeSwatch bg={it.bg} accent={it.accent} />
-            <span class="truncate text-ui-xs font-medium">{it.label}</span>
-          </span>
+          <span class="min-w-0 flex-1 truncate text-ui-xs font-medium">{it.label}</span>
           {#if $appThemeId === it.value}<Icon name="check" class="ml-auto size-3.5 shrink-0 text-primary" />{/if}
+          <ThemeSwatchStrip themeId={/** @type {import('$lib/themes/registry.js').ThemeId} */ (it.value)} />
         {/snippet}
       </SearchableMenu>
+    </div>
+  {/if}
+
+  {#if show('Theme builder', 'Custom theme colours intensity grain noise')}
+    <div class={rowCls}>
+      <div class="min-w-0">
+        <p class="text-ui-sm font-medium text-foreground">Theme builder</p>
+        <p class="mt-0.5 text-ui-xs leading-relaxed text-muted-foreground">Make your own theme from colours, intensity and film grain. Previews live.</p>
+      </div>
+      <Button type="button" variant="outline" size="sm" onclick={() => (themeBuilderOpen = true)}>
+        <Icon name="sparkles" class="size-3.5 shrink-0" />
+        {$appThemeId === 'custom' ? 'Edit theme' : 'Build a theme'}
+      </Button>
     </div>
   {/if}
 
@@ -1146,7 +1183,7 @@
         ariaLabel="Font family"
         value={settings.font}
         onValueChange={(v) => { if (v) setFont(/** @type {import('$lib/stores/settings.js').FontId} */ (v)); }}
-        items={fontEntries.map(([id, preset]) => ({ value: id, label: preset.label, sans: preset.sans, keywords: [preset.label] }))}
+        items={fontEntries.map(([id, preset]) => ({ value: id, label: preset.label, sans: preset.sans, keywords: [preset.label, preset.description, id === 'mono' ? 'monospace' : 'sans'] }))}
         searchPlaceholder="Search fonts…"
       >
         {#snippet lead(it)}
@@ -1212,7 +1249,7 @@
             {:else if it.value === "phosphor"}
               <PhosphorSparkle class="size-4" size="100%" />
             {:else}
-              <LucideSparkles class="size-4" />
+              <LucideSparkles class="size-4 shrink-0" />
             {/if}
           </span>
         {/snippet}
@@ -1501,11 +1538,11 @@
       </div>
       <div class="flex items-center gap-1">
         <Button type="button" variant="ghost" size="icon" class="size-7" aria-label="Zoom out" disabled={!canDecreaseZoom(settings.zoom)} onclick={() => bumpZoom(-1)}>
-          <Minus class="size-3.5" />
+          <Minus class="size-3.5 shrink-0" />
         </Button>
         <button type="button" class="min-w-12 rounded-md px-2 py-1 font-mono text-ui-xs tabular-nums text-foreground transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-muted active:scale-[0.98]" onclick={() => (settings = resetZoom())} title="Reset to 100%">{zoomLabel}</button>
         <Button type="button" variant="ghost" size="icon" class="size-7" aria-label="Zoom in" disabled={!canIncreaseZoom(settings.zoom)} onclick={() => bumpZoom(1)}>
-          <Plus class="size-3.5" />
+          <Plus class="size-3.5 shrink-0" />
         </Button>
       </div>
     </div>
@@ -1525,6 +1562,10 @@
   {/if}
 
   {@render secLabel($t('settings.sec.account'))}
+  <!-- Account first; the license key row below stays as the secondary path. -->
+  {#if show('Account', 'Sign in with GitHub or Google, plan, devices, sign out')}
+    <AccountCard class="my-2" />
+  {/if}
   {#if show($t('settings.license'), $t('settings.license.desc'))}
     {@render actionRow($t('settings.license'), $t('settings.license.desc'), $t('settings.btn.manage'), () => { open = false; onopenlicense(); }, planBadge)}
   {/if}
@@ -1542,7 +1583,7 @@
         <p class="mt-0.5 text-ui-xs leading-relaxed text-muted-foreground">{$t('settings.website.desc')}</p>
       </div>
         <a href= "field-surface https://stroke.click"target="_blank"rel="noopener noreferrer"class="inline-flex h-8 shrink-0 items-center gap-1.5 bg-background px-3 text-ui-xs font-medium text-foreground transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-muted active:scale-[0.98]">
-        stroke.click <Icon name="external-link" class="size-3.5" />
+        stroke.click <Icon name="external-link" class="size-3.5 shrink-0" />
       </a>
     </div>
   {/if}
@@ -1551,8 +1592,8 @@
     <p class="mt-8 mb-1 text-ui-2xs font-semibold uppercase tracking-[0.06em] text-muted-foreground">{$t('settings.sec.keyboard')}</p>
     <div class="mb-3 border-b border-border/40"></div>
     <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
-      {@render shortcut('Mod+M', $t('settings.kbd.cycleTheme'))}
-      {@render shortcut('Mod+Shift+M', $t('settings.kbd.prevTheme'))}
+      {#if bindingFor('theme.next')}{@render shortcut(bindingFor('theme.next'), $t('settings.kbd.cycleTheme'))}{/if}
+      {#if bindingFor('theme.prev')}{@render shortcut(bindingFor('theme.prev'), $t('settings.kbd.prevTheme'))}{/if}
       {@render shortcut('Mod+Plus', $t('settings.kbd.zoom'))}
       {@render shortcut('Mod+Minus', $t('settings.kbd.zoom'))}
       {@render shortcut('Mod+0', $t('settings.kbd.resetZoom'))}
@@ -1594,3 +1635,5 @@
     }
   }
 </style>
+
+<ThemeBuilder bind:open={themeBuilderOpen} />
