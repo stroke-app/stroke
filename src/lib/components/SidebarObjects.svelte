@@ -463,9 +463,19 @@
   /** @param {string} s */
   const cap = (s) => s[0].toUpperCase() + s.slice(1)
 
-  // The Tables tab's row recipe (Sidebar.svelte), so both tabs read as one.
-  const ROW = 'absolute inset-x-1.5 flex h-7 cursor-default select-none items-center rounded-md text-left transition-colors'
-  const IDLE = 'text-foreground/70 hover:bg-sidebar-accent/50 hover:text-foreground'
+  // The Explorer's (SidebarTree) row recipe: full-width rows on an indent grid
+  // with hairline guides, so this tab reads as the same tree.
+  const ROW = 'absolute inset-x-0 flex h-7 cursor-default select-none items-center gap-1.5 pr-2 text-left transition-colors'
+  const IDLE = 'text-foreground/80 hover:bg-sidebar-accent/50 hover:text-foreground'
+  const RING = 'outline-2 -outline-offset-2 outline-ring'
+  const GUIDE = 'pointer-events-none absolute inset-y-0 w-px bg-border'
+  /** Left padding and one level's width (the chevron column), as in SidebarTree. */
+  const PAD = 0.375
+  const INDENT = 1
+  /** @param {number} depth */
+  const padFor = (depth) => `${PAD + depth * INDENT}rem`
+  /** @param {number} level */
+  const guideAt = (level) => `calc(${PAD + level * INDENT + INDENT / 2}rem - 0.5px)`
   const SELECTED = 'bg-sidebar-accent text-sidebar-accent-foreground'
   const ICON_BTN = 'inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40'
 </script>
@@ -503,7 +513,7 @@
     <!-- Nothing at all in the schema: one place to start from. -->
     <div class="flex flex-col items-center gap-3 px-6 py-14 text-center">
       <div class="flex size-10 items-center justify-center rounded-lg border border-border bg-muted/30">
-        <Icon name="shapes" class="size-5 text-muted-foreground" />
+        <Icon name="shapes" class="size-5 shrink-0 text-muted-foreground" />
       </div>
       <p class="max-w-[16rem] text-ui-xs font-medium text-foreground">No views or routines in “{schema}”</p>
       {#if family}{@render newMenu('empty')}{/if}
@@ -543,6 +553,13 @@
                 {@const i = start + n}
                 {@const isActive = r.key === active}
                 {@const ring = isActive && focused && kbd}
+                {@const depth = r.t === 'group' ? 0 : r.t === 'ext' ? 1 : r.depth}
+                {#snippet guides()}
+                  <!-- Indent guides, one hairline per level: the Explorer's tree look. -->
+                  {#each { length: depth } as _, level}
+                    <span class={GUIDE} style:left={guideAt(level)} aria-hidden="true"></span>
+                  {/each}
+                {/snippet}
                 {#if r.t === 'group'}
                   <div
                     id={rowId(i)}
@@ -551,16 +568,16 @@
                     aria-expanded={r.open}
                     aria-selected={isActive}
                     data-index={i}
-                    class={cn(ROW, 'group/row gap-1.5 px-2', isActive ? SELECTED : 'hover:bg-sidebar-accent/50', ring && 'outline-2 -outline-offset-2 outline-ring')}
-                    style="top: {i * rowH}px"
+                    class={cn(ROW, 'group/row', isActive ? SELECTED : 'text-foreground hover:bg-sidebar-accent/50', ring && RING)}
+                    style="top: {i * rowH}px; padding-left: {padFor(0)}"
                   >
-                    <!-- A tree node: chevron, the kind's coloured icon, its name and
-                         the count in brackets. -->
-                    <Icon name="chevron-right" class={cn('size-3 shrink-0 text-muted-foreground transition-transform duration-150', r.open && 'rotate-90')} />
+                    <span class="flex h-full w-4 shrink-0 items-center justify-center" aria-hidden="true">
+                      <Icon name="chevron-right" class={cn('size-3.5 shrink-0 text-muted-foreground transition-transform duration-100', r.open && 'rotate-90')} />
+                    </span>
                     <Icon name={OBJECT_KIND_META[/** @type {ObjectKind} */ (r.group)]?.icon ?? 'box'} class={cn('size-4 shrink-0', OBJECT_KIND_META[/** @type {ObjectKind} */ (r.group)]?.tone)} />
-                    <span class="min-w-0 truncate text-ui-sm text-foreground">{r.label}</span>
-                    <span class="shrink-0 font-mono text-ui-xs tabular-nums text-muted-foreground">
-                      ({q ? `${r.count}/${r.total}` : r.total})
+                    <span class="min-w-0 flex-1 truncate text-ui-sm font-medium leading-4">{r.label}</span>
+                    <span class={cn('shrink-0 font-mono text-ui-2xs tabular-nums text-muted-foreground', canCreate && 'group-hover/row:invisible', canCreate && ring && 'invisible')}>
+                      {q ? `${r.count}/${r.total}` : r.total}
                     </span>
                     {#if canCreate}
                       <!-- Over the count, which hides while it shows: nothing moves. -->
@@ -572,7 +589,7 @@
                         aria-label="New {one(r.group)}"
                         onclick={(e) => { e.stopPropagation(); create(r.group) }}
                       >
-                        <Icon name="plus" class="size-3.5" />
+                        <Icon name="plus" class="size-3.5 shrink-0" />
                       </button>
                     {/if}
                   </div>
@@ -584,14 +601,17 @@
                     aria-expanded={r.open}
                     aria-selected={isActive}
                     data-index={i}
-                    class={cn(ROW, 'gap-1.5 pl-9 pr-2', isActive ? SELECTED : IDLE, ring && 'outline-2 -outline-offset-2 outline-ring')}
-                    style="top: {i * rowH}px"
+                    class={cn(ROW, isActive ? SELECTED : IDLE, ring && RING)}
+                    style="top: {i * rowH}px; padding-left: {padFor(1)}"
                     title="Objects the {r.ext} extension owns"
                   >
-                    <Icon name="chevron-right" class={cn('size-3 shrink-0 text-muted-foreground transition-transform duration-150', r.open && 'rotate-90')} />
-                    <Icon name="package" class="size-3.5 shrink-0 text-muted-foreground" />
-                    <span class="min-w-0 truncate text-ui-sm">{r.label}</span>
-                    <span class="shrink-0 font-mono text-ui-xs tabular-nums text-muted-foreground">({q ? `${r.count}/${r.total}` : r.total})</span>
+                    {@render guides()}
+                    <span class="flex h-full w-4 shrink-0 items-center justify-center" aria-hidden="true">
+                      <Icon name="chevron-right" class={cn('size-3.5 shrink-0 text-muted-foreground transition-transform duration-100', r.open && 'rotate-90')} />
+                    </span>
+                    <Icon name="package" class="size-4 shrink-0 text-muted-foreground" />
+                    <span class="min-w-0 flex-1 truncate text-ui-sm leading-4">{r.label}</span>
+                    <span class="shrink-0 font-mono text-ui-2xs tabular-nums text-muted-foreground">{q ? `${r.count}/${r.total}` : r.total}</span>
                   </div>
                 {:else}
                   {@const item = r.item}
@@ -603,24 +623,27 @@
                     aria-level={r.depth + 1}
                     aria-selected={isActive}
                     data-index={i}
-                    class={cn(ROW, 'gap-1.5 pr-2', r.depth === 2 ? 'pl-[3.375rem]' : 'pl-9', isActive || current ? SELECTED : IDLE, ring && 'outline-2 -outline-offset-2 outline-ring')}
-                    style="top: {i * rowH}px"
+                    class={cn(ROW, isActive || current ? SELECTED : IDLE, ring && RING)}
+                    style="top: {i * rowH}px; padding-left: {padFor(r.depth)}"
                     title={item.title}
                   >
-                    <Icon name={OBJECT_KIND_META[/** @type {ObjectKind} */ (item.kind)]?.icon ?? 'box'} class={cn('size-3.5 shrink-0', OBJECT_KIND_META[/** @type {ObjectKind} */ (item.kind)]?.tone)} />
-                    <span class="flex min-w-0 flex-1 items-baseline font-mono text-ui-sm leading-4">
-                      <span class="max-w-full shrink-0 truncate">{#if hit}{hit[0]}<mark class="rounded-[2px] bg-primary/25 text-inherit">{hit[1]}</mark>{hit[2]}{:else}{item.name}{/if}</span>
-                      {#if item.kind === 'function' || item.kind === 'procedure'}
-                        <span class="min-w-0 truncate pl-1.5 text-ui-xs text-muted-foreground">({item.args})</span>
+                    {@render guides()}
+                    <!-- Leaf: an empty chevron column keeps icons on the tree's grid. -->
+                    <span class="w-4 shrink-0" aria-hidden="true"></span>
+                    <Icon name={OBJECT_KIND_META[/** @type {ObjectKind} */ (item.kind)]?.icon ?? 'box'} class={cn('size-4 shrink-0', OBJECT_KIND_META[/** @type {ObjectKind} */ (item.kind)]?.tone)} />
+                    <span class="flex min-w-0 flex-1 items-baseline gap-1.5">
+                      <span class="min-w-0 shrink truncate text-ui-sm leading-4">{#if hit}{hit[0]}<mark class="rounded-[2px] bg-primary/25 text-inherit">{hit[1]}</mark>{hit[2]}{:else}{item.name}{/if}</span>
+                      {#if (item.kind === 'function' || item.kind === 'procedure') && item.args}
+                        <span class="min-w-0 shrink-[2] truncate font-mono text-ui-2xs text-muted-foreground">({item.args})</span>
                       {/if}
                       {#if showComments && item.comment}
-                        <span class="min-w-0 truncate pl-2 font-sans text-ui-2xs text-muted-foreground">{item.comment}</span>
+                        <span class="min-w-0 shrink-[3] truncate text-ui-2xs text-muted-foreground">{item.comment}</span>
                       {/if}
                     </span>
                     {#if busy === item.key}
                       <Icon name="loader-2" class="size-3 shrink-0 animate-spin text-muted-foreground" />
                     {:else if item.right}
-                      <span class="max-w-[45%] shrink-0 truncate text-right font-mono text-ui-xs leading-4 tabular-nums text-muted-foreground">{item.right}</span>
+                      <span class="max-w-[40%] shrink-0 truncate text-right font-mono text-ui-2xs tabular-nums text-muted-foreground/80">{item.right}</span>
                     {/if}
                   </div>
                 {/if}
@@ -712,7 +735,7 @@
         aria-checked={dropCascade}
         aria-label="Cascade"
         class={cn(
-          'relative inline-flex h-[18px] w-8 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+          'relative inline-flex h-[18px] w-8 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
           dropCascade ? 'bg-destructive' : 'bg-muted',
         )}
         onclick={() => (dropCascade = !dropCascade)}
@@ -727,7 +750,7 @@
   {/if}
   {#if dropSql}
     <div class="px-5 py-4">
-      <p class="mb-2 text-ui-3xs font-semibold uppercase tracking-[0.07em] text-muted-foreground">Will execute</p>
+      <p class="mb-2 text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground">Will execute</p>
       <div class="rounded-lg border border-border/20 bg-muted/[0.3] px-3.5 py-2.5">
         <code class="break-all font-mono text-ui-xs text-destructive">{dropSql}</code>
       </div>
