@@ -4249,15 +4249,15 @@
                                 <button
                                   type="button"
                                   onclick={pickSqliteFile}
-                                  class="field-surface inline-flex h-8 shrink-0 items-center gap-1 px-2.5 text-ui-2xs text-muted-foreground transition-[color,background-color,border-color,transform] duration-150 ease-out hover:bg-muted/40 hover:text-foreground active:scale-[0.97]"
+                                  class="field-surface inline-flex h-9 shrink-0 items-center gap-1.5 px-3 text-ui-xs text-muted-foreground transition-[color,background-color,border-color,transform] duration-150 ease-out hover:bg-muted/40 hover:text-foreground active:scale-[0.97]"
                                 >
-                                  <Icon name="folder-open" class="size-3 shrink-0" />
+                                  <Icon name="folder-open" class="size-3.5 shrink-0" />
                                   Browse
                                 </button>
                                 <button
                                   type="button"
                                   onclick={() => void newDatabaseFile("sqlite")}
-                                  class="field-surface inline-flex h-8 shrink-0 items-center gap-1 px-2.5 text-ui-2xs text-muted-foreground transition-[color,background-color,border-color,transform] duration-150 ease-out hover:bg-muted/40 hover:text-foreground active:scale-[0.97]"
+                                  class="field-surface inline-flex h-9 shrink-0 items-center gap-1.5 px-3 text-ui-xs text-muted-foreground transition-[color,background-color,border-color,transform] duration-150 ease-out hover:bg-muted/40 hover:text-foreground active:scale-[0.97]"
                                 >
                                   <Icon name="plus" class="size-3 shrink-0" />
                                   New
@@ -4421,15 +4421,15 @@
                                 <button
                                   type="button"
                                   onclick={pickDuckdbFile}
-                                  class="field-surface inline-flex h-8 shrink-0 items-center gap-1 px-2.5 text-ui-2xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
+                                  class="field-surface inline-flex h-9 shrink-0 items-center gap-1.5 px-3 text-ui-xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
                                 >
-                                  <Icon name="folder-open" class="size-3 shrink-0" />
+                                  <Icon name="folder-open" class="size-3.5 shrink-0" />
                                   Browse
                                 </button>
                                 <button
                                   type="button"
                                   onclick={() => void newDatabaseFile("duckdb")}
-                                  class="field-surface inline-flex h-8 shrink-0 items-center gap-1 px-2.5 text-ui-2xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
+                                  class="field-surface inline-flex h-9 shrink-0 items-center gap-1.5 px-3 text-ui-xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
                                 >
                                   <Icon name="plus" class="size-3 shrink-0" />
                                   New
