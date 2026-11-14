@@ -4222,17 +4222,17 @@
                             <!-- Local file vs remote SQLite (Turso / libSQL). Remote reuses the
                    dedicated libsql driver + backend by switching dbType. -->
                             <div
-                              class="flex gap-0.5 rounded-md border border-border/25 bg-muted/30 p-0.5 text-ui-2xs"
+                              class="flex w-fit gap-0.5 rounded-md bg-muted/50 p-0.5 text-ui-xs" role="radiogroup" aria-label="Where the database is"
                             >
                               <button
                                 type="button"
-                                class="flex-1 rounded bg-background px-2 py-1 font-medium text-foreground"
+                                class="h-6 rounded-sm bg-background px-2.5 font-medium text-foreground shadow-sm" role="radio" aria-checked="true"
                                 >Local file</button
                               >
                               <button
                                 type="button"
                                 onclick={() => (dbType = "libsql")}
-                                class="flex-1 rounded px-2 py-1 text-muted-foreground transition-colors hover:text-foreground"
+                                class="h-6 rounded-sm px-2.5 text-muted-foreground transition-[color,scale] duration-[120ms] ease-[var(--ease-out)] hover:text-foreground active:scale-[0.97]" role="radio" aria-checked="false"
                                 >Remote (Turso / libSQL)</button
                               >
                             </div>
@@ -4290,17 +4290,17 @@
                             <!-- ── LibSQL / Turso ─────────────────────────── -->
                           {:else if dbType === "libsql"}
                             <div
-                              class="flex gap-0.5 rounded-md border border-border/25 bg-muted/30 p-0.5 text-ui-2xs"
+                              class="flex w-fit gap-0.5 rounded-md bg-muted/50 p-0.5 text-ui-xs" role="radiogroup" aria-label="Where the database is"
                             >
                               <button
                                 type="button"
                                 onclick={() => (dbType = "sqlite")}
-                                class="flex-1 rounded px-2 py-1 text-muted-foreground transition-colors hover:text-foreground"
+                                class="h-6 rounded-sm px-2.5 text-muted-foreground transition-[color,scale] duration-[120ms] ease-[var(--ease-out)] hover:text-foreground active:scale-[0.97]" role="radio" aria-checked="false"
                                 >Local file</button
                               >
                               <button
                                 type="button"
-                                class="flex-1 rounded bg-background px-2 py-1 font-medium text-foreground"
+                                class="h-6 rounded-sm bg-background px-2.5 font-medium text-foreground shadow-sm" role="radio" aria-checked="true"
                                 >Remote (Turso / libSQL)</button
                               >
                             </div>

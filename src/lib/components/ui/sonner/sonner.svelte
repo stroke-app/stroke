@@ -8,6 +8,7 @@
   import TriangleAlert from '@lucide/svelte/icons/triangle-alert'
   import X from '@lucide/svelte/icons/x'
   import { toast } from './toast.svelte.js'
+  import { cn } from '$lib/utils.js'
 
   let {
     position = 'top-right',
@@ -75,7 +76,7 @@
   })
 
   const base =
-    'group/toast pointer-events-auto relative flex w-full items-start gap-2.5 overflow-hidden rounded-xl border border-border/50 bg-popover px-3.5 py-3 text-popover-foreground elevate-2-rim'
+    'group/toast pointer-events-auto relative flex w-full items-start gap-2.5 overflow-hidden rounded-lg border border-border/50 bg-popover px-3 py-2.5 text-popover-foreground elevate-2-rim'
 
   const iconWrap = 'flex h-[1.15rem] shrink-0 items-center justify-center'
 
@@ -90,10 +91,13 @@
   function hostInsetStyle(pos, off) {
     const [y, x] = pos.split('-')
     /** @type {Record<string, string>} */
-    const style = { width: 'min(20rem, calc(100vw - 1.5rem))' }
+    const style = { width: 'min(19rem, calc(100vw - 1.5rem))' }
 
     const apply = (/** @type {Record<string, string | number>} */ o) => {
-      for (const key of ['top', 'right', 'bottom', 'left']) {
+      // Only the corner's own two edges: an offset object may carry all four
+      // (one per corner the user can pick), and pinning both top and bottom
+      // would stretch the stack down the whole window.
+      for (const key of ['top', 'right', 'bottom', 'left'].filter((k) => k === y || k === x)) {
         const v = o[key]
         if (v !== undefined) style[key] = typeof v === 'number' ? `${v}px` : String(v)
       }
@@ -133,7 +137,7 @@
   onmouseleave={toast.resumeAll}
 >
   {#if showClearAll}
-    <div class="ml-auto flex shrink-0 items-center gap-1.5" transition:fly={{ y: -8, duration: reduced ? 0 : 160 }}>
+    <div class={cn('flex shrink-0 items-center gap-1.5', String(position).endsWith('left') ? 'mr-auto' : 'ml-auto', String(position).startsWith('bottom') && 'order-last')} transition:fly={{ y: -8, duration: reduced ? 0 : 160 }}>
       {#if queued > 0}
         <!-- Says the stack is capped, rather than leaving the other 215 to look
              like they were dropped. -->
@@ -157,7 +161,7 @@
       style="font-family: var(--font-sans); font-size: var(--app-font-size);"
       role="status"
       in:fly={{ y: flyY, duration: reduced ? 0 : 200 }}
-      out:fly={{ x: 24, duration: reduced ? 0 : OUT_MS, delay: clearing && !reduced ? i * STAGGER_MS : 0 }}
+      out:fly={{ x: String(position).endsWith('left') ? -24 : 24, duration: reduced ? 0 : OUT_MS, delay: clearing && !reduced ? i * STAGGER_MS : 0 }}
       animate:flip={{ duration: clearing || reduced ? 0 : 200 }}
     >
       {#if t.type !== 'message'}

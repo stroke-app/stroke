@@ -1,4 +1,5 @@
 <script>
+  import { toastPosition, TOAST_POSITIONS } from '$lib/stores/toast-position.js'
   import ThemeBuilder from './ThemeBuilder.svelte';
   import { comboTitle } from '$lib/shortcuts.js'
   import Kbd from './Kbd.svelte'
@@ -1340,6 +1341,40 @@
         onValueChange={setRowSpacing}
         items={rowSpacingEntries.map(([id, s]) => ({ value: id, label: s.label, keywords: [s.label] }))}
       />
+    </div>
+  {/if}
+  {#if show('Notifications', 'Corner of the window where notifications appear: top left, top right, bottom left, bottom right')}
+    <div class={rowCls}>
+      <div class="min-w-0">
+        <p class="text-ui-sm font-medium text-foreground">Notifications</p>
+        <p class="mt-0.5 text-ui-xs leading-relaxed text-muted-foreground">
+          The corner of the window they appear in.
+        </p>
+      </div>
+      <!-- A small window with four corners to pick: the choice is spatial, so
+           it is shown as a place rather than named in a list. -->
+      <div class="grid h-12 w-[4.5rem] shrink-0 grid-cols-2 grid-rows-2 gap-1 rounded-md border border-border/60 bg-muted/30 p-1" role="radiogroup" aria-label="Notification position">
+        {#each TOAST_POSITIONS as pos (pos)}
+          <button
+            type="button"
+            role="radio"
+            aria-checked={$toastPosition === pos}
+            aria-label={pos.replace('-', ' ')}
+            title={pos.replace('-', ' ').replace(/^./, (c) => c.toUpperCase())}
+            class={cn(
+              'flex rounded-sm transition-[background-color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-accent active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring',
+              pos.startsWith('top') ? 'items-start' : 'items-end',
+              pos.endsWith('left') ? 'justify-start' : 'justify-end',
+            )}
+            onclick={() => {
+              toastPosition.set(pos)
+              toast.success('Notifications appear here now')
+            }}
+          >
+            <span class={cn('m-0.5 h-1.5 w-4 rounded-sm', $toastPosition === pos ? 'bg-primary' : 'bg-muted-foreground/30')}></span>
+          </button>
+        {/each}
+      </div>
     </div>
   {/if}
   {#if show('Grid text size', 'Font size of the data grid, independent of the app zoom')}
