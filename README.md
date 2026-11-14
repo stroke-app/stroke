@@ -58,7 +58,7 @@ scoop bucket add stroke https://github.com/stroke-app/stroke
 scoop install stroke
 ```
 
-Or grab an installer from [Releases](https://github.com/stroke-app/stroke/releases): `.dmg` for macOS (Apple Silicon or Intel), `-setup.exe` for Windows, `.deb` or `.AppImage` for Linux.
+Or grab an installer from [Releases](https://github.com/stroke-app/stroke/releases): `.dmg` for macOS (Apple Silicon or Intel), `-setup.exe` for Windows, `.deb` (Ubuntu 22.04+, Debian 12+), `.rpm` (Fedora 41+, RHEL 10) or `.AppImage` (Arch and any distro with glibc 2.35+) for Linux.
 
 If macOS blocks the first launch, run `xattr -cr /Applications/Stroke.app`. If Windows SmartScreen warns, choose **More info → Run anyway**.
 

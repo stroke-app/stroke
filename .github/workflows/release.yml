@@ -100,7 +100,8 @@ jobs:
           **Windows:** \`stroke_*_x64-setup.exe\` (recommended) · \`.msi\`
           > Unsigned. On SmartScreen, click **More info**, then **Run anyway**.
 
-          **Linux:** \`.deb\` · \`.rpm\` · \`.AppImage\`
+          **Linux:** \`.deb\` (Ubuntu 22.04+, Debian 12+) · \`.rpm\` (Fedora 41+, RHEL / Rocky / Alma 10) · \`.AppImage\` (any distro with glibc 2.35+, e.g. Arch)
+          > RHEL 9 and its rebuilds are not supported: they don't ship WebKitGTK 4.1.
 
           Built from \`${SHA}\`.
           EOF
@@ -176,6 +177,7 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev \
             patchelf \
+            squashfs-tools \
             build-essential
 
       - run: npm ci
@@ -199,6 +201,17 @@ jobs:
           # macOS: ad-hoc signed only — no APPLE_CERTIFICATE, so Tauri skips the
           # PKCS12 import and notarization. Re-add the Apple secrets here to
           # restore full signing once a valid cert + password are available.
+
+      # linuxdeploy bundles the build machine's libwayland-client, which breaks
+      # the host's Mesa EGL on newer distros (Arch, Fedora 41+, RHEL 10): the
+      # webview aborts at startup. Drop it before the AppImage is signed and
+      # uploaded. https://github.com/stroke-app/stroke/issues/112
+      - name: Use the host's libwayland-client in the AppImage
+        if: matrix.name == 'linux'
+        shell: bash
+        run: |
+          APP=$(ls src-tauri/target/release/bundle/appimage/*.AppImage | head -1)
+          bash scripts/appimage-strip-host-libs.sh "$APP"
 
       # ── macOS aarch64 ───────────────────────────────────────────────────────
       - name: Upload macOS aarch64 artifacts
