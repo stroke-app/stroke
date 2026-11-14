@@ -994,7 +994,7 @@
               </Command.Item>
               <Command.Item value="toggle tree sidebar beta explorer classic hierarchy folders" onSelect={() => run(() => updateSettings({ sidebarStyle: $appSidebarStyle === 'tree' ? 'classic' : 'tree' }))}>
                 <Icon name="list-tree" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
-                <span data-slot="command-label" class="truncate">Toggle tree sidebar (beta)</span>
+                <span data-slot="command-label" class="truncate">Toggle tree sidebar (Labs)</span>
                 <span data-slot="command-trailing" class="shrink-0 text-ui-xs text-muted-foreground">{$appSidebarStyle === 'tree' ? 'on' : 'off'}</span>
               </Command.Item>
               {#if $pinEnabled}

@@ -6504,6 +6504,17 @@
       >
         Open
       </button>
+      <button
+        type="button"
+        class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-ui-sm hover:bg-accent hover:text-foreground"
+        onclick={() => {
+          const conv = convList.find((c) => c.id === menu.id);
+          if (conv) startRename(conv.id, displayTitle(conv));
+          closeContextMenu();
+        }}
+      >
+        <Pencil class="size-3 shrink-0" /> Rename
+      </button>
       <div class="my-1 h-px bg-border"></div>
       <button
         type="button"

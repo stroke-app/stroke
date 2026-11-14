@@ -83,7 +83,7 @@
           <div class="flex items-center gap-2">
             <h3 id="whats-new-hero" class="text-ui-lg font-semibold text-foreground">{hero.title}</h3>
             {#if hero.beta}
-              <span class="rounded-full border border-border/70 px-1.5 py-px text-ui-3xs font-medium leading-4 text-muted-foreground">Beta</span>
+              <span class="rounded-full border border-border/70 px-1.5 py-px text-ui-3xs font-medium leading-4 text-muted-foreground">Labs</span>
             {/if}
           </div>
           <p class="text-ui-sm leading-relaxed text-pretty text-muted-foreground">{hero.body}</p>
