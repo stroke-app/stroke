@@ -258,8 +258,24 @@ async fn find_binary(names: &[&str]) -> Option<PathBuf> {
     dirs.extend(install_dirs());
     names.iter().find_map(|name| {
         let file = if cfg!(windows) { format!("{name}.exe") } else { (*name).to_string() };
-        dirs.iter().map(|d| d.join(&file)).find(|p| is_executable(p))
+        dirs.iter()
+            .map(|d| d.join(&file))
+            .find(|p| is_executable(p) && (*name != "sql" || !is_other_sql(p)))
     })
+}
+
+/// A `sql` that is not Oracle's SQLcl. GNU Parallel (Homebrew's `parallel`,
+/// Debian's `parallel`) installs a Perl script named `sql` that takes a
+/// "dburl" and exits on anything else, so it would shadow SQLcl on PATH.
+fn is_other_sql(path: &Path) -> bool {
+    use std::io::Read;
+    let Ok(file) = std::fs::File::open(path) else { return false };
+    let mut head = Vec::new();
+    if file.take(64 * 1024).read_to_end(&mut head).is_err() {
+        return false;
+    }
+    let text = String::from_utf8_lossy(&head).to_ascii_lowercase();
+    text.contains("gnu parallel") || text.contains("dburl")
 }
 
 /// Client installs that stay off PATH: keg-only Homebrew formulas (libpq,
@@ -281,10 +297,25 @@ fn install_dirs() -> Vec<PathBuf> {
         ] {
             out.push(PathBuf::from(d));
         }
-        // Instant Client unzipped where Oracle's instructions put it.
-        out.extend(versioned(Path::new("/opt/oracle"), "instantclient", ""));
+        // SQLcl from the Homebrew cask, which links no `sql` onto PATH when
+        // GNU Parallel already owns that name.
+        for caskroom in ["/opt/homebrew/Caskroom/sqlcl", "/usr/local/Caskroom/sqlcl"] {
+            out.extend(versioned(Path::new(caskroom), "", "sqlcl/bin"));
+        }
+        out.push(PathBuf::from("/opt/oracle/sqlcl/bin"));
         out.extend(versioned(Path::new("/usr/lib/postgresql"), "", "bin"));
     }
+    // SQL*Plus unzipped into the Instant Client folder, wherever the Oracle
+    // connection itself looks for it (home, Downloads, /opt/oracle, C:\oracle),
+    // and SQLcl unzipped next to it.
+    out.extend(super::oracle::client_dir_candidates(""));
+    if let Some(home) = home_dir() {
+        for parent in [home.clone(), home.join("Downloads"), home.join("oracle")] {
+            out.push(parent.join("sqlcl").join("bin"));
+        }
+    }
+    #[cfg(windows)]
+    out.push(PathBuf::from("C:\\oracle\\sqlcl\\bin"));
     // winget and the per-user MSI put mongosh here, which a running app's PATH
     // often does not include until the next sign-in.
     #[cfg(windows)]
@@ -1217,6 +1248,19 @@ mod tests {
         let Some(cmd) = linux_install("mysql") else { return };
         assert!(cmd.starts_with("sudo "), "{cmd}");
         assert_eq!(linux_install("sqlcmd"), None);
+    }
+
+    #[test]
+    fn gnu_parallel_sql_is_not_sqlcl() {
+        let dir = std::env::temp_dir().join(format!("stroke-sql-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let parallel = dir.join("parallel-sql");
+        std::fs::write(&parallel, "#!/usr/bin/perl\n# GNU Parallel: sql - execute a command on a database determined by a dburl\n").unwrap();
+        let sqlcl = dir.join("sqlcl-sql");
+        std::fs::write(&sqlcl, "#!/bin/bash\n# SQLcl launcher\nexec java -jar \"$SQLCL_HOME/lib/dbtools-sqlcl.jar\" \"$@\"\n").unwrap();
+        assert!(super::is_other_sql(&parallel));
+        assert!(!super::is_other_sql(&sqlcl));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

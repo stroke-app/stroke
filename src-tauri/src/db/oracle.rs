@@ -48,7 +48,7 @@ const CLIENT_LIB: &str = "libclntsh.dylib";
 const CLIENT_LIB: &str = "libclntsh.so";
 
 /// Folders an unzipped Instant Client usually lands in, newest first.
-fn client_dir_candidates(explicit: &str) -> Vec<PathBuf> {
+pub(crate) fn client_dir_candidates(explicit: &str) -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = Vec::new();
     let explicit = explicit.trim();
     if !explicit.is_empty() {
