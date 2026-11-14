@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.8.6] - 2026-11-14
+
+### Changes
+- Sync the last changes before Stroke closes (#182)
+
+
 ## [2.8.5] - 2026-11-14
 
 ### Changes
