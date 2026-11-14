@@ -302,6 +302,11 @@ fn engine_port(engine: &str) -> u16 {
         "clickhouse" => 8123,
         "mssql" => 1433,
         "cockroachdb" => 26257,
+        "oracle" => 1521,
+        "mongodb" => 27017,
+        "couchdb" => 5984,
+        "cassandra" => 9042,
+        "dynamodb" => 8000,
         _ => 5432,
     }
 }
@@ -332,6 +337,23 @@ fn engine_for_image(image: &str) -> Option<&'static str> {
     if i.contains("mssql") || i.contains("sqlserver") || i.contains("azure-sql-edge") {
         return Some("mssql");
     }
+    // gvenzl/oracle-free, gvenzl/oracle-xe, container-registry.oracle.com/database/free.
+    if i.contains("oracle-free") || i.contains("oracle-xe") || i.contains("oracle/database") || i.contains("oracle.com/database") {
+        return Some("oracle");
+    }
+    // Admin UIs share the name but are not databases.
+    if i.contains("mongo") && !i.contains("mongo-express") {
+        return Some("mongodb");
+    }
+    if i.contains("couchdb") {
+        return Some("couchdb");
+    }
+    if i.contains("cassandra") || i.contains("scylla") {
+        return Some("cassandra");
+    }
+    if i.contains("dynamodb-local") {
+        return Some("dynamodb");
+    }
     None
 }
 
@@ -348,6 +370,10 @@ fn engine_for_ports(ports: &Value) -> Option<&'static str> {
             8123 => "clickhouse",
             1433 => "mssql",
             26257 => "cockroachdb",
+            1521 => "oracle",
+            27017 => "mongodb",
+            5984 => "couchdb",
+            9042 => "cassandra",
             _ => continue,
         };
         return Some(engine);
@@ -403,6 +429,20 @@ fn credentials(engine: &str, env: &std::collections::HashMap<String, String>) ->
             String::new(),
         ),
         "cockroachdb" => ("root".into(), String::new(), "defaultdb".into()),
+        // gvenzl images: SYSTEM with ORACLE_PASSWORD; the official image uses ORACLE_PWD.
+        // The database is the pluggable one the image opens (set in database_from_inspect).
+        "oracle" => ("system".into(), get(&["ORACLE_PASSWORD", "ORACLE_PWD"]).unwrap_or_default(), String::new()),
+        "mongodb" => (
+            get(&["MONGO_INITDB_ROOT_USERNAME"]).unwrap_or_default(),
+            get(&["MONGO_INITDB_ROOT_PASSWORD"]).unwrap_or_default(),
+            get(&["MONGO_INITDB_DATABASE"]).unwrap_or_default(),
+        ),
+        "couchdb" => (
+            get(&["COUCHDB_USER"]).unwrap_or_default(),
+            get(&["COUCHDB_PASSWORD"]).unwrap_or_default(),
+            String::new(),
+        ),
+        "cassandra" | "dynamodb" => (String::new(), String::new(), String::new()),
         _ => {
             let user = get(&["POSTGRES_USER", "PGUSER"]).unwrap_or_else(|| "postgres".into());
             let db = get(&["POSTGRES_DB", "PGDATABASE"]).unwrap_or_else(|| user.clone());
@@ -447,7 +487,14 @@ fn database_from_inspect(c: &Value) -> Option<DockerDatabase> {
         .to_string();
 
     let env = env_map(config.get("Env").unwrap_or(&Value::Null));
-    let (user, password, database) = credentials(&engine, &env);
+    let (user, password, mut database) = credentials(&engine, &env);
+    if engine == "oracle" && database.is_empty() {
+        // Free (23ai) opens FREEPDB1, XE opens XEPDB1; APP_USER-style images may add one.
+        database = env
+            .get("ORACLE_DATABASE")
+            .cloned()
+            .unwrap_or_else(|| if image.to_lowercase().contains("xe") { "XEPDB1".into() } else { "FREEPDB1".into() });
+    }
     let name = c
         .get("Name")
         .and_then(Value::as_str)
@@ -578,6 +625,13 @@ mod tests {
     fn recognises_database_images_and_ignores_the_rest() {
         assert_eq!(engine_for_image("postgres:17-alpine"), Some("postgres"));
         assert_eq!(engine_for_image("pgvector/pgvector:pg16"), Some("postgres"));
+        assert_eq!(engine_for_image("gvenzl/oracle-free:slim"), Some("oracle"));
+        assert_eq!(engine_for_image("container-registry.oracle.com/database/free:latest"), Some("oracle"));
+        assert_eq!(engine_for_image("mongo:7"), Some("mongodb"));
+        assert_eq!(engine_for_image("mongo-express"), None);
+        assert_eq!(engine_for_image("couchdb:3"), Some("couchdb"));
+        assert_eq!(engine_for_image("scylladb/scylla"), Some("cassandra"));
+        assert_eq!(engine_for_image("amazon/dynamodb-local"), Some("dynamodb"));
         assert_eq!(engine_for_image("timescale/timescaledb:latest-pg16"), Some("postgres"));
         assert_eq!(engine_for_image("mariadb:11"), Some("mariadb"));
         assert_eq!(engine_for_image("mysql:8.4"), Some("mysql"));
