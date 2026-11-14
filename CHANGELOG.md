@@ -4,6 +4,23 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.6.4] - 2026-11-14
+
+### Bug Fixes
+- AI chat with a local agent no longer spins forever when a tool never answers: after 30 seconds it says which step it is waiting on, and after 3 minutes it stops the agent and ends the turn with the reason
+- When a license is on all the devices it covers, the message says where to free one or ask for more devices (stroke.click/app)
+- Settings: one line under each section heading instead of two
+- The sign-in prompt for license-key holders says what signing in gives you: connections, workspaces and settings on every device, end-to-end encrypted
+- Shift + mouse wheel scrolls sideways everywhere: the related-rows panel, query results, settings and every other wide area, not only the data grid
+- Shift + wheel over the related-rows panel no longer scrolls the grid behind it
+
+### Improvements
+- Create database, Report an issue and About share one calm dialog frame: a title with one line under it, the content, and a ruled footer with a single filled action. Decorative icon tiles, boxed rows and the full-width Deactivate bar are gone; Report an issue picks its kind from a segmented control
+
+### Features
+- Settings has an Account & Sync tab: your account, plan and license, and end-to-end encrypted sync (set up, unlock, status, Sync now) in one place
+
+
 ## [2.6.3] - 2026-11-14
 
 ### Changes
