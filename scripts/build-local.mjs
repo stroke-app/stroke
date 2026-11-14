@@ -114,6 +114,10 @@ function buildLinux() {
     fail('Linux bundles can only be built on Linux (they link against webkit2gtk). Use a Linux machine or VM.')
   }
   tauriBuild([])
+  // Same post-step as the release (issue #112): use the host's libwayland-client.
+  for (const f of listArtifacts(join(ROOT, 'src-tauri', 'target', 'release', 'bundle'))) {
+    if (f.endsWith('.AppImage')) run('bash', ['scripts/appimage-strip-host-libs.sh', f])
+  }
   report(null)
 }
 
