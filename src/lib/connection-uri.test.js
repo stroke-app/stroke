@@ -3,6 +3,7 @@ import {
   parseMssqlUri,
   parseConnectionUri,
   detectConnectionUri,
+  connectionUrl,
   parseRedisUri,
   parseLibsqlUri,
 } from './connection-uri.js'
@@ -285,5 +286,21 @@ describe('detectConnectionUri: everything people paste', () => {
   })
   it('still says no to junk', () => {
     expect(d('adsf')).toBeNull()
+  })
+})
+
+describe('connectionUrl: Copy URL, the reverse of paste', () => {
+  it('round-trips through the paste parsers', () => {
+    const pg = { type: 'postgres', host: 'db.example.com', port: '5432', database: 'shop', user: 'me', password: 'p@ss/w#rd', ssl: true }
+    expect(parseConnectionUri('postgres', connectionUrl(pg))).toMatchObject({ host: 'db.example.com', port: '5432', database: 'shop', user: 'me', password: 'p@ss/w#rd' })
+    const my = { type: 'mysql', host: 'h', port: '3306', database: 'app', user: 'root', password: 'x y' }
+    expect(parseConnectionUri('mysql', connectionUrl(my))).toMatchObject({ host: 'h', database: 'app', user: 'root', password: 'x y' })
+    const ms = { type: 'mssql', host: 'sql', port: '1433', database: 'app', user: 'sa', password: 'Secret1!', encrypt: true }
+    expect(parseConnectionUri('mssql', connectionUrl(ms))).toMatchObject({ host: 'sql', port: '1433', database: 'app', user: 'sa', password: 'Secret1!' })
+    const rd = { type: 'redis', host: 'cache', port: '6380', password: 'pw', db: 2, tls: true }
+    expect(connectionUrl(rd)).toBe('rediss://:pw@cache:6380/2')
+    expect(detectConnectionUri(connectionUrl({ type: 'oracle', host: 'h', port: '1521', serviceName: 'FREEPDB1', user: 'app', password: 'app' }))).toMatchObject({ type: 'oracle' })
+    expect(connectionUrl({ type: 'sqlite', filePath: '/data/app.db' })).toBe('/data/app.db')
+    expect(connectionUrl({ type: 'd1', databaseId: 'x' })).toBe('')
   })
 })
