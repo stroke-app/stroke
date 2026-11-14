@@ -4,6 +4,20 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.6.1] - 2026-11-14
+
+### Bug Fixes
+- Oracle connections on macOS no longer fail with "Oracle Instant Client is not installed" when Instant Client is installed
+- Oracle: the status bar shows the container you are in (FREEPDB1) instead of "No database", and warns when a blank service name put you in the root container (CDB$ROOT), which holds only Oracle's own schemas
+- Oracle: "Hide system tables" hides the tables Oracle maintains itself (AQ$_, LOGMNR, MVIEW$ and the rest)
+- Oracle: paging, sorting and filtering a table no longer re-read the catalog each time (3.5 s to a few ms once the table is open)
+- The SQL filter bar applies on Enter again; a typed-out word before the cursor made Enter insert a space instead
+- The Oracle terminal no longer starts GNU Parallel's `sql` command in place of SQLcl, and it finds SQL*Plus inside the Instant Client folder and SQLcl installed from the Homebrew cask
+
+### Features
+- Keyboard shortcuts (⌘/ or Ctrl+/) opens as a tab next to your tables and queries instead of covering the window; with no connection open it still opens as a full page
+
+
 ## [2.6.0] - 2026-11-14
 
 ### New Features
