@@ -768,11 +768,11 @@
     </ProviderAuthPanel>
 
   {:else if phase === 'selecting' || phase === 'building' || phase === 'password'}
-    <!-- Connected account: brand mark, who you are, sign out. -->
-    <div class="flex items-center gap-3 rounded-lg border border-border/60 bg-muted/20 px-3.5 py-3">
-      <div class="grid size-9 shrink-0 place-items-center rounded-lg border border-border/60 bg-background">
-        <DbIcon id={provider} class={cn('size-4.5 shrink-0', engineTint(provider))} />
-      </div>
+    <!-- Connected account: brand mark, who you are, sign out. A plain row over
+         a hairline, not a boxed card (T3's settings rows): the form below is
+         the content, this is just whose account it is. -->
+    <div class="flex items-center gap-3 border-b border-border/50 pb-3">
+      <DbIcon id={provider} class={cn('size-5 shrink-0', engineTint(provider))} />
       <div class="min-w-0 flex-1">
         <p class="flex items-center gap-2 text-ui-sm font-medium text-foreground">
           {meta?.name}
@@ -788,7 +788,7 @@
 
     {#if phase === 'password'}
       <!-- Inline password step, providers that don't expose the DB password -->
-      <div class="flex flex-col gap-2.5 rounded-lg border border-border/50 p-3">
+      <div class="flex flex-col gap-2.5">
         <p class="text-ui-xs text-foreground">
           Database password for <span class="font-medium">{resolved?.name}</span>
         </p>
@@ -926,8 +926,8 @@
       <!-- The same shape as the sidebar's empty tabs: a mark in a well, a title, one
      line on what to do, one button. Generous padding, because this block is
      the whole content of the panel when it shows. -->
-      <div class="flex flex-col items-center gap-4 rounded-lg border border-dashed border-border/60 px-6 py-10 text-center">
-        <div class="flex size-10 items-center justify-center rounded-lg border border-border/60 bg-muted/30">
+      <div class="flex flex-col items-center gap-4 px-6 py-10 text-center">
+        <div class="flex size-10 items-center justify-center rounded-lg bg-muted/40">
           <DbIcon id={provider} class="size-5 text-muted-foreground" />
         </div>
         <div class="flex max-w-[36ch] flex-col gap-1">

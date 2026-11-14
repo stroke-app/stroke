@@ -3169,7 +3169,7 @@
 {#snippet readOnlyRow()}
   <label
     for="cn-readonly"
-    class="flex h-14 cursor-pointer select-none items-center gap-3 rounded-lg border border-border/60 px-3.5 transition-colors hover:bg-muted/25"
+    class="flex h-12 cursor-pointer select-none items-center gap-3 border-t border-border/50"
   >
     <Icon name="eye" class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
     <span class="flex min-w-0 flex-1 flex-col">

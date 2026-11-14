@@ -231,7 +231,7 @@
 
 {#if step === 'form'}
   <form
-    class="flex flex-col gap-4 rounded-lg border border-border/60 p-4"
+    class="flex flex-col gap-4"
     aria-labelledby="{uid}-title"
     onsubmit={(e) => { e.preventDefault(); void submit() }}
   >
