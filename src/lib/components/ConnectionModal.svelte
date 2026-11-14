@@ -79,7 +79,7 @@
   import { focusTrap } from '$lib/actions/focus-trap.js';
   import { toast } from "$lib/components/ui/sonner/toast.svelte.js";
   import * as ContextMenu from "$lib/components/ui/context-menu/index.js";
-  import { parseConnectionUri, detectConnectionUri } from "$lib/connection-uri.js";
+  import { parseConnectionUri, detectConnectionUri, connectionUrl } from "$lib/connection-uri.js";
   import { PROVIDERS, providerBuildConnection, providerWarm, providerToSaved, AUTH_FAILURE } from "$lib/providers.js";
   import { providerOf, engineLabel } from "$lib/connection-provider.js";
   import ConfirmDialog from "./ConfirmDialog.svelte";
@@ -433,6 +433,8 @@
   let fsEmulator = $state("localhost:8080");
   // Oracle: a service name (in the shared `database` field), a SID, or a whole
   // connect string; and where Instant Client lives when the app can't find it.
+  /** Copy URL just copied: the button says so for a moment. */
+  let urlCopied = $state(false);
   let oraMode = $state(/** @type {'service'|'sid'|'connect'} */ ("service"));
   let oraSid = $state("");
   let oraConnect = $state("");
@@ -3746,6 +3748,29 @@
                     <Icon name="link-2" class="size-3.5 shrink-0" aria-hidden="true" />
                     Paste a URL
                   </button>
+                  <!-- The reverse: this form as a connection string, for a .env
+                       file, an ORM or another client. -->
+                  {@const copyUrl = connectionUrl(formPayload())}
+                  {#if copyUrl}
+                    <button
+                      type="button"
+                      title="Copy this connection as a URL (it includes the password)"
+                      onclick={async () => {
+                        try {
+                          await navigator.clipboard.writeText(copyUrl);
+                          urlCopied = true;
+                          setTimeout(() => (urlCopied = false), 1500);
+                          toast.success("Connection URL copied", { description: "It includes the password." });
+                        } catch {
+                          toast.error("Couldn't copy the URL");
+                        }
+                      }}
+                      class="field-surface inline-flex h-8 shrink-0 items-center gap-1.5 px-2.5 text-ui-2xs text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-accent/40 hover:text-foreground active:scale-[0.97]"
+                    >
+                      <Icon name={urlCopied ? "check" : "copy"} class="size-3.5 shrink-0" aria-hidden="true" />
+                      {urlCopied ? "Copied" : "Copy URL"}
+                    </button>
+                  {/if}
                 {/if}
               </div>
             {/if}

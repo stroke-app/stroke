@@ -656,3 +656,60 @@ export function parseCassandraUri(uri) {
   if (!m) return { error: 'Expected cassandra://host:9042/keyspace' }
   return { cql: true, user: decodePart(m[1] ?? ''), password: decodePart(m[2] ?? ''), hosts: m[3], keyspace: decodePart(m[4] ?? '') }
 }
+
+/**
+ * The connection string for a form's payload: the reverse of the paste box.
+ * Copy URL hands it to `.env` files, ORMs and other tools. Credentials are
+ * URL-encoded, so a password with `@`, `/` or `#` survives the round trip.
+ * Returns '' for an engine with no URL form (D1, DynamoDB, Firestore).
+ * @param {Record<string, any>} p
+ * @returns {string}
+ */
+export function connectionUrl(p) {
+  if (!p) return ''
+  const enc = encodeURIComponent
+  const auth = (/** @type {string} */ u, /** @type {string} */ pw) =>
+    u || pw ? `${enc(u ?? '')}${pw ? `:${enc(pw)}` : ''}@` : ''
+  const hp = (/** @type {string} */ h, /** @type {any} */ port) => `${h || 'localhost'}${port ? `:${port}` : ''}`
+  switch (p.type) {
+    case 'postgres':
+    case 'cockroachdb': {
+      const q = p.ssl ? `?sslmode=${p.sslMode || 'require'}` : ''
+      return `postgresql://${auth(p.user, p.password)}${hp(p.host, p.port)}/${enc(p.database ?? '')}${q}`
+    }
+    case 'mysql':
+    case 'mariadb':
+      return `mysql://${auth(p.user, p.password)}${hp(p.host, p.port)}/${enc(p.database ?? '')}${p.ssl ? '?ssl-mode=REQUIRED' : ''}`
+    case 'mssql': {
+      const parts = [p.database && `database=${p.database}`, p.user && `user=${p.user}`, p.password && `password=${p.password}`, p.encrypt && 'encrypt=true'].filter(Boolean)
+      return `sqlserver://${hp(p.host, p.port)}${parts.length ? `;${parts.join(';')}` : ''}`
+    }
+    case 'oracle':
+      if (p.connectString) return p.connectString
+      if (p.sid) return `jdbc:oracle:thin:${p.user ? `${p.user}${p.password ? `/${p.password}` : ''}` : ''}@${hp(p.host, p.port)}:${p.sid}`
+      return `oracle://${auth(p.user, p.password)}${hp(p.host, p.port)}/${enc(p.serviceName ?? '')}`
+    case 'clickhouse':
+      return `${p.secure ? 'https' : 'http'}://${auth(p.user, p.password)}${hp(p.host, p.port)}/?database=${enc(p.database || 'default')}`
+    case 'redis':
+    case 'valkey': {
+      const scheme = (p.tls ? 'rediss' : 'redis')
+      const cred = p.user || p.password ? `${enc(p.user ?? '')}:${enc(p.password ?? '')}@` : ''
+      return `${scheme}://${cred}${hp(p.host, p.port)}/${Number(p.db) || 0}`
+    }
+    case 'mongodb':
+      return p.uri || ''
+    case 'libsql':
+      return p.url ? `${p.url}${p.authToken ? `${p.url.includes('?') ? '&' : '?'}authToken=${enc(p.authToken)}` : ''}` : ''
+    case 'couchdb': {
+      const m = /^(https?:\/\/)(.*)$/i.exec(p.url || '')
+      return m ? `${m[1]}${auth(p.user, p.password)}${m[2]}` : p.url || ''
+    }
+    case 'cassandra':
+      return `cassandra://${auth(p.user, p.password)}${p.hosts || 'localhost:9042'}${p.keyspace ? `/${enc(p.keyspace)}` : ''}`
+    case 'sqlite':
+    case 'duckdb':
+      return p.filePath || ''
+    default:
+      return ''
+  }
+}
