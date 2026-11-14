@@ -9,6 +9,7 @@
  * Query Read to run HogQL.
  */
 
+use super::SendRetry;
 use super::{http, OAuthConfig, ProviderConnection, ProviderDatabase};
 use serde_json::{json, Value};
 
@@ -38,7 +39,7 @@ async fn get(token: &str, url_or_path: &str) -> Result<Value, String> {
     let resp = http()
         .get(&url)
         .bearer_auth(key)
-        .send()
+        .send_retrying()
         .await
         .map_err(|e| format!("PostHog request failed: {}", super::describe(&e)))?;
     let status = resp.status().as_u16();

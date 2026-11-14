@@ -486,6 +486,37 @@ pub struct ProviderOAuthStatus {
 
 // ── Shared HTTP client ──────────────────────────────────────────────────────────
 
+/// `.send()` with one retry, for every provider call. A request that never got
+/// an answer (a socket the far end had closed, a handshake lost on a slow
+/// link) is sent once more after a short pause; a slow connection showed up
+/// as "couldn't reach" on the first hiccup. Timeouts are retried only for
+/// GET/HEAD: a timed-out create may have created something.
+pub(crate) trait SendRetry {
+    fn send_retrying(self) -> impl std::future::Future<Output = reqwest::Result<reqwest::Response>> + Send;
+}
+
+impl SendRetry for reqwest::RequestBuilder {
+    fn send_retrying(self) -> impl std::future::Future<Output = reqwest::Result<reqwest::Response>> + Send {
+        async move {
+            let retry = self.try_clone();
+            let safe_to_repeat = retry
+                .as_ref()
+                .and_then(|r| r.try_clone()?.build().ok())
+                .is_some_and(|r| matches!(*r.method(), reqwest::Method::GET | reqwest::Method::HEAD));
+            match self.send().await {
+                Err(e) if e.is_connect() || e.is_request() || (e.is_timeout() && safe_to_repeat) => match retry {
+                    Some(r) => {
+                        tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+                        r.send().await
+                    }
+                    None => Err(e),
+                },
+                other => other,
+            }
+        }
+    }
+}
+
 static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
 pub(crate) fn http() -> &'static reqwest::Client {

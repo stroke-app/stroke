@@ -6,6 +6,7 @@
  * database's own endpoint and password, which the API returns directly.
  */
 
+use super::SendRetry;
 use super::{http, CreateOptions, CreateRequest, CreatedDatabase, DatabaseStatus, OAuthConfig, ProviderConnection, ProviderDatabase};
 use serde_json::Value;
 
@@ -33,7 +34,7 @@ async fn get(token: &str, path: &str, what: &str) -> Result<Value, String> {
     let resp = http()
         .get(format!("{API}{path}"))
         .basic_auth(email, Some(key))
-        .send()
+        .send_retrying()
         .await
         .map_err(|e| format!("Upstash request failed ({what}): {}", super::describe(&e)))?;
     let status = resp.status().as_u16();
@@ -177,7 +178,7 @@ pub async fn create_database(token: &str, req: &CreateRequest) -> Result<Created
         .post(format!("{API}/redis/database"))
         .basic_auth(email, Some(key))
         .json(&body)
-        .send()
+        .send_retrying()
         .await
         .map_err(|e| format!("Upstash request failed (creating a database): {}", super::describe(&e)))?;
     let status = resp.status().as_u16();
