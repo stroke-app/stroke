@@ -3564,7 +3564,7 @@
                lights' centre line instead of floating at an offset. It is also
                the window's drag area here. -->
           <div
-            class={cn("flex h-10 shrink-0 items-center gap-1 px-3", isMacChrome && "h-[52px]", isMacChrome && !railOpen && "ps-[92px]")}
+            class={cn("flex h-(--app-titlebar-h) shrink-0 items-center gap-1 px-3", isMacChrome && !railOpen && "ps-[92px]")}
             data-tauri-drag-region
           >
             {#if !railOpen}

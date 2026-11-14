@@ -72,6 +72,20 @@
   const CARD_IDLE =
     "border-border/40 text-foreground/85 hover:border-border/70 hover:bg-muted/30 hover:text-foreground";
 
+  /** One line under each provider in the wizard: what you get, and what it takes. */
+  const PROVIDER_BLURB = /** @type {Record<string, string>} */ ({
+    stroke: "Free models, no key needed",
+    openrouter: "One key, hundreds of models",
+    openai: "GPT models with your OpenAI key",
+    anthropic: "Claude models with your Anthropic key",
+    copilot: "Your Copilot plan, sign in with GitHub",
+    mistral: "Mistral models with your key",
+    google: "Gemini models with your Google AI key",
+    ollama: "Models running on this computer",
+    omniroute: "A local gateway in front of many providers",
+    custom: "Any OpenAI-compatible endpoint",
+  });
+
   /** Marks for the providers brand-icons.js has no logo for. */
   const PROVIDER_ICON_FALLBACK = /** @type {Record<string, any>} */ ({
     stroke: Sparkles,
@@ -500,14 +514,14 @@
 
     <!-- ══ LIST VIEW ═════════════════════════════════════════════════════ -->
     {#if view === "list"}
-      <div class="flex items-center gap-2 border-b border-border/25 px-4 py-3">
-        <div class="flex-1">
-          <Dialog.Title class="text-ui-xs font-semibold text-foreground">AI Models</Dialog.Title>
-          <Dialog.Description class="mt-0.5 text-ui-3xs text-muted-foreground">
-            Right-click a model to edit or delete it.
+      <div class="flex items-start gap-2 px-5 pt-5 pb-3">
+        <div class="min-w-0 flex-1">
+          <Dialog.Title class="text-ui-lg">AI models</Dialog.Title>
+          <Dialog.Description class="mt-1 text-ui-xs text-muted-foreground">
+            The models chat and SQL suggestions can use. Pick one to use it.
           </Dialog.Description>
         </div>
-        <Dialog.Close class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:outline-none" />
+        <Dialog.Close class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring" />
       </div>
 
       <div class="app-scroll max-h-[min(60vh,26rem)] overflow-y-auto px-2 py-1.5">
@@ -546,9 +560,12 @@
                     </div>
                     <div class="flex shrink-0 items-center gap-1">
                       <button
-                        class="rounded px-1.5 py-0.5 text-ui-3xs text-muted-foreground opacity-0 transition-colors hover:text-foreground group-hover:opacity-100"
+                        type="button"
+                        class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-colors hover:bg-accent hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+                        title="Edit"
+                        aria-label={`Edit ${profile.name}`}
                         onclick={(e) => { e.stopPropagation(); void startEdit(profile) }}
-                      >Edit</button>
+                      ><SlidersHorizontal class="size-3.5 shrink-0" /></button>
                       <!-- A check marks the active model; the old uppercase pill
                            was the loudest thing in a list of quiet rows. -->
                       <Check class={cn("size-3.5 shrink-0 text-primary", !isActive && "invisible")} />
@@ -578,13 +595,11 @@
         {/if}
       </div>
 
-      <div class="border-t border-border/25 p-1.5">
-        <button type="button"
-          class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-ui-xs text-muted-foreground transition-colors hover:bg-muted/30 hover:text-foreground"
-          onclick={startAdd}>
+      <div class="flex items-center border-t border-border/40 px-5 py-3.5">
+        <Button type="button" variant="outline" onclick={startAdd}>
           <Plus class="size-3.5 shrink-0" />
           Add model
-        </button>
+        </Button>
       </div>
 
     <!-- ══ FORM VIEW ═════════════════════════════════════════════════════ -->
@@ -631,25 +646,33 @@
 
         <!-- Step 0 · Provider ─────────────────────────────────────────── -->
         {#if step === 0}
-          <!-- Every row carries a mark: providers are recognised by their logo
-               long before the name is read, and a grid of bare labels was the
-               least identifiable version of this list. -->
-          <div class="grid grid-cols-2 gap-1.5">
+          <!-- One list, T3's provider picker: the mark, the name, one line on
+               what it is. Choosing one is the step; there is nothing to
+               confirm, so it goes straight on to the model. -->
+          <div class="-mx-1 flex flex-col gap-px" role="listbox" aria-label="Provider">
             {#each PROVIDERS as p (p.id)}
               {@const selected = formProvider === p.id}
               {@const Fallback = PROVIDER_ICON_FALLBACK[p.id] ?? Sparkles}
               <button
                 type="button"
-                class={cn(CARD_BASE, "h-9 px-2.5", selected ? CARD_SELECTED : CARD_IDLE)}
-                onclick={() => selectProvider(p.id)}
+                role="option"
+                aria-selected={selected}
+                class={cn(
+                  "flex w-full min-w-0 items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors duration-150 outline-none focus-visible:bg-accent",
+                  selected ? "bg-accent text-foreground" : "text-foreground/90 hover:bg-accent/60",
+                )}
+                onclick={() => { selectProvider(p.id); nextStep(); }}
               >
                 {#if hasBrand(p.id)}
-                  <BrandIcon name={p.id} class={cn("size-4 shrink-0", !selected && "opacity-70")} />
+                  <BrandIcon name={p.id} class="size-4 shrink-0" />
                 {:else}
-                  <Fallback class={cn("size-4 shrink-0", !selected && "opacity-60")} />
+                  <Fallback class="size-4 shrink-0 text-muted-foreground" />
                 {/if}
-                <span class="min-w-0 flex-1 truncate text-ui-sm font-medium">{p.label}</span>
-                {#if selected}{@render checkBadge()}{/if}
+                <span class="min-w-0 flex-1">
+                  <span class="block truncate text-ui-sm font-medium">{p.label}</span>
+                  <span class="block truncate text-ui-xs text-muted-foreground">{PROVIDER_BLURB[p.id] ?? ""}</span>
+                </span>
+                <ChevronRight class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
               </button>
             {/each}
           </div>
@@ -1080,7 +1103,10 @@
           {/if}
         </div>
 
-        {#if step < STEPS.length - 1}
+        {#if step === 0}
+          <!-- Picking a provider is the step: no Continue to press. -->
+          <span></span>
+        {:else if step < STEPS.length - 1}
           <Button
              size="sm"
             disabled={!stepCanProceed}

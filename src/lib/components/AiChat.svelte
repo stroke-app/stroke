@@ -4445,7 +4445,9 @@
              weight (border, lift) once it has focus. -->
         <div
           class={cn(
-            "rounded-2xl border border-border/50 bg-sidebar transition-colors focus-within:border-foreground/20",
+            // One clear edge at rest, a focus ring when typing: the field shows
+            // where it is without a heavy box, and focus is unmistakable.
+            "rounded-2xl border border-border bg-sidebar shadow-[0_1px_2px_rgb(0_0_0/0.05)] transition-[border-color,box-shadow] duration-150 focus-within:border-ring/50 focus-within:shadow-[0_0_0_3px_color-mix(in_oklch,var(--ring)_14%,transparent)]",
             hasPendingConfirm && "opacity-50",
           )}
         >
@@ -4530,12 +4532,8 @@
                  guidance for someone about to type, not a permanent label. -->
             {#if loading && inputText.trim()}
               <span class="hidden shrink-0 text-ui-2xs text-muted-foreground sm:block">↵ to queue</span>
-            {:else if inputFocused && !inputText.trim() && !loading}
-              <span
-                class="hidden shrink-0 text-ui-2xs text-muted-foreground sm:block"
-              >
-                {hasPendingConfirm ? "Confirm or cancel above" : "↵ to send"}
-              </span>
+            {:else if hasPendingConfirm}
+              <span class="hidden shrink-0 text-ui-2xs text-muted-foreground sm:block">Confirm or cancel above</span>
             {/if}
 
             <AiModelPicker onopenSettings={onopenmodelsettings} />
@@ -4551,7 +4549,7 @@
                 ></span>
                 <button
                   type="button"
-                  class="flex size-7 items-center justify-center rounded-full bg-destructive/90 text-destructive-foreground transition-colors hover:bg-destructive active:scale-95"
+                  class="flex size-8 items-center justify-center rounded-full bg-destructive/90 text-destructive-foreground transition-colors hover:bg-destructive active:scale-95 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
                   onclick={stop}
                   aria-label="Stop"
                   title="Stop (Esc)"
@@ -4565,7 +4563,7 @@
                 type="button"
                 class={cn(
                   // T3's send: a round button, grey until there is something to send.
-                  "flex size-9 shrink-0 items-center justify-center rounded-full transition-[background-color,opacity,transform] duration-150 active:scale-95",
+                  "flex size-8 shrink-0 items-center justify-center rounded-full transition-[background-color,opacity,transform] duration-150 active:scale-95 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
                   canSend
                     ? "bg-foreground text-background hover:opacity-90"
                     : "bg-sidebar-accent text-muted-foreground cursor-not-allowed",
@@ -5707,17 +5705,27 @@
          to hide behind a Details toggle. -->
     {#if error}
       {@const failure = describeAiError(error)}
-      <div class="shrink-0 border-t border-destructive/25 bg-destructive/[0.04] px-3 py-2.5">
+      <!-- A card in the composer's column, not a bar across the window: it
+           belongs to the turn that failed, and sits where the eye already is. -->
+      <div class={cn("shrink-0", mode === "full" ? "px-6 pt-2" : "px-3 pt-2")}>
+      <div role="alert" class={cn("rounded-lg border border-destructive/25 bg-destructive/[0.05] px-3.5 py-3", mode === "full" && "mx-auto w-full max-w-3xl")}>
         <div class="flex items-start gap-2.5">
-          <AlertTriangle class="mt-px size-3.5 shrink-0 text-destructive" />
+          <AlertTriangle class="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden="true" />
           <div class="min-w-0 flex-1">
-            <p class="text-ui-xs font-medium leading-relaxed text-foreground">
+            <p class="text-ui-sm font-medium text-foreground">
               {failure.title}
             </p>
             {#if failure.hint}
-              <p class="mt-0.5 text-ui-2xs leading-relaxed text-muted-foreground">
+              <p class="mt-0.5 text-pretty text-ui-xs leading-relaxed text-muted-foreground">
                 {failure.hint}
               </p>
+            {/if}
+            {#if failure.status === 401 || failure.status === 403}
+              <button
+                type="button"
+                onclick={onopenmodelsettings}
+                class="mt-2 inline-flex h-7 items-center rounded-md border border-border bg-background px-2.5 text-ui-xs font-medium text-foreground transition-colors hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+              >Open AI settings</button>
             {/if}
             {#if failure.detail}
               <button
@@ -5745,13 +5753,15 @@
           </div>
           <button
             type="button"
-            class="hit-area inline-flex size-5 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            class="hit-area inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
             onclick={() => (error = "")}
             title="Dismiss"
+            aria-label="Dismiss"
           >
-            <X class="size-3 shrink-0" />
+            <X class="size-3.5 shrink-0" />
           </button>
         </div>
+      </div>
       </div>
     {/if}
 
