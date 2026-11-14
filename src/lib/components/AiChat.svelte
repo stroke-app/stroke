@@ -4212,10 +4212,7 @@
           <PanelLeft class="size-3.5 shrink-0" />
         </button>
         {/if}
-        <span
-          class="flex-1 px-1 text-ui-xs font-medium text-muted-foreground"
-          >History</span
-        >
+        <span class="flex-1 px-1 text-ui-sm text-foreground/80">Chats</span>
         <button
           type="button"
           class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
@@ -4316,7 +4313,7 @@
                   // table sidebar lists tables. Hover actions replace the time
                   // in place instead of covering the title.
                   // Focus is a soft fill like hover, never a border or bar.
-                  "relative flex h-9 w-full min-w-0 items-center gap-2 rounded-md px-2.5 text-left transition-colors outline-none focus-visible:bg-sidebar-accent/80 focus-visible:text-foreground",
+                  "relative flex min-h-9 w-full min-w-0 items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors outline-none focus-visible:bg-sidebar-accent/80 focus-visible:text-foreground",
                   isSel
                     ? "bg-primary/10 text-foreground"
                     : isActive && !selecting
@@ -4356,8 +4353,17 @@
                     {#if isSel}<Check class="size-2.5 shrink-0" strokeWidth={3} />{/if}
                   </span>
                 {/if}
-                <span class="min-w-0 flex-1 truncate text-ui-xs font-medium leading-snug">{displayTitle(conv)}</span>
-                <span class={cn("shrink-0 text-ui-3xs tabular-nums text-muted-foreground", !selecting && "group-hover/conv:invisible")}>{relativeTime(conv.updatedAt)}</span>
+                <!-- The sidebar's Chats row: where it worked over the title. -->
+                <span class="flex min-w-0 flex-1 flex-col gap-0.5">
+                  {#if chatWhere(conv)}
+                    <span class="flex min-w-0 items-center gap-1.5 text-ui-2xs text-muted-foreground">
+                      <Database class="size-3 shrink-0" />
+                      <span class="min-w-0 truncate font-mono">{chatWhere(conv)}</span>
+                    </span>
+                  {/if}
+                  <span class="min-w-0 truncate text-ui-sm leading-snug">{displayTitle(conv)}</span>
+                </span>
+                <span class={cn("shrink-0 self-end pb-px font-mono text-ui-2xs tabular-nums text-muted-foreground/80", !selecting && "group-hover/conv:invisible")}>{relativeTime(conv.updatedAt)}</span>
               </button>
               {#if !selecting}
               <div
@@ -4392,16 +4398,14 @@
         {/each}
 
         {#if convList.length === 0 && !isDraftChat}
-          <div
-            class="flex flex-col items-center gap-1.5 px-4 py-10 text-center"
+          <button
+            type="button"
+            class="mx-1 flex h-8 items-center gap-2.5 rounded-md px-2 text-ui-sm text-muted-foreground transition-colors hover:bg-sidebar-accent/60 hover:text-foreground"
+            onclick={() => void newConversation()}
           >
-            <p class="text-ui-2xs text-muted-foreground">
-              No conversations yet
-            </p>
-            <p class="text-ui-3xs text-muted-foreground">
-              Chats save automatically
-            </p>
-          </div>
+            <Plus class="size-4 shrink-0" />
+            Ask about this database
+          </button>
         {/if}
       </div>
       {#if onexit}
