@@ -4,6 +4,86 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.3.1] - 2026-11-14
+
+### New Features
+- **Native macOS menu bar** - The app menu lives in the macOS menu bar
+- **New start screen** - Recent connections and engine shortcuts when nothing is open
+- **Custom shortcuts** - Rebind or unbind any shortcut in Settings → Keyboard
+- **Live SQL preview** - Create table, trigger, sequence and schema dialogs show the exact SQL as you fill them in
+- **Tree sidebar (beta)** - Browse databases, schemas, tables and objects in one tree
+- **Theme builder** - Create your own theme from a few colours
+- **Glass themes** - New Glass light and Glass dark themes
+- What's new after an update shows a few features to try, each with a button that turns it on
+- A Browse button in the connect box opens a SQLite or DuckDB file
+- **Workspaces** - Group connections into named, coloured workspaces and switch between them
+
+#### Account
+- **Sign in** - Sign in with GitHub or Google; your license comes with your account
+- **Sync** - Workspaces, connections and settings sync between your devices, end-to-end encrypted
+
+#### Backup
+- **Faster backups** - Tables are dumped in parallel with live progress
+- **Partial backups** - A table that can't be read is reported instead of failing the whole backup
+- **Restore preview** - See a dump's engine and tables before restoring it
+
+#### NoSQL
+- **MongoDB, CouchDB, Cassandra, DynamoDB and Firestore** - Browse, filter, edit and import documents
+- **MongoDB tools** - Aggregation builder, explain, indexes and inferred schema
+
+#### Data grid
+- **SQL filter** - Filter rows with a SQL condition, with column completion
+- **Text and JSON views** - See the current page as text or JSON
+- **New extensions** - ID decoder, JWT decoder, IP address, byte size, duplicates and more
+- **Atomic apply** - Staged edits, deletes and inserts are applied in one transaction: all or nothing
+
+#### Redis
+- **Keys table** - Edit values, TTLs and names inline and apply them together
+- **Insights** - Overview, slow log, clients and pub/sub views
+
+#### Terminal
+- **Turso CLI** - Open `turso db shell` for libSQL connections, also on Windows through WSL
+- **Find** - Search the terminal output with ⌘F (Ctrl+Shift+F on Windows and Linux)
+
+### Bug Fixes
+- Databases created by the AI or in a terminal now appear in the database switcher
+- The status line no longer shows `127.0.0.1:—/` for cloud providers
+- ER diagram cards no longer overlap
+- Large schemas open in the diagram view without freezing
+- The Linux AppImage starts on Arch, Fedora 41+ and RHEL 10, where it aborted with an EGL error (#112)
+- MCP read-only mode now classifies statements correctly on MySQL, SQLite, MongoDB and the other engines, not only Postgres
+- Paid Pro keeps working offline, and when stroke.click is down, for 30 days past the last check; the app reconnects on its own when the server is back
+- Windows builds compile again with Tauri 2.12
+- Windows and Linux: minimize, maximize and close sit in the window's top-right corner, also with the sidebar on the right and in AI mode
+- Windows and Linux: the tab bar shows again
+- Rebound shortcuts work in the SQL and ORM editors, including Alt chords
+- Switching theme or zoom repaints at once instead of flickering
+- Pasting a plain path to a database file connects, including Windows paths with spaces or quotes
+- Saving a chart no longer pushes the chart down
+- The view-only dashboard's Exit button stays in the dashboard's corner
+- Only one view is highlighted in the Objects sidebar
+- The Website link in Settings → About opens
+
+#### AI
+- Scrolling an answer no longer gets stuck on SQL blocks; long blocks collapse with "Show all"
+- Changing the access mode now takes effect right away
+- Tables and databases created by the AI appear without a manual refresh
+
+### Changes
+- Status bar icons and buttons share one size, with even spacing
+- Cleaner connection form with one primary action
+- Provider database pickers can be refreshed; a single database is selected automatically
+- ⌘M and ⇧⌘M no longer change the theme by default
+- Read-only connections are enforced by ClickHouse itself
+- Faster schema loading on MySQL, MSSQL, DuckDB and SQLite
+- ⌘/Alt+Backspace deletes a word in every terminal client
+- The terminal opens noticeably faster, especially for remote MySQL
+- **Consistent controls** - Buttons, menus, selects and tooltips share one height, radius and icon size, so toolbars line up
+- Code blocks no longer render `=>` and `!=` as ligatures
+- Thinner, rounded terminal scrollbar
+- The account in Settings is one row, like the settings around it
+
+
 ## [2.3.0] - 2026-11-02
 
 ### New Features
