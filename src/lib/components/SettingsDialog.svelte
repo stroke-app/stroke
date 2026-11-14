@@ -104,6 +104,7 @@
     { id: 'account',      label: 'Account & Sync', icon: 'cloud' },
     { id: 'integrations', label: 'Integrations', icon: 'blocks' },
     { id: 'keybindings',  label: 'Keybindings',  icon: 'keyboard' },
+    { id: 'labs',         label: 'Labs',         icon: 'flask-conical' },
     { id: 'about',        label: 'About',        icon: 'info' },
   ];
   let category = $state('general');
@@ -602,6 +603,7 @@
                 {@render agentContent()}
                 {@render accountContent()}
                 {@render integrationsContent()}
+                {@render labsContent()}
                 {@render aboutContent()}
               {:else if category === 'general'}
                 {@render generalContent()}
@@ -617,6 +619,8 @@
                 {@render accountContent()}
               {:else if category === 'integrations'}
                 {@render integrationsContent()}
+              {:else if category === 'labs'}
+                {@render labsContent()}
               {:else}
                 {@render aboutContent()}
               {/if}
@@ -631,6 +635,32 @@
 <PinSetupDialog bind:open={pinDialogOpen} mode={pinDialogMode} />
 
 <!-- ── Content snippets ──────────────────────────────────────────── -->
+<!-- Labs: features still being shaped. Each was a "(beta)" or "(experimental)"
+     switch scattered through General; they live together here, so what is
+     settled and what is still moving read as two different things. -->
+{#snippet labsContent()}
+  {#if !searching}
+    <p class="mb-4 text-ui-xs leading-relaxed text-pretty text-muted-foreground">
+      Features still being shaped. They work, they may change, and the ones that settle move to their own page.
+    </p>
+  {/if}
+  {#if show('AI chat in a tab', 'Labs, open AI chat as a tab beside your tables, with its chats in the sidebar')}
+    {@render switchRow('AI chat in a tab', 'AI chat opens as a tab beside your tables and queries, with its chats in the sidebar, instead of taking over the whole window.', settings.aiInTab, toggleAiInTab)}
+  {/if}
+  {#if show('Tree sidebar', 'Labs, browse connections, schemas, tables and columns as one explorer tree')}
+    {@render switchRow('Tree sidebar', 'One explorer tree in the sidebar: connection, database, schema, tables, views and routines, columns. Replaces the Tables, Objects and Databases tabs; Queries, Recent and Find & replace stay.', settings.sidebarStyle === 'tree', toggleTreeSidebar)}
+  {/if}
+  {#if show('Live mode', 'Labs, auto-refresh the active table when its data changes')}
+    {@render switchRow('Live mode', 'Shows the Live toggle in the status bar, which refreshes the open table when its data changes.', settings.liveModeEnabled, toggleLiveMode)}
+  {/if}
+  {#if show('Cmd+K AI', 'Labs, ask AI directly from the command palette')}
+    {@render switchRow(`${comboTitle('Mod+K')} AI`, `Shows "Ask AI" in the ${comboTitle('Mod+K')} command palette.`, settings.cmdkAiEnabled, toggleCmdkAi)}
+  {/if}
+  {#if show('Vim mode', 'Labs, modal keyboard navigation across the app, the data grid, and the SQL editor')}
+    {@render switchRow('Vim mode', 'Modal keyboard navigation (hjkl, gg/G, i/Esc) across the grid, the SQL editor and tabs.', settings.vimMode, toggleVimMode)}
+  {/if}
+{/snippet}
+
 {#snippet secLabel(/** @type {string} */ text)}
   {#if !searching}
     <!-- No rule of its own: the first row's top border is the line under it.
@@ -1037,21 +1067,6 @@
   {/if}
   {#if show('Wrap JSON', 'Soft-wrap long values in every JSON viewer instead of scrolling sideways')}
     {@render switchRow('Wrap JSON', 'Soft-wrap long values (embeddings, document chunks) in every JSON view instead of running off the right edge. Off keeps the structure easier to scan.', settings.jsonWordWrap, toggleJsonWordWrap)}
-  {/if}
-  {#if show('Vim mode', 'Experimental modal keyboard navigation across the app, the data grid, and the SQL editor')}
-    {@render switchRow('Vim mode', 'Experimental: modal keyboard navigation (hjkl, gg/G, i/Esc) across the grid, the SQL editor, and tabs', settings.vimMode, toggleVimMode)}
-  {/if}
-  {#if show('Cmd+K AI', 'Experimental, ask AI directly from the command palette')}
-    {@render switchRow(`${comboTitle('Mod+K')} AI (experimental)`, `Experimental, show "Ask AI" in the ${comboTitle('Mod+K')} command palette. Off by default.`, settings.cmdkAiEnabled, toggleCmdkAi)}
-  {/if}
-  {#if show('Live mode', 'Experimental, auto-refresh the active table when its data changes')}
-    {@render switchRow('Live mode (experimental)', 'Experimental, show the Live auto-refresh toggle in the status bar. Off by default.', settings.liveModeEnabled, toggleLiveMode)}
-  {/if}
-  {#if show('Tree sidebar', 'Beta, browse connections, schemas, tables and columns as one explorer tree')}
-    {@render switchRow('Tree sidebar (beta)', 'Beta, one explorer tree in the sidebar: connection, database, schema, tables, views and routines, columns. Replaces the Tables, Objects and Databases tabs; Queries, Recent and Find & replace stay. Off by default.', settings.sidebarStyle === 'tree', toggleTreeSidebar)}
-  {/if}
-  {#if show('AI chat in a tab', 'Beta, open AI chat as a tab beside your tables, with its chats in the sidebar')}
-    {@render switchRow('AI chat in a tab (beta)', 'Beta, AI chat opens as a tab beside your tables and queries, and its chats are listed in the sidebar, instead of taking over the whole window. Off by default.', settings.aiInTab, toggleAiInTab)}
   {/if}
   {#if show('Load large values on demand', 'Fetch a column that averages megabytes as a size, and load a cell when you open it')}
     {@render switchRow('Load large values on demand', 'A column averaging half a megabyte a row arrives as its size, and the value loads when you open the cell. Off fetches every value with the page, which is what it did before, and what makes such a table take ten seconds to open. PostgreSQL.', settings.lazyWideColumns, toggleLazyWideColumns)}

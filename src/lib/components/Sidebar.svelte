@@ -3350,6 +3350,8 @@
                 />
               </div>
             {:else}
+              <ContextMenu.Root>
+              <ContextMenu.Trigger class="block w-full">
               <div
                 class={cn(
                   'group/chat relative flex h-7 w-full min-w-0 items-center rounded-md',
@@ -3399,6 +3401,20 @@
                   </div>
                 {/if}
               </div>
+              </ContextMenu.Trigger>
+              <ContextMenu.Content class="min-w-44">
+                <ContextMenu.Item onSelect={() => onopenaichat(chat.id)}>
+                  <Icon name="arrow-right" class="size-3.5 shrink-0" />Open
+                </ContextMenu.Item>
+                <ContextMenu.Item onSelect={() => startChatRename(chat)}>
+                  <Icon name="pencil" class="size-3.5 shrink-0" />Rename
+                </ContextMenu.Item>
+                <ContextMenu.Separator />
+                <ContextMenu.Item variant="destructive" onSelect={() => { confirmDeleteChatId = chat.id; void deleteChat(chat.id) }}>
+                  <Icon name="trash-2" class="size-3.5 shrink-0" />Delete
+                </ContextMenu.Item>
+              </ContextMenu.Content>
+              </ContextMenu.Root>
             {/if}
           {/each}
           {#if !chats.length && !(liveChats && chatBusy.length)}
