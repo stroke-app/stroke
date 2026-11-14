@@ -475,7 +475,7 @@
   // fields, dropdown triggers and buttons to share one corner, and `rounded-md` (8px)
   // left every toolbar button 2px squarer than the field it sits next to.
   const iconBtn =
-    "inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-30";
+    "inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-[color,background-color,scale] duration-[120ms] ease-[var(--ease-out)] active:scale-[0.97] hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-30";
 
   // ── Filter row chrome ──────────────────────────────────────────────────────
   // One border, one surface, one hover for every control in a filter row. Column,
@@ -1824,7 +1824,7 @@
         <div class="ms-1.5 flex items-center gap-0.5">
           <button
             type="button"
-            class="inline-flex h-7 items-center gap-1 rounded-md px-2 text-ui-sm text-muted-foreground transition-[color,background-color,transform] hover:bg-accent hover:text-foreground active:scale-[0.97]"
+            class="inline-flex h-7 items-center gap-1 rounded-md px-2 text-ui-sm text-muted-foreground transition-[color,background-color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-accent hover:text-foreground active:scale-[0.97]"
             onclick={addFilterAndFocus}
             title="Add a filter condition ({KEY.filter} opens this bar)"
           >
@@ -1833,7 +1833,7 @@
           </button>
           <button
             type="button"
-            class="inline-flex h-7 items-center gap-1 rounded-md px-2 text-ui-sm text-muted-foreground transition-[color,background-color,transform] hover:bg-accent hover:text-foreground active:scale-[0.97]"
+            class="inline-flex h-7 items-center gap-1 rounded-md px-2 text-ui-sm text-muted-foreground transition-[color,background-color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-accent hover:text-foreground active:scale-[0.97]"
             onclick={addSqlFilterAndFocus}
             title="Filter with a SQL condition, like id > 200 AND name LIKE 'a%'"
           >
@@ -1844,7 +1844,7 @@
         {#if rowFilters.length > 0}
           <button
             type="button"
-            class="ms-auto inline-flex h-7 items-center gap-1 rounded-md px-2 text-ui-sm text-muted-foreground transition-[color,background-color,transform] hover:bg-accent hover:text-foreground active:scale-[0.97]"
+            class="ms-auto inline-flex h-7 items-center gap-1 rounded-md px-2 text-ui-sm text-muted-foreground transition-[color,background-color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-accent hover:text-foreground active:scale-[0.97]"
             onclick={clearFilters}
             title="Remove every filter condition ({KEY.reset} also clears search, sort and hidden columns)"
           >

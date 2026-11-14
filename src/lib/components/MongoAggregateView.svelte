@@ -239,8 +239,8 @@
     const lines = JSON.stringify(d, null, 2).split('\n')
     return lines.length > 8 ? lines.slice(0, 8).join('\n') + '\n  …' : lines.join('\n')
   }
-  const iconBtn = 'inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-30'
-  const pill = 'inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-ui-xs text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground disabled:opacity-40'
+  const iconBtn = 'inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-[color,background-color,scale] duration-[120ms] ease-[var(--ease-out)] active:scale-[0.97] hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-30'
+  const pill = 'inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-ui-xs text-muted-foreground transition-[color,background-color,scale] duration-[120ms] ease-[var(--ease-out)] active:scale-[0.97] hover:bg-accent/50 hover:text-foreground disabled:opacity-40'
 </script>
 
 <div class="flex min-h-0 flex-1 flex-col">

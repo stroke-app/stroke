@@ -453,7 +453,7 @@
     }
   }
 
-  const iconBtn = 'inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40'
+  const iconBtn = 'inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-[color,background-color,scale] duration-[120ms] ease-[var(--ease-out)] active:scale-[0.97] hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40'
   /** A quiet text toggle: the on state is foreground, the rest muted. No pill, no frame. */
   const textToggle = 'inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-ui-xs transition-colors hover:text-foreground'
   /** A frameless field inside the command bar. */

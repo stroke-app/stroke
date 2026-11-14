@@ -338,7 +338,7 @@
   // No radius here: Select.Item's own rounded-lg is derived from the panel's
   // radius minus its padding, and overriding it breaks that relationship.
   const axisItem = ''
-  const iconBtn = 'inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground'
+  const iconBtn = 'inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-[color,background-color,scale] duration-[120ms] ease-[var(--ease-out)] active:scale-[0.97] hover:bg-accent hover:text-foreground'
 </script>
 
 <div class="flex min-h-0 flex-1 flex-col overflow-hidden">

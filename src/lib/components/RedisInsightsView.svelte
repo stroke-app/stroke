@@ -254,7 +254,7 @@ return out`
   })
 
   const TITLES = { insights: 'Overview', slowlog: 'Slow log', clients: 'Clients', pubsub: 'Pub/Sub' }
-  const iconBtn = 'inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40'
+  const iconBtn = 'inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-[color,background-color,scale] duration-[120ms] ease-[var(--ease-out)] active:scale-[0.97] hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40'
   const th = 'sticky top-0 z-10 bg-panel px-3 py-2 text-left text-ui-2xs font-medium text-muted-foreground'
   const td = 'px-3 py-1.5 align-top'
 </script>

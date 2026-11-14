@@ -635,7 +635,7 @@
   let dragStart = 0
   let dragScale = 1
 
-  const iconBtn = 'inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40'
+  const iconBtn = 'inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-[color,background-color,scale] duration-[120ms] ease-[var(--ease-out)] active:scale-[0.97] hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40'
   /** A quiet text toggle: the on state is foreground, the rest muted. No pill, no frame. */
   const pageSelectTrigger = 'h-8 min-w-0 gap-1 rounded-lg! border-transparent! bg-transparent! focus-visible:border-ring! data-[state=open]:border-ring! px-2 text-ui-xs font-normal tabular-nums shadow-none hover:bg-accent!'
   const textToggle = 'inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-ui-xs transition-colors hover:text-foreground'
