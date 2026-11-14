@@ -5,6 +5,7 @@
   import { autocompletion, closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
   import { indentRange } from "@codemirror/language";
   import { keymap } from "@codemirror/view";
+  import { commandKeys } from "$lib/editor-command-keys.js";
   import CodeEditor from "./CodeEditor.svelte";
   import { ormCompletionSource } from "$lib/cm-orm-complete.js";
   import { appVimMode } from "$lib/stores/settings.js";
@@ -115,26 +116,26 @@
     return true;
   }
 
-  /** @param {(() => void) | undefined} fn */
-  const call = (fn) => { fn?.(); return true; };
-
   /**
-   * The editor's own chords, and the app's: a handled chord stops at the
-   * editor, so the global shortcuts it shadows are passed on by hand.
+   * The editor's own chords. The app's commands are `appKeys` below.
    * @type {import('@codemirror/view').KeyBinding[]}
    */
   const keys = [
     { key: "Mod-Enter", run: () => { void handleRun(); return true; } },
     { key: "Mod-s", run: reindent },
-    { key: "Mod-i", run: () => call(onmodi) },
-    { key: "Mod-w", run: () => call(onmodw) },
-    { key: "Mod-n", run: () => call(onmodn) },
-    { key: "Mod-m", run: () => call(onmodm) },
-    { key: "Mod-t", run: () => call(onmodt) },
-    { key: "Mod-Shift-d", run: () => call(onmodshiftd) },
-    { key: "Mod-Alt-d", run: () => call(onmodaltd) },
-    { key: "Mod-Shift-e", run: () => call(onmodshifte) },
   ];
+
+  // The app's commands, on the user's bindings (see editor-command-keys.js).
+  const appKeys = commandKeys(() => [
+    ["ai.sidebar", onmodi],
+    ["tab.close", onmodw],
+    ["tab.new", onmodn],
+    ["theme.next", onmodm],
+    ["palette.tablesAlt", onmodt],
+    ["connection.disconnect", onmodshiftd],
+    ["view.data", onmodaltd],
+    ["ai.panel", onmodshifte],
+  ]);
 
   // ── Valid JS identifier table names only ──────────────────────────────────
   /** @param {string} name */
@@ -216,7 +217,7 @@
 
   // Experimental Vim mode: @replit/codemirror-vim, loaded only while it is on.
   let vimExtension = $state(/** @type {import('@codemirror/state').Extension | null} */ (null));
-  const editorExtensions = $derived([...(vimExtension ? [Prec.highest(vimExtension)] : []), ...completion]);
+  const editorExtensions = $derived([...(vimExtension ? [Prec.highest(vimExtension)] : []), appKeys, ...completion]);
 
   // ── Parse / run ────────────────────────────────────────────────────────────
 

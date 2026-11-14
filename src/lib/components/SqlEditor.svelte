@@ -15,6 +15,7 @@
    */
   import { onMount } from 'svelte'
   import { StateEffect, StateField, RangeSetBuilder, Prec, EditorState } from '@codemirror/state'
+  import { commandKeys } from '$lib/editor-command-keys.js'
   import { EditorView, Decoration, ViewPlugin, GutterMarker, WidgetType, gutter, hoverTooltip, keymap, drawSelection, highlightWhitespace } from '@codemirror/view'
   import { indentUnit, foldable, foldEffect, unfoldEffect, foldedRanges, syntaxTree } from '@codemirror/language'
   import { insertNewlineKeepIndent } from '@codemirror/commands'
@@ -967,23 +968,29 @@
   /** @param {(() => void) | undefined} fn */
   const call = (fn) => () => { if (!fn) return false; fn(); return true }
 
+  // The app's commands, on the user's bindings (see editor-command-keys.js).
+  const appKeys = commandKeys(() => [
+    ['palette.open', onmodk],
+    ['ai.sidebar', onmodi],
+    ['tab.close', onmodw],
+    ['tab.new', onmodn],
+    ['theme.next', onmodm],
+    ['palette.tablesAlt', onmodt],
+    ['connection.disconnect', onmodshiftd],
+    ['view.data', onmodaltd],
+    ['ai.panel', onmodshifte],
+    ['view.orm', onmodshifto],
+  ])
+
+  // The editor's own chords: these mean something different in a console
+  // (save this query, its output, its history) than the app-wide command.
   const keys = [
-    { key: 'Mod-k', run: () => call(onmodk)() },
     // No preventDefault: unwired (a notebook cell), Ctrl+S has to reach the
     // notebook's own save; a wired handler returns true and claims it anyway.
     { key: 'Mod-s', run: () => call(onmods)() },
     { key: 'Mod-Shift-s', run: () => call(onmodshifts)() },
     { key: 'Mod-l', run: selectStatement, preventDefault: true },
     { key: 'Mod-r', run: runStatement, preventDefault: true },
-    { key: 'Mod-i', run: () => call(onmodi)() },
-    { key: 'Mod-w', run: () => call(onmodw)() },
-    { key: 'Mod-n', run: () => call(onmodn)() },
-    { key: 'Mod-m', run: () => call(onmodm)() },
-    { key: 'Mod-t', run: () => call(onmodt)() },
-    { key: 'Mod-Shift-d', run: () => call(onmodshiftd)() },
-    { key: 'Mod-Alt-d', run: () => call(onmodaltd)() },
-    { key: 'Mod-Shift-e', run: () => call(onmodshifte)() },
-    { key: 'Mod-Shift-o', run: () => call(onmodshifto)() },
     { key: 'Mod-j', run: () => call(onmodj)() },
     { key: 'Mod-Shift-b', run: () => call(onmodshiftb)() },
     // Wrap on/off: VS Code's key, the one the cell dock uses too.
@@ -1279,7 +1286,7 @@
     ...editingExtensions($appSqlEditor),
     ...(onlens && !readOnly && $appSqlEditor.codeLens === 'current' ? [lensRoom] : []),
   ])
-  const extensions = $derived([...(vimExtension ? [Prec.highest(vimExtension)] : []), ...baseExtensions, ...editing])
+  const extensions = $derived([...(vimExtension ? [Prec.highest(vimExtension)] : []), appKeys, ...baseExtensions, ...editing])
 
   $effect(() => {
     if (!$appVimMode) { vimExtension = null; return }
