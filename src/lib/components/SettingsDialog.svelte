@@ -21,6 +21,8 @@
   import { t, locale, LOCALES, setLocale } from "$lib/i18n.js";
   import { licenseStatus } from "$lib/stores/license.js";
   import AccountCard from "./AccountCard.svelte";
+  import SyncSection from "./SyncSection.svelte";
+  import { isSignedIn, signInWithToast } from "$lib/stores/account.js";
   import {
     appThemeId,
     loadSettings,
@@ -98,6 +100,7 @@
     { id: 'database',     label: 'Database',     icon: 'database' },
     { id: 'appearance',   label: 'Appearance',   icon: 'sparkles' },
     { id: 'agent',        label: 'Agent',        icon: 'bot' },
+    { id: 'account',      label: 'Account & Sync', icon: 'cloud' },
     { id: 'integrations', label: 'Integrations', icon: 'blocks' },
     { id: 'keybindings',  label: 'Keybindings',  icon: 'keyboard' },
     { id: 'about',        label: 'About',        icon: 'info' },
@@ -593,6 +596,7 @@
                 {@render databaseContent()}
                 {@render appearanceContent()}
                 {@render agentContent()}
+                {@render accountContent()}
                 {@render integrationsContent()}
                 {@render aboutContent()}
               {:else if category === 'general'}
@@ -605,6 +609,8 @@
                 {@render agentContent()}
               {:else if category === 'keybindings'}
                 <KeybindingsSettings />
+              {:else if category === 'account'}
+                {@render accountContent()}
               {:else if category === 'integrations'}
                 {@render integrationsContent()}
               {:else}
@@ -623,8 +629,9 @@
 <!-- ── Content snippets ──────────────────────────────────────────── -->
 {#snippet secLabel(/** @type {string} */ text)}
   {#if !searching}
+    <!-- No rule of its own: the first row's top border is the line under it.
+         Both drew one, which is the double line under every heading. -->
     <p class="mt-8 mb-1 text-ui-2xs font-semibold uppercase tracking-[0.06em] text-muted-foreground first:mt-0">{text}</p>
-    <div class="mb-1 border-b border-border/40"></div>
   {/if}
 {/snippet}
 
@@ -1560,14 +1567,34 @@
   {#if show($t('settings.aiModels'), $t('settings.aiModels.desc'))}
     {@render actionRow($t('settings.aiModels'), $t('settings.aiModels.desc'), $t('settings.btn.configure'), openModelConfiguration)}
   {/if}
+{/snippet}
 
+<!-- Account & Sync: who you are, your plan and devices, and end-to-end
+     encrypted sync, in one place instead of under Integrations and the
+     License page. -->
+{#snippet accountContent()}
   {@render secLabel($t('settings.sec.account'))}
-  <!-- Account first; the license key row below stays as the secondary path. -->
   {#if show('Account', 'Sign in with GitHub or Google, plan, devices, sign out')}
     <AccountCard variant="row" />
   {/if}
   {#if show($t('settings.license'), $t('settings.license.desc'))}
     {@render actionRow($t('settings.license'), $t('settings.license.desc'), $t('settings.btn.manage'), () => { open = false; onopenlicense(); }, planBadge)}
+  {/if}
+  {#if show('Sync', 'End-to-end encrypted sync of connections, workspaces and settings across your devices')}
+    {#if $isSignedIn}
+      <div class="mt-6">
+        <SyncSection sectionLabel="mb-1 text-ui-2xs font-semibold uppercase tracking-[0.06em] text-muted-foreground" />
+      </div>
+    {:else}
+      {@render secLabel('Sync')}
+      <div class={rowCls}>
+        <div class="min-w-0">
+          <p class="text-ui-sm font-medium text-foreground">Sync your connections</p>
+          <p class="mt-0.5 text-ui-xs leading-relaxed text-muted-foreground">Sign in to keep connections, workspaces and settings on all your devices. They are encrypted on this device with a passphrase only you know, so no one else can read them, Stroke included.</p>
+        </div>
+        <Button type="button" size="sm" class="shrink-0" onclick={() => void signInWithToast()}>Sign in</Button>
+      </div>
+    {/if}
   {/if}
 {/snippet}
 
@@ -1589,8 +1616,7 @@
   {/if}
 
   {#if !searching}
-    <p class="mt-8 mb-1 text-ui-2xs font-semibold uppercase tracking-[0.06em] text-muted-foreground">{$t('settings.sec.keyboard')}</p>
-    <div class="mb-3 border-b border-border/40"></div>
+    <p class="mt-8 mb-3 text-ui-2xs font-semibold uppercase tracking-[0.06em] text-muted-foreground">{$t('settings.sec.keyboard')}</p>
     <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
       {#if bindingFor('theme.next')}{@render shortcut(bindingFor('theme.next'), $t('settings.kbd.cycleTheme'))}{/if}
       {#if bindingFor('theme.prev')}{@render shortcut(bindingFor('theme.prev'), $t('settings.kbd.prevTheme'))}{/if}

@@ -256,8 +256,8 @@ async function maybePromptKeyHolder() {
     return
   }
   const { toast } = await import('$lib/components/ui/sonner/toast.svelte.js')
-  toast.info('Stroke now has accounts', {
-    description: 'Sign in to sync your connections; your license comes with you.',
+  toast.info('Sign in to sync your connections', {
+    description: 'Your connections, workspaces and settings, on every device, end-to-end encrypted: no one else can read them, Stroke included. Your license comes with you.',
     duration: 20000,
     action: { label: 'Sign in', onClick: () => void signInWithToast() },
   })
