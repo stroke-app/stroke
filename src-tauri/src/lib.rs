@@ -802,6 +802,7 @@ pub fn run() {
             omniroute::omniroute_running,
             docker::docker_check,
             docker::docker_run_db,
+            docker::docker_templates,
             docker::scan_docker_databases,
             docker::docker_container_action,
             db::local_scan::scan_local_studios,

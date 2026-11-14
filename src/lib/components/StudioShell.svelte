@@ -7802,26 +7802,21 @@ let rowSearch = $state('')
   }
 
   /** @param {{ db_type: string, host: string, port: number, user: string, password: string, database: string, name: string }} info */
+  /**
+   * A container the Docker launcher started: save it and open it. The backend
+   * returns the saved-connection shape for its engine (Postgres, MongoDB,
+   * Redis, Oracle, ...).
+   * @param {Record<string, any>} info
+   */
   async function handleDockerConnect(info) {
-    const conn = /** @type {import('$lib/stores/connections.js').SavedConnection} */ ({
-      id: crypto.randomUUID(),
-      type: info.db_type === 'mysql' ? 'mysql' : 'postgres',
-      name: info.name,
-      host: info.host,
-      port: info.port,
-      user: info.user,
-      password: info.password,
-      database: info.database,
-      ssl: false,
-    })
+    const conn = /** @type {import('$lib/stores/connections.js').SavedConnection} */ ({ id: crypto.randomUUID(), ...info })
     upsertConnection(conn)
     await disconnectPostgres().catch(() => {})
     connection = null
     clearConnectionState()
     beginConnectOverlay(conn.name ?? '')
     try {
-      if (conn.type === 'mysql' || conn.type === 'mariadb') await connectMysql(conn)
-      else await connectPostgres(conn)
+      await connectByType(conn)
       await onConnected(conn, conn.id)
       showDockerModal = false
     } catch (e) {
@@ -8979,6 +8974,7 @@ let rowSearch = $state('')
   onopenreport={() => (showReportIssueDialog = true)}
   oncheckupdate={() => void updateDialog?.checkNow()}
   ondockerlaunch={(dbType) => { commandOpen = false; dockerInitialDb = dbType; showDockerModal = true }}
+  onopendocker={(c) => { commandOpen = false; void handleDockerConnect(c) }}
   onswitchdatabase={handleSwitchDatabase}
   {queryHistory}
   {savedQueries}

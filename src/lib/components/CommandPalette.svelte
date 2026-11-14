@@ -8,7 +8,8 @@
   import { aiSettings, isAiConfigured } from '$lib/stores/ai-settings.js'
   import { pinEnabled, lockNow } from '$lib/stores/app-lock.js'
   import { appCmdkAi, appThemeId, appSidebarStyle, previewTheme, endThemePreview, updateSettings } from '$lib/stores/settings.js'
-  import { executeSql } from '$lib/api.js'
+  import { executeSql, dockerTemplates, scanDockerDatabases } from '$lib/api.js'
+  import DbIcon from './DbIcon.svelte'
   import { themesByGroup, getThemeDefinition } from '$lib/themes/registry.js'
   import ThemeSwatchStrip from './ThemeSwatchStrip.svelte'
 
@@ -86,6 +87,8 @@
     onreadonlytoggle = () => {},
     /** @param {'postgres'|'mysql'} dbType */
     ondockerlaunch = (dbType) => {},
+    /** Open a database already running in Docker. @type {(conn: Record<string, any>) => void} */
+    onopendocker = () => {},
     /** @param {import('$lib/stores/connections.js').SavedConnection} conn */
     onswitchdatabase = (conn) => {},
     /** @type {import('$lib/stores/query-history.js').QueryHistoryEntry[]} */
@@ -120,6 +123,23 @@
 
   /** Value of the highlighted command row (bound to the palette). */
   let highlighted = $state('')
+
+  // ── Docker page: the launch catalog and what is already running ──────────
+  /** @type {import('$lib/api.js').DockerTemplate[]} */
+  let dockerTpls = $state([])
+  /** @type {import('$lib/api.js').DockerDatabase[]} */
+  let dockerRunning = $state([])
+  $effect(() => {
+    if (page !== 'docker') return
+    if (!dockerTpls.length) dockerTemplates().then((t) => (dockerTpls = t)).catch(() => {})
+    scanDockerDatabases().then((d) => (dockerRunning = d.filter((x) => !x.reason))).catch(() => {})
+  })
+  const dockerGroups = $derived.by(() => {
+    /** @type {Map<string, import('$lib/api.js').DockerTemplate[]>} */
+    const m = new Map()
+    for (const t of dockerTpls) m.set(t.group, [...(m.get(t.group) ?? []), t])
+    return [...m]
+  })
   /** The theme in effect when the page opened; null when no preview is live. */
   let themeOrigin = $state(/** @type {ThemeId | null} */ (null))
   /** Off until the page has highlighted the current theme, so the first row is never flashed. */
@@ -1045,8 +1065,8 @@
 
           <!-- ── Drill-in: Docker ───────────────────────────────────── -->
           <Command.Group heading="Launch">
-            <Command.Item value="docker containers postgresql mysql launch run" onSelect={() => navigate('docker')}>
-              <Icon name="package" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+            <Command.Item value="docker containers launch run postgresql mysql mariadb mongodb redis valkey sql server oracle cockroachdb clickhouse cassandra couchdb dynamodb libsql pgvector postgis timescale" onSelect={() => navigate('docker')}>
+              <DbIcon id="docker" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
               <span data-slot="command-label" class="truncate">Docker</span>
               <Icon name="chevron-right" class="size-3.5 shrink-0 text-muted-foreground" />
             </Command.Item>
@@ -1123,24 +1143,37 @@
 
         <!-- ── DOCKER PAGE ────────────────────────────────────────────── -->
         {:else if page === 'docker'}
-          <Command.Group heading="Docker containers">
-            <Command.Item
-              value="launch postgresql postgres container pull run 5433"
-              onSelect={() => run(() => ondockerlaunch('postgres'))}
-            >
-              <Icon name="package" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
-              <span data-slot="command-label" class="truncate">PostgreSQL container</span>
-              <span data-slot="command-trailing" class="shrink-0 font-mono text-ui-2xs text-muted-foreground">:5433</span>
-            </Command.Item>
-            <Command.Item
-              value="launch mysql container pull run 3307"
-              onSelect={() => run(() => ondockerlaunch('mysql'))}
-            >
-              <Icon name="package" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
-              <span data-slot="command-label" class="truncate">MySQL container</span>
-              <span data-slot="command-trailing" class="shrink-0 font-mono text-ui-2xs text-muted-foreground">:3307</span>
-            </Command.Item>
-          </Command.Group>
+          {#if dockerRunning.length}
+            <Command.Group heading="Running">
+              {#each dockerRunning as d (d.containerId)}
+                <Command.Item
+                  value="running open {d.name} {d.engine} {d.image} {d.port}"
+                  onSelect={() => run(() => onopendocker({ id: `docker-${d.name}`, type: d.engine, name: d.name, host: d.host, port: d.port, user: d.user, password: d.password, database: d.database }))}
+                >
+                  <DbIcon id={d.engine} class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">{d.name}</span>
+                  <span data-slot="command-trailing" class="shrink-0 font-mono text-ui-2xs text-muted-foreground">{d.target}</span>
+                </Command.Item>
+              {/each}
+            </Command.Group>
+          {/if}
+          {#each dockerGroups as [group, items] (group)}
+            <Command.Group heading={group}>
+              {#each items as t (t.id)}
+                <Command.Item
+                  value="launch {t.label} {t.engine} {t.image} {t.note} docker"
+                  onSelect={() => run(() => ondockerlaunch(t.id))}
+                >
+                  <DbIcon id={t.icon} class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">{t.label}{#if t.note}<span class="ml-2 text-ui-2xs text-muted-foreground">{t.note}</span>{/if}</span>
+                  <span data-slot="command-trailing" class="shrink-0 font-mono text-ui-2xs text-muted-foreground">{t.image}</span>
+                </Command.Item>
+              {/each}
+            </Command.Group>
+          {/each}
+          {#if !dockerTpls.length}
+            <div class="px-3 py-6 text-center text-ui-xs text-muted-foreground">Loading images…</div>
+          {/if}
 
         <!-- ── CONNECTIONS PAGE ───────────────────────────────────────── -->
         {:else if page === 'connections'}
