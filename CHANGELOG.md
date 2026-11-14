@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.7.6] - 2026-11-14
+
+### Features
+- The status bar shows your connection: the database's round trip ("48 ms", amber when slow, red when very slow), "Offline" when the computer has no network, and "No response" when the database stops answering. Click it to check now
+
+
 ## [2.7.5] - 2026-11-14
 
 ### Bug Fixes
