@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.7.9] - 2026-11-14
+
+### Changes
+- Fixes: AI background replies, compact AI transcript, tabs, TimescaleDB, theme surfaces (#175)
+
+
 ## [2.7.8] - 2026-11-14
 
 ### Features
