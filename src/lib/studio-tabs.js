@@ -1,4 +1,4 @@
-/** @typedef {'table' | 'sql' | 'ddl' | 'welcome' | 'ai' | 'schema' | 'orm' | 'security' | 'logs' | 'extensions' | 'extension-detail' | 'backup' | 'json' | 'charts' | 'dashboard' | 'erd' | 'reltree' | 'diagrams' | 'search' | 'notebook' | 'schema-timeline' | 'data-diff' | 'insights' | 'objects' | 'redis' | 'dynamodb' | 'docs' | 'license' | 'orm-schema' | 'map' | 'advisor' | 'golf' | 'terminal'} StudioTabKind */
+/** @typedef {'table' | 'sql' | 'ddl' | 'welcome' | 'ai' | 'schema' | 'orm' | 'security' | 'logs' | 'extensions' | 'extension-detail' | 'backup' | 'json' | 'charts' | 'dashboard' | 'erd' | 'reltree' | 'diagrams' | 'search' | 'notebook' | 'schema-timeline' | 'data-diff' | 'insights' | 'objects' | 'redis' | 'dynamodb' | 'docs' | 'license' | 'orm-schema' | 'map' | 'advisor' | 'golf' | 'terminal' | 'shortcuts'} StudioTabKind */
 
 import { loadDefaultPageSize } from '$lib/table-query.js'
 
@@ -235,6 +235,7 @@ const SINGLETON_TAB_TITLES = {
   'data-diff': 'Data diff',
   golf: 'VACUUM',
   terminal: 'Terminal',
+  shortcuts: 'Keyboard shortcuts',
 }
 
 /** @param {StudioTabKind} kind */
@@ -281,6 +282,8 @@ export const createSchemaTimelineTab = () => createKindTab('schema-timeline')
 export const createDataDiffTab = () => createKindTab('data-diff')
 /** The connection's own CLI (psql, mysql, sqlite3...) in a real terminal. */
 export const createTerminalTab = () => createKindTab('terminal')
+/** Every shortcut, searchable and remappable. */
+export const createShortcutsTab = () => createKindTab('shortcuts')
 
 /** @type {(tabs: StudioTab[]) => StudioTab | null} */
 export const findAiTab = (tabs) => findTabByKind(tabs, 'ai')
@@ -329,6 +332,8 @@ export const findDiagramsTab = (tabs) => findTabByKind(tabs, 'diagrams')
 export const findErdTab = (tabs) => findTabByKind(tabs, 'erd')
 /** @type {(tabs: StudioTab[]) => StudioTab | null} */
 export const findLicenseTab = (tabs) => findTabByKind(tabs, 'license')
+/** @type {(tabs: StudioTab[]) => StudioTab | null} */
+export const findShortcutsTab = (tabs) => findTabByKind(tabs, 'shortcuts')
 /** @type {(tabs: StudioTab[]) => StudioTab | null} */
 export const findSearchTab = (tabs) => findTabByKind(tabs, 'search')
 /** @type {(tabs: StudioTab[]) => StudioTab | null} */

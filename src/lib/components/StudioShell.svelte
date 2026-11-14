@@ -225,6 +225,8 @@
     findDataDiffTab,
     createLicenseTab,
     findLicenseTab,
+    createShortcutsTab,
+    findShortcutsTab,
     findTableTab,
     findSchemaTab,
     findOrmTab,
@@ -2634,7 +2636,7 @@ let rowSearch = $state('')
     } else if (id === 'open-themes') {
       menuActions.theme?.()
     } else if (id === 'open-shortcuts') {
-      showShortcutsModal = true
+      openShortcuts()
     } else if (id === 'open-connections') {
       showConnectionModal = true
     }
@@ -3046,7 +3048,7 @@ let rowSearch = $state('')
     logs: () => openLogsTab(),
     extensions: () => openExtensionsTab(),
 
-    shortcuts: () => (showShortcutsModal = true),
+    shortcuts: () => openShortcuts(),
     changelog: () => void openExternalUrl('https://stroke.click/changelog?utm_source=stroke-app&utm_medium=menu&utm_campaign=changelog'),
     reportIssue: () => (showReportIssueDialog = true),
     // ⌘A from the native menu: select all in whatever has focus.
@@ -3171,7 +3173,7 @@ let rowSearch = $state('')
   createCommandHotkey('help.shortcuts', (e) => {
     if (commandOpen || showConnectionModal || showSettingsModal || showShortcutsModal) return
     e.preventDefault()
-    showShortcutsModal = true
+    openShortcuts()
   })
 
   // Jump straight to tab N (Ctrl/⌘+1..8); 9 always jumps to the last tab -
@@ -3541,7 +3543,7 @@ let rowSearch = $state('')
     // mid-sentence.
     if (isTypingTarget(document.activeElement)) return
     e.preventDefault()
-    showShortcutsModal = true
+    openShortcuts()
   })
 
   // Same panel via a modifier chord (Ctrl/⌘+?), which works even while a text
@@ -3549,7 +3551,7 @@ let rowSearch = $state('')
   createCommandHotkey('help.shortcutsAlt', (e) => {
     if (commandOpen || showConnectionModal || showSettingsModal || showShortcutsModal) return
     e.preventDefault()
-    showShortcutsModal = true
+    openShortcuts()
   })
 
   createCommandHotkey('settings.open', (e) => {
@@ -4153,6 +4155,19 @@ let rowSearch = $state('')
     saveActiveTabState()
     dropWelcomeTabs()
     const tab = createLicenseTab()
+    tabs = [...tabs, tab]
+    activeTabId = tab.id
+    clearTableEditor()
+  }
+
+  /** Keyboard shortcuts as a tab; without a connection there is no tab bar, so the overlay. */
+  function openShortcuts() {
+    if (!connection) { showShortcutsModal = true; return }
+    const existing = findShortcutsTab(tabs)
+    if (existing) { void activateTab(existing.id); return }
+    saveActiveTabState()
+    dropWelcomeTabs()
+    const tab = createShortcutsTab()
     tabs = [...tabs, tab]
     activeTabId = tab.id
     clearTableEditor()
@@ -8928,7 +8943,7 @@ let rowSearch = $state('')
   {hasInsights}
   {hasAdvisor}
   onopenJsonViewer={() => { if (aiMode) exitAiMode(); openJsonTab() }}
-  onopenshortcuts={() => (showShortcutsModal = true)}
+  onopenshortcuts={() => openShortcuts()}
   onopenkeybindings={() => { settingsSection = 'keybindings'; showSettingsModal = true }}
   onopenabout={() => (showAboutModal = true)}
   onopenreport={() => (showReportIssueDialog = true)}
@@ -9051,7 +9066,7 @@ let rowSearch = $state('')
         {/snippet}
       <Sidebar
         onopensettings={() => (showSettingsModal = true)}
-        onopenshortcuts={() => (showShortcutsModal = true)}
+        onopenshortcuts={() => openShortcuts()}
         oncheckupdates={() => void updateDialog?.checkNow?.()}
         tableNav={activeTab?.kind === 'table' && !!activeTable}
         bind:openFindReplace={sidebarOpenFindReplace}
@@ -9298,7 +9313,7 @@ let rowSearch = $state('')
               mode="full"
               onexit={exitAiMode}
               onopensettings={() => (showSettingsModal = true)}
-              onopenshortcuts={() => (showShortcutsModal = true)}
+              onopenshortcuts={() => openShortcuts()}
               onwritesql={(sql) => void handleAiWriteSql(sql)}
               onopenmodelsettings={() => (showAiModelSettings = true)}
               onopendiagramspage={() => { exitAiMode(); openDiagramsTab() }}
@@ -9629,6 +9644,17 @@ let rowSearch = $state('')
             </svelte:boundary>
           </div>
         {/key}
+      {/if}
+
+      <!-- Keyboard shortcuts tab: light, so it mounts while it is the active tab only -->
+      {#if activeTab?.kind === 'shortcuts'}
+        <div class="flex min-h-0 flex-1 flex-col">
+          <svelte:boundary failed={tabError}>
+            {#await import('./KeyboardShortcutsPage.svelte')}<TabLoading />{:then { default: KeyboardShortcutsPage }}
+              <KeyboardShortcutsPage />
+            {/await}
+          </svelte:boundary>
+        </div>
       {/if}
 
       <!-- License tab, rarely opened, no keep-alive needed -->
