@@ -2102,6 +2102,31 @@
     });
   }
 
+  /**
+   * The engine-specific connection fields for a container. The SQL engines and
+   * Redis take host/port/user; the document engines take a URI or endpoint.
+   * @param {import('$lib/api.js').DockerDatabase} d
+   */
+  function dockerConnFields(d) {
+    const hp = `${d.host}:${d.port}`;
+    const auth = d.user ? `${encodeURIComponent(d.user)}:${encodeURIComponent(d.password)}@` : "";
+    switch (d.engine) {
+      case "oracle":
+        return { host: d.host, port: d.port, serviceName: d.database, sid: "", connectString: "", user: d.user, password: d.password };
+      case "mongodb":
+        return { uri: `mongodb://${auth}${hp}/${d.user ? "?authSource=admin" : ""}`, database: d.database };
+      case "couchdb":
+        return { url: `http://${hp}`, user: d.user, password: d.password };
+      case "cassandra":
+        return { hosts: hp, user: d.user, password: d.password, keyspace: "" };
+      case "dynamodb":
+        // DynamoDB Local accepts any keys; it still wants some.
+        return { region: "us-east-1", endpoint: `http://${hp}`, accessKeyId: "local", secretAccessKey: "local", sessionToken: "" };
+      default:
+        return { host: d.host, port: d.port, user: d.user, password: d.password, database: d.database };
+    }
+  }
+
   /** @param {import('$lib/api.js').DockerDatabase} d */
   function dockerTarget(d) {
     const label = `Docker · ${d.image}`;
@@ -2114,7 +2139,9 @@
           ? { encrypt: true, trustCert: true }
           : d.engine === "clickhouse"
             ? { secure: false }
-            : { ssl: false };
+            : ["oracle", "mongodb", "couchdb", "cassandra", "dynamodb"].includes(d.engine)
+              ? {}
+              : { ssl: false };
     return /** @type {LocalTarget} */ ({
       id: `docker:${d.name}`,
       container: d.name,
@@ -2132,13 +2159,9 @@
             id: `docker:${d.name}`,
             type: d.engine,
             name: d.name,
-            host: d.host,
-            port: d.port,
-            user: d.user,
-            password: d.password,
-            database: d.database,
             origin: "docker",
             toolLabel: label,
+            ...dockerConnFields(d),
             ...extras,
           },
     });
