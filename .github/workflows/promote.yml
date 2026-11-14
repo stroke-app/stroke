@@ -1,0 +1,69 @@
+# Promote nightly to stable: opens the "Release vX.Y.Z" PR from `nightly` into
+# `master`. Merging it (with a merge commit) makes auto-release.yml tag vX.Y.Z,
+# and release.yml builds and publishes Stroke.
+#
+# Run it from Actions → Promote nightly to stable → Run workflow.
+
+name: Promote nightly to stable
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: nightly
+          fetch-depth: 0
+
+      - name: Open the release PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          STABLE=$(git show origin/master:src-tauri/tauri.conf.json | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).version))")
+
+          if git ls-remote --exit-code --tags origin "refs/tags/v${VERSION}" >/dev/null; then
+            echo "::error::v${VERSION} is already released. Merge something into nightly first."
+            exit 1
+          fi
+          if [ -z "$(git log --oneline origin/master..HEAD)" ]; then
+            echo "::error::nightly has nothing that master doesn't."
+            exit 1
+          fi
+
+          # Every changelog entry between the stable version and this one.
+          VERSION="$VERSION" STABLE="$STABLE" node -e "
+            const fs = require('fs')
+            const { VERSION, STABLE } = process.env
+            const cl = fs.readFileSync('CHANGELOG.md', 'utf8')
+            const start = cl.indexOf('## [' + VERSION + ']')
+            const end = cl.indexOf('## [' + STABLE + ']')
+            const notes = start === -1 ? '' : cl.slice(start, end === -1 ? undefined : end).trim()
+            const body = [
+              'Promotes nightly to stable as **v' + VERSION + '** (stable is v' + STABLE + ').',
+              '',
+              '**Merge with \"Create a merge commit\"**, not squash: it keeps master and nightly on one history.',
+              'Merging tags v' + VERSION + ' (auto-release.yml), and release.yml builds and publishes it.',
+              '',
+              '---',
+              '',
+              notes.replace(/^## /gm, '### '),
+            ].join('\n')
+            fs.writeFileSync('body.md', body)
+          "
+
+          EXISTING=$(gh pr list --base master --head nightly --state open --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh pr edit "$EXISTING" --title "Release v${VERSION}" --body-file body.md
+            echo "Updated the open release PR #${EXISTING}."
+          else
+            gh pr create --base master --head nightly --title "Release v${VERSION}" --body-file body.md
+          fi

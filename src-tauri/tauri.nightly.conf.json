@@ -1,0 +1,16 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "Stroke Nightly",
+  "mainBinaryName": "stroke-nightly",
+  "identifier": "com.broisnischal.stroke.nightly",
+  "bundle": {
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/stroke-app/stroke/releases/download/nightly/latest.json"
+      ]
+    }
+  }
+}

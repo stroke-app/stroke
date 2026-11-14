@@ -1,0 +1,286 @@
+# Stroke Nightly: the `nightly` branch, built for every platform and published
+# as the rolling `nightly` pre-release.
+#
+# Runs every night and skips when nothing merged since the last nightly; run it
+# by hand (Actions → Nightly → Run workflow) to build now.
+#
+# Nightly is its own app (src-tauri/tauri.nightly.conf.json): "Stroke Nightly",
+# its own identifier and data folder, installed beside Stroke. Its updater reads
+# releases/download/nightly/latest.json. Stable reads releases/latest, which
+# never points at a pre-release, so stable users never see these builds.
+#
+# Version: the version on nightly plus `-nightly.<UTC date+time>`, e.g.
+# 2.5.6-nightly.202611150200 — always after the previous nightly, always before
+# the 2.5.6 stable release.
+
+name: Nightly
+
+on:
+  schedule:
+    - cron: '0 2 * * *'   # 02:00 UTC
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Build even if nothing changed since the last nightly
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+jobs:
+  # ── 1. Anything new since the last nightly? ────────────────────────────────
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.check.outputs.build }}
+      sha: ${{ steps.check.outputs.sha }}
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: nightly
+          fetch-depth: 0
+
+      - id: check
+        env:
+          FORCE: ${{ github.event.inputs.force }}
+        run: |
+          SHA=$(git rev-parse HEAD)
+          LAST=$(git ls-remote origin refs/tags/nightly | cut -f1)
+          BASE=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          VERSION="${BASE}-nightly.$(date -u +%Y%m%d%H%M)"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if [ "$SHA" = "$LAST" ] && [ "$FORCE" != "true" ]; then
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            echo "Nothing new on nightly since the last build ($SHA)."
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
+            echo "Building $VERSION from $SHA (last nightly: ${LAST:-none})."
+          fi
+
+  # ── 2. Build every platform ────────────────────────────────────────────────
+  build:
+    needs: check
+    if: needs.check.outputs.build == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Same runners as release.yml (see the notes there).
+          - platform: ubuntu-22.04
+            name: linux
+            args: '--bundles deb,appimage'
+          - platform: windows-2022
+            name: windows
+            # NSIS only: MSI cannot carry a non-numeric pre-release version.
+            args: '--bundles nsis'
+          - platform: macos-latest
+            name: macos-aarch64
+            args: '--target aarch64-apple-darwin --bundles app,dmg'
+          - platform: macos-latest
+            name: macos-x64
+            args: '--target x86_64-apple-darwin --bundles app,dmg'
+
+    runs-on: ${{ matrix.platform }}
+    name: build-${{ matrix.name }}
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.check.outputs.sha }}
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ startsWith(matrix.name, 'macos') && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: nightly-${{ matrix.name }}
+
+      - name: Install Linux system dependencies
+        if: matrix.name == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            squashfs-tools \
+            build-essential
+
+      - run: npm ci
+
+      # The nightly overlay plus this build's version.
+      - name: Nightly config
+        shell: bash
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          node -e "
+            const fs = require('fs')
+            const c = JSON.parse(fs.readFileSync('src-tauri/tauri.nightly.conf.json', 'utf8'))
+            c.version = process.env.VERSION
+            fs.writeFileSync('nightly.conf.json', JSON.stringify(c, null, 2))
+          "
+          cat nightly.conf.json
+
+      - name: Build
+        shell: bash
+        run: npx tauri build --config nightly.conf.json ${{ matrix.args }}
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          NO_STRIP: ${{ matrix.name == 'linux' && '1' || '' }}
+
+      # Same fix as release.yml (issue #112). The AppImage is the updater's
+      # payload on Linux, so it is re-signed after the repack.
+      - name: Use the host's libwayland-client in the AppImage
+        if: matrix.name == 'linux'
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          APP=$(ls src-tauri/target/release/bundle/appimage/*.AppImage | head -1)
+          bash scripts/appimage-strip-host-libs.sh "$APP"
+          rm -f "$APP.sig"
+          npx tauri signer sign "$APP"
+
+      # Fixed asset names, so latest.json and the download links never change
+      # shape between nights. The updater payload and its .sig sit next to each
+      # installer.
+      - name: Collect assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          T=src-tauri/target
+          case "${{ matrix.name }}" in
+            linux)
+              B=$T/release/bundle
+              cp "$(ls $B/deb/*.deb | head -1)"                 out/stroke-nightly_amd64.deb
+              cp "$(ls $B/appimage/*.AppImage | head -1)"       out/stroke-nightly_amd64.AppImage
+              cp "$(ls $B/appimage/*.AppImage.sig | head -1)"   out/stroke-nightly_amd64.AppImage.sig
+              ;;
+            windows)
+              B=$T/release/bundle
+              cp "$(ls $B/nsis/*-setup.exe | head -1)"          out/stroke-nightly_x64-setup.exe
+              cp "$(ls $B/nsis/*-setup.exe.sig | head -1)"      out/stroke-nightly_x64-setup.exe.sig
+              ;;
+            macos-aarch64|macos-x64)
+              ARCH=$([ "${{ matrix.name }}" = macos-aarch64 ] && echo aarch64 || echo x64)
+              TRIPLE=$([ "$ARCH" = aarch64 ] && echo aarch64-apple-darwin || echo x86_64-apple-darwin)
+              B=$T/$TRIPLE/release/bundle
+              cp "$(ls $B/dmg/*.dmg | head -1)"                 out/stroke-nightly_${ARCH}.dmg
+              cp "$(ls $B/macos/*.app.tar.gz | head -1)"        out/stroke-nightly_${ARCH}.app.tar.gz
+              cp "$(ls $B/macos/*.app.tar.gz.sig | head -1)"    out/stroke-nightly_${ARCH}.app.tar.gz.sig
+              ;;
+          esac
+          ls -la out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nightly-${{ matrix.name }}
+          path: out/*
+          if-no-files-found: error
+          retention-days: 3
+
+  # ── 3. Replace the `nightly` pre-release ───────────────────────────────────
+  #      Only after every platform built: a failed night keeps the previous
+  #      nightly up instead of publishing a partial one.
+  publish:
+    needs: [check, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.check.outputs.sha }}
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: nightly-*
+          merge-multiple: true
+          path: out
+
+      - name: latest.json and notes
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+          SHA: ${{ needs.check.outputs.sha }}
+        run: |
+          set -euo pipefail
+          BASE="https://github.com/${GITHUB_REPOSITORY}/releases/download/nightly"
+          VERSION="$VERSION" BASE="$BASE" node -e "
+            const fs = require('fs')
+            const { VERSION, BASE } = process.env
+            const sig = (f) => fs.readFileSync('out/' + f, 'utf8').trim()
+            const platforms = {
+              'darwin-aarch64': { url: BASE + '/stroke-nightly_aarch64.app.tar.gz', signature: sig('stroke-nightly_aarch64.app.tar.gz.sig') },
+              'darwin-x86_64':  { url: BASE + '/stroke-nightly_x64.app.tar.gz',     signature: sig('stroke-nightly_x64.app.tar.gz.sig') },
+              'linux-x86_64':   { url: BASE + '/stroke-nightly_amd64.AppImage',      signature: sig('stroke-nightly_amd64.AppImage.sig') },
+              'windows-x86_64': { url: BASE + '/stroke-nightly_x64-setup.exe',       signature: sig('stroke-nightly_x64-setup.exe.sig') },
+            }
+            const notes = 'Stroke Nightly ' + VERSION + '. See the nightly release for what changed.'
+            fs.writeFileSync('out/latest.json', JSON.stringify({ version: VERSION, notes, pub_date: new Date().toISOString(), platforms }, null, 2))
+          "
+          cat out/latest.json
+
+          # What changed since the previous nightly (or the last stable tag).
+          PREV=$(git ls-remote origin refs/tags/nightly | cut -f1)
+          if [ -z "$PREV" ] || ! git cat-file -e "$PREV" 2>/dev/null; then
+            PREV=$(git describe --tags --abbrev=0 --match 'v*' "$SHA" 2>/dev/null || true)
+          fi
+          {
+            echo "**Stroke Nightly ${VERSION}**, built from \`${SHA:0:7}\` on the \`nightly\` branch."
+            echo
+            echo "Nightly installs as its own app (**Stroke Nightly**) next to Stroke, with its own settings and data, and updates itself every night something lands. Expect rough edges; use Stroke for anything that matters."
+            echo
+            echo "| Platform | Download |"
+            echo "|---|---|"
+            echo "| macOS (Apple Silicon) | \`stroke-nightly_aarch64.dmg\` |"
+            echo "| macOS (Intel) | \`stroke-nightly_x64.dmg\` |"
+            echo "| Windows | \`stroke-nightly_x64-setup.exe\` |"
+            echo "| Linux | \`stroke-nightly_amd64.AppImage\` · \`stroke-nightly_amd64.deb\` |"
+            echo
+            echo "### Changes since the last nightly"
+            if [ -n "$PREV" ]; then
+              git log --no-merges --format='- %s' "${PREV}..${SHA}" | grep -v '^- chore: version ' | head -100 || true
+            else
+              echo "- First nightly."
+            fi
+          } > notes.md
+          cat notes.md
+
+      - name: Publish the nightly pre-release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.check.outputs.version }}
+          SHA: ${{ needs.check.outputs.sha }}
+        run: |
+          set -euo pipefail
+          # One rolling release: drop last night's (and its tag), then publish
+          # this one at the commit it was built from. --latest=false keeps it
+          # from ever becoming the repo's "latest" release.
+          gh release delete nightly --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes 2>/dev/null || true
+          git push origin ":refs/tags/nightly" 2>/dev/null || true
+          gh release create nightly out/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$SHA" \
+            --title "Stroke Nightly ${VERSION}" \
+            --notes-file notes.md \
+            --prerelease \
+            --latest=false
+          echo "✅ Published Stroke Nightly ${VERSION}"
