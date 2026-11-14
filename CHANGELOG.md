@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.6.7] - 2026-11-14
+
+### Improvements
+- AI mode's chat list matches the sidebar's Chats: each chat shows the database and schema it worked in over its title, and an empty list offers to start one
+
+
 ## [2.6.6] - 2026-11-14
 
 ### Bug Fixes
