@@ -1045,6 +1045,15 @@ export async function scanLocalStudios() {
 }
 
 /**
+ * What the Docker launcher can start: one row per image, grouped by kind.
+ * @typedef {{ id: string, label: string, engine: string, icon: string, group: string, image: string, note: string, port: number }} DockerTemplate
+ * @returns {Promise<DockerTemplate[]>}
+ */
+export async function dockerTemplates() {
+  return inv('docker_templates')
+}
+
+/**
  * Database containers running in Docker, with the credentials they were started
  * with - read from the container's own environment, so nothing has to be typed.
  * Docker missing or stopped comes back as an empty list, never an error.

@@ -3,6 +3,7 @@ use std::process::Stdio;
 use tauri::Emitter;
 use tokio::io::AsyncBufReadExt;
 use tokio::process::Command as Cmd;
+use serde_json::Value;
 
 /// `docker …`, with no console window on Windows. The container scan runs on the
 /// connection screen, so a bare spawn flashed a cmd.exe window at app start.
@@ -16,61 +17,10 @@ fn docker() -> Cmd {
 // TCP-open ≠ database-ready. MySQL/Postgres accept TCP connections seconds before
 // they finish initialization. We retry actual SQL pings to confirm readiness.
 
-async fn wait_mysql_ready(host_port: u16, password: &str) -> bool {
-    let url = format!(
-        "mysql://root:{password}@127.0.0.1:{host_port}/mysql?ssl-mode=disabled"
-    );
-    for _ in 0..60u32 {
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-        if let Ok(pool) = sqlx::mysql::MySqlPoolOptions::new()
-            .max_connections(1)
-            .acquire_timeout(std::time::Duration::from_secs(2))
-            .connect(&url)
-            .await
-        {
-            let ok = sqlx::query("SELECT 1").execute(&pool).await.is_ok();
-            pool.close().await;
-            if ok { return true; }
-        }
-    }
-    false
-}
-
-async fn wait_postgres_ready(host_port: u16, password: &str) -> bool {
-    let url = format!(
-        "postgres://postgres:{password}@127.0.0.1:{host_port}/postgres?sslmode=disable"
-    );
-    for _ in 0..60u32 {
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-        if let Ok(pool) = sqlx::postgres::PgPoolOptions::new()
-            .max_connections(1)
-            .acquire_timeout(std::time::Duration::from_secs(2))
-            .connect(&url)
-            .await
-        {
-            let ok = sqlx::query("SELECT 1").execute(&pool).await.is_ok();
-            pool.close().await;
-            if ok { return true; }
-        }
-    }
-    false
-}
-
 #[derive(serde::Serialize, Clone)]
 pub struct DockerLog {
     pub line: String,
     pub kind: String,
-}
-
-#[derive(serde::Serialize, Clone)]
-pub struct DockerConnInfo {
-    pub db_type: String,
-    pub host: String,
-    pub port: u16,
-    pub user: String,
-    pub password: String,
-    pub database: String,
-    pub name: String,
 }
 
 fn emit_log(app: &tauri::AppHandle, event: &str, line: &str, kind: &str) {
@@ -114,153 +64,239 @@ pub async fn docker_check() -> Result<String, String> {
     Ok(if v.is_empty() { "ok".to_string() } else { v })
 }
 
+// ── The launch catalog ────────────────────────────────────────────────────────
+// Every engine Stroke can open, as a container it can start with one click: the
+// image, how to start it, the credentials it starts with, and how to tell it is
+// ready. The palette lists these (docker_templates) and docker_run_db launches
+// one, returning a connection the app opens as it is.
+
+/// How to tell a fresh container is ready for a client.
+#[derive(Clone, Copy)]
+enum Ready {
+    /// `SELECT 1` over the Postgres protocol (Postgres, CockroachDB).
+    Postgres,
+    /// `SELECT 1` over the MySQL protocol (MySQL, MariaDB).
+    Mysql,
+    /// This line in the container's log, at least this many times (MongoDB
+    /// prints it once for its setup run and again for the real server).
+    Log(&'static str, usize),
+    /// Any HTTP answer at this path. Not a bare TCP connect: Docker's port
+    /// proxy accepts those before anything listens inside the container.
+    Http(&'static str),
+}
+
+struct Template {
+    id: &'static str,
+    label: &'static str,
+    /// Stroke engine id: the connection type, and the palette's icon.
+    engine: &'static str,
+    /// Icon when it isn't the engine's own (pgvector shows Postgres anyway).
+    icon: &'static str,
+    group: &'static str,
+    image: &'static str,
+    note: &'static str,
+    /// Port inside the container.
+    port: u16,
+    /// Preferred host port; the next free one is used when it is taken.
+    host_port: u16,
+    env: &'static [&'static str],
+    /// Arguments after the image (the container's command).
+    cmd: &'static [&'static str],
+    user: &'static str,
+    password: &'static str,
+    database: &'static str,
+    ready: Ready,
+    /// Seconds to wait for `ready`; Oracle and SQL Server start slowly.
+    wait_secs: u64,
+}
+
+const PG_ENV: &[&str] = &["POSTGRES_PASSWORD=postgres", "POSTGRES_USER=postgres", "POSTGRES_DB=postgres"];
+
+const TEMPLATES: &[Template] = &[
+    Template { id: "postgres", label: "PostgreSQL 17", engine: "postgres", icon: "postgres", group: "Relational", image: "postgres:17-alpine", note: "", port: 5432, host_port: 5433, env: PG_ENV, cmd: &[], user: "postgres", password: "postgres", database: "postgres", ready: Ready::Postgres, wait_secs: 90 },
+    Template { id: "postgres16", label: "PostgreSQL 16", engine: "postgres", icon: "postgres", group: "Relational", image: "postgres:16-alpine", note: "", port: 5432, host_port: 5434, env: PG_ENV, cmd: &[], user: "postgres", password: "postgres", database: "postgres", ready: Ready::Postgres, wait_secs: 90 },
+    Template { id: "pgvector", label: "PostgreSQL + pgvector", engine: "postgres", icon: "postgres", group: "Relational", image: "pgvector/pgvector:pg17", note: "Vector search", port: 5432, host_port: 5435, env: PG_ENV, cmd: &[], user: "postgres", password: "postgres", database: "postgres", ready: Ready::Postgres, wait_secs: 90 },
+    Template { id: "postgis", label: "PostGIS", engine: "postgres", icon: "postgres", group: "Relational", image: "postgis/postgis:17-3.5", note: "Geospatial", port: 5432, host_port: 5436, env: PG_ENV, cmd: &[], user: "postgres", password: "postgres", database: "postgres", ready: Ready::Postgres, wait_secs: 120 },
+    Template { id: "timescale", label: "TimescaleDB", engine: "postgres", icon: "timescale", group: "Relational", image: "timescale/timescaledb:latest-pg17", note: "Time series", port: 5432, host_port: 5437, env: PG_ENV, cmd: &[], user: "postgres", password: "postgres", database: "postgres", ready: Ready::Postgres, wait_secs: 120 },
+    // MySQL 8.4 defaults to caching_sha2_password, which needs TLS or an RSA
+    // exchange; native passwords let the driver connect over loopback.
+    Template { id: "mysql", label: "MySQL 8.4", engine: "mysql", icon: "mysql", group: "Relational", image: "mysql:8.4", note: "", port: 3306, host_port: 3307, env: &["MYSQL_ROOT_PASSWORD=mysql", "MYSQL_DATABASE=app"], cmd: &["--mysql-native-password=ON"], user: "root", password: "mysql", database: "app", ready: Ready::Mysql, wait_secs: 120 },
+    Template { id: "mariadb", label: "MariaDB 11", engine: "mariadb", icon: "mariadb", group: "Relational", image: "mariadb:11", note: "", port: 3306, host_port: 3308, env: &["MARIADB_ROOT_PASSWORD=mariadb", "MARIADB_DATABASE=app"], cmd: &[], user: "root", password: "mariadb", database: "app", ready: Ready::Mysql, wait_secs: 120 },
+    Template { id: "mssql", label: "SQL Server 2022", engine: "mssql", icon: "mssql", group: "Relational", image: "mcr.microsoft.com/mssql/server:2022-latest", note: "x86-64 only", port: 1433, host_port: 1434, env: &["ACCEPT_EULA=Y", "MSSQL_SA_PASSWORD=Stroke_Passw0rd!"], cmd: &[], user: "sa", password: "Stroke_Passw0rd!", database: "master", ready: Ready::Log("SQL Server is now ready for client connections", 1), wait_secs: 180 },
+    Template { id: "oracle", label: "Oracle Database Free", engine: "oracle", icon: "oracle", group: "Relational", image: "gvenzl/oracle-free:slim", note: "Needs Instant Client", port: 1521, host_port: 1521, env: &["ORACLE_PASSWORD=oracle", "APP_USER=app", "APP_USER_PASSWORD=app"], cmd: &[], user: "app", password: "app", database: "FREEPDB1", ready: Ready::Log("DATABASE IS READY TO USE!", 1), wait_secs: 300 },
+    Template { id: "cockroachdb", label: "CockroachDB", engine: "cockroachdb", icon: "cockroachdb", group: "Relational", image: "cockroachdb/cockroach:latest", note: "Single node", port: 26257, host_port: 26257, env: &[], cmd: &["start-single-node", "--insecure"], user: "root", password: "", database: "defaultdb", ready: Ready::Postgres, wait_secs: 120 },
+    Template { id: "mongodb", label: "MongoDB 8", engine: "mongodb", icon: "mongodb", group: "Document and key-value", image: "mongo:8", note: "", port: 27017, host_port: 27018, env: &["MONGO_INITDB_ROOT_USERNAME=mongo", "MONGO_INITDB_ROOT_PASSWORD=mongo"], cmd: &[], user: "mongo", password: "mongo", database: "app", ready: Ready::Log("Waiting for connections", 2), wait_secs: 90 },
+    Template { id: "redis", label: "Redis 7", engine: "redis", icon: "redis", group: "Document and key-value", image: "redis:7-alpine", note: "", port: 6379, host_port: 6380, env: &[], cmd: &[], user: "", password: "", database: "", ready: Ready::Log("Ready to accept connections", 1), wait_secs: 60 },
+    Template { id: "valkey", label: "Valkey 8", engine: "valkey", icon: "valkey", group: "Document and key-value", image: "valkey/valkey:8-alpine", note: "", port: 6379, host_port: 6381, env: &[], cmd: &[], user: "", password: "", database: "", ready: Ready::Log("Ready to accept connections", 1), wait_secs: 60 },
+    Template { id: "couchdb", label: "CouchDB 3", engine: "couchdb", icon: "couchdb", group: "Document and key-value", image: "couchdb:3", note: "", port: 5984, host_port: 5985, env: &["COUCHDB_USER=admin", "COUCHDB_PASSWORD=couchdb"], cmd: &[], user: "admin", password: "couchdb", database: "", ready: Ready::Log("Apache CouchDB has started", 1), wait_secs: 90 },
+    Template { id: "dynamodb", label: "DynamoDB Local", engine: "dynamodb", icon: "dynamodb", group: "Document and key-value", image: "amazon/dynamodb-local:latest", note: "", port: 8000, host_port: 8001, env: &[], cmd: &[], user: "", password: "", database: "", ready: Ready::Http("/"), wait_secs: 60 },
+    Template { id: "cassandra", label: "Cassandra 5", engine: "cassandra", icon: "cassandra", group: "Document and key-value", image: "cassandra:5", note: "Starts in about a minute", port: 9042, host_port: 9043, env: &[], cmd: &[], user: "", password: "", database: "", ready: Ready::Log("Starting listening for CQL clients", 1), wait_secs: 240 },
+    Template { id: "clickhouse", label: "ClickHouse", engine: "clickhouse", icon: "clickhouse", group: "Analytics", image: "clickhouse/clickhouse-server:latest", note: "", port: 8123, host_port: 8124, env: &["CLICKHOUSE_USER=default", "CLICKHOUSE_PASSWORD=clickhouse", "CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1"], cmd: &[], user: "default", password: "clickhouse", database: "default", ready: Ready::Http("/ping"), wait_secs: 90 },
+    Template { id: "libsql", label: "libSQL server", engine: "libsql", icon: "turso", group: "Analytics", image: "ghcr.io/tursodatabase/libsql-server:latest", note: "Turso, self-hosted", port: 8080, host_port: 8081, env: &[], cmd: &[], user: "", password: "", database: "", ready: Ready::Http("/health"), wait_secs: 60 },
+];
+
+/// What the palette lists for one launchable image.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DockerTemplate {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub engine: &'static str,
+    pub icon: &'static str,
+    pub group: &'static str,
+    pub image: &'static str,
+    pub note: &'static str,
+    pub port: u16,
+}
+
 #[tauri::command]
-pub async fn docker_run_db(
-    app: tauri::AppHandle,
-    db_type: String,
-    event_id: String,
-) -> Result<DockerConnInfo, String> {
+pub fn docker_templates() -> Vec<DockerTemplate> {
+    TEMPLATES
+        .iter()
+        .map(|t| DockerTemplate { id: t.id, label: t.label, engine: t.engine, icon: t.icon, group: t.group, image: t.image, note: t.note, port: t.host_port })
+        .collect()
+}
+
+/// The preferred port if nothing listens there, else the next free one.
+fn free_port(preferred: u16) -> u16 {
+    let free = |p: u16| std::net::TcpListener::bind(("127.0.0.1", p)).is_ok();
+    (preferred..preferred.saturating_add(100)).find(|p| free(*p)).unwrap_or_else(|| {
+        std::net::TcpListener::bind(("127.0.0.1", 0)).and_then(|l| l.local_addr()).map(|a| a.port()).unwrap_or(preferred)
+    })
+}
+
+/// The saved-connection object the app opens for a launched template.
+fn connection_for(t: &Template, port: u16) -> Value {
+    let host = "127.0.0.1";
+    let name = format!("Docker {} (:{port})", t.label);
+    match t.engine {
+        "mongodb" => serde_json::json!({ "type": "mongodb", "name": name, "uri": format!("mongodb://{}:{}@{host}:{port}/?authSource=admin", t.user, t.password), "database": t.database }),
+        "redis" | "valkey" => serde_json::json!({ "type": t.engine, "name": name, "host": host, "port": port, "db": 0 }),
+        "couchdb" => serde_json::json!({ "type": "couchdb", "name": name, "url": format!("http://{host}:{port}"), "user": t.user, "password": t.password }),
+        "dynamodb" => serde_json::json!({ "type": "dynamodb", "name": name, "region": "us-east-1", "endpoint": format!("http://{host}:{port}"), "accessKeyId": "local", "secretAccessKey": "local" }),
+        "cassandra" => serde_json::json!({ "type": "cassandra", "name": name, "hosts": format!("{host}:{port}") }),
+        "libsql" => serde_json::json!({ "type": "libsql", "name": name, "url": format!("http://{host}:{port}") }),
+        "oracle" => serde_json::json!({ "type": "oracle", "name": name, "host": host, "port": port, "serviceName": t.database, "user": t.user, "password": t.password }),
+        "mssql" => serde_json::json!({ "type": "mssql", "name": name, "host": host, "port": port, "user": t.user, "password": t.password, "database": t.database, "trustCert": true }),
+        _ => serde_json::json!({ "type": t.engine, "name": name, "host": host, "port": port, "user": t.user, "password": t.password, "database": t.database, "ssl": false }),
+    }
+}
+
+async fn wait_ready(t: &Template, container: &str, port: u16) -> bool {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(t.wait_secs);
+    while std::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        let ok = match t.ready {
+            Ready::Postgres => {
+                let url = format!("postgres://{}:{}@127.0.0.1:{port}/{}?sslmode=disable", t.user, t.password, t.database);
+                match sqlx::postgres::PgPoolOptions::new().max_connections(1).acquire_timeout(std::time::Duration::from_secs(2)).connect(&url).await {
+                    Ok(pool) => {
+                        let ok = sqlx::query("SELECT 1").execute(&pool).await.is_ok();
+                        pool.close().await;
+                        ok
+                    }
+                    Err(_) => false,
+                }
+            }
+            Ready::Mysql => {
+                let url = format!("mysql://{}:{}@127.0.0.1:{port}/{}?ssl-mode=disabled", t.user, t.password, t.database);
+                match sqlx::mysql::MySqlPoolOptions::new().max_connections(1).acquire_timeout(std::time::Duration::from_secs(2)).connect(&url).await {
+                    Ok(pool) => {
+                        let ok = sqlx::query("SELECT 1").execute(&pool).await.is_ok();
+                        pool.close().await;
+                        ok
+                    }
+                    Err(_) => false,
+                }
+            }
+            Ready::Http(path) => {
+                let url = format!("http://127.0.0.1:{port}{path}");
+                let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(2)).build();
+                match client {
+                    Ok(c) => c.get(&url).send().await.is_ok(),
+                    Err(_) => false,
+                }
+            }
+            Ready::Log(line, times) => {
+                let logs = docker().args(["logs", container]).output().await;
+                logs.is_ok_and(|o| {
+                    let all = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
+                    all.matches(line).count() >= times
+                })
+            }
+        };
+        if ok {
+            return true;
+        }
+    }
+    false
+}
+
+/// Pull and run one catalog image, wait until it takes connections, and
+/// return the connection to open. `db_type` is a template id (`postgres`,
+/// `mongodb`, ...); logs stream as `docker-log:{event_id}`.
+#[tauri::command]
+pub async fn docker_run_db(app: tauri::AppHandle, db_type: String, event_id: String) -> Result<Value, String> {
     let evt = format!("docker-log:{event_id}");
-
-    let (image, host_port, cont_port): (&str, u16, u16) = match db_type.as_str() {
-        "postgres" => ("postgres:17-alpine", 5433, 5432),
-        "mysql" => ("mysql:8.4", 3307, 3306),
-        other => return Err(format!("Unsupported database type: {other}")),
-    };
-
-    let (user, password, database): (&str, &str, &str) = match db_type.as_str() {
-        "postgres" => ("postgres", "postgres", "postgres"),
-        "mysql" => ("root", "mysql", "mysql"),
-        _ => unreachable!(),
-    };
-
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    let container_name = format!("stroke-{db_type}-{ts}");
-    let port_map = format!("{host_port}:{cont_port}");
+    let t = TEMPLATES
+        .iter()
+        .find(|t| t.id == db_type)
+        .ok_or_else(|| format!("No Docker image for {db_type}"))?;
+    let host_port = free_port(t.host_port);
+    if host_port != t.host_port {
+        emit_log(&app, &evt, &format!("Port {} is taken, using {host_port}.", t.host_port), "info");
+    }
+    let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+    let container_name = format!("stroke-{}-{ts}", t.id);
 
     // ── Pull ──────────────────────────────────────────────────────────────────
-    emit_log(&app, &evt, &format!("Pulling {image}…"), "info");
-
+    emit_log(&app, &evt, &format!("Pulling {}…", t.image), "info");
     let mut pull_child = docker()
-        .args(["pull", image])
+        .args(["pull", t.image])
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("Failed to start docker pull: {e}"))?;
-
     if let Some(stderr) = pull_child.stderr.take() {
         let mut lines = tokio::io::BufReader::new(stderr).lines();
         while let Ok(Some(line)) = lines.next_line().await {
-            let t = line.trim();
-            if !t.is_empty() {
-                emit_log(&app, &evt, t, "info");
+            let line = line.trim();
+            if !line.is_empty() {
+                emit_log(&app, &evt, line, "info");
             }
         }
     }
-
     let pull_status = pull_child.wait().await.map_err(|e| e.to_string())?;
     if !pull_status.success() {
-        return Err(format!(
-            "docker pull {image} failed. Check your internet connection."
-        ));
+        return Err(format!("docker pull {} failed. Check your internet connection, or whether the image runs on this machine ({}).", t.image, std::env::consts::ARCH));
     }
-
     emit_log(&app, &evt, "Image ready. Starting container…", "info");
 
     // ── Run ───────────────────────────────────────────────────────────────────
     let mut run_cmd = docker();
-    run_cmd
-        .arg("run")
-        .arg("-d")
-        .arg("--name")
-        .arg(&container_name)
-        .arg("-p")
-        .arg(&port_map);
-
-    match db_type.as_str() {
-        "postgres" => {
-            run_cmd
-                .arg("-e")
-                .arg("POSTGRES_PASSWORD=postgres")
-                .arg("-e")
-                .arg("POSTGRES_USER=postgres")
-                .arg("-e")
-                .arg("POSTGRES_DB=postgres");
-        }
-        "mysql" => {
-            run_cmd
-                .arg("-e")
-                .arg("MYSQL_ROOT_PASSWORD=mysql")
-                .arg("-e")
-                .arg("MYSQL_DATABASE=mysql")
-                // MySQL 8.4 uses caching_sha2_password by default which requires SSL or
-                // RSA key exchange. Enable mysql_native_password so sqlx can connect
-                // without TLS on loopback connections.
-                .arg("--mysql-native-password=ON");
-        }
-        _ => {}
+    run_cmd.args(["run", "-d", "--name", &container_name, "-p", &format!("{host_port}:{}", t.port)]);
+    for e in t.env {
+        run_cmd.args(["-e", e]);
     }
-    run_cmd.arg(image);
-
-    let run_out = run_cmd
-        .output()
-        .await
-        .map_err(|e| format!("Failed to launch container: {e}"))?;
-
+    run_cmd.arg(t.image).args(t.cmd);
+    let run_out = run_cmd.output().await.map_err(|e| format!("Failed to launch container: {e}"))?;
     if !run_out.status.success() {
         let err = String::from_utf8_lossy(&run_out.stderr);
-        let msg = if err.contains("port is already allocated")
-            || err.contains("address already in use")
-        {
+        return Err(if err.contains("port is already allocated") || err.contains("address already in use") {
             format!("Port {host_port} is already in use. Stop the existing service and try again.")
         } else {
             format!("Container failed to start: {err}")
-        };
-        return Err(msg);
+        });
     }
-
     let cid = String::from_utf8_lossy(&run_out.stdout).trim().to_string();
-    let short = &cid[..cid.len().min(12)];
-    emit_log(&app, &evt, &format!("Container {short} started."), "info");
-    emit_log(
-        &app,
-        &evt,
-        "Waiting for database to accept connections…",
-        "info",
-    );
+    emit_log(&app, &evt, &format!("Container {} started on port {host_port}.", &cid[..cid.len().min(12)]), "info");
+    emit_log(&app, &evt, "Waiting for the database to accept connections…", "info");
 
-    let ready = match db_type.as_str() {
-        "mysql"    => wait_mysql_ready(host_port, password).await,
-        "postgres" => wait_postgres_ready(host_port, password).await,
-        _          => false,
-    };
-
-    if !ready {
-        return Err(format!(
-            "Database did not become ready within 60s. Container: {container_name}"
-        ));
+    if !wait_ready(t, &container_name, host_port).await {
+        return Err(format!("{} did not become ready within {}s. Container: {container_name} (docker logs {container_name})", t.label, t.wait_secs));
     }
-
     emit_log(&app, &evt, "Database is ready.", "info");
-
-    let label = if db_type == "postgres" {
-        "PostgreSQL"
-    } else {
-        "MySQL"
-    };
-
-    Ok(DockerConnInfo {
-        db_type,
-        host: "127.0.0.1".to_string(),
-        port: host_port,
-        user: user.to_string(),
-        password: password.to_string(),
-        database: database.to_string(),
-        name: format!("Docker {label} (:{host_port})"),
-    })
+    Ok(connection_for(t, host_port))
 }
 
 // ── Databases already running in Docker ───────────────────────────────────────
@@ -270,7 +306,6 @@ pub async fn docker_run_db(
 // running containers and hands back ready-to-open connections.
 
 use serde::Serialize;
-use serde_json::Value;
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -681,5 +716,30 @@ mod action_tests {
     #[ignore]
     async fn docker_live_restart_the_test_container() {
         docker_container_action("stroke-test-mysql".into(), "restart".into()).await.unwrap();
+    }
+}
+
+#[cfg(test)]
+mod catalog_tests {
+    use super::*;
+
+    #[test]
+    fn template_ids_are_unique_and_connections_name_their_engine() {
+        let mut ids: Vec<&str> = TEMPLATES.iter().map(|t| t.id).collect();
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), TEMPLATES.len());
+        for t in TEMPLATES {
+            let c = connection_for(t, 4000);
+            assert_eq!(c["type"], t.engine, "{}", t.id);
+            assert!(c["name"].as_str().unwrap().contains(":4000"), "{}", t.id);
+        }
+    }
+
+    #[test]
+    fn free_port_skips_a_taken_one() {
+        let taken = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = taken.local_addr().unwrap().port();
+        assert_ne!(free_port(port), port);
     }
 }
