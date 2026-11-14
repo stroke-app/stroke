@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.8.4] - 2026-11-14
+
+### Changes
+- Sidebar: explain tables hidden by Hide empty / Hide system (#180)
+
+
 ## [2.8.3] - 2026-11-14
 
 ### Changes
