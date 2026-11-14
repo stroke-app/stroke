@@ -142,6 +142,7 @@
     if (tab.kind === 'map') return 'globe'
     if (tab.kind === 'search') return 'search'
     if (tab.kind === 'license') return 'key-round'
+    if (tab.kind === 'shortcuts') return 'keyboard'
     return 'file-text'
   }
 </script>
