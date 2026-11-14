@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.8.3] - 2026-11-14
+
+### Changes
+- Notification corner setting, compact SQLite switch (#179)
+
+
 ## [2.8.2] - 2026-11-14
 
 ### Changes
