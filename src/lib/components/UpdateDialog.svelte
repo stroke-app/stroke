@@ -139,6 +139,32 @@
    * "updated to v1.24" on a first run is a lie about something the user did not
    * do; the version is recorded and the dialog waits for the next upgrade.
    */
+  /**
+   * What's new on demand (the palette): the newest highlights and the notes
+   * since the previous minor version, whenever it is asked for.
+   */
+  export async function showWhatsNew() {
+    let current = ''
+    try {
+      const { getVersion } = await import('@tauri-apps/api/app')
+      current = await getVersion()
+    } catch {
+      return
+    }
+    const base = current.replace(/-.*$/, '')
+    const [maj, min] = base.split('.').map(Number)
+    const previous = min > 0 ? `${maj}.${min - 1}.99` : `${Math.max(0, maj - 1)}.99.99`
+    /** @type {{ releases: import('$lib/changelog.js').ChangelogRelease[], omitted: number }} */
+    let notes = { releases: [], omitted: 0 }
+    try {
+      const { default: markdown } = await import('../../../CHANGELOG.md?raw')
+      notes = releasesBetween(markdown, previous, base)
+    } catch { /* the highlights still show */ }
+    const { latestHighlights } = await import('$lib/whats-new.js')
+    whatsNew = { previous: "", current, ...notes, highlights: latestHighlights(base) }
+    whatsNewOpen = true
+  }
+
   async function announceNewVersion() {
     let current = ''
     try {
