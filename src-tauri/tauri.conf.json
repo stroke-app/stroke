@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Stroke",
-  "version": "2.7.6",
+  "version": "2.7.7",
   "identifier": "com.broisnischal.stroke",
   "build": {
     "frontendDist": "../dist",
