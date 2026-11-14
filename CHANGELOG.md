@@ -4,6 +4,27 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.6.2] - 2026-11-14
+
+### Bug Fixes
+- AI chats belong to the connection, not the database: switching databases keeps your chats, and SQLite files, MongoDB, D1, DynamoDB and Firestore connections no longer share one chat list
+- Connection screen: the show-connections and close buttons sit in a title row on the traffic lights' line on macOS (and in a 40px row on Windows and Linux), instead of floating at an offset
+- Connection screen uses the window's width, left-aligned with the connections list, instead of a narrow centred column
+- A pasted redis:// or libsql:// URL fills the Redis or LibSQL form correctly instead of being read as a Postgres URL
+- Provider panel: an account with one database no longer connects to it unasked; you pick it
+- A database just created on Prisma Postgres (or any provider) is connected once it takes connections, instead of failing with "Failed to connect to upstream database" the first time
+- Region and organization in "New database" are searchable, like the database list
+- The generated password shows in one field with its copy button inside it
+
+### Features
+- AI chat in a tab (beta, Settings → AI chat in a tab): AI opens as a tab beside your tables instead of taking over the window, and its chats are listed in the sidebar with the database and schema each one worked in, and "Working" while one replies
+- The AI can run statements in another database on the same server (a database it just created, or one you name) instead of asking you to switch connections
+- ⌘K → Docker starts any of 18 databases in one step, each with its brand icon: PostgreSQL 17 and 16, pgvector, PostGIS, TimescaleDB, MySQL, MariaDB, SQL Server, Oracle Free, CockroachDB, MongoDB, Redis, Valkey, CouchDB, DynamoDB Local, Cassandra, ClickHouse and a libSQL server. It picks a free port, waits until the database takes connections, and opens it
+- ⌘K → Docker lists the database containers already running, to open in one step
+- Real brand marks for MongoDB, Cassandra, CouchDB, Oracle, DynamoDB and Firestore
+- Paste any connection string to connect: whole .env lines (DATABASE_URL="…"), SQLAlchemy/ORM URLs (postgresql+psycopg2://), libpq key/value (host=… dbname=…), ADO.NET SQL Server strings (Server=…;Database=…;), valkey://, couchdb://, cassandra://, mysqlx://, Turso https:// and ClickHouse http:// endpoints, and TiDB Cloud, Upstash, Nile and Railway hosts
+
+
 ## [2.6.1] - 2026-11-14
 
 ### Bug Fixes
