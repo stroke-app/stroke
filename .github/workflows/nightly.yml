@@ -224,7 +224,9 @@ jobs:
         run: |
           set -euo pipefail
           BASE="https://github.com/${GITHUB_REPOSITORY}/releases/download/nightly"
-          VERSION="$VERSION" BASE="$BASE" node -e "
+          git fetch -q origin master || true
+          STABLE=$(git show origin/master:src-tauri/tauri.conf.json 2>/dev/null | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{console.log(JSON.parse(s).version)}catch{console.log('')}})")
+          VERSION="$VERSION" BASE="$BASE" STABLE="$STABLE" node -e "
             const fs = require('fs')
             const { VERSION, BASE } = process.env
             const sig = (f) => fs.readFileSync('out/' + f, 'utf8').trim()
@@ -234,7 +236,17 @@ jobs:
               'linux-x86_64':   { url: BASE + '/stroke-nightly_amd64.AppImage',      signature: sig('stroke-nightly_amd64.AppImage.sig') },
               'windows-x86_64': { url: BASE + '/stroke-nightly_x64-setup.exe',       signature: sig('stroke-nightly_x64-setup.exe.sig') },
             }
-            const notes = 'Stroke Nightly ' + VERSION + '. See the nightly release for what changed.'
+            // The changelog since the last stable release, in CHANGELOG.md's own
+            // format: the update window parses it into New / Improved / Fixed.
+            let notes = 'Stroke Nightly ' + VERSION + '. See the nightly release for what changed.'
+            try {
+              const cl = fs.readFileSync('CHANGELOG.md', 'utf8')
+              const stable = process.env.STABLE || ''
+              const start = cl.indexOf('## [')
+              const end = stable ? cl.indexOf('## [' + stable + ']') : -1
+              const body = start === -1 ? '' : cl.slice(start, end > start ? end : undefined).trim()
+              if (body) notes = body.slice(0, 60000)
+            } catch {}
             fs.writeFileSync('out/latest.json', JSON.stringify({ version: VERSION, notes, pub_date: new Date().toISOString(), platforms }, null, 2))
           "
           cat out/latest.json

@@ -14,9 +14,11 @@
   import { cn }          from '$lib/utils.js'
   import { focusTrap } from '$lib/actions/focus-trap.js'
   import { updateCheck, updateDownload, updateStatus, updateRestart } from '$lib/api.js'
-  import { loadSettings } from '$lib/stores/settings.js'
+  import { loadSettings, updateSettings } from '$lib/stores/settings.js'
+  import ReleaseNotes from './ReleaseNotes.svelte'
+  import Logo from './Logo.svelte'
   import { isRevealed }  from '$lib/app-reveal.js'
-  import { parseChangelog, releasesBetween } from '$lib/changelog.js'
+  import { parseChangelog, parseReleases, releasesBetween } from '$lib/changelog.js'
   import WhatsNewDialog  from './WhatsNewDialog.svelte'
 
   let {
@@ -34,6 +36,10 @@
   let releaseNotes = $state('')
   /** The downloaded build installs by itself when Stroke quits (updates.rs). */
   let applyOnQuit = $state(false)
+  /** The running build, for "You have v…". */
+  let appVersion = $state('')
+  /** Settings → Download and install updates automatically, from this window too. */
+  let autoUpdate = $state(loadSettings().autoUpdate)
   let progress = $state(0)
   let downloadedBytes = $state(0)
   let totalBytes = $state(0)
@@ -105,7 +111,18 @@
     return `${(bytes/(1024*1024)).toFixed(1)} MB`
   }
 
-  const changelog = $derived(parseChangelog(releaseNotes))
+  /**
+   * The update's notes as releases: Nightly's feed carries CHANGELOG.md
+   * sections for several versions (## [x.y.z]); a stable release carries one
+   * version's sections without the heading.
+   * @type {import('$lib/changelog.js').ChangelogRelease[]}
+   */
+  const changelog = $derived.by(() => {
+    const many = parseReleases(releaseNotes)
+    if (many.length) return many
+    const sections = parseChangelog(releaseNotes)
+    return sections.length ? [{ version: updateVersion, date: '', sections }] : []
+  })
 
   // Actionable states are true modals (dark backdrop, blocks the app);
   // passive states (checking / up-to-date) float without blocking.
@@ -120,6 +137,7 @@
   let announceTimer
 
   onMount(() => {
+    import('@tauri-apps/api/app').then((m) => m.getVersion()).then((v) => (appVersion = v)).catch(() => {})
     // Runs in dev too: it is a version comparison, not an update check, and a
     // dev build that has genuinely changed version should say so.
     void announceNewVersion()
@@ -322,12 +340,16 @@
       return
     }
     adopt(info)
-    if (loadSettings().autoUpdate && info.applyOnQuit) {
+    // Automatic updates (the default) always download in the background, with
+    // no window: where it can, the build installs as Stroke quits; elsewhere the
+    // sidebar's pill offers Restart. With them off, the pill offers Update.
+    // Neither interrupts what is open.
+    if (loadSettings().autoUpdate) {
       await install(true)
       return
     }
     status = 'available'
-    dismissed = false
+    dismissed = true
     onupdatefound('available')
   }
 
@@ -413,209 +435,112 @@
 
 <!-- ── Centered update dialog (sits above the connection modal) ───── -->
 {#if visible}
-  <!-- Actionable states get a dark backdrop; passive states float without blocking. -->
+  <!-- Sparkle's update window, in the app's own style: the mark and what is
+       on offer, the notes right there, one choice, and the automatic setting
+       beside it. -->
   <div
-    class={cn(
-      'fixed inset-0 z-[200] flex items-center justify-center p-4',
-      !isModal && 'pointer-events-none',
-    )}
+    class="fixed inset-0 z-[200] flex items-center justify-center p-4"
     role="dialog"
-    aria-modal={isModal}
-    aria-label="Application update"
+    aria-modal="true"
+    aria-labelledby="update-title"
     tabindex="-1"
-    use:focusTrap={{ enabled: isModal }}
+    use:focusTrap={{ enabled: true }}
   >
-    {#if isModal}
-      <button
-        type="button"
-        tabindex="-1"
-        aria-label="Dismiss"
-        class="absolute inset-0 cursor-default bg-black/65"
-        onclick={() => (dismissed = true)}
-      ></button>
-    {/if}
+    <button
+      type="button"
+      tabindex="-1"
+      aria-label="Dismiss"
+      class="absolute inset-0 cursor-default bg-black/60"
+      onclick={() => (dismissed = true)}
+    ></button>
 
-    <div
-      class="pointer-events-auto relative w-[min(26.25rem,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-border/60 bg-background elevate-3-rim"
-    >
-      <!-- header row -->
-      <div class="flex items-center gap-3 border-b border-border/40 px-5 py-3.5">
-        <div class="shrink-0 rounded-lg bg-muted/50 p-2">
-          {#if status === 'ready' || status === 'up-to-date'}
-            <CheckCircle2 class="size-4 shrink-0 text-success" />
-          {:else if status === 'error'}
-            <AlertCircle class="size-4 shrink-0 text-destructive" />
-          {:else if checking}
-            <Loader2 class="size-4 shrink-0 animate-spin text-primary" />
-          {:else if status === 'available'}
-            <Sparkles class="size-4 shrink-0 text-primary" />
-          {:else}
-            <Download class="size-4 shrink-0 text-primary" />
-          {/if}
+    <div class="pointer-events-auto relative flex max-h-[min(40rem,calc(100vh-2rem))] w-[min(34rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-lg border border-border/60 bg-background elevate-3-rim">
+      <div class="flex items-start gap-3.5 px-6 pt-6 pe-12">
+        <Logo class="size-11 shrink-0" />
+        <div class="min-w-0">
+          <h2 id="update-title" class="text-ui-lg font-semibold text-balance text-foreground">
+            {#if status === 'error'}
+              {failedAction === 'install' ? 'The download did not finish' : failedAction === 'restart' ? "Couldn't install the update" : "Couldn't check for updates"}
+            {:else if status === 'ready'}
+              Stroke {updateVersion} is ready
+            {:else if status === 'downloading'}
+              Downloading Stroke {updateVersion}
+            {:else}
+              Stroke {updateVersion} is available
+            {/if}
+          </h2>
+          <p class="mt-1 text-ui-xs text-pretty text-muted-foreground">
+            {#if status === 'error'}
+              <span class="break-words font-mono text-destructive">{errorMsg}</span>
+            {:else if status === 'ready'}
+              {applyOnQuit ? 'It installs when you quit Stroke. Restart now to use it straight away.' : 'Restart Stroke to finish installing it.'}
+              {#if appVersion}<span class="tabular-nums"> You have v{appVersion}.</span>{/if}
+            {:else if status === 'downloading'}
+              {totalBytes > 0 ? `${fmt(downloadedBytes)} of ${fmt(totalBytes)}` : 'Starting…'} · it keeps going if you close this.
+            {:else}
+              {appVersion ? `You have v${appVersion}.` : 'A newer version of Stroke is out.'}
+            {/if}
+          </p>
         </div>
-
-        <span class="flex-1 whitespace-nowrap text-ui font-semibold text-foreground">
-          {#if status === 'error'}
-            {failedAction === 'install' ? 'Download failed'
-              : failedAction === 'restart' ? "Couldn't install the update"
-              : "Couldn't check for updates"}
-          {:else if status === 'available'}
-            Stroke {updateVersion} available
-          {:else if status === 'downloading'}
-            Downloading update…
-          {:else if status === 'ready'}
-            Ready to install
-          {:else if status === 'up-to-date'}
-            Up to date
-          {:else if checking}
-            Checking for updates…
-          {/if}
-        </span>
-
-        <!-- Closable while downloading too: the download carries on, and the
-             status bar picks it up when it is done. -->
         <button
           type="button"
           onclick={() => (dismissed = true)}
-          class="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          aria-label="Dismiss"
+          class="absolute top-4 right-4 inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          aria-label="Close"
         >
           <X class="size-4 shrink-0" />
         </button>
       </div>
 
-      <!-- body -->
-      <div class="px-5 py-4 text-ui-sm">
-
-        {#if status === 'available'}
-          <p class="mb-4 text-ui-sm text-muted-foreground">A new version is ready to install.</p>
-          <div class="flex gap-2.5">
-            <button
-              type="button"
-              onclick={() => void openChangelog()}
-              class= "field-surface inline-flex h-9 flex-1 items-center justify-center gap-1.5 whitespace-nowrap px-3 text-ui-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-            >
-              <ScrollText class="size-3.5 shrink-0" />
-              Release Notes
-            </button>
-            <Button
-              onclick={() => void install()}
-              class="flex-1" size="lg"
->
-              <Download class="size-3.5 shrink-0" />
-              Install
-            </Button>
+      {#if status === 'downloading'}
+        <div class="px-6 pt-4">
+          <div class="h-1.5 w-full overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuenow={progress} aria-valuemin="0" aria-valuemax="100" aria-label="Download progress">
+            <div class="h-full rounded-full bg-primary transition-[width] duration-150" style="width:{progress}%"></div>
           </div>
+        </div>
+      {/if}
 
-        {:else if status === 'downloading'}
-          <div class="flex flex-col gap-2.5">
-            <div class="flex items-center justify-between text-ui-xs text-muted-foreground">
-              <span>{totalBytes > 0 ? `${fmt(downloadedBytes)} / ${fmt(totalBytes)}` : 'Downloading…'}</span>
-              <span class="font-mono tabular-nums">{progress}%</span>
-            </div>
-            <div class="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-              <div
-                class="h-full rounded-full bg-primary transition-[width] duration-150"
-                style="width:{progress}%"
-              ></div>
-            </div>
-            <p class="text-ui-xs text-muted-foreground">
-              Stroke <span class="font-mono font-medium text-foreground">{updateVersion}</span>.
-              It keeps downloading if you close this.
-            </p>
-          </div>
-
-        {:else if status === 'ready'}
-          {#if applyOnQuit}
-            <p class="mb-4 text-ui-sm text-muted-foreground">
-              Stroke <span class="font-mono font-medium text-foreground">{updateVersion}</span> is ready. It installs when you quit.
-            </p>
-            <div class="flex gap-2.5">
-              <button
-                type="button"
-                onclick={() => (dismissed = true)}
-                class= "field-surface inline-flex h-9 flex-1 items-center justify-center gap-1.5 whitespace-nowrap px-3 text-ui-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-              >
-                Later
-              </button>
-              <Button
-                onclick={() => void restart()}
-                disabled={restarting}
-                class="flex-1" size="lg"
->
-                <RefreshCw class={cn('size-3.5 shrink-0', restarting && 'animate-spin')} />
-                Restart now
-              </Button>
-            </div>
+      {#if status !== 'error'}
+        <div class="mt-5 min-h-0 flex-1 overflow-y-auto border-t border-border/40 px-6 py-4 [scrollbar-gutter:stable]">
+          {#if changelog.length}
+            <ReleaseNotes releases={changelog} compact />
           {:else}
-            <p class="mb-4 text-ui-sm text-muted-foreground">
-              Version <span class="font-mono font-medium text-foreground">{updateVersion}</span> downloaded. Restart to apply.
+            <p class="text-ui-sm text-muted-foreground">
+              The notes for this version are on the release page.
+              <button type="button" class="ms-1 inline-flex items-center gap-1 text-foreground underline-offset-4 hover:underline" onclick={() => void openChangelog()}>
+                Read them<ExternalLink class="size-3 shrink-0" />
+              </button>
             </p>
-            <div class="flex gap-2.5">
-              {#if changelog.length > 0}
-                <button
-                  type="button"
-                  onclick={() => void openChangelog()}
-                  class= "field-surface inline-flex h-9 flex-1 items-center justify-center gap-1.5 whitespace-nowrap px-3 text-ui-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                >
-                  <ScrollText class="size-3.5 shrink-0" />
-                  What's New
-                </button>
-              {/if}
-              <Button
-                onclick={() => void restart()}
-                disabled={restarting}
-                class="flex-1" size="lg"
->
-                <RefreshCw class={cn('size-3.5 shrink-0', restarting && 'animate-spin')} />
-                Restart now
-              </Button>
-            </div>
           {/if}
+        </div>
+      {/if}
 
-        {:else if status === 'error'}
-          <p class="mb-2.5 text-ui-sm text-muted-foreground">
-            {failedAction === 'install' ? 'The download did not finish.'
-              : failedAction === 'restart' ? 'The update could not be installed. You can try again or keep working.'
-              : 'Stroke could not reach the update server.'}
-          </p>
-          <!-- break-words: the endpoint URL is one long token and ran past the
-               dialog edge without it. -->
-          <p class="mb-4 font-mono text-ui-xs break-words text-destructive">{errorMsg}</p>
-          <div class="flex gap-2.5">
-            <button
-              type="button"
-              onclick={() => (dismissed = true)}
-              class="field-surface inline-flex h-9 flex-1 items-center justify-center gap-1.5 whitespace-nowrap px-3 text-ui-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-            >
-              Not now
-            </button>
-            <Button
-              onclick={() => void retry()}
-              class="flex-1" size="lg"
->
-              <RefreshCw class="size-3.5 shrink-0" />
-              Retry
+      <div class={cn('flex flex-wrap items-center gap-3 border-t border-border/40 px-6 py-4', status === 'error' && 'mt-5')}>
+        <label class="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-ui-xs text-muted-foreground">
+          <input
+            type="checkbox"
+            class="size-3.5 shrink-0 accent-[var(--primary)]"
+            checked={autoUpdate}
+            onchange={(e) => { autoUpdate = e.currentTarget.checked; updateSettings({ autoUpdate }) }}
+          />
+          <span class="min-w-0">Download and install updates automatically</span>
+        </label>
+        <div class="flex shrink-0 items-center gap-2">
+          {#if status === 'error'}
+            <Button variant="ghost" onclick={() => (dismissed = true)}>Not now</Button>
+            <Button onclick={() => void retry()}><RefreshCw class="size-3.5 shrink-0" />Try again</Button>
+          {:else if status === 'ready'}
+            <Button variant="ghost" onclick={() => (dismissed = true)}>{applyOnQuit ? 'On quit' : 'Later'}</Button>
+            <Button onclick={() => void restart()} disabled={restarting}>
+              <RefreshCw class={cn('size-3.5 shrink-0', restarting && 'animate-spin')} />Restart now
             </Button>
-          </div>
-
-        {:else if status === 'up-to-date' || checking}
-          <p class="text-ui-sm leading-relaxed text-muted-foreground">
-            {checking ? 'Checking GitHub for a newer release…' : "You're on the latest version."}
-          </p>
-          {#if !checking}
-            <button
-              type="button"
-              onclick={() => void openChangelog()}
-              class= "field-surface mt-4 inline-flex h-9 items-center gap-1.5 px-3 text-ui-sm text-muted-foreground transition-[color,background-color,transform] duration-150 ease-out hover:bg-muted hover:text-foreground active:scale-[0.97]"
-            >
-              <ScrollText class="size-3.5 shrink-0" />
-              View changelog
-              <ExternalLink class="ml-0.5 size-3.5 shrink-0 text-muted-foreground" />
-            </button>
+          {:else if status === 'downloading'}
+            <Button variant="ghost" onclick={() => (dismissed = true)}>Hide</Button>
+          {:else}
+            <Button variant="ghost" onclick={() => (dismissed = true)}>Later</Button>
+            <Button onclick={() => void install()}><Download class="size-3.5 shrink-0" />Install</Button>
           {/if}
-        {/if}
-
+        </div>
       </div>
     </div>
   </div>

@@ -5,7 +5,8 @@
   import ChevronRight from '@lucide/svelte/icons/chevron-right'
   import ArrowRight from '@lucide/svelte/icons/arrow-right'
   import { appSidebarStyle } from '$lib/stores/settings.js'
-  import { splitInlineCode } from '$lib/changelog.js'
+  import ReleaseNotes from './ReleaseNotes.svelte'
+  import Logo from './Logo.svelte'
   import { cn } from '$lib/utils.js'
 
   /**
@@ -47,74 +48,24 @@
     onaction(id)
   }
 
-  /** @type {Record<import('$lib/changelog.js').ChangeType, string>} */
-  const DOT = {
-    feature: 'bg-primary',
-    fix: 'bg-success',
-    change: 'bg-muted-foreground',
-    other: 'bg-muted-foreground',
-  }
 </script>
 
-{#snippet notes()}
-  <div class="flex flex-col gap-5">
-    {#each releases as release (release.version)}
-      <section class="flex flex-col gap-3">
-        {#if releases.length > 1}
-          <div class="flex items-baseline gap-2">
-            <span class="font-mono text-ui-xs font-medium tabular-nums text-foreground">v{release.version}</span>
-            {#if release.date}
-              <span class="text-ui-2xs tabular-nums text-muted-foreground">{release.date}</span>
-            {/if}
-          </div>
-        {/if}
-        {#each release.sections as section, i (i)}
-          {@const newGroup = i === 0 || release.sections[i - 1].group !== section.group}
-          <div class="flex flex-col gap-1.5">
-            {#if newGroup}
-              <h3 class="flex items-center gap-2 text-ui-sm font-semibold text-foreground">
-                <span class={cn('size-1.5 shrink-0 rounded-full', DOT[section.type])} aria-hidden="true"></span>
-                {section.group}
-              </h3>
-            {/if}
-            {#if section.title !== section.group}
-              <h4 class="ps-3.5 text-ui-xs font-medium text-muted-foreground">{section.title}</h4>
-            {/if}
-            <ul class="flex flex-col gap-1 ps-3.5">
-              {#each section.items as item, j (j)}
-                <li class="relative ps-3 text-ui-sm leading-relaxed text-pretty text-foreground/90 before:absolute before:top-[0.6em] before:left-0 before:size-1 before:rounded-full before:bg-muted-foreground/60">
-                  {#each splitInlineCode(item) as part, k (k)}
-                    {#if part.code}
-                      <code class="rounded-md bg-muted/60 px-1 py-px font-mono text-ui-xs text-foreground">{part.text}</code>
-                    {:else}
-                      {part.text}
-                    {/if}
-                  {/each}
-                </li>
-              {/each}
-            </ul>
-          </div>
-        {/each}
-      </section>
-    {/each}
-    {#if omitted > 0}
-      <p class="text-ui-xs text-muted-foreground">
-        And {omitted} earlier {omitted === 1 ? 'release' : 'releases'} in the full changelog.
-      </p>
-    {/if}
-  </div>
-{/snippet}
 
 <Dialog.Root bind:open>
   <Dialog.Content class="max-w-[30rem] gap-0 p-0">
-    <Dialog.Header class="gap-1 px-6 pt-6 pe-12">
-      <Dialog.Title class="text-ui-xl text-balance">What's new in Stroke {current}</Dialog.Title>
-      {#if previous}
-        <Dialog.Description class="text-ui-xs tabular-nums">Updated from v{previous}</Dialog.Description>
-      {/if}
+    <!-- The app's mark beside the version, and one line of what changed, so the
+         size of the update is clear before reading any of it. -->
+    <Dialog.Header class="flex-row items-center gap-3.5 px-6 pt-6 pe-12">
+      <Logo class="size-10 shrink-0" />
+      <div class="flex min-w-0 flex-col gap-1">
+        <Dialog.Title class="text-ui-xl text-balance">What's new in Stroke {current}</Dialog.Title>
+        <Dialog.Description class="text-ui-xs tabular-nums">
+          {[previous && `Updated from v${previous}`, changeCount && `${changeCount} ${changeCount === 1 ? 'change' : 'changes'}`].filter(Boolean).join(' · ')}
+        </Dialog.Description>
+      </div>
     </Dialog.Header>
 
-    <div class="max-h-[min(32rem,68vh)] overflow-y-auto px-6 pt-5 pb-2 [scrollbar-gutter:stable]">
+    <div class="mt-5 max-h-[min(32rem,68vh)] overflow-y-auto border-t border-border/40 px-6 pt-5 pb-2 [scrollbar-gutter:stable]">
       {#if hero}
         <!-- The lead feature: the only filled button in the dialog. -->
         <section class="flex flex-col gap-1.5" aria-labelledby="whats-new-hero">
@@ -168,7 +119,7 @@
           </button>
         {/if}
         {#if notesOpen}
-          <div class="pb-4 {highlights.length ? 'ps-5' : 'pt-1'}">{@render notes()}</div>
+          <div class="pb-4 {highlights.length ? '' : 'pt-1'}"><ReleaseNotes {releases} {omitted} /></div>
         {/if}
       {/if}
     </div>
