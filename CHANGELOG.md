@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.7.0] - 2026-11-14
+
+### Features
+- Open more than one terminal: "New terminal tab" (Ctrl+Shift+`, the + in the terminal's bar, or the command palette) starts another session in its own tab, numbered Terminal 2, Terminal 3…; closing a tab ends only its own session
+
+
 ## [2.6.9] - 2026-11-14
 
 ### Improvements
