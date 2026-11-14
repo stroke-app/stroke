@@ -1495,14 +1495,30 @@
       try {
         const { getCurrentWindow } = await import('@tauri-apps/api/window')
         const win = getCurrentWindow()
-        unlisten = await win.onCloseRequested(async (event) => {
-          if (!hasAnyUnsavedChanges()) return
-          // Stop the close, ask in-app, then force-close if confirmed. Use destroy()
-          // (not close()) so we don't re-enter this handler.
+        // Closing the window: unsaved table edits ask first, then anything sync
+        // has not sent yet goes out (a few seconds at most) before the window
+        // is destroyed. destroy(), not close(), so this handler isn't re-entered.
+        const offClose = await win.onCloseRequested(async (event) => {
+          const unsaved = hasAnyUnsavedChanges()
+          const { flushSyncBeforeExit } = await import('$lib/sync/runtime.js')
           event.preventDefault()
-          const ok = await askConfirm('You have unsaved table changes. Discard them and quit?', 'Discard & quit')
-          if (ok) await win.destroy()
+          if (unsaved && !(await askConfirm('You have unsaved table changes. Discard them and quit?', 'Discard & quit'))) return
+          await flushSyncBeforeExit()
+          await win.destroy()
         })
+        // ⌘Q / Quit: the Rust side holds the exit and asks here first.
+        const { listen } = await import('@tauri-apps/api/event')
+        const { invoke } = await import('@tauri-apps/api/core')
+        const offQuit = await listen('app-quit-requested', async () => {
+          if (hasAnyUnsavedChanges() && !(await askConfirm('You have unsaved table changes. Discard them and quit?', 'Discard & quit'))) {
+            await invoke('cancel_quit').catch(() => {})
+            return
+          }
+          const { flushSyncBeforeExit } = await import('$lib/sync/runtime.js')
+          await flushSyncBeforeExit()
+          await invoke('quit_now').catch(() => {})
+        })
+        unlisten = () => { offClose(); offQuit() }
       } catch { /* non-Tauri / web preview - no window close event */ }
     })()
     return () => unlisten()

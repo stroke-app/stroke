@@ -31,6 +31,7 @@ mod providers;
 mod secrets;
 mod sync;
 mod updates;
+mod quit;
 mod web_search;
 
 use db::{ActiveConnection, DbState, TunnelState};
@@ -881,6 +882,8 @@ pub fn run() {
             commands::get_autostart_status,
             commands::advisor_scan,
             commands::cancel_query,
+            quit::quit_now,
+            quit::cancel_quit,
             #[cfg(debug_assertions)]
             commands::debug_set_trial_days_ago,
             #[cfg(debug_assertions)]
@@ -893,6 +896,17 @@ pub fn run() {
                 code: Some(tauri::RESTART_EXIT_CODE),
                 ..
             } => updates::note_restart(app),
+            // ⌘Q / Quit with the window still open: hold the exit once and let
+            // the page finish what it must (unsaved edits, the last sync push),
+            // then it calls quit_now. If the page doesn't answer in 6 s the app
+            // quits anyway, so a stuck page can never keep it open. Closing the
+            // last window arrives here with no windows left and is not held.
+            tauri::RunEvent::ExitRequested { code: None, api, .. }
+                if !quit::approved() && !app.webview_windows().is_empty() =>
+            {
+                api.prevent_exit();
+                quit::requested(app);
+            }
             // The last window closed, or the OS is shutting down. Reap the
             // OmniRoute proxy we spawned, or it survives every app quit.
             tauri::RunEvent::Exit => {

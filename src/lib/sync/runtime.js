@@ -165,6 +165,27 @@ export function syncNow() {
   return running
 }
 
+/** A local change has happened since the last run started (debounce pending). */
+let pendingLocal = false
+
+/**
+ * Before the app closes: push what changed in the last couple of seconds (the
+ * change debounce would otherwise lose it with the process), or let a run in
+ * flight finish. Waits at most `timeoutMs`, and not at all when there is
+ * nothing to send or sync isn't set up, so quitting is never held hostage by
+ * the network.
+ * @param {number} [timeoutMs]
+ * @returns {Promise<boolean>} whether it waited for a sync
+ */
+export async function flushSyncBeforeExit(timeoutMs = 3000) {
+  if (!get(account)?.signed_in) return false
+  const phase = get(syncStatus).phase
+  if (phase !== 'ready' && phase !== 'syncing') return false
+  if (!pendingLocal && !running) return false
+  await Promise.race([syncNow().catch(() => {}), new Promise((r) => setTimeout(r, timeoutMs))])
+  return true
+}
+
 /** After a 429, no automatic sync until then (ms). */
 let backoffUntil = 0
 const BACKOFF_MS = 60_000
@@ -180,6 +201,8 @@ async function runOnce() {
     if (st.phase !== 'ready') return
   }
   setStatus({ phase: 'syncing', error: null })
+  // Whatever changed until now goes out with this run.
+  pendingLocal = false
   try {
     const r = await engine.run()
     const last = { lastSyncedAt: Date.now(), items: r.items }
@@ -259,6 +282,7 @@ export function startSync() {
   /** @type {ReturnType<typeof setTimeout> | null} */
   let debounce = null
   onLocalChange(() => {
+    pendingLocal = true
     if (debounce) clearTimeout(debounce)
     debounce = setTimeout(() => {
       debounce = null
