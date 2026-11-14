@@ -57,6 +57,7 @@
     stepLabel,
     cleanToolError,
   } from "$lib/local-agents.js";
+  import { extractPlan, sqlStepLabel, groupRetries, retryLabel, planProgress, summarizeSteps, formatStepDuration } from "$lib/ai-steps.js";
   import AgentComposerChips from "$lib/components/AgentComposerChips.svelte";
   import { isReadOnly, guardWrite, readOnlyMode } from "$lib/stores/read-only.js";
   import { isWriteSql, isWriteFor, stripSqlComments } from "$lib/sql-write.js";
@@ -132,6 +133,8 @@
   import Link2 from "@lucide/svelte/icons/link-2";
   import LoaderCircle from "@lucide/svelte/icons/loader-circle";
   import CircleCheck from "@lucide/svelte/icons/circle-check";
+  import CircleX from "@lucide/svelte/icons/circle-x";
+  import Circle from "@lucide/svelte/icons/circle";
   import CircleAlert from "@lucide/svelte/icons/circle-alert";
   import GitBranch from "@lucide/svelte/icons/git-branch";
   import BarChart3 from "@lucide/svelte/icons/chart-column";
@@ -163,14 +166,15 @@
    *   | { id: string, kind: 'executing', sql: string, op: 'query' | 'schema' | 'describe' | 'run' | 'diagram' }
    *   | { id: string, kind: 'diagram', code: string, title: string }
    *   | { id: string, kind: 'web', mode: 'search'|'fetch', label: string, hits: {title:string,url:string,snippet:string}[], error: string|null, loading: boolean }
-   *   | { id: string, kind: 'work', startedAt: number, endedAt: number|null, steps: WorkStep[] }
+   *   | { id: string, kind: 'work', startedAt: number, endedAt: number|null, steps: WorkStep[], plan?: string[] }
    * } ChatItem
    */
 
   /**
    * One step of a local agent's turn, folded under "Worked for 4s": a tool
    * call, or a `note` (what the agent said between calls).
-   * @typedef {{ id: string, tool: string, op: 'query' | 'schema' | 'describe' | 'web' | 'note', detail: string, status: 'running' | 'done' | 'error', error?: string }} WorkStep
+   * The built-in model's steps also carry timing and the affected-row count.
+   * @typedef {{ id: string, tool: string, op: 'query' | 'schema' | 'describe' | 'web' | 'note', detail: string, status: 'running' | 'done' | 'error', error?: string, startedAt?: number, endedAt?: number, affected?: number | null, message?: string | null }} WorkStep
    */
 
   /**
@@ -820,18 +824,22 @@
     }
   }
 
+  /** The streamed reply without its <plan> block, which draws as a checklist. */
+  const streamingParts = $derived(
+    streamingContent.includes("<plan>") ? extractPlan(streamingContent) : { plan: null, text: streamingContent },
+  );
   /** Streaming display strips <think>...</think> blocks in real time */
   const displayStreamingContent = $derived(
     // Fast path: most models never emit <think>, so skip the regex scans over
     // the (growing) streamed string entirely unless a think tag is present.
-    streamingContent.includes("<think>")
-      ? streamingContent
+    streamingParts.text.includes("<think>")
+      ? streamingParts.text
           // Complete think blocks - hide entirely
           .replace(/<think>[\s\S]*?<\/think>/g, "")
           // Partial/open think block currently being written - hide from cursor onwards
           .replace(/<think>[\s\S]*$/, "")
           .trim()
-      : streamingContent.trim(),
+      : streamingParts.text.trim(),
   );
   /** ID of the `streaming` ChatItem in `items` (null when not streaming) */
   let streamingId = $state(/** @type {string | null} */ (null));
@@ -986,6 +994,7 @@
       ctrl?.abort();
       // A pending confirm would hold the tool loop forever: answer it as declined.
       for (const i of items.filter((i) => i.kind === "confirm")) i.resolve(false);
+      settleOpenWork();
       flushStreamingContent();
       const partial = streamingContent.trim();
       const sid = streamingId;
@@ -996,7 +1005,7 @@
             ? /** @type {ChatItem} */ ({
                 id: sid,
                 kind: "assistant",
-                parts: parseAssistantMessage(partial || "…"),
+                parts: parseAssistantMessage(extractPlan(partial).text || "…"),
                 ts: Date.now(),
               })
             : i,
@@ -2078,6 +2087,8 @@
     const disowned = () => turn !== turnSeq;
     executedCalls = new Set();
     failureTracker = new Map();
+    builtinWorkId = null;
+    pendingPlan = null;
 
     // A local agent CLI reads the schema through its own tools, so none of the
     // prompt building below applies to it.
@@ -2161,6 +2172,8 @@
       topics,
       // So "which model are you?" gets the real answer, not a guess.
       modelLabel: modelDisplayName(settings),
+      // The transcript draws <plan> as a ticking checklist (ai-steps.js).
+      planSteps: true,
     });
     const ci = $aiChatParams.customInstructions.trim();
     turnSystemPrompt = ci ? `${ci}\n\n---\n\n${basePrompt}` : basePrompt;
@@ -2207,6 +2220,7 @@
   /** Close out the current turn's UI: the streamed reply kept, indicators gone. */
   async function finishTurn() {
     try {
+      settleOpenWork();
       // Flush any rAF-buffered content before reading it
       flushStreamingContent();
       // Finalize any in-progress streaming item (abort or error mid-stream)
@@ -2220,7 +2234,7 @@
               ? /** @type {ChatItem} */ ({
                   id: sid,
                   kind: "assistant",
-                  parts: parseAssistantMessage(partial || "…"),
+                  parts: parseAssistantMessage(extractPlan(partial).text || "…"),
                   ts: Date.now(),
                 })
               : i,
@@ -2296,15 +2310,124 @@
    */
   let enterFrom = $state(0);
 
-  /** Folds the user opened. */
-  let openWork = $state(/** @type {Set<string>} */ (new Set()));
+  /**
+   * Whether a fold is open: what the user chose, else open while it runs or
+   * while a step is still failing, so the live timeline and any error are in
+   * view without a click.
+   * @param {Extract<ChatItem, { kind: 'work' }>} item @param {boolean} running
+   */
+  function isWorkOpen(item, running) {
+    const chosen = workOpenChoice.get(item.id);
+    if (chosen !== undefined) return chosen;
+    return running || groupRetries(item.steps).some((g) => g.status === "error");
+  }
+  /** Folds the user opened or closed by hand. */
+  let workOpenChoice = $state(/** @type {Map<string, boolean>} */ (new Map()));
+  /** @param {Extract<ChatItem, { kind: 'work' }>} item @param {boolean} running */
+  function toggleWorkItem(item, running) {
+    const next = new Map(workOpenChoice);
+    next.set(item.id, !isWorkOpen(item, running));
+    workOpenChoice = next;
+  }
 
+  /** Steps whose SQL and result the user expanded. */
+  let openSteps = $state(/** @type {Set<string>} */ (new Set()));
   /** @param {string} id */
-  function toggleWork(id) {
-    const next = new Set(openWork);
+  function toggleStep(id) {
+    const next = new Set(openSteps);
     if (next.has(id)) next.delete(id);
     else next.add(id);
-    openWork = next;
+    openSteps = next;
+  }
+
+  // ── The built-in model's step timeline ────────────────────────────────────
+  /** The running turn's fold; null until its first tool call. */
+  let builtinWorkId = /** @type {string | null} */ (null);
+  /** A plan written before the fold exists, attached when it is made. */
+  let pendingPlan = /** @type {string[] | null} */ (null);
+
+  /** @param {string} id @param {(w: any) => any} fn */
+  function patchWorkItem(id, fn) {
+    items = items.map((i) => (i.id === id && i.kind === "work" ? fn(i) : i));
+  }
+
+  /** @param {string[]} plan */
+  function acceptPlan(plan) {
+    if (builtinWorkId && items.some((i) => i.id === builtinWorkId)) {
+      patchWorkItem(builtinWorkId, (w) => (w.plan ? w : { ...w, plan }));
+    } else pendingPlan = plan;
+  }
+
+  /**
+   * The turn's fold, made on first use - in place of `replaceId` (the
+   * narration it absorbs) or at the end - and its clock resumed if the model
+   * paused to write.
+   * @param {string | null} [replaceId]
+   */
+  function ensureBuiltinWork(replaceId = null) {
+    if (builtinWorkId && items.some((i) => i.id === builtinWorkId)) {
+      patchWorkItem(builtinWorkId, (w) =>
+        w.endedAt === null ? w : { ...w, startedAt: w.startedAt + (Date.now() - w.endedAt), endedAt: null },
+      );
+      if (replaceId) items = items.filter((i) => i.id !== replaceId);
+      return builtinWorkId;
+    }
+    const id = uid();
+    const work = /** @type {ChatItem} */ ({
+      id,
+      kind: "work",
+      startedAt: Date.now(),
+      endedAt: null,
+      steps: [],
+      ...(pendingPlan ? { plan: pendingPlan } : {}),
+    });
+    pendingPlan = null;
+    const at = replaceId ? items.findIndex((i) => i.id === replaceId) : -1;
+    if (at >= 0) items.splice(at, 1, work);
+    else items.push(work);
+    builtinWorkId = id;
+    return id;
+  }
+
+  /** @param {WorkStep} step */
+  function addBuiltinStep(step) {
+    const wid = ensureBuiltinWork();
+    const thinkIdx = items.findIndex((i) => i.kind === "thinking");
+    if (thinkIdx >= 0) items.splice(thinkIdx, 1);
+    patchWorkItem(wid, (w) => ({ ...w, steps: [...w.steps, step] }));
+  }
+
+  /** @param {string} stepId @param {Partial<WorkStep>} patch */
+  function patchBuiltinStep(stepId, patch) {
+    if (!builtinWorkId) return;
+    patchWorkItem(builtinWorkId, (w) => ({
+      ...w,
+      steps: w.steps.map((/** @type {WorkStep} */ s) => (s.id === stepId ? { ...s, ...patch } : s)),
+    }));
+  }
+
+  /** Stop the fold's clock while the model writes its answer. */
+  function pauseBuiltinWork() {
+    if (builtinWorkId) patchWorkItem(builtinWorkId, (w) => (w.endedAt === null ? { ...w, endedAt: Date.now() } : w));
+  }
+
+  /**
+   * Close every fold still open when a turn ends or is stopped: the clock
+   * stops, and a step that never answered says so instead of spinning on.
+   */
+  function settleOpenWork() {
+    const now = Date.now();
+    items = items.map((i) =>
+      i.kind === "work" && (i.endedAt === null || i.steps.some((s) => s.status === "running"))
+        ? {
+            ...i,
+            endedAt: i.endedAt ?? now,
+            steps: i.steps.map((s) =>
+              s.status === "running" ? { ...s, status: /** @type {const} */ ("error"), error: "Stopped before it finished.", endedAt: now } : s,
+            ),
+          }
+        : i,
+    );
   }
 
   /** @param {number} ms */
@@ -2761,13 +2884,34 @@
     // Flush any buffered streaming content before finalizing
     flushStreamingContent();
 
+    // A <plan> opens a multi-step turn: it becomes the fold's checklist, and
+    // the reply keeps the rest. History keeps the plan, so the model sees it.
+    const { plan, text: shownText } = extractPlan(fullContent);
+    if (plan && toolCalls.length > 0) acceptPlan(plan);
+
     // Promote the streaming placeholder to a finalized assistant item
     if (itemId && streamingId) {
       streamingId = null;
       streamingContent = "";
       _pendingStreamContent = "";
-      items = items.flatMap((i) => (i.id === itemId ? replyItems(itemId, parseAssistantMessage(fullContent)) : [i]));
+      const parts = parseAssistantMessage(shownText);
+      if (toolCalls.length > 0 && parts.every((p) => p.type === "text")) {
+        // Text before a tool call is narration ("Creating the tables first"),
+        // not the answer: it moves into the fold, and only the reply that ends
+        // the turn stays in the transcript, as the local agents' turns do.
+        const wid = ensureBuiltinWork(itemId);
+        const note = shownText.trim();
+        if (note) {
+          patchWorkItem(wid, (w) => ({
+            ...w,
+            steps: [...w.steps, /** @type {WorkStep} */ ({ id: uid(), tool: "note", op: "note", detail: note, status: "done" })],
+          }));
+        }
+      } else {
+        items = items.flatMap((i) => (i.id === itemId ? replyItems(itemId, parts) : [i]));
+      }
     }
+    if (toolCalls.length === 0) pauseBuiltinWork();
 
     dropGenerating();
     if (toolCalls.length > 0) {
@@ -2794,7 +2938,7 @@
       apiHistory.push({ role: "assistant", content: fullContent });
       // Fallback: if no streaming item was created (non-streaming endpoint), add it now
       if (!itemId) {
-        items.push(...replyItems(uid(), parseAssistantMessage(fullContent)));
+        items.push(...replyItems(uid(), parseAssistantMessage(shownText)));
         await scrollBottom();
       }
     } else {
@@ -2871,6 +3015,8 @@
         if (sql && isReadOnly() && isWriteFor(sql, schemaContext.dbType)) {
           // Refuse in the tool channel: the model needs to hear *why*, or it
           // retries the same write until it hits the retry cap.
+          const now = Date.now();
+          addBuiltinStep({ id: String(call.id || uid()), tool: "execute_sql", op: "query", detail: sql, status: "error", error: "Not run: this connection is open in read-only mode.", startedAt: now, endedAt: now });
           apiHistory.push({
             role: "tool",
             tool_call_id: call.id,
@@ -2905,16 +3051,11 @@
         }
         const { sql: guardedSql, capped: frontendCapped } =
           guardSelectLimit(sql);
-        const execId = uid();
-        items.push(
-          /** @type {ChatItem} */ ({
-            id: execId,
-            kind: "executing",
-            sql,
-            op: "query",
-          }),
-        );
-        await scrollBottom();
+        // One row in the turn's step timeline, not a card of its own: running,
+        // then done with its time and row count, or failed with the error.
+        const stepId = String(call.id || uid());
+        addBuiltinStep({ id: stepId, tool: "execute_sql", op: "query", detail: sql, status: "running", startedAt: Date.now() });
+        scrollBottomSoon();
         try {
           const data = await executeSql(guardedSql);
           if (isDdl(sql)) onschemadirty();
@@ -2924,13 +3065,17 @@
           const backendCapped =
             typeof data.message === "string" &&
             data.message.startsWith("Showing first");
-          const execIdx = items.findIndex((i) => i.id === execId);
-          // Only show a result card when there are actual rows to display.
-          // Zero-row results are silently removed from the chat - the AI still
-          // receives the empty result via toolResult and can explain it.
-          if (total > 0) {
+          patchBuiltinStep(stepId, {
+            status: "done",
+            endedAt: Date.now(),
+            affected: cols.length ? rows.length : total,
+            message: typeof data.message === "string" ? data.message : null,
+          });
+          // Rows get their table after the timeline, as before. A write's
+          // "3 row(s) affected" lives on its step; the model still gets it below.
+          if (cols.length > 0 && total > 0) {
             const resultId = uid();
-            const resultItem = /** @type {ChatItem} */ ({
+            items.push(/** @type {ChatItem} */ ({
               id: resultId,
               kind: "result",
               sql,
@@ -2939,15 +3084,10 @@
               total,
               error: null,
               capped: frontendCapped,
-            });
-            if (execIdx >= 0) items.splice(execIdx, 1, resultItem);
-            else items.push(resultItem);
+            }));
             autoOpenResult(resultId);
-          } else {
-            // 0 rows - just remove the executing indicator, no result card
-            if (execIdx >= 0) items.splice(execIdx, 1);
           }
-          await scrollBottom();
+          scrollBottomSoon();
           // Return rows as objects (not arrays) so the AI can pass `rows`
           // directly to render_chart without needing to transform the data.
           const colNames = cols.map((c) => c.name);
@@ -2972,25 +3112,12 @@
             message: data.message ?? null,
           });
         } catch (sqlErr) {
-          const msg = String(sqlErr);
-          const hint = classifyDbError(msg);
-          // Show the failure in the transcript rather than deleting the
-          // indicator. Hiding it left the user watching the model narrate a
-          // cause for an error they were never shown - the query that actually
-          // failed, and why, is the one thing they need to see.
-          const execIdx = items.findIndex((i) => i.id === execId);
-          const failedItem = /** @type {ChatItem} */ ({
-            id: execId,
-            kind: "result",
-            sql,
-            columns: [],
-            rows: [],
-            total: 0,
-            error: msg,
-            capped: false,
-          });
-          if (execIdx >= 0) items.splice(execIdx, 1, failedItem);
-          else items.push(failedItem);
+          const msg = String(sqlErr).replace(/^Error:\s*/, "");
+          const hint = classifyDbError(msg, sql);
+          // The failure stays in the timeline with the database's own words,
+          // in red under the step: the user sees what the model is recovering
+          // from, and the retry folds under it.
+          patchBuiltinStep(stepId, { status: "error", endedAt: Date.now(), error: msg });
           const existing = failureTracker.get(callKey) ?? {
             count: 0,
             lastError: "",
@@ -2999,10 +3126,13 @@
             count: existing.count + 1,
             lastError: msg,
           });
+          // The full error text reaches the model, plus a hint when one
+          // applies, so it can fix the statement instead of guessing.
           toolResult = JSON.stringify({
             error: msg,
             ...(hint ? { hint } : {}),
             attempt: existing.count + 1,
+            instruction: "Fix the cause named in `error` and call execute_sql again with corrected SQL. Do not resend the same statement.",
           });
         }
       } else if (
@@ -3823,6 +3953,86 @@
   </div>
 {/snippet}
 
+<!-- The plan a multi-step turn opens with, ticked as its steps finish. Status
+     reads from the icon and a screen-reader word; color is never the only cue. -->
+{#snippet planChecklist(/** @type {string[]} */ plan, /** @type {string[]} */ statuses)}
+  <ol class="flex flex-col gap-1 py-1" aria-label="Plan">
+    {#each plan as line, i (i)}
+      {@const st = statuses[i] ?? "pending"}
+      <li class="flex min-w-0 items-start gap-2 text-ui-sm">
+        <span class="flex h-5 shrink-0 items-center">
+          {#if st === "done"}
+            <CircleCheck class="size-3.5 shrink-0 text-primary" />
+          {:else if st === "error"}
+            <CircleX class="size-3.5 shrink-0 text-destructive" />
+          {:else if st === "running"}
+            <span class="flex size-3.5 shrink-0 items-center justify-center" aria-hidden="true"><span class="size-3 animate-spin rounded-full border-[1.5px] border-muted-foreground/25 border-t-muted-foreground will-change-transform"></span></span>
+          {:else}
+            <Circle class="size-3.5 shrink-0 text-muted-foreground" />
+          {/if}
+        </span>
+        <span class={cn("min-w-0 break-words leading-5", st === "done" || st === "pending" ? "text-muted-foreground" : "text-foreground")}>{line}</span>
+        <span class="sr-only">({st === "error" ? "failed" : st})</span>
+      </li>
+    {/each}
+  </ol>
+{/snippet}
+
+<!-- One step of a turn: status icon, what it does, how long it took. A query
+     step opens to its SQL and result; a failure says why, in red, without a click. -->
+{#snippet stepRow(/** @type {WorkStep} */ step)}
+  {@const isQuery = step.op === "query"}
+  {@const meta = isQuery ? { label: sqlStepLabel(step.detail), detail: "" } : stepLabel(step)}
+  {@const dur = step.startedAt && step.endedAt ? formatStepDuration(step.endedAt - step.startedAt) : ""}
+  {@const expandable = isQuery && !!step.detail.trim()}
+  {@const open = openSteps.has(step.id)}
+  {#snippet rowInner()}
+    {#if step.status === "running"}
+      <span class="flex size-3.5 shrink-0 items-center justify-center" aria-hidden="true"><span class="size-3 animate-spin rounded-full border-[1.5px] border-muted-foreground/25 border-t-muted-foreground will-change-transform"></span></span>
+    {:else if step.status === "error"}
+      <CircleX class="size-3.5 shrink-0 text-destructive" />
+    {:else}
+      <CircleCheck class="size-3.5 shrink-0 text-muted-foreground" />
+    {/if}
+    <span class="min-w-0 truncate text-ui-xs text-foreground">{meta.label}</span>
+    <span class="sr-only">({step.status === "error" ? "failed" : step.status === "running" ? "running" : "done"})</span>
+    {#if meta.detail}
+      <span class="min-w-0 flex-1 truncate font-mono text-ui-2xs text-muted-foreground">{meta.detail}</span>
+    {:else}
+      <span class="flex-1"></span>
+    {/if}
+    {#if dur}
+      <span class="shrink-0 font-mono text-ui-2xs tabular-nums text-muted-foreground">{dur}</span>
+    {/if}
+    {#if expandable}
+      <ChevronRight class={cn("size-3.5 shrink-0 text-muted-foreground", open && "rotate-90")} />
+    {/if}
+  {/snippet}
+  <div class="flex min-w-0 flex-col gap-1">
+    {#if expandable}
+      <button
+        type="button"
+        class="-mx-1.5 flex h-7 min-w-0 items-center gap-2 rounded-md px-1.5 text-left transition-colors hover:bg-accent"
+        aria-expanded={open}
+        onclick={() => toggleStep(step.id)}
+      >{@render rowInner()}</button>
+    {:else}
+      <div class="flex h-7 min-w-0 items-center gap-2">{@render rowInner()}</div>
+    {/if}
+    {#if step.error}
+      <p class="pl-5.5 text-ui-2xs leading-relaxed break-words whitespace-pre-wrap text-destructive">{cleanToolError(step.error)}</p>
+    {/if}
+    {#if expandable && open}
+      <div class="flex flex-col gap-1 pl-5.5">
+        <CollapsibleCode text={step.detail.trim()} max={160} class="rounded-md bg-muted/30 px-2.5 py-1.5 font-mono text-ui-2xs whitespace-pre-wrap break-words text-muted-foreground" />
+        {#if step.status === "done" && (step.message || step.affected != null)}
+          <p class="font-mono text-ui-2xs text-muted-foreground">{step.message || `${step.affected} row(s)`}</p>
+        {/if}
+      </div>
+    {/if}
+  </div>
+{/snippet}
+
 <!-- Per-message footer: time + copy (+ quote for assistant turns).
      Hidden until the message is hovered or a control inside it takes focus, so a
      long transcript stays quiet - but always laid out, so revealing it can't
@@ -4564,6 +4774,7 @@
                      bought nothing. The user's own turns are the contrast. -->
                 {@const split = splitStreamingDiagram(displayStreamingContent)}
                 <div class="min-w-0 px-3.5">
+                  {#if streamingParts.plan}{@render planChecklist(streamingParts.plan, [])}{/if}
                   {#if split}
                     {#if split.before.trim()}<AiMarkdown content={split.before.trim()} streaming onrender={scrollBottomSoon} />{/if}
                     <div class="my-2">{@render generatingCard(split.kind === "chart" ? "chart" : "diagram")}</div>
@@ -4604,81 +4815,81 @@
                   </span>
                 </div>
 
-                <!-- ── A local agent's tool steps, folded ─── -->
+                <!-- ── A turn's steps: plan, timeline, summary ─── -->
               {:else if item.kind === "work"}
                 {@const running = item.endedAt === null && loading}
-                {@const isOpen = openWork.has(item.id)}
-                {@const failed = item.steps.filter((s) => s.status === "error").length}
-                {@const summary = workSummary(item.steps)}
+                {@const groups = groupRetries(item.steps)}
+                {@const failed = groups.filter((g) => g.status === "error").length}
+                {@const isOpen = isWorkOpen(item, running)}
+                {@const outcome = running ? { text: "", sql: "" } : summarizeSteps(item.steps)}
+                {@const summary = outcome.text || workSummary(item.steps)}
                 <div class="min-w-0 px-3.5">
+                  {#if item.plan?.length}
+                    {@render planChecklist(item.plan, planProgress(item.plan, item.steps, !running))}
+                  {/if}
                   <!-- One quiet row: state icon, time, what was done, chevron.
-                       The full-width rule under it read as a section break in
-                       the middle of a reply; the row stands on its own. -->
-                  <button
-                    type="button"
-                    class="group/work -ml-1.5 inline-flex h-7 max-w-full items-center gap-2 rounded-md px-1.5 text-ui-xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
-                    aria-expanded={isOpen}
-                    onclick={() => toggleWork(item.id)}
-                  >
-                    {#if running}
-                      <!-- A CSS ring on its own compositor layer: it keeps turning
-                           while the main thread is busy streaming the reply. -->
-                      <span class="size-3.5 shrink-0 animate-spin rounded-full border-[1.75px] border-current/25 border-t-current will-change-transform" aria-hidden="true"></span>
-                    {:else if failed}
-                      <CircleAlert class="size-3.5 shrink-0 text-destructive" />
-                    {:else}
-                      <CircleCheck class="size-3.5 shrink-0 text-muted-foreground/80 group-hover/work:text-foreground" />
+                       Once the turn ends it says what changed, and the SQL that
+                       did it is one click away. -->
+                  <div class="flex min-w-0 items-center gap-1">
+                    <button
+                      type="button"
+                      class="group/work -ml-1.5 inline-flex h-7 min-w-0 items-center gap-2 rounded-md px-1.5 text-ui-xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+                      aria-expanded={isOpen}
+                      onclick={() => toggleWorkItem(item, running)}
+                    >
+                      {#if running}
+                        <!-- A CSS ring on its own compositor layer: it keeps turning
+                             while the main thread is busy streaming the reply. -->
+                        <span class="size-3.5 shrink-0 animate-spin rounded-full border-[1.75px] border-current/25 border-t-current will-change-transform" aria-hidden="true"></span>
+                      {:else if failed}
+                        <CircleAlert class="size-3.5 shrink-0 text-destructive" />
+                      {:else}
+                        <CircleCheck class="size-3.5 shrink-0 text-muted-foreground group-hover/work:text-foreground" />
+                      {/if}
+                      <span class={cn("shrink-0 tabular-nums", running && "text-foreground")}>{running ? "Working" : "Worked"} for {formatElapsed((item.endedAt ?? (running ? nowMs : item.startedAt)) - item.startedAt)}</span>
+                      {#if summary}
+                        <span class="truncate">· {summary}</span>
+                      {/if}
+                      {#if failed}
+                        <span class="shrink-0 text-destructive">· {failed} failed</span>
+                      {/if}
+                      <ChevronRight class={cn("size-3.5 shrink-0", isOpen && "rotate-90")} />
+                    </button>
+                    {#if outcome.sql}
+                      <button
+                        type="button"
+                        class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                        title="Copy SQL"
+                        aria-label="Copy the SQL this turn ran"
+                        onclick={() => void copyWithFeedback(`${item.id}:sql`, outcome.sql)}
+                      >
+                        {#if copiedKey === `${item.id}:sql`}<Check class="size-3.5 shrink-0" />{:else}<Copy class="size-3.5 shrink-0" />{/if}
+                      </button>
                     {/if}
-                    <span class={cn("shrink-0 tabular-nums", running ? "text-foreground/85" : "")}>{running ? "Working" : "Worked"} <span class="text-muted-foreground">for</span> {formatElapsed((item.endedAt ?? (running ? nowMs : item.startedAt)) - item.startedAt)}</span>
-                    {#if summary}
-                      <span class="truncate text-muted-foreground/80">· {summary}</span>
-                    {/if}
-                    {#if failed}
-                      <span class="shrink-0 text-destructive">· {failed} failed</span>
-                    {/if}
-                    <ChevronRight class={cn("size-3.5 shrink-0 opacity-60 transition-transform duration-150 group-hover/work:opacity-100", isOpen && "rotate-90")} />
-                  </button>
-                  <!-- Height eases open and shut (grid rows 0fr to 1fr) instead of
-                       the steps snapping in and out. -->
-                  <div
-                    class="grid transition-[grid-template-rows,opacity] duration-200 ease-out {isOpen ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}"
-                    inert={!isOpen}
-                  >
-                    <div class="min-h-0 overflow-hidden">
-                    <ol class="mt-1 mb-2 ml-[0.4375rem] flex flex-col gap-1.5 border-l border-border/50 pl-3.5">
-                      {#each item.steps as step (step.id)}
-                        {@const meta = stepLabel(step)}
-                        {#if step.op === "note"}
-                          <li class="text-ui-2xs leading-relaxed whitespace-pre-wrap break-words text-muted-foreground">{step.detail}</li>
+                  </div>
+                  <!-- Opens and shuts at once: it is toggled often and follows
+                       the turn by itself, so a height animation would only lag. -->
+                  {#if isOpen}
+                    <ol class="mt-1 mb-2 ml-[0.4375rem] flex flex-col gap-1 border-l border-border/50 pl-3.5">
+                      {#each groups as group (group.step.id)}
+                        {#if group.step.op === "note"}
+                          <li class="py-0.5 text-ui-xs leading-relaxed whitespace-pre-wrap break-words text-muted-foreground">{group.step.detail}</li>
                         {:else}
-                        <li class="flex min-w-0 flex-col gap-1">
-                          <div class="flex min-w-0 items-center gap-2">
-                            {#if step.status === "running"}
-                              <span class="size-3 shrink-0 animate-spin rounded-full border-[1.5px] border-muted-foreground/25 border-t-muted-foreground will-change-transform" aria-hidden="true"></span>
-                            {:else if step.op === "query"}
-                              <Database class={cn("size-3.5 shrink-0", step.status === "error" ? "text-destructive" : "text-muted-foreground")} />
-                            {:else if step.op === "web"}
-                              <Globe class={cn("size-3.5 shrink-0", step.status === "error" ? "text-destructive" : "text-muted-foreground")} />
-                            {:else}
-                              <Layers class={cn("size-3.5 shrink-0", step.status === "error" ? "text-destructive" : "text-muted-foreground")} />
+                          <li class="flex min-w-0 flex-col gap-1">
+                            {@render stepRow(group.step)}
+                            {#if group.retries.length}
+                              <div class="ml-[0.4375rem] flex flex-col gap-1 border-l border-border/50 pl-3">
+                                <span class={cn("text-ui-2xs", group.status === "error" ? "text-destructive" : "text-muted-foreground")}>{retryLabel(group)}</span>
+                                {#each group.retries as retry (retry.id)}
+                                  {@render stepRow(retry)}
+                                {/each}
+                              </div>
                             {/if}
-                            <span class="shrink-0 text-ui-2xs font-medium text-foreground/80">{meta.label}</span>
-                            {#if meta.detail}
-                              <span class="min-w-0 flex-1 truncate font-mono text-ui-3xs text-muted-foreground">{meta.detail}</span>
-                            {/if}
-                          </div>
-                          {#if step.op === "query" && step.detail.trim()}
-                            <CollapsibleCode text={step.detail.trim()} max={160} class="rounded-md bg-muted/30 px-2.5 py-1.5 font-mono text-ui-3xs whitespace-pre-wrap break-words text-muted-foreground" />
-                          {/if}
-                          {#if step.error}
-                            <p class="text-ui-3xs break-words text-destructive">{cleanToolError(step.error)}</p>
-                          {/if}
-                        </li>
+                          </li>
                         {/if}
                       {/each}
                     </ol>
-                    </div>
-                  </div>
+                  {/if}
                 </div>
 
                 <!-- ── Assistant message ──────────────────── -->
