@@ -969,6 +969,11 @@ export async function connectOracle(config) {
   return connectInv('connect_oracle_db', { config: normalizeOracle(config) })
 }
 
+/** The container the Oracle session is in: a pluggable database (FREEPDB1) or CDB$ROOT. */
+export async function oracleContainerName() {
+  return /** @type {Promise<string>} */ (inv('oracle_container_name'))
+}
+
 /**
  * Resolve saved-connection hostnames into the OS resolver cache ahead of time.
  *

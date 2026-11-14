@@ -937,7 +937,8 @@
   function applySortBy(list) {
     let result = list
     if (hideEmpty) result = result.filter((t) => (t.rowCount ?? 0) > 0)
-    if (hideSystem) result = result.filter((t) => !isSystemTable(t.name))
+    // The engine's own flag where it gives one (Oracle), the name otherwise.
+    if (hideSystem) result = result.filter((t) => !(t.system ?? isSystemTable(t.name)))
     if (sortBy === 'rowCount') {
       result = [...result].sort((a, b) => (b.rowCount ?? 0) - (a.rowCount ?? 0))
     } else if (sortBy === 'created') {

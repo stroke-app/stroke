@@ -21,6 +21,11 @@ pub struct TableInfo {
     /// of the SQLite catalog row, the DuckDB object id. Larger is newer. For
     /// sorting only; the numbers mean nothing on their own.
     pub create_order: Option<i64>,
+    /// The engine's own object rather than the user's (Oracle's
+    /// ORACLE_MAINTAINED). None where the engine doesn't say; the sidebar then
+    /// goes by name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -325,6 +330,7 @@ async fn list_tables_pg(pool: &PgPool, schema: &str) -> Result<Vec<TableInfo>, S
                 rls_enabled: r.try_get::<bool, _>(3).ok(),
                 created_at: None,
                 create_order: r.try_get::<i64, _>(4).ok(),
+                system: None,
             })
         })
         .collect();
@@ -384,7 +390,7 @@ async fn list_tables_sqlite(pool: &sqlx::SqlitePool) -> Result<Vec<TableInfo>, S
             let ty = r.try_get::<Option<String>, _>(1).ok().flatten().unwrap_or_default();
             let kind = if ty == "view" { "view".to_string() } else { "table".to_string() };
             let create_order = r.try_get::<i64, _>(2).ok();
-            Some(TableInfo { name, kind, row_count: -1, rls_enabled: None, created_at: None, create_order })
+            Some(TableInfo { name, kind, row_count: -1, rls_enabled: None, created_at: None, create_order, system: None })
         })
         .collect();
 
@@ -538,7 +544,7 @@ async fn list_tables_d1(cfg: &super::connection::D1Config) -> Result<Vec<TableIn
             let ty = r.get(type_idx).and_then(|v| v.as_str()).unwrap_or("table");
             let kind = if ty == "view" { "view".to_string() } else { "table".to_string() };
             let create_order = seq_idx.and_then(|i| r.get(i)).and_then(|v| v.as_i64());
-            Some(TableInfo { name, kind, row_count: -1, rls_enabled: None, created_at: None, create_order })
+            Some(TableInfo { name, kind, row_count: -1, rls_enabled: None, created_at: None, create_order, system: None })
         })
         .collect();
 
@@ -663,7 +669,7 @@ async fn list_tables_libsql(cfg: &super::connection::LibSqlConfig) -> Result<Vec
         let ty = r.get(type_idx).and_then(|v| v.as_str()).unwrap_or("table");
         let kind = if ty == "view" { "view".to_string() } else { "table".to_string() };
         let create_order = seq_idx.and_then(|i| r.get(i)).and_then(|v| v.as_i64());
-        Some(TableInfo { name, kind, row_count: -1, rls_enabled: None, created_at: None, create_order })
+        Some(TableInfo { name, kind, row_count: -1, rls_enabled: None, created_at: None, create_order, system: None })
     }).collect();
 
     // Batch counts into one round-trip per chunk (each libsql query is a remote
@@ -797,7 +803,7 @@ async fn list_tables_mysql(pool: &MySqlPool, schema: &str) -> Result<Vec<TableIn
             let row_count = if est >= 100_000 { est } else { -1 };
             // NULL for views; a real timestamp for tables.
             let created_at = my_text(r, 3);
-            Some(TableInfo { name, kind, row_count, rls_enabled: None, created_at, create_order: None })
+            Some(TableInfo { name, kind, row_count, rls_enabled: None, created_at, create_order: None, system: None })
         })
         .collect();
 

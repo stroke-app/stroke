@@ -44,7 +44,7 @@ pub async fn list_tables(conn: &DocConn) -> Result<Vec<TableInfo>, String> {
     };
     Ok(names
         .into_iter()
-        .map(|name| TableInfo { name, row_count: 0, kind: "table".into(), rls_enabled: None, created_at: None, create_order: None })
+        .map(|name| TableInfo { name, row_count: 0, kind: "table".into(), rls_enabled: None, created_at: None, create_order: None, system: None })
         .collect())
 }
 
@@ -63,7 +63,7 @@ pub async fn list_schemas(conn: &DocConn) -> Result<Vec<String>, String> {
 }
 
 fn info(name: String, row_count: i64) -> TableInfo {
-    TableInfo { name, row_count, kind: "table".into(), rls_enabled: None, created_at: None, create_order: None }
+    TableInfo { name, row_count, kind: "table".into(), rls_enabled: None, created_at: None, create_order: None, system: None }
 }
 
 /// Tables in one schema, with counts where they're cheap (-1 = unknown).

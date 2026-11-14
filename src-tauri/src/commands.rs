@@ -941,6 +941,15 @@ pub async fn connect_oracle_db(state: State<'_, DbState>, config: OracleConfig) 
     connect_oracle(state, config).await
 }
 
+/// The Oracle container the active connection is in (FREEPDB1, CDB$ROOT).
+#[tauri::command]
+pub async fn oracle_container_name(state: State<'_, DbState>) -> Result<String, String> {
+    match crate::db::connection::require_conn(&state)? {
+        ActiveConnection::Oracle(h) => crate::db::oracle::container_name(&h).await,
+        _ => Err("Not connected to Oracle".into()),
+    }
+}
+
 // ── Live mode ─────────────────────────────────────────────────────────────────
 
 use crate::db::live::{self, LiveState};

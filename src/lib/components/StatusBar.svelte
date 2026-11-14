@@ -21,6 +21,7 @@
   import { vimSubMode, VIM_MODE_LABEL } from '$lib/vim/vim.js'
   import { listDatabases, canSwitchDatabase, currentDatabaseKey, isCurrentDatabase } from '$lib/databases.js'
   import { engineFamily } from '$lib/stores/connections.js'
+  import { oracleContainerName } from '$lib/api.js'
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js'
   import AppearanceMenu from './AppearanceMenu.svelte'
   import CreateDatabaseDialog from './CreateDatabaseDialog.svelte'
@@ -236,8 +237,26 @@
   /** Label shown in the trigger for the active db. Provider connections all use
    * the db name "postgres", so show the project name instead (from the connection
    * name, e.g. "Prisma · stroke-testing" → "stroke-testing"). */
+  /** Oracle's "database" is the container the session landed in, which the
+   *  saved config may not name: a blank service name goes to the listener's
+   *  default, often the root. Asked once per connection. */
+  let oracleContainer = $state('')
+  $effect(() => {
+    const id = connection?.type === 'oracle' && !connectionLost ? connection.id : null
+    oracleContainer = ''
+    if (!id) return
+    let stale = false
+    oracleContainerName()
+      .then((name) => { if (!stale) oracleContainer = name })
+      .catch(() => {})
+    return () => { stale = true }
+  })
+  /** The root holds only Oracle's own schemas; user tables live in a PDB. */
+  const oracleInRoot = $derived(oracleContainer === 'CDB$ROOT')
+
   const currentDbLabel = $derived(
-    isRedis ? `db ${redisDb}`
+    connection?.type === 'oracle' ? (oracleContainer || connection?.serviceName || connection?.sid || '')
+    : isRedis ? `db ${redisDb}`
     : isProvider ? ((connection?.name?.split(' · ').pop()) || connection?.name || currentDb)
     : isD1 ? (connection?.database || connection?.name || '')
     : currentDb,
@@ -572,12 +591,16 @@
           <DropdownMenu.Trigger
             class={cn(labelBtn, 'text-muted-foreground', !canSwitchDb && 'cursor-default hover:bg-transparent hover:text-foreground')}
             disabled={!canSwitchDb}
-            title={canSwitchDb ? withShortcut('Switch database', 'database.switch') : currentDbLabel}
+            title={oracleInRoot
+              ? 'Connected to the root container, which holds only Oracle\'s own schemas. Set the service name to a pluggable database such as FREEPDB1.'
+              : canSwitchDb ? withShortcut('Switch database', 'database.switch') : currentDbLabel}
           >
             {#if connection?.type === 'sqlite'}
               <Icon name="hard-drive" class="size-3.5 shrink-0" />
             {:else if isD1}
               <Icon name="cloud" class="size-3.5 shrink-0" />
+            {:else if oracleInRoot}
+              <Icon name="alert-triangle" class="size-3.5 shrink-0 text-warning" />
             {:else}
               <Icon name="database" class="size-3.5 shrink-0" />
             {/if}
