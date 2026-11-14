@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.8.1] - 2026-11-14
+
+### Changes
+- License per account, one Update button, compact What's new, press feedback (#177)
+
+
 ## [2.8.0] - 2026-11-14
 
 ### Changes
