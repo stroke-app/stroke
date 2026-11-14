@@ -431,6 +431,30 @@
   let connection = $state(null)
   /** @type {boolean} - true when the DB went away mid-session */
   let connectionLost = $state(false)
+  /** The last health ping's round trip, in ms (null before the first). */
+  let dbLatencyMs = $state(/** @type {number | null} */ (null))
+  /** The computer has no network at all (navigator.onLine). */
+  let offline = $state(typeof navigator !== 'undefined' ? !navigator.onLine : false)
+  $effect(() => {
+    const on = () => { offline = false; void pingNow() }
+    const off = () => { offline = true }
+    window.addEventListener('online', on)
+    window.addEventListener('offline', off)
+    return () => { window.removeEventListener('online', on); window.removeEventListener('offline', off) }
+  })
+  /** One timed ping, for the status bar's click and coming back online. */
+  async function pingNow() {
+    if (!connection) return
+    const t0 = performance.now()
+    try {
+      await pingConnection()
+      dbLatencyMs = Math.round(performance.now() - t0)
+      if (connectionLost) { connectionLost = false; error = '' }
+    } catch {
+      if (!connectionLost) connectionLost = true
+      void silentReconnect()
+    }
+  }
   let autoConnecting = $state(false)
   /** Name of the connection the overlay is waiting on. */
   let autoConnectName = $state('')
@@ -1919,8 +1943,10 @@ let rowSearch = $state('')
   $effect(() => {
     if (!connection) {
       connectionLost = false
+      dbLatencyMs = null
       return
     }
+    void pingNow()
     let stopped = false
     /** @type {ReturnType<typeof setTimeout> | undefined} */
     let timer
@@ -1935,7 +1961,10 @@ let rowSearch = $state('')
       // remote connection. The next tick after the window is shown will ping.
       if (typeof document !== 'undefined' && document.hidden) { schedule(); return }
       try {
+        // Timed: the status bar shows the round trip, so a slow link is visible.
+        const t0 = performance.now()
         await pingConnection()
+        dbLatencyMs = Math.round(performance.now() - t0)
         if (connectionLost) { connectionLost = false; error = '' }
       } catch {
         if (!connectionLost) connectionLost = true
@@ -10723,6 +10752,9 @@ let rowSearch = $state('')
   ontogglelive={() => { liveEnabled = !liveEnabled }}
   onswitchconnection={handleSwitchDatabase}
   {mcpRunning}
+  latencyMs={dbLatencyMs}
+  {offline}
+  onping={() => void pingNow()}
   hasUpdate={statusBarHasUpdate}
   updateReady={statusBarUpdateReady}
   onopenmcp={() => (showMcpPanel = true)}

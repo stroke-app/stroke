@@ -44,6 +44,12 @@
     savedConnections = [],
     activeConnectionId = '',
     mcpRunning = false,
+    /** Round trip of the last database ping in ms; null before the first. */
+    latencyMs = /** @type {number | null} */ (null),
+    /** No network at all on this computer. */
+    offline = false,
+    /** Check the connection now (the connectivity chip's click). */
+    onping = /** @type {() => void} */ (() => {}),
     hasUpdate = false,
     /** The update is downloaded and waiting: the badge offers the restart. */
     updateReady = false,
@@ -903,6 +909,32 @@
         <span class="@max-[52.5rem]/sb:hidden">{updateReady ? 'Restart to update' : 'Update'}</span>
       </button>
       {@render sep()}
+    {/if}
+
+    <!-- Connectivity: the database's round trip from the health ping, so a
+         slow link is visible before a query is. The number is always shown;
+         colour only adds to it. -->
+    {#if connection}
+      {@const tone = offline || connectionLost ? 'bad' : latencyMs == null ? 'idle' : latencyMs < 150 ? 'good' : latencyMs < 400 ? 'fair' : 'bad'}
+      <button
+        type="button"
+        class={cn(
+          labelBtn,
+          tone === 'bad' ? 'text-destructive' : tone === 'fair' ? 'text-warning' : 'text-muted-foreground',
+        )}
+        onclick={onping}
+        title={offline
+          ? 'This computer is offline. Stroke reconnects when the network is back.'
+          : connectionLost
+            ? 'The database is not answering. Stroke keeps trying in the background. Click to check now.'
+            : latencyMs == null
+              ? 'Checking the connection…'
+              : `The database answers in ${latencyMs} ms${tone === 'fair' ? ' (slow)' : tone === 'bad' ? ' (very slow)' : ''}. Checked every 30 s; click to check now.`}
+        aria-label={offline ? 'Offline' : connectionLost ? 'Database not responding' : latencyMs == null ? 'Checking connection' : `Database round trip ${latencyMs} milliseconds`}
+      >
+        <Icon name={offline || connectionLost ? 'wifi-off' : 'wifi'} class="size-3.5 shrink-0" />
+        <span class="tabular-nums @max-[40rem]/sb:hidden">{offline ? 'Offline' : connectionLost ? 'No response' : latencyMs == null ? '…' : `${latencyMs} ms`}</span>
+      </button>
     {/if}
 
     <!-- MCP status -->
