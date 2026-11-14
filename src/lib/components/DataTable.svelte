@@ -7650,12 +7650,18 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       if (inner && inner !== el) return
       const { dx, dy } = wheelPixels(e, el.clientHeight)
       if (!dy && !dx) return
+      // Only take the wheel when the grid can move that way. At an edge (or a
+      // small embedded grid that fits, like an AI result) the tick goes to the
+      // page around it: swallowing it trapped the AI chat's scroll under the
+      // pointer whenever a result table was beneath it.
+      const canY = dy < 0 ? el.scrollTop > 0 : el.scrollTop + el.clientHeight < el.scrollHeight - 1
+      const canX = dx < 0 ? el.scrollLeft > 0 : el.scrollLeft + el.clientWidth < el.scrollWidth - 1
       // A trackpad's horizontal swipe arrives as plain deltaX (no Shift).
-      if (dy && el.scrollHeight > el.clientHeight) {
+      if (dy && canY) {
         e.preventDefault()
         scroller.push(0, dy)
       }
-      if (dx && el.scrollWidth > el.clientWidth) {
+      if (dx && canX) {
         e.preventDefault()
         scroller.push(dx, 0)
       }
