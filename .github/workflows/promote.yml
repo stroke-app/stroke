@@ -19,7 +19,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: nightly
+          # The branch, not the `nightly` tag of the same name.
+          ref: refs/heads/nightly
           fetch-depth: 0
 
       - name: Open the release PR
