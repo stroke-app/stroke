@@ -890,6 +890,7 @@ export function describeAiError(err) {
   const diagnosis = routerDiagnosis(payload)
 
   const hintFor = () => {
+    if (noKey) return 'Add the API key for this model in AI settings, then send again.'
     if (status === 401 || status === 403) return 'Check the API key for this provider in AI settings.'
     if (status === 404) return "That model isn't available at this endpoint - pick another in the model picker."
     if (status === 429) return 'Wait a moment and try again, or check your plan and usage limits.'
@@ -902,8 +903,12 @@ export function describeAiError(err) {
     return ''
   }
 
+  // OpenRouter answers a request with no key at all "No cookie auth
+  // credentials found": that is a missing key, not a wrong one.
+  const noKey = (status === 401 || status === 403) && /no cookie auth|no auth credentials|missing (api )?key|no api key|authorization header/i.test(payload)
   const title =
     status === 429 ? 'Rate limit reached'
+    : noKey ? 'No API key was sent'
     : status === 401 || status === 403 ? 'The provider rejected the API key'
     : status === 404 ? 'Model not found at this endpoint'
     : status === 502 || status === 503 || status === 504 ? 'The AI provider is unavailable'
@@ -920,7 +925,11 @@ export function describeAiError(err) {
   // A diagnosis is worth more than the message it wraps - "none of the 6
   // endpoints were tried, all cooling down after 429" beats "Upstream request
   // failed" - so where one exists the shape is unchanged.
-  const hint = diagnosis
+  // A missing key is the exception: the provider's sentence ("No cookie auth
+  // credentials found") is the confusing part, so ours goes first.
+  const hint = noKey
+    ? hintFor()
+    : diagnosis
     ? [diagnosis, hintFor()].filter(Boolean).join(' ')
     : message || hintFor()
   return { title, hint, detail: payloadAddsNothing(payload, hint) ? '' : payload, status }

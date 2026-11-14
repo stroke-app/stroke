@@ -146,3 +146,10 @@ describe('the plan instruction', () => {
     expect(p).toContain('USE does not carry over')
   })
 })
+
+it("a request with no key is called a missing key, not a rejected one", async () => {
+  const { describeAiError } = await import('./ai.js')
+  const f = describeAiError('AI API 401: {"error":{"message":"No cookie auth credentials found","code":401}}')
+  expect(f.title).toBe('No API key was sent')
+  expect(f.hint).toMatch(/Add the API key/)
+})
