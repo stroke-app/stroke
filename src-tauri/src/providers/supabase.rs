@@ -235,9 +235,16 @@ async fn post(token: &str, path: &str, body: &Value) -> Result<Value, String> {
     if !(200..300).contains(&status) {
         let msg = body["message"].as_str().map(String::from).unwrap_or_else(|| text.chars().take(160).collect());
         if status == 403 {
-            return Err(format!(
-                "Supabase refused to create the project ({msg}). Stroke's sign-in may lack the Projects write scope: sign out, sign in again, and allow it."
-            ));
+            // The scopes a Supabase OAuth token carries are the ones enabled on
+            // the OAuth app itself; signing in again only helps once the app
+            // grants Projects: Write.
+            if msg.contains("organization_projects_create") || msg.contains("scope") {
+                return Err(
+                    "Supabase's sign-in for Stroke can browse projects but not create them yet (it lacks the Projects: Write permission). Create the project on supabase.com for now; Stroke lists it here as soon as it exists."
+                        .into(),
+                );
+            }
+            return Err(format!("Supabase refused to create the project ({msg})."));
         }
         return Err(format!("Supabase API error ({status}): {msg}"));
     }
