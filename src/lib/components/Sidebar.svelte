@@ -692,6 +692,17 @@
     // Objects always draws its group headers: an empty group still has its +.
     t !== 'search' && t !== 'queries' && t !== 'objects' && t !== 'tree' && !loadingTables && !!connectionName &&
     tabCounts[t] === 0 && !(t === 'databases' && dbHeld)
+  /**
+   * Tables the display options (Hide empty / Hide system) are keeping out of
+   * the list. A database whose tables were all just created has nothing but
+   * empty ones, and with Hide empty on it read as "No tables" through every
+   * refresh, with nothing saying why.
+   */
+  const hiddenByDisplay = $derived(
+    hideEmpty || hideSystem
+      ? tables.filter((t) => t.kind === 'table' && ((hideEmpty && (t.rowCount ?? 0) === 0) || (hideSystem && (t.system ?? isSystemTable(t.name))))).length
+      : 0,
+  )
   /** True when the tab has rows but the filter hid all of them. @param {SidebarTab} t */
   const isTabEmptyFromFilter = (t) =>
     isTabEmpty(t) &&
@@ -3135,6 +3146,9 @@
                   <p class="mt-1 text-ui-2xs leading-relaxed text-muted-foreground">
                     {#if isTabEmptyFromFilter(lt)}
                       Nothing here matches “{debouncedFilter}”.
+                    {:else if lt === 'tables' && hiddenByDisplay > 0}
+                      {hiddenByDisplay} {hiddenByDisplay === 1 ? 'table is' : 'tables are'} hidden by your
+                      display options ({[hideEmpty && 'empty', hideSystem && 'system'].filter(Boolean).join(' and ')} tables).
                     {:else if lt === 'tables' && activeSchema}
                       Nothing in “{activeSchema}” yet.
                     {:else}
@@ -3142,7 +3156,12 @@
                     {/if}
                   </p>
                 </div>
-                {#if isTabEmptyFromFilter(lt)}
+                {#if lt === 'tables' && !isTabEmptyFromFilter(lt) && hiddenByDisplay > 0}
+                  <Button variant="outline" size="sm" onclick={() => { hideEmpty = false; hideSystem = false }}>
+                    <Icon name="eye" class="size-3.5 shrink-0" />
+                    Show them
+                  </Button>
+                {:else if isTabEmptyFromFilter(lt)}
                   <Button variant="outline" size="sm" onclick={() => handleFilterInput('')}>
                     <Icon name="x" class="size-3.5 shrink-0" />
                     Clear filter
