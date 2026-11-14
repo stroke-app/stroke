@@ -4530,6 +4530,11 @@
                                     spellcheck="false"
                                     class={cn(inp, flashedFields.has("database") && flashCls)}
                                   />
+                                  {#if !database.trim()}
+                                    <p class="mt-1 text-ui-xs text-muted-foreground">
+                                      Blank uses the listener's default, often the root container (CDB$ROOT), which holds only Oracle's own schemas. Your tables are usually in a pluggable database such as FREEPDB1.
+                                    </p>
+                                  {/if}
                                 </div>
                               {/if}
                             {/if}

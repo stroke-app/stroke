@@ -18,6 +18,8 @@
    * @property {string} [placeholder]
    * @property {string} [ariaLabel]
    * @property {import('@codemirror/view').KeyBinding[]} [keys] Extra bindings, checked first.
+   * @property {import('@codemirror/view').KeyBinding[]} [priorityKeys] Bindings ahead of the
+   *   editor's own Enter handling too (a one-line field whose Enter applies it). Set once.
    * @property {string} [lang] Force a language by id ('sql', 'json', 'typescript', 'csv',
    *   'prisma', 'plaintext' ... - see cm-languages.js). Empty guesses JSON or markup from the text.
    * @property {string} [dialect] SQL dialect for `lang="sql"` (the app's Dialect ids).
@@ -60,6 +62,7 @@
     placeholder = '',
     ariaLabel = '',
     keys = [],
+    priorityKeys = [],
     gutter = true,
     lang = '',
     dialect = '',
@@ -859,6 +862,8 @@
         ]),
         colorC.of(colorsFor(get(appEditorTheme))),
         theme,
+        // Ahead of sqlEditing's own highest-precedence Enter.
+        Prec.highest(keymap.of(priorityKeys)),
         sqlEditing(),
         placeholderC.of(placeholderExt(placeholder)),
         EditorView.contentAttributes.of({ 'aria-label': ariaLabel, spellcheck: 'false' }),

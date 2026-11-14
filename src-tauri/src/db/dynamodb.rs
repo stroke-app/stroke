@@ -513,6 +513,7 @@ pub async fn list_tables(cfg: &DynamoConfig) -> Result<Vec<super::schema::TableI
             rls_enabled: None,
             created_at: None,
             create_order: None,
+            system: None,
         })
         .collect())
 }

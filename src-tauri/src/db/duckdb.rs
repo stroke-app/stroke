@@ -265,7 +265,7 @@ pub async fn list_tables(handle: &DuckdbHandle) -> Result<Vec<TableInfo>, String
             // views → 0; base tables get -1 as a "needs count" sentinel, filled below.
             let row_count = if kind == "view" { 0 } else { -1 };
             let create_order = row.get(2).and_then(|v| v.as_i64());
-            tables.push(TableInfo { name, kind: kind.to_string(), row_count, rls_enabled: None, created_at: None, create_order });
+            tables.push(TableInfo { name, kind: kind.to_string(), row_count, rls_enabled: None, created_at: None, create_order, system: None });
         }
 
         // Batch all COUNT(*)s into one UNION ALL statement per chunk instead of a

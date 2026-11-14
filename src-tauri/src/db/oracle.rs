@@ -28,6 +28,48 @@ use std::time::Instant;
 pub struct OracleSession {
     conn: Connection,
     lock: Mutex<()>,
+    /// What the grid needs to know about a table besides its rows, by
+    /// (schema, table). The ALL_* dictionary views behind it are the slow part
+    /// of a page fetch (seconds for a user who sees every schema), and none of
+    /// it changes when you page, sort or filter.
+    meta: Mutex<HashMap<(String, String), (Instant, std::sync::Arc<TableMeta>)>>,
+}
+
+struct TableMeta {
+    structure: Vec<ColumnStructureRow>,
+    is_table: bool,
+    foreign_keys: Vec<ForeignKeyInfo>,
+}
+
+/// A table changed by another client shows up after at most this long.
+const META_TTL: std::time::Duration = std::time::Duration::from_secs(60);
+
+impl OracleSession {
+    fn cached_meta(&self, key: &(String, String)) -> Option<std::sync::Arc<TableMeta>> {
+        let map = self.meta.lock().ok()?;
+        map.get(key).filter(|(at, _)| at.elapsed() < META_TTL).map(|(_, m)| m.clone())
+    }
+
+    fn store_meta(&self, key: (String, String), meta: std::sync::Arc<TableMeta>) {
+        if let Ok(mut map) = self.meta.lock() {
+            map.insert(key, (Instant::now(), meta));
+        }
+    }
+
+    /// Forget every table's catalog facts, after a statement that may have
+    /// changed them.
+    fn forget_meta(&self) {
+        if let Ok(mut map) = self.meta.lock() {
+            map.clear();
+        }
+    }
+}
+
+/// Whether a statement only reads: anything else (DDL, DML, PL/SQL) may
+/// change a table's columns, keys or comments.
+fn reads_only(stmt: &str) -> bool {
+    let head = stmt.trim_start().split(|c: char| !c.is_ascii_alphabetic()).next().unwrap_or("");
+    head.eq_ignore_ascii_case("select") || head.eq_ignore_ascii_case("with")
 }
 
 // ── Oracle Client library ────────────────────────────────────────────────────
@@ -300,7 +342,7 @@ pub async fn connect(cfg: &OracleConfig) -> Result<OracleHandle, String> {
             .connect()
             .map_err(|e| explain_connect_error(&e.to_string()))?;
         conn.execute(SESSION_SETUP, &[]).map_err(|e| format!("Oracle session setup failed: {}", clean_err(&e.to_string())))?;
-        Ok(std::sync::Arc::new(OracleSession { conn, lock: Mutex::new(()) }))
+        Ok(std::sync::Arc::new(OracleSession { conn, lock: Mutex::new(()), meta: Mutex::new(HashMap::new()) }))
     })
     .await
     .map_err(|e| format!("Oracle connect task failed: {e}"))?
@@ -352,6 +394,16 @@ where
     })
     .await
     .map_err(|e| format!("Oracle task failed: {e}"))?
+}
+
+/// The container this session is in: a pluggable database (FREEPDB1) or the
+/// root (CDB$ROOT). On 11g, which has no containers, the database name.
+pub async fn container_name(handle: &OracleHandle) -> Result<String, String> {
+    let r = match query_binds(handle, "SELECT SYS_CONTEXT('USERENV', 'CON_NAME') FROM DUAL".into(), vec![]).await {
+        Ok(r) => r,
+        Err(_) => query_binds(handle, "SELECT SYS_CONTEXT('USERENV', 'DB_NAME') FROM DUAL".into(), vec![]).await?,
+    };
+    Ok(r.rows.first().and_then(|row| text(row, 0)).unwrap_or_default())
 }
 
 pub async fn ping(handle: &OracleHandle) -> Result<(), String> {
@@ -891,7 +943,8 @@ pub async fn execute_sql(handle: &OracleHandle, sql: &str) -> Result<SqlResult, 
         return Err("Query is empty".into());
     }
     let original = sql.trim().to_string();
-    run_blocking(handle, move |conn| {
+    let writes = !stmts.iter().all(|s| reads_only(s));
+    let out = run_blocking(handle, move |conn| {
         let mut last = None;
         for s in &stmts {
             last = Some(run_commit(conn, s, &[])?);
@@ -900,7 +953,12 @@ pub async fn execute_sql(handle: &OracleHandle, sql: &str) -> Result<SqlResult, 
         out.sql = original;
         Ok(out)
     })
-    .await
+    .await;
+    // Even a failed script may have run its first statements.
+    if writes {
+        handle.forget_meta();
+    }
+    out
 }
 
 /// `execute_sql` for read-only callers (the MCP server at "Read only"): the
@@ -1002,16 +1060,16 @@ pub async fn list_schemas(handle: &OracleHandle) -> Result<Vec<String>, String> 
 const ESTIMATE_THRESHOLD: i64 = 100_000;
 
 pub async fn list_tables(handle: &OracleHandle, schema: &str) -> Result<Vec<TableInfo>, String> {
-    let sql = "SELECT o.OBJECT_NAME, o.OBJECT_TYPE, t.NUM_ROWS, \
-            TO_CHAR(o.CREATED, 'YYYY-MM-DD HH24:MI:SS'), o.OBJECT_ID \
-        FROM ALL_OBJECTS o \
-        LEFT JOIN ALL_TABLES t ON t.OWNER = o.OWNER AND t.TABLE_NAME = o.OBJECT_NAME \
-        WHERE o.OWNER = NVL(:1, SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA')) AND o.OBJECT_TYPE IN ('TABLE', 'VIEW') \
-          AND o.SECONDARY = 'N' AND o.OBJECT_NAME NOT LIKE 'BIN$%' \
-          AND (t.NESTED IS NULL OR t.NESTED = 'NO') \
-          AND (t.IOT_TYPE IS NULL OR t.IOT_TYPE = 'IOT') \
-        ORDER BY o.OBJECT_NAME";
-    let r = query_binds(handle, sql.into(), vec![Bind::Text(schema.to_string())]).await?;
+    // ORACLE_MAINTAINED (12c+) marks Oracle's own objects - the AQ$_, LOGMNR,
+    // MVIEW$ tables that fill SYSTEM - so "Hide system tables" can hide them.
+    // 11g has no such column and gets the list without it.
+    let modern = TABLES_SQL.replace("{maintained}", "o.ORACLE_MAINTAINED");
+    let legacy = TABLES_SQL.replace("{maintained}", "NULL");
+    let binds = vec![Bind::Text(schema.to_string())];
+    let r = match query_binds(handle, modern, binds.clone()).await {
+        Ok(r) => r,
+        Err(_) => query_binds(handle, legacy, binds).await?,
+    };
     Ok(r.rows
         .iter()
         .filter_map(|row| {
@@ -1036,10 +1094,21 @@ pub async fn list_tables(handle: &OracleHandle, schema: &str) -> Result<Vec<Tabl
                 rls_enabled: None,
                 created_at: text(row, 3),
                 create_order: int(row, 4),
+                system: text(row, 5).map(|m| m == "Y"),
             })
         })
         .collect())
 }
+
+const TABLES_SQL: &str = "SELECT o.OBJECT_NAME, o.OBJECT_TYPE, t.NUM_ROWS, \
+            TO_CHAR(o.CREATED, 'YYYY-MM-DD HH24:MI:SS'), o.OBJECT_ID, {maintained} \
+        FROM ALL_OBJECTS o \
+        LEFT JOIN ALL_TABLES t ON t.OWNER = o.OWNER AND t.TABLE_NAME = o.OBJECT_NAME \
+        WHERE o.OWNER = NVL(:1, SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA')) AND o.OBJECT_TYPE IN ('TABLE', 'VIEW') \
+          AND o.SECONDARY = 'N' AND o.OBJECT_NAME NOT LIKE 'BIN$%' \
+          AND (t.NESTED IS NULL OR t.NESTED = 'NO') \
+          AND (t.IOT_TYPE IS NULL OR t.IOT_TYPE = 'IOT') \
+        ORDER BY o.OBJECT_NAME";
 
 /// Exact `COUNT(*)` of one table.
 pub async fn exact_row_count(handle: &OracleHandle, schema: &str, table: &str) -> Result<i64, String> {
@@ -1518,20 +1587,11 @@ pub async fn get_table_rows(
     include_meta: bool,
 ) -> Result<TableRows, String> {
     let t0 = Instant::now();
-    let structure = get_column_structure(handle, schema, table).await?;
-    if structure.is_empty() {
-        return Err(format!("Table {schema}.{table} not found, or you have no access to it"));
-    }
+    let meta = table_meta(handle, schema, table).await?;
+    let structure = &meta.structure;
+    let is_table = meta.is_table;
     let cols: Vec<FilterColumn> = structure.iter().map(|c| FilterColumn { name: c.name.clone(), data_type: c.data_type.clone() }).collect();
     let pk: Vec<String> = structure.iter().filter(|c| c.is_primary_key).map(|c| c.name.clone()).collect();
-    let is_table = query_binds(
-        handle,
-        "SELECT 1 FROM ALL_TABLES WHERE OWNER = NVL(:1, SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA')) AND TABLE_NAME = :2".into(),
-        vec![Bind::Text(schema.into()), Bind::Text(table.into())],
-    )
-    .await
-    .map(|r| !r.rows.is_empty())
-    .unwrap_or(false);
 
     let filters = filters.unwrap_or_default();
     let (where_sql, binds) = build_where(&cols, search.as_deref(), &filters, 1)?;
@@ -1561,7 +1621,7 @@ pub async fn get_table_rows(
             c.auto_generated = s.column_default.as_deref().is_some_and(|d| d.contains(".nextval") || d.contains("ISEQ$$"));
         }
     }
-    let fks = if include_meta { foreign_keys(handle, schema, table).await.unwrap_or_default() } else { Vec::new() };
+    let fks = if include_meta { meta.foreign_keys.clone() } else { Vec::new() };
 
     Ok(TableRows {
         preview_columns: Vec::new(),
@@ -1573,6 +1633,31 @@ pub async fn get_table_rows(
         foreign_keys: fks,
         sql: format!("{data_sql}\n{count_sql}"),
     })
+}
+
+/// A table's columns, whether it is a table (not a view) and its foreign keys:
+/// from the session's cache, or the catalog on a miss.
+async fn table_meta(handle: &OracleHandle, schema: &str, table: &str) -> Result<std::sync::Arc<TableMeta>, String> {
+    let key = (schema.to_string(), table.to_string());
+    if let Some(meta) = handle.cached_meta(&key) {
+        return Ok(meta);
+    }
+    let structure = get_column_structure(handle, schema, table).await?;
+    if structure.is_empty() {
+        return Err(format!("Table {schema}.{table} not found, or you have no access to it"));
+    }
+    let is_table = query_binds(
+        handle,
+        "SELECT 1 FROM ALL_TABLES WHERE OWNER = NVL(:1, SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA')) AND TABLE_NAME = :2".into(),
+        vec![Bind::Text(schema.into()), Bind::Text(table.into())],
+    )
+    .await
+    .map(|r| !r.rows.is_empty())
+    .unwrap_or(false);
+    let foreign_keys = foreign_keys(handle, schema, table).await.unwrap_or_default();
+    let meta = std::sync::Arc::new(TableMeta { structure, is_table, foreign_keys });
+    handle.store_meta(key, meta.clone());
+    Ok(meta)
 }
 
 // ── Row editing ──────────────────────────────────────────────────────────────
@@ -1706,6 +1791,64 @@ pub async fn delete_table_rows(
         out
     })
     .await
+}
+
+/// Against a real server: `STROKE_ORACLE_TEST=user/password@//host:1521/SERVICE
+/// cargo test --lib oracle_live -- --ignored --nocapture`, with a CUSTOMERS
+/// table in that user's schema.
+#[cfg(test)]
+mod live_tests {
+    use super::*;
+
+    fn live_cfg() -> Option<OracleConfig> {
+        let url = std::env::var("STROKE_ORACLE_TEST").ok()?;
+        let (creds, cs) = url.split_once('@')?;
+        let (user, password) = creds.split_once('/')?;
+        Some(OracleConfig {
+            name: "live".into(),
+            host: String::new(),
+            port: 1521,
+            service_name: String::new(),
+            sid: String::new(),
+            connect_string: cs.into(),
+            user: user.into(),
+            password: password.into(),
+            client_lib_dir: std::env::var("STROKE_ORACLE_CLIENT_DIR").unwrap_or_default(),
+        })
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn oracle_live_meta_cache_and_flags() {
+        let Some(cfg) = live_cfg() else { return };
+        let h = connect(&cfg).await.expect("connect");
+        println!("container: {}", container_name(&h).await.unwrap());
+
+        let t = Instant::now();
+        let first = get_table_rows(&h, "", "CUSTOMERS", 100, 0, None, None, None, None, true).await.unwrap();
+        let first_ms = t.elapsed().as_millis();
+        let t = Instant::now();
+        let second = get_table_rows(&h, "", "CUSTOMERS", 100, 0, None, Some("NAME".into()), Some("desc".into()), None, true).await.unwrap();
+        let second_ms = t.elapsed().as_millis();
+        println!("first fetch {first_ms}ms, cached {second_ms}ms, rows {}", second.rows.len());
+        assert_eq!(first.rows.len(), second.rows.len());
+        assert_eq!(second.primary_key, vec!["ID".to_string()]);
+
+        // DDL forgets the cached columns.
+        execute_sql(&h, "ALTER TABLE CUSTOMERS ADD (NOTE VARCHAR2(10))").await.unwrap();
+        let after = get_table_rows(&h, "", "CUSTOMERS", 100, 0, None, None, None, None, true).await.unwrap();
+        execute_sql(&h, "ALTER TABLE CUSTOMERS DROP COLUMN NOTE").await.unwrap();
+        assert!(after.columns.iter().any(|c| c.name == "NOTE"));
+
+        let sql_filter = |v: &str| Some(vec![RowFilter { column: String::new(), op: "sql".into(), value: Some(v.into()), conjunct: None, data_type: None }]);
+        let filtered = get_table_rows(&h, "", "CUSTOMERS", 100, 0, None, None, None, sql_filter("ID < 3"), false).await.unwrap();
+        assert_eq!(filtered.total, 2, "{:?}", filtered.rows);
+        assert_eq!(filtered.rows.len(), 2);
+
+        let tables = list_tables(&h, "").await.unwrap();
+        let mine = tables.iter().find(|t| t.name == "CUSTOMERS").unwrap();
+        assert_eq!(mine.system, Some(false));
+    }
 }
 
 #[cfg(test)]
