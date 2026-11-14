@@ -43,12 +43,6 @@
   /** Tables pointing at each hub, for the pill on its card. */
   const hubRefs = $derived(new Map([...hubs].map((h) => [h, adj.down.get(h)?.size ?? 0])))
   const colCount = $derived(new Map(tables.map((t) => [t.name, t.columns?.length ?? 0])))
-  /** root: points at nothing but is pointed at · linked: points at something · loose: neither. @param {string} id */
-  function roleOf(id) {
-    const up = adj.up.get(id)?.size ?? 0, down = adj.down.get(id)?.size ?? 0
-    return up === 0 && down > 0 ? 'root' : up > 0 ? 'linked' : 'loose'
-  }
-  const ROLE_STRIP = /** @type {Record<string, string>} */ ({ root: 'bg-warning/80', linked: 'bg-info/80', loose: 'bg-muted-foreground/30' })
 
   // ── Row counts ────────────────────────────────────────────────────────────
   // The listing's numbers first, as the sidebar does: an estimate for a table
@@ -417,9 +411,12 @@
 
 <!-- The page pans and zooms under the pointer; the cards are the controls. -->
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+<!-- A faint dot grid that pans and zooms with the drawing: moving around has
+     something to hold on to, without lines competing with the edges. -->
 <div
   bind:this={host}
   class={cn('relative h-full w-full touch-none select-none overflow-hidden bg-background', panning ? 'cursor-grabbing' : 'cursor-grab')}
+  style="background-image: radial-gradient(circle, color-mix(in oklch, var(--foreground) 9%, transparent) 1px, transparent 1.2px); background-size: {24 * cam.k}px {24 * cam.k}px; background-position: {cam.x}px {cam.y}px"
   role="group"
   aria-label="Tables in foreign-key order"
   data-zoom-surface
@@ -438,10 +435,10 @@
     >
       <svg class="pointer-events-none absolute left-0 top-0 overflow-visible" width={L.width} height={L.height} aria-hidden="true">
         <defs>
-          <marker id="rm-arrow-{uid}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto">
+          <marker id="rm-arrow-{uid}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" markerUnits="userSpaceOnUse" orient="auto">
             <path d="M0,1 L9,5 L0,9 z" style="fill: var(--muted-foreground)" />
           </marker>
-          <marker id="rm-arrow-lit-{uid}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto">
+          <marker id="rm-arrow-lit-{uid}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" markerUnits="userSpaceOnUse" orient="auto">
             <path d="M0,1 L9,5 L0,9 z" style="fill: var(--primary)" />
           </marker>
         </defs>
@@ -449,18 +446,20 @@
           <path
             d={e.d}
             fill="none"
-            stroke-width="1.5"
+            stroke-width="1.25"
             stroke-linejoin="round"
+            stroke-linecap="round"
             marker-end="url(#rm-arrow-{uid})"
-            style="stroke: var(--muted-foreground); opacity: {dimEdge(e) ? 0.12 : 0.55}; transition: opacity 150ms"
+            style="stroke: var(--muted-foreground); opacity: {dimEdge(e) ? 0.1 : 0.4}; transition: opacity 150ms"
           />
         {/each}
         {#each edgesFront as e (e.id)}
           <path
             d={e.d}
             fill="none"
-            stroke-width="2"
+            stroke-width="1.75"
             stroke-linejoin="round"
+            stroke-linecap="round"
             marker-end="url(#rm-arrow-lit-{uid})"
             style="stroke: var(--primary)"
           />
@@ -481,15 +480,15 @@
           {@const n = rowCounts.get(t.name)}
           {@const isSel = selected === t.name}
           {@const refs = hideHubs ? hubRefs.get(t.name) : undefined}
-          {@const role = roleOf(t.name)}
-          {@const upN = adj.up.get(t.name)?.size ?? 0}
           {@const downN = adj.down.get(t.name)?.size ?? 0}
           <button
             type="button"
             data-card
             class={cn(
-              'group/card absolute flex cursor-pointer flex-col justify-center gap-1.5 overflow-hidden rounded-lg border bg-card pl-4 pr-3 text-left text-foreground transition-[opacity,border-color,box-shadow,background-color] duration-150 hover:border-foreground/30 hover:bg-accent/40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring',
-              isSel ? 'border-primary ring-2 ring-primary/30' : lit?.has(t.name) ? 'border-primary/50' : 'border-border/70',
+              // A raised card on the dot grid: border for its edge, a low layered
+              // shadow for lift. No colour strip; the lines say how it relates.
+              'group/card absolute flex cursor-pointer flex-col justify-center gap-1.5 overflow-hidden rounded-lg border bg-card px-3 text-left text-foreground shadow-[0_1px_2px_rgb(0_0_0/0.06),0_2px_8px_-2px_rgb(0_0_0/0.08)] transition-[opacity,border-color,box-shadow] duration-150 hover:border-foreground/25 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring',
+              isSel ? 'border-primary ring-2 ring-primary/25' : lit?.has(t.name) ? 'border-primary/50' : 'border-border/70',
               dimCard(t.name) && 'opacity-25',
             )}
             style="left: {p.x}px; top: {p.y}px; width: {s.w}px; height: {s.h}px"
@@ -504,19 +503,23 @@
             onfocus={() => (hovered = t.name)}
             onblur={() => { if (hovered === t.name) hovered = null }}
           >
-            <!-- Role strip: roots (point at nothing) amber, linked blue, loose grey. -->
-            <span class="absolute inset-y-0 left-0 w-1 {ROLE_STRIP[role]}" aria-hidden="true"></span>
             <span class="flex min-w-0 items-center gap-1.5">
               <Table2 class="size-3.5 shrink-0 text-muted-foreground" />
               <span class="min-w-0 truncate font-mono text-ui-xs font-medium leading-tight">{t.name}</span>
             </span>
             <span class="flex min-w-0 items-center gap-1.5 whitespace-nowrap pl-5 text-ui-2xs leading-none text-muted-foreground">
               <span class="min-w-0 truncate tabular-nums">{colCount.get(t.name) ?? 0} {plural(colCount.get(t.name) ?? 0, 'col')}{#if n !== undefined} · {formatTableRowCount(n)} {plural(n, 'row')}{/if}</span>
-              <span class="ml-auto flex shrink-0 items-center gap-1.5 tabular-nums" title="Points at {upN}, pointed at by {downN}">
-                {#if upN}<span>↑{upN}</span>{/if}
-                {#if downN}<span>↓{downN}</span>{/if}
-              </span>
+              {#if downN}
+                <span class="ml-auto shrink-0 tabular-nums" title="{downN} {plural(downN, 'table')} point at {t.name}">used by {downN}</span>
+              {/if}
             </span>
+            <!-- Size at a glance: row count on a log scale, so a 10-row table
+                 still shows beside a 10M-row one. -->
+            {#if n !== undefined && n > 0}
+              <span class="absolute inset-x-3 bottom-0 h-0.5 overflow-hidden rounded-full bg-border/40" aria-hidden="true">
+                <span class="block h-full rounded-full bg-muted-foreground/45" style="width: {barPct(n)}%"></span>
+              </span>
+            {/if}
             {#if refs}
               <span
                 class="pointer-events-none absolute right-2 top-1.5 rounded-sm bg-info/15 px-1 font-mono text-ui-3xs leading-4 tabular-nums text-info"
