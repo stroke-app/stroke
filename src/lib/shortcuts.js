@@ -143,6 +143,7 @@ export const SHORTCUT_GROUPS = [
       { combo: 'Mod+Shift+O', desc: 'ORM runner', id: 'view.orm' },
       { combo: 'Mod+J', desc: 'Toggle the terminal panel', id: 'view.terminalDock' },
       { combo: 'Control+`', desc: 'Terminal in a tab (psql, mysql, sqlite3...)', id: 'view.terminal' },
+      { combo: 'Control+Shift+`', desc: 'New terminal tab', id: 'view.terminalNew' },
       { combo: 'Mod+Shift+X', desc: 'Extensions', id: 'view.extensions' },
       { combo: 'Mod+Shift+E', desc: 'Toggle AI panel', id: 'ai.panel' },
       { combo: 'Mod+I', desc: 'Toggle AI sidebar', id: 'ai.sidebar' },

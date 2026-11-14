@@ -24,6 +24,7 @@
   import Command from '@lucide/svelte/icons/command'
   import X from '@lucide/svelte/icons/x'
   import RotateCw from '@lucide/svelte/icons/rotate-cw'
+  import Plus from '@lucide/svelte/icons/plus'
   import Eraser from '@lucide/svelte/icons/eraser'
   import Copy from '@lucide/svelte/icons/copy'
   import Check from '@lucide/svelte/icons/check'
@@ -66,6 +67,8 @@
     prewarm = false,
     /** @type {(() => void) | undefined} */
     onclose = undefined,
+    /** Open another terminal tab beside this one. @type {(() => void) | undefined} */
+    onnew = undefined,
   } = $props()
 
   /** @typedef {'idle' | 'checking' | 'unsupported' | 'missing' | 'failed' | 'starting' | 'running' | 'exited'} Phase */
@@ -1425,6 +1428,17 @@
       >
         <RotateCw class="size-3.5 shrink-0" />
       </button>
+      {#if onnew}
+        <button
+          type="button"
+          class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          title="New terminal (Ctrl+Shift+`)"
+          aria-label="New terminal"
+          onclick={onnew}
+        >
+          <Plus class="size-3.5 shrink-0" />
+        </button>
+      {/if}
       {#if onclose}
         <button
           type="button"

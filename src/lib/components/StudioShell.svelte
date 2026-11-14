@@ -858,7 +858,6 @@
   let securityEverOpened = $state(false)
   let logsEverOpened = $state(false)
   /** The terminal page lives exactly as long as its tab, and its client with it. */
-  const hasTerminalTab = $derived(tabs.some((t) => t.kind === 'terminal'))
   /** The welcome page's tiles: six when connected (two rows of three), four otherwise and for Redis. */
   const welcomeTileCount = $derived(connection ? 6 : 4)
   /** Welcome tile icon colours: theme tokens, written out whole so Tailwind sees them. */
@@ -2964,6 +2963,13 @@ let rowSearch = $state('')
     openTerminalTab()
   })
 
+  createCommandHotkey('view.terminalNew', (e) => {
+    if (!connection) return
+    e.preventDefault()
+    if (aiMode) exitAiMode()
+    openNewTerminalTab()
+  })
+
   // Tab-bar visibility toggle moved here so Mod+Shift+T can reopen closed tabs.
   createCommandHotkey('view.tabBar', (e) => {
     e.preventDefault()
@@ -4093,6 +4099,18 @@ let rowSearch = $state('')
     saveActiveTabState()
     dropWelcomeTabs()
     const tab = createTerminalTab()
+    tabs = [...tabs, tab]
+    activeTabId = tab.id
+    clearTableEditor()
+  }
+
+  /** Another terminal tab: a second psql beside the first, numbered. */
+  function openNewTerminalTab() {
+    if (!connection) return
+    saveActiveTabState()
+    dropWelcomeTabs()
+    const n = tabs.filter((t) => t.kind === 'terminal').length + 1
+    const tab = { ...createTerminalTab(), title: n > 1 ? `Terminal ${n}` : 'Terminal' }
     tabs = [...tabs, tab]
     activeTabId = tab.id
     clearTableEditor()
@@ -8935,6 +8953,7 @@ let rowSearch = $state('')
   onopensecurity={() => { if (aiMode) exitAiMode(); openSecurityTab() }}
   onopenlogs={() => { if (aiMode) exitAiMode(); openLogsTab() }}
   onopenterminal={() => { if (aiMode) exitAiMode(); if (!terminalDockOpen) toggleTerminalDock() }}
+  onnewterminal={() => { commandOpen = false; if (aiMode) exitAiMode(); openNewTerminalTab() }}
   onopeninsights={() => { if (aiMode) exitAiMode(); openInsightsTab() }}
   onopenadvisor={() => { if (aiMode) exitAiMode(); openAdvisorTab() }}
   onopenobjects={() => { if (aiMode) exitAiMode(); openObjectsTab() }}
@@ -9523,18 +9542,20 @@ let rowSearch = $state('')
 
       <!-- Terminal tab - mounted only while the tab exists: closing the tab
            unmounts the page, which kills its psql (and frees the connection). -->
-      {#if hasTerminalTab}
+      <!-- One page per terminal tab, each its own session: a second psql runs
+           beside the first, and closing a tab ends only its own. -->
+      {#each tabs.filter((t) => t.kind === 'terminal') as tt (tt.id)}
         <div
-          class={activeTab?.kind === 'terminal' ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}
-          inert={activeTab?.kind !== 'terminal' || undefined}
+          class={activeTabId === tt.id ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}
+          inert={activeTabId !== tt.id || undefined}
         >
           <svelte:boundary failed={tabError}>
             {#await import('./TerminalPage.svelte')}<TabLoading />{:then { default: TerminalPage }}
-              <TerminalPage active={activeTab?.kind === 'terminal'} {connection} {dbType} getHints={buildSqlHints} />
+              <TerminalPage active={activeTabId === tt.id} {connection} {dbType} getHints={buildSqlHints} onnew={openNewTerminalTab} />
             {/await}
           </svelte:boundary>
         </div>
-      {/if}
+      {/each}
 
       <!-- Instance Insights tab - mount once, keep alive -->
       {#if insightsEverOpened}
