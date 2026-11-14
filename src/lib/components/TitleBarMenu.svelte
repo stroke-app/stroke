@@ -44,7 +44,7 @@
 <DropdownMenu.Root>
   <DropdownMenu.Trigger
     class={cn(
-      'relative inline-flex size-7 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:text-foreground data-[state=open]:text-foreground',
+      'relative inline-flex size-7 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-[color,scale] duration-[120ms] ease-[var(--ease-out)] hover:text-foreground active:scale-[0.94] data-[state=open]:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring',
       className,
     )}
     title="Account and settings"

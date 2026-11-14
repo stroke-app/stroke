@@ -207,7 +207,7 @@
     'inline-flex h-6 min-w-7 items-center justify-center rounded-md px-1 font-mono text-ui-2xs transition-colors',
     on ? 'bg-primary/15 font-medium text-foreground ring-1 ring-primary/30' : 'text-muted-foreground hover:bg-accent hover:text-foreground',
   )
-  const iconBtn = 'hit-area inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground'
+  const iconBtn = 'hit-area inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-[color,background-color,scale] duration-[120ms] ease-[var(--ease-out)] active:scale-[0.97] hover:bg-accent hover:text-foreground'
   const sectionHead = 'flex items-center gap-2'
   const grid = 'grid grid-cols-[1.25rem_minmax(0,1fr)_minmax(0,1.15fr)_auto_minmax(0,0.9fr)_3.25rem] items-center gap-1'
 </script>

@@ -122,7 +122,7 @@
     return 1 / getAppScale()
   })
 
-  const iconBtn = 'inline-flex size-[calc(28px*var(--app-scale))] items-center justify-center rounded-md text-muted-foreground hover:text-foreground'
+  const iconBtn = 'inline-flex size-[calc(28px*var(--app-scale))] items-center justify-center rounded-md text-muted-foreground transition-[color,scale] duration-[120ms] ease-[var(--ease-out)] hover:text-foreground active:scale-[0.97]'
 </script>
 
 <!--

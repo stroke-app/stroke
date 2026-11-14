@@ -133,7 +133,7 @@
     if (!r.ok) toast.error('Could not sign out', { description: r.error })
   }
   const LINK_ERRORS = /** @type {Record<string, string>} */ ({
-    key_owned_elsewhere: 'The license key on this device belongs to another account. It still works here.',
+    key_owned_elsewhere: 'The license on this device was bought with another account, so this account is on the free trial. Sign in with the account that bought it to use it here.',
     revoked: 'The license key on this device has been revoked.',
     not_found: 'The license key on this device was not found on the server.',
     invalid_key: 'The license key on this device could not be linked.',

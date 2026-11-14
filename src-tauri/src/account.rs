@@ -369,7 +369,30 @@ pub fn apply_account(dir: &Path, local: LicenseStatus) -> LicenseStatus {
     if matches!(local, LicenseStatus::Error { .. }) {
         return local;
     }
+    // A key bought by another account doesn't make this account Pro: signed
+    // in as someone else, this device is on the trial (or that account's own
+    // plan). Signed out, the key works as it always has.
+    let local = if matches!(local, LicenseStatus::Valid { .. }) && key_owned_by_other_account(dir) {
+        crate::license::trial_status(dir)
+    } else {
+        local
+    };
     combine(local, account_license_status(dir))
+}
+
+/// Signed in, and the server said the license key on this device belongs to a
+/// different account. Only for the key it said that about: a new key is asked
+/// about afresh.
+fn key_owned_by_other_account(dir: &Path) -> bool {
+    let Some(c) = read_cache(dir) else { return false };
+    if c.link_error.as_deref() != Some("key_owned_elsewhere") {
+        return false;
+    }
+    if c.device_id.as_deref().is_some_and(|d| d != crate::license::device_id()) {
+        return false;
+    }
+    let Some(lic) = crate::license::load_license(dir) else { return false };
+    c.linked_key_hash.as_deref() == Some(crate::license::key_hash(&lic.key).as_str())
 }
 
 // ── New-install detection ─────────────────────────────────────────────────────

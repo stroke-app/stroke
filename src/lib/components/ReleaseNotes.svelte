@@ -76,8 +76,11 @@
         </h3>
         <ul class={cn('flex flex-col', compact ? 'gap-1.5' : 'gap-2')}>
           {#each grouped[b.id] as item, i (i)}
-            <li class="flex items-baseline gap-2.5 ps-3.5">
-              <span class="min-w-0 flex-1 text-pretty text-ui-sm leading-relaxed text-foreground/90">
+            <li class="flex items-baseline gap-2.5 ps-0.5">
+              <!-- A small marker, so a list of long lines reads as separate
+                   changes rather than one paragraph. -->
+              <span class="size-1 shrink-0 translate-y-[-0.2em] rounded-full bg-muted-foreground/50" aria-hidden="true"></span>
+              <span class={cn('min-w-0 flex-1 text-pretty leading-relaxed text-foreground/90', compact ? 'text-ui-xs' : 'text-ui-sm')}>
                 {#each parts(item.text) as p, k (k)}
                   {#if p.code}<code class="rounded-md bg-muted/60 px-1 py-px font-mono text-ui-xs text-foreground">{p.text}</code>{:else}{p.text}{/if}
                 {/each}

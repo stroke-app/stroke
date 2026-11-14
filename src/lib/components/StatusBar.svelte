@@ -386,7 +386,7 @@
     })
   }
 
-  const iconBtn = 'inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-sidebar-accent/60 hover:text-foreground'
+  const iconBtn = 'inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-[color,background-color,scale] duration-[120ms] ease-[var(--ease-out)] active:scale-[0.97] hover:bg-sidebar-accent/60 hover:text-foreground'
   /** Shared label+icon button */
   const labelBtn = 'flex h-7 items-center gap-2 rounded-md px-2.5 text-ui-xs hover:bg-sidebar-accent/60 hover:text-foreground data-[state=open]:bg-sidebar-accent/60 data-[state=open]:text-foreground'
 
@@ -897,8 +897,10 @@
 
     {#if !sidebarWidth}{@render globalTools()}{@render sep()}{/if}
 
-    <!-- Update badge -->
-    {#if hasUpdate}
+    <!-- Update badge: only while the sidebar is hidden. With it open, the
+         sidebar's own Update pill says the same thing, and two buttons for one
+         update read as two updates. -->
+    {#if hasUpdate && !sidebarWidth}
       <button
         type="button"
         class="flex h-7 items-center gap-2 rounded-md px-2.5 text-ui-xs font-medium text-warning transition-colors hover:bg-muted/50 hover:text-warning"

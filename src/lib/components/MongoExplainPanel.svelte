@@ -57,7 +57,7 @@
   const num = (n) => (n == null ? '—' : n.toLocaleString())
   /** @param {any} kp */
   const keyText = (kp) => (kp ? Object.entries(kp).map(([k, v]) => `${k} ${v === -1 ? '↓' : v === 1 ? '↑' : v}`).join(', ') : '')
-  const iconBtn = 'inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40'
+  const iconBtn = 'inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-[color,background-color,scale] duration-[120ms] ease-[var(--ease-out)] active:scale-[0.97] hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40'
 </script>
 
 <div class="flex min-h-0 flex-1 flex-col">
