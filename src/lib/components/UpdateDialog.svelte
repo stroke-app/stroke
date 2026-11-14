@@ -22,6 +22,8 @@
   let {
     /** An update was found ('available'), or is downloaded and waiting ('ready'). */
     onupdatefound = /** @type {(state: 'available' | 'ready') => void} */ ((_state) => {}),
+    /** A manual check is running: the sidebar's update button spins (T3: no dialog for checking). */
+    onchecking = /** @type {(checking: boolean) => void} */ ((_c) => {}),
     /** A What's new highlight's button. @type {(id: import('$lib/whats-new.js').HighlightAction) => void} */
     onwhatsnewaction = () => {},
   } = $props()
@@ -58,9 +60,34 @@
     status = 'idle'
     errorMsg = ''
     checking = true
-    await checkForUpdate(true)
-    if (status === 'idle') status = 'up-to-date'
-    checking = false
+    onchecking(true)
+    // T3's pattern: checking is a spinner on the button, not a dialog; the
+    // answer is a toast. Only a found update opens anything.
+    let failure = /** @type {unknown} */ (null)
+    try {
+      const info = await updateCheck()
+      if (info?.staged) markReady(info, false)
+      else if (info) {
+        adopt(info)
+        status = 'available'
+        onupdatefound('available')
+      }
+    } catch (e) {
+      failure = e
+    } finally {
+      checking = false
+      onchecking(false)
+    }
+    if (failure) {
+      toast.error("Couldn't check for updates", {
+        description: failure instanceof Error ? failure.message : String(failure),
+        action: { label: 'Retry', onClick: () => void checkNow() },
+      })
+    } else if (status === 'idle') {
+      let v = ''
+      try { v = await (await import('@tauri-apps/api/app')).getVersion() } catch { /* dev */ }
+      toast.success('Stroke is up to date', { description: v ? `You're on v${v}.` : undefined })
+    }
   }
 
   const visible = $derived(
@@ -68,9 +95,7 @@
     (status === 'available' ||
      status === 'downloading' ||
      status === 'ready' ||
-     status === 'error' ||
-     status === 'up-to-date' ||
-     checking),
+     status === 'error'),
   )
 
   /** @param {number} bytes */
