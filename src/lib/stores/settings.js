@@ -1498,12 +1498,16 @@ export function previewTheme(id) {
   const root = document.documentElement
   const theme = normalizeThemeId(id)
   const dark = isDarkTheme(theme)
+  // Each step through the picker is a theme switch: with transitions on, every
+  // control faded on its own clock per step, which is the lag on Windows/Linux.
+  const resume = document.body ? pauseTransitions() : null
   if (theme === 'custom') applyCustomTheme(undefined, { persist: false })
   setAttr(root, 'data-theme', theme)
   if (root.classList.contains('dark') !== dark) root.classList.toggle('dark', dark)
   syncWindowGlass(theme)
   // index.html's inline boot colour would otherwise outlive the preview.
   root.style.backgroundColor = ''
+  resume?.()
   // Everything CSS-driven repaints from the attribute above, right away. The
   // JS-driven followers (mode-watcher, charts, editor, logo) are settled once
   // the highlight rests: holding an arrow key walks a row per key repeat, and

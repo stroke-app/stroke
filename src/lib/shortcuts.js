@@ -266,6 +266,7 @@ export const SHORTCUT_GROUPS = [
       { combo: 'Mod+B', desc: 'Toggle sidebar', id: 'view.sidebar' },
       { combo: 'Alt+Shift+T', desc: 'Toggle tab bar', id: 'view.tabBar' },
       { combo: 'Mod+Shift+B', desc: 'Toggle status bar (the SQL editor and AI chat use it for their lists)', id: 'view.statusBar' },
+      { combo: 'Mod+Alt+T', desc: 'Theme picker', id: 'theme.pick' },
       // Unbound by default: set them in Settings → Keyboard if you want them.
       { combo: '', desc: 'Cycle theme', id: 'theme.next' },
       { combo: '', desc: 'Previous theme', id: 'theme.prev' },

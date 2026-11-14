@@ -2248,6 +2248,7 @@
    * close guard stops treating the form as dirty.
    */
   function handleSave() {
+    if (isProviderTab) return; // nothing in the form to save; pick a database
     if (!editingId && saved.length >= maxConnections) {
       failWith(
         `Free plan allows ${maxConnections} saved connections. Upgrade to Stroke Pro for unlimited.`,
@@ -2289,6 +2290,12 @@
    * @param {{ save?: boolean }} [opts]
    */
   async function handleConnect(opts = {}) {
+    // A provider (TiDB Cloud, Neon, D1...) connects by picking a database in its
+    // panel; the form behind it is empty, so dialling it hit 127.0.0.1.
+    if (isProviderTab) {
+      failWith("Pick a database above to connect.");
+      return;
+    }
     const save = opts.save !== false;
     if (save && !editingId && saved.length >= maxConnections) {
       failWith(
@@ -2313,25 +2320,16 @@
     try {
       const existing = editingId ? saved.find((s) => s.id === editingId) : null;
       const id = existing?.id ?? newConnectionId();
-      // Persist BEFORE dialling. Everything the user typed is worth keeping the
-      // moment they commit to it, and a connect can fail for reasons that have
-      // nothing to do with what they entered - no network, VPN down, server
-      // asleep. Saving only on success meant a dropped connection threw the
-      // whole form away and they had to retype it, which is what made
-      // connections look like they were disappearing after being saved.
-      // lastConnectedAt stays at its previous value so a failed attempt does not
-      // jump the row to the top of the recents list or turn it into "Resume".
-      if (save) {
-        saved = upsertConnection(
-          buildSavedConn(payload, id, existing?.lastConnectedAt),
-        ).sort(byLastConnected);
-        editingId = id;
-      }
+      // Saved only once the connection works. Saving before dialling kept
+      // failed attempts (a wrong host, a provider default of 127.0.0.1) in the
+      // list and synced them to every device. A failed attempt keeps the form
+      // open with everything typed, and Save files it without connecting.
       await openConnection(payload);
       if (myOp !== opId) return; // cancelled by the user
       const saved_conn = buildSavedConn(payload, id, Date.now());
       if (save) {
         saved = upsertConnection(saved_conn).sort(byLastConnected);
+        editingId = id;
         setLastConnectionId(id);
       }
       open = false;
@@ -5032,7 +5030,7 @@
                     {#if !editingId || isDirty || justSaved}
                       <Button
                         variant="outline"
-                        disabled={isBusy || justSaved}
+                        disabled={isBusy || justSaved || isProviderTab}
                         onclick={handleSave}
                       >
                         {#if justSaved}<Icon
@@ -5047,8 +5045,8 @@
                         connecting === (editingId ?? "__new__") &&
                           "disabled:opacity-90",
                       )}
-                      disabled={isBusy}
-                      title="Connect (↵)"
+                      disabled={isBusy || isProviderTab}
+                      title={isProviderTab ? "Pick a database above to connect" : "Connect (↵)"}
                       onclick={() => void handleConnect()}
                     >
                       {#if connecting === (editingId ?? "__new__")}

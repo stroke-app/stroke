@@ -41,7 +41,7 @@
 <div class={cn('fixed inset-0 z-[9999] flex flex-col bg-background transition-opacity duration-200 ease-out', leaving && 'opacity-0')}>
   <!-- Bare title bar: this screen replaces the app, TitleBar included. -->
   <div
-    class="flex h-[52px] shrink-0 items-center px-[10px] select-none"
+    class="flex shrink-0 items-center select-none {isMac ? 'h-[52px] px-[10px]' : 'h-10 pl-[10px]'}"
     data-tauri-drag-region
     role="toolbar"
     aria-label="Window title bar"

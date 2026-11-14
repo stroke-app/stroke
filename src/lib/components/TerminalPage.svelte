@@ -74,6 +74,20 @@
   /** The CLI that is missing while the built-in prompt stands in for it. */
   let missingClient = $state(/** @type {{ name: string, hint?: string } | null} */ (null))
   let installing = $state(false)
+  /** The "not installed" bar over the built-in prompt; closing it keeps it closed for this tab. */
+  let noticeDismissed = $state(false)
+  let installHintOpen = $state(false)
+  let installNoticeH = $state(0)
+  const showInstallNotice = $derived(!!missingClient && phase === 'running' && !noticeDismissed)
+  /** One click installs it (Homebrew, winget, the distro's manager); otherwise the hint is advice to read. */
+  const missingInstallable = $derived(/^(brew|winget|sudo|apt|pacman|dnf) /.test(missingClient?.hint ?? ''))
+  // The bar takes room at the top: re-fit so the prompt's rows match the space.
+  $effect(() => {
+    void showInstallNotice
+    void installNoticeH
+    const raf = requestAnimationFrame(() => fit())
+    return () => cancelAnimationFrame(raf)
+  })
   let installError = $state('')
   let client = $state(/** @type {import('$lib/api.js').TerminalClient | null} */ (null))
   /** Engines with no interactive CLI get the app's own SQL prompt instead. */
@@ -344,7 +358,8 @@
       // install alongside. Engines with no built-in prompt keep the page.
       if (!NON_SQL.has(dbType)) {
         missingClient = { name: info.name, hint: info.hint }
-        startBuiltinPrompt(`${info.name} is not installed, so this is the built-in prompt. Install ${info.name} (corner button) for its own commands.`)
+        // The bar above the prompt says why and offers the install.
+        startBuiltinPrompt()
         return
       }
       phase = 'missing'
@@ -1237,7 +1252,13 @@
     })
     resizeObserver.observe(termEl)
     // Theme, font preset and zoom all land as attributes on <html>.
-    themeObserver = new MutationObserver(() => applyAppearance())
+    // One repaint per frame: a theme switch (or a preview step) changes several
+    // <html> attributes, and each read here forces a style recalculation.
+    let appearanceFrame = 0
+    themeObserver = new MutationObserver(() => {
+      cancelAnimationFrame(appearanceFrame)
+      appearanceFrame = requestAnimationFrame(() => applyAppearance())
+    })
     themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class', 'style'] })
     // The editor font is a web font: measure the cells again once it is in.
     void remeasure()
@@ -1436,7 +1457,45 @@
         <button type="button" class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" title="Close (Esc)" aria-label="Close find" onclick={closeFind}><X class="size-3.5 shrink-0" /></button>
       </div>
     {/if}
-    <div class="absolute inset-0 pt-2 pr-1 pb-1 pl-3">
+    {#if showInstallNotice && missingClient}
+      <!-- Says what is going on and offers the one next step, above the prompt
+           instead of floating over its output. -->
+      <div class="absolute inset-x-0 top-0 z-10 flex min-h-9 flex-col justify-center border-b border-border/50 bg-muted/30 px-3 py-1.5" role="status" bind:clientHeight={installNoticeH}>
+        <div class="flex items-center gap-3">
+          <Icon name="info" class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+          <p class="min-w-0 flex-1 truncate text-ui-xs text-muted-foreground">
+            <span class="font-mono text-foreground">{missingClient.name}</span> isn't installed, so this is Stroke's built-in prompt.
+          </p>
+          {#if missingInstallable}
+            <Button size="sm" class="h-7 shrink-0 gap-1.5" disabled={installing} title={missingClient.hint ?? ''} onclick={() => void installClient()}>
+              {#if installing}
+                <Icon name="loader-2" class="size-3.5 shrink-0 animate-spin" />Installing…
+              {:else}
+                <Icon name="download" class="size-3.5 shrink-0" />Install {missingClient.name}
+              {/if}
+            </Button>
+          {:else if missingClient.hint}
+            <Button variant="ghost" size="sm" class="h-7 shrink-0" aria-expanded={installHintOpen} onclick={() => (installHintOpen = !installHintOpen)}>
+              How to install
+            </Button>
+          {/if}
+          <button
+            type="button"
+            class="-me-1 inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            aria-label="Dismiss"
+            title="Dismiss"
+            onclick={() => (noticeDismissed = true)}
+          ><X class="size-3.5 shrink-0" /></button>
+        </div>
+        {#if installHintOpen && !missingInstallable && missingClient.hint}
+          <p class="mt-1 ps-6.5 pe-8 text-ui-xs leading-relaxed text-pretty text-muted-foreground select-text">{missingClient.hint}</p>
+        {/if}
+        {#if installError}
+          <p class="mt-1 ps-6.5 pe-8 font-mono text-ui-2xs whitespace-pre-wrap text-destructive select-text">{installError}</p>
+        {/if}
+      </div>
+    {/if}
+    <div class="absolute inset-x-0 bottom-0 pt-2 pr-1 pb-1 pl-3" style:top={showInstallNotice ? `${installNoticeH}px` : '0'}>
       <div
         bind:this={termEl}
         class="size-full"
@@ -1483,26 +1542,6 @@
       </button>
     {/if}
 
-    {#if missingClient && phase === 'running'}
-      <div class="absolute right-3 bottom-3 z-10 flex max-w-sm flex-col items-end gap-1.5">
-        {#if installError}
-          <p class="rounded-md border border-destructive/30 bg-popover px-2.5 py-1.5 text-left font-mono text-ui-2xs whitespace-pre-wrap text-destructive elevate-2-rim">{installError}</p>
-        {/if}
-        <button
-          type="button"
-          disabled={installing}
-          class="inline-flex h-7 items-center gap-1.5 rounded-md border border-border/60 bg-popover px-2.5 text-ui-xs text-foreground elevate-2-rim transition-colors hover:bg-accent disabled:opacity-60"
-          title={missingClient.hint ?? ''}
-          onclick={() => void installClient()}
-        >
-          {#if installing}
-            <Icon name="loader-2" class="size-3.5 shrink-0 animate-spin" /> Installing {missingClient.name}…
-          {:else}
-            <Icon name="download" class="size-3.5 shrink-0" /> Install {missingClient.name}
-          {/if}
-        </button>
-      </div>
-    {/if}
 
     {#if phase === 'unsupported' || phase === 'missing' || phase === 'failed'}
       <div class="absolute inset-0 flex items-center justify-center bg-panel p-6">

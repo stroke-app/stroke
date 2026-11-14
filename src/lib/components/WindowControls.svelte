@@ -47,28 +47,32 @@
   const toggleMaximizeWindow = () => windowAction('toggleMaximize', (w) => w.toggleMaximize())
   const closeWindow = () => windowAction('close', (w) => w.close())
 
-  const winBtn = 'inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors duration-150 hover:bg-foreground/[0.08] hover:text-foreground'
+  // Windows' own caption buttons: 46px wide, the bar's full height, square, a
+  // light fill on hover and red behind close. The small rounded icon buttons
+  // read as app toolbar buttons, not as the window's.
+  const winBtn = 'inline-flex h-full w-[46px] items-center justify-center text-foreground/75 transition-colors duration-100 hover:bg-foreground/[0.08] hover:text-foreground active:bg-foreground/[0.14]'
 </script>
 
 {#if isTauri && !isMac}
-  <div class="flex shrink-0 items-center gap-2.5">
-    <button type="button" class={winBtn} onclick={minimizeWindow} title="Minimize">
-      <Minus class="size-3.5 shrink-0" />
+  <div class="flex shrink-0 self-stretch">
+    <button type="button" class={winBtn} onclick={minimizeWindow} title="Minimize" aria-label="Minimize">
+      <Minus class="size-4 shrink-0" strokeWidth={1.25} />
     </button>
-    <button type="button" class={winBtn} onclick={toggleMaximizeWindow} title={isMaximized ? 'Restore' : 'Maximize'}>
+    <button type="button" class={winBtn} onclick={toggleMaximizeWindow} title={isMaximized ? 'Restore' : 'Maximize'} aria-label={isMaximized ? 'Restore' : 'Maximize'}>
       {#if isMaximized}
-        <Copy class="size-3 shrink-0" />
+        <Copy class="size-3.5 shrink-0" strokeWidth={1.25} />
       {:else}
-        <Square class="size-3 shrink-0" />
+        <Square class="size-3 shrink-0" strokeWidth={1.25} />
       {/if}
     </button>
     <button
       type="button"
-      class={cn(winBtn, 'hover:bg-[#e81123] hover:text-white')}
+      class={cn(winBtn, 'hover:bg-[#c42b1c] hover:text-white active:bg-[#c42b1c]/85')}
       onclick={closeWindow}
       title="Close"
+      aria-label="Close"
     >
-      <X class="size-3.5 shrink-0" />
+      <X class="size-4 shrink-0" strokeWidth={1.25} />
     </button>
   </div>
 {/if}
