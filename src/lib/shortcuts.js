@@ -109,6 +109,7 @@ export const SHORTCUT_GROUPS = [
       { combo: 'Mod+Alt+1-9', desc: 'Switch to saved connection', id: 'connection.switchTo', items: [1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `Switch to saved connection ${n}`) },
       { combo: 'Mod+P', desc: 'Search tables', id: 'palette.tables' },
       { combo: 'Mod+T', desc: 'Search tables (alternate key)', id: 'palette.tablesAlt' },
+      { combo: 'Mod+;', desc: 'Leader key: then a letter or number (a panel lists them)', id: 'leader' },
       { combo: 'Mod+N', desc: 'New tab', id: 'tab.new' },
       { combo: 'Mod+W', desc: 'Close tab', id: 'tab.close' },
       { combo: 'Mod+Shift+W', desc: 'Close all tabs', id: 'tab.closeAll' },
