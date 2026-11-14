@@ -15,6 +15,8 @@
   import ConfirmDialog from './ConfirmDialog.svelte'
   import { rowsToCsv, saveExportFile, buildExportFilename } from '$lib/export.js'
   import Kbd from './Kbd.svelte'
+  import { matchesCommand } from '$lib/command-hotkey.js'
+  import { isTypingTarget } from '$lib/focus-search.js'
   import DataTable from './DataTable.svelte'
   import { Button } from '$lib/components/ui/button/index.js'
   import { readOnlyMode, guardWrite, READ_ONLY_HINT } from '$lib/stores/read-only.js'
@@ -447,6 +449,25 @@
   let applyEdits = $state(/** @type {() => void | Promise<void>} */ (() => {}))
   let resetEdits = $state(/** @type {() => void} */ (() => {}))
   let applying = $state(false)
+  // The table's Apply and Discard keys work here too (StudioShell binds them
+  // for SQL tables only): Mod+S writes the staged edits, Alt+Backspace drops
+  // them, unless the caret is in a text field.
+  /** @param {KeyboardEvent} e */
+  function onStagedKey(e) {
+    if (!active || pendingEditCount === 0 || applying) return
+    if (matchesCommand(e, 'table.apply')) {
+      e.preventDefault()
+      if (!readOnly) void applyStaged()
+    } else if ((matchesCommand(e, 'table.discard') || matchesCommand(e, 'table.discardAlt')) && !isTypingTarget(document.activeElement)) {
+      e.preventDefault()
+      resetEdits()
+    }
+  }
+  $effect(() => {
+    window.addEventListener('keydown', onStagedKey)
+    return () => window.removeEventListener('keydown', onStagedKey)
+  })
+
   async function applyStaged() {
     if (!guardWrite(`change ${noun.items}`)) return
     applying = true
@@ -822,12 +843,16 @@
         {#if pendingEditCount > 0}
           <!-- Staged edits float over the grid, out of the header's way: nothing
                is written until Apply, as on SQL tables. -->
-          <div class="absolute bottom-4 left-1/2 z-30 flex -translate-x-1/2 items-center gap-1 whitespace-nowrap rounded-full border border-border/60 bg-popover py-1 pl-4 pr-1 elevate-2-rim" role="status">
-            <span class="size-1.5 shrink-0 rounded-full bg-warning"></span>
-            <span class="ml-1.5 mr-2 text-ui-xs tabular-nums text-foreground">{pendingEditCount.toLocaleString()} unsaved {pendingEditCount === 1 ? 'change' : 'changes'}</span>
-            <Button size="sm" variant="ghost" class="h-7 rounded-full" disabled={applying} onclick={() => resetEdits()}>Discard</Button>
-            <Button size="sm" class="h-7 rounded-full" disabled={applying || readOnly} title={readOnly ? READ_ONLY_HINT : 'Write the staged changes'} onclick={() => void applyStaged()}>
-              {#if applying}<LoaderCircle class="animate-spin" />{/if}Apply
+          <!-- Compact, with the keys beside each action: the bar is there to be
+               dismissed or committed from the keyboard, not hunted for. -->
+          <div class="absolute bottom-4 left-1/2 z-30 flex h-9 -translate-x-1/2 items-center gap-0.5 whitespace-nowrap rounded-full border border-border/60 bg-popover pr-1 pl-3 elevate-2-rim" role="status">
+            <span class="size-1.5 shrink-0 rounded-full bg-warning" aria-hidden="true"></span>
+            <span class="ms-2 me-1.5 text-ui-xs tabular-nums text-foreground">{pendingEditCount.toLocaleString()} unsaved</span>
+            <Button size="sm" variant="ghost" class="h-7 gap-1.5 rounded-full px-2.5 text-muted-foreground hover:text-foreground" disabled={applying} onclick={() => resetEdits()}>
+              Discard<Kbd command="table.discard" />
+            </Button>
+            <Button size="sm" class="h-7 gap-1.5 rounded-full px-2.5" disabled={applying || readOnly} title={readOnly ? READ_ONLY_HINT : 'Write the staged changes'} onclick={() => void applyStaged()}>
+              {#if applying}<LoaderCircle class="animate-spin" />{/if}Apply<Kbd command="table.apply" class="text-primary-foreground/80" />
             </Button>
           </div>
         {/if}

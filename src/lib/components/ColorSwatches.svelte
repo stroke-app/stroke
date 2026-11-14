@@ -31,10 +31,10 @@
       aria-checked={!value}
       aria-label="No colour"
       title="No colour"
-      class={cn('flex size-6 items-center justify-center rounded-full text-muted-foreground ring-offset-2 ring-offset-popover transition-shadow hover:text-foreground', !value && 'ring-2 ring-ring/60')}
+      class={cn('flex size-5 items-center justify-center rounded-full text-muted-foreground ring-offset-2 ring-offset-popover transition-[box-shadow,scale] duration-[120ms] ease-[var(--ease-out)] hover:text-foreground active:scale-[0.94]', !value && 'ring-2 ring-ring/60')}
       onclick={() => onchange(null)}
     >
-      <Ban class="size-3.5 shrink-0" />
+      <Ban class="size-3 shrink-0" />
     </button>
   {/if}
   {#each COLORS as c (c.id)}
@@ -44,10 +44,10 @@
       aria-checked={value === c.id}
       aria-label={c.label}
       title={c.label}
-      class={cn('flex size-6 items-center justify-center rounded-full ring-offset-2 ring-offset-popover transition-shadow', c.dot, value === c.id && 'ring-2 ring-ring/60')}
+      class={cn('flex size-5 items-center justify-center rounded-full ring-offset-2 ring-offset-popover transition-[box-shadow,scale] duration-[120ms] ease-[var(--ease-out)] active:scale-[0.94]', c.dot, value === c.id && 'ring-2 ring-ring/60')}
       onclick={() => onchange(c.id)}
     >
-      {#if value === c.id}<Check class="size-3.5 shrink-0 text-white" strokeWidth={3} />{/if}
+      {#if value === c.id}<Check class="size-3 shrink-0 text-white" strokeWidth={3} />{/if}
     </button>
   {/each}
   <!-- Custom colour: a rainbow ring until one is picked, then that colour.
@@ -55,7 +55,7 @@
   <label
     title={custom ? `Custom ${custom}` : 'Custom colour'}
     class={cn(
-      'relative flex size-6 cursor-pointer items-center justify-center rounded-full ring-offset-2 ring-offset-popover transition-shadow focus-within:ring-2 focus-within:ring-ring',
+      'relative flex size-5 cursor-pointer items-center justify-center rounded-full ring-offset-2 ring-offset-popover transition-shadow focus-within:ring-2 focus-within:ring-ring',
       custom && 'ring-2 ring-ring/60',
     )}
     style={custom
@@ -73,10 +73,10 @@
       onchange={pick}
     />
     {#if custom}
-      <Check class="pointer-events-none size-3.5 shrink-0 text-white" strokeWidth={3} />
+      <Check class="pointer-events-none size-3 shrink-0 text-white" strokeWidth={3} />
     {:else}
-      <span class="pointer-events-none flex size-4 items-center justify-center rounded-full bg-popover">
-        <Plus class="size-3 shrink-0 text-foreground" strokeWidth={2.5} />
+      <span class="pointer-events-none flex size-3.5 items-center justify-center rounded-full bg-popover">
+        <Plus class="size-2.5 shrink-0 text-foreground" strokeWidth={2.5} />
       </span>
     {/if}
   </label>
