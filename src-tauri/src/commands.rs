@@ -1789,7 +1789,7 @@ pub async fn activate_license(
         Err(e) => {
             // Convert server error codes to user-friendly messages
             let msg = match e.as_str() {
-                "seat_limit_exceeded" => "Seat limit reached. Deactivate another device first.",
+                "seat_limit_exceeded" => "This license is on all the devices it covers. Remove one at stroke.click/app, or ask for more devices there (\"Need more devices?\").",
                 "revoked" => "This license key has been revoked.",
                 "expired" => "This license key has expired.",
                 "not_found" => "License key not found.",
