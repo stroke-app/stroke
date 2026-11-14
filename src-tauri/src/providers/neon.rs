@@ -4,7 +4,7 @@
  * included), so sign-in → list projects → one-click connect works end-to-end.
  */
 
-use super::{http, OAuthConfig, ProviderConnection, ProviderDatabase};
+use super::{http, Choice, CreateOptions, CreateRequest, CreatedDatabase, DatabaseStatus, OAuthConfig, ProviderConnection, ProviderDatabase};
 use serde_json::Value;
 
 pub const OAUTH: OAuthConfig = OAuthConfig {
@@ -187,10 +187,153 @@ pub(crate) fn parse_pg_uri(uri: &str) -> Result<(String, u16, String, String, St
     Ok((host, port, dec(user_raw), dec(pass_raw), dec(&database)))
 }
 
+// ── Create a project ─────────────────────────────────────────────────────────
+//
+// `POST /projects` with `urn:neoncloud:projects:create`, which the sign-in
+// already requests. A project is Neon's unit of "a database" in the picker (one
+// default branch, one `neondb`), so creating one is what "Create database"
+// means here. Neon publishes no region-list endpoint; the ids below are the
+// ones its Regions page lists for new projects (Azure regions are closed to new
+// projects).
+
+const REGIONS: &[(&str, &str)] = &[
+    ("aws-us-east-1", "AWS US East (N. Virginia)"),
+    ("aws-us-east-2", "AWS US East (Ohio)"),
+    ("aws-us-west-2", "AWS US West (Oregon)"),
+    ("aws-eu-central-1", "AWS Europe (Frankfurt)"),
+    ("aws-eu-west-2", "AWS Europe (London)"),
+    ("aws-ap-southeast-1", "AWS Asia Pacific (Singapore)"),
+    ("aws-ap-southeast-2", "AWS Asia Pacific (Sydney)"),
+    ("aws-sa-east-1", "AWS South America (São Paulo)"),
+];
+
+async fn post(token: &str, path: &str, body: &Value) -> Result<Value, String> {
+    let resp = http()
+        .post(format!("{API}{path}"))
+        .bearer_auth(token)
+        .json(body)
+        .send()
+        .await
+        .map_err(|e| format!("Neon request failed: {e}"))?;
+    let status = resp.status().as_u16();
+    if status == 401 {
+        return Err(super::UNAUTHORIZED.into());
+    }
+    let text = resp.text().await.map_err(|e| format!("Neon read failed: {e}"))?;
+    let body: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+    if !(200..300).contains(&status) {
+        let msg = body["message"].as_str().map(String::from).unwrap_or_else(|| text.chars().take(160).collect());
+        return Err(format!("Neon API error ({status}): {msg}"));
+    }
+    Ok(body)
+}
+
+/// `/users/me/organizations` → organization choices.
+fn parse_orgs(body: &Value) -> Vec<Choice> {
+    body["organizations"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|o| {
+            let id = o["id"].as_str()?;
+            Some(Choice::new(id, o["name"].as_str().unwrap_or(id)))
+        })
+        .collect()
+}
+
+pub async fn create_options(token: &str, scope: Option<&str>) -> Result<CreateOptions, String> {
+    let scopes = parse_orgs(&get(token, "/users/me/organizations").await?);
+    let regions = super::static_choices(REGIONS);
+    Ok(CreateOptions {
+        scope: super::chosen_scope(&scopes, scope),
+        scopes,
+        scope_label: "Organization".into(),
+        default_region: super::pick_default(&regions, "aws-us-east-2"),
+        regions,
+        region_label: "Region".into(),
+    })
+}
+
+fn create_body(req: &CreateRequest) -> Result<Value, String> {
+    let name = super::required_name(req)?;
+    let region = super::required(&req.region, "Pick a region.")?;
+    let mut project = serde_json::json!({ "name": name, "region_id": region });
+    if let Some(org) = req.scope.as_deref().filter(|s| !s.is_empty()) {
+        project["org_id"] = Value::String(org.to_string());
+    }
+    Ok(serde_json::json!({ "project": project }))
+}
+
+/// The create response → the new project. Ready once no operation is running.
+fn parse_created(body: &Value) -> Result<CreatedDatabase, String> {
+    let id = body["project"]["id"].as_str().ok_or("Neon created the project but returned no id")?;
+    Ok(CreatedDatabase {
+        db_ref: id.to_string(),
+        name: body["project"]["name"].as_str().unwrap_or(id).to_string(),
+        ready: operations_status(body).ready,
+    })
+}
+
+/// A project's operations → whether it is ready. Neon starts the compute and
+/// creates the branch as operations; connecting before they finish can fail.
+fn operations_status(body: &Value) -> DatabaseStatus {
+    let ops: Vec<&str> = body["operations"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|o| o["status"].as_str())
+        .collect();
+    if ops.iter().any(|s| *s == "failed" || *s == "error") {
+        return DatabaseStatus::failed("failed");
+    }
+    match ops.iter().find(|s| !matches!(**s, "finished" | "skipped" | "cancelled")) {
+        Some(s) => DatabaseStatus::pending(s),
+        None => DatabaseStatus::ready("ready"),
+    }
+}
+
+pub async fn create_database(token: &str, req: &CreateRequest) -> Result<CreatedDatabase, String> {
+    parse_created(&post(token, "/projects", &create_body(req)?).await?)
+}
+
+pub async fn database_status(token: &str, project_id: &str) -> Result<DatabaseStatus, String> {
+    let body = get(token, &format!("/projects/{}/operations?limit=20", urlencoding::encode(project_id))).await?;
+    Ok(operations_status(&body))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn create_body_carries_the_org_and_region() {
+        let req = CreateRequest { name: " shop ".into(), scope: Some("org-1".into()), region: Some("aws-us-east-2".into()), password: None };
+        assert_eq!(
+            create_body(&req).unwrap(),
+            json!({ "project": { "name": "shop", "region_id": "aws-us-east-2", "org_id": "org-1" } })
+        );
+        let no_org = CreateRequest { name: "x".into(), region: Some("aws-us-east-1".into()), ..Default::default() };
+        assert!(create_body(&no_org).unwrap()["project"].get("org_id").is_none());
+        assert!(create_body(&CreateRequest { name: "x".into(), ..Default::default() }).is_err());
+    }
+
+    #[test]
+    fn created_project_is_ready_when_its_operations_finish() {
+        let body = json!({ "project": { "id": "gentle-river-1", "name": "shop" },
+            "operations": [ { "status": "finished" }, { "status": "running" } ] });
+        assert_eq!(parse_created(&body).unwrap(), CreatedDatabase { db_ref: "gentle-river-1".into(), name: "shop".into(), ready: false });
+        assert!(operations_status(&json!({ "operations": [ { "status": "finished" } ] })).ready);
+        assert!(operations_status(&json!({ "operations": [] })).ready);
+        assert!(operations_status(&json!({ "operations": [ { "status": "failed" } ] })).failed);
+        assert!(parse_created(&json!({})).is_err());
+    }
+
+    #[test]
+    fn orgs_become_choices() {
+        let orgs = parse_orgs(&json!({ "organizations": [ { "id": "org-1", "name": "Acme" }, { "name": "no id" } ] }));
+        assert_eq!(orgs, vec![Choice::new("org-1", "Acme")]);
+    }
 
     #[test]
     fn default_branch_is_preferred_over_the_first() {

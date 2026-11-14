@@ -10,7 +10,7 @@
  * that page, the same way Neon reuses neonctl's client.
  */
 
-use super::{http, OAuthConfig, ProviderConnection, ProviderDatabase};
+use super::{http, Choice, CreateOptions, CreateRequest, CreatedDatabase, OAuthConfig, ProviderConnection, ProviderDatabase};
 use serde_json::Value;
 
 pub const API: &str = "https://api.turso.tech";
@@ -162,10 +162,176 @@ pub async fn build_connection(token: &str, db_ref: &str) -> Result<ProviderConne
     })
 }
 
+// ── Create a database ────────────────────────────────────────────────────────
+//
+// `POST /v1/organizations/{org}/databases { name, group }`. The group must
+// exist: an organization that already has groups picks one; one with none (a
+// brand-new account) picks a location instead, and Stroke first creates a
+// `default` group there with `POST /v1/organizations/{org}/groups`, the same
+// thing `turso db create` does on a fresh account. Turso databases are ready
+// the moment the call returns.
+
+const GROUP_PREFIX: &str = "group:";
+const LOCATION_PREFIX: &str = "loc:";
+
+async fn post(token: &str, path: &str, body: &Value, what: &str) -> Result<Value, String> {
+    send(http().post(format!("{API}{path}")).bearer_auth(token).json(body), what).await
+}
+
+fn parse_orgs(body: &Value) -> Vec<Choice> {
+    body["organizations"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|o| {
+            let slug = o["slug"].as_str()?;
+            Some(Choice::new(slug, o["name"].as_str().filter(|n| !n.is_empty()).unwrap_or(slug)))
+        })
+        .collect()
+}
+
+/// `/groups` → group choices, labelled with their primary location.
+fn parse_groups(body: &Value) -> Vec<Choice> {
+    body["groups"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|g| {
+            let name = g["name"].as_str()?;
+            let label = match g["primary"].as_str() {
+                Some(p) if !p.is_empty() => format!("{name} · {p}"),
+                _ => name.to_string(),
+            };
+            Some(Choice::new(format!("{GROUP_PREFIX}{name}"), label))
+        })
+        .collect()
+}
+
+/// `/v1/locations` (`{ locations: { code: description } }`) → location choices.
+fn parse_locations(body: &Value) -> Vec<Choice> {
+    let mut out: Vec<Choice> = body["locations"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .map(|(code, desc)| Choice::new(format!("{LOCATION_PREFIX}{code}"), desc.as_str().unwrap_or(code)))
+        .collect();
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
+}
+
+pub async fn create_options(token: &str, scope: Option<&str>) -> Result<CreateOptions, String> {
+    let scopes = parse_orgs(&get(token, "/v2/organizations", "listing organizations").await?);
+    let scope = super::chosen_scope(&scopes, scope);
+    let Some(org) = scope.clone() else {
+        return Err("This Turso account has no organization to create a database in.".into());
+    };
+    let groups = parse_groups(&get(token, &format!("/v1/organizations/{}/groups", urlencoding::encode(&org)), "listing groups").await?);
+    let (regions, region_label, preferred) = if groups.is_empty() {
+        let locations = parse_locations(&get(token, "/v1/locations", "listing locations").await?);
+        (locations, "Location", format!("{LOCATION_PREFIX}aws-us-east-1"))
+    } else {
+        (groups, "Group", format!("{GROUP_PREFIX}default"))
+    };
+    Ok(CreateOptions {
+        scopes,
+        scope_label: "Organization".into(),
+        scope,
+        default_region: super::pick_default(&regions, &preferred),
+        regions,
+        region_label: region_label.into(),
+    })
+}
+
+/// What the form's region answer asks for: an existing group, or a location
+/// to create the `default` group in first.
+#[derive(Debug, PartialEq, Eq)]
+enum Placement<'a> {
+    Group(&'a str),
+    NewGroupAt(&'a str),
+}
+
+fn placement(region: &str) -> Result<Placement<'_>, String> {
+    if let Some(g) = region.strip_prefix(GROUP_PREFIX) {
+        Ok(Placement::Group(g))
+    } else if let Some(l) = region.strip_prefix(LOCATION_PREFIX) {
+        Ok(Placement::NewGroupAt(l))
+    } else {
+        Err("Pick a group or a location.".into())
+    }
+}
+
+/// Turso names: lowercase letters, numbers and dashes, at most 64 characters.
+fn valid_name(name: &str) -> Result<(), String> {
+    if name.len() > 64 || !name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-') {
+        return Err("Turso database names use lowercase letters, numbers and dashes (up to 64).".into());
+    }
+    Ok(())
+}
+
+pub async fn create_database(token: &str, req: &CreateRequest) -> Result<CreatedDatabase, String> {
+    let name = super::required_name(req)?;
+    valid_name(name)?;
+    let org = super::required(&req.scope, "Pick an organization.")?;
+    let org_enc = urlencoding::encode(org);
+    let group = match placement(super::required(&req.region, "Pick a group or a location.")?)? {
+        Placement::Group(g) => g.to_string(),
+        Placement::NewGroupAt(location) => {
+            let made = post(
+                token,
+                &format!("/v1/organizations/{org_enc}/groups"),
+                &serde_json::json!({ "name": "default", "location": location }),
+                "creating a group",
+            )
+            .await;
+            // A `default` group made since the form loaded is fine to use.
+            if let Err(e) = made {
+                if !e.contains("(409)") {
+                    return Err(e);
+                }
+            }
+            "default".to_string()
+        }
+    };
+    let body = post(
+        token,
+        &format!("/v1/organizations/{org_enc}/databases"),
+        &serde_json::json!({ "name": name, "group": group }),
+        "creating a database",
+    )
+    .await?;
+    let created = field(&body["database"], "Name", "name").unwrap_or(name);
+    Ok(CreatedDatabase { db_ref: format!("{org}/{created}"), name: created.to_string(), ready: true })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn groups_or_locations_become_the_placement() {
+        let g = parse_groups(&json!({ "groups": [ { "name": "default", "primary": "aws-us-east-1" } ] }));
+        assert_eq!(g, vec![Choice::new("group:default", "default · aws-us-east-1")]);
+        let l = parse_locations(&json!({ "locations": { "aws-us-east-1": "AWS US East (Virginia)", "aws-eu-west-1": "AWS EU West (Ireland)" } }));
+        assert_eq!(l[0], Choice::new("loc:aws-eu-west-1", "AWS EU West (Ireland)"));
+        assert_eq!(placement("group:default").unwrap(), Placement::Group("default"));
+        assert_eq!(placement("loc:aws-us-east-1").unwrap(), Placement::NewGroupAt("aws-us-east-1"));
+        assert!(placement("aws-us-east-1").is_err());
+    }
+
+    #[test]
+    fn names_follow_turso_rules() {
+        assert!(valid_name("shop-db-2").is_ok());
+        assert!(valid_name("Shop").is_err());
+        assert!(valid_name("shop_db").is_err());
+        assert!(valid_name(&"a".repeat(65)).is_err());
+    }
+
+    #[test]
+    fn orgs_fall_back_to_the_slug_for_a_name() {
+        let o = parse_orgs(&json!({ "organizations": [ { "slug": "me", "name": "" }, { "slug": "acme", "name": "Acme" } ] }));
+        assert_eq!(o, vec![Choice::new("me", "me"), Choice::new("acme", "Acme")]);
+    }
 
     #[test]
     fn reads_either_casing_of_turso_fields() {

@@ -356,6 +356,16 @@ export async function cloudflareListD1Databases(apiToken, accountId) {
   return inv('cloudflare_list_d1_databases', { apiToken, accountId })
 }
 
+/**
+ * Create a D1 database in an account. `locationHint` is one of Cloudflare's
+ * region hints (wnam, enam, weur, eeur, apac, oc), or null to let it choose.
+ * @param {string} apiToken @param {string} accountId @param {string} name @param {string | null} [locationHint]
+ * @returns {Promise<{ uuid: string, name: string, created_at?: string, num_tables?: number }>}
+ */
+export async function cloudflareCreateD1Database(apiToken, accountId, name, locationHint = null) {
+  return inv('cloudflare_create_d1_database', { apiToken, accountId, name, locationHint })
+}
+
 /** @param {{ name: string, url: string, authToken?: string }} config */
 export async function testLibSqlConnection(config) {
   return inv('test_libsql', { config })

@@ -100,6 +100,32 @@ export async function providerBuildConnection(provider, dbRef) {
 }
 
 /**
+ * Where a new database can go: organization/workspace choices and the regions
+ * for `scope` (the first scope when omitted).
+ * @param {string} provider @param {string | null} [scope]
+ * @returns {Promise<import('./provider-create.js').CreateOptions>}
+ */
+export async function providerCreateOptions(provider, scope = null) {
+  return invoke('provider_create_options', { provider, scope })
+}
+
+/**
+ * Create a database on the provider. `password` is only for providers that
+ * need one up front (Supabase).
+ * @param {string} provider
+ * @param {{ name: string, scope?: string | null, region?: string | null, password?: string | null }} request
+ * @returns {Promise<import('./provider-create.js').CreatedDatabase>}
+ */
+export async function providerCreateDatabase(provider, request) {
+  return invoke('provider_create_database', { provider, request })
+}
+
+/** @param {string} provider @param {string} dbRef @returns {Promise<import('./provider-create.js').DatabaseStatus>} */
+export async function providerDatabaseStatus(provider, dbRef) {
+  return invoke('provider_database_status', { provider, dbRef })
+}
+
+/**
  * Turn a resolved provider spec into the SavedConnection shape for its engine,
  * reusing the id of an existing saved entry for the same database so a connect
  * or a switch upserts that entry instead of piling up duplicates (or, worse,

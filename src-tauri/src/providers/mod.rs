@@ -11,6 +11,13 @@
  *
  * Adding a provider = add an enum variant, its `OAuthConfig`, and a submodule
  * with `list_databases()` + `build_connection()`.
+ *
+ * Creating a database (the "Create database" form in the provider panel) is
+ * three more calls per provider that supports it: `create_options()` (where it
+ * can go: organization and region pickers), `create_database()`, and
+ * `database_status()` (polled until a cluster finishes provisioning). Providers
+ * whose token can't create one return `create_unsupported` and the UI keeps the
+ * dashboard link instead.
  */
 
 mod neon;
@@ -260,6 +267,65 @@ impl Provider {
             Self::PostHog => posthog::build_connection(token, db_ref).await,
         }
     }
+
+    /// Where a new database can go: the organization/workspace picker and the
+    /// regions for `scope` (or the first scope when None).
+    async fn create_options(&self, token: &str, scope: Option<&str>) -> Result<CreateOptions, String> {
+        match self {
+            Self::Neon => neon::create_options(token, scope).await,
+            Self::Supabase => supabase::create_options(token, scope).await,
+            Self::Prisma => prisma::create_options(token).await,
+            Self::TiDB => tidb::create_options(token).await,
+            Self::Turso => turso::create_options(token, scope).await,
+            Self::Nile => nile::create_options(token, scope).await,
+            Self::Upstash => Ok(upstash::create_options()),
+            Self::PlanetScale | Self::Railway | Self::PostHog => Err(self.create_unsupported()),
+        }
+    }
+
+    async fn create_database(&self, token: &str, req: &CreateRequest) -> Result<CreatedDatabase, String> {
+        match self {
+            Self::Neon => neon::create_database(token, req).await,
+            Self::Supabase => supabase::create_database(token, req).await,
+            Self::Prisma => prisma::create_database(token, req).await,
+            Self::TiDB => tidb::create_database(token, req).await,
+            Self::Turso => turso::create_database(token, req).await,
+            Self::Nile => nile::create_database(token, req).await,
+            Self::Upstash => upstash::create_database(token, req).await,
+            Self::PlanetScale | Self::Railway | Self::PostHog => Err(self.create_unsupported()),
+        }
+    }
+
+    async fn database_status(&self, token: &str, db_ref: &str) -> Result<DatabaseStatus, String> {
+        match self {
+            Self::Neon => neon::database_status(token, db_ref).await,
+            Self::Supabase => supabase::database_status(token, db_ref).await,
+            Self::Prisma => prisma::database_status(token, db_ref).await,
+            Self::TiDB => tidb::database_status(token, db_ref).await,
+            Self::Nile => nile::database_status(token, db_ref).await,
+            Self::Upstash => upstash::database_status(token, db_ref).await,
+            // Turso databases are usable the moment the create call returns.
+            Self::Turso => Ok(DatabaseStatus::ready("ready")),
+            Self::PlanetScale | Self::Railway | Self::PostHog => Err(self.create_unsupported()),
+        }
+    }
+
+    /// Why this provider has no "Create database" in Stroke. Kept in one place
+    /// so the reasons stay honest and match the UI's dashboard link.
+    fn create_unsupported(&self) -> String {
+        match self {
+            // Creating a database needs the `organization:create_databases`
+            // scope, which Stroke's OAuth app does not request, and every new
+            // PlanetScale database is a paid cluster that needs a size picked.
+            Self::PlanetScale => "Stroke's PlanetScale sign-in can't create databases (it lacks the create_databases scope). Create one in the PlanetScale dashboard, then refresh.".into(),
+            // The token is granted `workspace:viewer` plus the projects picked on
+            // the consent screen; creating a project needs workspace member
+            // access, and a project created later isn't covered by the grant.
+            Self::Railway => "Stroke's Railway sign-in can only see the projects you shared with it, so it can't create one. Create it in the Railway dashboard, then refresh.".into(),
+            Self::PostHog => "PostHog projects are created in PostHog.".into(),
+            _ => format!("{} databases can't be created from Stroke yet.", self.label()),
+        }
+    }
 }
 
 /// Per-provider OAuth endpoints. `client_id` is a public identifier registered
@@ -304,6 +370,112 @@ pub struct ProviderConnection {
     /// prompt the user for it; every other field is prefilled.
     pub needs_password: bool,
     pub name: String,
+}
+
+/// One option in a create-form picker (an organization, a region, a group).
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct Choice {
+    pub id: String,
+    pub name: String,
+}
+
+impl Choice {
+    pub(crate) fn new(id: impl Into<String>, name: impl Into<String>) -> Self {
+        Self { id: id.into(), name: name.into() }
+    }
+}
+
+/// What the "Create database" form needs to ask. Empty `scopes` means the token
+/// already names the place (one workspace, one project); a single scope is
+/// used without showing a picker.
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct CreateOptions {
+    /// Organizations / workspaces the database can be created in.
+    pub scopes: Vec<Choice>,
+    /// What a scope is called here: "Organization", "Workspace".
+    pub scope_label: String,
+    /// The scope these regions belong to (the one asked for, else the first).
+    pub scope: Option<String>,
+    pub regions: Vec<Choice>,
+    /// "Region", or "Group" for Turso when the organization already has groups.
+    pub region_label: String,
+    pub default_region: Option<String>,
+}
+
+/// The form's answers. `password` is the database password some providers
+/// require up front (Supabase); it is never logged.
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct CreateRequest {
+    pub name: String,
+    pub scope: Option<String>,
+    pub region: Option<String>,
+    pub password: Option<String>,
+}
+
+/// A database the provider accepted. `db_ref` is the same reference
+/// `list_databases` gives it, so the picker can select it after a refresh.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct CreatedDatabase {
+    pub db_ref: String,
+    pub name: String,
+    /// Usable now; false means poll `database_status` until it is.
+    pub ready: bool,
+}
+
+/// Provisioning progress. `state` is the provider's own word, for display.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct DatabaseStatus {
+    pub ready: bool,
+    pub failed: bool,
+    pub state: String,
+}
+
+impl DatabaseStatus {
+    pub(crate) fn ready(state: &str) -> Self {
+        Self { ready: true, failed: false, state: state.into() }
+    }
+    pub(crate) fn pending(state: &str) -> Self {
+        Self { ready: false, failed: false, state: state.into() }
+    }
+    pub(crate) fn failed(state: &str) -> Self {
+        Self { ready: false, failed: true, state: state.into() }
+    }
+}
+
+/// The trimmed, non-empty name from a create request.
+pub(crate) fn required_name(req: &CreateRequest) -> Result<&str, String> {
+    let name = req.name.trim();
+    if name.is_empty() {
+        return Err("Enter a name for the database.".into());
+    }
+    Ok(name)
+}
+
+/// The non-empty value of an optional request field, or `what` as the error.
+pub(crate) fn required<'a>(v: &'a Option<String>, what: &str) -> Result<&'a str, String> {
+    v.as_deref().map(str::trim).filter(|s| !s.is_empty()).ok_or_else(|| what.to_string())
+}
+
+/// The default among `choices`: `preferred` when offered, else the first.
+pub(crate) fn pick_default(choices: &[Choice], preferred: &str) -> Option<String> {
+    choices
+        .iter()
+        .find(|c| c.id == preferred)
+        .or_else(|| choices.first())
+        .map(|c| c.id.clone())
+}
+
+/// The scope a form asked for, else the first one offered.
+pub(crate) fn chosen_scope(scopes: &[Choice], asked: Option<&str>) -> Option<String> {
+    asked
+        .filter(|a| scopes.iter().any(|s| s.id == *a))
+        .map(String::from)
+        .or_else(|| scopes.first().map(|s| s.id.clone()))
+}
+
+/// Static region lists as choices.
+pub(crate) fn static_choices(list: &[(&str, &str)]) -> Vec<Choice> {
+    list.iter().map(|(id, name)| Choice::new(*id, *name)).collect()
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1181,6 +1353,89 @@ pub async fn provider_build_connection(
     .await;
     log::info!("{} build_connection: {} in {}ms", p.key(), if r.is_ok() { "ok" } else { "failed" }, t0.elapsed().as_millis());
     r
+}
+
+/// Where a new database can go, for the create form.
+#[tauri::command]
+pub async fn provider_create_options(
+    app: tauri::AppHandle,
+    provider: String,
+    scope: Option<String>,
+) -> Result<CreateOptions, String> {
+    let p = Provider::parse(&provider)?;
+    with_token(&app, p, |token| {
+        let scope = scope.clone();
+        async move { p.create_options(&token, scope.as_deref()).await }
+    })
+    .await
+}
+
+/// Create a database on the provider. A 401 means nothing was created, so the
+/// refresh-and-retry in `with_token` can't make a duplicate.
+#[tauri::command]
+pub async fn provider_create_database(
+    app: tauri::AppHandle,
+    provider: String,
+    request: CreateRequest,
+) -> Result<CreatedDatabase, String> {
+    let p = Provider::parse(&provider)?;
+    let t0 = std::time::Instant::now();
+    let r = with_token(&app, p, |token| {
+        let request = request.clone();
+        async move { p.create_database(&token, &request).await }
+    })
+    .await;
+    // Provider and outcome only: the request can carry a database password.
+    log::info!("{} create_database: {} in {}ms", p.key(), if r.is_ok() { "ok" } else { "failed" }, t0.elapsed().as_millis());
+    r
+}
+
+/// Provisioning progress of a database `provider_create_database` returned.
+#[tauri::command]
+pub async fn provider_database_status(
+    app: tauri::AppHandle,
+    provider: String,
+    db_ref: String,
+) -> Result<DatabaseStatus, String> {
+    let p = Provider::parse(&provider)?;
+    with_token(&app, p, |token| {
+        let db_ref = db_ref.clone();
+        async move { p.database_status(&token, &db_ref).await }
+    })
+    .await
+}
+
+#[cfg(test)]
+mod create_tests {
+    use super::*;
+
+    #[test]
+    fn scope_and_region_defaults() {
+        let cs = vec![Choice::new("a", "A"), Choice::new("b", "B")];
+        assert_eq!(pick_default(&cs, "b").as_deref(), Some("b"));
+        assert_eq!(pick_default(&cs, "zz").as_deref(), Some("a"));
+        assert_eq!(pick_default(&[], "zz"), None);
+        assert_eq!(chosen_scope(&cs, Some("b")).as_deref(), Some("b"));
+        assert_eq!(chosen_scope(&cs, Some("gone")).as_deref(), Some("a"));
+        assert_eq!(chosen_scope(&cs, None).as_deref(), Some("a"));
+    }
+
+    #[test]
+    fn names_and_required_fields_are_checked() {
+        let req = CreateRequest { name: "  ".into(), ..Default::default() };
+        assert!(required_name(&req).is_err());
+        let req = CreateRequest { name: " app ".into(), region: Some(" ".into()), ..Default::default() };
+        assert_eq!(required_name(&req).unwrap(), "app");
+        assert_eq!(required(&req.region, "Pick a region.").unwrap_err(), "Pick a region.");
+    }
+
+    #[test]
+    fn unsupported_providers_say_why() {
+        for p in [Provider::PlanetScale, Provider::Railway, Provider::PostHog] {
+            assert!(!p.create_unsupported().is_empty());
+        }
+        assert!(Provider::PlanetScale.create_unsupported().contains("create_databases"));
+    }
 }
 
 #[cfg(test)]
