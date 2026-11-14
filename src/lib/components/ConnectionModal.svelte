@@ -661,7 +661,7 @@
     // A string for another engine switches the engine too - refusing it and
     // making the user go and change the dropdown first would be pedantry.
     if (hit && hit.type !== dbType && !DISABLED_TABS.has(hit.type)) switchDriver(hit.type);
-    const ok = applyConnectionUriFrom(raw, hit?.uriType ?? uriTypeFor(dbType));
+    const ok = applyConnectionUriFrom(hit?.uri ?? raw, hit?.uriType ?? uriTypeFor(dbType));
     if (ok) {
       importUri = "";
       // Left open would mean an empty bar sitting over the fields it just
@@ -726,7 +726,7 @@
     if (!raw) return;
     const hit = detectConnectionUri(raw);
     if (!hit) {
-      quickHint = "That does not look like a connection string. Try postgres://…, mysql://…, or a path to a .db file.";
+      quickHint = "That does not look like a connection string. Paste a URL (postgres://, mysql://, sqlserver://, oracle://, mongodb://, redis://, libsql://, …), a .env line, host=… dbname=…, or a path to a .db file.";
       return;
     }
     if (DISABLED_TABS.has(hit.type)) {
@@ -744,7 +744,9 @@
       const known = ALL_DRIVERS.find((d) => d.id === hit.provider);
       quickHint = `Recognised a ${known?.label ?? PROVIDER_LABELS[hit.provider] ?? hit.provider} endpoint.`;
     }
-    const ok = applyConnectionUriFrom(raw, hit.uriType);
+    // `hit.uri`: the string with its .env wrapper or driver suffix taken off,
+    // or a key/value string turned into a URL.
+    const ok = applyConnectionUriFrom(hit.uri ?? raw, hit.uriType);
     if (!ok && !quickHint) quickHint = "Could not read that string.";
     quickUri = "";
     // Used. Coming back to the picker should not hand it over again.
@@ -1445,6 +1447,25 @@
       password = parsed.password;
       secure = parsed.tls;
       flashFields(["host", "port", "database", "user", "password", "secure"]);
+      uriHint = "Fields updated from URL";
+      return true;
+    }
+    // CouchDB: the server URL, the login in its own fields.
+    if ("couch" in parsed) {
+      couchUrl = parsed.url;
+      if (parsed.user) user = parsed.user;
+      if (parsed.password) password = parsed.password;
+      flashFields(["user", "password"]);
+      uriHint = "Fields updated from URL";
+      return true;
+    }
+    // Cassandra / ScyllaDB: contact points, login, keyspace.
+    if ("cql" in parsed) {
+      cqlHosts = parsed.hosts;
+      cqlKeyspace = parsed.keyspace;
+      if (parsed.user) user = parsed.user;
+      if (parsed.password) password = parsed.password;
+      flashFields(["user", "password"]);
       uriHint = "Fields updated from URL";
       return true;
     }

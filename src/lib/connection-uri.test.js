@@ -242,3 +242,48 @@ describe('Oracle connection strings', () => {
     expect(detectConnectionUri('jdbc:oracle:thin:@//h:1521/svc')).toEqual({ type: 'oracle', uriType: 'oracle' })
   })
 })
+
+describe('detectConnectionUri: everything people paste', () => {
+  const d = (s) => detectConnectionUri(s)
+  it('takes the value out of a .env line', () => {
+    expect(d('DATABASE_URL="postgresql://u:p@db:5432/app"')).toMatchObject({ type: 'postgres', uri: 'postgresql://u:p@db:5432/app' })
+    expect(d("export REDIS_URL='rediss://:pw@x.upstash.io:6379'")).toMatchObject({ type: 'redis', provider: 'upstash', uriType: 'redis' })
+  })
+  it('drops ORM driver suffixes', () => {
+    expect(d('postgresql+psycopg2://u:p@h/db')).toMatchObject({ type: 'postgres', uri: 'postgresql://u:p@h/db' })
+    expect(d('mysql+pymysql://u:p@h/db')).toMatchObject({ type: 'mysql', uri: 'mysql://u:p@h/db' })
+    expect(d('mongodb+srv://u:p@c.mongodb.net/app')).toMatchObject({ type: 'mongodb' })
+  })
+  it('parses Redis, Valkey and libSQL with their own parsers, not Postgres', () => {
+    expect(d('redis://:pw@h:6379/2')).toMatchObject({ type: 'redis', uriType: 'redis' })
+    expect(d('valkey://h:6379')).toMatchObject({ type: 'valkey', uriType: 'redis', uri: 'redis://h:6379' })
+    expect(d('libsql://db-org.turso.io?authToken=x')).toMatchObject({ type: 'libsql', uriType: 'libsql' })
+    expect(d('https://db-org.turso.io')).toMatchObject({ type: 'libsql' })
+  })
+  it('reads key/value strings', () => {
+    const pg = d("host=db.example.com port=5433 dbname=shop user=me password='p w' sslmode=require")
+    expect(pg).toMatchObject({ type: 'postgres' })
+    expect(parseConnectionUri('postgres', pg.uri)).toMatchObject({ host: 'db.example.com', port: '5433', database: 'shop', user: 'me', password: 'p w' })
+    const ms = d('Server=tcp:sql.example.com,1433;Database=app;User Id=sa;Password=Secret1!;Encrypt=True;')
+    expect(ms).toMatchObject({ type: 'mssql' })
+    expect(parseConnectionUri('mssql', ms.uri)).toMatchObject({ host: 'sql.example.com', port: '1433', database: 'app', user: 'sa', password: 'Secret1!' })
+  })
+  it('knows the NoSQL and HTTP endpoints', () => {
+    expect(d('couchdb://admin:pw@localhost:5984')).toMatchObject({ type: 'couchdb' })
+    expect(parseConnectionUri('couchdb', 'http://admin:pw@localhost:5984')).toEqual({ couch: true, url: 'http://localhost:5984', user: 'admin', password: 'pw' })
+    expect(d('cassandra://u:p@h1:9042,h2:9042/shop')).toMatchObject({ type: 'cassandra' })
+    expect(parseConnectionUri('cassandra', 'cassandra://u:p@h1:9042,h2:9042/shop')).toEqual({ cql: true, user: 'u', password: 'p', hosts: 'h1:9042,h2:9042', keyspace: 'shop' })
+    expect(d('http://localhost:8123')).toMatchObject({ type: 'clickhouse' })
+    expect(d('https://example.com')).toBeNull()
+  })
+  it('recognises cloud hosts', () => {
+    expect(d('mysql://u:p@gateway01.ap-northeast-1.prod.aws.tidbcloud.com:4000/test')).toMatchObject({ type: 'mysql', provider: 'tidb' })
+    expect(d('postgres://u:p@eu-central-1.db.thenile.dev/db')).toMatchObject({ provider: 'nile' })
+    expect(d('postgresql://u:p@monorail.proxy.rlwy.net:5432/railway')).toMatchObject({ type: 'postgres', provider: 'railway' })
+    expect(d('jdbc:sqlserver://h:1433;databaseName=x')).toMatchObject({ type: 'mssql' })
+    expect(d('jdbc:oracle:thin:@//h:1521/FREEPDB1')).toMatchObject({ type: 'oracle' })
+  })
+  it('still says no to junk', () => {
+    expect(d('adsf')).toBeNull()
+  })
+})
