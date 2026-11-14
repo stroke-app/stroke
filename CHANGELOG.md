@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.8.0] - 2026-11-14
+
+### Changes
+- Schema snapshots on every engine, flat provider panel, Supabase create error (#176)
+
+
 ## [2.7.9] - 2026-11-14
 
 ### Changes
