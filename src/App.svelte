@@ -12,11 +12,14 @@
   import { loadSettings, applySettings, installZoomShortcuts } from '$lib/stores/settings.js'
   import { installPlatformClass } from '$lib/platform.js'
   import { installClipboardBridge } from '$lib/clipboard.js'
+  import { installShiftWheel } from '$lib/shift-wheel.js'
 
   onMount(async () => {
     installPlatformClass()
     applySettings(loadSettings())
     installZoomShortcuts()
+    // Shift + wheel scrolls sideways in every scroll area, whatever the webview does.
+    installShiftWheel()
     // Route clipboard through Tauri's native plugin so copy works in the WKWebview
     // (navigator.clipboard is denied there, incl. Monaco's internal copy).
     void installClipboardBridge()

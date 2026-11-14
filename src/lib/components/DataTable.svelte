@@ -7620,9 +7620,14 @@ import FilterX from "@lucide/svelte/icons/filter-x";
         const { dx, dy } = wheelPixels(e, el.clientWidth)
         const delta = dy || dx // shift + vertical wheel IS horizontal movement
         if (!delta) return
-        if (inner && inner !== el && inner.scrollWidth > inner.clientWidth) {
-          e.preventDefault()
-          inner.scrollLeft += delta
+        // Over the panel the grid behind it never moves: scrolling something
+        // you can't see was what Shift+wheel did there whenever the panel
+        // itself was not wider than its box.
+        if (inner && inner !== el) {
+          if (inner.scrollWidth > inner.clientWidth) {
+            e.preventDefault()
+            inner.scrollLeft += delta
+          }
           return
         }
         e.preventDefault()
