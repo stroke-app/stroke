@@ -1,8 +1,3 @@
-<script module>
-  /** Providers whose only database was opened automatically this session. */
-  const autoPickedProviders = new Set()
-</script>
-
 <script>
   // One-flow provider sign-in: authorize (OAuth) or paste a token, list every
   // database on the account, and hand a ready-to-connect spec to the parent.
@@ -45,7 +40,10 @@
     providerCreateOptions,
     providerCreateDatabase,
     providerDatabaseStatus,
+    providerToSaved,
+    AUTH_FAILURE,
   } from '$lib/providers.js'
+  import { executeSqlOnConnection } from '$lib/api.js'
   import { readProviderList, writeProviderList, clearProviderLists } from '$lib/provider-list-cache.js'
 
   let {
@@ -108,16 +106,8 @@
   let selectedRef = $state('')
   /** The list is being fetched again from the refresh button (the picker stays usable). */
   let refreshing = $state(false)
-  // One database on the account: open it without asking. Once per visit, so a
-  // failed connect lands back on the picker instead of retrying in a loop.
-  // Only the first time per app session: coming back to this page (to refresh
-  // the list, or after a failed connect) must leave the picker in your hands.
-  $effect(() => {
-    if (phase !== 'selecting' || selectedRef || databases.length !== 1) return
-    if (autoPickedProviders.has(provider)) return
-    autoPickedProviders.add(provider)
-    void pick(databases[0].db_ref)
-  })
+  // Picking is always yours, even with one database on the account: opening it
+  // unasked connected to something you may only have wanted to look at.
 
   // `SearchableMenu` owns the query, the filtering and the keyboard: the input
   // autofocuses on open, Arrow keys move the highlight, Enter selects, Esc closes.
@@ -428,15 +418,13 @@
    */
   async function onDatabaseCreated(db, { password }) {
     creatingDb = false
-    // The one-database auto-pick must not race the explicit pick below.
-    autoPickedProviders.add(provider)
     await loadDatabases({ quiet: true })
     if (!databases.some((d) => d.db_ref === db.db_ref)) {
       databases = [...databases, { db_ref: db.db_ref, name: db.name, region: null, kind: null, host: null }]
     }
     if (phase !== 'selecting') return
     toast.success(`Created ${db.name}`)
-    await pick(db.db_ref, { password })
+    await pick(db.db_ref, { password, fresh: true })
   }
 
   /**
@@ -463,10 +451,11 @@
 
   /**
    * @param {string} ref
-   * @param {{ password?: string | null }} [opts] a password already known for
-   *   this database (one Stroke just generated), so it is not asked for.
+   * @param {{ password?: string | null, fresh?: boolean }} [opts] a password already known for
+   *   this database (one Stroke just generated), so it is not asked for; `fresh`
+   *   for one just created, which may take a few seconds more to take connections.
    */
-  async function pick(ref, { password = null } = {}) {
+  async function pick(ref, { password = null, fresh = false } = {}) {
     selectedRef = ref
     phase = 'building'
     try {
@@ -488,6 +477,7 @@
         // so we don't ask again. Otherwise ask inline, then connect.
         const known = password || resolvePassword(conn.host, conn.username)
         if (known) {
+          if (fresh) await untilAccepting({ ...conn, password: known })
           phase = 'selecting'
           onselect({ ...conn, password: known })
           return
@@ -496,6 +486,7 @@
         pw = ''
         phase = 'password'
       } else {
+        if (fresh) await untilAccepting(conn)
         phase = 'selecting'
         onselect(conn)
       }
@@ -541,6 +532,35 @@
       })
     }
   }
+
+  /**
+   * A database the provider just made can report ready a few seconds before it
+   * takes connections: Prisma Postgres answers "Failed to connect to upstream
+   * database" at first. Try it quietly (about 40s) so the first connect is the
+   * one that works. Gives up silently: the real connect then reports why.
+   * @param {Record<string, any>} conn
+   */
+  async function untilAccepting(conn) {
+    const saved = providerToSaved({ ...conn }, { provider, saved: [], newId: () => 'probe' })
+    const probe = saved.type === 'redis' ? 'PING' : 'SELECT 1'
+    warming = true
+    try {
+      for (let i = 0; i < 16; i++) {
+        try {
+          await executeSqlOnConnection(/** @type {any} */ (saved), probe)
+          return
+        } catch (e) {
+          // Wrong credentials won't fix themselves; stop and let the connect say so.
+          if (AUTH_FAILURE.test(String(e))) return
+        }
+        await new Promise((r) => setTimeout(r, Math.min(1000 + i * 500, 4000)))
+      }
+    } finally {
+      warming = false
+    }
+  }
+  /** A new database is being waited on: the trigger says "Starting…". */
+  let warming = $state(false)
 
   /** Merge the entered password into the resolved spec and connect. */
   function confirmPassword() {
@@ -879,7 +899,7 @@
             >
               <DbIcon id={provider} class={cn('size-4 shrink-0', selectedDbName ? 'text-foreground' : 'text-muted-foreground')} />
               <span class={cn('min-w-0 flex-1 truncate', selectedDbName ? 'font-medium text-foreground' : 'text-muted-foreground')}>
-                {selectedDbName || 'Select a database'}
+                {warming ? `Starting ${selectedDbName || 'the database'}…` : selectedDbName || 'Select a database'}
               </span>
               <!-- The spinner belongs on the trigger now. It used to sit on the
                    selected row, which the dropdown closes over on select, so
