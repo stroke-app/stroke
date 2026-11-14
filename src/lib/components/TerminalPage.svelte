@@ -79,6 +79,19 @@
   let installHintOpen = $state(false)
   let installNoticeH = $state(0)
   const showInstallNotice = $derived(!!missingClient && phase === 'running' && !noticeDismissed)
+  /**
+   * The button's words for an install. On Windows psql and mysql only come with
+   * their servers (winget's PostgreSQL / MariaDB), so the button says what it
+   * actually installs.
+   * @param {{ name: string, hint?: string | null } | null | undefined} c
+   */
+  function installLabel(c) {
+    const hint = c?.hint ?? ''
+    if (/PostgreSQL\.PostgreSQL/.test(hint)) return { text: 'Install PostgreSQL (includes psql)', title: `${hint}: installs the PostgreSQL server and its background service, with psql` }
+    if (/MariaDB\.Server/.test(hint)) return { text: 'Install MariaDB (includes mysql)', title: `${hint}: installs the MariaDB server and its background service, with the mysql client` }
+    return { text: `Install ${c?.name ?? 'it'}`, title: hint }
+  }
+
   /** One click installs it (Homebrew, winget, the distro's manager); otherwise the hint is advice to read. */
   const missingInstallable = $derived(/^(brew|winget|sudo|apt|pacman|dnf) /.test(missingClient?.hint ?? ''))
   // The bar takes room at the top: re-fit so the prompt's rows match the space.
@@ -1130,6 +1143,11 @@
     // Ctrl+Shift+letter reaches a terminal as plain Ctrl+letter, so no client
     // loses anything by these going to the app (go to page, SQL editor...).
     if (e.shiftKey && /^[a-z]$/.test(key)) return false
+    // Every other Ctrl key is the terminal's (D, X, R, U, Z, G...). Stop it
+    // here: returning true lets xterm send it, but the keydown still bubbled
+    // to the app, where Ctrl is the shortcut modifier on Windows and Linux,
+    // so Ctrl+D also opened "Switch database".
+    e.stopPropagation()
     return true
   }
 
@@ -1467,11 +1485,12 @@
             <span class="font-mono text-foreground">{missingClient.name}</span> isn't installed, so this is Stroke's built-in prompt.
           </p>
           {#if missingInstallable}
-            <Button size="sm" class="h-7 shrink-0 gap-1.5" disabled={installing} title={missingClient.hint ?? ''} onclick={() => void installClient()}>
+            {@const label = installLabel(missingClient)}
+            <Button size="sm" class="h-7 shrink-0 gap-1.5" disabled={installing} title={label.title} onclick={() => void installClient()}>
               {#if installing}
                 <Icon name="loader-2" class="size-3.5 shrink-0 animate-spin" />Installing…
               {:else}
-                <Icon name="download" class="size-3.5 shrink-0" />Install {missingClient.name}
+                <Icon name="download" class="size-3.5 shrink-0" />{label.text}
               {/if}
             </Button>
           {:else if missingClient.hint}
@@ -1575,8 +1594,8 @@
                 {/if}
               </div>
             {/if}
-            <Button size="sm" disabled={installing} onclick={() => void installClient()}>
-              {installing ? `Installing ${client?.name ?? ''}…` : `Install ${client?.name ?? 'it'}`}
+            <Button size="sm" disabled={installing} title={installLabel(client).title} onclick={() => void installClient()}>
+              {installing ? `Installing ${client?.name ?? ''}…` : installLabel(client).text}
             </Button>
             {#if installError}<p class="w-full whitespace-pre-wrap text-left font-mono text-ui-2xs text-destructive">{installError}</p>{/if}
             <Button variant="outline" size="sm" onclick={() => void start()}>

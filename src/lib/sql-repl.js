@@ -383,6 +383,18 @@ export function createSqlRepl({ write, run, name, historyKey, language = 'SQL', 
       case '\x1b[3~':
         if (cursor < line.length) { line = line.slice(0, cursor) + line.slice(cursor + 1); redraw() }
         return
+      // Ctrl+D: delete under the cursor, as bash, psql and sqlite3 do mid-line.
+      // On an empty line there is no session to end, so it only rings.
+      case '\x04':
+        if (cursor < line.length) { line = line.slice(0, cursor) + line.slice(cursor + 1); redraw() }
+        else if (!line) write('\x07')
+        return
+      // Ctrl+X: cut the line to the clipboard (what Windows users expect).
+      case '\x18':
+        if (!line) { write('\x07'); return }
+        try { void navigator.clipboard?.writeText(line).catch(() => {}) } catch { /* no clipboard */ }
+        line = ''; cursor = 0; redraw()
+        return
       case '\x1b[D': if (cursor > 0) { cursor--; write('\x1b[D') } return
       case '\x1b[C': if (cursor < line.length) { cursor++; write('\x1b[C') } return
       case '\x1b[H': case '\x01': cursor = 0; redraw(); return

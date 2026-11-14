@@ -48,7 +48,10 @@ struct Client {
 const PSQL_INSTALL: &str = if cfg!(target_os = "macos") {
     "brew install libpq"
 } else if cfg!(windows) {
-    "Install PostgreSQL from postgresql.org/download/windows. The Command Line Tools component alone is enough."
+    // No client-only package exists on Windows: this is the full PostgreSQL
+    // install (server and service included), which puts psql in
+    // Program Files\PostgreSQL\17\bin, where install_dirs() looks.
+    "winget install PostgreSQL.PostgreSQL.17"
 } else {
     "Install the PostgreSQL client: postgresql-client on Debian and Ubuntu, postgresql on Arch and Fedora."
 };
@@ -56,7 +59,9 @@ const PSQL_INSTALL: &str = if cfg!(target_os = "macos") {
 const MYSQL_INSTALL: &str = if cfg!(target_os = "macos") {
     "brew install mysql-client"
 } else if cfg!(windows) {
-    "Install the MySQL client from dev.mysql.com/downloads/installer, or MariaDB from mariadb.org/download. Either client works."
+    // As with psql, the client comes with the server: MariaDB's mysql.exe
+    // speaks to MySQL, TiDB and MariaDB, and lands in Program Files\MariaDB *\bin.
+    "winget install MariaDB.Server"
 } else {
     "Install a MySQL client: mysql-client or mariadb-client on Debian and Ubuntu, mariadb-clients on Arch."
 };
