@@ -1,7 +1,7 @@
 # TODO: security pass after v2.3.0
 
 Findings from an audit of v2.3.0 (local agents, license, dependencies).
-Ship the first section as 2.3.1 (`release:patch`).
+Sections 1-3 shipped in 2.3.x-2.5.x; what is left is unchecked below.
 
 ## 1. Agent access level has holes (dangerous, shipped in 2.3.0)
 
@@ -58,18 +58,21 @@ is not `valid: true`.
 - [x] Delete the `audit-probe` device row I created in the prod trial table
       while probing `/api/license/trial`.
 
-## 3. Dependencies (Dependabot: 22 open, 2 critical)
+## 3. Dependencies (Dependabot: 22 open, 2 critical → 1 low, #138)
 
-- [ ] `zip` (critical, high): only via `tauri-plugin-updater`, which unpacks
-      signed bundles. Low real risk; bump the updater / `cargo update`.
-- [ ] `rustls` 0.21 (via tiberius) and 0.23: `cargo update`.
-- [ ] `dompurify` (critical, high): via mermaid; the advisories are for modes
-      mermaid does not use. `npm update mermaid`.
-- [ ] `vite`, `@vitest/mocker`, `source-map-js`, `deepmerge`, `katex`: dev or
-      low. `npm update`.
+- [x] `zip` (critical, high): zip 6 came from libduckdb-sys 1.10503's build
+      script, not the updater. duckdb 1.10506.1 builds with zip 9.
+- [x] `rustls` 0.21 (via tiberius 0.12): tiberius 0.13 uses rustls 0.23.46.
+      It also brings aws-lc-rs, so `run` installs ring as the process-wide
+      TLS provider.
+- [x] `dompurify`: 3.4.17 through the override.
+- [x] `vite`, `@vitest/mocker`, `source-map-js`, `katex` (override ^0.18.2).
+- [ ] `deepmerge` (low): no fixed release exists; build-time only (via
+      @sveltejs/vite-plugin-svelte). Revisit when one ships.
+- [ ] `echarts` < 6.1.0 (moderate, XSS; `npm audit`, not Dependabot): needs
+      the echarts 6 upgrade (PR #14), which needs the charts tested.
 
 ## 4. Housekeeping
 
-- [ ] Rotate the Plunk secret key (it was pasted into a chat).
-- [ ] No secrets in the repo or history (checked: only sqlx doc examples match
+- [x] No secrets in the repo or history (checked: only sqlx doc examples match
       `PRIVATE KEY`). MCP binds 127.0.0.1 and always requires its bearer token.

@@ -76,9 +76,11 @@ jobs:
           const cfg     = JSON.parse(fs.readFileSync(cfgPath, 'utf8'))
           const [maj, min, pat] = cfg.version.split('.').map(Number)
 
+          // Patch versions run .1 to .9; the next patch after .9 is the next
+          // minor (2.3.9 -> 2.4.0), so a patch never reaches two digits.
           const next =
             bump === 'major' ? `${maj + 1}.0.0` :
-            bump === 'minor' ? `${maj}.${min + 1}.0` :
+            bump === 'minor' || pat >= 9 ? `${maj}.${min + 1}.0` :
                                `${maj}.${min}.${pat + 1}`
 
           // ── Update tauri.conf.json ───────────────────────────────────────

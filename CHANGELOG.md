@@ -20,9 +20,11 @@ All notable changes to Stroke are listed here, newest first.
 - The view-only dashboard's Exit button stays in the dashboard's corner
 - Only one view is highlighted in the Objects sidebar
 - The Website link in Settings → About opens
+- Windows and Linux: the connection page, shortcuts and onboarding no longer cover the bottom of the title bar
 
 ### Changes
 - The account in Settings is one row, like the settings around it
+- Linux: the program is installed as `stroke` instead of `app`; launch at login follows the new name
 
 ## [2.5.4] - 2026-11-14
 

@@ -469,6 +469,18 @@ pub fn run() {
         .manage(db::result_store::ResultStore::default())
         .manage(updates::UpdateState::default())
         .setup(move |app| {
+            // Linux packages renamed the binary from `app` to `stroke` (2.5.6), and
+            // a launch-at-login entry stores the binary's path. Re-enabling an
+            // enabled entry rewrites it with the current path, so it doesn't
+            // point at a file the upgrade removed.
+            #[cfg(target_os = "linux")]
+            {
+                use tauri_plugin_autostart::ManagerExt;
+                let launcher = app.autolaunch();
+                if launcher.is_enabled().unwrap_or(false) {
+                    let _ = launcher.enable();
+                }
+            }
             // The terminal finds its clients on the login shell's PATH; reading
             // that spawns the shell once, so do it now rather than on first open.
             tauri::async_runtime::spawn(async {
