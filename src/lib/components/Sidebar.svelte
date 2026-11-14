@@ -97,6 +97,10 @@
     onopensettings = () => {},
     onopenshortcuts = () => {},
     oncheckupdates = () => {},
+    /** A manual update check is running: the button spins. */
+    checkingUpdate = false,
+    /** An update was found ('available') or downloaded ('ready'): the button becomes a pill (T3). */
+    updateState = /** @type {'' | 'available' | 'ready'} */ (''),
     /** @type {(id: string) => void} */
     onremoveconnection = () => {},
     /** @type {(id: string, group: string | null) => void} */
@@ -2154,9 +2158,11 @@
                     </SearchableMenu>
             </div>
           {/if}
-          <div class="relative min-w-0 flex-1">
+          <!-- A field you can see at rest (faint fill), with room between the
+               magnifier and the text, so the caret never sits on the icon. -->
+          <div class="group/search relative min-w-0 flex-1">
           <Icon name="search"
-            class="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground"
+            class="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground transition-colors duration-150 group-focus-within/search:text-foreground"
           />
           <input
             type="search"
@@ -2225,7 +2231,7 @@
                 if (first) { e.preventDefault(); kbdNav = true; focusRow(first) }
               }
             }}
-            class="no-field-frame h-7 w-full min-w-0 rounded-md bg-transparent pl-7 pr-7 text-ui-sm text-foreground outline-none placeholder:text-muted-foreground focus-visible:bg-sidebar-accent/60 disabled:cursor-not-allowed disabled:opacity-40 [&::-webkit-search-cancel-button]:appearance-none"
+            class="no-field-frame h-8 w-full min-w-0 rounded-md bg-sidebar-accent/35 pl-[34px] pr-7 text-ui-sm text-foreground outline-none transition-colors duration-150 placeholder:text-muted-foreground hover:bg-sidebar-accent/50 focus-visible:bg-sidebar-accent/70 disabled:cursor-not-allowed disabled:opacity-40 [&::-webkit-search-cancel-button]:appearance-none"
             aria-label="Filter {activeTabLabel.toLowerCase()}"
             aria-describedby="sidebar-filter-hint"
             data-sidebar-filter
@@ -3156,10 +3162,24 @@
 
     <!-- Footer, as in T3: app-wide controls as plain icons, one round action. -->
     <div class="flex h-12 shrink-0 items-center gap-1 px-3">
-      <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:text-foreground" title="Settings" aria-label="Settings" onclick={onopensettings}><Icon name="settings" class="size-4 shrink-0" /></button>
-      <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:text-foreground" title={$isCurrentThemeDark ? 'Light theme' : 'Dark theme'} aria-label="Toggle theme" onclick={() => toggleLightDark()}><Icon name={$isCurrentThemeDark ? 'sun' : 'moon'} class="size-4 shrink-0" /></button>
-      <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:text-foreground" title="Keyboard shortcuts" aria-label="Keyboard shortcuts" onclick={onopenshortcuts}><Icon name="keyboard" class="size-4 shrink-0" /></button>
-      <button type="button" class="ml-auto inline-flex size-8 items-center justify-center rounded-full text-muted-foreground outline-none hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring" title="Check for updates" aria-label="Check for updates" onclick={oncheckupdates}><Icon name="arrow-up-circle" class="size-4 shrink-0" /></button>
+      <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title="Settings" aria-label="Settings" onclick={onopensettings}><Icon name="settings" class="size-4 shrink-0" /></button>
+      <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title={$isCurrentThemeDark ? 'Light theme' : 'Dark theme'} aria-label="Toggle theme" onclick={() => toggleLightDark()}><Icon name={$isCurrentThemeDark ? 'sun' : 'moon'} class="size-4 shrink-0" /></button>
+      <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title="Keyboard shortcuts" aria-label="Keyboard shortcuts" onclick={onopenshortcuts}><Icon name="keyboard" class="size-4 shrink-0" /></button>
+      {#if updateState}
+        <!-- T3's update pill: there when there is something to do, gone when
+             there isn't. Ready means downloaded; Restart installs it. -->
+        <button
+          type="button"
+          class="ml-auto inline-flex h-7 items-center gap-1.5 rounded-full bg-primary px-3 text-ui-xs font-medium text-primary-foreground transition-[background-color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-primary/90 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+          title={updateState === 'ready' ? 'The update is downloaded. Restart to install it.' : 'A new version of Stroke is available'}
+          onclick={oncheckupdates}
+        >
+          <Icon name={updateState === 'ready' ? 'refresh-cw' : 'arrow-up-circle'} class="size-3.5 shrink-0" />
+          {updateState === 'ready' ? 'Restart' : 'Update'}
+        </button>
+      {:else}
+        <button type="button" class="ml-auto inline-flex size-8 items-center justify-center rounded-full text-muted-foreground outline-none transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none" title={checkingUpdate ? 'Checking for updates…' : 'Check for updates'} aria-label={checkingUpdate ? 'Checking for updates' : 'Check for updates'} aria-busy={checkingUpdate} disabled={checkingUpdate} onclick={oncheckupdates}><Icon name={checkingUpdate ? 'loader-2' : 'arrow-up-circle'} class={checkingUpdate ? 'size-4 shrink-0 animate-spin' : 'size-4 shrink-0'} /></button>
+      {/if}
     </div>
   </aside>
   </ContextMenu.Trigger>

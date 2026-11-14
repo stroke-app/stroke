@@ -613,6 +613,8 @@
   /** @type {import('./UpdateDialog.svelte').default | null} */
   let updateDialog = $state(null)
   let statusBarHasUpdate = $state(false)
+  /** A manual update check is running (the sidebar button spins). */
+  let checkingUpdate = $state(false)
   /** The update is downloaded: the status bar offers the restart. */
   let statusBarUpdateReady = $state(false)
   let sidebarOpen = $state(loadLayout().navSidebarOpen)
@@ -8959,6 +8961,7 @@ let rowSearch = $state('')
     statusBarHasUpdate = true
     statusBarUpdateReady = state === 'ready'
   }}
+  onchecking={(c) => (checkingUpdate = c)}
 />
 
 
@@ -9149,6 +9152,8 @@ let rowSearch = $state('')
         onopensettings={() => (showSettingsModal = true)}
         onopenshortcuts={() => openShortcuts()}
         oncheckupdates={() => void updateDialog?.checkNow?.()}
+        {checkingUpdate}
+        updateState={statusBarUpdateReady ? 'ready' : statusBarHasUpdate ? 'available' : ''}
         tableNav={activeTab?.kind === 'table' && !!activeTable}
         bind:openFindReplace={sidebarOpenFindReplace}
         bind:showTablesTab={sidebarShowTables}
@@ -10571,7 +10576,7 @@ let rowSearch = $state('')
             <!-- The one main control: everything starts in ⌘K. -->
             <button
               type="button"
-              class="flex h-11 w-full items-center gap-3 rounded-md border border-border/60 bg-sidebar px-3.5 text-left text-ui-sm text-muted-foreground shadow-sm transition-colors hover:border-border hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+              class="flex h-11 w-full cursor-pointer items-center gap-3 rounded-md border border-border/60 bg-sidebar px-3.5 text-left text-ui-sm text-muted-foreground shadow-sm transition-[border-color,background-color,color,box-shadow,scale] duration-150 ease-[var(--ease-out)] hover:border-border hover:bg-accent/40 hover:text-foreground hover:shadow-md active:scale-[0.99] focus-visible:outline-2 focus-visible:outline-ring"
               onclick={() => { commandPage = 'root'; commandOpen = true }}
             >
               <Search class="size-4 shrink-0" />
