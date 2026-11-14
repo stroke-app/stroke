@@ -22,6 +22,8 @@
   let {
     /** An update was found ('available'), or is downloaded and waiting ('ready'). */
     onupdatefound = /** @type {(state: 'available' | 'ready') => void} */ ((_state) => {}),
+    /** A What's new highlight's button. @type {(id: import('$lib/whats-new.js').HighlightAction) => void} */
+    onwhatsnewaction = () => {},
   } = $props()
 
   /** @type {'idle'|'available'|'downloading'|'ready'|'error'|'up-to-date'} */
@@ -120,6 +122,8 @@
     /** @type {import('$lib/changelog.js').ChangelogRelease[]} */
     releases: [],
     omitted: 0,
+    /** @type {import('$lib/whats-new.js').Highlight[]} */
+    highlights: [],
   })
 
   /**
@@ -163,7 +167,10 @@
       console.error('[updater] changelog unavailable:', e)
     }
 
-    if (!notes.releases.length) {
+    const { highlightsFor } = await import('$lib/whats-new.js')
+    const highlights = highlightsFor(previous, current)
+
+    if (!notes.releases.length && !highlights.length) {
       // A downgrade, or a build whose notes are missing: just say what happened.
       toast.success(`Updated to v${current}`, {
         description: `You were on v${previous}.`,
@@ -174,7 +181,7 @@
       })
       return
     }
-    whatsNew = { previous, current, ...notes }
+    whatsNew = { previous, current, ...notes, highlights }
     // After the window is on screen and the startup screen has settled, so the
     // dialog is not the first thing that flashes past.
     const wait = () => {
@@ -348,6 +355,8 @@
   previous={whatsNew.previous}
   releases={whatsNew.releases}
   omitted={whatsNew.omitted}
+  highlights={whatsNew.highlights}
+  onaction={onwhatsnewaction}
   onfullchangelog={() => void openChangelog('whats-new')}
 />
 

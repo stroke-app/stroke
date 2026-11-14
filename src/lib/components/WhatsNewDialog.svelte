@@ -2,6 +2,11 @@
   import * as Dialog from '$lib/components/ui/dialog/index.js'
   import { Button } from '$lib/components/ui/button/index.js'
   import ExternalLink from '@lucide/svelte/icons/external-link'
+  import ListTree from '@lucide/svelte/icons/list-tree'
+  import Palette from '@lucide/svelte/icons/palette'
+  import Keyboard from '@lucide/svelte/icons/keyboard'
+  import Database from '@lucide/svelte/icons/database'
+  import { appSidebarStyle } from '$lib/stores/settings.js'
   import { splitInlineCode } from '$lib/changelog.js'
   import { cn } from '$lib/utils.js'
 
@@ -18,7 +23,19 @@
     /** Older releases left out of `releases`. */
     omitted = 0,
     onfullchangelog = /** @type {() => void} */ (() => {}),
+    /** A few features to try, above the notes (see $lib/whats-new.js). @type {import('$lib/whats-new.js').Highlight[]} */
+    highlights = [],
+    /** A highlight's button. @type {(id: import('$lib/whats-new.js').HighlightAction) => void} */
+    onaction = () => {},
   } = $props()
+
+  const ICON = { tree: ListTree, themes: Palette, keyboard: Keyboard, database: Database }
+
+  /** @param {import('$lib/whats-new.js').HighlightAction} id */
+  function act(id) {
+    open = false
+    onaction(id)
+  }
 
   /** @type {Record<import('$lib/changelog.js').ChangeType, string>} */
   const DOT = {
@@ -38,8 +55,37 @@
       {/if}
     </Dialog.Header>
 
-    <div class="-mx-5 mt-4 max-h-[min(26rem,60vh)] overflow-y-auto border-t border-border/40 px-5 py-4">
+    <div class="-mx-5 mt-4 max-h-[min(30rem,65vh)] overflow-y-auto border-t border-border/40 px-5 py-4">
       <div class="flex flex-col gap-5">
+        {#if highlights.length}
+          <!-- What to try first, each with the button that does it. -->
+          <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {#each highlights as h (h.id)}
+              {@const Ico = ICON[h.icon]}
+              {@const done = h.action?.id === 'enable-tree-sidebar' && $appSidebarStyle === 'tree'}
+              <div class="flex flex-col gap-2 rounded-lg border border-border/60 bg-panel p-3">
+                <div class="flex items-center gap-2">
+                  <span class="flex size-7 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+                    <Ico class="size-3.5 shrink-0" />
+                  </span>
+                  <p class="min-w-0 truncate text-ui-sm font-medium text-foreground">{h.title}</p>
+                  {#if h.beta}
+                    <span class="shrink-0 rounded-full border border-border/70 px-1.5 py-px text-ui-3xs font-medium leading-4 text-muted-foreground">Beta</span>
+                  {/if}
+                </div>
+                <p class="flex-1 text-ui-xs leading-relaxed text-muted-foreground text-pretty">{h.body}</p>
+                {#if h.action}
+                  <Button variant="outline" size="sm" class="self-start" disabled={done} onclick={() => act(h.action.id)}>
+                    {done ? 'On' : h.action.label}
+                  </Button>
+                {/if}
+              </div>
+            {/each}
+          </div>
+          {#if releases.length}
+            <h3 class="-mb-2 text-ui-xs font-medium text-muted-foreground">Everything in this update</h3>
+          {/if}
+        {/if}
         {#each releases as release (release.version)}
           <section class="flex flex-col gap-3">
             {#if releases.length > 1}
