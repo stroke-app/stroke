@@ -66,7 +66,11 @@ argon2 = "0.5"
 # the async Tauri command runtime); crypto-rust encrypts the D-Bus session.
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
 duckdb = { version = "1.3.2", features = ["bundled"] }
-tiberius = { version = "0.12.3", default-features = false, features = ["rustls", "tds73", "chrono"] }
+tiberius = { version = "0.13.0", default-features = false, features = ["rustls", "tds73", "chrono"] }
+# Pinned as a direct dependency only to pick the TLS crypto provider at
+# startup (see `run`): tiberius 0.13 enables aws-lc-rs next to the ring the
+# other drivers use, and rustls then has no default of its own.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 tokio-util = { version = "0.7.18", features = ["compat"] }
 # The SQL terminal: the engine's own CLI (psql, mysql, sqlite3...) in a
 # pseudo-terminal. ConPTY on Windows, openpty everywhere else.

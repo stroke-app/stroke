@@ -405,6 +405,13 @@ fn unlock_macos_webview_frame_rate(window: &tauri::WebviewWindow) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // One TLS crypto provider for the whole process. Two are compiled in
+    // (ring, which every driver used so far, and aws-lc-rs from tiberius 0.13),
+    // and with both rustls has no default: any client built without naming one
+    // (MongoDB, Redis, Postgres, SQL Server) would panic on its first TLS
+    // connection. ring keeps TLS exactly as it was.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     // Linux WebKitGTK rendering fix - set before any threads spawn.
     #[cfg(target_os = "linux")]
     // SAFETY: called before any threads are spawned.
