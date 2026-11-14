@@ -2904,7 +2904,70 @@ let rowSearch = $state('')
   /** The full-window AI chat, so the title bar's sidebar button can drive its chat list. @type {any} */
   let aiFullRef = $state(null)
   /** The AI chat in its tab (beta), for messages sent from elsewhere. @type {any} */
-  let aiTabRef = $state(null)
+  /**
+   * The AI tab's chat instances. One is on screen (`aiPrimaryKey`); the others
+   * are chats still replying after you started or opened another, kept mounted
+   * until their reply lands so leaving a chat never cancels it.
+   * @type {{ key: string, initialRequest: import('$lib/stores/ai-chat-bridge.js').ChatRequest | null, convId: string | null, busy: boolean }[]}
+   */
+  let aiInstances = $state([{ key: 'ai-0', initialRequest: null, convId: null, busy: false }])
+  let aiPrimaryKey = $state('ai-0')
+  let aiListVersion = $state(0)
+  let aiInstanceSeq = 0
+  /** @type {Record<string, any>} */
+  let aiTabRefs = $state({})
+  const aiTabRef = $derived(aiTabRefs[aiPrimaryKey] ?? null)
+  const aiBackgroundBusy = $derived(aiInstances.filter((i) => i.key !== aiPrimaryKey && i.busy).map((i) => i.convId ?? 'draft'))
+
+  function dropIdleAiInstances() {
+    aiInstances = aiInstances.filter((i) => i.key === aiPrimaryKey || i.busy)
+  }
+
+  /**
+   * An AI chat instance was asked for another chat while replying.
+   * @param {string} fromKey
+   * @param {import('$lib/stores/ai-chat-bridge.js').ChatRequest} req
+   */
+  function aiHandoff(fromKey, req) {
+    if (req.type === 'delete') {
+      aiInstances = aiInstances.filter((i) => i.key === aiPrimaryKey || i.convId !== req.id)
+      return
+    }
+    if (req.type === 'open') {
+      const running = aiInstances.find((i) => i.key !== fromKey && i.busy && i.convId === req.id)
+      if (running) {
+        aiPrimaryKey = running.key
+        dropIdleAiInstances()
+        return
+      }
+    }
+    const key = `ai-${++aiInstanceSeq}`
+    aiInstances = [...aiInstances, { key, initialRequest: req, convId: null, busy: false }]
+    aiPrimaryKey = key
+    dropIdleAiInstances()
+  }
+
+  /**
+   * @param {string} key
+   * @param {string | null} convId
+   * @param {boolean} busy
+   */
+  function aiBusyChange(key, convId, busy) {
+    const inst = aiInstances.find((i) => i.key === key)
+    if (!inst) return
+    const was = inst.busy
+    inst.convId = convId
+    inst.busy = busy
+    if (was && !busy && key !== aiPrimaryKey) {
+      // Its reply is saved: refresh the list now, and once more after the
+      // title it generates in the background lands, then let it go.
+      aiListVersion++
+      setTimeout(() => {
+        aiInstances = aiInstances.filter((i) => i.key !== key || i.key === aiPrimaryKey || i.busy)
+        aiListVersion++
+      }, 8000)
+    }
+  }
   let aiTabEverOpened = $state(false)
   let terminalDockOpen = $state(false)
   let terminalDockEver = $state(false)
@@ -9605,21 +9668,32 @@ let rowSearch = $state('')
         >
           <svelte:boundary failed={tabError}>
             {#await import('./AiChat.svelte')}<TabLoading />{:then { default: AiChat }}
+              {#each aiInstances as inst (inst.key)}
+              {@const primary = inst.key === aiPrimaryKey}
+              <div class={primary ? 'flex min-h-0 flex-1 flex-col' : 'hidden'} inert={!primary || undefined}>
               <AiChat
-                bind:this={aiTabRef}
+                bind:this={aiTabRefs[inst.key]}
                 listInSidebar
+                {primary}
+                backgroundBusy={primary ? aiBackgroundBusy : []}
+                initialRequest={inst.initialRequest}
+                listVersion={primary ? aiListVersion : 0}
+                onhandoff={(req) => aiHandoff(inst.key, req)}
+                onbusychange={(convId, busy) => aiBusyChange(inst.key, convId, busy)}
                 schemaContext={{ ...aiSchemaContext, activeTable: null, columns: [], primaryKey: [], foreignKeys: [] }}
                 connectionId={aiChatId}
                 chatMatch={aiChatMatch}
                 database={connection?.database ?? ''}
                 connectionConfig={connection}
-                isActive={activeTab?.kind === 'ai'}
+                isActive={primary && activeTab?.kind === 'ai'}
                 mode="full"
                 onwritesql={(sql) => void handleAiWriteSql(sql)}
                 onopenmodelsettings={() => (showAiModelSettings = true)}
                 onopendiagramspage={openDiagramsTab}
                 onschemadirty={reloadAfterAiDdl}
               />
+              </div>
+              {/each}
             {/await}
           </svelte:boundary>
         </div>

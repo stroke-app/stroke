@@ -1,6 +1,7 @@
 <script>
   import CollapsibleCode from './CollapsibleCode.svelte'
-  import { tick, onMount, onDestroy } from "svelte";
+  import { tick, onMount, onDestroy, untrack } from "svelte";
+  import { get } from "svelte/store";
   import Sparkles from "@lucide/svelte/icons/sparkles";
   import ArrowUp from "@lucide/svelte/icons/arrow-up";
   import ArrowDown from "@lucide/svelte/icons/arrow-down";
@@ -142,7 +143,7 @@
   import { loadLayout, setNavSidebarWidth, clampNavSidebarWidth, NAV_SIDEBAR_MIN, NAV_WIDTH_EVENT } from "$lib/stores/layout.js";
   import Brain from "@lucide/svelte/icons/brain";
   import AiModelPicker from "./AiModelPicker.svelte";
-  import { publishChatList, aiChatPending, takeChatRequest } from "$lib/stores/ai-chat-bridge.js";
+  import { publishChatList, aiChatPending, aiChatList, takeChatRequest } from "$lib/stores/ai-chat-bridge.js";
   import {
     listConversations,
     createConversation,
@@ -257,6 +258,24 @@
     externalToggle = false,
     /** AI in a tab (beta): the app's sidebar lists the chats, so this hides its own list. */
     listInSidebar = false,
+    /**
+     * Background replies (AI in a tab). The tab can hold several of these: the
+     * one on screen (`primary`) and others still replying to a chat you left.
+     * Starting or opening a chat while this one replies calls `onhandoff`, and
+     * the parent mounts a fresh instance for it instead of this reply being
+     * cancelled.
+     */
+    primary = true,
+    /** Chats replying in the other instances, listed as working. @type {string[]} */
+    backgroundBusy = [],
+    /** @type {((req: import('$lib/stores/ai-chat-bridge.js').ChatRequest) => void) | null} */
+    onhandoff = null,
+    /** What this instance opens with. @type {import('$lib/stores/ai-chat-bridge.js').ChatRequest | null} */
+    initialRequest = null,
+    /** @type {((convId: string | null, busy: boolean) => void) | null} */
+    onbusychange = null,
+    /** Bumped when another instance saved a chat: reload the list. */
+    listVersion = 0,
     /** @param {string} sql */
     onwritesql = (sql) => {},
     /** Open the dedicated AI model settings dialog. */
@@ -402,26 +421,67 @@
   }
   $effect(() => {
     if (!listInSidebar) return;
+    if (!primary) return;
+    const mine = loading ? [activeConvId ?? "draft"] : [];
     publishChatList({
       connectionId,
       chats: convList.map((c) => ({ id: c.id, title: displayTitle(c), updatedAt: c.updatedAt, where: chatWhere(c) })),
       activeId: activeConvId,
       busyId: loading ? activeConvId ?? "draft" : null,
+      busyIds: [...mine, ...backgroundBusy],
+      owner: instanceId,
       live: true,
     });
   });
   onDestroy(() => {
-    if (listInSidebar) publishChatList({ live: false, busyId: null });
+    // Only the instance that published the list takes it down: a background
+    // instance going away must not blank the list the new one put up.
+    if (listInSidebar && get(aiChatList).owner === instanceId) publishChatList({ live: false, busyId: null, busyIds: [] });
+  });
+
+  /** This instance's key in the shared list (several can be mounted). */
+  const instanceId = Math.random().toString(36).slice(2);
+
+  /** Tell the parent when this instance starts or stops replying. */
+  $effect(() => {
+    onbusychange?.(activeConvId, loading);
+  });
+
+  /** Another instance saved a chat: refresh the list (titles, times). */
+  $effect(() => {
+    if (listVersion > 0) untrack(() => void loadConvList());
+  });
+
+  /**
+   * Hand a new or other chat to a fresh instance rather than cancelling the
+   * reply in this one, or bring forward the instance already replying in it.
+   * @param {import('$lib/stores/ai-chat-bridge.js').ChatRequest} req
+   */
+  function handOff(req) {
+    if (!onhandoff || !listInSidebar) return false;
+    const elsewhere = req.type === "open" && backgroundBusy.includes(req.id);
+    if (!loading && !elsewhere) return false;
+    onhandoff(req);
+    return true;
+  }
+
+  onMount(() => {
+    const req = initialRequest;
+    if (req?.type === "open") void loadConvList().then(() => selectConversation(req.id));
   });
 
   /** Open or start the chat the sidebar asked for. */
   $effect(() => {
-    if (!listInSidebar || !$aiChatPending) return;
+    if (!listInSidebar || !primary || !$aiChatPending) return;
     const req = takeChatRequest();
     if (!req) return;
     void (async () => {
       if (req.type === "new") return newConversation();
-      if (req.type === "delete") return removeConversation(req.id);
+      if (req.type === "delete") {
+        // Replying in another instance: the parent ends that one too.
+        if (backgroundBusy.includes(req.id)) onhandoff?.(req);
+        return removeConversation(req.id);
+      }
       if (req.type === "rename") {
         const title = req.title.trim();
         if (!title) return;
@@ -515,6 +575,7 @@
 
   async function selectConversation(/** @type {string} */ id) {
     if (id === activeConvId) return;
+    if (handOff({ type: "open", id })) return;
     abortCurrentRequest();
     // Save current before switching
     await persistCurrent();
@@ -542,6 +603,8 @@
     rawApiHistory = /** @type {import('$lib/ai.js').ApiMessage[]} */ (
       conv.apiHistory ?? []
     );
+    // Chats saved mid-reply by older builds still carry a running step group.
+    settleOpenWork();
     syncSeq(items);
     enterFrom = items.length;
     error = "";
@@ -549,6 +612,7 @@
   }
 
   async function newConversation() {
+    if (handOff({ type: "new" })) return;
     abortCurrentRequest();
     await persistCurrent();
     activeConvId = null;
@@ -1103,6 +1167,9 @@
     streamingId = null;
     streamingContent = "";
     _pendingStreamContent = "";
+    // A step group left "Working" was saved that way and spun forever when the
+    // chat was opened again: close it out as stopped.
+    settleOpenWork();
     // Remove in-flight ephemeral items so the UI doesn't show a frozen state
     items = items.filter(
       (i) =>

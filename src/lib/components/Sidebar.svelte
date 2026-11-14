@@ -1558,6 +1558,8 @@
   const liveChats = $derived($aiChatList.live && $aiChatList.connectionId === aiChatId)
   const chats = $derived(liveChats ? $aiChatList.chats : storedChats)
   const chatsShown = $derived(chatsShowAll ? chats : chats.slice(0, CHATS_LIMIT))
+  /** Every chat replying, including ones left running in the background. */
+  const chatBusy = $derived($aiChatList.busyIds ?? ($aiChatList.busyId ? [$aiChatList.busyId] : []))
 
   // Rename and delete from the list. With the AI tab mounted it owns the list,
   // so the request goes to it; before that, the stored list is changed here.
@@ -3301,7 +3303,7 @@
       </div>
       {#if chatsOpen}
         <div class="app-scroll min-h-0 overflow-y-auto px-2 pb-2">
-          {#if liveChats && $aiChatList.busyId === 'draft'}
+          {#if liveChats && chatBusy.includes('draft')}
             <div class="flex h-7 w-full min-w-0 items-center gap-2 rounded-md bg-sidebar-accent px-2 text-ui-sm text-foreground">
               <span class="min-w-0 flex-1 truncate">New chat</span>
               <span class="flex shrink-0 items-center gap-1 text-ui-2xs text-primary"><Icon name="loader-2" class="size-3 shrink-0 animate-spin" />Working</span>
@@ -3309,7 +3311,7 @@
           {/if}
           {#each chatsShown as chat (chat.id)}
             {@const open = aiTabActive && liveChats && $aiChatList.activeId === chat.id}
-            {@const busy = liveChats && $aiChatList.busyId === chat.id}
+            {@const busy = liveChats && chatBusy.includes(chat.id)}
             {@const confirming = confirmDeleteChatId === chat.id}
             <!-- One line per chat: the title, then the time or "Working". On
                  hover (or focus) the time gives way to rename and delete; where
@@ -3380,7 +3382,7 @@
               </div>
             {/if}
           {/each}
-          {#if !chats.length && !(liveChats && $aiChatList.busyId)}
+          {#if !chats.length && !(liveChats && chatBusy.length)}
             <button
               type="button"
               class="flex h-8 w-full items-center gap-2.5 rounded-md px-2 text-ui-sm text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground"
