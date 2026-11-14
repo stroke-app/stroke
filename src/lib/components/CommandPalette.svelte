@@ -749,7 +749,7 @@
       <Command.List
         class={page === 'ask'
           ? 'h-[min(640px,74vh)] max-h-[min(640px,74vh)]'
-          : 'show-scrollbar max-h-[min(420px,56vh)] pb-5 [mask-image:linear-gradient(to_bottom,black_calc(100%-32px),transparent)]'}
+          : 'show-scrollbar max-h-[min(420px,56vh)] pb-2 [mask-image:linear-gradient(to_bottom,black_calc(100%-16px),transparent)]'}
       >
         {#if page !== 'ask'}
           <Command.Empty class="py-8 text-center text-ui-xs text-muted-foreground">No results.</Command.Empty>
@@ -1204,13 +1204,13 @@
       </Command.List>
       <!-- The keys, said once at the bottom, as the palette's own legend. -->
       {#if page === 'theme'}
-        <div class="flex h-10 shrink-0 items-center gap-4 border-t border-border/50 bg-muted/25 px-3.5 text-ui-2xs text-muted-foreground shadow-[inset_0_1px_0_rgb(255_255_255/0.03),0_-10px_20px_-12px_rgb(0_0_0/0.45)]">
+        <div class="flex h-10 shrink-0 items-center gap-4 border-t border-border/50 bg-muted/25 px-3.5 text-ui-2xs text-muted-foreground">
           <span class="flex items-center gap-1.5"><Kbd keys={['↑']} /><Kbd keys={['↓']} /> Preview</span>
           <span class="ml-auto flex items-center gap-1.5">Select theme <Kbd keys={['↵']} /></span>
           <span class="flex items-center gap-1.5">Cancel <Kbd keys={['esc']} /></span>
         </div>
       {:else if page !== 'ask'}
-        <div class="flex h-10 shrink-0 items-center gap-4 border-t border-border/50 bg-muted/25 px-3.5 text-ui-2xs text-muted-foreground shadow-[inset_0_1px_0_rgb(255_255_255/0.03),0_-10px_20px_-12px_rgb(0_0_0/0.45)]">
+        <div class="flex h-10 shrink-0 items-center gap-4 border-t border-border/50 bg-muted/25 px-3.5 text-ui-2xs text-muted-foreground">
           <span class="flex items-center gap-1.5"><Kbd keys={['↑']} /><Kbd keys={['↓']} /> Navigate</span>
           <span class="flex items-center gap-1.5"><Kbd keys={['↵']} /> Select</span>
           <span class="flex items-center gap-1.5"><Kbd keys={['esc']} /> Close</span>

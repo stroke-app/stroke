@@ -99,7 +99,7 @@
 <div class={cn('fixed inset-0 z-[9999] flex flex-col bg-background transition-opacity duration-200 ease-out', leaving && 'opacity-0')}>
   <!-- Bare title bar: just the drag region, the mark, and window controls -->
   <div
-    class="flex h-[52px] shrink-0 items-center border-b border-border/40 px-2.5 select-none"
+    class="flex shrink-0 items-center border-b border-border/40 select-none {isMac ? 'h-[52px] px-2.5' : 'h-10 pl-2.5'}"
     data-tauri-drag-region
     role="toolbar"
     aria-label="Window title bar"

@@ -1466,7 +1466,12 @@
     resize()
     ro = new ResizeObserver(resize)
     if (host) ro.observe(host)
-    themeObs = new MutationObserver(refreshTheme)
+    // Coalesced to a frame: reading the theme's colours forces a style recalc.
+    let themeFrame = 0
+    themeObs = new MutationObserver(() => {
+      cancelAnimationFrame(themeFrame)
+      themeFrame = requestAnimationFrame(refreshTheme)
+    })
     themeObs.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'data-theme', 'style'] })
     // Fit once positions are in (nodes may already be present, or arrive later).
     requestAnimationFrame(ensureFit)

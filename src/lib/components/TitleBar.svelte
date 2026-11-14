@@ -132,7 +132,7 @@
   style) floating over this bar, so it only reserves space for them here.
 -->
 <div
-  class="studio-chrome relative flex h-[calc(52px*var(--app-scale))] shrink-0 items-center bg-panel {isMac ? 'pr-[calc(10px*var(--app-scale))]' : 'border-b border-border/40 px-[calc(10px*var(--app-scale))]'} select-none"
+  class="studio-chrome relative flex shrink-0 items-center bg-panel {isMac ? 'h-[calc(52px*var(--app-scale))] pr-[calc(10px*var(--app-scale))]' : 'h-[calc(40px*var(--app-scale))] border-b border-border/40 pl-[calc(10px*var(--app-scale))] pr-0'} select-none"
   data-studio-chrome
   style:zoom={chromeZoom}
   data-studio-region="titlebar"
@@ -207,14 +207,15 @@
   <div class={isMac && tabStrip ? 'w-2 shrink-0' : 'min-w-0 flex-1'} data-tauri-drag-region></div>
 
   <!-- Right: trial pill + Chat -->
-  <div class="flex shrink-0 items-center gap-[calc(4px*var(--app-scale))]" bind:clientWidth={rightW}>
+  <div class="flex shrink-0 items-center gap-[calc(4px*var(--app-scale))] self-stretch" bind:clientWidth={rightW}>
 
     <!-- Workspace, then the app menu (account, settings, theme, help). -->
     <WorkspaceSwitcher {connections} compact />
     <TitleBarMenu actions={menuActions} class="size-[calc(28px*var(--app-scale))]" />
 
     {#if isTauri && !isMac}
-      <div class="ml-1 border-l border-border/40 pl-1.5">
+      <!-- Windows-style caption buttons: full height, flush with the window's edge. -->
+      <div class="ml-2 flex self-stretch">
         <WindowControls />
       </div>
     {/if}

@@ -647,11 +647,13 @@
     // lights, "History") and no status bar. Using the table view's heights there
     // left the AI header showing above inset pages (shortcuts, connections) and
     // its footer below them.
-    // The title bar is a fixed 52px at every zoom (TitleBar counter-zooms it),
-    // in AI mode too. 38px was left from an older bar, so on Windows/Linux the
-    // connection page, shortcuts and onboarding covered its bottom 14px.
-    root.style.setProperty('--app-titlebar-h', '52px')
-    root.style.setProperty('--app-statusbar-h', !aiMode && statusBarVisible ? '32px' : '0px')
+    // The title bar is a fixed height at every zoom (TitleBar counter-zooms it),
+    // in AI mode too.
+    // Windows/Linux use a 40px bar (TitleBar), the height of their own title bars.
+    root.style.setProperty('--app-titlebar-h', IS_MAC ? '52px' : '40px')
+    // The status bar is h-8, which grows with the app zoom; a fixed 32px let
+    // the connection page's footer slide over it when zoomed in.
+    root.style.setProperty('--app-statusbar-h', !aiMode && statusBarVisible ? 'calc(var(--spacing) * 8)' : '0px')
   })
   // Width for the loading-fallback shell, so the spinner fills a properly-sized
   // sidebar panel (matching saved width) instead of a zero-width strip while the
@@ -2636,6 +2638,11 @@ let rowSearch = $state('')
       showConnectionModal = true
     }
   }
+
+  createCommandHotkey('theme.pick', (e) => {
+    e.preventDefault()
+    menuActions.theme?.()
+  })
 
   createCommandHotkey('palette.open', (e) => {
     e.preventDefault()
