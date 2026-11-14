@@ -367,6 +367,7 @@ export function tabDisplayTitle(tab) {
   if (tab.kind === 'table' && tab.state) return tableTabTitle(/** @type {TableTabState} */ (tab.state))
   // Honour a custom title: a DDL viewer ("DDL · users") and the 2nd/3rd editor
   // ("Query Editor 2") are separate buffers and must not all read "Query Editor".
+  if (tab.kind === 'terminal') return tab.title || 'Terminal'
   if (tab.kind === 'sql') return tab.title || 'Query Editor'
   if (tab.kind === 'notebook') return tab.title || 'Untitled Notebook'
   if (tab.kind === 'extension-detail') return tab.title || tab.state?.extensionId || 'Extension'
