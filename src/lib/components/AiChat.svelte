@@ -982,6 +982,47 @@
   let userScrolledUp = $state(false);
 
   /**
+   * How each query result card sits in the transcript. While a turn runs its
+   * cards stay out of the way (the step list says what ran); afterwards the
+   * cards of one stretch draw as a single stacked block, and a long stretch
+   * shows its last three behind "Show N earlier queries".
+   * @type {Map<string, { hidden?: boolean, pos: "single" | "first" | "mid" | "last", more?: number, runKey: string }>}
+   */
+  const resultLayout = $derived.by(() => {
+    /** @type {Map<string, any>} */
+    const out = new Map();
+    let lastUser = -1;
+    for (let i = items.length - 1; i >= 0; i--) if (items[i].kind === "user") { lastUser = i; break; }
+    /** @type {string[]} */
+    let run = [];
+    const flush = () => {
+      if (!run.length) return;
+      const runKey = run[0];
+      const collapsed = run.length > 4 && !expandedResultRuns.has(runKey);
+      const shown = collapsed ? run.slice(-3) : run;
+      for (const id of run) if (!shown.includes(id)) out.set(id, { hidden: true, pos: "single", runKey });
+      shown.forEach((id, k) => {
+        const pos = shown.length === 1 ? "single" : k === 0 ? "first" : k === shown.length - 1 ? "last" : "mid";
+        out.set(id, { pos, runKey, more: collapsed && k === 0 ? run.length - 3 : undefined });
+      });
+      run = [];
+    };
+    items.forEach((it, i) => {
+      if (it.kind === "result") {
+        if (!$appAgentQueryCards && !it.error) return;
+        if (loading && i > lastUser) { out.set(it.id, { hidden: true, pos: "single", runKey: it.id }); return; }
+        run.push(it.id);
+      } else if (it.kind === "assistant" && !it.parts?.some((p) => p.type !== "text" || p.content.trim())) {
+        // Draws nothing: does not break a stretch of cards.
+      } else flush();
+    });
+    flush();
+    return out;
+  });
+  /** Long stretches of result cards the user opened up. */
+  let expandedResultRuns = $state(/** @type {Set<string>} */ (new Set()));
+
+  /**
    * Items that draw nothing: a query card the Agent setting hides, or an
    * assistant turn with no text (it only called tools, or only thought). Each
    * still left its wrapper behind, and content-visibility gives an empty
@@ -990,7 +1031,7 @@
    * @param {ChatItem} item
    */
   function drawsNothing(item) {
-    if (item.kind === "result") return !$appAgentQueryCards && !item.error;
+    if (item.kind === "result") return (!$appAgentQueryCards && !item.error) || !!resultLayout.get(item.id)?.hidden;
     if (item.kind === "assistant") return !item.parts?.some((p) => p.type !== "text" || p.content.trim());
     return false;
   }
@@ -2446,6 +2487,8 @@
     if (chosen !== undefined) return chosen;
     return running || groupRetries(item.steps).some((g) => g.status === "error");
   }
+  /** Work groups whose every step the user asked to see while running. */
+  let allStepsShown = $state(/** @type {Set<string>} */ (new Set()));
   /** Folds the user opened or closed by hand. */
   let workOpenChoice = $state(/** @type {Map<string, boolean>} */ (new Map()));
   /** @param {Extract<ChatItem, { kind: 'work' }>} item @param {boolean} running */
@@ -5043,8 +5086,22 @@
                   <!-- Opens and shuts at once: it is toggled often and follows
                        the turn by itself, so a height animation would only lag. -->
                   {#if isOpen}
+                    <!-- While it works, the latest few steps: forty-nine queries
+                         listed live pushed the reply off the screen. All of them
+                         are one click away, and the full list once it is done. -->
+                    {@const capped = running && groups.length > 6 && !allStepsShown.has(item.id)}
+                    {@const shownGroups = capped ? groups.slice(-5) : groups}
                     <ol class="mt-1 mb-2 ml-[0.4375rem] flex flex-col gap-1 border-l border-border/50 pl-3.5">
-                      {#each groups as group (group.step.id)}
+                      {#if capped}
+                        <li>
+                          <button
+                            type="button"
+                            class="-mx-1.5 flex h-6 items-center rounded-md px-1.5 text-ui-2xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                            onclick={() => (allStepsShown = new Set([...allStepsShown, item.id]))}
+                          >{groups.length - 5} earlier {groups.length - 5 === 1 ? "step" : "steps"}</button>
+                        </li>
+                      {/if}
+                      {#each shownGroups as group (group.step.id)}
                         {#if group.step.op === "note"}
                           <li class="py-0.5 text-ui-xs leading-relaxed whitespace-pre-wrap break-words text-muted-foreground">{group.step.detail}</li>
                         {:else}
@@ -5283,11 +5340,30 @@
                      container per state (red for errors, primary for schema)
                      gave a transcript of coloured blocks competing with the
                      prose; state now reads from the leading icon alone. -->
+                {@const lay = resultLayout.get(item.id)}
+                {#if lay?.more}
+                  <button
+                    type="button"
+                    class="mx-3.5 flex h-7 items-center gap-1.5 rounded-t-lg border border-b-0 border-border/40 px-3 text-ui-2xs text-muted-foreground transition-colors hover:bg-muted/20 hover:text-foreground"
+                    onclick={() => (expandedResultRuns = new Set([...expandedResultRuns, lay.runKey]))}
+                  >
+                    <ChevronRight class="size-3 shrink-0" />
+                    Show {lay.more} earlier {lay.more === 1 ? "query" : "queries"}
+                  </button>
+                {/if}
+                <!-- Cards of one stretch stack into one block: shared borders,
+                     the list gap pulled back, corners only at the ends. -->
                 <div
-                  class="mx-3.5 overflow-hidden rounded-lg border border-border/40 text-ui-xs"
+                  class={cn(
+                    "mx-3.5 overflow-hidden border border-border/40 text-ui-xs",
+                    (!lay || (!lay.more && (lay.pos === "single" || lay.pos === "first"))) && "rounded-t-lg",
+                    (!lay || lay.pos === "single" || lay.pos === "last") && "rounded-b-lg",
+                    (lay?.pos === "mid" || lay?.pos === "last") && "-mt-2",
+                    (lay?.more || lay?.pos === "mid" || lay?.pos === "last") && "border-t-border/25",
+                  )}
                 >
                   <div
-                    class="group/res flex w-full items-center gap-1.5 px-3 py-1.5 transition-colors hover:bg-muted/20 {resOpen
+                    class="group/res flex h-7 w-full items-center gap-1.5 px-3 transition-colors hover:bg-muted/20 {resOpen
                       ? 'border-b border-border/30'
                       : ''}"
                   >
@@ -5353,7 +5429,7 @@
                     {/if}
                     {#if !item.error}
                       <span
-                        class="shrink-0 rounded bg-muted/40 px-1.5 py-0.5 text-ui-3xs tabular-nums text-muted-foreground"
+                        class="shrink-0 font-mono text-ui-3xs tabular-nums text-muted-foreground"
                         >{formatCompactCount(item.total)}
                         {item.total === 1 ? "row" : "rows"}</span
                       >
@@ -5398,28 +5474,20 @@
                           showSelection={false}
                         />
                       </div>
-                      {#if item.total > 15}
-                        <p
-                          class="border-t border-border/20 px-3 py-1.5 text-ui-3xs text-muted-foreground"
-                        >
-                          Showing 15 of {formatCompactCount(item.total)} rows{item.capped
-                            ? ` (limited to ${AI_ROW_LIMIT})`
-                            : ""}
-                        </p>
-                      {/if}
-                      <!-- Export the result as a downloadable file -->
-                      <div
-                        class="flex items-center gap-1 border-t border-border/20 px-3 py-1.5"
-                      >
-                        <Download
-                          class="mr-1 size-3 shrink-0 text-muted-foreground"
-                        />
-                        {#each [["csv", "CSV"], ["json", "JSON"], ["md", "Markdown"]] as [fmt, label]}
+                      <!-- One quiet footer: how much is shown, and the export. -->
+                      <div class="flex h-7 items-center gap-1 border-t border-border/20 px-3 text-ui-3xs text-muted-foreground">
+                        <span class="min-w-0 flex-1 truncate tabular-nums">
+                          {#if item.total > 15}
+                            15 of {formatCompactCount(item.total)} rows{item.capped ? ` (limited to ${AI_ROW_LIMIT})` : ""}
+                          {/if}
+                        </span>
+                        <Download class="size-3 shrink-0" />
+                        {#each [["csv", "CSV"], ["json", "JSON"], ["md", "MD"]] as [fmt, label]}
                           <button
                             type="button"
-                            class="rounded px-1.5 py-0.5 text-ui-3xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                            class="rounded px-1 py-0.5 transition-colors hover:bg-accent hover:text-foreground"
                             onclick={() => exportResultAs(item, fmt)}
-                            title={`Download as ${label}`}>{label}</button
+                            title={`Download as ${label === "MD" ? "Markdown" : label}`}>{label}</button
                           >
                         {/each}
                       </div>
