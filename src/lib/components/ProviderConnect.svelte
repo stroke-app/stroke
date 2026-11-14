@@ -15,7 +15,11 @@
   import RefreshCw from '@lucide/svelte/icons/refresh-cw'
   import ArrowRight from '@lucide/svelte/icons/arrow-right'
   import X from '@lucide/svelte/icons/x'
+  import Plus from '@lucide/svelte/icons/plus'
+  import ExternalLink from '@lucide/svelte/icons/external-link'
   import DbIcon from './DbIcon.svelte'
+  import ProviderCreateDatabase from './ProviderCreateDatabase.svelte'
+  import { createSpec, CREATE_ELSEWHERE } from '$lib/provider-create.js'
   import ProviderAuthPanel from './ProviderAuthPanel.svelte'
   import { Button } from '$lib/components/ui/button/index.js'
   import ConfirmDialog from './ConfirmDialog.svelte'
@@ -38,6 +42,9 @@
     providerLogout,
     providerListDatabases,
     providerBuildConnection,
+    providerCreateOptions,
+    providerCreateDatabase,
+    providerDatabaseStatus,
   } from '$lib/providers.js'
   import { readProviderList, writeProviderList, clearProviderLists } from '$lib/provider-list-cache.js'
 
@@ -405,7 +412,61 @@
     return providerBuildConnection(provider, ref)
   }
 
-  async function pick(ref) {
+  // ── Create a database ─────────────────────────────────────────────────────
+  // Providers whose API lets this sign-in create one get a form in the panel;
+  // the rest (CREATE_ELSEWHERE) keep a link to their dashboard, with the reason.
+  const spec = $derived(createSpec(provider))
+  const elsewhere = $derived(CREATE_ELSEWHERE[provider] ?? null)
+  /** The create form is open in place of the picker. */
+  let creatingDb = $state(false)
+
+  /**
+   * The new database is ready: refresh the list so it shows, then connect to
+   * it. A Supabase project connects with the password the form generated.
+   * @param {import('$lib/provider-create.js').CreatedDatabase} db
+   * @param {{ password: string | null }} extra
+   */
+  async function onDatabaseCreated(db, { password }) {
+    creatingDb = false
+    // The one-database auto-pick must not race the explicit pick below.
+    autoPickedProviders.add(provider)
+    await loadDatabases({ quiet: true })
+    if (!databases.some((d) => d.db_ref === db.db_ref)) {
+      databases = [...databases, { db_ref: db.db_ref, name: db.name, region: null, kind: null, host: null }]
+    }
+    if (phase !== 'selecting') return
+    toast.success(`Created ${db.name}`)
+    await pick(db.db_ref, { password })
+  }
+
+  /**
+   * The form closed. When the user stopped waiting on a database that is
+   * still provisioning, it keeps going on the provider: say so and list it.
+   * @param {import('$lib/provider-create.js').CreatedDatabase | null} pendingDb
+   */
+  function onCreateClosed(pendingDb) {
+    creatingDb = false
+    if (!pendingDb) return
+    toast(`${pendingDb.name} is still being set up`, {
+      description: `${meta?.name ?? 'The provider'} keeps going without Stroke. Pick it from the list once it's ready.`,
+    })
+    void loadDatabases({ quiet: true })
+  }
+
+  async function openDashboard() {
+    if (!elsewhere) return
+    try {
+      const { openUrl } = await import('@tauri-apps/plugin-opener')
+      await openUrl(elsewhere.url)
+    } catch { /* the reason text names the dashboard */ }
+  }
+
+  /**
+   * @param {string} ref
+   * @param {{ password?: string | null }} [opts] a password already known for
+   *   this database (one Stroke just generated), so it is not asked for.
+   */
+  async function pick(ref, { password = null } = {}) {
     selectedRef = ref
     phase = 'building'
     try {
@@ -425,7 +486,7 @@
       if (conn.needs_password) {
         // Reuse a previously-saved password for this exact database (host + user)
         // so we don't ask again. Otherwise ask inline, then connect.
-        const known = resolvePassword(conn.host, conn.username)
+        const known = password || resolvePassword(conn.host, conn.username)
         if (known) {
           phase = 'selecting'
           onselect({ ...conn, password: known })
@@ -494,6 +555,7 @@
     await providerLogout(provider)
     clearProviderLists(cacheKey)
     prefetched.clear()
+    creatingDb = false
     phase = 'idle'
     databases = []
     selectedRef = ''
@@ -696,7 +758,7 @@
           {meta?.name}
           <span class="inline-flex items-center gap-1.5 text-ui-2xs font-normal text-success"><span class="size-1.5 rounded-full bg-success" aria-hidden="true"></span>Connected</span>
         </p>
-        <p class="truncate text-ui-xs text-muted-foreground">Pick a database to connect</p>
+        <p class="truncate text-ui-xs text-muted-foreground">{creatingDb ? 'Create a database' : 'Pick a database to connect'}</p>
       </div>
       <Button variant="ghost" size="sm" class="shrink-0 text-muted-foreground hover:text-foreground" onclick={() => (confirmSignOut = true)}>
         <LogOut class="size-3.5 shrink-0" aria-hidden="true" />
@@ -753,6 +815,19 @@
         </div>
       </div>
 
+    {:else if creatingDb && spec}
+      <ProviderCreateDatabase
+        providerName={meta?.name ?? provider}
+        iconId={provider}
+        {spec}
+        taken={databases.map((d) => d.name)}
+        loadOptions={(scope) => providerCreateOptions(provider, scope)}
+        create={(req) => providerCreateDatabase(provider, req)}
+        checkStatus={(ref) => providerDatabaseStatus(provider, ref)}
+        oncreated={(db, extra) => void onDatabaseCreated(db, extra)}
+        onclose={onCreateClosed}
+      />
+
     <!-- Database picker: the same searchable dropdown the D1 flow uses. -->
     {:else if databases.length > 0}
       <!-- A field-width control, not a full-bleed bar: capped at 28rem so the
@@ -764,9 +839,21 @@
             Database
             <span class="text-ui-2xs tabular-nums text-muted-foreground">{databases.length}</span>
           </span>
+          {#if spec}
+            <Button
+              variant="ghost"
+              size="xs"
+              class="ml-auto text-muted-foreground"
+              disabled={phase === 'building'}
+              onclick={() => (creatingDb = true)}
+            >
+              <Plus class="size-3 shrink-0" aria-hidden="true" />
+              New database
+            </Button>
+          {/if}
           <button
           type="button"
-          class="ml-auto inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
+          class="{spec ? '' : 'ml-auto '}inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
           title="Refresh the list"
           aria-label="Refresh databases"
           disabled={refreshing}
@@ -825,12 +912,33 @@
         </div>
         <div class="flex max-w-[36ch] flex-col gap-1">
           <p class="text-ui-sm font-medium text-foreground">No databases yet</p>
-          <p class="text-pretty text-ui-xs leading-relaxed text-muted-foreground">Nothing on this {meta?.name ?? ''} account yet. Create one in the {meta?.name ?? 'provider'} dashboard, then refresh.</p>
+          <p class="text-pretty text-ui-xs leading-relaxed text-muted-foreground">
+            {#if spec}
+              Nothing on this {meta?.name ?? ''} account yet. Create one here and Stroke connects to it when it's ready.
+            {:else if elsewhere}
+              {elsewhere.reason}
+            {:else}
+              Nothing on this {meta?.name ?? ''} account yet. Create one in the {meta?.name ?? 'provider'} dashboard, then refresh.
+            {/if}
+          </p>
         </div>
-        <Button variant="outline" size="sm" class="group active:scale-[0.96]" onclick={() => loadDatabases()}>
-          <RefreshCw class="size-3.5 shrink-0" aria-hidden="true" />
-          Refresh
-        </Button>
+        <div class="flex flex-wrap items-center justify-center gap-2">
+          {#if spec}
+            <Button onclick={() => (creatingDb = true)}>
+              <Plus class="size-3.5 shrink-0" aria-hidden="true" />
+              Create database
+            </Button>
+          {:else if elsewhere}
+            <Button variant="outline" onclick={openDashboard}>
+              Open {meta?.name} dashboard
+              <ExternalLink class="size-3.5 shrink-0" aria-hidden="true" />
+            </Button>
+          {/if}
+          <Button variant={spec || elsewhere ? 'ghost' : 'outline'} class="group" onclick={() => loadDatabases()}>
+            <RefreshCw class="size-3.5 shrink-0" aria-hidden="true" />
+            Refresh
+          </Button>
+        </div>
       </div>
     {/if}
 

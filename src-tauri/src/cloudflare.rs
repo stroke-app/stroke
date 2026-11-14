@@ -594,3 +594,96 @@ pub async fn cloudflare_list_d1_databases(
         })
         .collect())
 }
+
+// ── Create a D1 database ──────────────────────────────────────────────────────
+//
+// `POST /accounts/{id}/d1/database { name, primary_location_hint? }`, covered by
+// the `d1:write` scope the sign-in already requests. A D1 database is usable as
+// soon as the call returns. The location hint is optional: without one,
+// Cloudflare places the database near the request.
+
+/// Location hints Cloudflare accepts for `primary_location_hint`.
+const D1_LOCATION_HINTS: &[&str] = &["wnam", "enam", "weur", "eeur", "apac", "oc"];
+
+fn d1_create_body(name: &str, location_hint: Option<&str>) -> Result<serde_json::Value, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("Enter a name for the database.".into());
+    }
+    let mut body = serde_json::json!({ "name": name });
+    if let Some(hint) = location_hint.map(str::trim).filter(|h| !h.is_empty()) {
+        if !D1_LOCATION_HINTS.contains(&hint) {
+            return Err(format!("Unknown D1 location: {hint}"));
+        }
+        body["primary_location_hint"] = serde_json::Value::String(hint.to_string());
+    }
+    Ok(body)
+}
+
+fn parse_d1_created(body: &serde_json::Value) -> Result<CfD1Database, String> {
+    let d = &body["result"];
+    Ok(CfD1Database {
+        uuid: d["uuid"].as_str().ok_or("Cloudflare created the database but returned no id")?.to_string(),
+        name: d["name"].as_str().unwrap_or("Unnamed").to_string(),
+        created_at: d["created_at"].as_str().map(|s| s.to_string()),
+        num_tables: d["num_tables"].as_u64(),
+    })
+}
+
+/// Create a D1 database in an account.
+#[tauri::command]
+pub async fn cloudflare_create_d1_database(
+    api_token: String,
+    account_id: String,
+    name: String,
+    location_hint: Option<String>,
+) -> Result<CfD1Database, String> {
+    let body = d1_create_body(&name, location_hint.as_deref())?;
+    let url = format!(
+        "https://api.cloudflare.com/client/v4/accounts/{}/d1/database",
+        urlencoding::encode(account_id.trim())
+    );
+    let resp = http()
+        .post(&url)
+        .header("Authorization", format!("Bearer {}", api_token.trim()))
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| describe_request_error("Creating a D1 database", &e))?;
+    let status = resp.status().as_u16();
+    let body: serde_json::Value = resp.json().await.unwrap_or_default();
+    if status == 401 || status == 403 {
+        return Err("This Cloudflare sign-in can't create D1 databases in this account. Sign out, sign in again, and allow D1 access.".to_string());
+    }
+    if !(200..300).contains(&status) {
+        let msg = body["errors"]
+            .as_array()
+            .and_then(|e| e.first())
+            .and_then(|e| e["message"].as_str())
+            .unwrap_or("Unknown error");
+        return Err(format!("Cloudflare error {status}: {msg}"));
+    }
+    parse_d1_created(&body)
+}
+
+#[cfg(test)]
+mod d1_create_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn create_body_trims_the_name_and_checks_the_hint() {
+        assert_eq!(d1_create_body(" app ", None).unwrap(), json!({ "name": "app" }));
+        assert_eq!(d1_create_body("app", Some("weur")).unwrap(), json!({ "name": "app", "primary_location_hint": "weur" }));
+        assert_eq!(d1_create_body("app", Some("")).unwrap(), json!({ "name": "app" }));
+        assert!(d1_create_body("app", Some("mars")).is_err());
+        assert!(d1_create_body("  ", None).is_err());
+    }
+
+    #[test]
+    fn created_database_reads_the_result() {
+        let d = parse_d1_created(&json!({ "success": true, "result": { "uuid": "u-1", "name": "app", "created_at": "2026-01-01" } })).unwrap();
+        assert_eq!((d.uuid.as_str(), d.name.as_str()), ("u-1", "app"));
+        assert!(parse_d1_created(&json!({ "result": {} })).is_err());
+    }
+}

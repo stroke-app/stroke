@@ -6,7 +6,7 @@
  * database's own endpoint and password, which the API returns directly.
  */
 
-use super::{http, OAuthConfig, ProviderConnection, ProviderDatabase};
+use super::{http, CreateOptions, CreateRequest, CreatedDatabase, DatabaseStatus, OAuthConfig, ProviderConnection, ProviderDatabase};
 use serde_json::Value;
 
 /// Unused for a token provider; present so `Provider::oauth` stays total.
@@ -109,10 +109,120 @@ pub async fn build_connection(token: &str, database_id: &str) -> Result<Provider
     connection_from_detail(&db, database_id)
 }
 
+// ── Create a Redis database ──────────────────────────────────────────────────
+//
+// `POST /v2/redis/database { database_name, platform, primary_region, tls }`
+// with the same email + Developer API key, which has full account access. The
+// plan is left out so Upstash picks free or pay-as-you-go from the account.
+// There is no region-list endpoint; these are the AWS primary regions the
+// create schema accepts. A new database is `active` right away, but the status
+// is still checked so a slow one isn't connected to early.
+
+const REGIONS: &[(&str, &str)] = &[
+    ("us-east-1", "AWS US East (N. Virginia)"),
+    ("us-east-2", "AWS US East (Ohio)"),
+    ("us-west-1", "AWS US West (N. California)"),
+    ("us-west-2", "AWS US West (Oregon)"),
+    ("ca-central-1", "AWS Canada (Central)"),
+    ("sa-east-1", "AWS South America (São Paulo)"),
+    ("eu-west-1", "AWS Europe (Ireland)"),
+    ("eu-west-2", "AWS Europe (London)"),
+    ("eu-central-1", "AWS Europe (Frankfurt)"),
+    ("ap-south-1", "AWS Asia Pacific (Mumbai)"),
+    ("ap-southeast-1", "AWS Asia Pacific (Singapore)"),
+    ("ap-southeast-2", "AWS Asia Pacific (Sydney)"),
+    ("ap-northeast-1", "AWS Asia Pacific (Tokyo)"),
+    ("af-south-1", "AWS Africa (Cape Town)"),
+];
+
+pub fn create_options() -> CreateOptions {
+    let regions = super::static_choices(REGIONS);
+    CreateOptions {
+        scopes: Vec::new(),
+        scope_label: String::new(),
+        scope: None,
+        default_region: super::pick_default(&regions, "us-east-1"),
+        regions,
+        region_label: "Primary region".into(),
+    }
+}
+
+fn create_body(req: &CreateRequest) -> Result<Value, String> {
+    let name = super::required_name(req)?;
+    let region = super::required(&req.region, "Pick a region.")?;
+    Ok(serde_json::json!({ "database_name": name, "platform": "aws", "primary_region": region, "tls": true }))
+}
+
+fn db_status(db: &Value) -> DatabaseStatus {
+    match db["state"].as_str().unwrap_or("active") {
+        s @ "active" => DatabaseStatus::ready(s),
+        s @ "suspended" => DatabaseStatus::failed(s),
+        s => DatabaseStatus::pending(s),
+    }
+}
+
+fn parse_created(db: &Value) -> Result<CreatedDatabase, String> {
+    let id = db["database_id"].as_str().ok_or("Upstash created the database but returned no id")?;
+    Ok(CreatedDatabase {
+        db_ref: id.to_string(),
+        name: db["database_name"].as_str().unwrap_or(id).to_string(),
+        ready: db_status(db).ready,
+    })
+}
+
+pub async fn create_database(token: &str, req: &CreateRequest) -> Result<CreatedDatabase, String> {
+    let body = create_body(req)?;
+    let (email, key) = credentials(token)?;
+    let resp = http()
+        .post(format!("{API}/redis/database"))
+        .basic_auth(email, Some(key))
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("Upstash request failed (creating a database): {}", super::describe(&e)))?;
+    let status = resp.status().as_u16();
+    if status == 401 {
+        return Err(super::UNAUTHORIZED.into());
+    }
+    let text = resp.text().await.map_err(|e| format!("Upstash read failed: {e}"))?;
+    if !(200..300).contains(&status) {
+        // Upstash answers errors as a bare string or `{ "error": … }`.
+        let msg = serde_json::from_str::<Value>(&text)
+            .ok()
+            .and_then(|v| v["error"].as_str().or_else(|| v.as_str()).map(String::from))
+            .unwrap_or_else(|| text.chars().take(160).collect());
+        return Err(format!("Upstash API error ({status}) on creating a database: {msg}"));
+    }
+    let db: Value = serde_json::from_str(&text).map_err(|_| "Upstash returned a non-JSON response for creating a database".to_string())?;
+    parse_created(&db)
+}
+
+pub async fn database_status(token: &str, database_id: &str) -> Result<DatabaseStatus, String> {
+    let db = get(token, &format!("/redis/database/{}", urlencoding::encode(database_id)), "reading the database").await?;
+    Ok(db_status(&db))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn create_body_is_a_tls_aws_database() {
+        let req = CreateRequest { name: "cache".into(), region: Some("eu-west-1".into()), ..Default::default() };
+        assert_eq!(
+            create_body(&req).unwrap(),
+            json!({ "database_name": "cache", "platform": "aws", "primary_region": "eu-west-1", "tls": true })
+        );
+    }
+
+    #[test]
+    fn created_database_reads_id_and_state() {
+        let c = parse_created(&json!({ "database_id": "abc", "database_name": "cache", "state": "active" })).unwrap();
+        assert_eq!(c, CreatedDatabase { db_ref: "abc".into(), name: "cache".into(), ready: true });
+        assert!(db_status(&json!({ "state": "suspended" })).failed);
+        assert_eq!(create_options().default_region.as_deref(), Some("us-east-1"));
+    }
 
     #[test]
     fn list_and_detail_map_to_a_tls_redis_connection() {

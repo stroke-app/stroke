@@ -5,7 +5,7 @@
  * `needs_password = true`; the UI prompts for the password once.
  */
 
-use super::{http, OAuthConfig, ProviderConnection, ProviderDatabase};
+use super::{http, Choice, CreateOptions, CreateRequest, CreatedDatabase, DatabaseStatus, OAuthConfig, ProviderConnection, ProviderDatabase};
 use serde_json::Value;
 
 pub const OAUTH: OAuthConfig = OAuthConfig {
@@ -186,10 +186,200 @@ fn pooler_target(proj: &Value, pooler: &Value, project_ref: &str, name: &str) ->
     Ok((host, user))
 }
 
+// ── Create a project ─────────────────────────────────────────────────────────
+//
+// `POST /v1/projects` (OAuth scope `projects:write`) needs an organization
+// slug, a region and the database password, which Supabase never returns
+// afterwards: the UI generates a strong one, shows it once, and connects with
+// it. Regions come from `/v1/projects/available-regions` for the organization;
+// the fallback below is the request schema's own region enum, used only when
+// that endpoint fails. A new project starts `COMING_UP` and is polled until
+// `ACTIVE_HEALTHY` (about a minute or two).
+
+const FALLBACK_REGIONS: &[(&str, &str)] = &[
+    ("us-east-1", "East US (North Virginia)"),
+    ("us-east-2", "East US (Ohio)"),
+    ("us-west-1", "West US (North California)"),
+    ("us-west-2", "West US (Oregon)"),
+    ("ca-central-1", "Canada (Central)"),
+    ("sa-east-1", "South America (São Paulo)"),
+    ("eu-west-1", "West EU (Ireland)"),
+    ("eu-west-2", "West Europe (London)"),
+    ("eu-west-3", "West EU (Paris)"),
+    ("eu-central-1", "Central EU (Frankfurt)"),
+    ("eu-central-2", "Central Europe (Zurich)"),
+    ("eu-north-1", "North EU (Stockholm)"),
+    ("ap-south-1", "South Asia (Mumbai)"),
+    ("ap-southeast-1", "Southeast Asia (Singapore)"),
+    ("ap-southeast-2", "Oceania (Sydney)"),
+    ("ap-northeast-1", "Northeast Asia (Tokyo)"),
+    ("ap-northeast-2", "Northeast Asia (Seoul)"),
+    ("ap-east-1", "East Asia (Hong Kong)"),
+];
+
+async fn post(token: &str, path: &str, body: &Value) -> Result<Value, String> {
+    let resp = http()
+        .post(format!("{API}{path}"))
+        .bearer_auth(token)
+        .json(body)
+        .send()
+        .await
+        .map_err(|e| format!("Supabase request failed: {e}"))?;
+    let status = resp.status().as_u16();
+    if status == 401 {
+        return Err(super::UNAUTHORIZED.into());
+    }
+    let text = resp.text().await.map_err(|e| format!("Supabase read failed: {e}"))?;
+    let body: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+    if !(200..300).contains(&status) {
+        let msg = body["message"].as_str().map(String::from).unwrap_or_else(|| text.chars().take(160).collect());
+        if status == 403 {
+            return Err(format!(
+                "Supabase refused to create the project ({msg}). Stroke's sign-in may lack the Projects write scope: sign out, sign in again, and allow it."
+            ));
+        }
+        return Err(format!("Supabase API error ({status}): {msg}"));
+    }
+    Ok(body)
+}
+
+/// `/v1/organizations` → choices keyed by slug (`id` is its deprecated alias).
+fn parse_orgs(body: &Value) -> Vec<Choice> {
+    body.as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|o| {
+            let slug = o["slug"].as_str().or_else(|| o["id"].as_str())?;
+            Some(Choice::new(slug, o["name"].as_str().unwrap_or(slug)))
+        })
+        .collect()
+}
+
+/// `available-regions` → (choices, the recommended one).
+fn parse_regions(body: &Value) -> (Vec<Choice>, Option<String>) {
+    let regions: Vec<Choice> = body["all"]["specific"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|r| {
+            let code = r["code"].as_str()?;
+            Some(Choice::new(code, r["name"].as_str().unwrap_or(code)))
+        })
+        .collect();
+    let recommended = body["recommendations"]["specific"][0]["code"].as_str().map(String::from);
+    (regions, recommended)
+}
+
+pub async fn create_options(token: &str, scope: Option<&str>) -> Result<CreateOptions, String> {
+    let scopes = parse_orgs(&get(token, "/organizations").await?);
+    let scope = super::chosen_scope(&scopes, scope);
+    let (mut regions, mut recommended) = (Vec::new(), None);
+    if let Some(org) = &scope {
+        if let Ok(body) = get(token, &format!("/projects/available-regions?organization_slug={}", urlencoding::encode(org))).await {
+            (regions, recommended) = parse_regions(&body);
+        }
+    }
+    if regions.is_empty() {
+        regions = super::static_choices(FALLBACK_REGIONS);
+    }
+    let default_region = recommended
+        .filter(|r| regions.iter().any(|c| &c.id == r))
+        .or_else(|| super::pick_default(&regions, "us-east-1"));
+    Ok(CreateOptions {
+        scopes,
+        scope_label: "Organization".into(),
+        scope,
+        regions,
+        region_label: "Region".into(),
+        default_region,
+    })
+}
+
+fn create_body(req: &CreateRequest) -> Result<Value, String> {
+    let name = super::required_name(req)?;
+    let org = super::required(&req.scope, "Pick an organization.")?;
+    let region = super::required(&req.region, "Pick a region.")?;
+    let password = req.password.as_deref().filter(|p| p.len() >= 12).ok_or("The database password must be at least 12 characters.")?;
+    Ok(serde_json::json!({
+        "name": name,
+        "organization_slug": org,
+        "db_pass": password,
+        "region_selection": { "type": "specific", "code": region },
+    }))
+}
+
+fn parse_created(body: &Value) -> Result<CreatedDatabase, String> {
+    let project_ref = body["ref"]
+        .as_str()
+        .or_else(|| body["id"].as_str())
+        .ok_or("Supabase created the project but returned no ref")?;
+    Ok(CreatedDatabase {
+        db_ref: project_ref.to_string(),
+        name: body["name"].as_str().unwrap_or(project_ref).to_string(),
+        ready: project_status(body).ready,
+    })
+}
+
+fn project_status(proj: &Value) -> DatabaseStatus {
+    match proj["status"].as_str().unwrap_or("COMING_UP") {
+        s @ "ACTIVE_HEALTHY" => DatabaseStatus::ready(s),
+        s @ ("INIT_FAILED" | "REMOVED" | "GOING_DOWN" | "RESTORE_FAILED" | "PAUSE_FAILED") => DatabaseStatus::failed(s),
+        s => DatabaseStatus::pending(s),
+    }
+}
+
+pub async fn create_database(token: &str, req: &CreateRequest) -> Result<CreatedDatabase, String> {
+    parse_created(&post(token, "/projects", &create_body(req)?).await?)
+}
+
+pub async fn database_status(token: &str, project_ref: &str) -> Result<DatabaseStatus, String> {
+    Ok(project_status(&get(token, &format!("/projects/{}", urlencoding::encode(project_ref))).await?))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn create_body_uses_the_slug_region_selection_and_password() {
+        let req = CreateRequest {
+            name: "shop".into(),
+            scope: Some("acme-slug".into()),
+            region: Some("eu-west-1".into()),
+            password: Some("Abcdefghijkl12345".into()),
+        };
+        assert_eq!(
+            create_body(&req).unwrap(),
+            json!({ "name": "shop", "organization_slug": "acme-slug", "db_pass": "Abcdefghijkl12345",
+                    "region_selection": { "type": "specific", "code": "eu-west-1" } })
+        );
+        let weak = CreateRequest { password: Some("short".into()), ..req.clone() };
+        assert!(create_body(&weak).unwrap_err().contains("12 characters"));
+        let no_org = CreateRequest { scope: None, ..req };
+        assert!(create_body(&no_org).unwrap_err().contains("organization"));
+    }
+
+    #[test]
+    fn orgs_and_regions_parse() {
+        let orgs = parse_orgs(&json!([{ "id": "old", "slug": "acme", "name": "Acme" }, { "id": "legacy", "name": "L" }]));
+        assert_eq!(orgs, vec![Choice::new("acme", "Acme"), Choice::new("legacy", "L")]);
+        let (regions, rec) = parse_regions(&json!({
+            "recommendations": { "smartGroup": { "code": "emea" }, "specific": [ { "code": "eu-central-1", "name": "Frankfurt" } ] },
+            "all": { "specific": [ { "code": "us-east-1", "name": "N. Virginia" }, { "code": "eu-central-1", "name": "Frankfurt" } ] }
+        }));
+        assert_eq!(regions.len(), 2);
+        assert_eq!(rec.as_deref(), Some("eu-central-1"));
+    }
+
+    #[test]
+    fn created_project_polls_until_active_healthy() {
+        let c = parse_created(&json!({ "ref": "abcd", "name": "shop", "status": "COMING_UP" })).unwrap();
+        assert_eq!((c.db_ref.as_str(), c.ready), ("abcd", false));
+        assert!(project_status(&json!({ "status": "ACTIVE_HEALTHY" })).ready);
+        assert!(project_status(&json!({ "status": "INIT_FAILED" })).failed);
+        assert!(!project_status(&json!({ "status": "UNKNOWN" })).ready);
+    }
 
     #[test]
     fn paused_and_starting_projects_say_so() {

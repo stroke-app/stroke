@@ -12,14 +12,17 @@
   import ChevronDown from '@lucide/svelte/icons/chevron-down'
   import RefreshCw from '@lucide/svelte/icons/refresh-cw'
   import ArrowRight from '@lucide/svelte/icons/arrow-right'
+  import Plus from '@lucide/svelte/icons/plus'
   import DbIcon from './DbIcon.svelte'
   import SearchableMenu from './SearchableMenu.svelte'
+  import ProviderCreateDatabase from './ProviderCreateDatabase.svelte'
+  import { createSpec } from '$lib/provider-create.js'
   import ProviderAuthPanel from './ProviderAuthPanel.svelte'
   import { Button } from '$lib/components/ui/button/index.js'
   import ConfirmDialog from './ConfirmDialog.svelte'
   import { cfStartOAuth, cfOAuthStatus, cfLogout, cfGetValidToken } from '$lib/cloudflare.js'
   import { readProviderList, writeProviderList, clearProviderLists } from '$lib/provider-list-cache.js'
-  import { cloudflareListAccounts, cloudflareListD1Databases } from '$lib/api.js'
+  import { cloudflareListAccounts, cloudflareListD1Databases, cloudflareCreateD1Database } from '$lib/api.js'
   import { cn } from '$lib/utils.js'
   import { engineTint } from '$lib/engine-tint.js'
 
@@ -267,6 +270,7 @@
    */
   async function selectAccount(id, { token, pending = null, quiet = false } = {}) {
     if (id !== selectedAccountId) {
+      creatingDb = false
       selectedAccountId = id
       selectedDbUuid = ''
       // Another account's last-known list, if we have one, while it refreshes.
@@ -310,6 +314,45 @@
       phase = 'error'
       errorMsg = String(e)
     }
+  }
+
+  // ── Create a D1 database ──────────────────────────────────────────────────
+  // The sign-in already holds `d1:write`. A D1 database is ready the moment
+  // the API answers, so there is nothing to poll.
+  const d1Spec = /** @type {import('$lib/provider-create.js').CreateSpec} */ (createSpec('d1'))
+  /** Cloudflare's location hints; "auto" sends none and lets Cloudflare place it. */
+  const D1_LOCATIONS = [
+    { id: 'auto', name: 'Automatic (closest to you)' },
+    { id: 'wnam', name: 'Western North America' },
+    { id: 'enam', name: 'Eastern North America' },
+    { id: 'weur', name: 'Western Europe' },
+    { id: 'eeur', name: 'Eastern Europe' },
+    { id: 'apac', name: 'Asia-Pacific' },
+    { id: 'oc', name: 'Oceania' },
+  ]
+  let creatingDb = $state(false)
+
+  async function d1Options() {
+    return { scopes: [], scope_label: '', scope: null, regions: D1_LOCATIONS, region_label: 'Location', default_region: 'auto' }
+  }
+
+  /** @param {{ name: string, region: string | null }} req */
+  async function createD1(req) {
+    const token = await cfGetValidToken()
+    const hint = req.region && req.region !== 'auto' ? req.region : null
+    const d = await cloudflareCreateD1Database(token, selectedAccountId, req.name, hint)
+    return { db_ref: d.uuid, name: d.name, ready: true }
+  }
+
+  /** @param {{ db_ref: string, name: string }} db */
+  async function onD1Created(db) {
+    creatingDb = false
+    // The one-database auto-pick must not race the explicit pick below.
+    d1AutoPicked.done = true
+    await selectAccount(selectedAccountId)
+    if (!databases.some((d) => d.uuid === db.db_ref)) databases = [...databases, { uuid: db.db_ref, name: db.name }]
+    if (phase !== 'selecting') return
+    await selectDatabase(db.db_ref)
   }
 
   /** Sign-out asks first: saved D1 connections depend on this sign-in. */
@@ -469,9 +512,15 @@
       <div class="flex min-w-0 flex-col gap-1.5">
         <div class="flex items-center gap-1.5">
           <span class="flex items-baseline gap-1.5 text-ui-xs font-medium text-foreground/80">D1 database{#if databases.length}<span class="text-ui-2xs tabular-nums text-muted-foreground">{databases.length}</span>{/if}</span>
+          {#if databases.length > 0 && !creatingDb}
+            <Button variant="ghost" size="xs" class="ml-auto text-muted-foreground" onclick={() => (creatingDb = true)}>
+              <Plus class="size-3 shrink-0" aria-hidden="true" />
+              New database
+            </Button>
+          {/if}
           <button
           type="button"
-          class="ml-auto inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
+          class="{databases.length > 0 && !creatingDb ? '' : 'ml-auto '}inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
           title="Refresh the list"
           aria-label="Refresh databases"
           disabled={loadingDbs || refreshing}
@@ -479,7 +528,18 @@
         ><RefreshCw class={cn('size-3.5 shrink-0', (loadingDbs || refreshing) && 'animate-spin')} /></button>
         </div>
 
-        {#if databases.length > 0}
+        {#if creatingDb}
+          <ProviderCreateDatabase
+            providerName="Cloudflare"
+            iconId="d1"
+            spec={d1Spec}
+            taken={databases.map((d) => d.name)}
+            loadOptions={d1Options}
+            create={createD1}
+            oncreated={(db) => void onD1Created(db)}
+            onclose={() => (creatingDb = false)}
+          />
+        {:else if databases.length > 0}
           <SearchableMenu
             items={dbItems}
             placeholder="Search databases…"
@@ -524,12 +584,18 @@
             </div>
             <div class="flex max-w-[36ch] flex-col gap-1">
               <p class="text-ui-sm font-medium text-foreground">No databases yet</p>
-              <p class="text-pretty text-ui-xs leading-relaxed text-muted-foreground">This account has no D1 databases. Create one with <code class="font-mono text-ui-2xs">wrangler d1 create</code> or in the Cloudflare dashboard, then refresh.</p>
+              <p class="text-pretty text-ui-xs leading-relaxed text-muted-foreground">This account has no D1 databases. Create one here and Stroke connects to it.</p>
             </div>
-            <Button variant="outline" size="sm" class="group active:scale-[0.96]" onclick={() => selectAccount(selectedAccountId)}>
-              <RefreshCw class="size-3.5 shrink-0" aria-hidden="true" />
-              Refresh
-            </Button>
+            <div class="flex flex-wrap items-center justify-center gap-2">
+              <Button onclick={() => (creatingDb = true)}>
+                <Plus class="size-3.5 shrink-0" aria-hidden="true" />
+                Create database
+              </Button>
+              <Button variant="ghost" class="group" onclick={() => selectAccount(selectedAccountId)}>
+                <RefreshCw class="size-3.5 shrink-0" aria-hidden="true" />
+                Refresh
+              </Button>
+            </div>
           </div>
         {/if}
       </div>

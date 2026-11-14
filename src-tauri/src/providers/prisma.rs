@@ -6,7 +6,7 @@
  * a normal Postgres driver can't speak).
  */
 
-use super::{http, OAuthConfig, ProviderConnection, ProviderDatabase};
+use super::{http, Choice, CreateOptions, CreateRequest, CreatedDatabase, DatabaseStatus, OAuthConfig, ProviderConnection, ProviderDatabase};
 use serde_json::Value;
 
 pub const OAUTH: OAuthConfig = OAuthConfig {
@@ -226,10 +226,117 @@ fn connection_from_created(created: &Value, name: &str) -> Result<ProviderConnec
     ))
 }
 
+// ── Create a project ─────────────────────────────────────────────────────────
+//
+// `POST /v1/projects { name, region, createDatabase: true }` creates a project
+// with its Prisma Postgres database in the token's workspace (`workspace:admin`
+// is already granted). Regions come from `GET /v1/regions/postgres`. The
+// database starts `provisioning`; `GET /v1/projects/{id}/databases` is polled
+// until it is `ready`.
+
+/// Used when the regions endpoint fails: the create schema's region enum.
+const FALLBACK_REGIONS: &[(&str, &str)] = &[
+    ("us-east-1", "US East (N. Virginia)"),
+    ("us-west-1", "US West (N. California)"),
+    ("eu-west-3", "Europe (Paris)"),
+    ("eu-central-1", "Europe (Frankfurt)"),
+    ("ap-northeast-1", "Asia Pacific (Tokyo)"),
+    ("ap-southeast-1", "Asia Pacific (Singapore)"),
+];
+
+/// `/v1/regions/postgres` → the regions a database can be created in now.
+fn parse_regions(body: &Value) -> Vec<Choice> {
+    as_list(body)
+        .iter()
+        .filter(|r| r["status"].as_str().unwrap_or("available") == "available")
+        .filter_map(|r| {
+            let id = r["id"].as_str()?;
+            Some(Choice::new(id, r["name"].as_str().unwrap_or(id)))
+        })
+        .collect()
+}
+
+pub async fn create_options(token: &str) -> Result<CreateOptions, String> {
+    let mut regions = get(token, "/regions/postgres").await.map(|b| parse_regions(&b)).unwrap_or_default();
+    if regions.is_empty() {
+        regions = super::static_choices(FALLBACK_REGIONS);
+    }
+    Ok(CreateOptions {
+        // The OAuth grant is for one workspace: nothing to pick.
+        scopes: Vec::new(),
+        scope_label: String::new(),
+        scope: None,
+        default_region: super::pick_default(&regions, "us-east-1"),
+        regions,
+        region_label: "Region".into(),
+    })
+}
+
+fn create_body(req: &CreateRequest) -> Result<Value, String> {
+    let name = super::required_name(req)?;
+    let region = super::required(&req.region, "Pick a region.")?;
+    Ok(serde_json::json!({ "name": name, "region": region, "createDatabase": true }))
+}
+
+fn parse_created(body: &Value) -> Result<CreatedDatabase, String> {
+    let project = if body["data"].is_object() { &body["data"] } else { body };
+    let id = project["id"].as_str().ok_or("Prisma created the project but returned no id")?;
+    Ok(CreatedDatabase {
+        db_ref: id.to_string(),
+        name: project["name"].as_str().unwrap_or(id).to_string(),
+        ready: project["database"]["status"].as_str() == Some("ready"),
+    })
+}
+
+/// A project's databases → the first one's provisioning state.
+fn databases_status(body: &Value) -> DatabaseStatus {
+    let list = as_list(body);
+    match list.first().and_then(|d| d["status"].as_str()) {
+        Some(s @ "ready") => DatabaseStatus::ready(s),
+        Some(s @ "failure") => DatabaseStatus::failed(s),
+        Some(s) => DatabaseStatus::pending(s),
+        None => DatabaseStatus::pending("provisioning"),
+    }
+}
+
+pub async fn create_database(token: &str, req: &CreateRequest) -> Result<CreatedDatabase, String> {
+    parse_created(&post(token, "/projects", create_body(req)?).await?)
+}
+
+pub async fn database_status(token: &str, project_id: &str) -> Result<DatabaseStatus, String> {
+    let body = get(token, &format!("/projects/{}/databases", urlencoding::encode(project_id))).await?;
+    Ok(databases_status(&body))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn create_body_asks_for_a_database_in_the_region() {
+        let req = CreateRequest { name: "pulse".into(), region: Some("eu-central-1".into()), ..Default::default() };
+        assert_eq!(create_body(&req).unwrap(), json!({ "name": "pulse", "region": "eu-central-1", "createDatabase": true }));
+        assert!(create_body(&CreateRequest { name: "pulse".into(), ..Default::default() }).is_err());
+    }
+
+    #[test]
+    fn created_project_and_its_database_status() {
+        let c = parse_created(&json!({ "data": { "id": "proj_1", "name": "pulse", "database": { "status": "provisioning" } } })).unwrap();
+        assert_eq!(c, CreatedDatabase { db_ref: "proj_1".into(), name: "pulse".into(), ready: false });
+        assert!(databases_status(&json!({ "data": [ { "status": "ready" } ] })).ready);
+        assert!(databases_status(&json!({ "data": [ { "status": "failure" } ] })).failed);
+        assert!(!databases_status(&json!({ "data": [] })).ready);
+    }
+
+    #[test]
+    fn only_available_regions_are_offered() {
+        let r = parse_regions(&json!({ "data": [
+            { "id": "us-east-1", "name": "US East", "status": "available" },
+            { "id": "eu-west-3", "name": "Paris", "status": "unavailable" }
+        ] }));
+        assert_eq!(r, vec![Choice::new("us-east-1", "US East")]);
+    }
 
     #[test]
     fn credentials_object_is_read_wherever_prisma_nests_it() {
