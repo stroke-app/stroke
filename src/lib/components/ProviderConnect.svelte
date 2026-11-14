@@ -854,7 +854,7 @@
            name, the chevron and the list below sit where the eye reads, and the
            menu opens at the trigger's width (with a floor for long names). -->
       <div class="flex min-w-0 flex-col gap-1.5">
-        <div class="flex items-center gap-1.5">
+        <div class="flex h-7 items-center gap-1.5">
           <span id="pc-db-label" class="flex items-baseline gap-1.5 text-ui-xs font-medium text-foreground/80">
             Database
             <span class="text-ui-2xs tabular-nums text-muted-foreground">{databases.length}</span>

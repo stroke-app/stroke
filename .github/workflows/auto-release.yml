@@ -83,8 +83,20 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add src-tauri/tauri.conf.json package.json CHANGELOG.md .changeset/
           git commit -m "chore: version ${VERSION} (#${PR_NUMBER})"
-          git push origin HEAD:refs/heads/nightly
-          echo "nightly is now ${VERSION}; the next nightly build ships it."
+          # A PR merged while this ran moves nightly ahead of us. Runs are
+          # serialized, so what landed is a merge, never another bump: rebase
+          # onto it and push again instead of failing (its changeset is folded
+          # by its own run).
+          for attempt in 1 2 3 4 5; do
+            if git push origin HEAD:refs/heads/nightly; then
+              echo "nightly is now ${VERSION}; the next nightly build ships it."
+              exit 0
+            fi
+            sleep $((attempt * 3))
+            git pull --rebase origin refs/heads/nightly
+          done
+          echo "::error::Could not push the version bump after 5 attempts."
+          exit 1
 
   # ── PR merged into master: promotion or hotfix ─────────────────────────────
   stable-release:

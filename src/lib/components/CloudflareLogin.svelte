@@ -1,8 +1,3 @@
-<script module>
-  /** Whether the only D1 database was opened automatically this session. */
-  const d1AutoPicked = { done: false }
-</script>
-
 <script>
   import { onMount } from 'svelte'
   import Check from '@lucide/svelte/icons/check'
@@ -55,13 +50,7 @@
   /** @type {Array<{uuid: string, name: string, created_at?: string, num_tables?: number}>} */
   let databases = $state([])
   let selectedDbUuid = $state('')
-  // One D1 database on the account: open it without asking, once per visit.
-  // Only the first time per app session, so coming back keeps the picker.
-  $effect(() => {
-    if (phase !== 'selecting' || d1AutoPicked.done || selectedDbUuid || !selectedAccountId || databases.length !== 1) return
-    d1AutoPicked.done = true
-    void selectDatabase(databases[0].uuid)
-  })
+  // Picking is always yours, even with one D1 database on the account.
   let loadingDbs = $state(false)
   /** The refresh button is fetching the list again; the picker stays usable. */
   let refreshing = $state(false)
@@ -347,8 +336,6 @@
   /** @param {{ db_ref: string, name: string }} db */
   async function onD1Created(db) {
     creatingDb = false
-    // The one-database auto-pick must not race the explicit pick below.
-    d1AutoPicked.done = true
     await selectAccount(selectedAccountId)
     if (!databases.some((d) => d.uuid === db.db_ref)) databases = [...databases, { uuid: db.db_ref, name: db.name }]
     if (phase !== 'selecting') return
@@ -476,7 +463,11 @@
     <!-- Account selector -->
     {#if accounts.length > 1}
       <div class="flex min-w-0 flex-col gap-1.5">
-        <span class="text-ui-xs font-medium text-foreground/80">Account</span>
+        <!-- Label rows are a fixed h-7 everywhere, buttons or not, so fields
+             side by side start on the same line. -->
+        <div class="flex h-7 items-center">
+          <span class="text-ui-xs font-medium text-foreground/80">Account</span>
+        </div>
         <SearchableMenu
           items={accounts.map((a) => ({ value: a.id, label: a.name }))}
           placeholder="Search accounts…"
@@ -510,7 +501,7 @@
     <!-- Database selector -->
     {#if selectedAccountId}
       <div class="flex min-w-0 flex-col gap-1.5">
-        <div class="flex items-center gap-1.5">
+        <div class="flex h-7 items-center gap-1.5">
           <span class="flex items-baseline gap-1.5 text-ui-xs font-medium text-foreground/80">D1 database{#if databases.length}<span class="text-ui-2xs tabular-nums text-muted-foreground">{databases.length}</span>{/if}</span>
           {#if databases.length > 0 && !creatingDb}
             <Button variant="ghost" size="xs" class="ml-auto text-muted-foreground" onclick={() => (creatingDb = true)}>
