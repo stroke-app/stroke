@@ -4,7 +4,7 @@
   import AccountAvatar from './AccountAvatar.svelte'
   import AccountSignInButtons from './AccountSignInButtons.svelte'
   import SyncSection from './SyncSection.svelte'
-  import { account, planLabel, signOut, openManageAccount, refreshAccount } from '$lib/stores/account.js'
+  import { account, planLabel, offlineGraceNote, signOut, openManageAccount, refreshAccount } from '$lib/stores/account.js'
   import { Button } from '$lib/components/ui/button/index.js'
   import { cn } from '$lib/utils.js'
   import Laptop from '@lucide/svelte/icons/laptop'
@@ -122,6 +122,7 @@
   const signedIn = $derived(!!$account?.signed_in)
   const user = $derived($account?.user ?? null)
   const plan = $derived(planLabel($account, $licenseStatus))
+  const graceNote = $derived(offlineGraceNote($account))
   const devices = $derived($account?.devices ?? [])
   let signingOut = $state(false)
   async function handleSignOut() {
@@ -177,7 +178,8 @@
           </div>
           <span class={cn('shrink-0 rounded-md px-2 py-0.5 text-ui-2xs font-medium', plan.tone === 'pro' ? 'bg-success/10 text-success' : plan.tone === 'trial' ? 'bg-warning/10 text-warning' : 'bg-muted text-muted-foreground')}>{plan.label}</span>
         </div>
-        {#if $account?.offline}<p class="text-ui-xs text-muted-foreground">Offline. Showing the last saved plan.</p>{/if}
+        {#if graceNote}<p class="text-ui-xs leading-relaxed text-warning">{graceNote.text}</p>
+        {:else if $account?.offline}<p class="text-ui-xs text-muted-foreground">Offline. Showing the last saved plan.</p>{/if}
         {#if $account?.link_error}<p class="text-ui-xs leading-relaxed text-muted-foreground">{LINK_ERRORS[$account.link_error] ?? 'The license key on this device could not be linked.'}</p>{/if}
         <div class="flex items-center gap-1">
           <Button variant="secondary" size="sm" onclick={() => void openManageAccount()}>Manage account <ExternalLink class="size-3.5 shrink-0" /></Button>

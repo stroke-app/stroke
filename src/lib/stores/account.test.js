@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 
-const { planLabel, initials } = await import('./account.js')
+const { planLabel, initials, offlineGraceNote } = await import('./account.js')
 
 /** @param {Partial<import('./account.js').AccountStatus>} over */
 const acc = (over = {}) => /** @type {any} */ ({ signed_in: true, entitlement_fresh: true, entitlement: null, ...over })
@@ -49,5 +49,20 @@ describe('parseSignInCode', async () => {
     for (const bad of ['', 'stroke-code:', 'short', 'has spaces in the middle of it', `https://x/?code=${code}`, 'a'.repeat(257)]) {
       expect(parseSignInCode(bad)).toBeNull()
     }
+  })
+})
+
+describe('offlineGraceNote', () => {
+  const now = 1_000_000
+  it('is null when not on the offline grace', () => {
+    expect(offlineGraceNote(acc({ offline_grace_until: 0 }), now)).toBeNull()
+    expect(offlineGraceNote(acc({ offline_grace_until: now - 1 }), now)).toBeNull()
+    expect(offlineGraceNote(acc({ signed_in: false, offline_grace_until: now + 86400 }), now)).toBeNull()
+    expect(offlineGraceNote(null, now)).toBeNull()
+  })
+  it('counts the days left, rounding up', () => {
+    expect(offlineGraceNote(acc({ offline_grace_until: now + 1 }), now)?.days).toBe(1)
+    expect(offlineGraceNote(acc({ offline_grace_until: now + 86400 }), now)?.text).toContain('within 1 day ')
+    expect(offlineGraceNote(acc({ offline_grace_until: now + 10 * 86400 - 5 }), now)?.days).toBe(10)
   })
 })

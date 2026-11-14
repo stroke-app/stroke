@@ -15,7 +15,7 @@ import { refreshLicenseStatus, licenseStatus } from './license.js'
  *   issued_at: number, valid_until: number }} Entitlement
  * @typedef {{ device_id: string, name: string, os: string, last_seen_at: number, current: boolean }} AccountDevice
  * @typedef {{ signed_in: boolean, user: AccountUser|null, entitlement: Entitlement|null,
- *   entitlement_fresh: boolean, devices: AccountDevice[], fetched_at: number, offline: boolean,
+ *   entitlement_fresh: boolean, offline_grace_until: number, devices: AccountDevice[], fetched_at: number, offline: boolean,
  *   needs_onboarding: boolean, has_license_key: boolean, link_error: string|null,
  *   error: string|null, manage_url: string }} AccountStatus
  * @typedef {{ phase: 'idle'|'waiting'|'error', provider: string|null, error: string|null, url: string|null }} SignInState
@@ -78,6 +78,21 @@ export function planLabel(acc, lic, now = Math.floor(Date.now() / 1000)) {
   return { label: 'Free', tone: 'free' }
 }
 
+/**
+ * Paid Pro running on the offline grace (stroke.click unreachable past the
+ * entitlement's window): how long until the app has to get online once.
+ * @param {AccountStatus|null} acc
+ * @param {number} [now] unix seconds
+ * @returns {{ days: number, text: string } | null}
+ */
+export function offlineGraceNote(acc, now = Math.floor(Date.now() / 1000)) {
+  const until = acc?.signed_in ? acc.offline_grace_until : 0
+  if (!until || until <= now) return null
+  const days = Math.max(1, Math.ceil((until - now) / 86400))
+  const span = `${days} ${days === 1 ? 'day' : 'days'}`
+  return { days, text: `Pro is working offline. Connect to the internet within ${span} so Stroke can confirm your plan.` }
+}
+
 /** @param {AccountUser|null|undefined} user */
 export function initials(user) {
   const src = (user?.name || user?.email || '').trim()
@@ -98,6 +113,7 @@ export async function refreshAccount({ network = true } = {}) {
     const before = get(account)
     const status = /** @type {AccountStatus} */ (await invoke('account_status', { refresh: network }))
     account.set(status)
+    if (network) scheduleOfflineRetry(status)
     // The entitlement feeds the license status; re-read it when it may have moved.
     if (network || before?.signed_in !== status.signed_in) void refreshLicenseStatus()
     return status
@@ -250,6 +266,41 @@ async function maybePromptKeyHolder() {
 let started = false
 let lastRefresh = 0
 
+/** While stroke.click can't be reached, re-check on this schedule (then every 15 min). */
+const OFFLINE_RETRY_MS = [30_000, 60_000, 2 * 60_000, 5 * 60_000, 15 * 60_000]
+let retryTimer = /** @type {ReturnType<typeof setTimeout>|null} */ (null)
+let retryStep = 0
+
+/**
+ * The app keeps running on the cached plan while the server is unreachable;
+ * this notices when it is back (an outage ends without an `online` event) and
+ * picks up the server's verdict, including a refund or a revoked session.
+ * @param {AccountStatus} status
+ */
+function scheduleOfflineRetry(status) {
+  if (retryTimer) clearTimeout(retryTimer)
+  retryTimer = null
+  if (!status?.signed_in || !status.offline) {
+    retryStep = 0
+    return
+  }
+  const ms = OFFLINE_RETRY_MS[Math.min(retryStep++, OFFLINE_RETRY_MS.length - 1)]
+  retryTimer = setTimeout(() => {
+    retryTimer = null
+    if (get(signInState).phase === 'waiting') return scheduleOfflineRetry(status)
+    lastRefresh = Date.now()
+    void refreshAccount({ network: true })
+  }, ms)
+}
+
+/** Once per launch: a paid user close to the end of the offline grace is told to connect. */
+async function maybeWarnOfflineGrace() {
+  const note = offlineGraceNote(get(account))
+  if (!note || note.days > 7) return
+  const { toast } = await import('$lib/components/ui/sonner/toast.svelte.js')
+  toast.warning('Connect to keep Stroke Pro', { description: note.text, duration: 15000 })
+}
+
 /**
  * Load the cached account at launch, then refresh it from the server, and again
  * on window focus (at most every FOCUS_REFRESH_MS). Call once.
@@ -260,6 +311,7 @@ export async function startAccountSync() {
   await refreshAccount({ network: false })
   lastRefresh = Date.now()
   void refreshAccount({ network: true }).then(() => {
+    void maybeWarnOfflineGrace()
     setTimeout(() => void maybePromptKeyHolder(), 4000)
   })
 

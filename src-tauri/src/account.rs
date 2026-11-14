@@ -204,6 +204,34 @@ pub fn entitlement_fresh(ent: &Entitlement, now: u64) -> bool {
     now < ent.valid_until
 }
 
+/// How long a paid entitlement keeps working past `valid_until` when the app
+/// can't get a new one: offline, on a plane, or stroke.click down. Paid users
+/// get ~37 days without the internet (7-day window + this), then have to go
+/// online once. Bounded, signed and clock-guarded, so it is not a way around
+/// paying: a refund or revocation lands the next time the app reaches the server.
+pub const OFFLINE_GRACE_SECS: u64 = 30 * 86_400;
+
+/// A paid (license-backed) Pro entitlement past its window but inside the
+/// offline grace. Trials get no grace: they fall back to the device trial.
+fn in_offline_grace(ent: &Entitlement, now: u64) -> bool {
+    !entitlement_fresh(ent, now)
+        && ent.plan == "pro"
+        && ent.source == "license"
+        && now < ent.valid_until.saturating_add(OFFLINE_GRACE_SECS)
+}
+
+/// The cached entitlement may decide the license status: fresh, or paid and
+/// inside the offline grace.
+pub fn entitlement_usable(ent: &Entitlement, now: u64) -> bool {
+    entitlement_fresh(ent, now) || in_offline_grace(ent, now)
+}
+
+/// When a paid entitlement running on the offline grace stops counting, so the
+/// UI can ask for a connection before then. `None` when not on the grace.
+pub fn offline_grace_until(ent: &Entitlement, now: u64) -> Option<u64> {
+    in_offline_grace(ent, now).then(|| ent.valid_until.saturating_add(OFFLINE_GRACE_SECS))
+}
+
 // ── Cache file ────────────────────────────────────────────────────────────────
 
 #[derive(Serialize, Deserialize, Default, Debug, Clone)]
@@ -272,6 +300,11 @@ pub fn entitlement_status(ent: &Entitlement, email: &str, now: u64) -> LicenseSt
             }
         }
         let lic = ent.license.as_ref();
+        // A cached entitlement can outlive a term license (offline grace): the
+        // license's own end date, which is signed, still applies.
+        if lic.is_some_and(|l| l.expires_at > 0 && l.expires_at <= now) {
+            return LicenseStatus::TrialExpired;
+        }
         return LicenseStatus::Valid {
             email: email.to_string(),
             plan: lic.map(|l| l.plan.clone()).filter(|p| !p.is_empty()).unwrap_or_else(|| "pro".into()),
@@ -301,12 +334,13 @@ pub fn combine(local: LicenseStatus, account: Option<LicenseStatus>) -> LicenseS
 }
 
 /// The account's status from the cache only: no network, no keychain. Used by
-/// the license commands so existing Pro gates see account entitlements.
+/// the license commands so existing Pro gates see account entitlements, also
+/// when stroke.click can't be reached (see `OFFLINE_GRACE_SECS`).
 pub fn account_license_status(dir: &Path) -> Option<LicenseStatus> {
     let (me, _) = cached_me(dir)?;
     // Clock-guarded: setting the clock back can't stretch a cached entitlement.
     let now = crate::license::trusted_now(dir);
-    if !entitlement_fresh(&me.entitlement, now) {
+    if !entitlement_usable(&me.entitlement, now) {
         return None;
     }
     Some(entitlement_status(&me.entitlement, &me.user.email, now))
@@ -381,7 +415,8 @@ pub(crate) fn http() -> &'static reqwest::Client {
 pub enum ApiError {
     /// 401: the token is unknown or revoked.
     Unauthorized,
-    /// No answer (offline, DNS, timeout).
+    /// No usable answer: offline, DNS, timeout, or the server is down (5xx,
+    /// a gateway/Cloudflare error page). Never a verdict on the account.
     Network(String),
     /// The server answered with an error: (code, message).
     Server(String, String),
@@ -410,11 +445,21 @@ pub(crate) async fn read_error(resp: reqwest::Response) -> ApiError {
     if status == reqwest::StatusCode::UNAUTHORIZED {
         return ApiError::Unauthorized;
     }
+    // An outage, not an answer: the app keeps the cached plan and retries.
+    if is_outage(status) {
+        return ApiError::Network(format!("server unavailable ({status})"));
+    }
     let body: serde_json::Value = resp.json().await.unwrap_or_default();
     ApiError::Server(
         body["error"].as_str().unwrap_or(status.as_str()).to_string(),
         body["message"].as_str().unwrap_or("").to_string(),
     )
+}
+
+/// Statuses that mean the server couldn't answer: 5xx (including Cloudflare's
+/// 520-530) and a request timeout.
+pub(crate) fn is_outage(status: reqwest::StatusCode) -> bool {
+    status.is_server_error() || status == reqwest::StatusCode::REQUEST_TIMEOUT
 }
 
 #[derive(Deserialize, Debug)]
@@ -702,6 +747,9 @@ pub struct AccountStatus {
     pub entitlement: Option<Entitlement>,
     /// The cached entitlement verified and is inside its validity window.
     pub entitlement_fresh: bool,
+    /// Paid Pro running on the offline grace: unix seconds by which the app
+    /// has to reach stroke.click once. 0 when not on the grace.
+    pub offline_grace_until: u64,
     pub devices: Vec<Device>,
     pub fetched_at: u64,
     /// The last refresh couldn't reach the server; showing the cache.
@@ -726,7 +774,9 @@ fn build_status(dir: &Path, signed_in: bool) -> AccountStatus {
     };
     if signed_in {
         if let Some((me, c)) = cached_me(dir) {
-            s.entitlement_fresh = entitlement_fresh(&me.entitlement, crate::license::trusted_now(dir));
+            let now = crate::license::trusted_now(dir);
+            s.entitlement_fresh = entitlement_fresh(&me.entitlement, now);
+            s.offline_grace_until = offline_grace_until(&me.entitlement, now).unwrap_or(0);
             s.user = Some(me.user);
             s.entitlement = Some(me.entitlement);
             s.devices = me.devices;
@@ -1143,6 +1193,51 @@ mod tests {
     }
 
     #[test]
+    fn paid_pro_survives_an_outage_for_the_grace_only() {
+        let e = ent("pro", "license", 2_000);
+        // Inside the window: fresh, no grace.
+        assert!(entitlement_usable(&e, 1_999));
+        assert_eq!(offline_grace_until(&e, 1_999), None);
+        // Past the window: still Pro, with a deadline.
+        assert!(entitlement_usable(&e, 2_000));
+        assert!(entitlement_usable(&e, 2_000 + OFFLINE_GRACE_SECS - 1));
+        assert_eq!(offline_grace_until(&e, 2_500), Some(2_000 + OFFLINE_GRACE_SECS));
+        // And no further.
+        assert!(!entitlement_usable(&e, 2_000 + OFFLINE_GRACE_SECS));
+        assert_eq!(offline_grace_until(&e, 2_000 + OFFLINE_GRACE_SECS), None);
+    }
+
+    #[test]
+    fn trials_and_free_get_no_offline_grace() {
+        assert!(!entitlement_usable(&ent("pro", "trial", 2_000), 2_000));
+        assert!(!entitlement_usable(&ent("free", "none", 2_000), 2_000));
+        assert_eq!(offline_grace_until(&ent("pro", "trial", 2_000), 2_500), None);
+    }
+
+    #[test]
+    fn an_ended_term_license_is_not_pro_even_on_the_grace() {
+        let mut e = ent("pro", "license", 2_000);
+        e.license = Some(EntLicense { plan: "pro".into(), expires_at: 3_000, key_hint: None });
+        assert!(matches!(entitlement_status(&e, "a", 2_999), LicenseStatus::Valid { .. }));
+        assert!(matches!(entitlement_status(&e, "a", 3_000), LicenseStatus::TrialExpired));
+        // 0 = lifetime.
+        e.license = Some(EntLicense { plan: "pro".into(), expires_at: 0, key_hint: None });
+        assert!(matches!(entitlement_status(&e, "a", 9e9 as u64), LicenseStatus::Valid { .. }));
+    }
+
+    #[test]
+    fn server_outages_are_not_verdicts() {
+        use reqwest::StatusCode as S;
+        for s in [S::INTERNAL_SERVER_ERROR, S::BAD_GATEWAY, S::SERVICE_UNAVAILABLE, S::GATEWAY_TIMEOUT, S::REQUEST_TIMEOUT] {
+            assert!(is_outage(s), "{s}");
+        }
+        assert!(is_outage(S::from_u16(522).unwrap()));
+        for s in [S::UNAUTHORIZED, S::FORBIDDEN, S::NOT_FOUND, S::TOO_MANY_REQUESTS, S::BAD_REQUEST] {
+            assert!(!is_outage(s), "{s}");
+        }
+    }
+
+    #[test]
     fn entitlement_maps_to_license_status() {
         let now = 1_000;
         assert!(matches!(entitlement_status(&ent("pro", "license", 9e9 as u64), "a", now), LicenseStatus::Valid { .. }));
@@ -1251,6 +1346,14 @@ mod tests {
             }
         });
         format!("http://{addr}")
+    }
+
+    #[tokio::test]
+    async fn a_down_server_reads_as_offline_not_signed_out() {
+        let base = mock_server(vec![("GET /api/me", 502, "<html>Bad gateway</html>".into())]).await;
+        assert!(matches!(fetch_me(&base, "tok").await, Err(ApiError::Network(_))));
+        let base = mock_server(vec![("GET /api/me", 522, "<html>Connection timed out</html>".into())]).await;
+        assert!(matches!(fetch_me(&base, "tok").await, Err(ApiError::Network(_))));
     }
 
     #[tokio::test]
