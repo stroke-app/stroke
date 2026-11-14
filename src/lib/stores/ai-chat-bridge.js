@@ -13,7 +13,7 @@ import { writable, get } from 'svelte/store'
 /**
  * @typedef {{ id: string, title: string, updatedAt: number, where?: string }} ChatRow  - `where`: "database · schema" it last worked in
  * @typedef {{ connectionId: string, chats: ChatRow[], activeId: string | null, busyId: string | null, live: boolean }} ChatListState
- * @typedef {{ type: 'open', id: string } | { type: 'new' }} ChatRequest
+ * @typedef {{ type: 'open', id: string } | { type: 'new' } | { type: 'delete', id: string } | { type: 'rename', id: string, title: string }} ChatRequest
  */
 
 /** @type {import('svelte/store').Writable<ChatListState>} */

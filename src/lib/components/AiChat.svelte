@@ -421,6 +421,14 @@
     if (!req) return;
     void (async () => {
       if (req.type === "new") return newConversation();
+      if (req.type === "delete") return removeConversation(req.id);
+      if (req.type === "rename") {
+        const title = req.title.trim();
+        if (!title) return;
+        await updateConversation(req.id, { title });
+        convList = convList.map((c) => (c.id === req.id ? { ...c, title } : c));
+        return;
+      }
       if (!convList.some((c) => c.id === req.id)) await loadConvList();
       await selectConversation(req.id);
     })();
@@ -572,6 +580,8 @@
       saveOpenTabs(connectionId, openTabIds);
     }
     if (activeConvId === id) {
+      // Deleting the chat that is replying ends that reply first.
+      abortCurrentRequest();
       activeConvId = null;
       clearAnchor();
       stopAgentSession();
