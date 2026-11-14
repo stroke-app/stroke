@@ -328,6 +328,8 @@ export function parseOracleUri(uri) {
  * @returns {ParsedPostgresUri | ParsedSqliteUri | Record<string, any> | { error: string } | null}
  */
 export function parseConnectionUri(type, uri) {
+  if (type === 'couchdb') return parseCouchUri(uri)
+  if (type === 'cassandra') return parseCassandraUri(uri)
   if (type === 'sqlite') return parseSqliteUri(uri)
   if (type === 'mysql') return parseMysqlUri(uri)
   if (type === 'mssql') return parseMssqlUri(uri)
@@ -356,11 +358,95 @@ export function parseConnectionUri(type, uri) {
  * @returns {{ type: string, provider?: string, uriType: 'postgres'|'sqlite'|'mysql'|'mssql'|'clickhouse'|'oracle' } | null}
  */
 export function detectConnectionUri(uri) {
-  const s = unquotePath(String(uri ?? ''))
+  const s = cleanPastedConnection(String(uri ?? ''))
   if (!s) return null
+  const hit = detectClean(s)
+  if (!hit) return null
+  // `uri`: the string to hand the parser, when it isn't what was pasted - the
+  // .env wrapper, driver suffix or key/value form turned into a plain URL.
+  const plain = hit.uri ?? s
+  const { uri: _drop, ...rest } = hit
+  return plain !== String(uri ?? '').trim() ? { ...rest, uri: plain } : rest
+}
 
-  const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(s)?.[1]?.toLowerCase() ?? ''
+/**
+ * What people paste is rarely just the URL: a `.env` line (`DATABASE_URL="…"`,
+ * `export REDIS_URL=…`), a quoted value, a trailing semicolon. Keep the value.
+ * @param {string} raw
+ */
+export function cleanPastedConnection(raw) {
+  let s = String(raw ?? '').trim()
+  s = s.replace(/^export\s+/i, '')
+  // KEY=value or KEY: value, when the key is an identifier and the value
+  // starts like a connection string (not `host=… dbname=…` key/value text).
+  const kv = /^([A-Za-z_][A-Za-z0-9_]*)\s*[=:]\s*(.+)$/s.exec(s)
+  if (kv && /^["'`]?[a-z][a-z0-9+.-]*:\/\//i.test(kv[2].trim())) s = kv[2].trim()
+  s = s.replace(/;\s*$/, '').trim()
+  return unquotePath(s)
+}
+
+/**
+ * A libpq key/value string (`host=db port=5432 dbname=app user=me`) as a URL.
+ * @param {string} s
+ */
+function libpqToUrl(s) {
+  /** @type {Record<string, string>} */
+  const o = {}
+  for (const m of s.matchAll(/(\w+)\s*=\s*('(?:[^'\\]|\\.)*'|\S+)/g)) o[m[1].toLowerCase()] = m[2].replace(/^'|'$/g, '').replace(/\\(.)/g, '$1')
+  if (!o.host && !o.dbname) return null
+  const enc = encodeURIComponent
+  const auth = o.user ? `${enc(o.user)}${o.password ? `:${enc(o.password)}` : ''}@` : ''
+  const q = o.sslmode ? `?sslmode=${enc(o.sslmode)}` : ''
+  return `postgresql://${auth}${o.host || 'localhost'}${o.port ? `:${o.port}` : ''}/${enc(o.dbname || '')}${q}`
+}
+
+/**
+ * An ADO.NET string (`Server=tcp:host,1433;Database=app;User Id=sa;Password=…;`)
+ * in the semicolon form the SQL Server parser reads.
+ * @param {string} s
+ */
+function adoNetToUrl(s) {
+  /** @type {Record<string, string>} */
+  const o = {}
+  for (const part of s.split(';')) {
+    const i = part.indexOf('=')
+    if (i > 0) o[part.slice(0, i).trim().toLowerCase().replace(/\s+/g, ' ')] = part.slice(i + 1).trim()
+  }
+  const server = o.server ?? o['data source'] ?? o.address ?? o.addr
+  if (!server) return null
+  const [hostPart, portPart] = server.replace(/^tcp:/i, '').split(',')
+  const user = o['user id'] ?? o.uid ?? o.user ?? ''
+  const password = o.password ?? o.pwd ?? ''
+  const db = o.database ?? o['initial catalog'] ?? ''
+  const params = [db && `database=${db}`, user && `user=${user}`, password && `password=${password}`,
+    o.encrypt && `encrypt=${o.encrypt}`, o.trustservercertificate && `trustServerCertificate=${o.trustservercertificate}`].filter(Boolean)
+  return `sqlserver://${hostPart.trim()}${portPart ? `:${portPart.trim()}` : ''};${params.join(';')}`
+}
+
+/** @param {string} s @returns {{ type: string, provider?: string, uriType: string, uri?: string } | null} */
+function detectClean(s) {
+  // Key/value forms first: no scheme to go by.
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(s) || /^(server|data source)\s*=/i.test(s)) {
+    if (/(^|;)\s*(server|data source|address)\s*=/i.test(s) && s.includes(';')) {
+      const url = adoNetToUrl(s)
+      if (url) return { type: 'mssql', uriType: 'mssql', uri: url }
+    }
+    if (/\b(host|dbname)\s*=/i.test(s) && !s.includes(';')) {
+      const url = libpqToUrl(s)
+      if (url) return { type: 'postgres', uriType: 'postgres', uri: url }
+    }
+  }
+
+  let scheme = /^([a-z][a-z0-9+.-]*):/i.exec(s)?.[1]?.toLowerCase() ?? ''
+  // SQLAlchemy / ORM driver suffixes: `postgresql+psycopg2://`, `mysql+pymysql://`.
+  // Not `mongodb+srv` (a real scheme) or `prisma+postgres` (a provider's).
+  if (scheme.includes('+') && scheme !== 'mongodb+srv' && scheme !== 'prisma+postgres') {
+    const base = scheme.split('+')[0]
+    const inner = detectClean(base + s.slice(scheme.length))
+    return inner ? { ...inner, uri: inner.uri ?? base + s.slice(scheme.length) } : null
+  }
   const host = hostOf(s)
+  const port = Number(/^[a-z][a-z0-9+.-]*:\/\/(?:[^@/]*@)?[^/:?#]+:(\d+)/i.exec(s)?.[1] ?? 0)
 
   // Providers first: a Neon or Supabase string is a Postgres string, and saying
   // so lets the caller offer the account flow rather than a bare host/port form.
@@ -375,8 +461,20 @@ export function detectConnectionUri(uri) {
     if (/\.psdb\.cloud$/i.test(host) || /\.planetscale\.(com|sh)$/i.test(host)) {
       return { type: 'mysql', provider: 'planetscale', uriType: 'mysql' }
     }
-    if (/\.turso\.io$/i.test(host)) return { type: 'libsql', provider: 'turso', uriType: 'postgres' }
+    if (/\.turso\.io$/i.test(host)) return { type: 'libsql', provider: 'turso', uriType: 'libsql' }
+    if (/\.tidbcloud\.com$/i.test(host)) return { type: 'mysql', provider: 'tidb', uriType: 'mysql' }
+    if (/\.upstash\.io$/i.test(host) && /^rediss?$/.test(scheme)) return { type: 'redis', provider: 'upstash', uriType: 'redis' }
+    if (/\.thenile\.dev$/i.test(host)) return { type: 'postgres', provider: 'nile', uriType: 'postgres' }
+    if (/\.(rlwy\.net|railway\.app|railway\.internal)$/i.test(host)) {
+      const inner = detectByScheme(scheme, s, host, port)
+      if (inner) return { ...inner, provider: 'railway' }
+    }
   }
+  return detectByScheme(scheme, s, host, port)
+}
+
+/** @param {string} scheme @param {string} s @param {string} host @param {number} port */
+function detectByScheme(scheme, s, host, port) {
 
   switch (scheme) {
     case 'postgres':
@@ -385,7 +483,8 @@ export function detectConnectionUri(uri) {
     case 'cockroachdb':
       return { type: 'cockroachdb', uriType: 'postgres' }
     case 'mysql':
-      return { type: 'mysql', uriType: 'mysql' }
+    case 'mysqlx':
+      return { type: 'mysql', uriType: 'mysql', uri: scheme === 'mysqlx' ? 'mysql' + s.slice(6) : undefined }
     case 'mariadb':
       return { type: 'mariadb', uriType: 'mysql' }
     case 'sqlserver':
@@ -399,11 +498,35 @@ export function detectConnectionUri(uri) {
     case 'mongodb':
     case 'mongodb+srv':
       return { type: 'mongodb', uriType: 'mongodb' }
+    case 'postgis':
+    case 'timescale':
+    case 'pgsql':
+    case 'pg':
+      return { type: 'postgres', uriType: 'postgres', uri: 'postgresql' + s.slice(scheme.length) }
     case 'redis':
     case 'rediss':
-      return { type: 'redis', uriType: 'postgres' }
+      return { type: 'redis', uriType: 'redis' }
+    case 'valkey':
+    case 'valkeys':
+      return { type: 'valkey', uriType: 'redis', uri: (scheme === 'valkeys' ? 'rediss' : 'redis') + s.slice(scheme.length) }
     case 'libsql':
-      return { type: 'libsql', uriType: 'postgres' }
+      return { type: 'libsql', uriType: 'libsql' }
+    case 'couchdb':
+    case 'couchdbs':
+      return { type: 'couchdb', uriType: 'couchdb', uri: (scheme === 'couchdbs' ? 'https' : 'http') + s.slice(scheme.length) }
+    case 'cassandra':
+    case 'scylla':
+    case 'cql':
+      return { type: 'cassandra', uriType: 'cassandra' }
+    case 'http':
+    case 'https':
+    case 'ws':
+    case 'wss':
+      // An HTTP endpoint says what it is by its host or its port.
+      if (/\.turso\.io$/i.test(host) || scheme.startsWith('ws')) return { type: 'libsql', uriType: 'libsql' }
+      if (/clickhouse/i.test(host) || port === 8123 || port === 8443) return { type: 'clickhouse', uriType: 'clickhouse' }
+      if (/couch|cloudant/i.test(host) || port === 5984) return { type: 'couchdb', uriType: 'couchdb' }
+      return null
     case 'duckdb':
       return { type: 'duckdb', uriType: 'sqlite' }
     case 'sqlite':
@@ -500,4 +623,36 @@ export function parseLibsqlUri(uri) {
   url.searchParams.delete('auth_token')
   // `toString()` re-appends a bare `?` once the params are gone.
   return { url: url.toString().replace(/\?$/, ''), authToken: token }
+}
+
+/**
+ * CouchDB's server URL, with the login moved to its own fields.
+ * @param {string} uri
+ * @returns {{ couch: true, url: string, user: string, password: string } | { error: string } | null}
+ */
+export function parseCouchUri(uri) {
+  const t = uri.trim().replace(/^couchdbs:/i, 'https:').replace(/^couchdb:/i, 'http:')
+  if (!t) return null
+  let u
+  try {
+    u = new URL(escapeUserinfo(t))
+  } catch {
+    return { error: 'Could not read that CouchDB URL' }
+  }
+  const user = decodePart(u.username)
+  const password = decodePart(u.password)
+  u.username = ''
+  u.password = ''
+  return { couch: true, url: u.toString().replace(/\/$/, ''), user, password }
+}
+
+/**
+ * `cassandra://user:pass@h1:9042,h2:9042/keyspace` into the CQL form's fields.
+ * @param {string} uri
+ * @returns {{ cql: true, hosts: string, user: string, password: string, keyspace: string } | { error: string } | null}
+ */
+export function parseCassandraUri(uri) {
+  const m = /^[a-z]+:\/\/(?:([^:@/]*)(?::([^@/]*))?@)?([^/?#]+)(?:\/([^?#]*))?/i.exec(uri.trim())
+  if (!m) return { error: 'Expected cassandra://host:9042/keyspace' }
+  return { cql: true, user: decodePart(m[1] ?? ''), password: decodePart(m[2] ?? ''), hosts: m[3], keyspace: decodePart(m[4] ?? '') }
 }
