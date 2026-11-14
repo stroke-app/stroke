@@ -633,6 +633,11 @@ pub fn check_status(data_dir: &Path) -> LicenseStatus {
     }
 
     // 2. Trial
+    trial_status(data_dir)
+}
+
+/// The trial's state alone, ignoring any license key on this device.
+pub fn trial_status(data_dir: &Path) -> LicenseStatus {
     let days = trial_days_remaining(data_dir);
     if days > 0 {
         LicenseStatus::Trial {

@@ -42,6 +42,11 @@
   })
   const changeCount = $derived(releases.reduce((n, r) => n + r.sections.reduce((m, s) => m + s.items.length, 0), 0))
 
+  /** "2.7.8" from "2.7.8-nightly.202611141611" or "v2.7.8". @param {string} v */
+  const short = (v) => String(v ?? '').replace(/^v/, '').replace(/-nightly\.\d+$/, '')
+  /** @param {string} v */
+  const isNightly = (v) => /-nightly\./.test(String(v ?? ''))
+
   /** @param {import('$lib/whats-new.js').HighlightAction} id */
   function act(id) {
     open = false
@@ -52,20 +57,26 @@
 
 
 <Dialog.Root bind:open>
-  <Dialog.Content class="max-w-[30rem] gap-0 p-0">
-    <!-- The app's mark beside the version, and one line of what changed, so the
-         size of the update is clear before reading any of it. -->
-    <Dialog.Header class="flex-row items-center gap-3.5 px-6 pt-6 pe-12">
-      <Logo class="size-10 shrink-0" />
-      <div class="flex min-w-0 flex-col gap-1">
-        <Dialog.Title class="text-ui-xl text-balance">What's new in Stroke {current}</Dialog.Title>
-        <Dialog.Description class="text-ui-xs tabular-nums">
-          {[previous && `Updated from v${previous}`, changeCount && `${changeCount} ${changeCount === 1 ? 'change' : 'changes'}`].filter(Boolean).join(' · ')}
+  <Dialog.Content class="max-w-[28rem] gap-0 p-0">
+    <!-- A compact header: the mark, "What's new", and the version as a short
+         figure with its channel beside it. The full nightly build id wrapped
+         the title over two lines; it stays in the tooltip. -->
+    <Dialog.Header class="flex-row items-center gap-3 px-5 pt-5 pe-12">
+      <Logo class="size-8 shrink-0" />
+      <div class="flex min-w-0 flex-col gap-0.5">
+        <Dialog.Title class="text-ui-lg">What's new</Dialog.Title>
+        <Dialog.Description class="flex min-w-0 items-center gap-1.5 text-ui-xs tabular-nums" title={previous ? `${current}, updated from ${previous}` : current}>
+          <span class="font-medium text-foreground">{short(current)}</span>
+          {#if isNightly(current)}
+            <span class="rounded-sm bg-muted px-1 py-px text-ui-3xs font-medium text-muted-foreground">Nightly</span>
+          {/if}
+          {#if previous}<span class="truncate">from {short(previous)}</span>{/if}
+          {#if changeCount}<span aria-hidden="true">·</span><span class="shrink-0">{changeCount} {changeCount === 1 ? 'change' : 'changes'}</span>{/if}
         </Dialog.Description>
       </div>
     </Dialog.Header>
 
-    <div class="mt-5 max-h-[min(32rem,68vh)] overflow-y-auto border-t border-border/40 px-6 pt-5 pb-2 [scrollbar-gutter:stable]">
+    <div class="mt-4 max-h-[min(30rem,64vh)] overflow-y-auto border-t border-border/40 px-5 pt-4 pb-2 [scrollbar-gutter:stable]">
       {#if hero}
         <!-- The lead feature: the only filled button in the dialog. -->
         <section class="flex flex-col gap-1.5" aria-labelledby="whats-new-hero">
@@ -119,17 +130,17 @@
           </button>
         {/if}
         {#if notesOpen}
-          <div class="pb-4 {highlights.length ? '' : 'pt-1'}"><ReleaseNotes {releases} {omitted} /></div>
+          <div class="pb-4 {highlights.length ? '' : 'pt-1'}"><ReleaseNotes {releases} {omitted} compact /></div>
         {/if}
       {/if}
     </div>
 
-    <Dialog.Footer class="mx-0 mb-0 border-t border-border/40 px-6 py-4">
-      <Button variant="ghost" onclick={onfullchangelog}>
+    <Dialog.Footer class="mx-0 mb-0 border-t border-border/40 px-5 py-3">
+      <Button variant="ghost" size="sm" class="text-muted-foreground hover:text-foreground" onclick={onfullchangelog}>
         <ExternalLink class="size-3.5 shrink-0" />
         Full changelog
       </Button>
-      <Button variant={hero ? 'outline' : 'default'} onclick={() => (open = false)}>Done</Button>
+      <Button size="sm" variant={hero ? 'outline' : 'default'} onclick={() => (open = false)}>Done</Button>
     </Dialog.Footer>
   </Dialog.Content>
 </Dialog.Root>
