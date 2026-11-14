@@ -438,6 +438,48 @@ jobs:
           TAG: ${{ env.RELEASE_TAG }}
         run: gh release upload "$TAG" --repo "$RELEASES_REPO" latest.json --clobber
 
+# ── 4a. Publish the AUR package (stroke-bin) ────────────────────────────────
+#      `yay -S stroke-bin` / `paru -S stroke-bin`. Needs the AUR_SSH_PRIVATE_KEY
+#      secret (a key added to the AUR account that maintains stroke-bin); without
+#      it this job says so and does nothing.
+  update-aur:
+    needs: publish-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Fill in the PKGBUILD
+        id: pkg
+        env:
+          TAG: ${{ env.RELEASE_TAG }}
+          AUR_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        run: |
+          if [ -z "$AUR_KEY" ]; then
+            echo "No AUR_SSH_PRIVATE_KEY secret: skipping the AUR publish."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          VERSION="${TAG#v}"
+          URL="https://github.com/stroke-app/stroke/releases/download/${TAG}/stroke_${VERSION}_amd64.deb"
+          curl -fsSL -o stroke.deb "$URL"
+          SHA=$(sha256sum stroke.deb | cut -d' ' -f1)
+          mkdir -p aur
+          sed -e "s/@VERSION@/${VERSION}/" -e "s/@SHA256@/${SHA}/" packaging/aur/stroke-bin/PKGBUILD.in > aur/PKGBUILD
+          cat aur/PKGBUILD
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Push to the AUR
+        if: steps.pkg.outputs.skip == 'false'
+        uses: KSXGitHub/github-actions-deploy-aur@v4.1.1
+        with:
+          pkgname: stroke-bin
+          pkgbuild: aur/PKGBUILD
+          commit_username: broisnees
+          commit_email: broisnees@users.noreply.github.com
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: "Update to ${{ env.RELEASE_TAG }}"
+          ssh_keyscan_types: rsa,ecdsa,ed25519
+
 # ── 4. Refresh the Scoop manifest ────────────────────────────────────────────
 #      `scoop bucket add stroke https://github.com/stroke-app/stroke` clones
 #      THIS repo anonymously and reads bucket/stroke.json, so the manifest is
