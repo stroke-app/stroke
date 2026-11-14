@@ -639,6 +639,11 @@
   let statusBarHasUpdate = $state(false)
   /** A manual update check is running (the sidebar button spins). */
   let checkingUpdate = $state(false)
+  /** The running version, for the welcome screen's footer. */
+  let appVersion = $state('')
+  $effect(() => {
+    import('@tauri-apps/api/app').then((m) => m.getVersion()).then((v) => (appVersion = v)).catch(() => {})
+  })
   /** The update is downloaded: the status bar offers the restart. */
   let statusBarUpdateReady = $state(false)
   let sidebarOpen = $state(loadLayout().navSidebarOpen)
@@ -9399,15 +9404,31 @@ let rowSearch = $state('')
           </section>
         </div>
 
-        <p class="absolute inset-x-0 bottom-6 text-center text-ui-2xs text-muted-foreground">
-          made with care by
+        <!-- The version and a way to check for a newer one: with no
+             connection open there is no sidebar, and so no update button. -->
+        <p class="absolute inset-x-0 bottom-6 flex items-center justify-center gap-2 text-ui-2xs text-muted-foreground">
+          {#if appVersion}
+            <span class="tabular-nums">v{appVersion}</span>
+            <span aria-hidden="true">·</span>
+          {/if}
+          <button
+            type="button"
+            disabled={checkingUpdate}
+            class="inline-flex items-center gap-1 text-foreground/80 underline-offset-4 transition-[color,scale] duration-[120ms] ease-[var(--ease-out)] hover:text-foreground hover:underline active:scale-[0.97] disabled:pointer-events-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            onclick={() => void updateDialog?.checkNow?.()}
+          >
+            <Icon name="refresh-cw" class={cn('size-3 shrink-0', checkingUpdate && 'animate-spin')} aria-hidden="true" />
+            {checkingUpdate ? 'Checking' : 'Check for updates'}
+          </button>
+          <span aria-hidden="true">·</span>
+          <span>made with care by
           <a
             href="https://nischal-dahal.com.np"
             target="_blank"
             rel="noreferrer"
             class="text-foreground/80 underline-offset-4 transition-colors hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
             onclick={(e) => { e.preventDefault(); void openExternalUrl('https://nischal-dahal.com.np') }}
-          >@broisnees</a>
+          >@broisnees</a></span>
         </p>
       </div>
     {:else}

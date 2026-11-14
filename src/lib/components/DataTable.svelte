@@ -748,6 +748,8 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     const relNavIdx = virtualRelCols.indexOf(vc)
     focusedCol = relNavIdx >= 0 ? visibleColumns.length + relNavIdx : (focusedCol ?? 0)
     const row = rows[rowIdx] ?? []
+    // A different relationship starts at the full dock, not the last one's fit.
+    if (fkSubview?.kind !== 'reverse' || fkSubview?.label !== vc.label) fkFitHeight = 0
     fkSubview = { rowIdx, kind: 'reverse', label: vc.label, relInfo: vc, data: { loading: true, columns: [], rows: [], error: null } }
     scrollRowIntoViewBesideDock(rowIdx)
     void onfetchrelatedrows({ kind: 'reverse', fromSchema: vc.fromSchema, fromTable: vc.fromTable, fromColumns: vc.fromColumns, toColumns: vc.toColumns, row }).then(res => {
@@ -7971,6 +7973,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
           }
           // Opening FK sub-view: close JSON expand for the same row (mutually exclusive)
           if (expandedRows.has(idx)) { const s = new Set(expandedRows); s.delete(idx); expandedRows = s }
+          if (fkSubview?.kind !== 'forward') fkFitHeight = 0
           fkSubview = { rowIdx: idx, kind: 'forward', label: fkLbl, colIdx: actualIdx, data: { loading: true, columns: [], rows: [], error: null } }
           scrollRowIntoViewBesideDock(idx)
           void onfetchrelatedrows({ kind: 'forward', fk, row: rows[idx] ?? [] }).then(res => {
@@ -9618,6 +9621,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       fkLabel={fkSubview.label}
       sourceHint={`row ${fkIdx + 1}`}
       bind:fitHeight={fkFitHeight}
+      many={fkSubview.kind === 'reverse'}
       onclose={() => { fkSubview = null }}
       onfullview={() => {
         const sv = fkSubview
