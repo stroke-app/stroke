@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.6.5] - 2026-11-14
+
+### Bug Fixes
+- Oracle, MongoDB, CouchDB, Cassandra/Scylla and DynamoDB Local containers now show up under Docker in the connection dialog, with their credentials filled in
+
+
 ## [2.6.4] - 2026-11-14
 
 ### Bug Fixes
