@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.7.8] - 2026-11-14
+
+### Features
+- Copy URL on the connection form: the connection as a connection string (postgresql://, mysql://, sqlserver://, oracle://, redis://, libsql:// and the rest), ready for a .env file, an ORM or another client. Passwords with special characters are encoded so they paste back intact
+
+
 ## [2.7.7] - 2026-11-14
 
 ### Improvements
