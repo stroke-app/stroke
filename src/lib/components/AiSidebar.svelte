@@ -107,6 +107,8 @@
       foreignKeys: [],
     }),
     connectionId = "",
+    /** Which stored chats are this connection's (lib/ai-chat-key.js). @type {((key: string) => boolean) | null} */
+    chatMatch = null,
     isActive = false,
     currentView = /** @type {'table' | 'sql' | 'orm' | 'schema' | 'welcome' | string} */ ("table"),
     currentSql = "",
@@ -336,7 +338,7 @@
   let historyOpen = $state(false)
 
   async function loadConvList() {
-    convList = await listConversations(connectionId || undefined, "sidebar")
+    convList = await listConversations(chatMatch ?? (connectionId || undefined), "sidebar")
   }
 
   async function restoreLatest() {
@@ -393,7 +395,7 @@
   }
 
   async function clearAllConversations() {
-    await clearConversations(connectionId || undefined, 'sidebar')
+    await clearConversations(chatMatch ?? (connectionId || undefined), 'sidebar')
     convList = []; activeConvId = null; items = []; apiHistory = []; rawApiHistory = []; error = ''; historyOpen = false
   }
 

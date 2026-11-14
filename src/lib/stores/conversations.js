@@ -9,6 +9,7 @@ const STORE = STORES.conversations
  *   createdAt: number
  *   updatedAt: number
  *   schema: string
+ *   database?: string  - the database it last worked in (chats follow the connection)
  *   connectionId: string
  *   items: unknown[]
  *   apiHistory: unknown[]
@@ -21,7 +22,8 @@ function getDb() {
 }
 
 /**
- * @param {string} [connectionId] when provided, only return conversations for that connection
+ * @param {string | ((key: string) => boolean)} [connectionId] when provided, only return
+ *   conversations for that connection: its key, or a test on the stored key (lib/ai-chat-key.js)
  * @param {'chat' | 'sidebar'} [source] when 'sidebar', return only sidebar chats; otherwise
  *   return full-chat conversations (excludes sidebar) so the two surfaces stay separate.
  * @returns {Promise<Conversation[]>} sorted newest first
@@ -29,7 +31,8 @@ function getDb() {
 export async function listConversations(connectionId, source) {
   const db = await getDb()
   const all = await db.getAll(STORE)
-  let filtered = connectionId ? all.filter((c) => c.connectionId === connectionId) : all
+  const belongs = typeof connectionId === 'function' ? connectionId : (/** @type {string} */ k) => k === connectionId
+  let filtered = connectionId ? all.filter((c) => belongs(c.connectionId)) : all
   filtered = source === 'sidebar'
     ? filtered.filter((c) => c.source === 'sidebar')
     : filtered.filter((c) => c.source !== 'sidebar')
@@ -75,6 +78,7 @@ export async function deleteConversation(id) {
  * @param {string} [connectionId]
  * @param {'chat' | 'sidebar'} [source]
  */
+/** @param {string | ((key: string) => boolean)} [connectionId] @param {'chat' | 'sidebar'} [source] */
 export async function clearConversations(connectionId, source) {
   const list = await listConversations(connectionId, source)
   const db = await getDb()
