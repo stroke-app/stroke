@@ -43,7 +43,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: nightly
+          # The full ref: a `nightly` tag (the rolling pre-release) exists too.
+          ref: refs/heads/nightly
           fetch-depth: 0
           # A PAT, so the bump commit can be pushed to nightly.
           token: ${{ secrets.RELEASES_TOKEN }}
@@ -82,7 +83,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add src-tauri/tauri.conf.json package.json CHANGELOG.md .changeset/
           git commit -m "chore: version ${VERSION} (#${PR_NUMBER})"
-          git push origin HEAD:nightly
+          git push origin HEAD:refs/heads/nightly
           echo "nightly is now ${VERSION}; the next nightly build ships it."
 
   # ── PR merged into master: promotion or hotfix ─────────────────────────────
@@ -157,12 +158,12 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch origin nightly
-          git checkout -B nightly origin/nightly
+          git fetch origin refs/heads/nightly:refs/remotes/origin/nightly
+          git checkout -B nightly refs/remotes/origin/nightly
           if git merge-base --is-ancestor origin/master HEAD; then
             echo "nightly already contains master."
           elif git merge --no-edit origin/master -m "chore: merge master into nightly"; then
-            git push origin nightly
+            git push origin HEAD:refs/heads/nightly
           else
             git merge --abort
             gh pr create --base nightly --head master \
