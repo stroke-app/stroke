@@ -615,10 +615,6 @@
   /** The update is downloaded: the status bar offers the restart. */
   let statusBarUpdateReady = $state(false)
   let sidebarOpen = $state(loadLayout().navSidebarOpen)
-  /** The nav sidebar was open when a visual page took the width; put it back on leaving. */
-  let _sidebarBeforeErd = false
-  /** Tab kinds that are a picture first: they get the sidebar's width. */
-  const WIDE_TAB_KINDS = new Set(['erd', 'reltree', 'diagrams'])
   let sidebarEverOpened = $state(loadLayout().navSidebarOpen)
   /** Which switchable sidebar panel is showing: 'tables' | 'connections' | 'extensions'. */
   let navSidebarPanel = $state(loadLayout().navSidebarPanel ?? 'tables')
@@ -1206,17 +1202,8 @@
     if (activeTab?.kind === 'charts') chartsEverOpened = true
     if (activeTab?.kind === 'dashboard') dashboardEverOpened = true
     if (activeTab?.kind === 'erd') erdEverOpened = true
-    // The visual pages want the width: the nav sidebar folds while one of them
-    // is the active tab and comes back when another kind is. Untracked so
-    // Ctrl+B on the tab itself is not undone by this effect re-running.
-    untrack(() => {
-      if (activeTab && WIDE_TAB_KINDS.has(activeTab.kind)) {
-        if (sidebarOpen) { _sidebarBeforeErd = true; sidebarOpen = false }
-      } else if (_sidebarBeforeErd) {
-        _sidebarBeforeErd = false
-        sidebarOpen = true
-      }
-    })
+    // The sidebar stays as you left it on every page, the diagrams included:
+    // folding it on its own took the table list away mid-task. ⌘B hides it.
     if (activeTab?.kind === 'diagrams') diagramsEverOpened = true
     if (activeTab?.kind === 'search') searchEverOpened = true
     if (activeTab?.kind === 'schema-timeline') schemaTimelineEverOpened = true
