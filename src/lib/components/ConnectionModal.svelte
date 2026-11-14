@@ -3514,25 +3514,41 @@
 
         <!-- ── Form panel ──────────────────────────────────────────── -->
         <div class="relative flex min-h-0 min-w-0 flex-col">
-          {#if !railOpen}
-            <!-- List hidden: no strip, just the button to bring it back, beside
-                 the traffic lights on macOS. -->
+          <!-- Title row: the panel's own chrome, the same height as the rail's
+               header and the app's title bar (52pt on macOS, where the traffic
+               lights sit in it; 40px elsewhere), so its buttons share the
+               lights' centre line instead of floating at an offset. It is also
+               the window's drag area here. -->
+          <div
+            class={cn("flex h-10 shrink-0 items-center gap-1 px-3", isMacChrome && "h-[52px]", isMacChrome && !railOpen && "ps-[92px]")}
+            data-tauri-drag-region
+          >
+            {#if !railOpen}
+              <button
+                type="button"
+                onclick={() => {
+                  railOpen = true;
+                  saveRail();
+                }}
+                title={`Show connections (${comboTitle('Mod+B')})`}
+                aria-label="Show connections"
+                class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-[color,background-color,scale] duration-150 ease-out hover:bg-accent hover:text-foreground active:scale-[0.94]"
+              >
+                <Icon name="panel-left-open" class="size-4 shrink-0" />
+              </button>
+            {/if}
+            <span class="flex-1" data-tauri-drag-region></span>
+            <!-- Close routes through the unsaved-changes guard. -->
             <button
               type="button"
-              onclick={() => {
-                railOpen = true;
-                saveRail();
-              }}
-              title={`Show connections (${comboTitle('Mod+B')})`}
-              aria-label="Show connections"
-              class={cn(
-                "absolute z-30 inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-[color,background-color,scale] duration-150 ease-out hover:bg-accent hover:text-foreground active:scale-[0.94]",
-                isMacChrome ? "left-[88px] top-3" : "left-3 top-3",
-              )}
+              onclick={requestClose}
+              aria-label="Close"
+              title="Close (Esc)"
+              class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-[color,background-color,scale] duration-150 ease-out hover:bg-accent hover:text-foreground active:scale-[0.94]"
             >
-              <Icon name="panel-left-open" class="size-4 shrink-0" />
+              <Icon name="x" class="size-3.5 shrink-0" />
             </button>
-          {/if}
+          </div>
           <!-- Connecting: the panel gives way to what is being dialled, the same
                look as the launch reconnect. The saved list on the left stays
                visible; the footer's Stop and this Cancel both end the attempt. -->
@@ -3559,12 +3575,12 @@
           <!-- The header lines up with whatever is under it: the tile column on
                step 1, the full-width form on step 2. -->
           <div
-            class={cn("w-full shrink-0 px-8 pt-5", step !== "pick" && "mx-auto max-w-3xl pt-10", isMacChrome && !railOpen && "pt-[60px]", !isMacChrome && !railOpen && "ps-14", step === "pick" && "mx-auto max-w-3xl pt-12", step === "pick" && isMacChrome && !railOpen && "pt-[72px]")}
+            class={cn("w-full max-w-6xl shrink-0 px-10", step === "pick" ? "pt-4" : "pt-2")}
           >
             {#if step === "pick"}
               <!-- pe-6 keeps the rescan button clear of the dialog's own close
                  button, which floats at right-8 top-5 over this same corner. -->
-              <div class="flex items-center gap-3 pe-10">
+              <div class="flex items-center gap-3">
                 <h2
                   class="text-ui-xl font-semibold tracking-tight text-foreground"
                 >
@@ -3708,7 +3724,7 @@
                    starts somewhere neither of them does. One leading edge. -->
               <!-- Full width: the grids below are four columns, so a wide window
                    buys wider tiles and fewer truncated names, not empty margin. -->
-              <div class="@container mx-auto flex w-full max-w-3xl flex-col gap-7 px-8 py-6">
+              <div class="@container flex w-full max-w-6xl flex-col gap-7 px-10 py-6">
                   <!-- ── Paste a connection string ─────────────────────────
                        The fastest path there is, and the one a developer already
                        has in a clipboard from their provider dashboard or a
@@ -4027,7 +4043,7 @@
                    same layout roomier - and the panel already runs the header,
                    the footer and the URL bar edge to edge, so a capped form in
                    the middle of them was the odd one out. -->
-              <div class="mx-auto flex w-full max-w-3xl items-start gap-10 px-8 py-6">
+              <div class="flex w-full max-w-6xl items-start gap-10 px-10 py-6">
                 <!-- Enter connects, from any field - filling a form and having to go
                  find the button is the one interaction nobody expects here. The
                  paste bar's own Enter handler runs first and marks the event
@@ -5068,8 +5084,8 @@
           {/if}
 
           <!-- ── Footer: inline error alert, status chip, then actions ── -->
-          <div class="shrink-0 border-t border-border/15 px-8 py-4">
-            <div class={cn("mx-auto", step === "pick" ? "max-w-none" : "max-w-[44rem]")}>
+          <div class="shrink-0 border-t border-border/15 px-10 py-4">
+            <div class="max-w-6xl">
               <!-- The alert itself is a toast (see failWith). What stays here is the
                  one-line record of it, so the driver's own words are still
                  readable after the toast has gone - without a panel that shoves
@@ -5261,17 +5277,6 @@
         </div>
       </div>
 
-      <!-- Close button, routes through the unsaved-changes guard -->
-      <button
-        type="button"
-        onclick={requestClose}
-        aria-label="Close"
-        title="Close (Esc)"
-        class="absolute right-3 top-3 z-30 inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-[color,background-color,scale] duration-150 ease-out hover:bg-accent hover:text-foreground active:scale-[0.94]"
-      >
-        <Icon name="x" class="size-3.5 shrink-0" />
-        <span class="sr-only">Close</span>
-      </button>
 
       <!-- Duplicate-target confirmation. Same shape as the discard prompt: this
            is the other question the dialog can ask, and two different-looking
