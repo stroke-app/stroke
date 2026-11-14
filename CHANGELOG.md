@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.6.3] - 2026-11-14
+
+### Changes
+- fix(connect): buttons on the traffic lights' line; full-width connection screen (#156)
+
+
 ## [2.6.2] - 2026-11-14
 
 ### Bug Fixes
