@@ -313,6 +313,7 @@
     connectPosthog,
     connectDuckdb,
     connectMssql,
+    connectOracle,
     connectRedis,
     connectDynamo,
     connectCouch,
@@ -7417,6 +7418,7 @@ let rowSearch = $state('')
       else if (last.type === 'posthog') await withTimeout(connectPosthog(last))
       else if (last.type === 'duckdb') await withTimeout(connectDuckdb(last))
       else if (last.type === 'mssql') await withTimeout(connectMssql(last))
+      else if (last.type === 'oracle') await withTimeout(connectOracle(last))
       else if (engineFamily(last.type) === 'redis') await withTimeout(connectRedis(last))
       else if (last.type === 'dynamodb') await withTimeout(connectDynamo(last))
       else if (last.type === 'couchdb') await withTimeout(connectCouch(last))
@@ -7828,6 +7830,7 @@ let rowSearch = $state('')
     else if (conn.type === 'posthog') await connectPosthog(conn)
     else if (conn.type === 'duckdb') await connectDuckdb(conn)
     else if (conn.type === 'mssql') await connectMssql(conn)
+    else if (conn.type === 'oracle') await connectOracle(conn)
     else if (engineFamily(conn.type) === 'redis') await connectRedis(conn)
     else if (conn.type === 'dynamodb') await connectDynamo(conn)
     else if (conn.type === 'couchdb') await connectCouch(conn)

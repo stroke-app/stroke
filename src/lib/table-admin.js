@@ -6,7 +6,7 @@
 
 import { engineFamily } from '$lib/stores/connections.js'
 
-/** @typedef {'postgres' | 'mysql' | 'sqlite' | 'duckdb' | 'mssql' | 'clickhouse'} TableDialect */
+/** @typedef {'postgres' | 'mysql' | 'sqlite' | 'duckdb' | 'mssql' | 'clickhouse' | 'oracle'} TableDialect */
 /** @typedef {'table' | 'view' | 'materialized_view'} ObjectKind */
 
 /**
@@ -17,7 +17,7 @@ import { engineFamily } from '$lib/stores/connections.js'
  */
 export function tableDialect(type) {
   const family = engineFamily(type)
-  if (family === 'postgres' || family === 'mysql' || family === 'duckdb' || family === 'mssql' || family === 'clickhouse') return family
+  if (family === 'postgres' || family === 'mysql' || family === 'duckdb' || family === 'mssql' || family === 'clickhouse' || family === 'oracle') return family
   if (family === 'sqlite' || family === 'd1' || family === 'libsql') return 'sqlite'
   return null
 }

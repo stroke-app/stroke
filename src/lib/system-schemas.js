@@ -21,8 +21,14 @@ const SYSTEM_SCHEMAS = new Set([
   'sys',
   // SQL Server
   'guest',
-  // ClickHouse
+  // ClickHouse; also Oracle's SYSTEM user
   'system',
+  // Oracle: users the database itself creates and maintains
+  'anonymous', 'appqossys', 'audsys', 'ctxsys', 'dbsfwuser', 'dbsnmp', 'dgpdb_int', 'dip', 'dvf', 'dvsys',
+  'ggsharedcap', 'ggsys', 'gsmadmin_internal', 'gsmcatuser', 'gsmrootuser', 'gsmuser', 'lbacsys', 'mddata',
+  'mdsys', 'ojvmsys', 'olapsys', 'opsg_admin', 'oracle_ocm', 'orddata', 'ordplugins', 'ordsys', 'outln',
+  'remote_scheduler_agent', 'si_informtn_schema', 'sys$umf', 'sysbackup', 'sysdg', 'syskm', 'sysrac',
+  'vecsys', 'wmsys', 'xdb', 'xs$null', 'baasys',
 ])
 
 /** @param {string} name */

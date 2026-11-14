@@ -147,6 +147,8 @@ fn sample_sql(conn: &ActiveConnection, schema: &str, table: &str, n: usize) -> R
         ActiveConnection::Postgres(_) => format!("SELECT * FROM {}.{} LIMIT {n}", dq(schema), dq(table)),
         ActiveConnection::Mysql(_) => format!("SELECT * FROM `{schema}`.`{table}` LIMIT {n}"),
         ActiveConnection::Mssql(_) => format!("SELECT TOP {n} * FROM [{schema}].[{table}]"),
+        ActiveConnection::Oracle(_) if schema.is_empty() => format!("SELECT * FROM {} FETCH FIRST {n} ROWS ONLY", dq(table)),
+        ActiveConnection::Oracle(_) => format!("SELECT * FROM {}.{} FETCH FIRST {n} ROWS ONLY", dq(schema), dq(table)),
         ActiveConnection::Clickhouse(_) => format!("SELECT * FROM {}.{} LIMIT {n}", dq(schema), dq(table)),
         ActiveConnection::Sqlite(_) | ActiveConnection::D1(_) | ActiveConnection::LibSql(_) | ActiveConnection::Duckdb(_) => {
             format!("SELECT * FROM {} LIMIT {n}", dq(table))
@@ -281,7 +283,7 @@ pub async fn call_tool(
         }
         "sample_rows" => {
             let table = args["table"].as_str().ok_or("Missing table argument")?;
-            let schema = args["schema"].as_str().unwrap_or(if matches!(conn, ActiveConnection::Mysql(_) | ActiveConnection::Clickhouse(_)) { "" } else { "public" });
+            let schema = args["schema"].as_str().unwrap_or(if matches!(conn, ActiveConnection::Mysql(_) | ActiveConnection::Clickhouse(_) | ActiveConnection::Oracle(_)) { "" } else { "public" });
             let schema = if schema.is_empty() {
                 match conn {
                     ActiveConnection::Mssql(_) => "dbo",
@@ -553,6 +555,14 @@ async fn execute_sql(
             let result = crate::db::mssql::execute_sql_readonly(h, sql).await?;
             Ok(truncated_result_json(&result, max_rows))
         }
+        ActiveConnection::Oracle(h) if read_only => {
+            let result = crate::db::oracle::execute_sql_readonly(h, sql).await?;
+            Ok(truncated_result_json(&result, max_rows))
+        }
+        ActiveConnection::Oracle(h) => {
+            let result = crate::db::oracle::execute_sql(h, sql).await?;
+            Ok(truncated_result_json(&result, max_rows))
+        }
         ActiveConnection::Mssql(h) => {
             let result = crate::db::mssql::execute_sql(h, sql).await?;
             Ok(truncated_result_json(&result, max_rows))
@@ -693,6 +703,10 @@ async fn list_tables(conn: &ActiveConnection, schema: &str) -> Result<String, St
         }
         ActiveConnection::Mssql(h) => {
             let tables = crate::db::mssql::list_tables(h, schema).await?;
+            Ok(json!({"tables":tables.iter().map(|t|&t.name).collect::<Vec<_>>()}).to_string())
+        }
+        ActiveConnection::Oracle(h) => {
+            let tables = crate::db::oracle::list_tables(h, schema).await?;
             Ok(json!({"tables":tables.iter().map(|t|&t.name).collect::<Vec<_>>()}).to_string())
         }
     }
@@ -852,6 +866,15 @@ async fn describe_table(
             let columns: Vec<_> = cols.iter().map(|c| json!({
                 "name": c.name, "type": c.data_type, "nullable": c.is_nullable,
                 "default": c.column_default, "comment": c.comment,
+            })).collect();
+            Ok(json!({"table":table,"columns":columns}).to_string())
+        }
+        ActiveConnection::Oracle(h) => {
+            let cols = crate::db::oracle::get_column_structure(h, schema, table).await?;
+            let columns: Vec<_> = cols.iter().map(|c| json!({
+                "name": c.name, "type": c.data_type, "nullable": c.is_nullable,
+                "default": c.column_default, "comment": c.comment,
+                "primary_key": c.is_primary_key, "foreign_key": c.foreign_key,
             })).collect();
             Ok(json!({"table":table,"columns":columns}).to_string())
         }
@@ -1114,6 +1137,7 @@ async fn check_migrations(conn: &ActiveConnection, schema: &str) -> Result<Strin
         ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => Ok(json!({"migrations":[],"note":"Migration detection not supported for DynamoDB"}).to_string()),
         ActiveConnection::Duckdb(_) => Ok(json!({"migrations":[],"note":"Migration detection not supported for DuckDB"}).to_string()),
         ActiveConnection::Mssql(_) => Ok(json!({"migrations":[],"note":"Migration detection not supported for MS SQL Server"}).to_string()),
+        ActiveConnection::Oracle(_) => Ok(json!({"migrations":[],"note":"Migration detection not supported for Oracle"}).to_string()),
     }
 }
 
@@ -1330,6 +1354,10 @@ async fn explain_query(conn: &ActiveConnection, sql: &str) -> Result<String, Str
             let r = crate::db::mssql::explain_showplan_all(h, sql).await?;
             Ok(json!({"plan":r.rows,"database":"mssql"}).to_string())
         }
+        ActiveConnection::Oracle(h) => {
+            let lines = crate::db::oracle::explain_lines(h, sql).await?;
+            Ok(json!({"plan":lines,"database":"oracle"}).to_string())
+        }
     }
 }
 
@@ -1428,6 +1456,10 @@ async fn get_database_stats(conn: &ActiveConnection, schema: &str) -> Result<Str
         ActiveConnection::Mssql(h) => {
             let tables = crate::db::mssql::list_tables(h, schema).await?;
             Ok(json!({"database":"mssql","table_count":tables.len()}).to_string())
+        }
+        ActiveConnection::Oracle(h) => {
+            let tables = crate::db::oracle::list_tables(h, schema).await?;
+            Ok(json!({"database":"oracle","table_count":tables.len()}).to_string())
         }
     }
 }

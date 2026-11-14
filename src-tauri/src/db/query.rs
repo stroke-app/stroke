@@ -1786,6 +1786,7 @@ pub(crate) fn raw_filter_dialect(conn: &ActiveConnection) -> super::sql_util::Ra
         ActiveConnection::Mysql(_) => D::Mysql,
         ActiveConnection::Sqlite(_) | ActiveConnection::D1(_) | ActiveConnection::LibSql(_) => D::Sqlite,
         ActiveConnection::Duckdb(_) => D::Duckdb,
+        ActiveConnection::Oracle(_) => D::Oracle,
         ActiveConnection::Mssql(_) | ActiveConnection::Clickhouse(_) | ActiveConnection::Posthog(_) | ActiveConnection::Redis(_) | ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => D::Literal,
     }
 }
@@ -1903,6 +1904,11 @@ pub async fn get_table_rows(
         }
         ActiveConnection::Mssql(h) => {
             return super::mssql::get_table_rows(
+                &h, &schema, &table, limit, offset, search, sort_column, sort_direction, filters, include_meta,
+            ).await;
+        }
+        ActiveConnection::Oracle(h) => {
+            return super::oracle::get_table_rows(
                 &h, &schema, &table, limit, offset, search, sort_column, sort_direction, filters, include_meta,
             ).await;
         }
@@ -2496,6 +2502,9 @@ pub async fn update_table_cell(
         ActiveConnection::Mssql(h) => {
             return super::mssql::update_table_cell(&h, &schema, &table, primary_key, &column, &value).await;
         }
+        ActiveConnection::Oracle(h) => {
+            return super::oracle::update_table_cell(&h, &schema, &table, primary_key, &column, &value).await;
+        }
         ActiveConnection::Postgres(_) => {}
     }
     let pool = require_pool(&state)?;
@@ -2716,6 +2725,10 @@ pub async fn insert_table_row(
             let row = super::duckdb::insert_table_row(&h, &table, values).await?;
             return Ok(InsertRowResult { row });
         }
+        ActiveConnection::Oracle(h) => {
+            let row = super::oracle::insert_table_row(&h, &schema, &table, values).await?;
+            return Ok(InsertRowResult { row });
+        }
         ActiveConnection::Mssql(h) => {
             let row = super::mssql::insert_table_row(&h, &schema, &table, values).await?;
             return Ok(InsertRowResult { row });
@@ -2844,6 +2857,9 @@ pub async fn delete_table_rows(
         }
         ActiveConnection::Mssql(h) => {
             return super::mssql::delete_table_rows(&h, &schema, &table, primary_keys).await;
+        }
+        ActiveConnection::Oracle(h) => {
+            return super::oracle::delete_table_rows(&h, &schema, &table, primary_keys).await;
         }
         ActiveConnection::Postgres(_) => {}
     }
@@ -3308,6 +3324,20 @@ pub async fn execute_sql(
         // when the receiver fires.
         ActiveConnection::Postgres(pool) => execute_sql_pg(&pool, &sql_str, Some(cancel_rx)).await,
         ActiveConnection::Mysql(pool) => super::mysql::execute_sql(&pool, &sql_str, Some(cancel_rx)).await,
+        // Oracle interrupts the running call (OCIBreak); it then fails with
+        // ORA-01013, reported as a cancel.
+        ActiveConnection::Oracle(h) => {
+            let run = super::oracle::execute_sql(&h, &sql_str);
+            tokio::pin!(run);
+            tokio::select! {
+                r = &mut run => r,
+                _ = async { let _ = cancel_rx.await; } => {
+                    super::oracle::cancel(&h).await;
+                    let _ = run.await;
+                    Err(QUERY_CANCELLED.to_string())
+                }
+            }
+        }
         // Engines without a server-side cancel primitive: abandon the future when
         // cancelled so the UI unblocks (the statement then finishes or times out
         // server-side). This preserves the previous behavior for these engines.
@@ -3324,7 +3354,7 @@ pub async fn execute_sql(
                     ActiveConnection::Doc(d) => super::docdb::query(&d, &sql_str).await,
                     ActiveConnection::Duckdb(h) => super::duckdb::execute_sql(&h, &sql_str).await,
                     ActiveConnection::Mssql(h) => super::mssql::execute_sql(&h, &sql_str).await,
-                    ActiveConnection::Postgres(_) | ActiveConnection::Mysql(_) => unreachable!(),
+                    ActiveConnection::Postgres(_) | ActiveConnection::Mysql(_) | ActiveConnection::Oracle(_) => unreachable!(),
                 }
             } => r,
             _ = async { let _ = cancel_rx.await; } => Err(QUERY_CANCELLED.to_string()),
@@ -3383,6 +3413,10 @@ pub async fn execute_sql_on_conn(
         AnyConnectionConfig::Mssql(c) => {
             let h = super::connection::open_mssql(&c).await?;
             super::mssql::execute_sql(&h, sql).await
+        }
+        AnyConnectionConfig::Oracle(c) => {
+            let h = super::connection::open_oracle(&c).await?;
+            super::oracle::execute_sql(&h, sql).await
         }
     };
     if let Ok(r) = &mut result {
@@ -3990,6 +4024,15 @@ fn next_word(sql: &str, from: usize) -> (&str, usize) {
 /// or the BEGIN … END body of a routine or trigger (`CREATE TRIGGER … BEGIN
 /// UPDATE …; END;` is one statement). Comment-only fragments are dropped.
 /// Mirrors `src/lib/sql-statements.js`.
+/// `split_sql_statements`, or the engine's own splitter where its scripts
+/// differ: Oracle runs PL/SQL blocks to a `/` line and rejects a trailing `;`.
+pub(crate) fn split_sql_for(conn: &ActiveConnection, sql: &str) -> Vec<String> {
+    match conn {
+        ActiveConnection::Oracle(_) => super::oracle::split_statements(sql),
+        _ => split_sql_statements(sql),
+    }
+}
+
 pub(crate) fn split_sql_statements(sql: &str) -> Vec<String> {
     let b = sql.as_bytes();
     let n = b.len();
@@ -4224,7 +4267,7 @@ pub async fn execute_sql_multi(
     let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
     let cancel_key = query_id.unwrap_or_else(|| "default".to_string());
     super::connection::register_cancel(&state, &cancel_key, cancel_tx);
-    let stmts = split_sql_statements(&sql_str);
+    let stmts = split_sql_for(&conn, &sql_str);
     if stmts.is_empty() {
         super::connection::unregister_cancel(&state, &cancel_key);
         return Err("Query is empty".into());
@@ -4238,6 +4281,11 @@ pub async fn execute_sql_multi(
         super::connection::unregister_cancel(&state, &cancel_key);
         return result;
     }
+    // Oracle's blocking call outlives the dropped future; interrupt it too.
+    let oracle_h = match &conn {
+        ActiveConnection::Oracle(h) => Some(h.clone()),
+        _ => None,
+    };
     let result = tokio::select! {
         r = async move {
             // Other engines: execute sequentially, one result set per statement.
@@ -4256,7 +4304,12 @@ pub async fn execute_sql_multi(
             }
             Ok(results)
         } => r,
-        _ = async { let _ = cancel_rx.await; } => Err(QUERY_CANCELLED.to_string()),
+        _ = async { let _ = cancel_rx.await; } => {
+            if let Some(h) = &oracle_h {
+                super::oracle::cancel(h).await;
+            }
+            Err(QUERY_CANCELLED.to_string())
+        }
     };
     super::connection::unregister_cancel(&state, &cancel_key);
     result
@@ -4277,6 +4330,7 @@ async fn run_one_other(conn: &ActiveConnection, stmt: &str) -> Result<SqlResult,
         ActiveConnection::Doc(d) => super::docdb::query(d, stmt).await,
         ActiveConnection::Duckdb(h) => super::duckdb::execute_sql(h, stmt).await,
         ActiveConnection::Mssql(h) => super::mssql::execute_sql(h, stmt).await,
+        ActiveConnection::Oracle(h) => super::oracle::execute_sql(h, stmt).await,
     }
 }
 
@@ -4326,7 +4380,7 @@ pub async fn execute_sql_script(
         return Err("Query is empty".into());
     }
     let conn = require_conn(&state)?;
-    let stmts = split_sql_statements(&sql_str);
+    let stmts = split_sql_for(&conn, &sql_str);
     if stmts.is_empty() {
         return Err("Query is empty".into());
     }
@@ -4415,6 +4469,9 @@ async fn run_script_other(
     tokio::select! {
         _ = run => {}
         _ = async { let _ = cancel_rx.await; } => {
+            if let ActiveConnection::Oracle(h) = conn {
+                super::oracle::cancel(h).await;
+            }
             out.lock().unwrap().push(StatementOutcome::failed("", 0, QUERY_CANCELLED.into()));
         }
     }
@@ -5100,6 +5157,14 @@ async fn column_stats_generic(
             };
             (t, quote_bracket(&column))
         }
+        ActiveConnection::Oracle(_) => {
+            let t = if schema.is_empty() {
+                quote_double(&table)
+            } else {
+                format!("{}.{}", quote_double(&schema), quote_double(&table))
+            };
+            (t, quote_double(&column))
+        }
         // SQLite, D1, LibSQL, DuckDB - double-quoted, single-namespace (no
         // PostgreSQL-style schema qualifier).
         _ => (quote_double(&table), quote_double(&column)),
@@ -5160,6 +5225,7 @@ async fn dispatch_stats_sql(conn: &ActiveConnection, sql: &str) -> Result<SqlRes
         ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => Err("Column statistics are not supported on DynamoDB".into()),
         ActiveConnection::Duckdb(h) => super::duckdb::execute_sql(h, sql).await,
         ActiveConnection::Mssql(h) => super::mssql::execute_sql(h, sql).await,
+        ActiveConnection::Oracle(h) => super::oracle::execute_sql(h, sql).await,
     }
 }
 
@@ -5180,6 +5246,7 @@ pub async fn ping_connection(state: State<'_, DbState>) -> Result<(), String> {
         ActiveConnection::D1(_) | ActiveConnection::LibSql(_) | ActiveConnection::Clickhouse(_) | ActiveConnection::Redis(_) | ActiveConnection::Posthog(_) | ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => Ok(()),
         ActiveConnection::Duckdb(h) => super::duckdb::execute_sql(&h, "SELECT 1").await.map(|_| ()),
         ActiveConnection::Mssql(h) => super::mssql::execute_sql(&h, "SELECT 1").await.map(|_| ()),
+        ActiveConnection::Oracle(h) => super::oracle::ping(&h).await,
     }
 }
 

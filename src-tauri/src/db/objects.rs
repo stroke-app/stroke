@@ -72,7 +72,7 @@ pub fn kinds_for(conn: &ActiveConnection) -> &'static [&'static str] {
         ActiveConnection::Duckdb(_) => &["view", "function", "sequence"],
         // Materialized views come back from list_tables as views here.
         ActiveConnection::Clickhouse(_) => &["view", "function"],
-        ActiveConnection::Redis(_) | ActiveConnection::Posthog(_) | ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => &[],
+        ActiveConnection::Redis(_) | ActiveConnection::Posthog(_) | ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) | ActiveConnection::Oracle(_) => &[],
     }
 }
 
@@ -245,7 +245,7 @@ pub async fn list_db_objects(state: State<'_, DbState>, schema: String) -> Resul
         ActiveConnection::LibSql(cfg) => sqlite_triggers_from(libsql_query(cfg, SQLITE_TRIGGERS, vec![]).await?),
         ActiveConnection::Duckdb(h) => list_duckdb(h, &schema).await?,
         ActiveConnection::Clickhouse(cfg) => list_clickhouse(cfg).await?,
-        ActiveConnection::Redis(_) | ActiveConnection::Posthog(_) | ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => vec![],
+        ActiveConnection::Redis(_) | ActiveConnection::Posthog(_) | ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) | ActiveConnection::Oracle(_) => vec![],
     };
     Ok(ObjectListing { kinds, cascade, objects })
 }
@@ -689,7 +689,7 @@ pub async fn get_object_definition(
         }
         ActiveConnection::Duckdb(h) => def_duckdb(h, &kind, &schema, &name).await?,
         ActiveConnection::Clickhouse(cfg) => def_clickhouse(cfg, &kind, &schema, &name).await?,
-        ActiveConnection::Redis(_) | ActiveConnection::Posthog(_) | ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => return Err(unsupported(&kind)),
+        ActiveConnection::Redis(_) | ActiveConnection::Posthog(_) | ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) | ActiveConnection::Oracle(_) => return Err(unsupported(&kind)),
     };
     Ok(format!("{}\n", def.trim_end()))
 }
@@ -1147,7 +1147,7 @@ pub async fn drop_object(
             super::clickhouse::query(cfg, &sql).await.map_err(fail)?;
             Ok(sql)
         }
-        ActiveConnection::Redis(_) | ActiveConnection::Posthog(_) | ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => Err(unsupported(&kind)),
+        ActiveConnection::Redis(_) | ActiveConnection::Posthog(_) | ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) | ActiveConnection::Oracle(_) => Err(unsupported(&kind)),
     }
 }
 

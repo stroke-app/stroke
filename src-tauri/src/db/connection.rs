@@ -279,6 +279,42 @@ pub struct MssqlConfig {
 /// Only one desktop connection is ever live, so lock contention is a non-issue.
 pub type MssqlHandle = Arc<tokio::sync::Mutex<crate::db::mssql::MssqlClient>>;
 
+// ── Oracle ──────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OracleConfig {
+    pub name: String,
+    #[serde(default)]
+    pub host: String,
+    #[serde(default = "default_oracle_port")]
+    pub port: u16,
+    /// Service name (Easy Connect `//host:port/service`). Used unless `sid` is set.
+    #[serde(default)]
+    pub service_name: String,
+    /// Legacy SID; connects through a full descriptor when set.
+    #[serde(default)]
+    pub sid: String,
+    /// Easy Connect string, TNS descriptor or tnsnames.ora alias. Overrides
+    /// host, port, service name and SID when set.
+    #[serde(default)]
+    pub connect_string: String,
+    pub user: String,
+    #[serde(default)]
+    pub password: String,
+    /// Folder holding Oracle Instant Client, when it isn't somewhere the app
+    /// finds by itself.
+    #[serde(default)]
+    pub client_lib_dir: String,
+}
+
+fn default_oracle_port() -> u16 {
+    1521
+}
+
+/// One synchronous Oracle session; see `db::oracle`.
+pub type OracleHandle = Arc<crate::db::oracle::OracleSession>;
+
 // ── Any-connection config for cross-connection queries ────────────────────────
 
 /// Accepts the full saved-connection JSON from the frontend and routes to the
@@ -309,6 +345,8 @@ pub enum AnyConnectionConfig {
     Duckdb(DuckdbConfig),
     #[serde(rename = "mssql")]
     Mssql(MssqlConfig),
+    #[serde(rename = "oracle")]
+    Oracle(OracleConfig),
     #[serde(rename = "posthog")]
     Posthog(PosthogConfig),
     /// Only the terminal (mongosh) uses this path; queries go through db::mongo.
@@ -332,6 +370,7 @@ pub enum ActiveConnection {
     Doc(crate::db::docdb::DocConn),
     Duckdb(DuckdbHandle),
     Mssql(MssqlHandle),
+    Oracle(OracleHandle),
     Posthog(PosthogConfig),
 }
 
@@ -349,6 +388,7 @@ impl ActiveConnection {
             Self::Doc(d) => d.driver(),
             Self::Duckdb(_) => "duckdb",
             Self::Mssql(_) => "mssql",
+            Self::Oracle(_) => "oracle",
             Self::Posthog(_) => "posthog",
         }
     }
@@ -1586,6 +1626,30 @@ pub async fn connect_mssql(state: State<'_, DbState>, config: MssqlConfig) -> Re
     let handle = open_mssql(&config).await?;
     close_existing(&state).await;
     set_conn(&state, Some(ActiveConnection::Mssql(handle)))
+}
+
+// ── Oracle connect / test ───────────────────────────────────────────────────────
+
+pub(crate) async fn open_oracle(config: &OracleConfig) -> Result<OracleHandle, String> {
+    crate::db::oracle::prepare_client(&config.client_lib_dir).await?;
+    match crate::db::oracle::probe_target(config) {
+        Some((host, port)) => connect_racing_probe(&host, port, None, crate::db::oracle::connect(config)).await,
+        // A tnsnames.ora alias: nothing to probe, so only the deadline applies.
+        None => tokio::time::timeout(CONNECT_DEADLINE, crate::db::oracle::connect(config))
+            .await
+            .map_err(|_| format!("Oracle connection timed out after {}s", CONNECT_DEADLINE.as_secs()))?,
+    }
+}
+
+pub async fn test_oracle_connection(config: OracleConfig) -> Result<(), String> {
+    let handle = open_oracle(&config).await?;
+    crate::db::oracle::ping(&handle).await
+}
+
+pub async fn connect_oracle(state: State<'_, DbState>, config: OracleConfig) -> Result<(), String> {
+    let handle = open_oracle(&config).await?;
+    close_existing(&state).await;
+    set_conn(&state, Some(ActiveConnection::Oracle(handle)))
 }
 
 // ── Disconnect ────────────────────────────────────────────────────────────────

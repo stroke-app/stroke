@@ -27,6 +27,9 @@ pub enum Dialect {
     Sql,
     /// Postgres: dollar quoting is real there, so `$$ ... $$` is a string.
     Postgres,
+    /// Oracle: `q'[...]'` quoting, and `BEGIN`/`DECLARE` open a PL/SQL block
+    /// that can run anything (EXECUTE IMMEDIATE included), not a transaction.
+    Oracle,
     /// The Mongo shell subset in `db::mongo`.
     Mongo,
     /// One raw Redis command.
@@ -40,6 +43,7 @@ impl Dialect {
     pub fn for_driver(driver: &str) -> Self {
         match driver {
             "postgres" => Self::Postgres,
+            "oracle" => Self::Oracle,
             "mongodb" => Self::Mongo,
             "redis" => Self::Redis,
             "couchdb" | "firestore" => Self::ReadOnlyDoc,
@@ -68,6 +72,26 @@ pub fn script_level_in(dialect: Dialect, sql: &str) -> u8 {
             .map(|s| statement_level(&s))
             .max()
             .unwrap_or(READ),
+        // The generic readings, and the statements as Oracle itself splits
+        // them (q-quotes, `/` lines, whole PL/SQL blocks); the worst wins.
+        Dialect::Oracle => {
+            let own = crate::db::oracle::split_statements(sql)
+                .iter()
+                .map(|s| oracle_statement_level(s))
+                .max()
+                .unwrap_or(READ);
+            own.max(script_level_in(Dialect::Sql, sql))
+        }
+    }
+}
+
+/// A PL/SQL block can do anything; the rest reads like any SQL statement once
+/// its literals are gone.
+fn oracle_statement_level(stmt: &str) -> u8 {
+    let bare = crate::db::oracle::strip_literals(stmt);
+    match words(&bare).first().map(String::as_str) {
+        Some("BEGIN") | Some("DECLARE") => DANGEROUS,
+        _ => statement_level(&bare),
     }
 }
 
@@ -81,6 +105,7 @@ pub fn statement_count(dialect: Dialect, sql: &str) -> usize {
             .map(|lx| split_statements(sql, lx).len())
             .max()
             .unwrap_or(0),
+        Dialect::Oracle => crate::db::oracle::split_statements(sql).len().max(statement_count(Dialect::Sql, sql)),
         _ => usize::from(!sql.trim().is_empty()),
     }
 }
@@ -624,5 +649,20 @@ mod tests {
         assert_eq!(Dialect::for_driver("couchdb"), Dialect::ReadOnlyDoc);
         assert_eq!(Dialect::for_driver("cassandra"), Dialect::Sql);
         assert_eq!(Dialect::for_driver("dynamodb"), Dialect::Sql);
+        assert_eq!(Dialect::for_driver("oracle"), Dialect::Oracle);
+    }
+
+    #[test]
+    fn oracle_scripts() {
+        let o = |s| script_level_in(Dialect::Oracle, s);
+        assert_eq!(o("SELECT * FROM emp WHERE action = 'DELETE'"), READ);
+        assert_eq!(o("select q'[it's]' from dual"), READ);
+        assert_eq!(o("INSERT INTO emp (id) VALUES (1)"), WRITE);
+        // A q-quote the generic lexer misreads must not hide what follows it.
+        assert_eq!(o("SELECT q'[it's]' FROM dual;\nDROP TABLE emp"), DANGEROUS);
+        // A PL/SQL block can run anything, DDL through EXECUTE IMMEDIATE included.
+        assert_eq!(o("BEGIN\n  EXECUTE IMMEDIATE 'DROP TABLE emp';\nEND;\n/"), DANGEROUS);
+        assert_eq!(o("DECLARE n NUMBER; BEGIN SELECT 1 INTO n FROM dual; END;"), DANGEROUS);
+        assert_eq!(statement_count(Dialect::Oracle, "SELECT 1 FROM dual;\nSELECT 2 FROM dual"), 2);
     }
 }

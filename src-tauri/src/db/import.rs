@@ -169,6 +169,7 @@ pub async fn import_rows(
         }
         ActiveConnection::Duckdb(_) => Err("Importing rows is not supported for DuckDB yet".into()),
         ActiveConnection::Mssql(_) => Err("Importing rows is not supported for SQL Server yet".into()),
+        ActiveConnection::Oracle(_) => Err("Importing rows is not supported for Oracle yet".into()),
         ActiveConnection::D1(_) => Err("Importing rows is not supported for Cloudflare D1 yet".into()),
         ActiveConnection::LibSql(_) => Err("Importing rows is not supported for LibSQL/Turso yet".into()),
         ActiveConnection::Clickhouse(_) => {

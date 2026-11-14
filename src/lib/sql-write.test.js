@@ -40,6 +40,14 @@ describe('isWriteSql', () => {
     expect(isWriteSql('/* SELECT */ DELETE FROM t')).toBe(true)
   })
 
+  it('counts a PL/SQL block as a write, but not a bare transaction start', () => {
+    expect(isWriteSql('BEGIN\n  pkg.archive_orders;\nEND;')).toBe(true)
+    expect(isWriteSql('DECLARE n NUMBER; BEGIN n := 1; END;\n/')).toBe(true)
+    expect(isWriteSql('begin null; end;')).toBe(true)
+    expect(isWriteSql('BEGIN TRANSACTION')).toBe(false)
+    expect(isWriteSql('DECLARE @x int = 1; SELECT @x')).toBe(false)
+  })
+
   it('flags any write inside a multi-statement script', () => {
     expect(isWriteSql('SELECT 1; SELECT 2')).toBe(false)
     expect(isWriteSql('SELECT 1; DELETE FROM t; SELECT 2')).toBe(true)

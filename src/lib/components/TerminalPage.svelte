@@ -127,6 +127,10 @@
       listTables: () => sqlRows("SELECT s.name + '.' + t.name AS [table] FROM sys.tables t JOIN sys.schemas s ON s.schema_id = t.schema_id ORDER BY 1"),
       describe: (/** @type {string} */ t) => sqlRows(`SELECT column_name, data_type, is_nullable, column_default FROM information_schema.columns WHERE table_name = ${lit(t)} ORDER BY ordinal_position`),
     }
+    if (type === 'oracle') return {
+      listTables: () => sqlRows('SELECT table_name AS "TABLE" FROM user_tables ORDER BY 1'),
+      describe: (/** @type {string} */ t) => sqlRows(`SELECT column_name, data_type, nullable, data_default FROM user_tab_columns WHERE table_name = ${lit(t)} ORDER BY column_id`),
+    }
     if (type === 'sqlite' || type === 'd1' || type === 'libsql') return {}
     // Postgres and its wire-compatible engines.
     return {

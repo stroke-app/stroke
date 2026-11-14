@@ -24,6 +24,8 @@
     connectDuckdb,
     testMssqlConnection,
     connectMssql,
+    testOracleConnection,
+    connectOracle,
     testRedis,
     connectRedis,
     testDynamo,
@@ -124,6 +126,7 @@
           desc: "Distributed Postgres-compatible SQL",
         },
         { id: "mssql", label: "SQL Server", desc: "Microsoft SQL Server" },
+        { id: "oracle", label: "Oracle", desc: "Oracle Database (uses Oracle Instant Client)" },
       ],
     },
     {
@@ -251,6 +254,7 @@
     "mariadb",
     "cockroachdb",
     "mssql",
+    "oracle",
     "clickhouse",
     "duckdb",
     "sqlite-memory",
@@ -427,6 +431,21 @@
   let fsAuth = $state(/** @type {'serviceAccount'|'gcloud'|'emulator'} */ ("serviceAccount"));
   let fsKeyFile = $state("");
   let fsEmulator = $state("localhost:8080");
+  // Oracle: a service name (in the shared `database` field), a SID, or a whole
+  // connect string; and where Instant Client lives when the app can't find it.
+  let oraMode = $state(/** @type {'service'|'sid'|'connect'} */ ("service"));
+  let oraSid = $state("");
+  let oraConnect = $state("");
+  let oraClientDir = $state("");
+  async function pickOracleClientDir() {
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const path = await open({ title: "Select the Instant Client folder", directory: true });
+      if (typeof path === "string" && path) oraClientDir = path;
+    } catch {
+      /* browser/non-Tauri env - the field is still typeable */
+    }
+  }
   async function pickFirestoreKey() {
     try {
       const { open } = await import("@tauri-apps/plugin-dialog");
@@ -968,6 +987,19 @@
         encrypt,
         trustCert,
       };
+    if (dbType === "oracle")
+      return {
+        type: "oracle",
+        name: nm,
+        host,
+        port,
+        serviceName: oraMode === "service" ? database.trim() : "",
+        sid: oraMode === "sid" ? oraSid.trim() : "",
+        connectString: oraMode === "connect" ? oraConnect.trim() : "",
+        user,
+        password,
+        clientLibDir: oraClientDir.trim(),
+      };
     if (dbType === "mongodb")
       return { type: "mongodb", name: nm, uri: mongoUri.trim(), database: mongoDb.trim() };
     if (dbType === "firestore")
@@ -1092,6 +1124,13 @@
       fsEmulator = conn.emulatorHost ?? "localhost:8080";
       cqlHosts = conn.hosts ?? "127.0.0.1:9042";
       cqlKeyspace = conn.keyspace ?? "";
+      if (conn.type === "oracle") {
+        database = conn.serviceName ?? "";
+        oraSid = conn.sid ?? "";
+        oraConnect = conn.connectString ?? "";
+        oraClientDir = conn.clientLibDir ?? "";
+        oraMode = oraConnect ? "connect" : oraSid ? "sid" : "service";
+      }
       connColor = conn.color ?? null;
       connWorkspace = conn.workspaceId ?? DEFAULT_WORKSPACE_ID;
       couchUrl = conn.type === "couchdb" ? (conn.url ?? "http://localhost:5984") : "http://localhost:5984";
@@ -1144,6 +1183,10 @@
       connWorkspace = getStore(activeWorkspaceId);
       cqlHosts = "127.0.0.1:9042";
       cqlKeyspace = "";
+      oraMode = "service";
+      oraSid = "";
+      oraConnect = "";
+      oraClientDir = "";
       mongoUri = "mongodb://localhost:27017";
       mongoDb = "";
       fsProject = "";
@@ -1286,6 +1329,7 @@
     cockroachdb: 26257,
     clickhouse: 8123,
     mssql: 1433,
+    oracle: 1521,
     redis: 6379,
     valkey: 6379,
   };
@@ -1309,6 +1353,7 @@
     mariadb:     { database: "", user: "root" },
     clickhouse:  { database: "default", user: "default" },
     mssql:       { database: "master", user: "sa" },
+    oracle:      { database: "", user: "" },
     redis:       { database: "0", user: "" },
     valkey:      { database: "0", user: "" },
     dynamodb:    { database: "", user: "" },
@@ -1357,6 +1402,7 @@
     if (t === "sqlite" || t === "sqlite-memory" || t === "duckdb" || t === "duckdb-memory") return "sqlite";
     if (t === "mysql" || t === "mariadb") return "mysql";
     if (t === "mssql") return "mssql";
+    if (t === "oracle") return "oracle";
     if (t === "clickhouse") return "clickhouse";
     // Redis and LibSQL have their own shapes: a `redis://` string read by the
     // Postgres parser loses the database index and mistakes a bare password for
@@ -1400,6 +1446,20 @@
       secure = parsed.tls;
       flashFields(["host", "port", "database", "user", "password", "secure"]);
       uriHint = "Fields updated from URL";
+      return true;
+    }
+    // Oracle: host + service or SID, or a descriptor kept whole.
+    if ("oracle" in parsed) {
+      host = parsed.host || host;
+      port = parsed.port;
+      database = parsed.serviceName;
+      oraSid = parsed.sid;
+      oraConnect = parsed.connectString;
+      oraMode = parsed.connectString ? "connect" : parsed.sid ? "sid" : "service";
+      if (parsed.user) user = parsed.user;
+      if (parsed.password) password = parsed.password;
+      flashFields(["host", "port", "database", "user", "password"]);
+      uriHint = "Fields updated from connection string";
       return true;
     }
     // LibSQL / Turso: the URL, with any `authToken` moved to its own field.
@@ -1476,6 +1536,7 @@
     cockroachdb: "postgresql://user:pass@host:26257/defaultdb",
     clickhouse: "clickhouse://user:pass@host:8123/db",
     mssql: "sqlserver://user:pass@host:1433;database=db",
+    oracle: "oracle://user:pass@host:1521/FREEPDB1",
     redis: "rediss://:password@host:6379/0",
     libsql: "libsql://db-org.turso.io?authToken=…",
     sqlite: "/path/to/app.db",
@@ -1493,7 +1554,7 @@
     const suffix = id.replace(/^cn-/, "");
     for (const cid of [
       id,
-      ...["ch", "mssql", "redis"].map((p) => `cn-${p}-${suffix}`),
+      ...["ch", "mssql", "ora", "redis"].map((p) => `cn-${p}-${suffix}`),
     ]) {
       const el = /** @type {HTMLInputElement | null} */ (
         document.getElementById(cid)
@@ -1530,6 +1591,13 @@
         },
       };
     }
+    if (/oracle instant client|dpi-1047/.test(e))
+      return {
+        title: "Oracle Instant Client is not installed here",
+        hint: "Stroke talks to Oracle through Oracle's own client library. Download Instant Client Basic for this platform, unzip it, and point Instant Client folder at it.",
+        actionLabel: "Set Instant Client folder",
+        action: () => focusField("cn-ora-client"),
+      };
     // A REST 401 comes first: `auth.*error` used to swallow "401 Unauthorized:
     // …\"errors\":[…]" and report a wrong *password* for a token that had simply
     // expired, which sends people to a field that isn't the problem.
@@ -1735,6 +1803,7 @@
     if (conn.type === "posthog") return connectPosthog(conn);
     if (conn.type === "duckdb") return connectDuckdb(conn);
     if (conn.type === "mssql") return connectMssql(conn);
+    if (conn.type === "oracle") return connectOracle(conn);
     if (engineFamily(conn.type) === "redis") return connectRedis(conn);
     if (conn.type === "dynamodb") return connectDynamo(conn);
     if (conn.type === "couchdb") return connectCouch(conn);
@@ -2203,6 +2272,7 @@
       else if (p.type === "clickhouse") await testClickhouseConnection(p);
       else if (p.type === "duckdb") await testDuckdbConnection(p);
       else if (p.type === "mssql") await testMssqlConnection(p);
+      else if (p.type === "oracle") await testOracleConnection(p);
       else if (engineFamily(p.type) === "redis") await testRedis(p);
       else if (p.type === "dynamodb") await testDynamo(p);
       else if (p.type === "couchdb") await testCouch(p);
@@ -2415,6 +2485,10 @@
       sshKeepalive,
       sslMode,
       sslCaPath,
+      oraMode,
+      oraSid,
+      oraConnect,
+      oraClientDir,
     ]);
   }
   const isDirty = $derived(snapshot() !== baseline);
@@ -2434,6 +2508,8 @@
     if (dbType === "firestore") return fsProject || "—";
     if (dbType === "mongodb") return uriHost(mongoUri) || "—";
     if (dbType === "dynamodb") return awsEndpoint || awsRegion || (awsAuth === "profile" ? awsProfile || "default profile" : "AWS");
+    if (dbType === "oracle" && oraMode === "connect") return oraConnect || "—";
+    if (dbType === "oracle" && oraMode === "sid") return `${host || "—"}:${port || "—"}:${oraSid || ""}`;
     return `${host || "—"}:${port || "—"}/${database || ""}`;
   });
 
@@ -4380,6 +4456,124 @@
                                   )}
                                 />
                               </div>
+                            </div>
+
+                            <!-- ── Oracle ─────────────────────────────────── -->
+                          {:else if dbType === "oracle"}
+                            <div>
+                              <span class={lbl} id="cn-ora-mode-label">Connect with</span>
+                              <div class="flex h-8 items-center gap-0.5 rounded-[var(--radius-field)] bg-muted/40 p-0.5" role="group" aria-labelledby="cn-ora-mode-label">
+                                {#each [{ v: "service", l: "Service name" }, { v: "sid", l: "SID" }, { v: "connect", l: "Connect string" }] as m (m.v)}
+                                  <button
+                                    type="button"
+                                    aria-pressed={oraMode === m.v}
+                                    class={cn(
+                                      "inline-flex h-7 flex-1 items-center justify-center rounded-md text-ui-xs font-medium transition-colors",
+                                      oraMode === m.v ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+                                    )}
+                                    onclick={() => (oraMode = /** @type {'service'|'sid'|'connect'} */ (m.v))}
+                                  >{m.l}</button>
+                                {/each}
+                              </div>
+                            </div>
+
+                            {#if oraMode === "connect"}
+                              <div>
+                                <label for="cn-ora-connect" class={lbl}>Connect string</label>
+                                <Input
+                                  id="cn-ora-connect"
+                                  bind:value={oraConnect}
+                                  placeholder="host:1521/FREEPDB1"
+                                  spellcheck="false"
+                                  autocomplete="off"
+                                  class={cn(inp, "font-mono")}
+                                />
+                                <p class="mt-1 text-ui-3xs leading-relaxed text-muted-foreground">
+                                  Easy Connect (<span class="font-mono">tcps://host:2484/service</span>), a full
+                                  <span class="font-mono">(DESCRIPTION=…)</span> descriptor, or a tnsnames.ora alias
+                                  (with <span class="font-mono">TNS_ADMIN</span> set).
+                                </p>
+                              </div>
+                            {:else}
+                              <div class="grid grid-cols-[1fr_110px] gap-2">
+                                <div>
+                                  <label for="cn-ora-host" class={lbl}>Host</label>
+                                  <Input
+                                    id="cn-ora-host"
+                                    bind:value={host}
+                                    class={cn(inp, flashedFields.has("host") && flashCls)}
+                                  />
+                                </div>
+                                <div>
+                                  <label for="cn-ora-port" class={lbl}>Port</label>
+                                  <Input
+                                    id="cn-ora-port"
+                                    bind:value={port}
+                                    type="text"
+                                    inputmode="numeric"
+                                    class={cn(inpNum, flashedFields.has("port") && flashCls)}
+                                  />
+                                </div>
+                              </div>
+                              {#if oraMode === "sid"}
+                                <div>
+                                  <label for="cn-ora-sid" class={lbl}>SID</label>
+                                  <Input id="cn-ora-sid" bind:value={oraSid} placeholder="ORCL" spellcheck="false" class={inp} />
+                                </div>
+                              {:else}
+                                <div>
+                                  <label for="cn-ora-db" class={lbl}>Service name</label>
+                                  <Input
+                                    id="cn-ora-db"
+                                    bind:value={database}
+                                    placeholder="FREEPDB1"
+                                    spellcheck="false"
+                                    class={cn(inp, flashedFields.has("database") && flashCls)}
+                                  />
+                                </div>
+                              {/if}
+                            {/if}
+
+                            <div class="grid grid-cols-2 gap-2">
+                              <div>
+                                <label for="cn-ora-user" class={lbl}>Username</label>
+                                <Input
+                                  id="cn-ora-user"
+                                  bind:value={user}
+                                  autocomplete="username"
+                                  class={cn(inp, flashedFields.has("user") && flashCls)}
+                                />
+                              </div>
+                              <div>
+                                <label for="cn-ora-pass" class={lbl}>Password</label>
+                                <PasswordInput
+                                  id="cn-ora-pass"
+                                  bind:value={password}
+                                  autocomplete="current-password"
+                                  class={cn(inp, flashedFields.has("password") && flashCls)}
+                                />
+                              </div>
+                            </div>
+
+                            <div>
+                              <label for="cn-ora-client" class={lbl}
+                                >Instant Client folder <span class="normal-case font-normal opacity-50">(optional)</span></label
+                              >
+                              <div class="flex gap-2">
+                                <Input
+                                  id="cn-ora-client"
+                                  bind:value={oraClientDir}
+                                  placeholder="Found automatically"
+                                  spellcheck="false"
+                                  autocomplete="off"
+                                  class={cn(inp, "min-w-0 flex-1 font-mono")}
+                                />
+                                <Button type="button" variant="outline" onclick={pickOracleClientDir}>Browse…</Button>
+                              </div>
+                              <p class="mt-1 text-ui-3xs leading-relaxed text-muted-foreground">
+                                Stroke uses Oracle Instant Client, a free download from Oracle. Leave this empty when it is
+                                installed system-wide or in a usual place (ORACLE_HOME, /opt/oracle, your home or Downloads folder).
+                              </p>
                             </div>
 
                             <!-- ── Redis ──────────────────────────────────── -->

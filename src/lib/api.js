@@ -937,6 +937,38 @@ export async function connectMssql(config) {
   return connectInv('connect_mssql_db', { config: normalizeMssql(config) })
 }
 
+// ── Oracle ────────────────────────────────────────────────────────────────────
+
+/**
+ * @typedef {{ name?: string, host?: string, port?: number|string, serviceName?: string, sid?: string,
+ *   connectString?: string, user?: string, password?: string, clientLibDir?: string }} OracleConnConfig
+ */
+
+/** @param {OracleConnConfig} config */
+function normalizeOracle(config) {
+  return {
+    name: String(config.name || 'Oracle'),
+    host: String(config.host || '127.0.0.1').trim(),
+    port: Math.min(65535, Math.max(1, Number(config.port) || 1521)),
+    serviceName: String(config.serviceName ?? '').trim(),
+    sid: String(config.sid ?? '').trim(),
+    connectString: String(config.connectString ?? '').trim(),
+    user: String(config.user ?? '').trim(),
+    password: String(config.password ?? ''),
+    clientLibDir: String(config.clientLibDir ?? '').trim(),
+  }
+}
+
+/** @param {OracleConnConfig} config */
+export async function testOracleConnection(config) {
+  return inv('test_oracle', { config: normalizeOracle(config) })
+}
+
+/** @param {OracleConnConfig} config */
+export async function connectOracle(config) {
+  return connectInv('connect_oracle_db', { config: normalizeOracle(config) })
+}
+
 /**
  * Resolve saved-connection hostnames into the OS resolver cache ahead of time.
  *

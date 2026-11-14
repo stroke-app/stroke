@@ -26,7 +26,7 @@
 
   // Everything the connection dialog can open.
   const ENGINES = [
-    ['postgres', 'Postgres'], ['mysql', 'MySQL'], ['mariadb', 'MariaDB'], ['sqlite', 'SQLite'], ['mssql', 'SQL Server'],
+    ['postgres', 'Postgres'], ['mysql', 'MySQL'], ['mariadb', 'MariaDB'], ['sqlite', 'SQLite'], ['mssql', 'SQL Server'], ['oracle', 'Oracle'],
     ['cockroachdb', 'CockroachDB'], ['duckdb', 'DuckDB'], ['clickhouse', 'ClickHouse'],
     ['mongodb', 'MongoDB'], ['redis', 'Redis'], ['valkey', 'Valkey'], ['dynamodb', 'DynamoDB'], ['couchdb', 'CouchDB'],
     ['cassandra', 'Cassandra'], ['firestore', 'Firestore'],
