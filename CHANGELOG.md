@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.8.5] - 2026-11-14
+
+### Changes
+- Labs settings page; rename chats from their menus (#181)
+
+
 ## [2.8.4] - 2026-11-14
 
 ### Changes
