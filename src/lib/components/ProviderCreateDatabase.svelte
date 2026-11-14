@@ -14,7 +14,9 @@
   import ProviderAuthPanel from './ProviderAuthPanel.svelte'
   import { Button } from '$lib/components/ui/button/index.js'
   import { Input } from '$lib/components/ui/input/index.js'
-  import * as Select from '$lib/components/ui/select/index.js'
+  import SearchableMenu from './SearchableMenu.svelte'
+  import ChevronDown from '@lucide/svelte/icons/chevron-down'
+  import { cn } from '$lib/utils.js'
   import { nameProblem, suggestName, generatePassword, waitUntilReady } from '$lib/provider-create.js'
 
   let {
@@ -191,6 +193,42 @@
   const clock = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 </script>
 
+<!-- Organization and region: the database list's searchable menu, so a long
+     region list (TiDB, Neon) is typed into instead of scrolled. -->
+{#snippet picker(/** @type {{ items: any[], current: string | null | undefined, currentName: string, noun: string, labelledby: string, onpick: (v: string) => void }} */ p)}
+  <SearchableMenu
+    items={p.items}
+    placeholder="Search {p.items.length} {p.noun}s…"
+    empty="No matching {p.noun}"
+    searchThreshold={6}
+    contentClass="z-[120] w-[var(--bits-popover-anchor-width)] min-w-[260px]"
+    align="start"
+    onselect={(it) => p.onpick(it.value)}
+  >
+    {#snippet trigger(props)}
+      <button
+        {...props}
+        type="button"
+        aria-labelledby={p.labelledby}
+        disabled={loadingOptions}
+        class="field-surface flex h-9 w-full items-center gap-2 pl-3 pr-2.5 text-left text-ui-xs transition-[border-color,box-shadow] hover:border-border focus:outline-none disabled:opacity-60 data-[state=open]:border-ring"
+      >
+        {#if loadingOptions}
+          <Loader2 class="size-3.5 shrink-0 animate-spin text-muted-foreground" aria-hidden="true" />
+          <span class="min-w-0 flex-1 truncate text-muted-foreground">Loading…</span>
+        {:else}
+          <span class={cn('min-w-0 flex-1 truncate', p.currentName ? 'text-foreground' : 'text-muted-foreground')}>{p.currentName || 'Select…'}</span>
+        {/if}
+        <ChevronDown class="size-3.5 shrink-0 text-muted-foreground" />
+      </button>
+    {/snippet}
+    {#snippet item(it)}
+      <span class="min-w-0 flex-1 truncate">{it.label}</span>
+      {#if it.value === p.current}<Check class="size-3.5 shrink-0 text-primary" />{/if}
+    {/snippet}
+  </SearchableMenu>
+{/snippet}
+
 {#if step === 'form'}
   <form
     class="flex flex-col gap-4 rounded-lg border border-border/60 p-4"
@@ -229,38 +267,28 @@
       {#if (options?.scopes.length ?? 0) > 1}
         <div class="flex min-w-0 flex-col gap-1.5">
           <span id="{uid}-scope" class="text-ui-xs font-medium text-muted-foreground">{options?.scope_label || 'Organization'}</span>
-          <Select.Root type="single" value={scope ?? undefined} onValueChange={changeScope}>
-            <Select.Trigger class="w-full data-[size=default]:h-9" aria-labelledby="{uid}-scope" disabled={loadingOptions}>
-              <span data-slot="select-value" class="truncate">{scopeName || 'Select…'}</span>
-            </Select.Trigger>
-            <Select.Content class="z-[120] max-h-[20rem] p-1" sideOffset={6}>
-              {#each options?.scopes ?? [] as s (s.id)}
-                <Select.Item value={s.id} label={s.name}>{s.name}</Select.Item>
-              {/each}
-            </Select.Content>
-          </Select.Root>
+          {@render picker({
+            items: (options?.scopes ?? []).map((s) => ({ value: s.id, label: s.name, keywords: [s.name, s.id] })),
+            current: scope,
+            currentName: scopeName,
+            noun: (options?.scope_label || 'organization').toLowerCase(),
+            labelledby: `${uid}-scope`,
+            onpick: changeScope,
+          })}
         </div>
       {/if}
 
       {#if needsRegion || loadingOptions}
         <div class="flex min-w-0 flex-col gap-1.5">
           <span id="{uid}-region" class="text-ui-xs font-medium text-muted-foreground">{options?.region_label || 'Region'}</span>
-          <Select.Root type="single" value={region ?? undefined} onValueChange={(v) => v && (region = v)}>
-            <Select.Trigger class="w-full data-[size=default]:h-9" aria-labelledby="{uid}-region" disabled={loadingOptions}>
-              {#if loadingOptions}
-                <span data-slot="select-value" class="flex items-center gap-1.5 text-muted-foreground">
-                  <Loader2 class="size-3.5 shrink-0 animate-spin" aria-hidden="true" />Loading…
-                </span>
-              {:else}
-                <span data-slot="select-value" class="truncate">{regionName || 'Select…'}</span>
-              {/if}
-            </Select.Trigger>
-            <Select.Content class="z-[120] max-h-[20rem] p-1" sideOffset={6}>
-              {#each options?.regions ?? [] as r (r.id)}
-                <Select.Item value={r.id} label={r.name}>{r.name}</Select.Item>
-              {/each}
-            </Select.Content>
-          </Select.Root>
+          {@render picker({
+            items: (options?.regions ?? []).map((r) => ({ value: r.id, label: r.name, keywords: [r.name, r.id] })),
+            current: region,
+            currentName: regionName,
+            noun: (options?.region_label || 'region').toLowerCase(),
+            labelledby: `${uid}-region`,
+            onpick: (/** @type {string} */ v) => v && (region = v),
+          })}
         </div>
       {/if}
     </div>
@@ -268,18 +296,25 @@
     {#if password}
       <div class="flex flex-col gap-1.5">
         <span id="{uid}-pw" class="text-ui-xs font-medium text-muted-foreground">Database password</span>
-        <div class="flex items-center gap-2">
+        <!-- One field: the value, and its copy button inside it at the end. -->
+        <div class="field-surface flex h-9 min-w-0 items-center gap-1 bg-muted/25 pl-3 pr-1">
           <output
             aria-labelledby="{uid}-pw"
-            class="field-surface flex h-9 min-w-0 flex-1 items-center bg-muted/25 px-3 font-mono text-ui-xs tabular-nums text-foreground select-all"
-          ><span class="truncate">{password}</span></output>
-          <Button variant="outline" size="lg" onclick={copyPassword}>
-            {#if copied}<Check class="size-3.5 shrink-0 text-success" aria-hidden="true" />Copied{:else}<Copy class="size-3.5 shrink-0" aria-hidden="true" />Copy{/if}
-          </Button>
+            class="min-w-0 flex-1 truncate font-mono text-ui-xs tabular-nums text-foreground select-all"
+          >{password}</output>
+          <button
+            type="button"
+            class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            title={copied ? 'Copied' : 'Copy password'}
+            aria-label="Copy password"
+            onclick={copyPassword}
+          >
+            {#if copied}<Check class="size-3.5 shrink-0 text-success" aria-hidden="true" />{:else}<Copy class="size-3.5 shrink-0" aria-hidden="true" />{/if}
+          </button>
           <span class="sr-only" role="status">{copied ? 'Password copied' : ''}</span>
         </div>
         <p class="text-pretty text-ui-2xs leading-relaxed text-muted-foreground">
-          Generated for you. {providerName} won't show it again; Stroke saves it with this connection. Copy it if you'll connect from somewhere else.
+          {providerName} won't show it again. Stroke saves it with the connection.
         </p>
       </div>
     {/if}
