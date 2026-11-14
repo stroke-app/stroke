@@ -13,6 +13,7 @@
   import { canvasToPngBlob, copyPngToClipboard } from '$lib/svg-png.js'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
   import * as Select from '$lib/components/ui/select/index.js'
+  import { Popover, PopoverTrigger, PopoverContent } from '$lib/components/ui/popover/index.js'
   import ChevronDown  from '@lucide/svelte/icons/chevron-down'
   import Download     from '@lucide/svelte/icons/download'
   import Copy         from '@lucide/svelte/icons/copy'
@@ -303,9 +304,11 @@
   let newGroupMode = $state(false)
   let newGroupName = $state('')
 
-  function openSavePanel() {
+  /** A fresh form each time the popover opens. @param {boolean} open */
+  function onSaveOpenChange(open) {
+    if (!open) return
     saveName = ''; saveGroup = $chartGroups[0] ?? 'Default'
-    newGroupMode = false; newGroupName = ''; saveOpen = true
+    newGroupMode = false; newGroupName = ''
   }
 
   function commitSave() {
@@ -493,9 +496,69 @@
       <!-- Right actions -->
       <div class="ml-auto flex items-center gap-0.5">
         <span class="mr-1.5 tabular-nums font-mono text-ui-2xs text-muted-foreground">{loadedRows.length.toLocaleString()}{partial ? ` of ${rows.length.toLocaleString()} loaded` : ' rows'}</span>
-        <button type="button" class={iconBtn} title="Save chart" onclick={openSavePanel}>
-          <Bookmark class="size-3.5 shrink-0" />
-        </button>
+        <!-- Save opens over the chart, not in a bar under the toolbar: that bar
+             pushed the whole chart down while you typed a name. -->
+        <Popover bind:open={saveOpen} onOpenChange={onSaveOpenChange}>
+          <PopoverTrigger>
+            {#snippet child({ props })}
+              <button {...props} type="button" class={cn(iconBtn, saveOpen && 'bg-accent text-foreground')} title="Save chart">
+                <Bookmark class="size-3.5 shrink-0" />
+              </button>
+            {/snippet}
+          </PopoverTrigger>
+          <PopoverContent align="end" sideOffset={6} class="w-72 p-3">
+            <form class="flex flex-col gap-3" onsubmit={(e) => { e.preventDefault(); commitSave() }}>
+              <p class="text-ui-sm font-medium text-foreground">Save chart</p>
+              <label class="flex flex-col gap-1.5">
+                <span class="text-ui-xs text-muted-foreground">Name</span>
+                <!-- svelte-ignore a11y_autofocus -->
+                <input
+                  type="text"
+                  placeholder="Chart name…"
+                  bind:value={saveName}
+                  autofocus
+                  class="no-field-frame h-8 w-full rounded-md border-0 bg-sidebar-accent/50 px-2.5 text-ui-sm text-foreground outline-none placeholder:text-muted-foreground focus:bg-sidebar-accent"
+                />
+              </label>
+              <div class="flex flex-col gap-1.5">
+                <span class="text-ui-xs text-muted-foreground">Group</span>
+                <div class="flex items-center gap-1">
+                  {#if !newGroupMode}
+                    <Select.Root type="single" value={saveGroup} onValueChange={(v) => v && (saveGroup = v)}>
+                      <Select.Trigger
+                        size="sm"
+                        aria-label="Chart group"
+                        class="h-8 min-w-0 flex-1 gap-1.5 rounded-md border-0 bg-sidebar-accent/50 px-2.5 text-ui-sm [&_svg]:size-3.5 [&_svg]:text-muted-foreground"
+                      >
+                        <span class="truncate">{saveGroup}</span>
+                      </Select.Trigger>
+                      <Select.Content class={axisContent} sideOffset={6}>
+                        {#each $chartGroups as g (g)}<Select.Item value={g} label={g} class={axisItem}>{g}</Select.Item>{/each}
+                      </Select.Content>
+                    </Select.Root>
+                    <button type="button" class="inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" title="New group" onclick={() => { newGroupMode = true }}>
+                      <Plus class="size-3.5 shrink-0" />
+                    </button>
+                  {:else}
+                    <input
+                      type="text"
+                      placeholder="New group name…"
+                      bind:value={newGroupName}
+                      class="no-field-frame h-8 min-w-0 flex-1 rounded-md border-0 bg-sidebar-accent/50 px-2.5 text-ui-sm text-foreground outline-none placeholder:text-muted-foreground focus:bg-sidebar-accent"
+                    />
+                    <button type="button" class="inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" title="Pick an existing group" onclick={() => (newGroupMode = false)}>
+                      <X class="size-3.5 shrink-0" />
+                    </button>
+                  {/if}
+                </div>
+              </div>
+              <div class="flex items-center justify-end gap-1.5">
+                <Button type="button" size="sm" variant="ghost" onclick={() => (saveOpen = false)}>Cancel</Button>
+                <Button type="submit" size="sm" variant="secondary"><Check class="size-3.5 shrink-0" />Save</Button>
+              </div>
+            </form>
+          </PopoverContent>
+        </Popover>
         <button type="button" class={iconBtn} title="Copy ECharts JSON (AI-ready)" onclick={copyConfig}>
           <Copy class="size-3.5 shrink-0" />
         </button>
@@ -504,62 +567,6 @@
         </button>
       </div>
     </div>
-
-    <!-- ── Save panel (inline below toolbar) ─────────────────────────── -->
-    {#if saveOpen}
-      <div class="flex h-12 shrink-0 items-center gap-2 border-b border-border/40 px-3">
-        <span class="text-ui-xs text-muted-foreground">Save as</span>
-        <input
-          type="text"
-          placeholder="Chart name…"
-          bind:value={saveName}
-          class="no-field-frame h-8 w-40 rounded-md border-0 bg-sidebar-accent/50 px-2.5 text-ui-sm text-foreground outline-none placeholder:text-muted-foreground focus:bg-sidebar-accent"
-        />
-
-        {#if !newGroupMode}
-          <Select.Root type="single" value={saveGroup} onValueChange={(v) => v && (saveGroup = v)}>
-            <Select.Trigger
-              size="sm"
-              aria-label="Chart group"
-              class="h-8 gap-1.5 rounded-md border-0 bg-sidebar-accent/50 px-2.5 text-ui-sm [&_svg]:size-3.5 [&_svg]:text-muted-foreground"
-            >
-              <span class="truncate">{saveGroup}</span>
-            </Select.Trigger>
-            <Select.Content class={axisContent} sideOffset={6}>
-              {#each $chartGroups as g (g)}<Select.Item value={g} label={g} class={axisItem}>{g}</Select.Item>{/each}
-            </Select.Content>
-          </Select.Root>
-          <button type="button" class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:text-foreground" title="New group" onclick={() => { newGroupMode = true }}>
-            <Plus class="size-3.5 shrink-0" />
-          </button>
-        {:else}
-          <input
-            type="text"
-            placeholder="New group name…"
-            bind:value={newGroupName}
-            class="no-field-frame h-8 w-36 rounded-md border-0 bg-sidebar-accent/50 px-2.5 text-ui-sm text-foreground outline-none placeholder:text-muted-foreground focus:bg-sidebar-accent"
-          />
-          <button type="button" class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:text-foreground" onclick={() => (newGroupMode = false)}>
-            <X class="size-3 shrink-0" />
-          </button>
-        {/if}
-
-        <Button
-          onclick={commitSave}
-          size="sm"
-          variant="secondary"
->
-          <Check class="size-3 shrink-0" />Save
-        </Button>
-        <button
-          type="button"
-          onclick={() => (saveOpen = false)}
-          class="inline-flex h-6 items-center gap-1 rounded-md px-2 text-ui-xs text-muted-foreground hover:bg-accent hover:text-foreground"
-        >
-          Cancel
-        </button>
-      </div>
-    {/if}
 
     <!-- ── Chart ──────────────────────────────────────────────────────── -->
     <div bind:this={hostEl} class="chart-canvas-host relative min-h-0 flex-1">
