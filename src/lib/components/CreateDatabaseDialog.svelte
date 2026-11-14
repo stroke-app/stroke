@@ -2,7 +2,6 @@
   import { Button } from '$lib/components/ui/button/index.js'
   import FieldSelect from './FieldSelect.svelte';
   import * as Dialog from '$lib/components/ui/dialog/index.js'
-  import Database from '@lucide/svelte/icons/database'
   import ChevronDown from '@lucide/svelte/icons/chevron-down'
   import { cn } from '$lib/utils.js'
 
@@ -119,31 +118,18 @@
 </script>
 
 <Dialog.Root bind:open>
-  <Dialog.Content class="w-[32.5rem] max-w-[calc(100vw-2rem)] gap-0 p-0">
+  <!-- Same frame as What's new: title and one line under it, the body, then
+       a ruled footer with one filled action. No icon tile, no rules inside. -->
+  <Dialog.Content class="w-[30rem] max-w-[calc(100vw-2rem)] gap-0 p-0">
+    <Dialog.Header class="gap-1 px-6 pt-6 pe-12">
+      <Dialog.Title class="text-ui-lg text-balance">Create database</Dialog.Title>
+      <Dialog.Description class="text-ui-xs">A new {engineLabel} database on this server.</Dialog.Description>
+    </Dialog.Header>
 
-    <!-- Header -->
-    <div class="flex items-center gap-3 px-5 py-4 border-b border-border/60">
-      <div class="flex size-8 shrink-0 items-center justify-center text-muted-foreground">
-        <Database class="size-3.5 shrink-0 text-muted-foreground" />
-      </div>
-      <div class="min-w-0">
-        <Dialog.Title class="text-ui-sm font-semibold leading-none">Create database</Dialog.Title>
-        <p class="mt-1 truncate text-ui-xs text-muted-foreground">
-          {engineLabel} · on this server
-        </p>
-      </div>
-    </div>
-
-    <!-- Body -->
-    <form onsubmit={handleSubmit} class="flex flex-col gap-0 px-5 py-4">
-
-      <!-- Name, always visible -->
-      <div class="mb-4">
-        <label for="cdb-name" class="mb-1.5 block text-ui-xs font-semibold">
-          Database name
-          <span class="text-destructive" aria-hidden="true">*</span>
-          <span class="sr-only">(required)</span>
-        </label>
+    <form onsubmit={handleSubmit} class="flex flex-col">
+      <div class="flex flex-col gap-6 px-6 pt-5 pb-6">
+      <div class="flex flex-col gap-1.5">
+        <label for="cdb-name" class="text-ui-xs font-medium text-foreground/90">Name</label>
         <input
           id="cdb-name"
           bind:this={nameInputEl}
@@ -158,8 +144,8 @@
           aria-describedby="cdb-name-hint"
           disabled={loading}
         />
-        <p id="cdb-name-hint" class="mt-1.5 text-ui-2xs text-muted-foreground">
-          Letters, digits, underscores · max 63 characters
+        <p id="cdb-name-hint" class="text-ui-2xs text-muted-foreground">
+          Letters, digits and underscores, up to 63 characters.
         </p>
       </div>
 
@@ -169,21 +155,16 @@
         type="button"
         aria-expanded={showAdvanced}
         aria-controls="cdb-advanced"
-        class="flex w-full items-center gap-1.5 rounded-md py-1.5 text-left text-ui-xs text-muted-foreground transition-colors hover:text-foreground"
+        class="-mb-3 flex w-fit items-center gap-1.5 rounded-md text-left text-ui-xs text-muted-foreground transition-colors duration-150 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
         onclick={() => (showAdvanced = !showAdvanced)}
       >
-        <ChevronDown class={cn('size-3.5 shrink-0 transition-transform duration-150', showAdvanced && 'rotate-180')} />
-        <span class="shrink-0 font-medium whitespace-nowrap">Advanced options</span>
-        {#if !showAdvanced}
-          <span class="ml-auto min-w-0 truncate text-ui-2xs text-muted-foreground">
-            encoding, collation, owner
-          </span>
-        {/if}
+        <ChevronDown class={cn('size-3.5 shrink-0 transition-transform duration-150', !showAdvanced && '-rotate-90')} />
+        {isMySQL ? 'Character set and collation' : 'Encoding, collation and owner'}
       </button>
 
       <!-- Advanced fields (collapsible) -->
       {#if showAdvanced}
-        <div id="cdb-advanced" class="mt-3 flex flex-col gap-3 border-t border-border/40 pt-3">
+        <div id="cdb-advanced" class="flex flex-col gap-3">
 
           {#if !isMySQL}
             <!-- Owner -->
@@ -277,26 +258,17 @@
       {/if}
       {/if}
 
-      <!-- Error -->
       {#if error}
-        <p class="mt-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-ui-xs text-destructive">{error}</p>
+        <p role="alert" class="-mt-3 text-pretty text-ui-xs text-destructive">{error}</p>
       {/if}
+      </div>
 
-      <!-- Footer -->
-      <div class="mt-4 flex items-center justify-end gap-2 border-t border-border/60 pt-4">
-        <button
-          type="button"
-          class= "field-surface inline-flex h-8 items-center px-3 text-ui-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
-          onclick={() => (open = false)}
-          disabled={loading}
-        >
-          Cancel
-        </button>
+      <div class="flex items-center justify-end gap-2 border-t border-border/40 px-6 py-4">
+        <Button type="button" variant="ghost" onclick={() => (open = false)} disabled={loading}>Cancel</Button>
         <Button
           type="submit"
-          
           disabled={loading || !name.trim()}
->
+        >
           {#if loading}
             <span class="inline-block size-3 animate-spin rounded-full border border-primary-foreground border-t-transparent"></span>
             Creating…
