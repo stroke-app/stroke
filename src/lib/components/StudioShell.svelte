@@ -2635,6 +2635,12 @@ let rowSearch = $state('')
       openShortcuts()
     } else if (id === 'open-connections') {
       showConnectionModal = true
+    } else if (id === 'enable-ai-tab') {
+      updateSettings({ aiInTab: true })
+      toast.success('AI chat opens in a tab now', { description: 'Switch back any time in Settings → General.' })
+    } else if (id === 'open-docker') {
+      commandPage = 'docker'
+      commandOpen = true
     }
   }
 
@@ -8991,6 +8997,7 @@ let rowSearch = $state('')
   onopenlogs={() => { if (aiMode) exitAiMode(); openLogsTab() }}
   onopenterminal={() => { if (aiMode) exitAiMode(); if (!terminalDockOpen) toggleTerminalDock() }}
   onnewterminal={() => { commandOpen = false; if (aiMode) exitAiMode(); openNewTerminalTab() }}
+  onopenwhatsnew={() => { commandOpen = false; void updateDialog?.showWhatsNew?.() }}
   onopeninsights={() => { if (aiMode) exitAiMode(); openInsightsTab() }}
   onopenadvisor={() => { if (aiMode) exitAiMode(); openAdvisorTab() }}
   onopenobjects={() => { if (aiMode) exitAiMode(); openObjectsTab() }}

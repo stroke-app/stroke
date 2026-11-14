@@ -64,6 +64,8 @@
     onopenlogs = () => {},
     onopenterminal = () => {},
     onnewterminal = () => {},
+    /** What's new in this version, any time. */
+    onopenwhatsnew = () => {},
     onopeninsights = () => {},
     onopenadvisor = () => {},
     onopenobjects = () => {},
@@ -246,6 +248,7 @@
     { icon: 'terminal',        label: 'SQL editor',       keys: '⌘⇧S', action: onopensql,        show: connected && (!isKeyValue || isDynamo || isDoc), value: 'open sql editor query console' },
     { icon: 'plus',            label: 'New SQL editor',                action: onnewsql,         show: connected && (!isKeyValue || isDynamo || isDoc), value: 'new sql editor tab additional multiple query console open another' },
     { icon: 'square-terminal', label: 'Terminal',         keys: '⌘J',  action: onopenterminal,   show: connected, value: 'terminal shell cli command line psql mysql mariadb sqlite3 sqlcmd redis-cli console repl meta commands' },
+    { icon: 'sparkles',        label: "What's new",       keys: '',    action: onopenwhatsnew,   show: true,      value: 'whats new changelog release notes updates features version' },
     { icon: 'square-terminal', label: 'New terminal tab', keys: '⌃⇧`', action: onnewterminal,    show: connected, value: 'new terminal tab another second shell psql mysql session' },
     { icon: 'code-2',          label: 'ORM runner',       keys: '⌘⇧O', action: onopenorm,        show: connected && !isKeyValue, value: 'open orm runner drizzle prisma query builder' },
     { icon: 'network',         label: 'Schema diagram',                action: onopenerd,        show: connected && !isKeyValue, value: 'open schema diagram data model er diagram erd entity relationship foreign key pk fk graph hierarchy roadmap mermaid tree dictionary ddl schema map' },
