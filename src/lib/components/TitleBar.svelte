@@ -115,11 +115,11 @@
   // overflowed them (menus, workspace name and buttons all ballooned). It is
   // counter-zoomed by 1/scale; its few px sizes are written × scale above so
   // they land back on whole pixels. Menus it opens are portaled and still zoom.
-  let chromeZoom = $state(1)
-  $effect(() => {
+  // Read in the same frame: applySettings sets --app-scale before it updates
+  // appZoom. Deferring it a frame made the bar jump after every zoom step.
+  const chromeZoom = $derived.by(() => {
     void $appZoom
-    const raf = requestAnimationFrame(() => { chromeZoom = 1 / getAppScale() })
-    return () => cancelAnimationFrame(raf)
+    return 1 / getAppScale()
   })
 
   const iconBtn = 'inline-flex size-[calc(28px*var(--app-scale))] items-center justify-center rounded-md text-muted-foreground hover:text-foreground'
@@ -202,7 +202,9 @@
   {/if}
 
   <!-- Spacer (also draggable - it's the largest empty stretch of the bar) -->
-  <div class={tabStrip ? 'w-2 shrink-0' : 'min-w-0 flex-1'} data-tauri-drag-region></div>
+  <!-- Only macOS draws the tab strip here; elsewhere the spacer has to stretch,
+       or the controls on the right ended up beside the menus. -->
+  <div class={isMac && tabStrip ? 'w-2 shrink-0' : 'min-w-0 flex-1'} data-tauri-drag-region></div>
 
   <!-- Right: trial pill + Chat -->
   <div class="flex shrink-0 items-center gap-[calc(4px*var(--app-scale))]" bind:clientWidth={rightW}>
