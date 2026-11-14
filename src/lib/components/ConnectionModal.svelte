@@ -4944,7 +4944,7 @@
                               <span class={lbl}>Options</span>
                               {@render advancedFields()}
                             </div>
-                            <div class="flex min-w-0 items-end gap-4">
+                            <div class="flex min-w-0 items-start gap-4">
                             <div class="min-w-0 flex-1">
                               <label for="cn-name" class={lbl}>
                                 Name
@@ -4965,7 +4965,7 @@
                                   <FieldSelect
                                     bind:value={connWorkspace}
                                     aria-label="Workspace"
-                                    class="h-9 w-full"
+                                    class="w-full data-[size=default]:h-9"
                                     options={$workspaces.map((w) => ({ value: w.id, label: w.name }))}
                                   />
                                 </div>
