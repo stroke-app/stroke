@@ -1564,7 +1564,7 @@
   {@render secLabel($t('settings.sec.account'))}
   <!-- Account first; the license key row below stays as the secondary path. -->
   {#if show('Account', 'Sign in with GitHub or Google, plan, devices, sign out')}
-    <AccountCard class="my-2" />
+    <AccountCard variant="row" />
   {/if}
   {#if show($t('settings.license'), $t('settings.license.desc'))}
     {@render actionRow($t('settings.license'), $t('settings.license.desc'), $t('settings.btn.manage'), () => { open = false; onopenlicense(); }, planBadge)}
@@ -1582,7 +1582,7 @@
         <p class="text-ui-sm font-medium text-foreground">{$t('settings.website')}</p>
         <p class="mt-0.5 text-ui-xs leading-relaxed text-muted-foreground">{$t('settings.website.desc')}</p>
       </div>
-        <a href= "field-surface https://stroke.click"target="_blank"rel="noopener noreferrer"class="inline-flex h-8 shrink-0 items-center gap-1.5 bg-background px-3 text-ui-xs font-medium text-foreground transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-muted active:scale-[0.98]">
+        <a href="https://stroke.click" target="_blank" rel="noopener noreferrer" class="field-surface inline-flex h-8 shrink-0 items-center gap-1.5 bg-background px-3 text-ui-xs font-medium text-foreground transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:bg-muted active:scale-[0.98]">
         stroke.click <Icon name="external-link" class="size-3.5 shrink-0" />
       </a>
     </div>

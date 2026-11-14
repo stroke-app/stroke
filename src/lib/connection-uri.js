@@ -226,11 +226,32 @@ export function parseClickhouseUri(uri) {
 }
 
 /**
+ * Windows Explorer's "Copy as path" wraps the path in double quotes.
+ * @param {string} s
+ */
+function unquotePath(s) {
+  const t = s.trim()
+  return /^"[^"]+"$/.test(t) || /^'[^']+'$/.test(t) ? t.slice(1, -1).trim() : t
+}
+
+/**
+ * A bare path to a database file, which is what a SQLite "connection string"
+ * usually is in practice. Spaces are fine in an absolute path (C:\Users\Jane
+ * Doe\app.db is the usual Windows home); a relative one with spaces is more
+ * likely a sentence.
+ * @param {string} s already trimmed and unquoted
+ */
+function isDatabaseFilePath(s) {
+  const absolute = /^([a-z]:[\\/]|\\\\|\/|~[\\/])/i.test(s)
+  return /\.(db|sqlite3?|db3|duckdb)$/i.test(s) && (absolute || !/\s/.test(s))
+}
+
+/**
  * @param {string} uri
  * @returns {ParsedSqliteUri | { error: string } | null}
  */
 export function parseSqliteUri(uri) {
-  const trimmed = uri.trim()
+  const trimmed = unquotePath(uri)
   if (!trimmed) return null
   if (trimmed === ':memory:') return { filePath: ':memory:' }
 
@@ -244,6 +265,8 @@ export function parseSqliteUri(uri) {
   if (/^file:\/\//i.test(trimmed)) {
     return { filePath: decodeURIComponent(trimmed.slice(7)) }
   }
+
+  if (isDatabaseFilePath(trimmed)) return { filePath: trimmed }
 
   return null
 }
@@ -281,7 +304,7 @@ export function parseConnectionUri(type, uri) {
  * @returns {{ type: string, provider?: string, uriType: 'postgres'|'sqlite'|'mysql'|'mssql'|'clickhouse' } | null}
  */
 export function detectConnectionUri(uri) {
-  const s = String(uri ?? '').trim()
+  const s = unquotePath(String(uri ?? ''))
   if (!s) return null
 
   const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(s)?.[1]?.toLowerCase() ?? ''
@@ -344,9 +367,7 @@ export function detectConnectionUri(uri) {
   }
 
   if (s === ':memory:') return { type: 'sqlite-memory', uriType: 'sqlite' }
-  // A bare path to a database file, which is what a SQLite "connection string"
-  // usually is in practice.
-  if (/\.(db|sqlite3?|duckdb)$/i.test(s) && !/\s/.test(s)) {
+  if (isDatabaseFilePath(s)) {
     return { type: /\.duckdb$/i.test(s) ? 'duckdb' : 'sqlite', uriType: 'sqlite' }
   }
   return null

@@ -2527,6 +2527,25 @@
     }
   }
 
+  /** The quick box's Browse: pick a database file, then continue as if pasted. */
+  async function browseQuickFile() {
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const path = await open({
+        title: "Open a database file",
+        filters: [
+          { name: "Database files", extensions: ["db", "sqlite", "sqlite3", "db3", "duckdb"] },
+          { name: "All files", extensions: ["*"] },
+        ],
+      });
+      if (typeof path !== "string" || !path) return;
+      quickUri = path;
+      useQuickUri();
+    } catch {
+      /* browser/non-Tauri env - the field is still typeable */
+    }
+  }
+
   async function pickSqliteFile() {
     try {
       const { open } = await import("@tauri-apps/plugin-dialog");
@@ -3663,6 +3682,16 @@
                       {#if !quickUri}
                         <Kbd combo="Mod+L" size="sm" class="shrink-0 text-muted-foreground" />
                       {/if}
+                      <!-- A file on disk: pick it instead of typing its path. -->
+                      <button
+                        type="button"
+                        onclick={() => void browseQuickFile()}
+                        title="Choose a database file (SQLite, DuckDB)"
+                        aria-label="Choose a database file"
+                        class="inline-flex size-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                      >
+                        <Icon name="folder-open" class="size-3.5 shrink-0" aria-hidden="true" />
+                      </button>
                       <!-- Quiet until there is something to continue with, then
                            primary. Disabled it reads as part of the field, not
                            as a broken button next to it. -->

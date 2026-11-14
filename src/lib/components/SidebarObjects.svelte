@@ -242,6 +242,20 @@
   /** @param {number} i */
   const rowId = (i) => `objects-row-${i}`
 
+  // The selection follows the open tab, as the Tree sidebar's does. A view row
+  // is highlighted for being open as well as for being the clicked row, so
+  // switching tabs from view A to view B left both highlighted.
+  $effect(() => {
+    const name = activeTable
+    untrack(() => {
+      const row = name
+        ? rows.find((r) => r.t === 'item' && (r.item.kind === 'view' || r.item.kind === 'matview') && r.item.name === name)
+        : null
+      if (row) active = row.key
+      else if (active && rows.some((r) => r.key === active && r.t === 'item' && (r.item.kind === 'view' || r.item.kind === 'matview'))) active = ''
+    })
+  })
+
   /** @param {number} i */
   function ensureVisible(i) {
     if (!scroller) return

@@ -245,7 +245,21 @@
     </div>
   </div>
 {:else}
-<div class="group/dash flex min-h-0 flex-1 flex-col overflow-hidden">
+<div class="group/dash relative flex min-h-0 flex-1 flex-col overflow-hidden">
+  {#if presenting}
+    <!-- Only affordance left on screen: a corner pill that fades in on hover.
+         In the dashboard's own corner: `fixed` to the window put it over
+         the sidebar whenever the sidebar was on the right. -->
+    <button
+      type="button"
+      class="absolute right-4 top-3 z-30 inline-flex h-8 items-center gap-1.5 rounded-md bg-sidebar-accent/80 px-3 text-ui-xs text-muted-foreground opacity-0 transition-opacity duration-150 hover:text-foreground focus-visible:opacity-100 group-hover/dash:opacity-100"
+      title="Exit view only (Esc)"
+      onclick={() => setViewOnly(false)}
+    >
+      <Minimize2 class="size-3.5 shrink-0" />
+      Exit
+    </button>
+  {/if}
   <!-- Header -->
   {#if !presenting}
   <div
@@ -426,18 +440,6 @@
 
   <!-- Content -->
   <div class="relative min-h-0 flex-1 overflow-y-auto p-4">
-    {#if presenting}
-      <!-- Only affordance left on screen: a corner pill that fades in on hover. -->
-      <button
-        type="button"
-        class="fixed right-4 top-[calc(52px+12px)] z-30 inline-flex h-8 items-center gap-1.5 rounded-md bg-sidebar-accent/80 px-3 text-ui-xs text-muted-foreground opacity-0 transition-opacity duration-150 hover:text-foreground focus-visible:opacity-100 group-hover/dash:opacity-100"
-        title="Exit view only (Esc)"
-        onclick={() => setViewOnly(false)}
-      >
-        <Minimize2 class="size-3.5 shrink-0" />
-        Exit
-      </button>
-    {/if}
     {#if !activeDash}
       <div class="flex h-full min-h-[300px] flex-col items-center justify-center gap-4">
         <div class="flex size-16 items-center justify-center rounded-lg bg-muted/30">

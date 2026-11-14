@@ -198,3 +198,27 @@ describe('MongoDB strings', () => {
     expect(detectConnectionUri('mongodb+srv://u:p@cluster0.ab12.mongodb.net/?retryWrites=true')).toEqual({ type: 'mongodb', uriType: 'mongodb' })
   })
 })
+
+describe('detectConnectionUri: file paths', () => {
+  it('takes absolute paths with spaces (Windows home folders)', () => {
+    expect(detectConnectionUri('C:\\Users\\Jane Doe\\Documents\\app.db')?.type).toBe('sqlite')
+    expect(detectConnectionUri('/home/jane/My Data/app.duckdb')?.type).toBe('duckdb')
+    expect(detectConnectionUri('~/My Data/app.sqlite')?.type).toBe('sqlite')
+    expect(detectConnectionUri('\\\\server\\share\\team data.db')?.type).toBe('sqlite')
+  })
+  it('still leaves a relative phrase with spaces alone', () => {
+    expect(detectConnectionUri('open my app.db')).toBeNull()
+    expect(detectConnectionUri('app.db')?.type).toBe('sqlite')
+  })
+})
+
+describe('parseConnectionUri: a bare database path fills the file field', () => {
+  it('takes the path the field asks for, not only sqlite://', () => {
+    expect(parseConnectionUri('sqlite', '/tmp/app.db')).toEqual({ filePath: '/tmp/app.db' })
+    expect(parseConnectionUri('sqlite', 'C:\\Users\\Jane Doe\\app.db')).toEqual({ filePath: 'C:\\Users\\Jane Doe\\app.db' })
+  })
+  it('drops the quotes Windows "Copy as path" adds', () => {
+    expect(parseConnectionUri('sqlite', '"C:\\Users\\Jane Doe\\app.db"')).toEqual({ filePath: 'C:\\Users\\Jane Doe\\app.db' })
+    expect(detectConnectionUri('"C:\\data\\x.duckdb"')?.type).toBe('duckdb')
+  })
+})

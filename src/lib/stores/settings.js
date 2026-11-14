@@ -1093,12 +1093,51 @@ if (typeof window !== 'undefined' && window.matchMedia) {
   } catch {}
 }
 
+/** The theme the page last painted, to tell a switch from a re-apply. */
+let _lastAppliedTheme = /** @type {string | null} */ (null)
+
+/**
+ * Switch CSS transitions off while a theme or zoom change lands, and back on
+ * once the new styles are committed. ~750 controls transition their colours,
+ * so a theme switch faded each of them separately (one after another, the
+ * flicker people saw on Windows, where WebView2 is slowest at it) and a zoom
+ * step animated through the re-layout. With them off the window repaints once.
+ * @returns {() => void} call after the change
+ */
+function pauseTransitions() {
+  const style = document.createElement('style')
+  style.textContent = '*,*::before,*::after{transition:none!important}'
+  document.head.appendChild(style)
+  return () => {
+    // Read a computed style so the new tokens are applied with transitions
+    // still off; only then take the rule away.
+    void window.getComputedStyle(document.body).opacity
+    setTimeout(() => style.remove(), 1)
+  }
+}
+
 /** @param {AppSettings} settings */
 export function applySettings(settings) {
   const root = document.documentElement
   const theme = normalizeThemeId(settings.theme)
   const zoom = settings.zoom
   const dark = isDarkTheme(theme)
+  // Not on the very first apply: nothing has painted yet to transition from.
+  const switching = _lastAppliedTheme !== null && (_lastAppliedTheme !== theme || _lastAppliedZoom !== zoom)
+  _lastAppliedTheme = theme
+  const resume = switching && document.body ? pauseTransitions() : null
+  try {
+    applySettingsNow(settings, root, theme, zoom, dark)
+  } finally {
+    resume?.()
+  }
+}
+
+/**
+ * @param {AppSettings} settings @param {HTMLElement} root @param {string} theme
+ * @param {number} zoom @param {boolean} dark
+ */
+function applySettingsNow(settings, root, theme, zoom, dark) {
 
   // The custom theme's stylesheet (and the grain, which applies to any theme)
   // has to be in place before anything reads the tokens below.

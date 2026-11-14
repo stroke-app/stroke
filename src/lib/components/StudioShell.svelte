@@ -41,7 +41,7 @@
   import { createCommandHotkey, matchesCommand } from '$lib/command-hotkey.js'
   import { IS_MAC } from '$lib/shortcuts.js'
   import { findSearchInput, isTypingTarget } from '$lib/focus-search.js'
-  import { appFkAutoExpandJson, cycleTheme, restorePreviousTheme, isCurrentThemeDark, loadSettings, appPaginationMode, appVimMode, appAutoSaveQueries, appStreamResults, appSqlUndo, appSqlEditor, increaseZoom, decreaseZoom, resetZoom } from '$lib/stores/settings.js'
+  import { appFkAutoExpandJson, cycleTheme, restorePreviousTheme, isCurrentThemeDark, loadSettings, appPaginationMode, appVimMode, appAutoSaveQueries, appStreamResults, appSqlUndo, appSqlEditor, increaseZoom, decreaseZoom, resetZoom, updateSettings } from '$lib/stores/settings.js'
   import { requireUnlock } from '$lib/stores/app-lock.js'
   import { isTextEntryTarget, setVimSubMode } from '$lib/vim/vim.js'
   import { normalizeColumn, columnType } from '$lib/column.js'
@@ -2617,6 +2617,23 @@ let rowSearch = $state('')
   createHotkey('F12', (e) => { e.preventDefault(); void toggleDevtools() })
   createHotkey('Mod+Shift+I', (e) => { e.preventDefault(); void toggleDevtools() })
 
+  /**
+   * A What's new highlight's button: do the thing it names.
+   * @param {import('$lib/whats-new.js').HighlightAction} id
+   */
+  function handleWhatsNewAction(id) {
+    if (id === 'enable-tree-sidebar') {
+      updateSettings({ sidebarStyle: 'tree' })
+      toast.success('Explorer tree is on', { description: 'Switch back any time in Settings → General.' })
+    } else if (id === 'open-themes') {
+      menuActions.theme?.()
+    } else if (id === 'open-shortcuts') {
+      showShortcutsModal = true
+    } else if (id === 'open-connections') {
+      showConnectionModal = true
+    }
+  }
+
   createCommandHotkey('palette.open', (e) => {
     e.preventDefault()
     commandPage = 'root'
@@ -2819,7 +2836,9 @@ let rowSearch = $state('')
   /** The sidebar's drawn width, so the title bar's left part matches it (T3-style full-height sidebar). */
   let sidebarDockW = $state(0)
   /** One pane: its tabs live in the title row (T3: one row, not a title over a tab strip). */
-  const tabsInTitle = $derived(!!connection && !aiMode && tabBarVisible && paneCount <= 1 && !showConnectionModal)
+  // macOS only: the Windows/Linux bar holds the menus and a centred title, so
+  // their tabs stay in their own row (passing them up here hid them entirely).
+  const tabsInTitle = $derived(IS_MAC && !!connection && !aiMode && tabBarVisible && paneCount <= 1 && !showConnectionModal)
   /** The element's exact (fractional) border-box width. clientWidth rounds,
    *  and half a pixel was enough to split the sidebar's edge from the title
    *  bar's into two soft lines. @param {HTMLElement} node @param {(w: number) => void} set */
@@ -8834,6 +8853,7 @@ let rowSearch = $state('')
 {/if}
 <UpdateDialog
   bind:this={updateDialog}
+  onwhatsnewaction={handleWhatsNewAction}
   onupdatefound={(state) => {
     statusBarHasUpdate = true
     statusBarUpdateReady = state === 'ready'
@@ -8942,7 +8962,50 @@ let rowSearch = $state('')
 {/if}
 
 
+<!-- The title bar. macOS: the top of the content column, so the sidebar runs
+     full height beside it under the traffic lights. Windows/Linux: across the
+     whole window above the sidebar (VS Code, Discord), so minimize/maximize/
+     close sit at the window's real top-right corner whichever side the sidebar
+     is on, and in AI mode too, which has no other window controls. -->
+{#snippet titleBar()}
+<TitleBar
+  title={windowTitle}
+  connected={!!connection}
+  {aiMode}
+  {aiSidebarOpen}
+  ontoggleaimode={() => { if (aiMode) exitAiMode(); else openAiTab() }}
+  ontoggleaisidebar={() => { if (aiMode) exitAiMode(); toggleAiSidebar() }}
+  {menuActions}
+  sidebarOpen={sidebarOpen && !aiMode}
+  savedConnection={savedConnections.find((c) => c.id === activeConnectionId) ?? null}
+  {activeTab}
+  connections={savedConnections}
+  sidebarWidth={connection && sidebarOpen && !aiMode && !showConnectionModal && sidebarSide !== 'right' ? sidebarDockW : 0}
+>
+  {#snippet tabStrip()}
+    {#if tabsInTitle}
+      <TabBar
+            tabs={tabs.filter((t) => t.kind !== 'ai')}
+            {activeTabId}
+            onselect={(id) => activateTab(id)}
+            onclose={closeTab}
+            oncloseothers={closeOtherTabs}
+            oncloseall={closeAllTabs}
+            onclosemany={(ids, anchorId) => void closeManyTabs(ids, anchorId)}
+            onduplicate={(id) => void duplicateTab(id)}
+            onresettable={(id) => void resetTableTab(id)}
+            onreopenclosed={reopenLastClosedTab}
+            canreopenclosed={closedTabStack.length > 0}
+            onpintoggle={toggleTabPin}
+            onnewsql={() => { if (aiMode) exitAiMode(); openNewSqlTab() }}
+          />
+    {/if}
+  {/snippet}
+</TitleBar>
+{/snippet}
+
 <div class="flex h-full min-h-0 w-full flex-col overflow-hidden bg-background">
+{#if !IS_MAC}{@render titleBar()}{/if}
 <div class="flex min-h-0 flex-1 overflow-hidden">
   {#if connection}
     <!-- Sidebar dock. Navigation between pages/views now lives in the ⌘P
@@ -9084,42 +9147,7 @@ let rowSearch = $state('')
   <!-- Everything right of the sidebar: title row, content, status bar. The
        sidebar is its own full-height column (T3), so its edge runs unbroken. -->
   <div class="flex min-h-0 min-w-0 flex-1 flex-col">
-{#if !aiMode}
-<TitleBar
-  title={windowTitle}
-  connected={!!connection}
-  {aiMode}
-  {aiSidebarOpen}
-  ontoggleaimode={() => { if (aiMode) exitAiMode(); else openAiTab() }}
-  ontoggleaisidebar={() => { if (aiMode) exitAiMode(); toggleAiSidebar() }}
-  {menuActions}
-  sidebarOpen={sidebarOpen && !aiMode}
-  savedConnection={savedConnections.find((c) => c.id === activeConnectionId) ?? null}
-  {activeTab}
-  connections={savedConnections}
-  sidebarWidth={connection && sidebarOpen && !aiMode && !showConnectionModal && sidebarSide !== 'right' ? sidebarDockW : 0}
->
-  {#snippet tabStrip()}
-    {#if tabsInTitle}
-      <TabBar
-            tabs={tabs.filter((t) => t.kind !== 'ai')}
-            {activeTabId}
-            onselect={(id) => activateTab(id)}
-            onclose={closeTab}
-            oncloseothers={closeOtherTabs}
-            oncloseall={closeAllTabs}
-            onclosemany={(ids, anchorId) => void closeManyTabs(ids, anchorId)}
-            onduplicate={(id) => void duplicateTab(id)}
-            onresettable={(id) => void resetTableTab(id)}
-            onreopenclosed={reopenLastClosedTab}
-            canreopenclosed={closedTabStack.length > 0}
-            onpintoggle={toggleTabPin}
-            onnewsql={() => { if (aiMode) exitAiMode(); openNewSqlTab() }}
-          />
-    {/if}
-  {/snippet}
-</TitleBar>
-{/if}
+{#if !aiMode && IS_MAC}{@render titleBar()}{/if}
   <div class="flex min-h-0 flex-1 overflow-hidden">
   <main class="relative flex min-h-0 min-w-0 flex-1 flex-col bg-panel" data-studio-region="main">
     {#if accountPageOpen && !connection}
@@ -9803,7 +9831,7 @@ let rowSearch = $state('')
             onmodi={() => { if (connection) toggleAiSidebar() }}
             onmodw={() => closeActiveTab()}
             onmodn={() => { if (connection) openWelcomeTab() }}
-            onmodm={() => { if (bindingFor('theme.next') === 'Mod+M') cycleTheme() }}
+            onmodm={cycleTheme}
             onmodt={() => { if (connection) { commandPage = 'tables'; commandOpen = true } }}
             onmodshifte={() => { if (connection) aiMode ? exitAiMode() : enterAiMode() }}
             onmodshiftd={() => { if (connection) showDisconnectDialog = true }}
@@ -9863,7 +9891,7 @@ let rowSearch = $state('')
             onmodi={() => { if (connection) toggleAiSidebar() }}
             onmodw={() => closeActiveTab()}
             onmodn={() => { if (connection) openWelcomeTab() }}
-            onmodm={() => { if (bindingFor('theme.next') === 'Mod+M') cycleTheme() }}
+            onmodm={cycleTheme}
             onmodt={() => { if (connection) { commandPage = 'tables'; commandOpen = true } }}
             onmodshifte={() => { if (connection) aiMode ? exitAiMode() : enterAiMode() }}
             onmodshiftd={() => { if (connection) showDisconnectDialog = true }}

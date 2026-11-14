@@ -32,11 +32,24 @@ export function createCommandHotkey(id, callback, options = {}) {
     () => /** @type {any} */ (bindingFor(id) || fallback),
     callback,
     () => ({
+      ignoreInputs: firesInInputs(bindingFor(id)) ? false : undefined,
       ...options,
       conflictBehavior: 'allow',
       enabled: !!bindingFor(id) && options.enabled !== false,
     }),
   )
+}
+
+/**
+ * Whether a combo should fire while focus is in a text field or editor. The
+ * library only lets Ctrl/Meta chords and Escape through there, so a command
+ * moved from Ctrl+K to Alt+K went dead in the SQL editor. Any chord with
+ * Mod, Ctrl, Meta or Alt is a command, not typing; a bare key or Shift+key
+ * still types.
+ * @param {string} combo
+ */
+export function firesInInputs(combo) {
+  return /(^|\+)(Mod|Control|Ctrl|Meta|Cmd|Command|Alt|Option)\+/i.test(combo ?? '')
 }
 
 /**
