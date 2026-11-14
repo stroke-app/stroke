@@ -1,3 +1,9 @@
+<!--
+Target `nightly` (the default). Merging bumps the version by one patch; label
+`release:minor` / `release:major`, or `release:skip` for no bump. Only hotfixes
+target `master`.
+-->
+
 ## What this changes
 
 <!-- What is different afterwards, and why it is worth doing. -->

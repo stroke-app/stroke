@@ -92,13 +92,36 @@ feat(geo): map view for PostGIS layers
 
 For PRs:
 
-1. Branch from `master`. Keep the diff focused — unrelated refactors make
-   review slow and risky.
+1. Branch from `nightly` and open the PR against `nightly` (the default
+   branch). Keep the diff focused — unrelated refactors make review slow and
+   risky.
 2. Make sure the three checks above pass.
-3. **Never bump the version number.** CI bumps it automatically when a
-   labeled PR is merged; a hand-edited version causes double bumps.
-4. Describe what changed and why. For UI changes, include a before/after
+3. **Never bump the version number.** Merging into `nightly` bumps it: one
+   patch version per PR, or label the PR `release:minor` / `release:major`,
+   or `release:skip` for no bump (docs, CI). A hand-edited version causes
+   double bumps.
+4. Add a `.changeset/*.md` for user-visible changes (format in
+   `.changeset/README.md`); it becomes that version's changelog entry.
+5. Describe what changed and why. For UI changes, include a before/after
    screenshot.
+
+## Release channels
+
+| Channel | Branch | Built | Installs as |
+|---|---|---|---|
+| **Nightly** | `nightly` | every night something merged (`nightly.yml`), or by hand | **Stroke Nightly**, its own app and data, beside Stroke |
+| **Stable** | `master` | when nightly is promoted | **Stroke** |
+
+- Every merged PR lands on `nightly` and ships in the next Stroke Nightly
+  (`2.5.6-nightly.202611150200`). Nightly updates itself from the rolling
+  `nightly` pre-release; stable users never see it.
+- **Promote** when nightly is good: Actions → *Promote nightly to stable* opens
+  "Release vX.Y.Z" from `nightly` into `master`. Merge it with **Create a merge
+  commit**. That tags `vX.Y.Z` and `release.yml` publishes Stroke.
+- **Hotfix**: a PR straight into `master` with a `release:*` label releases on
+  its own; `master` is then merged back into `nightly`.
+- Patch versions run .1 to .9; the patch after .9 is the next minor
+  (2.5.9 → 2.6.0).
 
 ## Contributor License Agreement
 

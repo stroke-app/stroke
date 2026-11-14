@@ -14,12 +14,19 @@ body:
       label: What happened
       description: What you did, what you expected, and what you got instead.
     validations: { required: true }
+  - type: dropdown
+    id: channel
+    attributes:
+      label: Channel
+      description: Stroke Nightly is the separate app that updates every night.
+      options: [Stroke (stable), Stroke Nightly]
+    validations: { required: true }
   - type: input
     id: version
     attributes:
       label: Stroke version
       description: Shown at the right-hand end of the status bar.
-      placeholder: "1.21.0"
+      placeholder: "2.5.5 or 2.5.6-nightly.202611150200"
     validations: { required: true }
   - type: dropdown
     id: os

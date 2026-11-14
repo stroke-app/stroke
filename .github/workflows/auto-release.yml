@@ -1,63 +1,68 @@
-# Triggered when a PR is merged into master.
+# Versions and stable releases, driven by merged PRs.
 #
-# Label the PR with one of:
-#   release:patch  →  0.0.x  (bug fixes)
-#   release:minor  →  0.x.0  (new features, backwards-compatible)
-#   release:major  →  x.0.0  (breaking changes)
+#   PR merged into `nightly`   → bump the version on nightly (one patch per PR)
+#                                and fold .changeset/*.md into CHANGELOG.md.
+#                                No tag: nightly.yml builds it as Stroke Nightly.
+#       label release:minor    → x.Y.0 instead
+#       label release:major    → X.0.0 instead
+#       label release:skip     → no bump (docs, CI, chores)
 #
-# The workflow will:
-#   1. Bump the version in tauri.conf.json + package.json
-#   2. Fold .changeset/*.md files into CHANGELOG.md under the new version
-#   3. Commit the bump + changelog to master
-#   4. Push tag vX.Y.Z  →  triggers release.yml to build and publish
+#   PR `nightly` → `master`    → the promotion (promote.yml opens it). Tags
+#                                vX.Y.Z at the version nightly already has, which
+#                                triggers release.yml to build and publish Stable.
+#
+#   Any other PR into `master` → a hotfix. With a release:* label it bumps,
+#                                tags and releases like before; master is then
+#                                merged back into nightly.
+#
+# Patch versions run .1-.9; the patch after .9 is the next minor
+# (scripts/release-bump.cjs).
 
 name: Auto Release
 
 on:
   pull_request:
     types: [closed]
-    branches: [master]
+    branches: [nightly, master]
 
 permissions:
   contents: write
+  pull-requests: write
+
+concurrency:
+  # One version change at a time per branch: two merges in a row must not
+  # both read the same version.
+  group: auto-release-${{ github.event.pull_request.base.ref }}
+  cancel-in-progress: false
 
 jobs:
-  auto-release:
-    if: github.event.pull_request.merged == true
+  # ── PR merged into nightly: one version per PR ─────────────────────────────
+  nightly-version:
+    if: github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'nightly'
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v5
         with:
+          ref: nightly
           fetch-depth: 0
-          # Push the version-bump commit + tag with a PAT, not the default
-          # GITHUB_TOKEN: tags pushed by GITHUB_TOKEN never trigger other
-          # workflows (a GitHub Actions rule), which would leave release.yml
-          # needing a manual dispatch after every auto-release. Only the tag
-          # push needs this — release.yml itself publishes with GITHUB_TOKEN
-          # now that the releases live in this repo.
+          # A PAT, so the bump commit can be pushed to nightly.
           token: ${{ secrets.RELEASES_TOKEN }}
 
       - uses: actions/setup-node@v5
         with:
           node-version: 22
 
-      # ── 1. Determine bump type from PR labels ─────────────────────────────
       - name: Resolve bump type
         id: bump
         run: |
           LABELS='${{ toJson(github.event.pull_request.labels.*.name) }}'
           echo "PR labels: $LABELS"
-
-          if   echo "$LABELS" | grep -q '"release:major"'; then echo "type=major" >> "$GITHUB_OUTPUT"
+          if   echo "$LABELS" | grep -q '"release:skip"';  then echo "type=skip"  >> "$GITHUB_OUTPUT"
+          elif echo "$LABELS" | grep -q '"release:major"'; then echo "type=major" >> "$GITHUB_OUTPUT"
           elif echo "$LABELS" | grep -q '"release:minor"'; then echo "type=minor" >> "$GITHUB_OUTPUT"
-          elif echo "$LABELS" | grep -q '"release:patch"'; then echo "type=patch" >> "$GITHUB_OUTPUT"
-          else
-            echo "type=skip" >> "$GITHUB_OUTPUT"
-            echo "No release:* label — skipping release."
+          else                                                  echo "type=patch" >> "$GITHUB_OUTPUT"
           fi
 
-      # ── 2. Bump versions + fold changesets into CHANGELOG.md ──────────────
       - name: Bump version and update changelog
         if: steps.bump.outputs.type != 'skip'
         id: version
@@ -65,127 +70,103 @@ jobs:
           BUMP_TYPE: ${{ steps.bump.outputs.type }}
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: |
-          node - <<'EOF'
-          const fs   = require('fs')
-          const path = require('path')
-          const bump = process.env.BUMP_TYPE
+        run: node scripts/release-bump.cjs
 
-          // ── Compute new version ──────────────────────────────────────────
-          const cfgPath = 'src-tauri/tauri.conf.json'
-          const cfg     = JSON.parse(fs.readFileSync(cfgPath, 'utf8'))
-          const [maj, min, pat] = cfg.version.split('.').map(Number)
-
-          // Patch versions run .1 to .9; the next patch after .9 is the next
-          // minor (2.3.9 -> 2.4.0), so a patch never reaches two digits.
-          const next =
-            bump === 'major' ? `${maj + 1}.0.0` :
-            bump === 'minor' || pat >= 9 ? `${maj}.${min + 1}.0` :
-                               `${maj}.${min}.${pat + 1}`
-
-          // ── Update tauri.conf.json ───────────────────────────────────────
-          cfg.version = next
-          fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2) + '\n')
-
-          // ── Update package.json ──────────────────────────────────────────
-          const pkgPath = 'package.json'
-          const pkg     = JSON.parse(fs.readFileSync(pkgPath, 'utf8'))
-          pkg.version   = next
-          fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n')
-
-          // ── Collect .changeset/*.md files ────────────────────────────────
-          const csDir = '.changeset'
-          const files = fs.existsSync(csDir)
-            ? fs.readdirSync(csDir).filter(f => f.endsWith('.md') && f !== 'README.md')
-            : []
-
-          // sections: { 'New Features': { '#### Canvas Table': ['- item'] } }
-          /** @type {Record<string, Record<string, string[]>>} */
-          const sections = {}
-
-          for (const file of files) {
-            const content = fs.readFileSync(path.join(csDir, file), 'utf8')
-            let h3 = null
-            let h4 = null
-
-            for (const line of content.split('\n')) {
-              const t = line.trim()
-              if (t.startsWith('### ')) {
-                h3 = t.slice(4).trim()
-                if (!sections[h3]) sections[h3] = {}
-                h4 = null
-              } else if (t.startsWith('#### ')) {
-                h4 = t   // keep full "#### Foo"
-                if (h3 && !sections[h3][h4]) sections[h3][h4] = []
-              } else if (/^[-*]\s/.test(t) && h3) {
-                const key = h4 ?? '__top__'
-                if (!sections[h3][key]) sections[h3][key] = []
-                sections[h3][key].push(t)
-              }
-            }
-          }
-
-          // ── Build the new CHANGELOG entry ────────────────────────────────
-          const today    = new Date().toISOString().slice(0, 10)
-          const order    = ['New Features', 'Bug Fixes', 'Changes']
-          const allKeys  = [...new Set([...order, ...Object.keys(sections)])]
-          let entry      = `## [${next}] - ${today}\n`
-          let hasContent = false
-
-          for (const heading of allKeys) {
-            if (!sections[heading] || Object.keys(sections[heading]).length === 0) continue
-            hasContent = true
-            entry += `\n### ${heading}\n`
-
-            // Top-level bullets (no sub-section)
-            const top = sections[heading]['__top__'] ?? []
-            for (const item of top) entry += `${item}\n`
-
-            // Sub-sections
-            for (const [sub, items] of Object.entries(sections[heading])) {
-              if (sub === '__top__') continue
-              entry += `\n${sub}\n`
-              for (const item of items) entry += `${item}\n`
-            }
-          }
-
-          if (!hasContent) {
-            // No changeset files — generate a minimal entry from PR title
-            const pr = process.env.PR_TITLE || 'No changelog provided'
-            const num = process.env.PR_NUMBER
-            entry += `\n### Changes\n- ${pr}${num ? ` (#${num})` : ''}\n`
-          }
-
-          // ── Inject at top of CHANGELOG.md (after the "---" separator) ───
-          const clPath = 'CHANGELOG.md'
-          const cl     = fs.existsSync(clPath) ? fs.readFileSync(clPath, 'utf8') : '# Changelog\n\n---\n'
-          const sep    = '---\n'
-          const idx    = cl.indexOf(sep)
-          const before = idx !== -1 ? cl.slice(0, idx + sep.length) : cl
-          const after  = idx !== -1 ? cl.slice(idx + sep.length)    : ''
-          fs.writeFileSync(clPath, `${before}\n${entry}\n${after}`)
-
-          // ── Delete consumed changeset files ──────────────────────────────
-          for (const file of files) fs.unlinkSync(path.join(csDir, file))
-
-          console.log(`v${next} — merged ${files.length} changeset(s)`)
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, `new_version=${next}\n`)
-          EOF
-
-      # ── 3. Commit everything and push the release tag ─────────────────────
-      - name: Commit and tag
+      - name: Commit to nightly
         if: steps.bump.outputs.type != 'skip'
         env:
-          NEW_TAG: v${{ steps.version.outputs.new_version }}
+          VERSION: ${{ steps.version.outputs.new_version }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add src-tauri/tauri.conf.json package.json CHANGELOG.md .changeset/
-          git commit -m "chore: release ${{ steps.version.outputs.new_version }}"
+          git commit -m "chore: version ${VERSION} (#${PR_NUMBER})"
+          git push origin HEAD:nightly
+          echo "nightly is now ${VERSION}; the next nightly build ships it."
 
-          git tag "$NEW_TAG"
-          git push origin master
-          git push origin "$NEW_TAG"
+  # ── PR merged into master: promotion or hotfix ─────────────────────────────
+  stable-release:
+    if: github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'master'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: master
+          fetch-depth: 0
+          # Tags pushed with the default GITHUB_TOKEN never trigger other
+          # workflows, so release.yml would not start. Use the PAT.
+          token: ${{ secrets.RELEASES_TOKEN }}
 
-          echo "✅ $NEW_TAG pushed — release.yml will now build and publish."
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Decide what this merge is
+        id: kind
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          LABELS='${{ toJson(github.event.pull_request.labels.*.name) }}'
+          if [ "$HEAD_REF" = "nightly" ]; then
+            echo "kind=promotion" >> "$GITHUB_OUTPUT"
+          elif echo "$LABELS" | grep -q '"release:major"'; then echo "kind=hotfix" >> "$GITHUB_OUTPUT"; echo "type=major" >> "$GITHUB_OUTPUT"
+          elif echo "$LABELS" | grep -q '"release:minor"'; then echo "kind=hotfix" >> "$GITHUB_OUTPUT"; echo "type=minor" >> "$GITHUB_OUTPUT"
+          elif echo "$LABELS" | grep -q '"release:patch"'; then echo "kind=hotfix" >> "$GITHUB_OUTPUT"; echo "type=patch" >> "$GITHUB_OUTPUT"
+          else
+            echo "kind=none" >> "$GITHUB_OUTPUT"
+            echo "Not a promotion and no release:* label — nothing to release."
+          fi
+
+      # A hotfix ships its own version; a promotion ships the version nightly
+      # already carries.
+      - name: Bump version (hotfix)
+        if: steps.kind.outputs.kind == 'hotfix'
+        env:
+          BUMP_TYPE: ${{ steps.kind.outputs.type }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          node scripts/release-bump.cjs
+          VERSION=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src-tauri/tauri.conf.json package.json CHANGELOG.md .changeset/
+          git commit -m "chore: release ${VERSION}"
+          git push origin HEAD:master
+
+      - name: Tag the release
+        if: steps.kind.outputs.kind != 'none'
+        run: |
+          VERSION=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          TAG="v${VERSION}"
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null; then
+            echo "::error::${TAG} already exists. Nightly has nothing newer than the last stable release."
+            exit 1
+          fi
+          git tag "$TAG"
+          git push origin "$TAG"
+          echo "✅ ${TAG} pushed — release.yml will now build and publish Stable."
+
+      # Keep nightly ahead of master: a hotfix (and a squash-merged promotion)
+      # only lands on master otherwise. A conflict opens a PR instead.
+      - name: Merge master back into nightly
+        if: steps.kind.outputs.kind != 'none'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin nightly
+          git checkout -B nightly origin/nightly
+          if git merge-base --is-ancestor origin/master HEAD; then
+            echo "nightly already contains master."
+          elif git merge --no-edit origin/master -m "chore: merge master into nightly"; then
+            git push origin nightly
+          else
+            git merge --abort
+            gh pr create --base nightly --head master \
+              --title "chore: merge master into nightly" \
+              --body "master has changes nightly lacks and they conflict; resolve here." \
+              --label "release:skip" || true
+          fi
