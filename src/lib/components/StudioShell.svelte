@@ -92,6 +92,7 @@
   import Onboarding from './Onboarding.svelte'
   import SettingsDialog from './SettingsDialog.svelte'
   import KeyboardShortcutsDialog from './KeyboardShortcutsDialog.svelte'
+  import LeaderPanel from './LeaderPanel.svelte'
   import { requestChat } from '$lib/stores/ai-chat-bridge.js'
   import { aiChatKey, chatBelongsTo } from '$lib/ai-chat-key.js'
   import InsiderDialog from './InsiderDialog.svelte'
@@ -3179,6 +3180,41 @@ let rowSearch = $state('')
     if (commandOpen || showConnectionModal || showSettingsModal || showShortcutsModal) return
     e.preventDefault()
     openShortcuts()
+  })
+
+  // ── Leader key ──────────────────────────────────────────────────────────
+  // ⌘; (Ctrl+; elsewhere), then one key. The panel lists them, and the
+  // letters are the words' first letters, so they are learned by using them.
+  let leaderOpen = $state(false)
+  /** @param {number} n */
+  function goToTab(n) {
+    if (!connection || tabs.length === 0) return
+    const idx = n === 9 ? tabs.length - 1 : Math.min(n - 1, tabs.length - 1)
+    void activateTab(tabs[idx].id)
+  }
+  /** @type {import('./LeaderPanel.svelte').LeaderAction[]} */
+  const leaderActions = $derived([
+    ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => ({ key: String(n), label: `Tab ${n}`, run: () => goToTab(n) })),
+    ...(connection
+      ? [
+          { key: 's', label: 'New SQL query', run: () => openNewSqlTab() },
+          { key: 'a', label: 'AI chat', run: () => openAiTab() },
+          { key: 't', label: 'Terminal', run: () => { if (aiMode) exitAiMode(); openTerminalTab() } },
+          { key: 'e', label: 'Schema diagram', run: () => openErdTab() },
+          { key: 'b', label: 'Show or hide sidebar', run: () => toggleSidebar() },
+          { key: 'l', label: 'Logs', run: () => openLogsTab() },
+          { key: 'w', label: 'Close tab', run: () => { if (activeTabId) void closeTab(activeTabId) } },
+          { key: 'r', label: 'Reopen closed tab', run: () => reopenLastClosedTab() },
+        ]
+      : []),
+    { key: 'c', label: 'Connections', run: () => { showConnectionModal = true } },
+    { key: 'k', label: 'Command palette', run: () => { commandOpen = true } },
+    { key: ',', label: 'Settings', run: () => { showSettingsModal = true } },
+    { key: '/', label: 'All shortcuts', run: () => openShortcuts() },
+  ])
+  createCommandHotkey('leader', (e) => {
+    e.preventDefault()
+    leaderOpen = !leaderOpen
   })
 
   // Jump straight to tab N (Ctrl/⌘+1..8); 9 always jumps to the last tab -
@@ -8865,6 +8901,7 @@ let rowSearch = $state('')
 <AiSettingsDialog bind:open={showAiModelSettings} />
 
 <KeyboardShortcutsDialog bind:open={showShortcutsModal} />
+<LeaderPanel bind:open={leaderOpen} actions={leaderActions} />
 
 <InsiderDialog bind:open={showInsiderModal} />
 
