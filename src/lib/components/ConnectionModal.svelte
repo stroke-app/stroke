@@ -3657,14 +3657,10 @@
               </div>
               <p class="mt-1.5 text-ui-sm text-muted-foreground">Paste a connection string, or pick where your database lives.</p>
             {:else}
-              <!-- pe-14, not pe-6: the URL button now sits at the right edge of
-                   this row and the dialog's own close ✕ floats over the same
-                   corner (right-4, size-8). -->
-              <!-- pe-10 = the 32px close button + the row's own 8px gap, so
-                   "Paste a URL" and ✕ sit 8px apart like every other pair in
-                   this row. The close button shares the 32px edge (right-8)
-                   and the h-8 height of these controls. -->
-              <div class="flex items-center gap-2 pe-10">
+              <!-- No end padding: the close button lives in the titlebar row
+                   above now, so the URL buttons end on the form's right edge,
+                   flush with the fields below. -->
+              <div class="flex items-center gap-2">
                 <button
                   type="button"
                   onclick={backToPick}

@@ -912,28 +912,41 @@
     {/if}
 
     <!-- Connectivity: the database's round trip from the health ping, so a
-         slow link is visible before a query is. The number is always shown;
-         colour only adds to it. -->
+         slow link is visible before a query is. Three signal bars (lit by how
+         fast it answers) and the number; the wifi glyph read as this
+         computer's network rather than the database. -->
     {#if connection}
       {@const tone = offline || connectionLost ? 'bad' : latencyMs == null ? 'idle' : latencyMs < 150 ? 'good' : latencyMs < 400 ? 'fair' : 'bad'}
+      {@const lit = offline || connectionLost ? 0 : tone === 'good' ? 3 : tone === 'fair' ? 2 : tone === 'bad' ? 1 : 0}
       <button
         type="button"
         class={cn(
-          labelBtn,
-          tone === 'bad' ? 'text-destructive' : tone === 'fair' ? 'text-warning' : 'text-muted-foreground',
+          'flex h-7 items-center gap-1.5 rounded-md px-1.5 text-ui-xs transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent/60 active:scale-[0.97]',
+          tone === 'bad' ? 'text-destructive' : tone === 'fair' ? 'text-warning' : 'text-muted-foreground hover:text-foreground',
         )}
         onclick={onping}
         title={offline
-          ? 'This computer is offline. Stroke reconnects when the network is back.'
+          ? 'Offline. Reconnects when the network is back.'
           : connectionLost
-            ? 'The database is not answering. Stroke keeps trying in the background. Click to check now.'
+            ? 'Not responding. Click to retry.'
             : latencyMs == null
-              ? 'Checking the connection…'
-              : `The database answers in ${latencyMs} ms${tone === 'fair' ? ' (slow)' : tone === 'bad' ? ' (very slow)' : ''}. Checked every 30 s; click to check now.`}
+              ? 'Checking the connection'
+              : `${latencyMs} ms round trip${tone === 'fair' ? ', slow' : tone === 'bad' ? ', very slow' : ''}. Click to re-check.`}
         aria-label={offline ? 'Offline' : connectionLost ? 'Database not responding' : latencyMs == null ? 'Checking connection' : `Database round trip ${latencyMs} milliseconds`}
       >
-        <Icon name={offline || connectionLost ? 'wifi-off' : 'wifi'} class="size-3.5 shrink-0" />
-        <span class="tabular-nums @max-[40rem]/sb:hidden">{offline ? 'Offline' : connectionLost ? 'No response' : latencyMs == null ? '…' : `${latencyMs} ms`}</span>
+        <span class="flex h-2.5 items-end gap-px" aria-hidden="true">
+          {#each [1, 2, 3] as bar (bar)}
+            <span
+              class={cn(
+                'w-0.5 rounded-full transition-colors duration-150',
+                bar === 1 ? 'h-1' : bar === 2 ? 'h-1.75' : 'h-2.5',
+                bar <= lit ? 'bg-current' : 'bg-current opacity-25',
+                latencyMs == null && !offline && !connectionLost && 'motion-safe:animate-pulse',
+              )}
+            ></span>
+          {/each}
+        </span>
+        <span class="tabular-nums @max-[40rem]/sb:hidden">{offline ? 'Offline' : connectionLost ? 'No response' : latencyMs == null ? '' : `${latencyMs}ms`}</span>
       </button>
     {/if}
 

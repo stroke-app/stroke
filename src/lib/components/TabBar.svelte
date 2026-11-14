@@ -21,6 +21,7 @@
     // too made the window maximize and instantly restore. This handler only
     // covers double-clicks on non-interactive children the built-in ignores.
     if (e.target === e.currentTarget) return
+    if (/** @type {Element} */ (e.target).hasAttribute?.('data-tauri-drag-region')) return
     if (/** @type {Element} */ (e.target).closest('button')) return
     import('@tauri-apps/api/window').then(({ getCurrentWindow }) => getCurrentWindow().toggleMaximize()).catch(() => {})
   }
@@ -156,8 +157,12 @@
   aria-label={$t('tabs.openEditors')}
   ondblclick={handleDragAreaDblClick}
 >
+  <!-- The strip's empty stretch drags the window too (macOS, Windows, Linux):
+       only an element that carries the attribute itself starts a drag, and
+       this one filled the bar to the right of the last tab. -->
   <div
     bind:this={scrollEl}
+    data-tauri-drag-region
     class={cn(
       // scroll-px keeps a tab scrolled into view clear of the edge fade.
       'app-scroll flex h-full min-w-0 flex-1 items-center gap-0.5 overflow-x-auto scroll-px-8 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
@@ -201,10 +206,11 @@
                 title={tabDisplayTitle(tab)}
                 class={cn(
                   'flex min-w-0 flex-1 items-center gap-2 pl-2.5 text-left text-ui-xs leading-none transition-colors duration-100',
-                  // Inactive, unpinned tabs don't reserve the close button's width
-                  // (that left a dead gap after every title); the button overlays
-                  // the title's end on hover, which fades out beneath it.
-                  active || tab.pinned ? 'pr-1' : 'pr-3 group-hover/tab:[mask-image:linear-gradient(to_right,black_calc(100%-2.25rem),transparent_calc(100%-1rem))]',
+                  // Every tab keeps the close button's slot, shown or not, so a
+                  // tab is the same width active, inactive and hovered: the
+                  // overlaid button covered the title's end on hover and the
+                  // tab grew when it became active.
+                  'pr-1',
                   active ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
                 )}
                 onclick={() => { if (_suppressTabClick) { _suppressTabClick = false; return } onselect(tab.id) }}
@@ -218,7 +224,7 @@
                 <button
                   type="button"
                   class={cn(
-                    'hit-area mr-1.5 inline-flex size-5 shrink-0 self-center items-center justify-center rounded-md transition-opacity duration-100',
+                    'hit-area mr-1 inline-flex size-5 shrink-0 self-center items-center justify-center rounded-md transition-opacity duration-100',
                     'text-muted-foreground hover:bg-accent hover:text-foreground',
                     active ? 'opacity-100' : 'opacity-70 group-hover/tab:opacity-100',
                   )}
@@ -235,9 +241,8 @@
                   class={cn(
                     'hit-area inline-flex size-5 shrink-0 self-center items-center justify-center rounded-md transition-opacity duration-100',
                     'text-muted-foreground hover:bg-accent hover:text-foreground',
-                    active
-                      ? 'mr-1.5 opacity-100'
-                      : 'absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover/tab:opacity-100 focus-visible:opacity-100',
+                    'mr-1',
+                    active ? 'opacity-100' : 'opacity-0 group-hover/tab:opacity-100 focus-visible:opacity-100',
                   )}
                   title={$t('tabs.close')}
                   aria-label={$t('tabs.close')}
@@ -316,4 +321,6 @@
       </ContextMenu.Root>
     {/each}
   </div>
+  <!-- A grab handle that is always there, even with the strip full of tabs. -->
+  <div class="h-full w-10 shrink-0" data-tauri-drag-region aria-hidden="true"></div>
 </header>

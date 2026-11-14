@@ -39,8 +39,8 @@
   import { t } from "$lib/i18n.js";
   import { visibleRowCount, soleMatch } from "$lib/sidebar-filter.js";
   import { splitSchemas, isSystemSchema } from "$lib/system-schemas.js";
-  import { aiChatList } from "$lib/stores/ai-chat-bridge.js";
-  import { listConversations } from "$lib/stores/conversations.js";
+  import { aiChatList, requestChat } from "$lib/stores/ai-chat-bridge.js";
+  import { listConversations, deleteConversation, updateConversation } from "$lib/stores/conversations.js";
   import { formatTableRowCount, compareCreated } from "$lib/table-list.js";
   import {
     clampNavSidebarWidth,
@@ -1558,6 +1558,53 @@
   const liveChats = $derived($aiChatList.live && $aiChatList.connectionId === aiChatId)
   const chats = $derived(liveChats ? $aiChatList.chats : storedChats)
   const chatsShown = $derived(chatsShowAll ? chats : chats.slice(0, CHATS_LIMIT))
+  /** Every chat replying, including ones left running in the background. */
+  const chatBusy = $derived($aiChatList.busyIds ?? ($aiChatList.busyId ? [$aiChatList.busyId] : []))
+
+  // Rename and delete from the list. With the AI tab mounted it owns the list,
+  // so the request goes to it; before that, the stored list is changed here.
+  /** @type {string | null} */
+  let renamingChatId = $state(null)
+  let renamingChatTitle = $state('')
+  /** The chat whose delete button has been pressed once (it asks again). */
+  /** @type {string | null} */
+  let confirmDeleteChatId = $state(null)
+  /** @type {ReturnType<typeof setTimeout> | undefined} */
+  let confirmDeleteTimer
+  /** @param {{ id: string, title: string }} chat */
+  function startChatRename(chat) {
+    confirmDeleteChatId = null
+    renamingChatId = chat.id
+    renamingChatTitle = chat.title
+  }
+  async function commitChatRename() {
+    const id = renamingChatId
+    const title = renamingChatTitle.trim()
+    renamingChatId = null
+    if (!id || !title) return
+    if (liveChats) return requestChat({ type: 'rename', id, title })
+    await updateConversation(id, { title }).catch(() => {})
+    storedChats = storedChats.map((c) => (c.id === id ? { ...c, title } : c))
+  }
+  /** @param {string} id */
+  async function deleteChat(id) {
+    if (confirmDeleteChatId !== id) {
+      confirmDeleteChatId = id
+      clearTimeout(confirmDeleteTimer)
+      confirmDeleteTimer = setTimeout(() => (confirmDeleteChatId = null), 3000)
+      return
+    }
+    confirmDeleteChatId = null
+    clearTimeout(confirmDeleteTimer)
+    if (liveChats) return requestChat({ type: 'delete', id })
+    await deleteConversation(id).catch(() => {})
+    storedChats = storedChats.filter((c) => c.id !== id)
+  }
+  /** Focus and select a field as it mounts. @param {HTMLInputElement} el */
+  function selectOnMount(el) {
+    el.focus()
+    el.select()
+  }
 
   // ── Connections at the sidebar's foot ────────────────────────────────────
   const CONNS_LIMIT = 10
@@ -3256,43 +3303,86 @@
       </div>
       {#if chatsOpen}
         <div class="app-scroll min-h-0 overflow-y-auto px-2 pb-2">
-          {#if liveChats && $aiChatList.busyId === 'draft'}
-            <div class="flex h-8 w-full min-w-0 items-center gap-2.5 rounded-md bg-sidebar-accent px-2 text-ui-sm text-foreground">
+          {#if liveChats && chatBusy.includes('draft')}
+            <div class="flex h-7 w-full min-w-0 items-center gap-2 rounded-md bg-sidebar-accent px-2 text-ui-sm text-foreground">
               <span class="min-w-0 flex-1 truncate">New chat</span>
               <span class="flex shrink-0 items-center gap-1 text-ui-2xs text-primary"><Icon name="loader-2" class="size-3 shrink-0 animate-spin" />Working</span>
             </div>
           {/if}
           {#each chatsShown as chat (chat.id)}
             {@const open = aiTabActive && liveChats && $aiChatList.activeId === chat.id}
-            {@const busy = liveChats && $aiChatList.busyId === chat.id}
-            <!-- Two lines, T3's thread row: where it worked (database · schema)
-                 over the title, the time or "Working" at the right. -->
-            <button
-              type="button"
-              class={cn(
-                'flex w-full min-w-0 flex-col gap-0.5 rounded-md px-2 py-1.5 text-left',
-                open ? 'bg-sidebar-accent text-foreground' : 'text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground',
-              )}
-              title={chat.where ? `${chat.title} (${chat.where})` : chat.title}
-              onclick={() => onopenaichat(chat.id)}
-            >
-              {#if chat.where}
-                <span class="flex min-w-0 items-center gap-1.5 text-ui-2xs text-muted-foreground">
-                  <Icon name="database" class="size-3 shrink-0" />
-                  <span class="min-w-0 truncate font-mono">{chat.where}</span>
-                </span>
-              {/if}
-              <span class="flex min-w-0 items-center gap-2 text-ui-sm">
-                <span class="min-w-0 flex-1 truncate">{chat.title}</span>
-                {#if busy}
-                  <span class="flex shrink-0 items-center gap-1 text-ui-2xs text-primary"><Icon name="loader-2" class="size-3 shrink-0 animate-spin" />Working</span>
-                {:else}
-                  <span class="shrink-0 font-mono text-ui-2xs tabular-nums text-muted-foreground/80">{ago(chat.updatedAt)}</span>
+            {@const busy = liveChats && chatBusy.includes(chat.id)}
+            {@const confirming = confirmDeleteChatId === chat.id}
+            <!-- One line per chat: the title, then the time or "Working". On
+                 hover (or focus) the time gives way to rename and delete; where
+                 it worked (database · schema) is in the tooltip. -->
+            {#if renamingChatId === chat.id}
+              <div class="flex h-7 w-full min-w-0 items-center rounded-md bg-sidebar-accent px-1">
+                <input
+                  use:selectOnMount
+                  class="h-6 min-w-0 flex-1 rounded-sm bg-transparent px-1 text-ui-sm text-foreground outline-none ring-1 ring-ring"
+                  aria-label="Chat name"
+                  bind:value={renamingChatTitle}
+                  onkeydown={(e) => {
+                    if (e.key === 'Enter') { e.preventDefault(); void commitChatRename() }
+                    else if (e.key === 'Escape') { e.preventDefault(); renamingChatId = null }
+                  }}
+                  onblur={() => void commitChatRename()}
+                />
+              </div>
+            {:else}
+              <div
+                class={cn(
+                  'group/chat relative flex h-7 w-full min-w-0 items-center rounded-md',
+                  open ? 'bg-sidebar-accent text-foreground' : 'text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground',
+                )}
+              >
+                <button
+                  type="button"
+                  class="flex h-full min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-left text-ui-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  title={chat.where ? `${chat.title}\n${chat.where}` : chat.title}
+                  onclick={() => onopenaichat(chat.id)}
+                  ondblclick={() => startChatRename(chat)}
+                >
+                  <span class="min-w-0 flex-1 truncate">{chat.title}</span>
+                  {#if busy}
+                    <Icon name="loader-2" class="size-3 shrink-0 animate-spin text-primary" aria-label="Working" />
+                  {:else}
+                    <span class={cn('shrink-0 font-mono text-ui-2xs tabular-nums text-muted-foreground/80', !confirming && 'group-hover/chat:invisible group-focus-within/chat:invisible')}>{confirming ? '' : ago(chat.updatedAt)}</span>
+                  {/if}
+                </button>
+                {#if !busy}
+                  <div class={cn('absolute inset-y-0 right-1 flex items-center gap-0.5', confirming ? 'flex' : 'hidden group-hover/chat:flex group-focus-within/chat:flex')}>
+                    {#if !confirming}
+                      <button
+                        type="button"
+                        class="inline-flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-[color,background-color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.97]"
+                        title="Rename"
+                        aria-label="Rename chat"
+                        onclick={() => startChatRename(chat)}
+                      >
+                        <Icon name="pencil" class="size-3 shrink-0" />
+                      </button>
+                    {/if}
+                    <button
+                      type="button"
+                      class={cn(
+                        'inline-flex h-5 shrink-0 items-center justify-center gap-1 rounded-sm transition-[color,background-color,scale] duration-[120ms] ease-[var(--ease-out)] active:scale-[0.97]',
+                        confirming ? 'bg-destructive/12 px-1.5 text-ui-2xs font-medium text-destructive hover:bg-destructive/20' : 'w-5 text-muted-foreground hover:bg-sidebar-accent hover:text-destructive',
+                      )}
+                      title={confirming ? 'Click again to delete' : 'Delete'}
+                      aria-label={confirming ? 'Confirm delete chat' : 'Delete chat'}
+                      onclick={() => void deleteChat(chat.id)}
+                    >
+                      <Icon name="trash-2" class="size-3 shrink-0" />
+                      {#if confirming}Delete{/if}
+                    </button>
+                  </div>
                 {/if}
-              </span>
-            </button>
+              </div>
+            {/if}
           {/each}
-          {#if !chats.length && !(liveChats && $aiChatList.busyId)}
+          {#if !chats.length && !(liveChats && chatBusy.length)}
             <button
               type="button"
               class="flex h-8 w-full items-center gap-2.5 rounded-md px-2 text-ui-sm text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground"

@@ -748,6 +748,8 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     const relNavIdx = virtualRelCols.indexOf(vc)
     focusedCol = relNavIdx >= 0 ? visibleColumns.length + relNavIdx : (focusedCol ?? 0)
     const row = rows[rowIdx] ?? []
+    // A different relationship starts at the full dock, not the last one's fit.
+    if (fkSubview?.kind !== 'reverse' || fkSubview?.label !== vc.label) fkFitHeight = 0
     fkSubview = { rowIdx, kind: 'reverse', label: vc.label, relInfo: vc, data: { loading: true, columns: [], rows: [], error: null } }
     scrollRowIntoViewBesideDock(rowIdx)
     void onfetchrelatedrows({ kind: 'reverse', fromSchema: vc.fromSchema, fromTable: vc.fromTable, fromColumns: vc.fromColumns, toColumns: vc.toColumns, row }).then(res => {
@@ -6264,6 +6266,13 @@ import FilterX from "@lucide/svelte/icons/filter-x";
    *  that holds nothing yet: a fresh or just-resized canvas is blank (or black
    *  in WebKit) and has to be painted. */
   const holdPaint = $derived(loading && columns.length === 0)
+  /** A fetch has finished since mount, so empty columns are the table's own, not "not loaded yet". */
+  let finishedLoad = $state(false)
+  let sawLoading = false
+  $effect(() => {
+    if (loading) sawLoading = true
+    else if (sawLoading) finishedLoad = true
+  })
   /** The canvas has shown a real table at least once. Until then a first load
    *  has no previous frame to hold, and an empty grid sat on screen for the
    *  whole fetch - placeholder rows stand in for it (see the empty states). */
@@ -7641,12 +7650,18 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       if (inner && inner !== el) return
       const { dx, dy } = wheelPixels(e, el.clientHeight)
       if (!dy && !dx) return
+      // Only take the wheel when the grid can move that way. At an edge (or a
+      // small embedded grid that fits, like an AI result) the tick goes to the
+      // page around it: swallowing it trapped the AI chat's scroll under the
+      // pointer whenever a result table was beneath it.
+      const canY = dy < 0 ? el.scrollTop > 0 : el.scrollTop + el.clientHeight < el.scrollHeight - 1
+      const canX = dx < 0 ? el.scrollLeft > 0 : el.scrollLeft + el.clientWidth < el.scrollWidth - 1
       // A trackpad's horizontal swipe arrives as plain deltaX (no Shift).
-      if (dy && el.scrollHeight > el.clientHeight) {
+      if (dy && canY) {
         e.preventDefault()
         scroller.push(0, dy)
       }
-      if (dx && el.scrollWidth > el.clientWidth) {
+      if (dx && canX) {
         e.preventDefault()
         scroller.push(dx, 0)
       }
@@ -7971,6 +7986,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
           }
           // Opening FK sub-view: close JSON expand for the same row (mutually exclusive)
           if (expandedRows.has(idx)) { const s = new Set(expandedRows); s.delete(idx); expandedRows = s }
+          if (fkSubview?.kind !== 'forward') fkFitHeight = 0
           fkSubview = { rowIdx: idx, kind: 'forward', label: fkLbl, colIdx: actualIdx, data: { loading: true, columns: [], rows: [], error: null } }
           scrollRowIntoViewBesideDock(idx)
           void onfetchrelatedrows({ kind: 'forward', fk, row: rows[idx] ?? [] }).then(res => {
@@ -8987,6 +9003,16 @@ import FilterX from "@lucide/svelte/icons/filter-x";
             <!-- Under the grace window: the last frame stays as it is. A quick
                  load lands before anything changes; a slow one gets the
                  placeholder rows above - one loading look, not three. -->
+          {:else if !loading && columns.length === 0 && finishedLoad}
+            <!-- A table with no columns at all is legal in Postgres (TimescaleDB's
+                 cache_inval_* tables are exactly that). It drew as a blank pane
+                 that read as "the data didn't load". -->
+            <div class="pointer-events-none absolute inset-0 z-[3] flex items-center justify-center" role="status" aria-live="polite">
+              <div class="flex flex-col items-center gap-2 px-4 text-center">
+                <Table2 class="size-8 text-muted-foreground" />
+                <p class="text-ui-sm text-muted-foreground">This table has no columns</p>
+              </div>
+            </div>
           {:else if columns.length > 0 && visibleColumns.length === 0}
             <div class="pointer-events-none absolute inset-0 z-[3] flex items-center justify-center" role="status" aria-live="polite">
               <div class="flex flex-col items-center gap-2 px-4 text-center">
@@ -9618,6 +9644,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       fkLabel={fkSubview.label}
       sourceHint={`row ${fkIdx + 1}`}
       bind:fitHeight={fkFitHeight}
+      many={fkSubview.kind === 'reverse'}
       onclose={() => { fkSubview = null }}
       onfullview={() => {
         const sv = fkSubview

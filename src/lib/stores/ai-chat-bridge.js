@@ -12,12 +12,13 @@ import { writable, get } from 'svelte/store'
 
 /**
  * @typedef {{ id: string, title: string, updatedAt: number, where?: string }} ChatRow  - `where`: "database · schema" it last worked in
- * @typedef {{ connectionId: string, chats: ChatRow[], activeId: string | null, busyId: string | null, live: boolean }} ChatListState
- * @typedef {{ type: 'open', id: string } | { type: 'new' }} ChatRequest
+ * @typedef {{ connectionId: string, chats: ChatRow[], activeId: string | null, busyId: string | null, busyIds?: string[], owner?: string, live: boolean }} ChatListState
+ *   - `busyIds`: every chat replying, the one on screen and any left running in the background
+ * @typedef {{ type: 'open', id: string } | { type: 'new' } | { type: 'delete', id: string } | { type: 'rename', id: string, title: string }} ChatRequest
  */
 
 /** @type {import('svelte/store').Writable<ChatListState>} */
-export const aiChatList = writable({ connectionId: '', chats: [], activeId: null, busyId: null, live: false })
+export const aiChatList = writable({ connectionId: '', chats: [], activeId: null, busyId: null, busyIds: [], owner: '', live: false })
 
 /** A request the mounted AiChat has not taken yet. @type {import('svelte/store').Writable<ChatRequest | null>} */
 export const aiChatPending = writable(null)
