@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.8.2] - 2026-11-14
+
+### Changes
+- Aligned connection fields, smaller swatches, keyboard-first staged-changes bar (#178)
+
+
 ## [2.8.1] - 2026-11-14
 
 ### Changes
