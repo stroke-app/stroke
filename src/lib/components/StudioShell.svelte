@@ -41,7 +41,7 @@
   import { createCommandHotkey, matchesCommand } from '$lib/command-hotkey.js'
   import { IS_MAC } from '$lib/shortcuts.js'
   import { findSearchInput, isTypingTarget } from '$lib/focus-search.js'
-  import { appFkAutoExpandJson, cycleTheme, restorePreviousTheme, isCurrentThemeDark, loadSettings, appPaginationMode, appVimMode, appAutoSaveQueries, appStreamResults, appSqlUndo, appSqlEditor, increaseZoom, decreaseZoom, resetZoom, updateSettings } from '$lib/stores/settings.js'
+  import { appFkAutoExpandJson, cycleTheme, restorePreviousTheme, isCurrentThemeDark, loadSettings, appPaginationMode, appVimMode, appAutoSaveQueries, appStreamResults, appSqlUndo, appSqlEditor, appAiInTab, increaseZoom, decreaseZoom, resetZoom, updateSettings } from '$lib/stores/settings.js'
   import { requireUnlock } from '$lib/stores/app-lock.js'
   import { isTextEntryTarget, setVimSubMode } from '$lib/vim/vim.js'
   import { normalizeColumn, columnType } from '$lib/column.js'
@@ -92,6 +92,8 @@
   import Onboarding from './Onboarding.svelte'
   import SettingsDialog from './SettingsDialog.svelte'
   import KeyboardShortcutsDialog from './KeyboardShortcutsDialog.svelte'
+  import { requestChat } from '$lib/stores/ai-chat-bridge.js'
+  import { aiChatKey, chatBelongsTo } from '$lib/ai-chat-key.js'
   import InsiderDialog from './InsiderDialog.svelte'
   import AboutDialog from './AboutDialog.svelte'
   import ReportIssueDialog from './ReportIssueDialog.svelte'
@@ -224,6 +226,8 @@
     createDataDiffTab,
     findDataDiffTab,
     createLicenseTab,
+    createAiTab,
+    findAiTab,
     findLicenseTab,
     findTableTab,
     findSchemaTab,
@@ -1185,6 +1189,7 @@
     if (activeTab?.kind === 'orm') ormEverOpened = true
     if (activeTab?.kind === 'security') securityEverOpened = true
     if (activeTab?.kind === 'logs') logsEverOpened = true
+    if (activeTab?.kind === 'ai') aiTabEverOpened = true
     if (activeTab?.kind === 'insights') insightsEverOpened = true
     if (activeTab?.kind === 'advisor') advisorEverOpened = true
     if (activeTab?.kind === 'golf') golfEverOpened = true
@@ -2099,6 +2104,10 @@ let rowSearch = $state('')
       : '',
   )
 
+  /** AI chats follow the connection, not the database (lib/ai-chat-key.js). */
+  const aiChatId = $derived(aiChatKey(connection))
+  const aiChatMatch = $derived((/** @type {string} */ k) => chatBelongsTo(k, connection))
+
   // ID of the currently-active saved connection (for highlighting in the palette)
   const activeConnectionId = $derived(
     connection
@@ -2863,6 +2872,9 @@ let rowSearch = $state('')
   }
   /** The full-window AI chat, so the title bar's sidebar button can drive its chat list. @type {any} */
   let aiFullRef = $state(null)
+  /** The AI chat in its tab (beta), for messages sent from elsewhere. @type {any} */
+  let aiTabRef = $state(null)
+  let aiTabEverOpened = $state(false)
   let terminalDockOpen = $state(false)
   let terminalDockEver = $state(false)
   let terminalDockHeight = $state(Number(loadLayout().terminalDockHeight) || 260)
@@ -3685,14 +3697,14 @@ let rowSearch = $state('')
 
   /** Open where AI messages go: the sidebar, or full AI mode while it is off. */
   function openAiSurface() {
-    if (!AI_SIDEBAR_ENABLED) { enterAiMode(); return }
+    if (!AI_SIDEBAR_ENABLED) { openAiTab(); return }
     if (!aiSidebarOpen) {
       aiSidebarOpen = true
       aiSidebarEverOpened = true
       saveLayout({ aiSidebarOpen: true })
     }
   }
-  const aiTargetRef = () => (AI_SIDEBAR_ENABLED ? aiSidebarRef : aiFullRef)
+  const aiTargetRef = () => (AI_SIDEBAR_ENABLED ? aiSidebarRef : $appAiInTab ? aiTabRef : aiFullRef)
 
   function toggleStatusBar() {
     statusBarVisible = !statusBarVisible
@@ -4000,9 +4012,24 @@ let rowSearch = $state('')
     clearTableEditor()
   }
 
+  /** AI chat: a tab beside the others (beta setting), or the window's AI mode. */
   function openAiTab() {
     if (!$hasPro) { showProGate = true; return }
+    if ($appAiInTab && connection) {
+      if (aiMode) exitAiMode()
+      openSingletonTab({ find: findAiTab, create: createAiTab })
+      return
+    }
     enterAiMode()
+  }
+
+  /**
+   * The sidebar's Chats list: open that chat (or a new one) in the AI tab.
+   * @param {string | null} id
+   */
+  function openAiChat(id) {
+    requestChat(id ? { type: 'open', id } : { type: 'new' })
+    openAiTab()
   }
 
   // Open a pro-gated singleton tab: focus it if already open, otherwise create,
@@ -4559,7 +4586,7 @@ let rowSearch = $state('')
   // belong to a group.
   /** @param {StudioTab} t */
   function isGroupable(t) {
-    return t.kind !== 'ai'
+    return $appAiInTab || t.kind !== 'ai'
   }
 
   /**
@@ -7499,6 +7526,9 @@ let rowSearch = $state('')
 
   function enterAiMode() {
     if (!connection) return
+    // AI in a tab (beta): every way into AI mode (⌘⇧E, the title bar, the
+    // palette) opens the tab instead.
+    if ($appAiInTab) { openSingletonTab({ find: findAiTab, create: createAiTab }); return }
     aiMode = true
     saveAiMode(true)
   }
@@ -8998,7 +9028,7 @@ let rowSearch = $state('')
   {#snippet tabStrip()}
     {#if tabsInTitle}
       <TabBar
-            tabs={tabs.filter((t) => t.kind !== 'ai')}
+            tabs={$appAiInTab ? tabs : tabs.filter((t) => t.kind !== 'ai')}
             {activeTabId}
             onselect={(id) => activateTab(id)}
             onclose={closeTab}
@@ -9050,6 +9080,11 @@ let rowSearch = $state('')
           </div>
         {/snippet}
       <Sidebar
+        aiInTab={$appAiInTab && $hasPro}
+        aiTabActive={activeTab?.kind === 'ai'}
+        aiChatId={aiChatId}
+        aiChatMatch={aiChatMatch}
+        onopenaichat={openAiChat}
         onopensettings={() => (showSettingsModal = true)}
         onopenshortcuts={() => (showShortcutsModal = true)}
         oncheckupdates={() => void updateDialog?.checkNow?.()}
@@ -9293,7 +9328,10 @@ let rowSearch = $state('')
               bind:this={aiFullRef}
               externalToggle
               schemaContext={{ ...aiSchemaContext, activeTable: null, columns: [], primaryKey: [], foreignKeys: [] }}
-              {connectionId}
+              connectionId={aiChatId}
+              chatMatch={aiChatMatch}
+              database={connection?.database ?? ''}
+              connectionConfig={connection}
               isActive={aiMode}
               mode="full"
               onexit={exitAiMode}
@@ -9331,7 +9369,7 @@ let rowSearch = $state('')
              (T3 has one row). A second tab brings the strip back. -->
         {#if tabBarVisible && !tabsInTitle}
           <TabBar
-            tabs={tabs.filter((t) => t.kind !== 'ai')}
+            tabs={$appAiInTab ? tabs : tabs.filter((t) => t.kind !== 'ai')}
             {activeTabId}
             onselect={(id) => activateTab(id)}
             onclose={closeTab}
@@ -9379,7 +9417,7 @@ let rowSearch = $state('')
 
       {#snippet sharedContent()}
       {#if activeTab?.kind === 'ai'}
-        <!-- AI is handled via AI mode toggle -->
+        <!-- AI in a tab (beta): drawn by the kept-alive block below -->
       {:else if activeTab?.kind === 'schema'}
         <svelte:boundary failed={tabError}>
           {#await import('./SchemaPage.svelte')}<TabLoading />{:then { default: SchemaPage }}
@@ -9437,6 +9475,35 @@ let rowSearch = $state('')
           <svelte:boundary failed={tabError}>
             {#await import('./BackupPage.svelte')}<TabLoading />{:then { default: BackupPage }}
               <BackupPage dbType={dbType} activeSchema={activeSchema} {schemas} tables={tables.map((t) => ({ name: t.name, rowCount: t.rowCount }))} />
+            {/await}
+          </svelte:boundary>
+        </div>
+      {/if}
+
+      <!-- AI chat tab (beta) - mount once, keep alive so a reply keeps streaming
+           while you look at a table. Its chats are listed in the sidebar. -->
+      {#if aiTabEverOpened && $appAiInTab}
+        <div
+          class={activeTab?.kind === 'ai' ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}
+          inert={activeTab?.kind !== 'ai' || undefined}
+        >
+          <svelte:boundary failed={tabError}>
+            {#await import('./AiChat.svelte')}<TabLoading />{:then { default: AiChat }}
+              <AiChat
+                bind:this={aiTabRef}
+                listInSidebar
+                schemaContext={{ ...aiSchemaContext, activeTable: null, columns: [], primaryKey: [], foreignKeys: [] }}
+                connectionId={aiChatId}
+                chatMatch={aiChatMatch}
+                database={connection?.database ?? ''}
+                connectionConfig={connection}
+                isActive={activeTab?.kind === 'ai'}
+                mode="full"
+                onwritesql={(sql) => void handleAiWriteSql(sql)}
+                onopenmodelsettings={() => (showAiModelSettings = true)}
+                onopendiagramspage={openDiagramsTab}
+                onschemadirty={reloadAfterAiDdl}
+              />
             {/await}
           </svelte:boundary>
         </div>
@@ -10527,7 +10594,10 @@ let rowSearch = $state('')
           <AiSidebar
             bind:this={aiSidebarRef}
             schemaContext={aiSchemaContext}
-            {connectionId}
+            connectionId={aiChatId}
+            chatMatch={aiChatMatch}
+            database={connection?.database ?? ''}
+            connectionConfig={connection}
             isActive={aiSidebarOpen && !aiMode}
             currentView={activeTab?.kind ?? 'welcome'}
             currentSql={sqlText}

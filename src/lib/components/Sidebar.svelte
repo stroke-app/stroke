@@ -39,6 +39,8 @@
   import { t } from "$lib/i18n.js";
   import { visibleRowCount, soleMatch } from "$lib/sidebar-filter.js";
   import { splitSchemas, isSystemSchema } from "$lib/system-schemas.js";
+  import { aiChatList } from "$lib/stores/ai-chat-bridge.js";
+  import { listConversations } from "$lib/stores/conversations.js";
   import { formatTableRowCount, compareCreated } from "$lib/table-list.js";
   import {
     clampNavSidebarWidth,
@@ -78,6 +80,16 @@
     connections = [],
     /** id of the currently live connection (Connections panel highlight). */
     activeConnectionId = "",
+    /** AI chat opens as a tab (beta): list its chats here, above Connections. */
+    aiInTab = false,
+    /** The connection's chat key, and the test for its stored chats (lib/ai-chat-key.js). */
+    aiChatId = "",
+    /** @type {((key: string) => boolean) | null} */
+    aiChatMatch = null,
+    /** The AI tab is the active tab: the open chat's row is highlighted. */
+    aiTabActive = false,
+    /** Open a chat in the AI tab; null starts a new one. @type {(id: string | null) => void} */
+    onopenaichat = () => {},
     /** @type {(c: import('$lib/stores/connections.js').SavedConnection) => void} */
     onswitchconnection = () => {},
     onaddconnection = () => {},
@@ -1518,6 +1530,30 @@
   }
 
 
+  // ── Chats (AI in a tab, beta) ────────────────────────────────────────────
+  // The mounted AI tab publishes its list (and which chat is replying); until
+  // it mounts, the stored list for this connection stands in.
+  const CHATS_LIMIT = 8
+  let chatsOpen = $state((() => { try { return localStorage.getItem('stroke:sidebar-chats-open') !== '0' } catch { return true } })())
+  let chatsShowAll = $state(false)
+  /** @type {import('$lib/stores/ai-chat-bridge.js').ChatRow[]} */
+  let storedChats = $state([])
+  $effect(() => {
+    const id = aiInTab ? aiChatId : ''
+    const match = aiChatMatch
+    if (!id) { storedChats = []; return }
+    // Re-read when the live list goes away (the tab closed): it may have changed.
+    void $aiChatList.live
+    let stale = false
+    listConversations(match ?? id)
+      .then((list) => { if (!stale) storedChats = list.map((c) => ({ id: c.id, title: c.title || 'New chat', updatedAt: c.updatedAt, where: [c.database, c.schema].filter(Boolean).join(' · ') })) })
+      .catch(() => {})
+    return () => { stale = true }
+  })
+  const liveChats = $derived($aiChatList.live && $aiChatList.connectionId === aiChatId)
+  const chats = $derived(liveChats ? $aiChatList.chats : storedChats)
+  const chatsShown = $derived(chatsShowAll ? chats : chats.slice(0, CHATS_LIMIT))
+
   // ── Connections at the sidebar's foot ────────────────────────────────────
   const CONNS_LIMIT = 10
   let connsOpen = $state((() => { try { return localStorage.getItem('stroke:sidebar-conns-open') !== '0' } catch { return true } })())
@@ -1748,6 +1784,7 @@
       </div>
       <RedisSidebarNav />
     </div>
+    {@render chatsSection()}
     {@render connectionsSection()}
     {:else if navSidebarPanel === "tables"}
     <div class="flex min-h-0 flex-1 flex-col">
@@ -3099,6 +3136,7 @@
         {/if}
       {/each}
     </div>
+    {@render chatsSection()}
     {@render connectionsSection()}
     {:else if navSidebarPanel === "connections"}
       <ConnectionsSidebarPanel
@@ -3164,6 +3202,100 @@
   bind:cascade={dangerCascade}
   onconfirm={(c) => confirmDanger(c)}
 />
+
+{#snippet chatsSection()}
+  <!-- AI chats (beta, AI in a tab): the T3 thread list. A chat that is
+       replying says so in place of its time, so you can read a table while it
+       works and see when it is done. -->
+  {#if aiInTab && aiChatId}
+    <div class="flex max-h-[40%] shrink-0 flex-col pt-2">
+      <div class="flex h-9 shrink-0 items-center gap-1 pr-2 pl-4">
+        <button
+          type="button"
+          class="flex h-full min-w-0 flex-1 items-center gap-2 text-ui-sm text-foreground/80 hover:text-foreground"
+          aria-expanded={chatsOpen}
+          onclick={() => {
+            chatsOpen = !chatsOpen
+            try { localStorage.setItem('stroke:sidebar-chats-open', chatsOpen ? '1' : '0') } catch {}
+          }}
+        >
+          <span class="flex-1 text-left">Chats</span>
+          {#if chats.length}<span class="font-mono text-ui-2xs tabular-nums">{chats.length}</span>{/if}
+          <Icon name={chatsOpen ? 'chevron-down' : 'chevron-right'} class="size-3 shrink-0" />
+        </button>
+        <button
+          type="button"
+          class="hit-area inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground"
+          title="New chat"
+          aria-label="New chat"
+          onclick={() => onopenaichat(null)}
+        >
+          <Icon name="plus" class="size-3.5 shrink-0" />
+        </button>
+      </div>
+      {#if chatsOpen}
+        <div class="app-scroll min-h-0 overflow-y-auto px-2 pb-2">
+          {#if liveChats && $aiChatList.busyId === 'draft'}
+            <div class="flex h-8 w-full min-w-0 items-center gap-2.5 rounded-md bg-sidebar-accent px-2 text-ui-sm text-foreground">
+              <span class="min-w-0 flex-1 truncate">New chat</span>
+              <span class="flex shrink-0 items-center gap-1 text-ui-2xs text-primary"><Icon name="loader-2" class="size-3 shrink-0 animate-spin" />Working</span>
+            </div>
+          {/if}
+          {#each chatsShown as chat (chat.id)}
+            {@const open = aiTabActive && liveChats && $aiChatList.activeId === chat.id}
+            {@const busy = liveChats && $aiChatList.busyId === chat.id}
+            <!-- Two lines, T3's thread row: where it worked (database · schema)
+                 over the title, the time or "Working" at the right. -->
+            <button
+              type="button"
+              class={cn(
+                'flex w-full min-w-0 flex-col gap-0.5 rounded-md px-2 py-1.5 text-left',
+                open ? 'bg-sidebar-accent text-foreground' : 'text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground',
+              )}
+              title={chat.where ? `${chat.title} (${chat.where})` : chat.title}
+              onclick={() => onopenaichat(chat.id)}
+            >
+              {#if chat.where}
+                <span class="flex min-w-0 items-center gap-1.5 text-ui-2xs text-muted-foreground">
+                  <Icon name="database" class="size-3 shrink-0" />
+                  <span class="min-w-0 truncate font-mono">{chat.where}</span>
+                </span>
+              {/if}
+              <span class="flex min-w-0 items-center gap-2 text-ui-sm">
+                <span class="min-w-0 flex-1 truncate">{chat.title}</span>
+                {#if busy}
+                  <span class="flex shrink-0 items-center gap-1 text-ui-2xs text-primary"><Icon name="loader-2" class="size-3 shrink-0 animate-spin" />Working</span>
+                {:else}
+                  <span class="shrink-0 font-mono text-ui-2xs tabular-nums text-muted-foreground/80">{ago(chat.updatedAt)}</span>
+                {/if}
+              </span>
+            </button>
+          {/each}
+          {#if !chats.length && !(liveChats && $aiChatList.busyId)}
+            <button
+              type="button"
+              class="flex h-8 w-full items-center gap-2.5 rounded-md px-2 text-ui-sm text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground"
+              onclick={() => onopenaichat(null)}
+            >
+              <Icon name="bot" class="size-4 shrink-0" />
+              Ask about this database
+            </button>
+          {/if}
+          {#if chats.length > CHATS_LIMIT}
+            <button
+              type="button"
+              class="flex h-8 w-full items-center gap-2.5 rounded-md px-2 text-ui-sm text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground"
+              onclick={() => (chatsShowAll = !chatsShowAll)}
+            >
+              <Icon name={chatsShowAll ? 'chevron-up' : 'chevron-down'} class="size-4 shrink-0" />
+              {chatsShowAll ? 'Show less' : `Show ${chats.length - CHATS_LIMIT} more`}
+            </button>
+          {/if}
+        </div>
+      {/if}
+    </div>
+  {/if}
+{/snippet}
 
 {#snippet connectionsSection()}
   <!-- Connections, pinned to the sidebar's foot (T3's "Settled" pattern): a

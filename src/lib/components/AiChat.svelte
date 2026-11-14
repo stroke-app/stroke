@@ -43,7 +43,7 @@
   import { Input } from "$lib/components/ui/input/index.js";
   import { Label } from "$lib/components/ui/label/index.js";
   import { cn } from "$lib/utils.js";
-  import { executeSql, aiWebSearch, aiFetchPage, saveExportAs, agentStart, agentSend, agentInterrupt, agentStop } from "$lib/api.js";
+  import { executeSql, executeSqlOnConnection, aiWebSearch, aiFetchPage, saveExportAs, agentStart, agentSend, agentInterrupt, agentStop } from "$lib/api.js";
   import { queryLanguageFor, sampleQuery, describeFromSample } from "$lib/ai-query-languages.js";
   import {
     profileAgent,
@@ -142,6 +142,7 @@
   import { loadLayout, setNavSidebarWidth, clampNavSidebarWidth, NAV_SIDEBAR_MIN, NAV_WIDTH_EVENT } from "$lib/stores/layout.js";
   import Brain from "@lucide/svelte/icons/brain";
   import AiModelPicker from "./AiModelPicker.svelte";
+  import { publishChatList, aiChatPending, takeChatRequest } from "$lib/stores/ai-chat-bridge.js";
   import {
     listConversations,
     createConversation,
@@ -238,6 +239,12 @@
       foreignKeys: [],
     },
     connectionId = "",
+    /** Which stored chats are this connection's, older keys included (lib/ai-chat-key.js). @type {((key: string) => boolean) | null} */
+    chatMatch = null,
+    /** The database the session is in, saved on each chat with its schema. */
+    database = "",
+    /** The live connection's config: execute_sql's `database` argument runs on a copy of it pointed at that database. @type {Record<string, any> | null} */
+    connectionConfig = null,
     isActive = false,
     /** 'tab' = embedded in tab, 'full' = fullscreen AI mode */
     mode = /** @type {'tab' | 'full'} */ ("tab"),
@@ -248,6 +255,8 @@
     onopenshortcuts = /** @type {(() => void) | null} */ (null),
     /** The window's own sidebar button drives the chat list (AI mode): no second toggle in here. */
     externalToggle = false,
+    /** AI in a tab (beta): the app's sidebar lists the chats, so this hides its own list. */
+    listInSidebar = false,
     /** @param {string} sql */
     onwritesql = (sql) => {},
     /** Open the dedicated AI model settings dialog. */
@@ -380,8 +389,42 @@
   let activeConvId = $state(null);
 
   async function loadConvList() {
-    convList = await listConversations(connectionId || undefined);
+    convList = await listConversations(chatMatch ?? (connectionId || undefined));
   }
+
+  /** Engines where execute_sql's `database` argument can open another database by name. */
+  const CROSS_DB_ENGINES = new Set(["postgres", "cockroachdb", "mysql", "mariadb", "mssql", "clickhouse"]);
+
+  // ── The sidebar's copy of the list (AI in a tab) ────────────────────────────
+  /** "shop · public": where a chat last worked. @param {any} c */
+  function chatWhere(c) {
+    return [c.database, c.schema].filter(Boolean).join(" · ");
+  }
+  $effect(() => {
+    if (!listInSidebar) return;
+    publishChatList({
+      connectionId,
+      chats: convList.map((c) => ({ id: c.id, title: displayTitle(c), updatedAt: c.updatedAt, where: chatWhere(c) })),
+      activeId: activeConvId,
+      busyId: loading ? activeConvId ?? "draft" : null,
+      live: true,
+    });
+  });
+  onDestroy(() => {
+    if (listInSidebar) publishChatList({ live: false, busyId: null });
+  });
+
+  /** Open or start the chat the sidebar asked for. */
+  $effect(() => {
+    if (!listInSidebar || !$aiChatPending) return;
+    const req = takeChatRequest();
+    if (!req) return;
+    void (async () => {
+      if (req.type === "new") return newConversation();
+      if (!convList.some((c) => c.id === req.id)) await loadConvList();
+      await selectConversation(req.id);
+    })();
+  });
 
   // ── Open conversation tabs (browser-style, persisted per connection) ───────
   const AI_TABS_KEY = "stroke:ai-chat-tabs";
@@ -578,15 +621,20 @@
       // save runs after every turn, so re-deriving it from the first message
       // clobbered the generated title moments after it landed, which is why every
       // conversation in the list stayed named after its opening word.
+      // Where it last worked: the chat follows the connection across databases.
+      const where = { schema: schemaContext.activeSchema, database };
       await updateConversation(activeConvId, {
         items: plainItems,
         apiHistory: plainHistory,
         agentNative: agentNative ? { ...agentNative } : null,
+        ...where,
       });
+      convList = convList.map((c) => (c.id === activeConvId ? { ...c, ...where, updatedAt: Date.now() } : c));
     } else {
       const conv = await createConversation({
         title,
         schema: schemaContext.activeSchema,
+        database,
         connectionId,
         items: plainItems,
         apiHistory: plainHistory,
@@ -3049,15 +3097,30 @@
             return;
           }
         }
+        // Another database on the same server: the model passes `database`
+        // (a database it just created, or one the user named). It runs over a
+        // short-lived connection with the same login, never in the current one.
+        const otherDb = String(args.database ?? "").trim();
+        const crossDb = !!otherDb && otherDb !== (connectionConfig?.database ?? database);
+        if (crossDb && !CROSS_DB_ENGINES.has(String(connectionConfig?.type ?? ""))) {
+          apiHistory.push({
+            role: "tool",
+            tool_call_id: call.id,
+            content: JSON.stringify({ error: `This engine can't open another database by name. Run it in the connected database (${connectionConfig?.database || database || "this one"}) or ask the user to connect to ${otherDb}.` }),
+          });
+          return;
+        }
         const { sql: guardedSql, capped: frontendCapped } =
           guardSelectLimit(sql);
         // One row in the turn's step timeline, not a card of its own: running,
         // then done with its time and row count, or failed with the error.
         const stepId = String(call.id || uid());
-        addBuiltinStep({ id: stepId, tool: "execute_sql", op: "query", detail: sql, status: "running", startedAt: Date.now() });
+        addBuiltinStep({ id: stepId, tool: "execute_sql", op: "query", detail: crossDb ? `-- in ${otherDb}\n${sql}` : sql, status: "running", startedAt: Date.now() });
         scrollBottomSoon();
         try {
-          const data = await executeSql(guardedSql);
+          const data = crossDb
+            ? await executeSqlOnConnection(/** @type {any} */ ({ ...connectionConfig, database: otherDb }), guardedSql)
+            : await executeSql(guardedSql);
           if (isDdl(sql)) onschemadirty();
           const cols = data.columns ?? [];
           const rows = data.rows ?? [];
@@ -4097,7 +4160,7 @@
 
 <div class="flex h-full min-h-0 overflow-hidden bg-background">
   <!-- ── Conversation sidebar ───────────────────────────────────────── -->
-  {#if sidebarVisible}
+  {#if sidebarVisible && !listInSidebar}
     <aside
       class="flex shrink-0 flex-col border-r border-border/50 bg-sidebar"
       style="width: calc({sidebarWidth}px * var(--app-scale, 1))"
@@ -4515,7 +4578,7 @@
          In full mode they float over the transcript's top corners; docked, they
          sit at the ends of the conversation tab bar that is there anyway. -->
     {#snippet chatListButton()}
-      {#if !externalToggle}
+      {#if !externalToggle && !listInSidebar}
       <button
         type="button"
         class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
@@ -5970,7 +6033,7 @@
                   const { clearConversations } = await import(
                     "$lib/stores/conversations.js"
                   );
-                  await clearConversations(connectionId || undefined);
+                  await clearConversations(chatMatch ?? (connectionId || undefined));
                   convList = [];
                   await newConversation();
                 }}

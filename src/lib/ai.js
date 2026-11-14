@@ -400,6 +400,12 @@ export const AI_TOOLS = [
         type: 'object',
         properties: {
           sql: { type: 'string', description: 'Valid SQL to execute against the connected database.' },
+          database: {
+            type: 'string',
+            description:
+              'Optional. Run in another database on the same server, over the same login: one you just made with CREATE DATABASE, or one the user names. ' +
+              'Use it instead of asking the user to switch connections. Omit for the connected database. CREATE DATABASE itself runs alone, outside BEGIN.',
+          },
         },
         required: ['sql'],
       },
@@ -2034,7 +2040,7 @@ export function buildSystemPrompt(ctx) {
     mysql: `Use MySQL syntax. Important rules:
 - Backtick identifiers (\`table\`, \`column\`), NOT double-quotes
 - String values in single quotes ('Alice'). The connection runs with ANSI_QUOTES, so "Alice" is read as a column name and fails with "Unknown column"
-- Each execute_sql call may take a different pooled connection, so a USE does not carry over to the next call. Qualify names (\`shop\`.\`orders\`) instead. "Create a database" for a demo or seed request: make the tables in the connected database unless the user asks for a separate one; if you do CREATE DATABASE, qualify every later table with it
+- Each execute_sql call may take a different pooled connection, so a USE does not carry over to the next call. For another database, pass execute_sql's \`database\` or qualify names (\`shop\`.\`orders\`)
 - LIMIT not FETCH FIRST; GROUP_CONCAT not string_agg; IFNULL/IF not COALESCE/CASE for simple null checks
 - Use NOW() for current timestamp; DATE_FORMAT() for date formatting
 - TIMESTAMP limitation (error 1293): only ONE TIMESTAMP column per table may have DEFAULT CURRENT_TIMESTAMP or ON UPDATE CURRENT_TIMESTAMP. Use DATETIME for additional auto-timestamp columns, DATETIME has no such restriction and is preferred for most use cases

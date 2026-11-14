@@ -391,6 +391,9 @@
     settings = updateSettings({ cmdkAiEnabled: !settings.cmdkAiEnabled });
   }
 
+  function toggleAiInTab() {
+    settings = updateSettings({ aiInTab: !settings.aiInTab });
+  }
   function toggleTreeSidebar() {
     settings = updateSettings({ sidebarStyle: settings.sidebarStyle === 'tree' ? 'classic' : 'tree' });
   }
@@ -1038,6 +1041,9 @@
   {/if}
   {#if show('Tree sidebar', 'Beta, browse connections, schemas, tables and columns as one explorer tree')}
     {@render switchRow('Tree sidebar (beta)', 'Beta, one explorer tree in the sidebar: connection, database, schema, tables, views and routines, columns. Replaces the Tables, Objects and Databases tabs; Queries, Recent and Find & replace stay. Off by default.', settings.sidebarStyle === 'tree', toggleTreeSidebar)}
+  {/if}
+  {#if show('AI chat in a tab', 'Beta, open AI chat as a tab beside your tables, with its chats in the sidebar')}
+    {@render switchRow('AI chat in a tab (beta)', 'Beta, AI chat opens as a tab beside your tables and queries, and its chats are listed in the sidebar, instead of taking over the whole window. Off by default.', settings.aiInTab, toggleAiInTab)}
   {/if}
   {#if show('Load large values on demand', 'Fetch a column that averages megabytes as a size, and load a cell when you open it')}
     {@render switchRow('Load large values on demand', 'A column averaging half a megabyte a row arrives as its size, and the value loads when you open the cell. Off fetches every value with the page, which is what it did before, and what makes such a table take ten seconds to open. PostgreSQL.', settings.lazyWideColumns, toggleLazyWideColumns)}

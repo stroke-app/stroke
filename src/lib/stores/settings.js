@@ -107,7 +107,7 @@ const markQualifyDefaultApplied = () => {
 /** @typedef {'claude' | 'geist' | 'serif' | 'apple' | 'inter' | 'mono' | 'fira' | 'plex' | 'space' | 'source'} FontId */
 /** @typedef {'regular' | 'light' | 'bold'} IconStyleId */
 /** @typedef {'lucide' | 'hugeicons' | 'phosphor'} IconSetId */
-/** @typedef {{ theme: ThemeId, zoom: number, font: FontId, iconStyle: IconStyleId, iconSet: IconSetId, tableStyle: TableStyleId, jsonTheme: JsonThemeId, editorTheme: import('$lib/themes/editor-themes.js').EditorThemeId, mcpAutoStart: boolean, launchAtLogin: boolean, autoUpdate: boolean, autoReconnectOnStartup: boolean, previewDmlBeforeApply: boolean, defaultDataView: string, paginationMode: string, maxQueryHistory: number, connectTimeoutMs: number, socketTimeoutMs: number, maxAllowedPacket: number, sessionTimezone: string, vimMode: boolean, cmdkAiEnabled: boolean, liveModeEnabled: boolean, sidebarStyle: SidebarStyleId, lazyWideColumns: boolean, nullSortOrder: string, agentChatFontSize: number, agentCodeFontSize: number, agentThinkingStyle: string, agentShowQueryCards: boolean, agentWebAccess: boolean, tableTextAlign: string, telemetry: boolean, jsonWordWrap: boolean, nativeScroll: boolean, rowSpacing: RowSpacingId, motion: MotionId, zebraRows: boolean, showRowNumbers: boolean, showMenuBar: boolean, numberGrouping: boolean, imagePreview: boolean, openUrlsOnClick: boolean, highlightActiveRow: boolean, fkAutoExpandJson: boolean, gridFontSize: number, autoSaveQueries: boolean, streamResults: boolean, sqlUndo: boolean, sidebarComments: boolean, sidebarRememberGroups: boolean, sqlFormat: import('$lib/sql-format-options.js').SqlFormatOptions, sqlEditor: import('$lib/sql-editor-options.js').SqlEditorOptions }} AppSettings */
+/** @typedef {{ theme: ThemeId, zoom: number, font: FontId, iconStyle: IconStyleId, iconSet: IconSetId, tableStyle: TableStyleId, jsonTheme: JsonThemeId, editorTheme: import('$lib/themes/editor-themes.js').EditorThemeId, mcpAutoStart: boolean, launchAtLogin: boolean, autoUpdate: boolean, autoReconnectOnStartup: boolean, previewDmlBeforeApply: boolean, defaultDataView: string, paginationMode: string, maxQueryHistory: number, connectTimeoutMs: number, socketTimeoutMs: number, maxAllowedPacket: number, sessionTimezone: string, vimMode: boolean, cmdkAiEnabled: boolean, liveModeEnabled: boolean, sidebarStyle: SidebarStyleId, aiInTab: boolean, lazyWideColumns: boolean, nullSortOrder: string, agentChatFontSize: number, agentCodeFontSize: number, agentThinkingStyle: string, agentShowQueryCards: boolean, agentWebAccess: boolean, tableTextAlign: string, telemetry: boolean, jsonWordWrap: boolean, nativeScroll: boolean, rowSpacing: RowSpacingId, motion: MotionId, zebraRows: boolean, showRowNumbers: boolean, showMenuBar: boolean, numberGrouping: boolean, imagePreview: boolean, openUrlsOnClick: boolean, highlightActiveRow: boolean, fkAutoExpandJson: boolean, gridFontSize: number, autoSaveQueries: boolean, streamResults: boolean, sqlUndo: boolean, sidebarComments: boolean, sidebarRememberGroups: boolean, sqlFormat: import('$lib/sql-format-options.js').SqlFormatOptions, sqlEditor: import('$lib/sql-editor-options.js').SqlEditorOptions }} AppSettings */
 
 /**
  * UI type scale in design pixels: `[step, font-size, line-height?]`, matching
@@ -600,6 +600,9 @@ export const DEFAULT_SETTINGS = {
   // Beta: 'tree' swaps the sidebar's Tables / Objects / Databases tabs for one
   // explorer tree (connection > database > schema > groups > objects > columns).
   sidebarStyle: 'classic',
+  // Beta: AI chat opens as a tab beside your tables, its chats listed in the
+  // sidebar, instead of taking over the whole window.
+  aiInTab: false,
   // On by default. A column averaging half a megabyte a row is fetched as a
   // size, and its value is loaded per cell on demand - the difference between a
   // table opening in a second and in eleven. Off restores the old behaviour:
@@ -713,6 +716,9 @@ export const appLiveMode = writable(false)
 /** @typedef {'classic' | 'tree'} SidebarStyleId */
 /** Reactive: which sidebar style is showing - the tab strip, or the Tree (beta). */
 export const appSidebarStyle = writable(/** @type {SidebarStyleId} */ ('classic'))
+
+/** Reactive: AI chat opens as a tab, chats in the sidebar (beta), instead of AI mode. */
+export const appAiInTab = writable(false)
 
 /** Whether the agent transcript shows a card per executed query. */
 export const appAgentQueryCards = writable(true)
@@ -952,6 +958,7 @@ export function loadSettings() {
     const sidebarRememberGroups = parsed.sidebarRememberGroups !== false
     const liveModeEnabled = parsed.liveModeEnabled === true
     const sidebarStyle = parsed.sidebarStyle === 'tree' ? 'tree' : 'classic'
+    const aiInTab = parsed.aiInTab === true
     const lazyWideColumns = parsed.lazyWideColumns !== false
     const nullSortOrder = NULL_SORT_IDS.includes(parsed.nullSortOrder) ? parsed.nullSortOrder : DEFAULT_NULL_SORT
     const agentChatFontSize = migrateAgentFont(parsed.agentChatFontSize, LEGACY_AGENT_CHAT_FONT, DEFAULT_AGENT_CHAT_FONT)
@@ -960,7 +967,7 @@ export function loadSettings() {
     const agentShowQueryCards = parsed.agentShowQueryCards !== false
     const agentWebAccess = parsed.agentWebAccess === true
     const tableTextAlign = TABLE_ALIGN_IDS.includes(parsed.tableTextAlign) ? parsed.tableTextAlign : DEFAULT_TABLE_ALIGN
-    _settingsCache = { theme, zoom, font, iconStyle, iconSet, tableStyle, jsonTheme, editorTheme, mcpAutoStart, launchAtLogin, autoUpdate, autoReconnectOnStartup, previewDmlBeforeApply, defaultDataView, paginationMode, maxQueryHistory, connectTimeoutMs, socketTimeoutMs, maxAllowedPacket, sessionTimezone, vimMode, cmdkAiEnabled, liveModeEnabled, sidebarStyle, lazyWideColumns, nullSortOrder, agentChatFontSize, agentCodeFontSize, agentThinkingStyle, agentShowQueryCards, agentWebAccess, tableTextAlign, telemetry, jsonWordWrap, nativeScroll, rowSpacing, motion, zebraRows, showRowNumbers, showMenuBar, numberGrouping, imagePreview, openUrlsOnClick, highlightActiveRow, fkAutoExpandJson, gridFontSize, autoSaveQueries, streamResults, sqlUndo, sidebarComments, sidebarRememberGroups, sqlFormat, sqlEditor }
+    _settingsCache = { theme, zoom, font, iconStyle, iconSet, tableStyle, jsonTheme, editorTheme, mcpAutoStart, launchAtLogin, autoUpdate, autoReconnectOnStartup, previewDmlBeforeApply, defaultDataView, paginationMode, maxQueryHistory, connectTimeoutMs, socketTimeoutMs, maxAllowedPacket, sessionTimezone, vimMode, cmdkAiEnabled, liveModeEnabled, sidebarStyle, aiInTab, lazyWideColumns, nullSortOrder, agentChatFontSize, agentCodeFontSize, agentThinkingStyle, agentShowQueryCards, agentWebAccess, tableTextAlign, telemetry, jsonWordWrap, nativeScroll, rowSpacing, motion, zebraRows, showRowNumbers, showMenuBar, numberGrouping, imagePreview, openUrlsOnClick, highlightActiveRow, fkAutoExpandJson, gridFontSize, autoSaveQueries, streamResults, sqlUndo, sidebarComments, sidebarRememberGroups, sqlFormat, sqlEditor }
     if (fontMigrated) {
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify(_settingsCache)) } catch {}
     }
@@ -1249,6 +1256,7 @@ function applySettingsNow(settings, root, theme, zoom, dark) {
   setStore(appSidebarRememberGroups, settings.sidebarRememberGroups !== false)
   setStore(appLiveMode, settings.liveModeEnabled === true)
   setStore(appSidebarStyle, settings.sidebarStyle === 'tree' ? 'tree' : 'classic')
+  setStore(appAiInTab, settings.aiInTab === true)
   setStore(appAgentQueryCards, settings.agentShowQueryCards !== false)
   setStore(appAgentWebAccess, settings.agentWebAccess === true)
   setStore(appTableAlign, TABLE_ALIGN_IDS.includes(settings.tableTextAlign) ? settings.tableTextAlign : DEFAULT_TABLE_ALIGN)
