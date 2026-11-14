@@ -6266,6 +6266,13 @@ import FilterX from "@lucide/svelte/icons/filter-x";
    *  that holds nothing yet: a fresh or just-resized canvas is blank (or black
    *  in WebKit) and has to be painted. */
   const holdPaint = $derived(loading && columns.length === 0)
+  /** A fetch has finished since mount, so empty columns are the table's own, not "not loaded yet". */
+  let finishedLoad = $state(false)
+  let sawLoading = false
+  $effect(() => {
+    if (loading) sawLoading = true
+    else if (sawLoading) finishedLoad = true
+  })
   /** The canvas has shown a real table at least once. Until then a first load
    *  has no previous frame to hold, and an empty grid sat on screen for the
    *  whole fetch - placeholder rows stand in for it (see the empty states). */
@@ -8990,6 +8997,16 @@ import FilterX from "@lucide/svelte/icons/filter-x";
             <!-- Under the grace window: the last frame stays as it is. A quick
                  load lands before anything changes; a slow one gets the
                  placeholder rows above - one loading look, not three. -->
+          {:else if !loading && columns.length === 0 && finishedLoad}
+            <!-- A table with no columns at all is legal in Postgres (TimescaleDB's
+                 cache_inval_* tables are exactly that). It drew as a blank pane
+                 that read as "the data didn't load". -->
+            <div class="pointer-events-none absolute inset-0 z-[3] flex items-center justify-center" role="status" aria-live="polite">
+              <div class="flex flex-col items-center gap-2 px-4 text-center">
+                <Table2 class="size-8 text-muted-foreground" />
+                <p class="text-ui-sm text-muted-foreground">This table has no columns</p>
+              </div>
+            </div>
           {:else if columns.length > 0 && visibleColumns.length === 0}
             <div class="pointer-events-none absolute inset-0 z-[3] flex items-center justify-center" role="status" aria-live="polite">
               <div class="flex flex-col items-center gap-2 px-4 text-center">
