@@ -10,6 +10,7 @@
  * that page, the same way Neon reuses neonctl's client.
  */
 
+use super::SendRetry;
 use super::{http, Choice, CreateOptions, CreateRequest, CreatedDatabase, OAuthConfig, ProviderConnection, ProviderDatabase};
 use serde_json::Value;
 
@@ -28,7 +29,7 @@ const MAX_PAGES: usize = 20;
 
 async fn send(req: reqwest::RequestBuilder, what: &str) -> Result<Value, String> {
     let resp = req
-        .send()
+        .send_retrying()
         .await
         .map_err(|e| format!("Turso request failed ({what}): {}", super::describe(&e)))?;
     let status = resp.status().as_u16();

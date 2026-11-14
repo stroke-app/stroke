@@ -9,6 +9,7 @@
  * `http://localhost:{port}/callback` on any free port.
  */
 
+use super::SendRetry;
 use super::{http, Choice, CreateOptions, CreateRequest, CreatedDatabase, DatabaseStatus, OAuthConfig, ProviderConnection, ProviderDatabase};
 use serde_json::Value;
 
@@ -24,7 +25,7 @@ const API: &str = "https://global.thenile.dev";
 
 async fn send(req: reqwest::RequestBuilder, what: &str) -> Result<Value, String> {
     let resp = req
-        .send()
+        .send_retrying()
         .await
         .map_err(|e| format!("Nile request failed ({what}): {}", super::describe(&e)))?;
     let status = resp.status().as_u16();

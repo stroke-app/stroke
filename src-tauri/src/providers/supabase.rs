@@ -5,6 +5,7 @@
  * `needs_password = true`; the UI prompts for the password once.
  */
 
+use super::SendRetry;
 use super::{http, Choice, CreateOptions, CreateRequest, CreatedDatabase, DatabaseStatus, OAuthConfig, ProviderConnection, ProviderDatabase};
 use serde_json::Value;
 
@@ -24,7 +25,7 @@ async fn get(token: &str, path: &str) -> Result<Value, String> {
     let resp = http()
         .get(format!("{API}{path}"))
         .bearer_auth(token)
-        .send()
+        .send_retrying()
         .await
         .map_err(|e| format!("Supabase request failed: {e}"))?;
     let status = resp.status().as_u16();
@@ -222,7 +223,7 @@ async fn post(token: &str, path: &str, body: &Value) -> Result<Value, String> {
         .post(format!("{API}{path}"))
         .bearer_auth(token)
         .json(body)
-        .send()
+        .send_retrying()
         .await
         .map_err(|e| format!("Supabase request failed: {e}"))?;
     let status = resp.status().as_u16();
