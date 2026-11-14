@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.6.8] - 2026-11-14
+
+### Bug Fixes
+- Opening the schema diagram, relation tree or diagrams no longer closes the sidebar; it stays as you left it (⌘B hides it)
+
+
 ## [2.6.7] - 2026-11-14
 
 ### Improvements
