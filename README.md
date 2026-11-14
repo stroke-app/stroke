@@ -12,7 +12,7 @@ Stroke is a Rust + Svelte app for browsing, editing and querying databases. It s
 
 ## Databases
 
-**Engines:** PostgreSQL, MySQL, MariaDB, CockroachDB, SQLite, Turso / libSQL, Cloudflare D1, ClickHouse, DuckDB, SQL Server and Redis.
+**Engines:** PostgreSQL, MySQL, MariaDB, CockroachDB, SQLite, Turso / libSQL, Cloudflare D1, ClickHouse, DuckDB, SQL Server, Oracle (with Oracle Instant Client installed) and Redis.
 
 **Sign in and pick a database**, no connection string needed:
 

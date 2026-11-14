@@ -265,6 +265,21 @@ pub async fn table_row_counts(
                 .await;
             Ok(counts)
         }
+        ActiveConnection::Oracle(h) => {
+            // One session: the counts run one after another.
+            let mut counts = Vec::with_capacity(tables.len());
+            for name in tables {
+                let row_count = match super::oracle::exact_row_count(&h, &schema, &name).await {
+                    Ok(n) => n,
+                    Err(e) => {
+                        eprintln!("[row count] {schema}.{name}: {e}");
+                        -1
+                    }
+                };
+                counts.push(TableRowCount { name, row_count });
+            }
+            Ok(counts)
+        }
         _ => Ok(Vec::new()),
     }
 }
@@ -1127,6 +1142,7 @@ pub async fn list_schemas(state: State<'_, DbState>) -> Result<Vec<String>, Stri
         ActiveConnection::Dynamodb(_) => Ok(vec![super::docdb::FLAT_SCHEMA.to_string()]),
         ActiveConnection::Doc(d) => super::docdb::list_schemas(&d).await,
         ActiveConnection::Mssql(h) => super::mssql::list_schemas(&h).await,
+        ActiveConnection::Oracle(h) => super::oracle::list_schemas(&h).await,
         ActiveConnection::Sqlite(_) | ActiveConnection::D1(_) | ActiveConnection::LibSql(_) | ActiveConnection::Duckdb(_) => Ok(vec!["main".to_string()]),
     }
 }
@@ -1159,6 +1175,7 @@ pub async fn list_tables(state: State<'_, DbState>, schema: String) -> Result<Ve
         ActiveConnection::Doc(d) => super::docdb::list_tables_in(&d, &schema).await,
         ActiveConnection::Duckdb(h) => super::duckdb::list_tables(&h).await,
         ActiveConnection::Mssql(h) => super::mssql::list_tables(&h, &schema).await,
+        ActiveConnection::Oracle(h) => super::oracle::list_tables(&h, &schema).await,
     }
 }
 
@@ -1198,6 +1215,7 @@ pub async fn list_indexes_for(
         ActiveConnection::Doc(d) => super::docdb::indexes_in(&d, &schema, table.as_deref()).await,
         ActiveConnection::Duckdb(h) => super::duckdb::list_indexes(&h).await,
         ActiveConnection::Mssql(h) => super::mssql::list_indexes(&h, &schema).await,
+        ActiveConnection::Oracle(h) => super::oracle::list_indexes(&h, &schema).await,
     }
 }
 
@@ -1347,6 +1365,8 @@ pub async fn get_table_column_structure(
     match require_conn(&state)? {
         ActiveConnection::Dynamodb(cfg) => return Ok(super::dynamodb::describe_shape(&cfg, &table).await?.0),
         ActiveConnection::Doc(d) => return super::docdb::columns_in(&d, &schema, &table).await,
+        // Oracle binds the names as values, and they may hold `$` or `#`.
+        ActiveConnection::Oracle(h) => return super::oracle::get_column_structure(&h, &schema, &table).await,
         _ => {}
     }
     validate_ident(&schema)?;
@@ -1375,7 +1395,7 @@ pub async fn get_table_column_structure(
             super::redis::get_column_structure(&cfg, &table).await
         }
         // Answered above.
-        ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => Ok(vec![]),
+        ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) | ActiveConnection::Oracle(_) => Ok(vec![]),
         ActiveConnection::Duckdb(h) => {
             super::duckdb::get_column_structure(&h, &table).await
         }
@@ -1700,6 +1720,7 @@ pub async fn get_schema_column_structure(
     match require_conn(&state)? {
         ActiveConnection::Doc(d) => return super::docdb::schema_columns_in(&d, &schema).await,
         ActiveConnection::Dynamodb(_) | ActiveConnection::Redis(_) => return Ok(vec![]),
+        ActiveConnection::Oracle(h) => return super::oracle::schema_column_structure(&h, &schema).await,
         _ => {}
     }
     validate_ident(&schema)?;
@@ -2479,6 +2500,9 @@ pub async fn get_incoming_foreign_keys(
     schema: String,
     table: String,
 ) -> Result<Vec<IncomingForeignKey>, String> {
+    if let ActiveConnection::Oracle(h) = require_conn(&state)? {
+        return super::oracle::incoming_foreign_keys(&h, &schema, &table).await;
+    }
     validate_ident(&schema)?;
     validate_ident(&table)?;
     match require_conn(&state)? {
@@ -2651,6 +2675,9 @@ pub async fn get_table_ddl(
     schema: String,
     table: String,
 ) -> Result<String, String> {
+    if let ActiveConnection::Oracle(h) = require_conn(&state)? {
+        return super::oracle::get_ddl(&h, &schema, &table).await;
+    }
     validate_ident(&schema)?;
     validate_ident(&table)?;
     match require_conn(&state)? {
@@ -2665,6 +2692,7 @@ pub async fn get_table_ddl(
         ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => Ok(String::new()),
         ActiveConnection::Duckdb(h) => super::duckdb::get_ddl(&h, &table).await,
         ActiveConnection::Mssql(h) => super::mssql::get_ddl(&h, &schema, &table).await,
+        ActiveConnection::Oracle(_) => unreachable!("answered above"),
     }
 }
 
@@ -2687,6 +2715,10 @@ pub async fn list_schemas_on_conn(config: AnyConnectionConfig) -> Result<Vec<Str
             result
         }
         AnyConnectionConfig::Clickhouse(c) => super::clickhouse::list_schemas(&c).await,
+        AnyConnectionConfig::Oracle(c) => {
+            let h = super::connection::open_oracle(&c).await?;
+            super::oracle::list_schemas(&h).await
+        }
         _ => Ok(vec!["main".to_string()]),
     }
 }
@@ -2734,6 +2766,10 @@ pub async fn list_tables_on_conn(
             let h = super::connection::open_mssql(&c).await?;
             super::mssql::list_tables(&h, &schema).await.map(to_names)
         }
+        AnyConnectionConfig::Oracle(c) => {
+            let h = super::connection::open_oracle(&c).await?;
+            super::oracle::list_tables(&h, &schema).await.map(to_names)
+        }
     }
 }
 
@@ -2744,6 +2780,10 @@ pub async fn get_table_ddl_on_conn(
     table: String,
 ) -> Result<String, String> {
     use super::connection::{open_mysql, open_pg, open_sqlite};
+    if let AnyConnectionConfig::Oracle(c) = &config {
+        let h = super::connection::open_oracle(c).await?;
+        return super::oracle::get_ddl(&h, &schema, &table).await;
+    }
     validate_ident(&schema)?;
     validate_ident(&table)?;
     match config {
@@ -2779,6 +2819,7 @@ pub async fn get_table_ddl_on_conn(
             let h = super::connection::open_mssql(&c).await?;
             super::mssql::get_ddl(&h, &schema, &table).await
         }
+        AnyConnectionConfig::Oracle(_) => unreachable!("answered above"),
     }
 }
 

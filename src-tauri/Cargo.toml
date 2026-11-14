@@ -67,6 +67,10 @@ argon2 = "0.5"
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
 duckdb = { version = "1.3.2", features = ["bundled"] }
 tiberius = { version = "0.13.0", default-features = false, features = ["rustls", "tds73", "chrono"] }
+# Oracle: ODPI-C is compiled from source by the crate (no Oracle files at build
+# time); the Oracle Client library (Instant Client) is loaded at runtime on the
+# first Oracle connect, so it is only needed by users who connect to Oracle.
+oracle = "0.6.3"
 # Pinned as a direct dependency only to pick the TLS crypto provider at
 # startup (see `run`): tiberius 0.13 enables aws-lc-rs next to the ring the
 # other drivers use, and rustls then has no default of its own.

@@ -359,18 +359,18 @@ pub fn toggle_devtools(window: tauri::WebviewWindow) {
 }
 
 use crate::db::{
-    connect, connect_clickhouse, connect_d1, connect_duckdb, connect_libsql, connect_mssql, connect_mysql, connect_redis, connect_sqlite, disconnect,
+    connect, connect_clickhouse, connect_d1, connect_duckdb, connect_libsql, connect_mssql, connect_mysql, connect_oracle, connect_redis, connect_sqlite, disconnect,
     delete_table_row, delete_table_rows, execute_ddl, execute_sql, execute_sql_multi, get_table_rows, count_table_rows, insert_table_row,
     list_schemas, list_tables, list_indexes_for, list_enums, list_functions, list_triggers, list_sequences, ping_connection, table_row_counts,
     truncate_table, drop_table, get_table_column_structure, get_schema_column_structure, get_incoming_foreign_keys, get_table_ddl as db_get_table_ddl,
-    test_clickhouse_connection, test_connection, test_d1_connection, test_duckdb_connection, test_libsql_connection, test_mssql_connection, test_mysql_connection, test_redis_connection, test_sqlite_connection,
+    test_clickhouse_connection, test_connection, test_d1_connection, test_duckdb_connection, test_libsql_connection, test_mssql_connection, test_mysql_connection, test_oracle_connection, test_redis_connection, test_sqlite_connection,
     update_table_cell, fetch_cell_value, ConnectionConfig, D1Config, DbState, EnumInfo, FunctionInfo, ExplainResult, IndexInfo, LibSqlConfig,
     SqlResult, SqliteConfig, TableInfo, TableRowCount, TableRows, TriggerInfo, SequenceInfo,
     ColumnStructureRow, TableColumnStructure, IncomingForeignKey, InsertRowResult, TunnelState,
     apply_table_changes, ApplyChangesResult, RowUpdate,
     explain_pg, explain_mysql, explain_sqlite, explain_from_text_lines, explain_from_sqlite_plan,
 };
-use crate::db::connection::{require_conn, ClickhouseConfig, DuckdbConfig, MssqlConfig, MysqlConfig, RedisConfig};
+use crate::db::connection::{require_conn, ClickhouseConfig, DuckdbConfig, MssqlConfig, MysqlConfig, OracleConfig, RedisConfig};
 use crate::db::ActiveConnection;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -929,6 +929,18 @@ pub async fn connect_mssql_db(state: State<'_, DbState>, config: MssqlConfig) ->
     connect_mssql(state, config).await
 }
 
+// ── Oracle ──────────────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn test_oracle(config: OracleConfig) -> Result<(), String> {
+    test_oracle_connection(config).await
+}
+
+#[tauri::command]
+pub async fn connect_oracle_db(state: State<'_, DbState>, config: OracleConfig) -> Result<(), String> {
+    connect_oracle(state, config).await
+}
+
 // ── Live mode ─────────────────────────────────────────────────────────────────
 
 use crate::db::live::{self, LiveState};
@@ -1101,6 +1113,10 @@ pub async fn pg_explain_sql(
                 return Err("Empty EXPLAIN result".into());
             }
             Ok(explain_from_text_lines(mssql_plan_lines(&xml), "mssql"))
+        }
+        ActiveConnection::Oracle(h) => {
+            let lines = crate::db::oracle::explain_lines(&h, &sql).await?;
+            Ok(explain_from_text_lines(lines, "oracle"))
         }
         _ => Err("EXPLAIN isn't supported for this engine yet".into()),
     }

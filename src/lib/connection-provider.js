@@ -54,6 +54,7 @@ const ENGINE_SHORT = {
   mysql: 'MySQL',
   mariadb: 'MariaDB',
   mssql: 'SQL Server',
+  oracle: 'Oracle',
   sqlite: 'SQLite',
   'sqlite-memory': 'SQLite',
   libsql: 'libSQL',

@@ -7,6 +7,7 @@ export const ENGINE_TINT = {
   sqlite: "text-blue-500/80",
   "sqlite-memory": "text-blue-500/80",
   mssql: "text-red-500/80",
+  oracle: "text-red-600/80",
   clickhouse: "text-yellow-500/80",
   duckdb: "text-yellow-500/80",
   "duckdb-memory": "text-yellow-500/80",

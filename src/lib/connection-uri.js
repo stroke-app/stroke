@@ -272,7 +272,58 @@ export function parseSqliteUri(uri) {
 }
 
 /**
- * @param {'postgres'|'sqlite'|'mysql'|'mssql'|'clickhouse'|'redis'|'libsql'} type
+ * Oracle connection strings: `oracle://user:pass@host:1521/SERVICE`, and the
+ * JDBC thin forms a DBA hands out - `jdbc:oracle:thin:@//host:1521/SERVICE`,
+ * `jdbc:oracle:thin:@host:1521:SID`, `jdbc:oracle:thin:user/pass@...` - and a
+ * `(DESCRIPTION=...)` descriptor, which is kept whole as the connect string.
+ * @param {string} uri
+ * @returns {{ oracle: true, host: string, port: string, serviceName: string, sid: string, connectString: string, user: string, password: string } | { error: string } | null}
+ */
+export function parseOracleUri(uri) {
+  const trimmed = uri.trim()
+  if (!trimmed) return null
+  const out = { oracle: /** @type {true} */ (true), host: '', port: '1521', serviceName: '', sid: '', connectString: '', user: '', password: '' }
+  const thin = /^(?:jdbc:)?oracle:thin:(.*)$/i.exec(trimmed)
+  if (thin) {
+    let rest = thin[1]
+    const at = rest.lastIndexOf('@')
+    if (at < 0) return { error: 'Expected jdbc:oracle:thin:@host:port/service' }
+    const creds = rest.slice(0, at)
+    rest = rest.slice(at + 1).trim()
+    if (creds) {
+      const slash = creds.indexOf('/')
+      out.user = slash < 0 ? creds : creds.slice(0, slash)
+      out.password = slash < 0 ? '' : creds.slice(slash + 1)
+    }
+    if (rest.startsWith('(')) {
+      out.connectString = rest
+      return out
+    }
+    // `//host:port/service` (service) or `host:port:SID` (the old SID form).
+    const svc = /^(?:\/\/)?([^:/]+)(?::(\d+))?\/(.+)$/.exec(rest)
+    if (svc) return { ...out, host: svc[1], port: svc[2] || '1521', serviceName: svc[3] }
+    const sid = /^([^:/]+):(\d+):(.+)$/.exec(rest)
+    if (sid) return { ...out, host: sid[1], port: sid[2], sid: sid[3] }
+    return { ...out, connectString: rest }
+  }
+  if (!/^oracle:\/\//i.test(trimmed)) return { error: 'Expected an oracle:// or jdbc:oracle:thin: connection string' }
+  try {
+    const url = new URL(escapeUserinfo(trimmed))
+    return {
+      ...out,
+      host: url.hostname || '127.0.0.1',
+      port: url.port || '1521',
+      serviceName: decodeURIComponent(url.pathname.replace(/^\//, '')),
+      user: decodeURIComponent(url.username),
+      password: decodeURIComponent(url.password),
+    }
+  } catch {
+    return { error: 'Could not parse connection URI' }
+  }
+}
+
+/**
+ * @param {'postgres'|'sqlite'|'mysql'|'mssql'|'clickhouse'|'redis'|'libsql'|'oracle'} type
  * @param {string} uri
  * @returns {ParsedPostgresUri | ParsedSqliteUri | Record<string, any> | { error: string } | null}
  */
@@ -283,6 +334,7 @@ export function parseConnectionUri(type, uri) {
   if (type === 'clickhouse') return parseClickhouseUri(uri)
   if (type === 'redis') return parseRedisUri(uri)
   if (type === 'libsql') return parseLibsqlUri(uri)
+  if (type === 'oracle') return parseOracleUri(uri)
   return parsePostgresUri(uri)
 }
 
@@ -301,7 +353,7 @@ export function parseConnectionUri(type, uri) {
  * credentials), or null when nothing in the string says.
  *
  * @param {string} uri
- * @returns {{ type: string, provider?: string, uriType: 'postgres'|'sqlite'|'mysql'|'mssql'|'clickhouse' } | null}
+ * @returns {{ type: string, provider?: string, uriType: 'postgres'|'sqlite'|'mysql'|'mssql'|'clickhouse'|'oracle' } | null}
  */
 export function detectConnectionUri(uri) {
   const s = unquotePath(String(uri ?? ''))
@@ -339,6 +391,8 @@ export function detectConnectionUri(uri) {
     case 'sqlserver':
     case 'mssql':
       return { type: 'mssql', uriType: 'mssql' }
+    case 'oracle':
+      return { type: 'oracle', uriType: 'oracle' }
     case 'clickhouse':
     case 'clickhouses':
       return { type: 'clickhouse', uriType: 'clickhouse' }

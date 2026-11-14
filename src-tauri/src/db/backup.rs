@@ -574,6 +574,7 @@ async fn export_into(
         ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => Err("Backup is not supported on DynamoDB".to_string()),
         ActiveConnection::Duckdb(h) => export_duckdb(rep, &h, out).await,
         ActiveConnection::Mssql(h) => export_mssql(rep, &h, out).await,
+        ActiveConnection::Oracle(_) => Err("Backup export is not supported for Oracle yet".to_string()),
     }
 }
 
@@ -605,6 +606,7 @@ pub async fn backup_import(
         ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => Err("Backup is not supported on DynamoDB".to_string()),
         ActiveConnection::Duckdb(h) => import_duckdb(&rep, &h, &script).await,
         ActiveConnection::Mssql(h) => import_mssql(&rep, &h, &script).await,
+        ActiveConnection::Oracle(_) => Err("Backup import is not supported for Oracle yet".to_string()),
     }
 }
 

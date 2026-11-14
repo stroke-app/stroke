@@ -141,7 +141,7 @@ pub async fn tx_begin(
         ActiveConnection::Sqlite(pool) => TxConn::Sqlite(
             pool.acquire().await.map_err(|e| format!("Could not open a transaction: {e}"))?,
         ),
-        ActiveConnection::Duckdb(_) | ActiveConnection::Mssql(_) => {
+        ActiveConnection::Duckdb(_) | ActiveConnection::Mssql(_) | ActiveConnection::Oracle(_) => {
             return Err("Explicit transactions are not supported for this engine yet".into())
         }
         ActiveConnection::D1(_) | ActiveConnection::LibSql(_) => {

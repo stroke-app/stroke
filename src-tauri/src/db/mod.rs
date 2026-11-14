@@ -6,6 +6,7 @@ pub mod connection;
 pub mod d1;
 pub mod duckdb;
 pub mod mssql;
+pub mod oracle;
 pub mod explain;
 pub mod advisor;
 pub mod insights;
@@ -37,8 +38,8 @@ pub mod terminal;
 pub mod tx;
 
 pub use connection::{
-    connect, connect_clickhouse, connect_d1, connect_duckdb, connect_libsql, connect_mssql, connect_mysql, connect_redis, connect_sqlite, disconnect,
-    test_clickhouse_connection, test_connection, test_d1_connection, test_duckdb_connection, test_libsql_connection, test_mssql_connection, test_mysql_connection, test_redis_connection, test_sqlite_connection,
+    connect, connect_clickhouse, connect_d1, connect_duckdb, connect_libsql, connect_mssql, connect_mysql, connect_oracle, connect_redis, connect_sqlite, disconnect,
+    test_clickhouse_connection, test_connection, test_d1_connection, test_duckdb_connection, test_libsql_connection, test_mssql_connection, test_mysql_connection, test_oracle_connection, test_redis_connection, test_sqlite_connection,
     ActiveConnection, AnyConnectionConfig, ConnectionConfig, D1Config, DbState, LibSqlConfig, SqliteConfig,
 };
 pub use explain::{explain_pg, explain_mysql, explain_sqlite, explain_from_text_lines, explain_from_sqlite_plan, ExplainResult};

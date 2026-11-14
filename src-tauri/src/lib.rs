@@ -731,6 +731,8 @@ pub fn run() {
             commands::connect_duckdb_db,
             commands::test_mssql,
             commands::connect_mssql_db,
+            commands::test_oracle,
+            commands::connect_oracle_db,
             commands::pg_list_schemas,
             commands::pg_list_tables,
             commands::pg_table_row_counts,

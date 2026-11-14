@@ -222,3 +222,23 @@ describe('parseConnectionUri: a bare database path fills the file field', () => 
     expect(detectConnectionUri('"C:\\data\\x.duckdb"')?.type).toBe('duckdb')
   })
 })
+
+describe('Oracle connection strings', () => {
+  it('reads oracle:// URLs as host, port and service name', () => {
+    expect(parseConnectionUri('oracle', 'oracle://scott:t%40ger@db.example.com:1522/ORCLPDB1')).toEqual({
+      oracle: true, host: 'db.example.com', port: '1522', serviceName: 'ORCLPDB1', sid: '', connectString: '', user: 'scott', password: 't@ger',
+    })
+  })
+
+  it('reads the JDBC thin forms: service, SID and descriptor', () => {
+    expect(parseConnectionUri('oracle', 'jdbc:oracle:thin:@//h:1521/FREEPDB1')).toMatchObject({ host: 'h', port: '1521', serviceName: 'FREEPDB1', sid: '' })
+    expect(parseConnectionUri('oracle', 'jdbc:oracle:thin:hr/pw@h:1521:XE')).toMatchObject({ host: 'h', sid: 'XE', serviceName: '', user: 'hr', password: 'pw' })
+    const desc = '(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=h)(PORT=1521))(CONNECT_DATA=(SERVICE_NAME=s)))'
+    expect(parseConnectionUri('oracle', `jdbc:oracle:thin:@${desc}`)).toMatchObject({ connectString: desc, host: '' })
+  })
+
+  it('is recognised from the paste bar, JDBC prefix included', () => {
+    expect(detectConnectionUri('oracle://u:p@h:1521/svc')).toEqual({ type: 'oracle', uriType: 'oracle' })
+    expect(detectConnectionUri('jdbc:oracle:thin:@//h:1521/svc')).toEqual({ type: 'oracle', uriType: 'oracle' })
+  })
+})

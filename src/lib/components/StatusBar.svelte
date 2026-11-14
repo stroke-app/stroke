@@ -292,6 +292,7 @@
       : connection?.type === 'posthog' ? 'PostHog'
       : connection?.type === 'duckdb' ? 'DuckDB'
       : connection?.type === 'mssql' ? 'SQL Server'
+      : connection?.type === 'oracle' ? 'Oracle'
       : connection?.type === 'd1' ? 'D1'
       : connection?.type === 'redis' ? 'Redis'
       : connection?.type === 'valkey' ? 'Valkey'

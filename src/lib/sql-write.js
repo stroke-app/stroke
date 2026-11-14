@@ -109,6 +109,12 @@ export function isWriteSql(sql) {
   const clean = stripSqlComments(String(sql ?? ''))
   if (!clean.trim()) return false
 
+  // A procedural block (Oracle's `BEGIN … END;`, `DECLARE … BEGIN … END;`)
+  // runs whatever it holds, procedure calls included, so it counts as a write.
+  // The statement splitter cuts it at its inner semicolons, so it is read
+  // whole here. A bare `BEGIN` / `BEGIN TRANSACTION` has no closing END.
+  if (/^\s*(?:declare|begin)\b/i.test(clean) && /\bend\s*;?\s*\/?\s*$/i.test(clean)) return true
+
   for (const raw of splitStatements(clean)) {
     // Leading parens wrap `(SELECT …) UNION …`, and a CTE can be parenthesised.
     const stmt = raw.trim().replace(/^[(\s]+/, '')

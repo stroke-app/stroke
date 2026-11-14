@@ -28,8 +28,8 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use super::connection::{
-    resolve_mysql_ssh, resolve_pg_ssh, AnyConnectionConfig, MssqlConfig, MysqlConfig, PgConfig,
-    RedisConfig, SqliteConfig,
+    resolve_mysql_ssh, resolve_pg_ssh, AnyConnectionConfig, MssqlConfig, MysqlConfig, OracleConfig,
+    PgConfig, RedisConfig, SqliteConfig,
 };
 use super::ssh_tunnel::SshTunnel;
 
@@ -81,6 +81,13 @@ const SQLCMD_INSTALL: &str = if cfg!(target_os = "macos") {
 } else {
     "Install go-sqlcmd from github.com/microsoft/go-sqlcmd/releases."
 };
+
+/// SQL*Plus ships as an Instant Client package; SQLcl (`sql`) is a separate
+/// Java download. Neither has a package-manager install that works everywhere.
+const SQLPLUS_INSTALL: &str = "Install SQL*Plus: download the Instant Client \"SQL*Plus\" package for your platform \
+from https://www.oracle.com/database/technologies/instant-client/downloads.html and unzip it into the same folder \
+as Instant Client Basic, then add that folder to PATH. Or install SQLcl (the `sql` command) from \
+https://www.oracle.com/database/sqldeveloper/technologies/sqlcl/.";
 
 const REDIS_INSTALL: &str = if cfg!(target_os = "macos") {
     "brew install redis"
@@ -163,6 +170,7 @@ fn client_for(config: &AnyConnectionConfig) -> Result<Client, String> {
         ),
         AnyConnectionConfig::Sqlite(_) => client("sqlite3", &["sqlite3"], SQLITE_INSTALL),
         AnyConnectionConfig::Mssql(_) => client("sqlcmd", &["sqlcmd"], SQLCMD_INSTALL),
+        AnyConnectionConfig::Oracle(_) => client("sqlplus", &["sqlplus", "sql"], SQLPLUS_INSTALL),
         AnyConnectionConfig::Redis(_) => client("redis-cli", &["redis-cli", "valkey-cli", "memurai-cli"], REDIS_INSTALL),
         AnyConnectionConfig::Duckdb(_) => Err(
             "DuckDB lets one process at a time open a database file, and Stroke already has this one open."
@@ -273,6 +281,8 @@ fn install_dirs() -> Vec<PathBuf> {
         ] {
             out.push(PathBuf::from(d));
         }
+        // Instant Client unzipped where Oracle's instructions put it.
+        out.extend(versioned(Path::new("/opt/oracle"), "instantclient", ""));
         out.extend(versioned(Path::new("/usr/lib/postgresql"), "", "bin"));
     }
     // winget and the per-user MSI put mongosh here, which a running app's PATH
@@ -573,6 +583,16 @@ fn mssql_launch(c: &MssqlConfig) -> Launch {
     }
 }
 
+/// `sqlplus user@connect_string`. Neither SQL*Plus nor SQLcl reads a password
+/// from the environment, and one on the command line is visible to every
+/// process, so the client asks for it in the terminal.
+fn oracle_launch(c: &OracleConfig) -> Launch {
+    let cs = super::oracle::connect_string(c);
+    let user = c.user.trim();
+    let target = if user.is_empty() { format!("/@{cs}") } else { format!("{user}@{cs}") };
+    Launch { args: vec![target], env: Vec::new(), unset: &["TWO_TASK"], tunnel: None }
+}
+
 fn redis_launch(c: &RedisConfig) -> Launch {
     let mut args = vec!["-h".to_string(), c.host.clone(), "-p".to_string(), c.port.to_string()];
     if c.db != 0 {
@@ -854,6 +874,7 @@ async fn open_session(
         }
         AnyConnectionConfig::Sqlite(c) => sqlite_launch(&c, client_version(&binary).await.as_deref()),
         AnyConnectionConfig::Mssql(c) => mssql_launch(&c),
+        AnyConnectionConfig::Oracle(c) => oracle_launch(&c),
         AnyConnectionConfig::Redis(c) => redis_launch(&c),
         // The URI carries host, credentials and options; mongosh reads it as is.
         // `--quiet` drops the startup banner.

@@ -17,7 +17,7 @@ const LAST_ID_KEY  = 'stroke:last-connection-id'
 const DISCONNECTED_KEY = 'stroke:disconnected'
 
 /**
- * @typedef {'postgres' | 'sqlite' | 'd1' | 'mysql' | 'mariadb' | 'cockroachdb' | 'libsql' | 'clickhouse' | 'duckdb' | 'mssql' | 'redis' | 'valkey' | 'dynamodb' | 'couchdb' | 'cassandra' | 'firestore' | 'mongodb' | 'posthog'} DbType
+ * @typedef {'postgres' | 'sqlite' | 'd1' | 'mysql' | 'mariadb' | 'cockroachdb' | 'libsql' | 'clickhouse' | 'duckdb' | 'mssql' | 'oracle' | 'redis' | 'valkey' | 'dynamodb' | 'couchdb' | 'cassandra' | 'firestore' | 'mongodb' | 'posthog'} DbType
  *
  * @typedef {{ host: string, port?: number, username: string, privateKeyPath?: string }} SshConfig
  *
@@ -37,6 +37,10 @@ const DISCONNECTED_KEY = 'stroke:disconnected'
  *   secure?: boolean
  *   encrypt?: boolean
  *   trustCert?: boolean
+ *   serviceName?: string  - Oracle service name
+ *   sid?: string  - Oracle SID, instead of a service name
+ *   connectString?: string  - Oracle Easy Connect / TNS descriptor / tnsnames alias; overrides host, port, service and SID
+ *   clientLibDir?: string  - folder holding Oracle Instant Client
  *   filePath?: string
  *   accountId?: string
  *   databaseId?: string
