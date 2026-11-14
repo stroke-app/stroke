@@ -2738,7 +2738,36 @@
     };
 
     await new Promise((resolve, reject) => {
+      // A tool that never answers (the database stalls, or the MCP server
+      // stops responding) used to leave the steps spinning forever with no
+      // word about why. Say which step it is waiting on after 30s; after 3
+      // minutes interrupt the agent and end the turn with the reason.
+      let lastEventAt = Date.now();
+      const runningSteps = () => [...tools.entries()].filter(([id, t]) =>
+        items.some((i) => i.id === t.workId && i.kind === "work" && /** @type {any} */ (i).steps.some((/** @type {WorkStep} */ s) => s.id === String(id) && s.status === "running")));
+      const watchdog = setInterval(() => {
+        const quiet = Date.now() - lastEventAt;
+        const waiting = runningSteps();
+        if (!waiting.length) return;
+        const what = waiting.length === 1 ? (waiting[0][1].detail || waiting[0][1].name.replace(/_/g, " ")) : `${waiting.length} steps`;
+        if (quiet >= 180_000) {
+          for (const [id, t] of waiting) {
+            patchWork(t.workId, (w) => ({
+              ...w,
+              steps: w.steps.map((/** @type {WorkStep} */ st) => (st.id === String(id) ? { ...st, status: "error", error: "No answer in 3 minutes." } : st)),
+            }));
+          }
+          void agentInterrupt(key).catch(() => {});
+          error = `No answer from ${what} in 3 minutes. The database may be busy or unreachable; check Logs, then try again.`;
+          closeText();
+          closeWork();
+          settle(null);
+        } else if (quiet >= 30_000) {
+          aiStatusHint = `Still waiting on ${what}… Stop ends it.`;
+        }
+      }, 5_000);
       const settle = (/** @type {Error | null} */ err) => {
+        clearInterval(watchdog);
         agentOnEvent = null;
         agentSettle = null;
         if (err) reject(err);
@@ -2746,6 +2775,8 @@
       };
       agentSettle = () => settle(null);
       agentOnEvent = (ev) => {
+        lastEventAt = Date.now();
+        if (aiStatusHint.startsWith("Still waiting on")) aiStatusHint = "";
         if (disowned()) return settle(null);
         if (ev.Text) {
           aiStatusHint = "";
