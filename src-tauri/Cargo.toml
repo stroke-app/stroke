@@ -95,8 +95,8 @@ objc2-web-kit = { version = "0.3", features = ["WKWebView"] }
 # Both are already in the tree via tauri/wry - pinned here to the versions wry
 # resolves so this never links a second copy of either binding.
 [target.'cfg(target_os = "windows")'.dependencies]
-webview2-com = "0.38"
-windows-core = "0.61"
+webview2-com = "0.39"
+windows-core = "0.62"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = { version = "=2.0.2", features = ["v2_38"] }
