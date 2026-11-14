@@ -1,4 +1,5 @@
 <script>
+  import { toastPosition } from '$lib/stores/toast-position.js'
   import { onMount } from 'svelte'
   import { Toaster } from '$lib/components/ui/sonner/index.js'
   import StudioShell from './lib/components/StudioShell.svelte'
@@ -77,7 +78,13 @@
   })
 </script>
 
-<Toaster position="top-right" offset={{ top: '52px', right: '12px' }} closeButton />
+<!-- The corner is a setting (Appearance → Notifications). Top corners clear
+     the titlebar, bottom ones the status bar. -->
+<Toaster
+  position={$toastPosition}
+  offset={{ top: '52px', bottom: '40px', left: '12px', right: '12px' }}
+  closeButton
+/>
 <AppErrorBoundary>
   <!-- Mounts only when armed, throws on mount, and disarms itself first. Inside
        the boundary so the crash screen catches it; a sibling of the app rather
