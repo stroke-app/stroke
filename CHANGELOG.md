@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.10.2] - 2026-11-15
+
+### Changes
+- Diagram and schema diff redesign, faster terminal start, / hints, fonts (#198)
+
+
 ## [2.10.1] - 2026-11-15
 
 ### Changes
