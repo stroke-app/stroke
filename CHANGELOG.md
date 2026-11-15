@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.13.1] - 2026-11-15
+
+### Changes
+- D1 prompt: Time Travel bookmarks and restore, slash commands (#227)
+
+
 ## [2.13.0] - 2026-11-15
 
 ### Changes
