@@ -1251,6 +1251,9 @@
       userSelect: 'none',
       pointerEvents: 'none',
     },
+    // CodeMirror's base theme lifts panels to z-index 300, over the app's
+    // popovers and dialogs: the vim --INSERT-- line drew over Workspaces.
+    '.cm-panels': { zIndex: '2' },
     // Vim's mode / command line, where monaco-vim's status strip was.
     '.cm-vim-panel': {
       padding: '2px 12px',

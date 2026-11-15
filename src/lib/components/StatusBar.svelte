@@ -821,15 +821,13 @@
 
     <!-- Vim mode indicator (experimental) -->
     {#if $appVimMode}
+      <!-- A neutral key with a mode dot: the key reads the same in every theme,
+           and only the dot carries the mode's colour. -->
       <span
-        class={cn(
-          'chip-gloss mx-0.5 h-6 px-2.5 font-mono text-ui-3xs font-semibold uppercase tracking-[0.08em]',
-          $vimSubMode === 'visual' && 'chip-warning',
-          $vimSubMode === 'command' && 'chip-primary',
-          $vimSubMode === 'normal' && 'chip-muted',
-        )}
+        class="key-gloss mx-0.5 h-6 gap-1.5 px-2.5 font-mono text-ui-3xs font-semibold uppercase tracking-[0.08em]"
+        style:--key-dot={$vimSubMode === 'visual' ? 'var(--warning)' : $vimSubMode === 'command' ? 'var(--primary)' : $vimSubMode === 'normal' ? 'var(--muted-foreground)' : 'var(--success)'}
         title="Vim mode · {VIM_MODE_LABEL[$vimSubMode]} (experimental)"
-      >{VIM_MODE_LABEL[$vimSubMode]}</span>
+      ><span class="key-dot shrink-0" aria-hidden="true"></span>{VIM_MODE_LABEL[$vimSubMode]}</span>
     {/if}
 
 
