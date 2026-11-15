@@ -3,7 +3,7 @@ import { importedIsDark } from '$lib/stores/imported-themes.js'
 
 /** @typedef {'light' | 'dark'} ThemeGroup */
 
-/** @typedef {'matte' | 'light' | 'parchment' | 'clay' | 'claude-light' | 'moss-light' | 'orchid-light' | 'ice' | 'github-light' | 'light-high-contrast' | 'dark' | 'obsidian' | 'claude' | 'moss' | 'orchid' | 'graphite' | 'midnight' | 'vitesse' | 'slate' | 'forest' | 'mono' | 'rose-pine' | 'catppuccin' | 'solarized' | 'dark-high-contrast' | 'hotdog' | 'glass-dark' | 'glass-light' | 'custom' | 'imported'} ThemeId */
+/** @typedef {'matte' | 'light' | 'parchment' | 'clay' | 'claude-light' | 'moss-light' | 'orchid-light' | 'ice' | 'github-light' | 'light-high-contrast' | 'dark' | 'obsidian' | 'claude' | 'moss' | 'orchid' | 'graphite' | 'midnight' | 'bro' | 'vitesse' | 'slate' | 'forest' | 'mono' | 'rose-pine' | 'catppuccin' | 'solarized' | 'dark-high-contrast' | 'hotdog' | 'glass-dark' | 'glass-light' | 'custom' | 'imported'} ThemeId */
 
 /**
  * `hidden` keeps a theme out of the picker until it is found. Only the easter
@@ -189,6 +189,14 @@ export const APP_THEMES = [
     isDark: true,
     group: 'dark',
     preview: { bg: '#1e1f22', fg: '#dfe1e5', accent: '#3574f0' },
+  },
+  {
+    id: 'bro',
+    name: 'Bro',
+    description: 'Pure black, a lifted sidebar, quiet grey and a blue accent',
+    isDark: true,
+    group: 'dark',
+    preview: { bg: '#0b0b0c', fg: '#f2f2f2', accent: '#4d8dff' },
   },
   {
     id: 'midnight',

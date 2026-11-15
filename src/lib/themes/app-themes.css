@@ -287,6 +287,39 @@ html[data-theme="hotdog"] {
 }
 
 /* ── Midnight - deep ocean navy, blue accent ── */
+/* ── Bro - pure black page, the sidebar a step up, quiet grey text, one blue ── */
+html[data-theme="bro"] {
+  --background:               oklch(0.150 0.002 286);
+  --foreground:               oklch(0.955 0.002 286);
+  --card:                     oklch(0.195 0.002 286);
+  --card-foreground:          oklch(0.955 0.002 286);
+  --popover:                  oklch(0.205 0.003 286);
+  --popover-foreground:       oklch(0.955 0.002 286);
+  --primary:                  oklch(0.660 0.170 256);
+  --primary-foreground:       oklch(0.985 0.002 286);
+  --secondary:                oklch(0.225 0.003 286);
+  --secondary-foreground:     oklch(0.900 0.002 286);
+  --muted:                    oklch(0.225 0.003 286);
+  --muted-foreground:         oklch(0.660 0.004 286);
+  --accent:                   oklch(0.245 0.003 286);
+  --accent-foreground:        oklch(0.975 0.002 286);
+  --destructive:              oklch(0.640 0.200 25);
+  --border:                   oklch(0.255 0.003 286);
+  --input:                    oklch(0.275 0.003 286);
+  --ring:                     oklch(0.660 0.170 256);
+  --sidebar:                  oklch(0.180 0.002 286);
+  --sidebar-foreground:       oklch(0.900 0.002 286);
+  --sidebar-accent:           oklch(0.245 0.003 286);
+  --sidebar-accent-foreground: oklch(0.975 0.002 286);
+  --sidebar-border:           oklch(0.230 0.003 286);
+  --panel:                    oklch(0.150 0.002 286);
+  --table-grid:               oklch(0.240 0.003 286);
+  --link:                     oklch(0.700 0.150 256);
+  --link-hover:               oklch(0.790 0.120 256);
+  --editor-surface:           #0e0e10;
+  --editor-line-highlight:    #18181b;
+}
+
 html[data-theme="midnight"] {
   --background:               oklch(0.140 0.030 265);
   --foreground:               oklch(0.930 0.016 250);
