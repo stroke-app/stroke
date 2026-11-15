@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.13.5] - 2026-11-15
+
+### Changes
+- Share: titles from what is shared, chart preview; simpler New view (#231)
+
+
 ## [2.13.4] - 2026-11-15
 
 ### Changes
