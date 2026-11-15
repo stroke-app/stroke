@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.10.1] - 2026-11-15
+
+### Changes
+- Smoother grid scrolling (120Hz budget) (#197)
+
+
 ## [2.10.0] - 2026-11-15
 
 ### Changes
