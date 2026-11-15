@@ -78,7 +78,7 @@
   import { terminalDockOpen as terminalDockStore } from '$lib/stores/redis-nav.js'
   import DbIcon from './DbIcon.svelte'
   import ShareDialog from './ShareDialog.svelte'
-  import { requestShare, sharesPageRequest } from '$lib/share-flow.js'
+  import { requestShare, sharesPageRequest, chartTitle } from '$lib/share-flow.js'
   import MySharesDialog from './MySharesDialog.svelte'
   import Icon from './Icon.svelte'
   import DockerLaunchModal from './DockerLaunchModal.svelte'
@@ -7119,7 +7119,7 @@ let rowSearch = $state('')
     const cells = picked.map((r) => visibleIdxs.map((i) => r[i]))
     const source = connection?.name ? `${connection.name} · ${activeSchema ? activeSchema + '.' : ''}${activeTable}` : String(activeTable ?? '')
     if (mode === 'chart' && chartPane?.shareSpec) {
-      requestShare({ kind: 'chart', title: `${activeTable} chart`, source, chart: chartPane.shareSpec(), columns: dataViewColumns.map((c) => ({ name: c.name, type: c.dataType ?? c.data_type })), rows: dataViewRows })
+      requestShare({ kind: 'chart', title: chartTitle(chartPane.shareSpec()), source, chart: chartPane.shareSpec(), columns: dataViewColumns.map((c) => ({ name: c.name, type: c.dataType ?? c.data_type })), rows: dataViewRows })
       return
     }
     requestShare({ kind: 'table', title: String(activeTable ?? 'Rows'), source, columns: cols, rows: cells, totalRows: Math.max(total || 0, cells.length) })

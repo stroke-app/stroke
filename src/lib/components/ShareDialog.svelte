@@ -8,6 +8,8 @@
   import { Switch } from '$lib/components/ui/switch/index.js'
   import Icon from './Icon.svelte'
   import SelectMenu from './SelectMenu.svelte'
+  import { buildOption } from '$lib/chart-utils.js'
+  import { isCurrentThemeDark } from '$lib/stores/settings.js'
   import { cn } from '$lib/utils.js'
   import { shareList } from '$lib/api.js'
   import { detectSensitiveColumns } from '$lib/share-crypto.js'
@@ -185,6 +187,22 @@
     lockedNote = ''
     expiry = v === 'never' ? null : Number(v)
   }
+  /** The chart's own option, for the preview (masked columns hidden, as shared). */
+  const chartOption = $derived.by(() => {
+    if (src?.kind !== 'chart') return null
+    try {
+      return buildOption({
+        type: src.chart.type,
+        columns: src.columns,
+        rows: src.rows.slice(0, 500),
+        xCol: src.chart.x,
+        yCol: src.chart.y?.[0] ?? '',
+        groupCol: src.chart.group ?? undefined,
+        isDark: $isCurrentThemeDark,
+        noTitle: true,
+      })
+    } catch { return null }
+  })
 </script>
 
 <Dialog.Root bind:open onOpenChange={(v) => { if (!v) close() }}>
@@ -240,6 +258,15 @@
           <label for="sh-title" class={lbl}>Title</label>
           <input id="sh-title" bind:value={title} class={tinp} placeholder="What this is" />
         </div>
+
+        {#if src?.kind === 'chart' && chartOption}
+          <!-- What the link will draw, before it is made. -->
+          <div class="relative h-40 overflow-hidden rounded-lg border border-border/60 bg-muted/10" aria-label="Chart preview">
+            {#await import('./EChartPanel.svelte') then { default: EChartPanel }}
+              <EChartPanel option={chartOption} class="pointer-events-none absolute inset-0" />
+            {/await}
+          </div>
+        {/if}
 
         {#if tabular && src && 'columns' in src}
           <section class="flex flex-col gap-1.5" aria-labelledby="sh-cols">
