@@ -5035,6 +5035,8 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   // ever sets this, and draw() zeroes it on entry, so every other path into
   // draw() is a full repaint by construction.
   let _blitDy = 0
+  /** The same for a frame that is a pure horizontal move (see draw()). */
+  let _blitDx = 0
   /** A hover change that arrived mid-scroll, applied when scrolling stops. @type {[number | null, string | null] | null} */
   let _parkedHover = null
 
@@ -5062,6 +5064,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
         // from scratch - any artifact a blit could produce lives only while the
         // content is still moving, and never in a resting grid.
         _blitDy = 0
+        _blitDx = 0
         scheduleDraw()
         return
       }
@@ -5084,6 +5087,11 @@ import FilterX from "@lucide/svelte/icons/filter-x";
         _blitDy =
           sl === _loopLastLeft && _loopLastTop >= 0 && !_loopNeedsDraw
             ? _scrollTop - prevVirt
+            : 0
+        // And a pure horizontal move: same vertical offset, columns slide.
+        _blitDx =
+          st === _loopLastTop && _loopLastLeft >= 0 && !_loopNeedsDraw
+            ? sl - _loopLastLeft
             : 0
         _scrollLeft = sl
         _loopLastTop = st
@@ -5260,6 +5268,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       _fonts = null
       _readColor = null
       _glyphFont = ''
+      _glyphWByFont.clear()
       _truncCacheReset()
       _redrawToken++
     }
@@ -5773,12 +5782,66 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   // Re-measured automatically whenever ctx.font changes (zoom / cell vs header).
   let _glyphW = 0
   let _glyphFont = ''
+
+  /**
+   * Make a context's `font` cheap. Reading `ctx.font` re-serialises the whole
+   * font string on every call, and the draw loop asks for it twice per cell
+   * (textWidth, truncText): 250ms of a 7s scroll went to that alone. Setting
+   * it re-parses even when nothing changed. This keeps the last value in JS:
+   * reads return it, a set to the same string is skipped, and save/restore
+   * keep it in step with the canvas's own font stack.
+   * @param {CanvasRenderingContext2D} ctx
+   */
+  function trackFont(ctx) {
+    const c = /** @type {any} */ (ctx)
+    if (c.__fontTracked) return
+    const desc = Object.getOwnPropertyDescriptor(CanvasRenderingContext2D.prototype, 'font')
+    if (!desc?.get || !desc.set) return
+    let cur = desc.get.call(ctx)
+    let lastSet = ''
+    /** @type {[string, string][]} */
+    const stack = []
+    Object.defineProperty(ctx, 'font', {
+      configurable: true,
+      get: () => cur,
+      set: (/** @type {string} */ v) => {
+        if (v === lastSet) return
+        desc.set.call(ctx, v)
+        lastSet = v
+        cur = desc.get.call(ctx)
+      },
+    })
+    const save = ctx.save.bind(ctx)
+    const restore = ctx.restore.bind(ctx)
+    ctx.save = () => { stack.push([cur, lastSet]); save() }
+    ctx.restore = () => {
+      restore()
+      const top = stack.pop()
+      if (top) [cur, lastSet] = top
+    }
+    // A canvas resize resets the context's state, font included, behind the
+    // setter's back; the resize path calls this to re-read it.
+    c.__fontReset = () => { cur = desc.get.call(ctx); lastSet = ''; stack.length = 0 }
+    c.__fontTracked = true
+  }
+
+  /** Glyph width per font string: the grid switches between its cell, header
+   *  and type fonts several times a frame, and each switch re-measured 'i' and
+   *  'W' (22 measureText calls a frame while scrolling). Cleared with the
+   *  truncation cache when web fonts load. @type {Map<string, number>} */
+  const _glyphWByFont = new Map()
   function _syncGlyphW(/** @type {CanvasRenderingContext2D} */ ctx) {
-    if (ctx.font === _glyphFont) return
-    const a = ctx.measureText('i').width
-    const b = ctx.measureText('W').width
-    _glyphW = Math.abs(a - b) < 0.1 ? b : 0 // 0 ⇒ not monospace → fall back to measureText
-    _glyphFont = ctx.font
+    const font = ctx.font
+    if (font === _glyphFont) return
+    let w = _glyphWByFont.get(font)
+    if (w === undefined) {
+      const a = ctx.measureText('i').width
+      const b = ctx.measureText('W').width
+      w = Math.abs(a - b) < 0.1 ? b : 0 // 0 ⇒ not monospace → fall back to measureText
+      _glyphWByFont.set(font, w)
+    }
+    _glyphW = w
+    _glyphFont = font
   }
 
   /** Width of `str` under the active font (O(1) for monospace). */
@@ -5833,7 +5896,25 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   }
 
   /** The measuring half of truncText - only reached on a cache miss. */
+  /** Printable ASCII: one glyph advance each in a monospace face. */
+  const _ASCII_RE = /^[\x20-\x7e]*$/
+  /** Width of '…' under _glyphFont (re-measured when the font changes). */
+  let _ellW = 0
+  let _ellFont = ''
+
   function _truncMeasure(ctx, text, maxW, len) {
+    // Monospace and printable ASCII (most database values): every character is
+    // exactly one advance, so the cut is arithmetic and needs no measuring. A
+    // scroll brings a new set of strings into view every frame, and each one
+    // missed the cache and paid 2-3 measureText shaping passes.
+    if (_glyphW > 0) {
+      const head = text.length > 256 ? text.slice(0, Math.ceil(maxW / _glyphW) + 2) : text
+      if (_ASCII_RE.test(head)) {
+        if (_ellFont !== _glyphFont) { _ellW = ctx.measureText('…').width; _ellFont = _glyphFont }
+        const k = Math.max(0, Math.floor((maxW - _ellW) / _glyphW))
+        return k >= len ? text : text.slice(0, k) + '…'
+      }
+    }
     // Only the head of a long value can ever be on screen, so only the head is
     // measured. measureText shapes every character it is given, and a long cell
     // (a 2,000-character Devanagari or markdown chunk) paid a whole-string
@@ -5953,7 +6034,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     if (!ctx || !read || !canvasEl || !colorProbe) return
     // Drop any scroll delta seen while holding: the first real frame after a
     // hold is a different table and must repaint whole, never blit the old one.
-    if (holdPaint && _surfaceHasFrame) { _blitDy = 0; return }
+    if (holdPaint && _surfaceHasFrame) { _blitDy = 0; _blitDx = 0; return }
     _surfaceHasFrame = true
     if (!hasHeldFrame && columns.length > 0) hasHeldFrame = true
 
@@ -5994,6 +6075,8 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     // stuttering: not a canvas bug, starvation.
     const dy = _blitDy
     _blitDy = 0
+    const dxs = _blitDx
+    _blitDx = 0
     // Band a scheduled frame was limited to (scheduleBandDraw), or null.
     const band = _drawBand
     _drawBand = null
@@ -6028,13 +6111,35 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     // between rows), so only those rows are repainted and the rest of the
     // canvas - header included - is left as it is. Same row-band repaint the
     // blit uses for its strip, with the same preconditions on the body.
+    // Horizontal scrolling repainted every visible cell every frame (3.1ms
+    // median and a 14ms worst case against the vertical path's ~2ms). The same
+    // trick applies sideways: with nothing pinned, the whole canvas, header and
+    // body, is a rigid horizontal translation of the last frame, so it is moved
+    // by dx and only the uncovered strip of columns is drawn. Pinned columns
+    // stay put while the rest slides, so a table with any keeps the full paint.
+    const canBlitX =
+      !canBlit &&
+      dy === 0 &&
+      dxs !== 0 &&
+      Number.isInteger(dxs) &&
+      Math.abs(dxs) < _viewportWidth - 1 &&
+      blitScale > 0 &&
+      Number.isInteger(dxs * blitScale) &&
+      geom.frozenWidth === 0 &&
+      !_sawSkeleton &&
+      !newRowDrafts &&
+      visibleColumns.length > 0
+    /** Columns outside [stripX0, stripX1) are skipped this frame (CSS px). */
+    let stripX0 = 0
+    let stripX1 = Infinity
     const partial =
       !canBlit &&
+      !canBlitX &&
       band !== null &&
       !_sawSkeleton &&
       !newRowDrafts &&
       visibleColumns.length > 0
-    if (!canBlit && !partial) _imgWanted.clear()
+    if (!canBlit && !canBlitX && !partial) _imgWanted.clear()
     // Font sizes and the layout constants (ROW_HEIGHT, HEADER_H, …) are both
     // `<base px> * canvasZoom`, so text and geometry cannot land on different
     // zoom rungs however this cache is invalidated. Do NOT re-source either one
@@ -6147,6 +6252,38 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       // background (drawHeaderRow starts with a full-width fill), and everything
       // between is either blitted or in the strip.
       fillPanel(ctx, cPanel, 0, stripTop, W, stripH)
+    } else if (canBlitX) {
+      // Same exact 1:1 device-pixel copy as the vertical case, through the
+      // scratch surface, of the whole viewport height (the header slides too).
+      const devH = Math.floor(H * blitScale)
+      const devW = ctx.canvas.width
+      const kDev = dxs * blitScale
+      const keepDev = devW - Math.abs(kDev)
+      const srcX = kDev > 0 ? kDev : 0
+      const dstX = kDev > 0 ? 0 : -kDev
+      const scratch = blitScratch(keepDev, devH)
+      if (scratch) {
+        scratch.ctx.setTransform(1, 0, 0, 1, 0, 0)
+        scratch.ctx.clearRect(0, 0, keepDev, devH)
+        scratch.ctx.drawImage(ctx.canvas, srcX, 0, keepDev, devH, 0, 0, keepDev, devH)
+        ctx.save()
+        ctx.setTransform(1, 0, 0, 1, 0, 0)
+        ctx.drawImage(scratch.canvas, 0, 0, keepDev, devH, dstX, 0, keepDev, devH)
+        ctx.restore()
+      }
+      // The uncovered strip, rounded outward, cleared, then clipped to below.
+      if (kDev > 0) {
+        stripX0 = Math.floor((dstX + keepDev) / blitScale)
+        stripX1 = W
+      } else {
+        stripX0 = 0
+        stripX1 = Math.ceil(-dxs)
+      }
+      fillPanel(ctx, cPanel, stripX0, 0, stripX1 - stripX0, H)
+      ctx.save()
+      ctx.beginPath()
+      ctx.rect(stripX0, 0, stripX1 - stripX0, H)
+      ctx.clip()
     } else if (partial) {
       stripTop = Math.max(HEADER_H, Math.floor(band[0]))
       stripH = Math.max(0, Math.ceil(Math.min(H, band[1])) - stripTop)
@@ -6275,6 +6412,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       // 150-cell viewport paid ~3000 graph reads a frame for values that cannot
       // change mid-frame. Read once here, then drawCell only touches this object.
       cols: geom.cols, pinnedCols, scrollLeft: _scrollLeft, viewportWidth: W,
+      stripX0, stripX1,
       padX: CELL_PAD_X, iconHit: ICON_HIT, zoom: canvasZoom, fonts: _fonts,
       highlightActiveRow: $appHighlightActiveRow,
       nameToActualIdx: _nameToActualIdx, colCache: _colCache,
@@ -6336,7 +6474,10 @@ import FilterX from "@lucide/svelte/icons/filter-x";
 
     // ── Header (pinned) - skip entirely when no columns visible ───────────
     // A band frame never touches it: the rows it repaints are clipped below it.
-    if (visibleColumns.length > 0 && !partial) {
+    // A vertical blit frame leaves it too: the copy never touches the header
+    // band, nothing in it depends on the vertical offset, and anything that
+    // would change it (hover, sort, selection) forces a full frame instead.
+    if (visibleColumns.length > 0 && !partial && !canBlit) {
       drawHeaderRow(ctx, {
         W, cPanel, cFg, cMuted, cGrid, cBorder, cMutedBg, cAccent, cPrimary, cRing,
         AMBER, AMBER_FG, BLUE_FG, RED, usedW,
@@ -6346,8 +6487,10 @@ import FilterX from "@lucide/svelte/icons/filter-x";
         // body context carried `fonts`, this one did not, and only the one
         // branch gated on the gutter being enabled ever touched it.
         fonts: _fonts,
+        stripX0, stripX1,
       })
     }
+    if (canBlitX) ctx.restore()
 
     // Now that the visible set is known, drop the backlog the viewport has moved
     // past and start whatever decodes fit in the remaining slots.
@@ -6624,12 +6767,16 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     // condition re-entered it once per column per row.
     const cols = c.cols
     const sl = c.scrollLeft
-    for (let ci = c.firstColIdx, nc = cols.length, vpw = c.viewportWidth; ci < nc; ci++) {
+    // On a horizontal blit frame only the columns crossing the uncovered strip
+    // are drawn (c.stripX0/X1; 0/Infinity on every other frame).
+    const right = Math.min(c.viewportWidth, c.stripX1)
+    const left = Math.max(0, c.stripX0)
+    for (let ci = c.firstColIdx, nc = cols.length; ci < nc; ci++) {
       const col = cols[ci]
       if (col.pinned) continue
       const dx = col.contentX - sl
-      if (dx >= vpw) break
-      if (dx + col.w <= 0) continue
+      if (dx >= right) break
+      if (dx + col.w <= left) continue
       drawCell(ctx, idx, col, dx, ry, rh, c)
     }
 
@@ -6641,7 +6788,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       }
     }
 
-    drawRowGutters(ctx, idx, -_scrollLeft, ry, rh, c)
+    if (gutterWidth - sl > left && -sl < right) drawRowGutters(ctx, idx, -sl, ry, rh, c)
 
     // Staged-delete decoration: a left red bar + a strikethrough across the row.
     if (isPendingDelete) {
@@ -6678,7 +6825,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       for (let vi = 0; vi < _vexprLayout.length; vi++) {
         const vc = _vexprLayout[vi]
         const cellX = vc.x - _scrollLeft
-        if (cellX + vc.w <= 0 || cellX >= _viewportWidth) continue
+        if (cellX + vc.w <= left || cellX >= right) continue
         fillPanel(ctx, c.cPanel, cellX, ry, vc.w, rh)
         const isVHov = hoveredRow === idx && hoveredColName === vc.hoverKey
         if (isVHov) { ctx.fillStyle = withAlpha(c.cMutedBg, 0.15); ctx.fillRect(cellX, ry, vc.w, rh) }
@@ -6705,7 +6852,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       const vc = virtualRelCols[vi]
       const cw = _vrelLayout[vi].w
       const cellX = _vrelLayout[vi].x - _scrollLeft
-      if (cellX + cw <= 0 || cellX >= _viewportWidth) continue
+      if (cellX + cw <= left || cellX >= right) continue
       // Panel base, then the row's own tint on top: painting only the panel left
       // the relationship columns dark while the rest of a selected row lit up,
       // so the highlight stopped mid-row.
@@ -7199,12 +7346,15 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     ctx.fillStyle = withAlpha(c.cMutedBg, 0.38)
     ctx.fillRect(0, 0, c.W, HEADER_H)
 
+    // Horizontal blit frame: only the uncovered strip's headers.
+    const hRight = Math.min(c.W, c.stripX1 ?? Infinity)
+    const hLeft = Math.max(0, c.stripX0 ?? 0)
     // Non-pinned headers. Ordered by ascending contentX → break past the right edge.
     for (const col of geom.cols) {
       if (col.pinned) continue
       const dx = col.contentX - _scrollLeft
-      if (dx >= c.W) break
-      if (dx + col.w <= 0) continue
+      if (dx >= hRight) break
+      if (dx + col.w <= hLeft) continue
       drawHeaderCell(ctx, col, dx, c)
     }
 
@@ -7552,6 +7702,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     // canvas and the visible one would stay black. Binding to canvasEl every call
     // keeps _ctx and the on-screen canvas in lockstep.
     _ctx = canvas.getContext('2d')
+    if (_ctx) trackFont(_ctx)
     const cssW = Math.max(1, Math.round(_viewportWidth))
     // Height is not simply the viewport's. Resizing the backing store on WebKit
     // swaps the new bitmap in a frame before the new box size lands, so the
@@ -7576,6 +7727,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       canvas.height = bh
       resized = true
       _surfaceHasFrame = false
+      if (_ctx) /** @type {any} */ (_ctx).__fontReset?.()
     }
     // canvas.width/height assignment resets the transform, so always (re)apply it.
     if (_ctx) _ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
