@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.9.2] - 2026-11-15
+
+### Changes
+- Press feedback only on compact buttons (#188)
+
+
 ## [2.9.1] - 2026-11-15
 
 ### Changes
