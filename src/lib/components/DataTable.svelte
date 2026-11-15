@@ -7902,17 +7902,36 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     // per event turned that coast sideways the moment Shift went down, or back
     // to vertical when it came up. A gap of more than GESTURE_GAP ms between
     // events starts a new gesture, which reads Shift afresh.
+    //
+    // Shift pressed during a scroll, or just after it seemed to stop, holds the
+    // scroll vertical until the wheel has been quiet for COAST_QUIET ms. A
+    // trackpad's coast thins out at its tail, and a busy frame (a focused cell
+    // redraws more) stretched the gap past GESTURE_GAP, so the rest of the
+    // coast was read as a new Shift gesture and the grid slid sideways.
+    // Gaps are timed from the events' own timestamps, which a stalled main
+    // thread does not stretch.
     const GESTURE_GAP = 100
+    const COAST_QUIET = 350
     let _gestureAt = -Infinity
     let _gestureShift = false
+    let _coastHold = false
     /** @param {WheelEvent} e @returns {boolean} the gesture scrolls sideways */
     const gestureShift = (e) => {
-      const now = performance.now()
-      if (now - _gestureAt > GESTURE_GAP) _gestureShift = e.shiftKey
+      const now = e.timeStamp || performance.now()
+      const gap = now - _gestureAt
+      if (gap > (_coastHold ? COAST_QUIET : GESTURE_GAP)) {
+        _coastHold = false
+        _gestureShift = e.shiftKey
+      }
       _gestureAt = now
       return _gestureShift
     }
-    const gestureLive = () => performance.now() - _gestureAt <= GESTURE_GAP
+    const gestureLive = () => performance.now() - _gestureAt <= (_coastHold ? COAST_QUIET : GESTURE_GAP)
+    /** Shift went down: during or right after a vertical scroll, keep it vertical. @param {KeyboardEvent} e */
+    const noteShift = (e) => {
+      if (e.type !== 'keydown' || e.key !== 'Shift' || e.repeat) return
+      if (!_gestureShift && performance.now() - _gestureAt <= COAST_QUIET) _coastHold = true
+    }
 
     // Non-passive: live for every tick under eased scrolling, otherwise only while
     // a modifier that needs preventDefault is down.
@@ -8016,6 +8035,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     /** @param {KeyboardEvent} e */
     let _detachTimer = 0
     const onKey = (e) => {
+      noteShift(e)
       if (easedScroll) return
       clearTimeout(_detachTimer)
       if (e.ctrlKey || e.shiftKey || e.altKey) { attach(); return }
