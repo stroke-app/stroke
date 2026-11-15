@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.10.9] - 2026-11-15
+
+### Changes
+- Update notes per version; quiet auto-updates; Update track in Settings (#205)
+
+
 ## [2.10.8] - 2026-11-15
 
 ### Changes
