@@ -1,6 +1,7 @@
 <script>
   import ArrowLeft from '@lucide/svelte/icons/arrow-left'
   import { onMount, onDestroy, untrack, tick } from 'svelte'
+  import { openPanel, closePanel, panelMotionOff } from '$lib/panel-motion.js'
   import { fade } from 'svelte/transition'
   import { traceInteraction } from '$lib/perf.js'
   import { couchAdapter, cassandraAdapter, elasticAdapter, firestoreAdapter, mongoAdapter, uriHost } from '$lib/doc-adapters.js'
@@ -3021,6 +3022,30 @@ let rowSearch = $state('')
   let terminalDockHeight = $state(Number(loadLayout().terminalDockHeight) || 260)
   /** @type {HTMLDivElement | null} */
   let terminalDockEl = $state(null)
+  // The dock slides like a native split view: its top edge moves while the
+  // terminal inside keeps its full height (clipped), so it never re-measures
+  // or repaints mid-animation. It stays laid out until the close has played.
+  let terminalDockShown = $state(false)
+  let terminalDockMoving = $state(false)
+  $effect(() => {
+    const open = terminalDockOpen
+    untrack(() => {
+      if (open) {
+        terminalDockShown = true
+        terminalDockMoving = true
+        void tick()
+          .then(() => openPanel(terminalDockEl, 'height'))
+          .then(() => { if (terminalDockOpen) terminalDockMoving = false })
+      } else if (terminalDockShown) {
+        terminalDockMoving = true
+        void closePanel(terminalDockEl, 'height').then(() => {
+          if (terminalDockOpen) return
+          terminalDockShown = false
+          terminalDockMoving = false
+        })
+      }
+    })
+  })
   function toggleTerminalDock() {
     if (!connection) return
     terminalDockOpen = !terminalDockOpen
@@ -3885,6 +3910,28 @@ let rowSearch = $state('')
     saveLayout({ navSidebarOpen: sidebarOpen })
   }
 
+
+  // The AI panel slides in from the right edge like a native inspector: its
+  // left edge moves, the chat inside keeps its width and is clipped. Switching
+  // to or from full AI mode stays instant (that is a different layout).
+  /** @type {HTMLDivElement | null} */
+  let aiPanelEl = $state(null)
+  let aiPanelShown = $state(untrack(() => aiSidebarOpen && !aiMode))
+  let aiPanelMode = untrack(() => aiMode)
+  $effect(() => {
+    const want = aiSidebarOpen && !aiMode
+    const modeFlip = aiMode !== aiPanelMode
+    aiPanelMode = aiMode
+    untrack(() => {
+      if (modeFlip || panelMotionOff()) { aiPanelShown = want; return }
+      if (want) {
+        aiPanelShown = true
+        void tick().then(() => openPanel(aiPanelEl, 'width'))
+      } else if (aiPanelShown) {
+        void closePanel(aiPanelEl, 'width').then(() => { if (!(aiSidebarOpen && !aiMode)) aiPanelShown = false })
+      }
+    })
+  })
 
   function toggleAiSidebar() {
     if (!connection) return
@@ -10911,17 +10958,20 @@ let rowSearch = $state('')
            actions float at the top-right of the terminal itself. -->
       <div
         bind:this={terminalDockEl}
-        class={terminalDockOpen ? 'relative flex shrink-0 flex-col border-t border-border/60 bg-panel' : 'hidden'}
+        class={terminalDockShown ? 'relative flex shrink-0 flex-col border-t border-border/60 bg-panel' : 'hidden'}
         style:height="{terminalDockHeight}px"
         inert={!terminalDockOpen || undefined}
       >
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div class="absolute inset-x-0 -top-1 z-10 h-2 cursor-row-resize" onpointerdown={startTerminalDockResize}></div>
-        <svelte:boundary failed={tabError}>
-          {#await import('./TerminalPage.svelte')}<TabLoading />{:then { default: TerminalPage }}
-            <TerminalPage active={terminalDockOpen} prewarm {connection} {dbType} getHints={buildSqlHints} docked onclose={() => (terminalDockOpen = false)} onpopout={() => { terminalDockOpen = false; openNewTerminalTab() }} />
-          {/await}
-        </svelte:boundary>
+        <!-- Full height while the edge moves, so the terminal is clipped rather than resized. -->
+        <div class={terminalDockMoving ? 'absolute inset-x-0 top-0 flex flex-col' : 'absolute inset-0 flex flex-col'} style:height={terminalDockMoving ? `${terminalDockHeight}px` : null}>
+          <svelte:boundary failed={tabError}>
+            {#await import('./TerminalPage.svelte')}<TabLoading />{:then { default: TerminalPage }}
+              <TerminalPage active={terminalDockOpen} prewarm {connection} {dbType} getHints={buildSqlHints} docked onclose={() => (terminalDockOpen = false)} onpopout={() => { terminalDockOpen = false; openNewTerminalTab() }} />
+            {/await}
+          </svelte:boundary>
+        </div>
       </div>
     {/if}
   </main>
@@ -10929,7 +10979,9 @@ let rowSearch = $state('')
 
   {#if aiSidebarEverOpened && connection}
     <div
-      style={aiSidebarOpen && !aiMode ? '' : 'display:none'}
+      bind:this={aiPanelEl}
+      class="flex shrink-0 justify-end"
+      style={aiPanelShown ? '' : 'display:none'}
       inert={!aiSidebarOpen || aiMode || undefined}
     >
       {#await import('./AiSidebar.svelte')}
