@@ -5333,61 +5333,167 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     if (p) _vimPrefixTimer = setTimeout(() => { _vimPrefix = '' }, 700)
   }
   /** Move the cell cursor by (dr, dc), clamped, and keep it in view. */
+  /**
+   * Grid Vim. Normal mode: hjkl and arrows-by-count, w/b next/previous column,
+   * 0/^ and $ row start/end, gg/G (and nG) first/last/nth row, H/M/L top,
+   * middle and bottom of the screen, Ctrl+d/u half a page, Ctrl+f/b a page.
+   * v starts a cell selection and V a row selection; motions extend it, y
+   * copies it (tab separated, pastes into a spreadsheet), Esc leaves it.
+   * Yank: yy the row, Y or yc the cell. p puts the clipboard into the cell
+   * (staged, like any edit). i/a/c/Enter edit, x sets NULL, dd deletes the
+   * row, u/Ctrl+r undo and redo, o expands the row, / searches.
+   */
+  /** @type {'' | 'v' | 'V'} */
+  let _vimVisual = ''
+  function vimEnterVisual(/** @type {'v' | 'V'} */ kind) {
+    const r = focusedRow ?? 0
+    if (focusedRow === null) focusedRow = 0
+    if (kind === 'V') {
+      selAnchor = { row: r, col: 0 }
+      focusedCol = Math.max(0, navigableColumns.length - 1)
+    } else {
+      if (focusedCol === null) focusedCol = 0
+      selAnchor = { row: r, col: focusedCol }
+    }
+    _vimVisual = kind
+    setVimSubMode('visual')
+    scheduleDraw()
+  }
+  function vimLeaveVisual() {
+    if (!_vimVisual) return
+    _vimVisual = ''
+    clearCellRange()
+    setVimSubMode('normal')
+    scheduleDraw()
+  }
+  /** First and last row on screen (the header excluded). */
+  function vimScreenRows() {
+    const n = rows.length
+    if (!n) return [0, 0]
+    let first = Math.min(n - 1, Math.max(0, Math.floor(_scrollTop / ROW_HEIGHT)))
+    while (first > 0 && rowViewportY(first) > HEADER_H) first--
+    while (first < n - 1 && rowViewportY(first) + ROW_HEIGHT <= HEADER_H) first++
+    let last = first
+    while (last < n - 1 && rowViewportY(last + 1) + ROW_HEIGHT <= _viewportHeight) last++
+    return [first, last]
+  }
+  /** @param {number} row */
+  function vimGoRow(row) {
+    const n = rows.length
+    if (!n) return
+    focusedRow = Math.min(Math.max(row, 0), n - 1)
+    if (focusedCol === null) focusedCol = 0
+    if (_vimVisual === 'V') focusedCol = Math.max(0, navigableColumns.length - 1)
+    scrollRowIntoView(focusedRow)
+    scheduleDraw()
+  }
   function vimMove(dr, dc) {
     const rowLen = rows.length, visLen = navigableColumns.length
     if (!rowLen || !visLen) return
     focusedRow = Math.min(Math.max((focusedRow ?? 0) + dr, 0), rowLen - 1)
-    focusedCol = Math.min(Math.max((focusedCol ?? 0) + dc, 0), visLen - 1)
-    selAnchor = null
+    focusedCol = _vimVisual === 'V' ? visLen - 1 : Math.min(Math.max((focusedCol ?? 0) + dc, 0), visLen - 1)
+    if (!_vimVisual) selAnchor = null
     scrollRowIntoView(focusedRow)
+    scheduleDraw()
+  }
+  async function vimPaste() {
+    if (focusedRow === null) return
+    const ci = visToActualColIdx(focusedCol ?? 0)
+    if (ci < 0) return
+    if (isReadOnly()) { guardWrite('edit cells'); return }
+    if (!canEditColumn(ci) || cellEditBlock?.(focusedRow, ci)) { toast.message('This cell can\'t be edited'); return }
+    let text = ''
+    try { text = await navigator.clipboard.readText() } catch { toast.error("Couldn't read the clipboard"); return }
+    stageEdit(focusedRow, ci, text.replace(/\r?\n$/, ''))
     scheduleDraw()
   }
   /** Interpret a key as a grid Vim normal-mode command. Returns true if consumed. */
   function handleVimGridKey(e) {
-    if (e.metaKey || e.ctrlKey || e.altKey) return false
     const k = e.key
+    // Ctrl chords Vim users reach for: page motions and redo.
+    if (e.ctrlKey && !e.metaKey && !e.altKey) {
+      const [first, last] = vimScreenRows()
+      const page = Math.max(1, last - first)
+      const cur = focusedRow ?? first
+      if (k === 'd') { e.preventDefault(); vimGoRow(cur + Math.ceil(page / 2)); return true }
+      if (k === 'u') { e.preventDefault(); vimGoRow(cur - Math.ceil(page / 2)); return true }
+      if (k === 'f') { e.preventDefault(); vimGoRow(cur + page); return true }
+      if (k === 'b') { e.preventDefault(); vimGoRow(cur - page); return true }
+      if (k === 'r') { e.preventDefault(); void redoEdit(); return true }
+      return false
+    }
+    if (e.metaKey || e.altKey) return false
     if (k === 'Escape') {
       _setVimPrefix(''); _vimCount = ''
+      if (_vimVisual) { e.preventDefault(); vimLeaveVisual(); return true }
       return false // let the default Escape cascade (clear range / blur) run
     }
     // Only single printable characters are Vim commands; arrows, Tab, Enter,
-    // Home/End, Page… keep their normal grid behavior in both modes.
-    if (k.length !== 1) return false
+    // Home/End, Page… keep their normal grid behavior in both modes (and an
+    // arrow collapses a visual selection, so the mode follows it).
+    if (k.length !== 1) { if (_vimVisual && /^(Arrow|Tab|Enter)/.test(k)) vimLeaveVisual(); return false }
     e.preventDefault()
 
     // Resolve a pending g/d/y prefix first.
     if (_vimPrefix) {
       const p = _vimPrefix; _setVimPrefix('')
-      if (p === 'g' && k === 'g') { focusedRow = 0; scrollRowIntoView(0); scheduleDraw(); return true }
+      const n = _vimCount ? parseInt(_vimCount, 10) : 0
+      _vimCount = ''
+      if (p === 'g' && k === 'g') { vimGoRow(n ? n - 1 : 0); return true }
       if (p === 'd' && k === 'd') { deleteRow(focusedRow ?? 0); return true }
-      if (p === 'y' && k === 'y') { void copyAs(focusedRow ?? 0, 'plain'); return true }
+      if (p === 'y' && k === 'y') { void copyAs(focusedRow ?? 0, 'plain'); toast.success('Yanked the row'); return true }
+      if (p === 'y' && (k === 'c' || k === 'w')) {
+        const ci = visToActualColIdx(focusedCol ?? 0)
+        if (focusedRow !== null && ci >= 0) void copyCellValue(focusedRow, ci)
+        return true
+      }
       // non-matching second key falls through to be handled fresh below
     }
 
     // Numeric count prefix (a lone "0" is the row-start motion, not a count).
     if ((k >= '1' && k <= '9') || (k === '0' && _vimCount !== '')) { _vimCount += k; return true }
+    const hadCount = _vimCount !== ''
     const count = Math.max(1, parseInt(_vimCount || '1', 10)); _vimCount = ''
     const ai = () => visToActualColIdx(focusedCol ?? 0)
+    const visLen = navigableColumns.length
+
+    // Visual mode: motions extend, y copies, v/V toggle, anything else leaves.
+    if (_vimVisual && (k === 'y' || k === 'Y')) {
+      void copyCellRange().then(() => toast.success('Yanked the selection'))
+      vimLeaveVisual()
+      return true
+    }
 
     switch (k) {
-      case 'g': case 'd': case 'y': _setVimPrefix(k); return true
+      case 'g': case 'd': case 'y': if (!_vimVisual) { _setVimPrefix(k); if (hadCount) _vimCount = String(count) } return true
       case 'h': vimMove(0, -count); return true
       case 'l': vimMove(0, count); return true
       case 'j': vimMove(count, 0); return true
       case 'k': vimMove(-count, 0); return true
-      case '0': focusedCol = 0; scheduleDraw(); return true
-      case '$': focusedCol = navigableColumns.length - 1; scheduleDraw(); return true
-      case 'G': { const last = rows.length - 1; if (last >= 0) { focusedRow = last; scrollRowIntoView(last); scheduleDraw() } return true }
-      case 'i': case 'a': case 'c': startEdit(focusedRow ?? 0, ai()); setVimSubMode('insert'); return true
-      case 'x': setCellNull(focusedRow ?? 0, ai()); return true
-      case '/': onrequestsearch(); return true
+      case 'w': vimMove(0, count); return true
+      case 'b': vimMove(0, -count); return true
+      case '0': case '^': if (_vimVisual !== 'V') { focusedCol = 0; scheduleDraw() } return true
+      case '$': if (visLen) { focusedCol = visLen - 1; scheduleDraw() } return true
+      case 'G': vimGoRow(hadCount ? count - 1 : rows.length - 1); return true
+      case 'H': { const [first, last] = vimScreenRows(); vimGoRow(Math.min(last, first + (hadCount ? count - 1 : 0))); return true }
+      case 'L': { const [first, last] = vimScreenRows(); vimGoRow(Math.max(first, last - (hadCount ? count - 1 : 0))); return true }
+      case 'M': { const [first, last] = vimScreenRows(); vimGoRow(Math.floor((first + last) / 2)); return true }
+      case 'v': if (_vimVisual === 'v') vimLeaveVisual(); else vimEnterVisual('v'); return true
+      case 'V': if (_vimVisual === 'V') vimLeaveVisual(); else vimEnterVisual('V'); return true
+      case 'Y': { const ci = ai(); if (focusedRow !== null && ci >= 0) void copyCellValue(focusedRow, ci); return true }
+      case 'p': void vimPaste(); return true
+      case 'u': void undoEdit(); return true
+      case 'o': if (showRowExpand && focusedRow !== null) toggleRowExpand(focusedRow); return true
+      case 'i': case 'a': case 'c': vimLeaveVisual(); startEdit(focusedRow ?? 0, ai()); setVimSubMode('insert'); return true
+      case 'x': if (!_vimVisual) setCellNull(focusedRow ?? 0, ai()); return true
+      case '/': vimLeaveVisual(); onrequestsearch(); return true
       default: return true // unmapped printable char - consume so it can't type-to-edit
     }
   }
   // Mirror the grid's edit state into the shared Vim indicator while focused.
   $effect(() => {
     if (!$appVimMode || !isTableFocused) return
-    setVimSubMode(editingCell ? 'insert' : 'normal')
+    setVimSubMode(editingCell ? 'insert' : _vimVisual ? 'visual' : 'normal')
   })
 
   /** @param {KeyboardEvent} e */
