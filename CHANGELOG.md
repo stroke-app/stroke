@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.13.8] - 2026-11-15
+
+### Changes
+- Show only the tick on the current item in menus (#234)
+
+
 ## [2.13.7] - 2026-11-15
 
 ### Changes
