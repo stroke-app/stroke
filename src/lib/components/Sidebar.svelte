@@ -22,6 +22,7 @@
   import { rootPxFor } from "$lib/type-scale.js";
   import SidebarObjects from "./SidebarObjects.svelte";
   import SidebarTree from "./SidebarTree.svelte";
+  import { treeConnectionScope } from "$lib/stores/sidebar-tree.js";
   import { objectsVersion } from "$lib/stores/sidebar-objects.svelte.js";
   import { listObjectComments } from "$lib/api.js";
   import { smoothScroll } from "$lib/smooth-scroll.js";
@@ -993,6 +994,8 @@
   // Sorted, hide-filtered, un-pinned base - recomputes only when the data, sort,
   // hide toggles or pins change (NOT on every keystroke). The search term then
   // just filters this base, so typing avoids the sort + array clones.
+  /** The open schema's tables for the tree, under the same display options. */
+  const treeTables = $derived(treeMode ? applySortBy(tables) : tables);
   const sortedRegularBase = $derived(
     applySortBy(regularTables.filter((t) => !pinnedSet.has(t.name))),
   );
@@ -1856,7 +1859,7 @@
       <RedisSidebarNav />
     </div>
     {@render chatsSection()}
-    {@render connectionsSection()}
+    {#if !(treeMode && $treeConnectionScope === 'all' && activePanel === 'tree')}{@render connectionsSection()}{/if}
     {:else if navSidebarPanel === "tables"}
     <div class="flex min-h-0 flex-1 flex-col">
 
@@ -1967,8 +1970,10 @@
           </div>
           <div class="ml-auto flex shrink-0 items-center gap-0.5">
           {#if sidebarTab === 'tree'}
-            <!-- The explorer's own actions, in the same slot so the bar keeps its width. -->
-            <span class="invisible size-7 shrink-0" aria-hidden="true"></span>
+            <!-- The explorer's own actions, in the same slot so the bar keeps
+                 its width. Display options first, as on the table list: they
+                 sort and hide the tree's tables the same way. -->
+            {@render displayOptions()}
             <button
               type="button"
               class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40"
@@ -2026,78 +2031,7 @@
                they did nothing for the panel below, so they keep their space
                there (no shift between tabs) but are not shown or reachable. -->
           <div class={cn("flex items-center gap-0.5", (sidebarTab === 'queries' || sidebarTab === 'search') && "invisible")}>
-          <DropdownMenu.Root>
-            <DropdownMenu.Trigger
-              class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground data-[state=open]:bg-accent data-[state=open]:text-foreground disabled:pointer-events-none disabled:opacity-40"
-              title="Display options"
-              disabled={!connectionName}
-            >
-              <Icon name="list-filter" class="size-3.5 shrink-0" />
-            </DropdownMenu.Trigger>
-            <DropdownMenu.Content align="start" class="min-w-52">
-              <div class="px-2 pt-1 pb-1.5 text-ui-2xs text-muted-foreground leading-relaxed">
-                <span class="font-mono tabular-nums text-foreground/80">{regularTables.length}</span> tables{#if views.length} · <span class="font-mono tabular-nums text-foreground/80">{views.length}</span> views{/if}{#if matViews.length} · <span class="font-mono tabular-nums text-foreground/80">{matViews.length}</span> mat.{/if}
-                {#if hiddenCount > 0}<br /><span class="text-warning">{hiddenCount} hidden by filters</span>{/if}
-              </div>
-              <DropdownMenu.Separator />
-              <DropdownMenu.CheckboxItem
-                checked={showRowCount}
-                onCheckedChange={(v) => (showRowCount = v)}
-              ><Icon name="hash" class="text-muted-foreground" />Row counts</DropdownMenu.CheckboxItem>
-              <DropdownMenu.CheckboxItem
-                checked={hideEmpty}
-                onCheckedChange={(v) => (hideEmpty = v)}
-              ><Icon name="circle-slash" class="text-muted-foreground" />Hide empty tables</DropdownMenu.CheckboxItem>
-              <DropdownMenu.CheckboxItem
-                checked={hideSystem}
-                onCheckedChange={(v) => (hideSystem = v)}
-              ><Icon name="cog" class="text-muted-foreground" />Hide system tables</DropdownMenu.CheckboxItem>
-              <DropdownMenu.Separator />
-              <DropdownMenu.Label>Sort by</DropdownMenu.Label>
-              <!-- Field + direction merged: pick a field, click it again to flip. -->
-              <DropdownMenu.Item
-                closeOnSelect={false}
-                title="Click to flip direction"
-                onSelect={() => { if (sortBy === 'name') sortDir = sortDir === 'asc' ? 'desc' : 'asc'; else sortBy = 'name' }}
-              >
-                <Icon name={sortBy === 'name' && sortDir === 'desc' ? 'arrow-up-a-z' : 'arrow-down-a-z'} class="text-muted-foreground" />
-                Name
-                {#if sortBy === 'name'}
-                  <span class="ml-auto font-mono text-ui-2xs text-muted-foreground">{sortDir === 'asc' ? 'A→Z' : 'Z→A'}</span>
-                {/if}
-              </DropdownMenu.Item>
-              <DropdownMenu.Item
-                closeOnSelect={false}
-                title="Click to flip direction"
-                onSelect={() => { if (sortBy === 'rowCount') sortDir = sortDir === 'asc' ? 'desc' : 'asc'; else sortBy = 'rowCount' }}
-              >
-                <Icon name={sortBy === 'rowCount' && sortDir === 'asc' ? 'arrow-up-0-1' : 'arrow-down-0-1'} class="text-muted-foreground" />
-                Row count
-                {#if sortBy === 'rowCount'}
-                  <span class="ml-auto font-mono text-ui-2xs text-muted-foreground">{sortDir === 'desc' ? '9→0' : '0→9'}</span>
-                {/if}
-              </DropdownMenu.Item>
-              <!-- Newest first on the first pick: "what did I just make" is the
-                   usual question. Engines that keep no creation time (Postgres,
-                   SQLite, DuckDB) sort by creation order instead. -->
-              <DropdownMenu.Item
-                closeOnSelect={false}
-                title="Click to flip direction. MySQL and SQL Server sort by creation time; other engines by the order tables were created in."
-                onSelect={() => { if (sortBy === 'created') sortDir = sortDir === 'asc' ? 'desc' : 'asc'; else { sortBy = 'created'; sortDir = 'desc' } }}
-              >
-                <Icon name="clock" class="text-muted-foreground" />
-                Created
-                {#if sortBy === 'created'}
-                  <span class="ml-auto font-mono text-ui-2xs text-muted-foreground">{sortDir === 'desc' ? 'New→Old' : 'Old→New'}</span>
-                {/if}
-              </DropdownMenu.Item>
-              <DropdownMenu.Separator />
-              <DropdownMenu.Item onSelect={resetFilters} disabled={!filtersActive}>
-                <Icon name="rotate-ccw" class="text-muted-foreground" />
-                Reset filters &amp; sort
-              </DropdownMenu.Item>
-            </DropdownMenu.Content>
-          </DropdownMenu.Root>
+          {@render displayOptions()}
           <button
             type="button"
             class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40"
@@ -2390,7 +2324,8 @@
             {connection}
             {connections}
             {schemas}
-            {tables}
+            tables={treeTables}
+            showRowCounts={showRowCount}
             {activeSchema}
             {activeTable}
             {loadingTables}
@@ -2415,6 +2350,7 @@
             {onnewschema}
             {onnewdatabase}
             {onconnectionmeta}
+            {onremoveconnection}
           />
         </div>
       {/if}
@@ -3224,7 +3160,7 @@
       {/each}
     </div>
     {@render chatsSection()}
-    {@render connectionsSection()}
+    {#if !(treeMode && $treeConnectionScope === 'all' && activePanel === 'tree')}{@render connectionsSection()}{/if}
     {:else if navSidebarPanel === "connections"}
       <ConnectionsSidebarPanel
         {connections}
@@ -3241,7 +3177,10 @@
     {/if}
 
     <!-- Footer, as in T3: app-wide controls as plain icons, one round action. -->
-    <div class="flex h-12 shrink-0 items-center gap-1 px-3">
+    <!-- Bottom-aligned 32px row: the status bar beside it is h-8, so the
+         icons here and its items share one centre line. Centred in 48px they
+         sat 8px higher than the status bar's. -->
+    <div class="flex h-12 shrink-0 items-end gap-1 px-3">
       <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title="Settings" aria-label="Settings" onclick={onopensettings}><Icon name="settings" class="size-4 shrink-0" /></button>
       <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title={$isCurrentThemeDark ? 'Light theme' : 'Dark theme'} aria-label="Toggle theme" onclick={() => toggleLightDark()}><Icon name={$isCurrentThemeDark ? 'sun' : 'moon'} class="size-4 shrink-0" /></button>
       <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title="Keyboard shortcuts" aria-label="Keyboard shortcuts" onclick={onopenshortcuts}><Icon name="keyboard" class="size-4 shrink-0" /></button>
@@ -3251,7 +3190,7 @@
              there isn't. Ready means downloaded; Restart installs it. -->
         <button
           type="button"
-          class="ml-auto inline-flex h-7 items-center gap-1.5 rounded-full bg-primary px-3 text-ui-xs font-medium text-primary-foreground transition-[background-color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-primary/90 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+          class="ml-auto mb-0.5 inline-flex h-7 items-center gap-1.5 rounded-full bg-primary px-3 text-ui-xs font-medium text-primary-foreground transition-[background-color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-primary/90 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
           title={updateState === 'ready' ? 'The update is downloaded. Restart to install it.' : 'A new version of Stroke is available'}
           onclick={oncheckupdates}
         >
@@ -3456,6 +3395,81 @@
       {/if}
     </div>
   {/if}
+{/snippet}
+
+{#snippet displayOptions()}
+          <DropdownMenu.Root>
+            <DropdownMenu.Trigger
+              class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground data-[state=open]:bg-accent data-[state=open]:text-foreground disabled:pointer-events-none disabled:opacity-40"
+              title="Display options"
+              disabled={!connectionName}
+            >
+              <Icon name="list-filter" class="size-3.5 shrink-0" />
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Content align="start" class="min-w-52">
+              <div class="px-2 pt-1 pb-1.5 text-ui-2xs text-muted-foreground leading-relaxed">
+                <span class="font-mono tabular-nums text-foreground/80">{regularTables.length}</span> tables{#if views.length} · <span class="font-mono tabular-nums text-foreground/80">{views.length}</span> views{/if}{#if matViews.length} · <span class="font-mono tabular-nums text-foreground/80">{matViews.length}</span> mat.{/if}
+                {#if hiddenCount > 0}<br /><span class="text-warning">{hiddenCount} hidden by filters</span>{/if}
+              </div>
+              <DropdownMenu.Separator />
+              <DropdownMenu.CheckboxItem
+                checked={showRowCount}
+                onCheckedChange={(v) => (showRowCount = v)}
+              ><Icon name="hash" class="text-muted-foreground" />Row counts</DropdownMenu.CheckboxItem>
+              <DropdownMenu.CheckboxItem
+                checked={hideEmpty}
+                onCheckedChange={(v) => (hideEmpty = v)}
+              ><Icon name="circle-slash" class="text-muted-foreground" />Hide empty tables</DropdownMenu.CheckboxItem>
+              <DropdownMenu.CheckboxItem
+                checked={hideSystem}
+                onCheckedChange={(v) => (hideSystem = v)}
+              ><Icon name="cog" class="text-muted-foreground" />Hide system tables</DropdownMenu.CheckboxItem>
+              <DropdownMenu.Separator />
+              <DropdownMenu.Label>Sort by</DropdownMenu.Label>
+              <!-- Field + direction merged: pick a field, click it again to flip. -->
+              <DropdownMenu.Item
+                closeOnSelect={false}
+                title="Click to flip direction"
+                onSelect={() => { if (sortBy === 'name') sortDir = sortDir === 'asc' ? 'desc' : 'asc'; else sortBy = 'name' }}
+              >
+                <Icon name={sortBy === 'name' && sortDir === 'desc' ? 'arrow-up-a-z' : 'arrow-down-a-z'} class="text-muted-foreground" />
+                Name
+                {#if sortBy === 'name'}
+                  <span class="ml-auto font-mono text-ui-2xs text-muted-foreground">{sortDir === 'asc' ? 'A→Z' : 'Z→A'}</span>
+                {/if}
+              </DropdownMenu.Item>
+              <DropdownMenu.Item
+                closeOnSelect={false}
+                title="Click to flip direction"
+                onSelect={() => { if (sortBy === 'rowCount') sortDir = sortDir === 'asc' ? 'desc' : 'asc'; else sortBy = 'rowCount' }}
+              >
+                <Icon name={sortBy === 'rowCount' && sortDir === 'asc' ? 'arrow-up-0-1' : 'arrow-down-0-1'} class="text-muted-foreground" />
+                Row count
+                {#if sortBy === 'rowCount'}
+                  <span class="ml-auto font-mono text-ui-2xs text-muted-foreground">{sortDir === 'desc' ? '9→0' : '0→9'}</span>
+                {/if}
+              </DropdownMenu.Item>
+              <!-- Newest first on the first pick: "what did I just make" is the
+                   usual question. Engines that keep no creation time (Postgres,
+                   SQLite, DuckDB) sort by creation order instead. -->
+              <DropdownMenu.Item
+                closeOnSelect={false}
+                title="Click to flip direction. MySQL and SQL Server sort by creation time; other engines by the order tables were created in."
+                onSelect={() => { if (sortBy === 'created') sortDir = sortDir === 'asc' ? 'desc' : 'asc'; else { sortBy = 'created'; sortDir = 'desc' } }}
+              >
+                <Icon name="clock" class="text-muted-foreground" />
+                Created
+                {#if sortBy === 'created'}
+                  <span class="ml-auto font-mono text-ui-2xs text-muted-foreground">{sortDir === 'desc' ? 'New→Old' : 'Old→New'}</span>
+                {/if}
+              </DropdownMenu.Item>
+              <DropdownMenu.Separator />
+              <DropdownMenu.Item onSelect={resetFilters} disabled={!filtersActive}>
+                <Icon name="rotate-ccw" class="text-muted-foreground" />
+                Reset filters &amp; sort
+              </DropdownMenu.Item>
+            </DropdownMenu.Content>
+          </DropdownMenu.Root>
 {/snippet}
 
 {#snippet connectionsSection()}

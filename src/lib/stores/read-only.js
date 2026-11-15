@@ -55,9 +55,12 @@ export function assertWritable(what) {
  */
 export function guardWrite(what) {
   if (!get(readOnlyMode)) return true
+  // One toast, refreshed: a few tries in a row (double-click, then typing)
+  // replace it rather than stacking a pile of the same warning.
   toast.warning('Read-only connection', {
-    description: `Turn read-only off to ${what}.`,
-    duration: 5000,
+    id: 'read-only-mode',
+    description: `Turn read-only off in the status bar to ${what}.`,
+    duration: 4000,
   })
   return false
 }

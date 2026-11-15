@@ -35,50 +35,44 @@
   onDestroy(() => clearInterval(timer))
 </script>
 
-<div class="flex flex-col items-center gap-6 text-center">
-  <div class="relative flex size-[88px] items-center justify-center" in:fade={{ delay, duration: 150 }}>
-    <!-- The track stays put; only the arc turns, on its own layer so the GPU
-         drives it. `animate-spin`, not `motion-safe:animate-spin`: app.css keeps
-         spinners turning (slower) under reduced motion, and the motion-safe
-         variant opted this one out - with Reduce Motion on, the arc froze. -->
-    <svg class="absolute inset-0 size-full" viewBox="0 0 88 88" fill="none" aria-hidden="true">
-      <circle cx="44" cy="44" r="42" stroke="currentColor" stroke-width="1.5" class="text-foreground/[0.07]" />
-    </svg>
-    <div class="absolute inset-0 animate-spin will-change-transform" aria-hidden="true">
-      <svg class="size-full" viewBox="0 0 88 88" fill="none">
-        <circle cx="44" cy="44" r="42" stroke="currentColor" stroke-width="1.5"
-          stroke-dasharray="44 220" stroke-linecap="round" class="text-foreground/45" />
-      </svg>
-    </div>
-    <div class="flex size-[72px] items-center justify-center rounded-full border border-border/60 bg-card ring-1 ring-inset ring-white/[0.04] shadow-[0_10px_30px_-14px_rgba(0,0,0,0.7)]">
-      {#if icon}
-        <DbIcon id={icon} class="size-8 shrink-0" />
-      {:else}
-        <Logo class="size-9" />
-      {/if}
-    </div>
+<!-- Flat: the engine's logo on a quiet tile, the name, and a thin moving line
+     under it. No ring, no shadow. -->
+<div class="flex w-full max-w-sm flex-col items-center gap-5 text-center" in:fade={{ delay, duration: 150 }}>
+  <div class="flex size-14 items-center justify-center rounded-lg bg-muted/70">
+    {#if icon}
+      <DbIcon id={icon} class="size-7 shrink-0" />
+    {:else}
+      <Logo class="size-8" />
+    {/if}
   </div>
 
-  <div class="flex max-w-sm flex-col items-center gap-1" role="status" aria-live="polite" in:fade={{ delay, duration: 150 }}>
-    <p class="max-w-full truncate text-ui-sm font-medium text-foreground/80">
+  <div class="flex w-full flex-col items-center gap-1" role="status" aria-live="polite">
+    <p class="max-w-full truncate text-ui-sm font-medium text-foreground">
       {verb}{name ? ` to ${name}` : ''}
     </p>
     {#if detail}
       <p class="max-w-full truncate font-mono text-ui-2xs text-muted-foreground" title={detail}>{detail}</p>
     {/if}
-    <!-- Elapsed time from 2s: long enough that a normal connect never shows it,
-         and past that a number says it is still working, not stuck. -->
-    <p class="mt-1 h-4 text-ui-2xs tabular-nums text-muted-foreground/80">
-      {#if elapsed >= 8}
-        {elapsed}s · a far region can take a few seconds to answer
-      {:else if elapsed >= 2}
-        {elapsed}s
-      {/if}
-    </p>
+  </div>
+
+  <!-- Indeterminate: a short segment sliding along a hairline track. It keeps
+       moving (slower) under reduced motion, like the app's other spinners. -->
+  <div class="relative h-0.5 w-40 overflow-hidden rounded-full bg-muted" aria-hidden="true">
+    <span class="connect-sweep absolute inset-y-0 w-1/3 rounded-full bg-foreground/50"></span>
+  </div>
+
+  <!-- Elapsed time from 2s: long enough that a normal connect never shows it,
+       and past that a number says it is still working, not stuck. -->
+  <div class="flex h-7 items-center gap-3 text-ui-2xs text-muted-foreground tabular-nums">
+    {#if elapsed >= 8}
+      <span>{elapsed}s · a far region can take a few seconds</span>
+    {:else if elapsed >= 2}
+      <span>{elapsed}s</span>
+    {/if}
     {#if oncancel}
       <button
         type="button"
-        class="mt-2 rounded-md px-2 py-1 text-ui-2xs text-muted-foreground underline underline-offset-4 transition-colors hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+        class="inline-flex h-7 items-center rounded-md px-2.5 text-ui-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
         onclick={() => oncancel?.()}
       >
         Cancel
@@ -86,3 +80,16 @@
     {/if}
   </div>
 </div>
+
+<style>
+  .connect-sweep {
+    animation: connect-sweep 1.1s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+  }
+  @keyframes connect-sweep {
+    from { left: -33%; }
+    to { left: 100%; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .connect-sweep { animation-duration: 2.4s; }
+  }
+</style>
