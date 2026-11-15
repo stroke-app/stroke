@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.11.1] - 2026-11-15
+
+### Changes
+- Native panel slides, zoom-proof switches, share dialog settings rows (#207)
+
+
 ## [2.11.0] - 2026-11-15
 
 ### Changes
