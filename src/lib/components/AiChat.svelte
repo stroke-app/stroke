@@ -4746,17 +4746,17 @@
             {#if loading}
               <div class="relative flex shrink-0 items-center justify-center">
                 <span
-                  class="pointer-events-none absolute -inset-[3px] animate-spin rounded-full border-[1.5px] border-transparent border-t-destructive/70"
+                  class="pointer-events-none absolute -inset-[3px] animate-spin rounded-full border-[1.5px] border-transparent border-t-muted-foreground/60"
                   aria-hidden="true"
                 ></span>
                 <button
                   type="button"
-                  class="flex size-8 items-center justify-center rounded-full bg-destructive/90 text-destructive-foreground transition-colors hover:bg-destructive active:scale-95 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                  class="flex size-8 items-center justify-center rounded-full bg-foreground text-background transition-opacity hover:opacity-90 active:scale-95 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
                   onclick={stop}
                   aria-label="Stop"
                   title="Stop (Esc)"
                 >
-                  <Square class="size-2 shrink-0 fill-current" />
+                  <Square class="size-2.5 shrink-0 fill-current" strokeWidth={0} />
                 </button>
               </div>
             {:else}
