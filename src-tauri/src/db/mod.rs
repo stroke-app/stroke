@@ -1,6 +1,7 @@
 pub mod admin;
 pub mod backup;
 pub mod clickhouse;
+pub mod parked;
 pub mod posthog;
 pub mod connection;
 pub mod d1;

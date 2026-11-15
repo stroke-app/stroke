@@ -382,7 +382,7 @@
     remapNullableRowIndex,
     remapRowIndexSet,
   } from '$lib/table-row-indices.js'
-  import { rowsToCsv, rowsToJson, rowsToCsvAsync, rowsToJsonAsync, rowsToSql, rowsToTsv, rowsToMarkdown, rowsToJsonl, saveExportFile, buildExportFilename } from '$lib/export.js'
+  import { rowsToCsv, rowsToJson, rowsToCsvAsync, rowsToJsonAsync, rowsToSql, rowsToTsv, rowsToMarkdown, rowsToJsonl, saveExportFile, buildExportFilename, exportRows as exportRowsAs } from '$lib/export.js'
   import {
     recordQueryExecution,
     listQueryHistory,
@@ -7202,16 +7202,12 @@ let rowSearch = $state('')
         content = format === 'csv'
           ? await rowsToCsvAsync(exportColumns, exportCells)
           : await rowsToJsonAsync(exportColumns, exportCells)
-      } else {
-        content =
-          format === 'csv' ? rowsToCsv(exportColumns, exportCells)
-            : format === 'json' ? rowsToJson(exportColumns, exportCells)
-            : format === 'sql' ? rowsToSql(exportColumns, exportCells, activeTable || 'exported_table')
-            : format === 'tsv' ? rowsToTsv(exportColumns, exportCells)
-            : format === 'md' ? rowsToMarkdown(exportColumns, exportCells)
-            : rowsToJsonl(exportColumns, exportCells)
+        // The other formats build in one go (Excel and Parquet as files).
+        content = ''
       }
-      const saved = await saveExportFile(content, filename, format)
+      const saved = content
+        ? await saveExportFile(content, filename, format)
+        : await exportRowsAs(format, exportColumns, exportCells, activeTable || 'exported_table')
       toast.dismiss(toastId)
       if (saved) {
         toast.success(`Exported ${formatCompactCount(n)} rows`, { description: filename })
@@ -8091,6 +8087,8 @@ let rowSearch = $state('')
 
   /** Ask first: switching drops the pool, the catalog and every open tab. */
   function requestDatabaseSwitch(/** @type {{ key: string, label: string }} */ entry) {
+    // Labs, several connections at once: nothing closes, so there is nothing to confirm.
+    if (multiConnection()) return switchDatabaseNow(entry)
     pendingDbSwitch = entry
     showSwitchDbDialog = true
   }
@@ -8282,6 +8280,8 @@ let rowSearch = $state('')
    */
   function handleConnectionRemoved(id) {
     savedConnections = loadSavedConnections()
+    // Labs: its kept tabs go with it (its pools are closed by removeConnection).
+    for (const key of [..._sessions.keys()]) if (key.startsWith(`${id}|`)) _sessions.delete(key)
     if (connection && id && (id === persistConnectionId || id === connection.id)) {
       void handleDisconnect({ forget: true })
     }
@@ -8367,6 +8367,54 @@ let rowSearch = $state('')
     else await connectPostgres(conn)
   }
 
+  // ── Labs: several connections at once ───────────────────────────────────
+  // A switch sets the open pool aside (Rust keeps it, see db/parked.rs) and
+  // keeps this page's tabs for it here; switching back resumes the pool with
+  // no connect round trip and puts the tabs back. Table tabs come back without
+  // their rows (marked evicted) and refetch when shown, so a kept session
+  // costs a tab list, not its data. SSH-tunnelled connections share one
+  // tunnel slot, so they still connect each time.
+  /** @type {Map<string, { tabs: StudioTab[], activeTabId: string | null, activeSchema: string }>} */
+  const _sessions = new Map()
+  const multiConnection = () => loadSettings().multiConnection === true
+  /** One key per database, not per saved connection: a server holds several. @param {any} c */
+  const sessionKey = (c) => (c ? [c.id ?? '', c.type, c.databaseId ?? c.database ?? c.filePath ?? ''].join('|') : '')
+  /** @param {any} c */
+  const keepable = (c) => !!c && !c.ssh?.host
+
+  /** Put the open connection's tabs aside under its key. */
+  function keepSession() {
+    if (!connection) return
+    saveActiveTabState()
+    const key = sessionKey(connection)
+    // Newest last, so the cap drops the one used longest ago (as db/parked.rs does).
+    _sessions.delete(key)
+    _sessions.set(key, {
+      tabs: tabs.map((t) => (t.kind === 'table' && t.state ? { ...t, state: { ...t.state, rows: [], evicted: true } } : t)),
+      activeTabId,
+      activeSchema,
+    })
+    while (_sessions.size > 6) _sessions.delete(/** @type {string} */ (_sessions.keys().next().value))
+  }
+
+  /** Bring a kept session's tabs back over the fresh connection's default tab. @param {any} conn */
+  async function restoreSession(conn) {
+    const key = sessionKey(conn)
+    const s = _sessions.get(key)
+    if (!s || !s.tabs.length) return
+    _sessions.delete(key)
+    tabs = s.tabs
+    // Its editor tabs are already here: don't add the stored copies again.
+    if (tabs.some((t) => t.kind === 'sql')) _sqlTabsRestoredFor = sqlDraftKey
+    if (s.activeSchema && s.activeSchema !== activeSchema && schemas.includes(s.activeSchema)) {
+      activeSchema = s.activeSchema
+      await loadTables()
+    }
+    const front = tabs.find((t) => t.id === s.activeTabId) ?? tabs[0]
+    activeTabId = front.id
+    await applyTabToEditor(front)
+  }
+
   /** @param {import('$lib/stores/connections.js').SavedConnection} conn */
   async function handleSwitchDatabase(conn) {
     // A deliberate switch is the other half of "PIN to open or reconnect".
@@ -8375,14 +8423,28 @@ let rowSearch = $state('')
     // Disconnect current before connecting to the new one to avoid the race
     // where set_conn(None) could fire after connect_* sets the new connection.
     const previous = connection
-    await disconnectPostgres().catch(() => {})
+    const multi = multiConnection()
+    if (multi && keepable(previous)) {
+      keepSession()
+      await liveStop().catch(() => {})
+      const { invoke } = await import('@tauri-apps/api/core')
+      await invoke('park_connection', { key: sessionKey(previous) }).catch(() => disconnectPostgres().catch(() => {}))
+    } else {
+      await disconnectPostgres().catch(() => {})
+    }
     connection = null
     clearConnectionState()
+    // Labs: a kept pool for this database comes back at once, no overlay.
+    let resumed = false
+    if (multi && keepable(conn)) {
+      const { invoke } = await import('@tauri-apps/api/core')
+      resumed = await invoke('resume_connection', { key: sessionKey(conn) }).then(Boolean).catch(() => false)
+    }
     // Connect to the chosen saved connection
-    beginConnectOverlay(conn.name ?? conn.database ?? conn.host ?? '')
+    if (!resumed) beginConnectOverlay(conn.name ?? conn.database ?? conn.host ?? '')
     try {
       try {
-        await connectByType(conn)
+        if (!resumed) await connectByType(conn)
       } catch (e) {
         // Provider credentials revoked or rotated in the provider's console:
         // mint fresh ones once, the same recovery the connect dialog does.
@@ -8394,6 +8456,7 @@ let rowSearch = $state('')
         await connectByType(conn)
       }
       await onConnected(conn, conn.id)
+      if (multi) await restoreSession(conn)
       // The switch landed, so the sidebar goes back to the tables of the
       // database you are now in. Every route into a switch - the Databases tab,
       // the status bar, the command palette, a context menu, another saved
@@ -10323,7 +10386,7 @@ let rowSearch = $state('')
         >
           <svelte:boundary failed={tabError}>
             {#await import('./DashboardPage.svelte')}<TabLoading />{:then { default: DashboardPage }}
-              <DashboardPage {connection} onopensqleditor={openSqlTab} />
+              <DashboardPage {connection} active={activeTab?.kind === 'dashboard'} onopensqleditor={openSqlTab} onopensql={(sql, title) => openSqlTabWith(sql, title)} />
             {/await}
           </svelte:boundary>
         </div>

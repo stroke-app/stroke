@@ -779,6 +779,17 @@
       </div>
     {/if}
   {/if}
+  {#if show('Several connections at once', 'Labs, multiple connections open together, switch without closing tabs')}
+    {@render switchRow(
+      'Several connections at once',
+      'Switching keeps the connection you leave open, with its tabs, and switching back is instant. Up to six stay open; connections through an SSH tunnel still reconnect.',
+      settings.multiConnection === true,
+      () => {
+        settings = updateSettings({ multiConnection: settings.multiConnection !== true });
+        if (!settings.multiConnection) void import('@tauri-apps/api/core').then(({ invoke }) => invoke('close_parked', { key: null })).catch(() => {});
+      },
+    )}
+  {/if}
   {#if show('Live mode', 'Labs, auto-refresh the active table when its data changes')}
     {@render switchRow('Live mode', 'Shows the Live toggle in the status bar, which refreshes the open table when its data changes.', settings.liveModeEnabled, toggleLiveMode)}
   {/if}

@@ -1,10 +1,10 @@
 <script>
+  import SelectMenu from "./SelectMenu.svelte";
   import SearchField from './SearchField.svelte'
   import { untrack } from "svelte";
   import { cn } from "$lib/utils.js";
   import { Button } from "$lib/components/ui/button/index.js";
   import { revealInFolder } from "$lib/api.js";
-  import * as Select from "$lib/components/ui/select/index.js";
   import SearchableMenu from "./SearchableMenu.svelte";
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
   import Check from "@lucide/svelte/icons/check";
@@ -798,14 +798,7 @@
                 {/snippet}
                 {#snippet relControl()}{@render toggle(c.mode === "relative", () => setPluginConfig(selected.id, { mode: c.mode === "relative" ? "absolute" : "relative" }), "Toggle relative time")}{/snippet}
                 {#snippet precisionControl()}
-                  <Select.Root type="single" value={c.precision ?? "seconds"} onValueChange={(v) => v && setPluginConfig(selected.id, { precision: v })}>
-                    <Select.Trigger size="sm" class={selTrigger} aria-label="Time precision">
-                      <span class="truncate">{PRECISION_OPTIONS.find((o) => o.value === (c.precision ?? "seconds"))?.label ?? "Seconds"}</span>
-                    </Select.Trigger>
-                    <Select.Content class="z-[120] min-w-[10rem] p-1" sideOffset={6}>
-                      {#each PRECISION_OPTIONS as o (o.value)}<Select.Item value={o.value} label={o.label} class="py-1.5 pl-2 text-ui-xs">{o.label}</Select.Item>{/each}
-                    </Select.Content>
-                  </Select.Root>
+                  <SelectMenu ariaLabel="Time precision" value={c.precision ?? "seconds"} onValueChange={(v) => v && setPluginConfig(selected.id, { precision: v })} items={PRECISION_OPTIONS.map((o) => ({ value: o.value, label: o.label }))} triggerClass="h-7 w-44" />
                 {/snippet}
                 <!-- The row reads "24-hour clock", so ON is `hour12: false`. -->
                 {#snippet hour12Control()}{@render toggle(c.hour12 !== true, () => setPluginConfig(selected.id, { hour12: c.hour12 !== true }), "Toggle 24-hour clock")}{/snippet}
@@ -822,12 +815,7 @@
               {:else if selected.id === "money-format"}
                 {@const c = cfg(selected.id, { currency: "USD", minorUnits: false })}
                 {#snippet curCtl()}
-                  <Select.Root type="single" value={c.currency} onValueChange={(v) => v && setPluginConfig(selected.id, { currency: v })}>
-                    <Select.Trigger size="sm" class={selTrigger} aria-label="Currency"><span class="truncate">{c.currency}</span></Select.Trigger>
-                    <Select.Content class="z-[120] max-h-[18rem] min-w-[8rem] p-1" sideOffset={6}>
-                      {#each CURRENCIES as cur (cur)}<Select.Item value={cur} label={cur} class="py-1.5 pl-2 text-ui-xs">{cur}</Select.Item>{/each}
-                    </Select.Content>
-                  </Select.Root>
+                  <SelectMenu ariaLabel="Currency" value={c.currency} onValueChange={(v) => v && setPluginConfig(selected.id, { currency: v })} items={CURRENCIES.map((cur) => ({ value: cur, label: cur }))} triggerClass="h-7 w-44" />
                 {/snippet}
                 {#snippet centsCtl()}{@render toggle(c.minorUnits === true, () => setPluginConfig(selected.id, { minorUnits: !c.minorUnits }), "Toggle minor units")}{/snippet}
                 {@render settingRow("Currency", null, curCtl)}
@@ -835,25 +823,13 @@
               {:else if selected.id === "duration-format"}
                 {@const c = cfg(selected.id, { unit: "auto" })}
                 {#snippet ctl()}
-                  <Select.Root type="single" value={c.unit} onValueChange={(v) => v && setPluginConfig(selected.id, { unit: v })}>
-                    <Select.Trigger size="sm" class={selTrigger} aria-label="Duration unit"><span class="truncate">{DURATION_UNITS.find((u) => u.value === c.unit)?.label ?? "Auto"}</span></Select.Trigger>
-                    <Select.Content class="z-[120] min-w-[12rem] p-1" sideOffset={6}>
-                      {#each DURATION_UNITS as u (u.value)}<Select.Item value={u.value} label={u.label} class="py-1.5 pl-2 text-ui-xs">{u.label}</Select.Item>{/each}
-                    </Select.Content>
-                  </Select.Root>
+                  <SelectMenu ariaLabel="Duration unit" value={c.unit} onValueChange={(v) => v && setPluginConfig(selected.id, { unit: v })} items={DURATION_UNITS.map((u) => ({ value: u.value, label: u.label }))} triggerClass="h-7 w-44" />
                 {/snippet}
                 {@render settingRow("Source unit", "How the stored number is interpreted", ctl)}
               {:else if selected.id === "boolean-glyph"}
                 {@const c = cfg(selected.id, { style: "dot" })}
                 {#snippet ctl()}
-                  <Select.Root type="single" value={c.style} onValueChange={(v) => v && setPluginConfig(selected.id, { style: v })}>
-                    <Select.Trigger size="sm" class={selTrigger} aria-label="Boolean style">
-                      <span class="truncate">{BOOLEAN_STYLES.find((s) => s.value === c.style)?.label ?? "Dot + text"}</span>
-                    </Select.Trigger>
-                    <Select.Content class="z-[120] max-h-[18rem] min-w-[10rem] p-1" sideOffset={6}>
-                      {#each BOOLEAN_STYLES as st (st.value)}<Select.Item value={st.value} label={st.label} class="py-1.5 pl-2 text-ui-xs">{st.label}</Select.Item>{/each}
-                    </Select.Content>
-                  </Select.Root>
+                  <SelectMenu ariaLabel="Boolean style" value={c.style} onValueChange={(v) => v && setPluginConfig(selected.id, { style: v })} items={BOOLEAN_STYLES.map((st) => ({ value: st.value, label: st.label }))} triggerClass="h-7 w-44" />
                 {/snippet}
                 {@render settingRow("Style", "How true and false are drawn", ctl)}
               {:else if selected.id === "mask-sensitive"}
@@ -866,12 +842,7 @@
                 {#each defs as d (d.key)}
                   {#snippet ctl()}
                     {#if d.options}
-                      <Select.Root type="single" value={String(c[d.key] ?? d.def)} onValueChange={(v) => v !== undefined && setPluginConfig(selected.id, { [d.key]: v })}>
-                        <Select.Trigger size="sm" class={selTrigger} aria-label={d.label}><span class="truncate">{d.options.find((o) => o.value === String(c[d.key] ?? d.def))?.label ?? d.options[0].label}</span></Select.Trigger>
-                        <Select.Content class="z-[120] min-w-[12rem] p-1" sideOffset={6}>
-                          {#each d.options as o (o.value)}<Select.Item value={o.value} label={o.label} class="py-1.5 pl-2 text-ui-xs">{o.label}</Select.Item>{/each}
-                        </Select.Content>
-                      </Select.Root>
+                      <SelectMenu ariaLabel={d.label} value={String(c[d.key] ?? d.def)} onValueChange={(v) => v !== undefined && setPluginConfig(selected.id, { [d.key]: v })} items={d.options.map((o) => ({ value: o.value, label: o.label }))} triggerClass="h-7 w-44" />
                     {:else}
                       {@render toggle(c[d.key] === true, () => setPluginConfig(selected.id, { [d.key]: !(c[d.key] === true) }), d.label)}
                     {/if}
@@ -881,12 +852,7 @@
               {:else if selected.id === "heatmap"}
                 {@const c = cfg(selected.id, { palette: "blue" })}
                 {#snippet ctl()}
-                  <Select.Root type="single" value={c.palette} onValueChange={(v) => v && setPluginConfig(selected.id, { palette: v })}>
-                    <Select.Trigger size="sm" class={selTrigger} aria-label="Heatmap palette"><span class="truncate">{HEAT_PALETTES.find((p) => p.value === c.palette)?.label ?? "Blue"}</span></Select.Trigger>
-                    <Select.Content class="z-[120] min-w-[12rem] p-1" sideOffset={6}>
-                      {#each HEAT_PALETTES as p (p.value)}<Select.Item value={p.value} label={p.label} class="py-1.5 pl-2 text-ui-xs">{p.label}</Select.Item>{/each}
-                    </Select.Content>
-                  </Select.Root>
+                  <SelectMenu ariaLabel="Heatmap palette" value={c.palette} onValueChange={(v) => v && setPluginConfig(selected.id, { palette: v })} items={HEAT_PALETTES.map((p) => ({ value: p.value, label: p.label }))} triggerClass="h-7 w-44" />
                 {/snippet}
                 {@render settingRow("Palette", "Color scale for the value gradient", ctl)}
               {:else if selected.id === "linkify"}

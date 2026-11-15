@@ -108,7 +108,7 @@ const markQualifyDefaultApplied = () => {
 /** @typedef {'claude' | 'geist' | 'serif' | 'apple' | 'inter' | 'mono' | 'fira' | 'plex' | 'space' | 'source'} FontId */
 /** @typedef {'regular' | 'light' | 'bold'} IconStyleId */
 /** @typedef {'lucide' | 'hugeicons' | 'phosphor'} IconSetId */
-/** @typedef {{ theme: ThemeId, zoom: number, font: FontId, iconStyle: IconStyleId, iconSet: IconSetId, tableStyle: TableStyleId, jsonTheme: JsonThemeId, editorTheme: import('$lib/themes/editor-themes.js').EditorThemeId, mcpAutoStart: boolean, launchAtLogin: boolean, autoUpdate: boolean, autoReconnectOnStartup: boolean, previewDmlBeforeApply: boolean, defaultDataView: string, paginationMode: string, maxQueryHistory: number, connectTimeoutMs: number, socketTimeoutMs: number, maxAllowedPacket: number, sessionTimezone: string, vimMode: boolean, cmdkAiEnabled: boolean, liveModeEnabled: boolean, sidebarStyle: SidebarStyleId, aiInTab: boolean, lazyWideColumns: boolean, nullSortOrder: string, agentChatFontSize: number, agentCodeFontSize: number, agentThinkingStyle: string, agentShowQueryCards: boolean, agentWebAccess: boolean, tableTextAlign: string, telemetry: boolean, jsonWordWrap: boolean, nativeScroll: boolean, rowSpacing: RowSpacingId, motion: MotionId, panelMotion: boolean, quitGuard: boolean, zebraRows: boolean, showRowNumbers: boolean, showMenuBar: boolean, numberGrouping: boolean, imagePreview: boolean, openUrlsOnClick: boolean, highlightActiveRow: boolean, fkAutoExpandJson: boolean, gridFontSize: number, autoSaveQueries: boolean, streamResults: boolean, sqlUndo: boolean, sidebarComments: boolean, sidebarRememberGroups: boolean, sqlFormat: import('$lib/sql-format-options.js').SqlFormatOptions, sqlEditor: import('$lib/sql-editor-options.js').SqlEditorOptions, shareDefaults: Record<string, any> | null }} AppSettings */
+/** @typedef {{ theme: ThemeId, zoom: number, font: FontId, iconStyle: IconStyleId, iconSet: IconSetId, tableStyle: TableStyleId, jsonTheme: JsonThemeId, editorTheme: import('$lib/themes/editor-themes.js').EditorThemeId, mcpAutoStart: boolean, launchAtLogin: boolean, autoUpdate: boolean, autoReconnectOnStartup: boolean, previewDmlBeforeApply: boolean, defaultDataView: string, paginationMode: string, maxQueryHistory: number, connectTimeoutMs: number, socketTimeoutMs: number, maxAllowedPacket: number, sessionTimezone: string, vimMode: boolean, cmdkAiEnabled: boolean, liveModeEnabled: boolean, sidebarStyle: SidebarStyleId, aiInTab: boolean, lazyWideColumns: boolean, nullSortOrder: string, agentChatFontSize: number, agentCodeFontSize: number, agentThinkingStyle: string, agentShowQueryCards: boolean, agentWebAccess: boolean, tableTextAlign: string, telemetry: boolean, jsonWordWrap: boolean, nativeScroll: boolean, rowSpacing: RowSpacingId, motion: MotionId, panelMotion: boolean, quitGuard: boolean, multiConnection: boolean, zebraRows: boolean, showRowNumbers: boolean, showMenuBar: boolean, numberGrouping: boolean, imagePreview: boolean, openUrlsOnClick: boolean, highlightActiveRow: boolean, fkAutoExpandJson: boolean, gridFontSize: number, autoSaveQueries: boolean, streamResults: boolean, sqlUndo: boolean, sidebarComments: boolean, sidebarRememberGroups: boolean, sqlFormat: import('$lib/sql-format-options.js').SqlFormatOptions, sqlEditor: import('$lib/sql-editor-options.js').SqlEditorOptions, shareDefaults: Record<string, any> | null }} AppSettings */
 
 /**
  * UI type scale in design pixels: `[step, font-size, line-height?]`, matching
@@ -572,6 +572,7 @@ export const DEFAULT_SETTINGS = {
   // The terminal dock and the AI panel slide open and closed. Off: they appear at once.
   panelMotion: true,
   quitGuard: true,
+  multiConnection: false,
   // SQL formatter preferences. Defaults live with the formatter (format-sql.js)
   // so there is one source for what a valid option set is.
   sqlFormat: { ...SQL_FORMAT_DEFAULTS },
@@ -963,6 +964,7 @@ export function loadSettings() {
     const motion = normalizeMotion(parsed.motion)
     const panelMotion = parsed.panelMotion !== false
     const quitGuard = parsed.quitGuard !== false
+    const multiConnection = parsed.multiConnection === true
     const sqlFormat = normalizeSqlFormat(parsed.sqlFormat)
     const sqlEditor = normalizeSqlEditor(parsed.sqlEditor)
     const shareDefaults = parsed.shareDefaults && typeof parsed.shareDefaults === 'object' && !Array.isArray(parsed.shareDefaults) ? parsed.shareDefaults : null
@@ -998,7 +1000,7 @@ export function loadSettings() {
     const agentShowQueryCards = parsed.agentShowQueryCards === true
     const agentWebAccess = parsed.agentWebAccess === true
     const tableTextAlign = TABLE_ALIGN_IDS.includes(parsed.tableTextAlign) ? parsed.tableTextAlign : DEFAULT_TABLE_ALIGN
-    _settingsCache = { theme, zoom, font, iconStyle, iconSet, tableStyle, jsonTheme, editorTheme, mcpAutoStart, launchAtLogin, autoUpdate, autoReconnectOnStartup, previewDmlBeforeApply, defaultDataView, paginationMode, maxQueryHistory, connectTimeoutMs, socketTimeoutMs, maxAllowedPacket, sessionTimezone, vimMode, cmdkAiEnabled, liveModeEnabled, sidebarStyle, aiInTab, lazyWideColumns, nullSortOrder, agentChatFontSize, agentCodeFontSize, agentThinkingStyle, agentShowQueryCards, agentWebAccess, tableTextAlign, telemetry, jsonWordWrap, nativeScroll, rowSpacing, motion, panelMotion, quitGuard, zebraRows, showRowNumbers, showMenuBar, numberGrouping, imagePreview, openUrlsOnClick, highlightActiveRow, fkAutoExpandJson, gridFontSize, autoSaveQueries, streamResults, sqlUndo, sidebarComments, sidebarRememberGroups, sqlFormat, sqlEditor, shareDefaults }
+    _settingsCache = { theme, zoom, font, iconStyle, iconSet, tableStyle, jsonTheme, editorTheme, mcpAutoStart, launchAtLogin, autoUpdate, autoReconnectOnStartup, previewDmlBeforeApply, defaultDataView, paginationMode, maxQueryHistory, connectTimeoutMs, socketTimeoutMs, maxAllowedPacket, sessionTimezone, vimMode, cmdkAiEnabled, liveModeEnabled, sidebarStyle, aiInTab, lazyWideColumns, nullSortOrder, agentChatFontSize, agentCodeFontSize, agentThinkingStyle, agentShowQueryCards, agentWebAccess, tableTextAlign, telemetry, jsonWordWrap, nativeScroll, rowSpacing, motion, panelMotion, quitGuard, multiConnection, zebraRows, showRowNumbers, showMenuBar, numberGrouping, imagePreview, openUrlsOnClick, highlightActiveRow, fkAutoExpandJson, gridFontSize, autoSaveQueries, streamResults, sqlUndo, sidebarComments, sidebarRememberGroups, sqlFormat, sqlEditor, shareDefaults }
     // A migrated value is saved at once, or the next launch reads the old one.
     if (settingsMigrated) {
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify(_settingsCache)) } catch {}

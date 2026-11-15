@@ -7,10 +7,13 @@ let diskPayload = /** @type {string | null} */ (null)
 /** The keychain vault's connection-secrets entry, and whether it works. */
 let vault = /** @type {string | null} */ (null)
 let vaultBroken = false
+/** Saved-connection ids whose set-aside pools were closed (Labs). */
+const closedParked = /** @type {string[]} */ ([])
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(async (/** @type {string} */ cmd, /** @type {any} */ args) => {
     if (cmd === 'connections_store_write') { writes.push(args.json); diskPayload = args.json; return null }
     if (cmd === 'connections_store_read') return diskPayload
+    if (cmd === 'close_parked') { closedParked.push(args.connection); return null }
     if (cmd === 'conn_secrets_read') { if (vaultBroken) throw new Error('no keychain'); return vault }
     if (cmd === 'conn_secrets_write') { if (vaultBroken) throw new Error('no keychain'); vault = args.json; return null }
     throw new Error(`unexpected command ${cmd}`)
@@ -167,5 +170,46 @@ describe('connection secrets in the keychain', () => {
     store.upsertConnection({ id: 'n', type: 'mysql', name: 'n', password: 'keepme' })
     await flush(); await flush()
     expect(localStorage.getItem('stroke:connections')).toContain('keepme')
+  })
+})
+
+// Labs, several connections at once: a pool set aside for a saved connection
+// must not outlive an edit that points it somewhere else.
+describe('set-aside pools on edit and delete', () => {
+  beforeEach(() => {
+    installLocalStorage()
+    closedParked.length = 0
+    vi.resetModules()
+  })
+
+  const base = { id: 'p', type: 'postgres', name: 'prod', host: 'db.one', port: 5432, user: 'me', password: 'x', database: 'app' }
+
+  it('leaves them alone on the write-back of every connect and database switch', async () => {
+    const { upsertConnection } = await import('./connections.js')
+    upsertConnection(base)
+    upsertConnection({ ...base, lastConnectedAt: 1, database: 'other', name: 'Prod', color: 'red' })
+    // A live copy without its secret is not a password change.
+    const { password: _, ...noSecret } = base
+    upsertConnection(noSecret)
+    await flush()
+    expect(closedParked).toEqual([])
+  })
+
+  it('closes them when the server, login or password changes', async () => {
+    const { upsertConnection } = await import('./connections.js')
+    upsertConnection(base)
+    upsertConnection({ ...base, host: 'db.two' })
+    upsertConnection({ ...base, host: 'db.two', password: 'y' })
+    upsertConnection({ ...base, host: 'db.two', password: 'y', ssh: { host: 'jump', username: 'me' } })
+    await flush()
+    expect(closedParked).toEqual(['p', 'p', 'p'])
+  })
+
+  it('closes them when the connection is deleted', async () => {
+    const { upsertConnection, removeConnection } = await import('./connections.js')
+    upsertConnection(base)
+    removeConnection('p')
+    await flush()
+    expect(closedParked).toEqual(['p'])
   })
 })
