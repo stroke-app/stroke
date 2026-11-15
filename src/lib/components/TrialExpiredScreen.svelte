@@ -121,94 +121,88 @@
       style="background: radial-gradient(ellipse 55% 50% at 50% -8%, color-mix(in oklch, var(--primary) 9%, transparent), transparent 70%);"
     ></div>
 
-    <div class="relative flex w-full max-w-[25rem] flex-col gap-3">
-      <div class="flex flex-col gap-5 rounded-lg border border-border/60 bg-card/60 p-6 shadow-sm">
-        <div class="flex items-center gap-3">
-          <div class="grid size-9 shrink-0 place-items-center rounded-lg border border-border/60 bg-background">
-            <Logo class="size-4.5" />
-          </div>
-          <div class="flex min-w-0 flex-col">
-            <span class="text-ui-sm font-medium text-foreground">Stroke Pro</span>
-            <span class="truncate text-ui-xs text-muted-foreground">
-              {#if activated}Active{:else if $isSignedIn && email}{email}{:else}Trial ended{/if}
-            </span>
-          </div>
-        </div>
+    <div class="relative flex w-full max-w-[22rem] flex-col items-center text-center">
+      <div class="grid size-11 place-items-center rounded-lg border border-border/60 bg-card shadow-sm">
+        <Logo class="size-5" />
+      </div>
 
-        <div class="flex flex-col gap-1.5">
-          {#if activated}
-            <h1 class="text-ui-2xl font-semibold tracking-tight text-foreground text-balance animate-in fade-in duration-200">Welcome to Stroke</h1>
-            <p class="text-ui-sm leading-normal text-muted-foreground text-pretty animate-in fade-in duration-200">
-              {activatedVia === 'account' ? 'Stroke Pro is on your account.' : 'Your license is active.'} Opening your workspace.
-            </p>
-          {:else if mode === 'key'}
-            <h1 class="text-ui-2xl font-semibold tracking-tight text-foreground text-balance">Enter your license key</h1>
-            <p class="text-ui-sm leading-normal text-muted-foreground text-pretty">It was sent to your email after purchase.</p>
-          {:else if $isSignedIn}
-            <h1 class="text-ui-2xl font-semibold tracking-tight text-foreground text-balance">Your free trial has ended</h1>
-            <p class="text-ui-sm leading-normal text-muted-foreground text-pretty">This account doesn't have Stroke Pro yet. Upgrade to keep working, or check again if you just bought it.</p>
-          {:else}
-            <h1 class="text-ui-2xl font-semibold tracking-tight text-foreground text-balance">Your free trial has ended</h1>
-            <p class="text-ui-sm leading-normal text-muted-foreground text-pretty">Sign in to continue. A purchase on stroke.click shows up in your account.</p>
-          {/if}
-        </div>
+      <div class="mt-5 flex flex-col gap-2">
+        {#if activated}
+          <h1 class="text-ui-xl font-semibold tracking-tight text-foreground text-balance animate-in fade-in duration-200">Welcome to Stroke Pro</h1>
+          <p class="text-ui-sm leading-relaxed text-muted-foreground text-pretty animate-in fade-in duration-200">
+            {activatedVia === 'account' ? 'Pro is on your account.' : 'Your license is active.'} Opening your workspace.
+          </p>
+        {:else if mode === 'key'}
+          <h1 class="text-ui-xl font-semibold tracking-tight text-foreground text-balance">Enter your license key</h1>
+          <p class="text-ui-sm leading-relaxed text-muted-foreground text-pretty">It's in the email you got after buying.</p>
+        {:else}
+          <h1 class="text-ui-xl font-semibold tracking-tight text-foreground text-balance">Your trial has ended</h1>
+          <p class="text-ui-sm leading-relaxed text-muted-foreground text-pretty">
+            {$isSignedIn
+              ? 'Get Stroke Pro to keep working. Already bought it? Check again and it unlocks right away.'
+              : 'Sign in with the account you bought Stroke Pro with, or get it on stroke.click.'}
+          </p>
+        {/if}
+      </div>
 
+      <div class="mt-6 flex w-full flex-col gap-2 text-left">
         {#if mode === 'key' || (activated && activatedVia === 'key')}
           <LicenseActivation naked onsuccess={() => { activatedVia = 'key'; activated = true }} onactivated={finish} />
         {:else if activated}
-          <div class="flex items-center gap-2 text-ui-sm text-muted-foreground animate-in fade-in duration-200">
+          <div class="flex items-center justify-center gap-2 text-ui-sm text-muted-foreground animate-in fade-in duration-200">
             <LoaderCircle class="size-3.5 shrink-0 animate-spin" /> Loading
           </div>
         {:else if $isSignedIn}
-          <div class="flex flex-col gap-2">
-            <Button size="lg" class="w-full" onclick={() => void openStore()}>
-              Get Stroke Pro <Icon name="external-link" class="size-3.5 shrink-0" />
-            </Button>
-            <div class="grid grid-cols-2 gap-2">
-              <Button variant="secondary" class="w-full" disabled={checking} onclick={() => void checkAgain()}>
-                {#if checking}<LoaderCircle class="size-3.5 shrink-0 animate-spin" />{:else}<RefreshCw class="size-3.5 shrink-0" />{/if}
-                Check again
-              </Button>
-              <Button variant="secondary" class="w-full" onclick={() => (mode = 'key')}>
-                <KeyRound class="size-3.5 shrink-0" /> License key
-              </Button>
-            </div>
-          </div>
+          <Button size="lg" class="w-full" onclick={() => void openStore()}>
+            Get Stroke Pro <Icon name="external-link" class="size-3.5 shrink-0" />
+          </Button>
+          <Button variant="secondary" class="w-full" disabled={checking} onclick={() => void checkAgain()}>
+            {#if checking}<LoaderCircle class="size-3.5 shrink-0 animate-spin" /> Checking{:else}<RefreshCw class="size-3.5 shrink-0" /> I bought it, check again{/if}
+          </Button>
         {:else}
-          <div class="flex flex-col gap-2">
-            <AccountSignInButtons size="lg" />
-            <Button variant="ghost" class="w-full text-muted-foreground" onclick={() => (mode = 'key')}>
-              <KeyRound class="size-3.5 shrink-0" /> Use a license key instead
-            </Button>
-          </div>
-        {/if}
-
-        {#if !activated}
-          <div class="flex items-center gap-2 border-t border-border/50 pt-4 text-ui-xs text-muted-foreground">
-            <ShieldCheck class="size-3.5 shrink-0" />
-            Your connections and settings are saved on this device.
-          </div>
+          <AccountSignInButtons size="lg" />
+          <Button variant="secondary" class="w-full" onclick={() => void openStore()}>
+            Get Stroke Pro <Icon name="external-link" class="size-3.5 shrink-0" />
+          </Button>
         {/if}
       </div>
 
-      <div class={cn('flex items-center justify-between gap-3 px-1 text-ui-xs transition-opacity duration-200', (activated || waiting) && 'pointer-events-none opacity-0')}>
+      {#if !activated}
         {#if mode === 'key'}
-          <button type="button" onclick={() => (mode = 'account')} class="inline-flex items-center gap-1.5 text-muted-foreground transition-colors hover:text-foreground">
+          <button type="button" onclick={() => (mode = 'account')} class="mt-4 inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-ui-xs text-muted-foreground transition-[color,scale] duration-[120ms] hover:text-foreground active:scale-[0.97]">
             <ArrowLeft class="size-3.5 shrink-0" /> Back
           </button>
-        {:else if $isSignedIn}
-          <button type="button" onclick={() => void signOut()} class="text-muted-foreground transition-colors hover:text-foreground">
-            Use a different account
-          </button>
         {:else}
-          <button type="button" onclick={() => void openStore()} class="inline-flex items-center gap-1.5 text-muted-foreground transition-colors hover:text-foreground">
-            Get Stroke Pro <Icon name="external-link" class="size-3.5 shrink-0" />
+          <button type="button" onclick={() => (mode = 'key')} class="mt-4 inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-ui-xs text-muted-foreground transition-[color,scale] duration-[120ms] hover:text-foreground active:scale-[0.97]">
+            <KeyRound class="size-3.5 shrink-0" /> Use a license key
           </button>
         {/if}
-        <button type="button" onclick={quit} class="text-muted-foreground transition-colors hover:text-foreground">
+      {/if}
+
+      {#if $isSignedIn && email && !activated}
+        <!-- Who is signed in, and the way to switch: a different account may
+             be the one that has Pro. -->
+        <div class={cn('mt-6 flex w-full items-center gap-2.5 rounded-lg border border-border/60 bg-card/50 px-3 py-2 text-left transition-opacity duration-200', waiting && 'pointer-events-none opacity-0')}>
+          <span class="grid size-6 shrink-0 place-items-center rounded-full bg-muted text-ui-2xs font-medium uppercase text-foreground" aria-hidden="true">{email.slice(0, 1)}</span>
+          <span class="min-w-0 flex-1">
+            <span class="block text-ui-3xs text-muted-foreground">Signed in as</span>
+            <span class="block truncate text-ui-xs text-foreground">{email}</span>
+          </span>
+          <button type="button" onclick={() => void signOut()} class="inline-flex h-7 shrink-0 items-center rounded-md px-2 text-ui-xs text-muted-foreground transition-[background-color,color,scale] duration-[120ms] hover:bg-muted/60 hover:text-foreground active:scale-[0.97]">
+            Switch
+          </button>
+        </div>
+      {/if}
+
+      {#if !activated}
+        <p class="mt-6 flex items-center justify-center gap-1.5 text-ui-2xs text-muted-foreground">
+          <ShieldCheck class="size-3.5 shrink-0" />
+          Connections and settings stay on this device.
+        </p>
+        <button type="button" onclick={quit} class={cn('mt-2 inline-flex h-7 items-center rounded-md px-2 text-ui-2xs text-muted-foreground/80 transition-[color,scale] duration-[120ms] hover:text-foreground active:scale-[0.97]', waiting && 'pointer-events-none opacity-0')}>
           Quit Stroke
         </button>
-      </div>
+      {/if}
     </div>
   </div>
 </div>
