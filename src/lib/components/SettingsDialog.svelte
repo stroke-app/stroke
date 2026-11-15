@@ -3,6 +3,7 @@
   import { toastPosition, TOAST_POSITIONS } from '$lib/stores/toast-position.js'
   import ThemeBuilder from './ThemeBuilder.svelte';
   import AddThemeDialog from './AddThemeDialog.svelte';
+  import { detectOs } from '$lib/platform.js';
   import { importedThemes, activeImportedId, removeImportedTheme, applyImportedTheme } from '$lib/stores/imported-themes.js';
   import { comboTitle } from '$lib/shortcuts.js'
   import Kbd from './Kbd.svelte'
@@ -214,6 +215,7 @@
   /** @param {import('$lib/themes/registry.js').ThemeId} themeId */
   let themeBuilderOpen = $state(false);
   let addThemeOpen = $state(false);
+  const isMacOs = detectOs() === 'macos';
 
   /** Use one of the imported themes. @param {string} id */
   function useImported(id) {
@@ -1758,6 +1760,14 @@
       'The terminal dock and the AI panel slide open and closed. Off, they appear at once.',
       settings.panelMotion !== false,
       () => { settings = updateSettings({ panelMotion: settings.panelMotion === false }); },
+    )}
+  {/if}
+  {#if isMacOs && show('Press ⌘Q twice to quit', 'Quit confirm command q hold double press')}
+    {@render switchRow(
+      'Press ⌘Q twice to quit',
+      'The first ⌘Q shows a reminder; press it again or hold it to quit. Off, ⌘Q quits at once.',
+      settings.quitGuard !== false,
+      () => { settings = updateSettings({ quitGuard: settings.quitGuard === false }); },
     )}
   {/if}
   {#if show('Alternating row colors', 'Shade every other grid row')}

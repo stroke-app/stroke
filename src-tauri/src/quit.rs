@@ -3,7 +3,8 @@
 //! ends. See the `ExitRequested` arm in lib.rs.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::time::Duration;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use tauri::{Emitter, Manager};
 
 static APPROVED: AtomicBool = AtomicBool::new(false);
@@ -17,7 +18,7 @@ pub fn approved() -> bool {
 }
 
 /// Ask the page, and quit anyway if it never answers.
-pub fn requested(app: &tauri::AppHandle) {
+pub fn requested<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     let gen = GEN.fetch_add(1, Ordering::SeqCst) + 1;
     let _ = app.emit("app-quit-requested", ());
     let handle = app.clone();
@@ -45,4 +46,42 @@ pub fn quit_now(app: tauri::AppHandle) {
 #[tauri::command]
 pub fn cancel_quit() {
     GEN.fetch_add(1, Ordering::SeqCst);
+}
+
+// ── ⌘Q guard ────────────────────────────────────────────────────────────────
+// The menu's Quit asks for a second ⌘Q (or a held one: key repeat sends the
+// shortcut again) within the window below. The first press only shows a hint.
+
+pub const QUIT_MENU_ID: &str = "stroke-quit";
+const SECOND_PRESS: Duration = Duration::from_millis(1600);
+static GUARD_OFF: AtomicBool = AtomicBool::new(false);
+static FIRST_PRESS: Mutex<Option<Instant>> = Mutex::new(None);
+
+/// Settings: "Press ⌘Q twice to quit". Off quits on the first press.
+#[tauri::command]
+pub fn set_quit_guard(on: bool) {
+    GUARD_OFF.store(!on, Ordering::SeqCst);
+}
+
+/// The menu's Quit item (and its ⌘Q).
+pub fn menu_quit<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    let now = Instant::now();
+    let second = {
+        let mut first = FIRST_PRESS.lock().unwrap_or_else(|e| e.into_inner());
+        let second = GUARD_OFF.load(Ordering::SeqCst)
+            || first.is_some_and(|t| now.duration_since(t) <= SECOND_PRESS);
+        *first = if second { None } else { Some(now) };
+        second
+    };
+    if second {
+        // Through the same path as any other quit: the page finishes unsaved
+        // edits and the last sync push first.
+        if app.webview_windows().is_empty() {
+            app.exit(0);
+        } else {
+            requested(app);
+        }
+    } else {
+        let _ = app.emit("app-quit-hint", SECOND_PRESS.as_millis() as u64);
+    }
 }

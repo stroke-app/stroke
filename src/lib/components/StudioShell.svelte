@@ -43,6 +43,7 @@
   import { IS_MAC } from '$lib/shortcuts.js'
   import { isTypingTarget } from '$lib/focus-search.js'
   import { slashFocusTarget } from '$lib/slash-focus.js'
+  import QuitHint from './QuitHint.svelte'
   import { appFkAutoExpandJson, cycleTheme, restorePreviousTheme, isCurrentThemeDark, loadSettings, appPaginationMode, appVimMode, appAutoSaveQueries, appStreamResults, appSqlUndo, appSqlEditor, appAiInTab, increaseZoom, decreaseZoom, resetZoom, updateSettings } from '$lib/stores/settings.js'
   import { requireUnlock } from '$lib/stores/app-lock.js'
   import { isTextEntryTarget, setVimSubMode } from '$lib/vim/vim.js'
@@ -11290,3 +11291,5 @@ let rowSearch = $state('')
   </div>
 {/if}
 </div>
+
+<QuitHint />

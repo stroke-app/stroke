@@ -903,6 +903,7 @@ pub fn run() {
             commands::cancel_query,
             quit::quit_now,
             quit::cancel_quit,
+            quit::set_quit_guard,
             #[cfg(debug_assertions)]
             commands::debug_set_trial_days_ago,
             #[cfg(debug_assertions)]
