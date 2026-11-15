@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.16.0] - 2026-11-15
+
+### Changes
+- SQL notebook: import/export, variables, autosave, a usable cell UI (#258)
+
+
 ## [2.15.9] - 2026-11-15
 
 ### Changes
