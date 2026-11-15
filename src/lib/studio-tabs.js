@@ -375,6 +375,8 @@ export function tabDisplayTitle(tab) {
   if (tab.kind === 'terminal') return tab.title || 'Terminal'
   if (tab.kind === 'sql') return tab.title || 'Query Editor'
   if (tab.kind === 'notebook') return tab.title || 'Untitled Notebook'
+  // A document tab is named after its collection.
+  if (tab.kind === 'docs') return tab.title || 'Browse'
   if (tab.kind === 'extension-detail') return tab.title || tab.state?.extensionId || 'Extension'
   return SINGLETON_TAB_TITLES[tab.kind] ?? tab.title
 }

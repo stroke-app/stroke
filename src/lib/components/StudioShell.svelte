@@ -1007,7 +1007,8 @@
   let dynamoEverOpened = $state(false)
   let docsEverOpened = $state(false)
   /** The collection/table the Browse page shows: the sidebar's selection. */
-  let docCollection = $state('')
+  /** The open document tab's collection (each docs tab keeps its own). */
+  const docCollection = $derived(activeTab?.kind === 'docs' ? (/** @type {any} */ (activeTab).collection ?? '') : '')
   /** The DynamoDB table the DynamoDB page shows. */
   let dynamoTable = $state('')
   /** Engines whose sidebar schema is part of the collection's name (db.coll, keyspace.table). */
@@ -4514,13 +4515,34 @@ let rowSearch = $state('')
     clearTableEditor()
   }
 
-  /** The document browser: the main page of a CouchDB / Cassandra / Firestore connection. */
-  function openDocsTab() {
-    const existing = findDocsTab(tabs)
-    if (existing) { void activateTab(existing.id); return }
+  /**
+   * The document browser (MongoDB, CouchDB, Elasticsearch, Firestore,
+   * Cassandra...), one tab per collection like table tabs. A collection
+   * already open is focused; the blank Browse tab a connection opens on takes
+   * the first collection picked; any other pick opens its own tab. No
+   * collection: back to the docs tab used last, or a blank one.
+   * @param {string} [collection]
+   */
+  function openDocsTab(collection) {
+    const docs = tabs.filter((t) => t.kind === 'docs')
+    if (collection === undefined) {
+      const last = docs.find((t) => t.id === activeTabId) ?? docs.at(-1)
+      if (last) { void activateTab(last.id); return }
+      collection = ''
+    }
+    const name = /** @type {string} */ (collection)
+    const same = docs.find((t) => (/** @type {any} */ (t).collection ?? '') === name)
+    if (same) { void activateTab(same.id); return }
+    const title = name ? name.slice(name.lastIndexOf('.') + 1) : 'Browse'
+    const blank = name ? docs.find((t) => !(/** @type {any} */ (t).collection)) : null
+    if (blank) {
+      tabs = tabs.map((t) => (t.id === blank.id ? /** @type {any} */ ({ ...t, collection: name, title }) : t))
+      void activateTab(blank.id)
+      return
+    }
     saveActiveTabState()
     dropWelcomeTabs()
-    const tab = createDocsTab()
+    const tab = /** @type {any} */ ({ ...createDocsTab(), collection: name, title })
     tabs = [...tabs, tab]
     activeTabId = tab.id
     clearTableEditor()
@@ -7667,10 +7689,9 @@ let rowSearch = $state('')
     const connIsDynamo = fam === 'dynamodb'
     const connIsDoc = fam === 'couchdb' || fam === 'cassandra' || fam === 'firestore' || fam === 'mongodb' || fam === 'elasticsearch' || fam === 'opensearch'
     const connIsRedis = fam === 'redis'
-    docCollection = ''
     dynamoTable = ''
     if (connIsDoc) {
-      openDocsTab()
+      openDocsTab('')
     } else if (connIsDynamo) {
       openDynamoTab()
     } else if (connIsRedis) {
@@ -8036,8 +8057,7 @@ let rowSearch = $state('')
     if (aiMode) exitAiMode()
     // NoSQL: the sidebar picks what the engine's own page shows.
     if (isDoc) {
-      docCollection = docQualified && activeSchema ? `${activeSchema}.${name}` : name
-      openDocsTab()
+      openDocsTab(docQualified && activeSchema ? `${activeSchema}.${name}` : name)
       return
     }
     if (isDynamo) {
@@ -10293,28 +10313,33 @@ let rowSearch = $state('')
         </div>
       {/if}
 
-      <!-- Document browser tab (CouchDB / Cassandra / Firestore) - mount once, keep alive -->
+      <!-- Document browser tabs (MongoDB, CouchDB, Elasticsearch, Firestore,
+           Cassandra...), one per collection, each mounted once and kept alive
+           so switching back keeps its page, filters and scroll. -->
       {#if docsEverOpened && docAdapter}
-        <div
-          class={activeTab?.kind === 'docs' ? 'flex min-h-0 flex-1' : 'hidden'}
-          inert={activeTab?.kind !== 'docs' || undefined}
-        >
-          <svelte:boundary failed={tabError}>
-            {#await import('./DocBrowser.svelte')}<TabLoading />{:then { default: DocBrowser }}
-              {#key dbType}
-                <DocBrowser
-                  active={activeTab?.kind === 'docs'}
-                  live={liveEnabled}
-                  {connection}
-                  adapter={docAdapter}
-                  collection={docCollection}
-                  where={docWhere}
-                  onopensql={(text, coll) => { if (aiMode) exitAiMode(); openSqlTabWith(text, coll ? `${docAdapter.consoleLabel} · ${coll}` : docAdapter.consoleLabel) }}
-                />
-              {/key}
-            {/await}
-          </svelte:boundary>
-        </div>
+        {#each tabs.filter((t) => t.kind === 'docs') as dt (dt.id)}
+          {@const on = activeTab?.id === dt.id}
+          <div
+            class={on ? 'flex min-h-0 flex-1' : 'hidden'}
+            inert={!on || undefined}
+          >
+            <svelte:boundary failed={tabError}>
+              {#await import('./DocBrowser.svelte')}<TabLoading />{:then { default: DocBrowser }}
+                {#key dbType}
+                  <DocBrowser
+                    active={on}
+                    live={liveEnabled}
+                    {connection}
+                    adapter={docAdapter}
+                    collection={/** @type {any} */ (dt).collection ?? ''}
+                    where={docWhere}
+                    onopensql={(text, coll) => { if (aiMode) exitAiMode(); openSqlTabWith(text, coll ? `${docAdapter.consoleLabel} · ${coll}` : docAdapter.consoleLabel) }}
+                  />
+                {/key}
+              {/await}
+            </svelte:boundary>
+          </div>
+        {/each}
       {/if}
 
       <!-- Map tab - mount once, keep alive (holds viewport + fetched features) -->
