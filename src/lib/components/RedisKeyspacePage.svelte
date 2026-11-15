@@ -681,6 +681,12 @@
     : filterInput.trim() || typeFilter ? `${rows.length.toLocaleString()} matching${done ? '' : '+'}`
     : `${rows.length.toLocaleString()} of ${dbSize.toLocaleString()} ${plural(dbSize, "key")}`,
   )
+  // ⌘R, or an agent's change: reload the keys on screen.
+  $effect(() => {
+    const on = () => { if (active) reload() }
+    window.addEventListener('stroke:refresh-view', on)
+    return () => window.removeEventListener('stroke:refresh-view', on)
+  })
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
