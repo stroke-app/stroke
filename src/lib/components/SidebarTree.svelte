@@ -1200,7 +1200,12 @@
   const ROW_IDLE = 'text-foreground/80 hover:bg-sidebar-accent/50 hover:text-foreground'
   const ROW_ACTIVE = 'bg-sidebar-accent text-sidebar-accent-foreground'
   const ROW_RING = 'outline-2 -outline-offset-2 outline-ring'
-  const ROW = 'absolute inset-x-0 flex cursor-default select-none items-center gap-1.5 pr-2 text-left contain-layout contain-paint contain-style'
+  // Rows sit inset with rounded corners, the way a macOS source list (Finder,
+  // Mail, Xcode) draws its selection, rather than as full-width bars.
+  const ROW = 'absolute inset-x-1.5 flex cursor-default select-none items-center gap-1.5 rounded-md pr-2 text-left contain-layout contain-paint contain-style'
+  // Pinned ancestors sit on a full-width strip of the sidebar's colour, so the
+  // rows scrolling under them don't show at the inset edges.
+  const PIN_BACK = 'pointer-events-none absolute inset-x-0 bg-sidebar'
 </script>
 
 {#snippet newItem(/** @type {string} */ kind, /** @type {string} */ schema, /** @type {boolean} */ short)}
@@ -1343,9 +1348,15 @@
                 {#each sticky as si, k (rows[si].key)}
                   {@const r = rows[si]}
                   <div
+                    class={cn(PIN_BACK, k === sticky.length - 1 && 'border-b border-border/50')}
+                    style:top="{stickyTop[k] ?? k * rowH}px"
+                    style:z-index={sticky.length - k}
+                    style:height="{rowH}px"
+                  ></div>
+                  <div
                     data-index={si}
                     data-sticky
-                    class={cn(ROW, 'pointer-events-auto bg-sidebar hover:bg-sidebar-accent', k === sticky.length - 1 && 'border-b border-border/50', r.key === active && 'bg-sidebar-accent text-sidebar-accent-foreground')}
+                    class={cn(ROW, 'pointer-events-auto bg-sidebar hover:bg-sidebar-accent', r.key === active && 'bg-sidebar-accent text-sidebar-accent-foreground')}
                     style:top="{stickyTop[k] ?? k * rowH}px"
                     style:z-index={sticky.length - k}
                     style:height="{rowH}px"
