@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.13.6] - 2026-11-15
+
+### Changes
+- Add a theme: community gallery, theme files and pasted JSON (#232)
+
+
 ## [2.13.5] - 2026-11-15
 
 ### Changes
