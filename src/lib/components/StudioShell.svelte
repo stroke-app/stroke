@@ -1,7 +1,7 @@
 <script>
   import ArrowLeft from '@lucide/svelte/icons/arrow-left'
   import { onMount, onDestroy, untrack, tick } from 'svelte'
-  import { openPanel, closePanel, panelMotionOff } from '$lib/panel-motion.js'
+  import { panelMotionOff, slidePanel } from '$lib/panel-motion.js'
   import { fade } from 'svelte/transition'
   import { traceInteraction } from '$lib/perf.js'
   import { couchAdapter, cassandraAdapter, elasticAdapter, firestoreAdapter, mongoAdapter, uriHost } from '$lib/doc-adapters.js'
@@ -3067,27 +3067,28 @@ let rowSearch = $state('')
   let terminalDockHeight = $state(Number(loadLayout().terminalDockHeight) || 260)
   /** @type {HTMLDivElement | null} */
   let terminalDockEl = $state(null)
-  // The dock slides like a native split view: its top edge moves while the
-  // terminal inside keeps its full height (clipped), so it never re-measures
-  // or repaints mid-animation. It stays laid out until the close has played.
-  let terminalDockShown = $state(false)
-  let terminalDockMoving = $state(false)
+  // The dock slides up from the bottom edge with a transform only. While it
+  // moves it lies over the page (absolutely positioned), so the page above
+  // changes size once (at the end of an open, the start of a close) instead of
+  // on every frame, which is what made the animation stutter.
+  /** @type {'closed' | 'opening' | 'open' | 'closing'} */
+  let terminalDockPhase = $state('closed')
+  const terminalDockShown = $derived(terminalDockPhase !== 'closed')
+  const terminalDockOverlay = $derived(terminalDockPhase === 'opening' || terminalDockPhase === 'closing')
   $effect(() => {
     const open = terminalDockOpen
     untrack(() => {
       if (open) {
-        terminalDockShown = true
-        terminalDockMoving = true
+        if (terminalDockPhase === 'open') return
+        terminalDockPhase = 'opening'
         void tick()
-          .then(() => openPanel(terminalDockEl, 'height'))
-          .then(() => { if (terminalDockOpen) terminalDockMoving = false })
-      } else if (terminalDockShown) {
-        terminalDockMoving = true
-        void closePanel(terminalDockEl, 'height').then(() => {
-          if (terminalDockOpen) return
-          terminalDockShown = false
-          terminalDockMoving = false
-        })
+          .then(() => slidePanel(terminalDockEl, 'bottom', true))
+          .then(() => { if (terminalDockOpen) terminalDockPhase = 'open' })
+      } else if (terminalDockPhase !== 'closed') {
+        terminalDockPhase = 'closing'
+        void tick()
+          .then(() => slidePanel(terminalDockEl, 'bottom', false))
+          .then(() => { if (!terminalDockOpen) terminalDockPhase = 'closed' })
       }
     })
   })
@@ -3963,24 +3964,34 @@ let rowSearch = $state('')
   }
 
 
-  // The AI panel slides in from the right edge like a native inspector: its
-  // left edge moves, the chat inside keeps its width and is clipped. Switching
-  // to or from full AI mode stays instant (that is a different layout).
+  // The AI panel slides in from the right edge with a transform only, lying
+  // over the page while it moves, so the page beside it is laid out once
+  // rather than on every frame. Switching to or from full AI mode is instant
+  // (a different layout).
   /** @type {HTMLDivElement | null} */
   let aiPanelEl = $state(null)
-  let aiPanelShown = $state(untrack(() => aiSidebarOpen && !aiMode))
+  /** @type {'closed' | 'opening' | 'open' | 'closing'} */
+  let aiPanelPhase = $state(untrack(() => (aiSidebarOpen && !aiMode ? 'open' : 'closed')))
+  const aiPanelShown = $derived(aiPanelPhase !== 'closed')
+  const aiPanelOverlay = $derived(aiPanelPhase === 'opening' || aiPanelPhase === 'closing')
   let aiPanelMode = untrack(() => aiMode)
   $effect(() => {
     const want = aiSidebarOpen && !aiMode
     const modeFlip = aiMode !== aiPanelMode
     aiPanelMode = aiMode
     untrack(() => {
-      if (modeFlip || panelMotionOff()) { aiPanelShown = want; return }
+      if (modeFlip || panelMotionOff()) { aiPanelPhase = want ? 'open' : 'closed'; return }
       if (want) {
-        aiPanelShown = true
-        void tick().then(() => openPanel(aiPanelEl, 'width'))
-      } else if (aiPanelShown) {
-        void closePanel(aiPanelEl, 'width').then(() => { if (!(aiSidebarOpen && !aiMode)) aiPanelShown = false })
+        if (aiPanelPhase === 'open') return
+        aiPanelPhase = 'opening'
+        void tick()
+          .then(() => slidePanel(aiPanelEl, 'right', true))
+          .then(() => { if (aiSidebarOpen && !aiMode) aiPanelPhase = 'open' })
+      } else if (aiPanelPhase !== 'closed') {
+        aiPanelPhase = 'closing'
+        void tick()
+          .then(() => slidePanel(aiPanelEl, 'right', false))
+          .then(() => { if (!(aiSidebarOpen && !aiMode)) aiPanelPhase = 'closed' })
       }
     })
   })
@@ -9666,7 +9677,7 @@ let rowSearch = $state('')
        sidebar is its own full-height column (T3), so its edge runs unbroken. -->
   <div class="flex min-h-0 min-w-0 flex-1 flex-col">
 {#if !aiMode && IS_MAC}{@render titleBar()}{/if}
-  <div class="flex min-h-0 flex-1 overflow-hidden">
+  <div class="relative flex min-h-0 flex-1 overflow-hidden">
   <main class="relative flex min-h-0 min-w-0 flex-1 flex-col bg-panel" data-studio-region="main">
     {#if accountPageOpen && !connection}
       <div class="absolute inset-0 z-30 flex flex-col bg-panel">
@@ -11069,14 +11080,13 @@ let rowSearch = $state('')
            actions float at the top-right of the terminal itself. -->
       <div
         bind:this={terminalDockEl}
-        class={terminalDockShown ? 'relative flex shrink-0 flex-col border-t border-border/60 bg-panel' : 'hidden'}
+        class={!terminalDockShown ? 'hidden' : terminalDockOverlay ? 'absolute inset-x-0 bottom-0 z-20 flex flex-col border-t border-border/60 bg-panel will-change-transform' : 'relative flex shrink-0 flex-col border-t border-border/60 bg-panel'}
         style:height="{terminalDockHeight}px"
         inert={!terminalDockOpen || undefined}
       >
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div class="absolute inset-x-0 -top-1 z-10 h-2 cursor-row-resize" onpointerdown={startTerminalDockResize}></div>
-        <!-- Full height while the edge moves, so the terminal is clipped rather than resized. -->
-        <div class={terminalDockMoving ? 'absolute inset-x-0 top-0 flex flex-col' : 'absolute inset-0 flex flex-col'} style:height={terminalDockMoving ? `${terminalDockHeight}px` : null}>
+        <div class="absolute inset-0 flex flex-col">
           <svelte:boundary failed={tabError}>
             {#await import('./TerminalPage.svelte')}<TabLoading />{:then { default: TerminalPage }}
               <TerminalPage active={terminalDockOpen} prewarm {connection} {dbType} getHints={buildSqlHints} docked onclose={() => (terminalDockOpen = false)} onpopout={() => { terminalDockOpen = false; openNewTerminalTab() }} />
@@ -11091,7 +11101,7 @@ let rowSearch = $state('')
   {#if aiSidebarEverOpened && connection}
     <div
       bind:this={aiPanelEl}
-      class="flex shrink-0 justify-end"
+      class={aiPanelOverlay ? 'absolute inset-y-0 right-0 z-30 flex justify-end will-change-transform' : 'flex shrink-0 justify-end'}
       style={aiPanelShown ? '' : 'display:none'}
       inert={!aiSidebarOpen || aiMode || undefined}
     >
