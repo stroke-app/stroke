@@ -15,6 +15,8 @@ export const PANEL_MS = 220
 /** @returns {boolean} */
 export function panelMotionOff() {
   if (typeof document === 'undefined') return true
+  // Settings → Appearance → Animate panels, off.
+  if (document.documentElement.getAttribute('data-panel-motion') === 'off') return true
   const pref = document.documentElement.getAttribute('data-motion')
   if (pref === 'full') return false
   if (pref === 'reduced') return true
