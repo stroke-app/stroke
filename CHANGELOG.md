@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.13.7] - 2026-11-15
+
+### Changes
+- Focus the grid column when I click it in the sidebar tree (#233)
+
+
 ## [2.13.6] - 2026-11-15
 
 ### Changes
