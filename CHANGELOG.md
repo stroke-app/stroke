@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.15.9] - 2026-11-15
+
+### Changes
+- Security page: the app's type, identifiers in mono (#257)
+
+
 ## [2.15.8] - 2026-11-15
 
 ### Changes
