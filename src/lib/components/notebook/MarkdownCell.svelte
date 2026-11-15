@@ -1,5 +1,6 @@
 <script>
-  import { marked } from 'marked'
+  import { renderSafeMarkdown } from '$lib/markdown-safe.js'
+  import { markdownEnter, markdownIndent } from '$lib/md-input.js'
   import { tick } from 'svelte'
   import Trash2 from '@lucide/svelte/icons/trash-2'
   import { cn } from '$lib/utils.js'
@@ -27,6 +28,8 @@
     canmoveup = true,
     canmovedown = true,
     canremove = true,
+    /** Shift+Enter: finish editing and go to the next cell. */
+    onadvance = () => {},
   } = $props()
 
   let editing = $state(false)
@@ -46,7 +49,8 @@
     const text = editing ? draft : content
     if (!text.trim()) return ''
     try {
-      return /** @type {string} */ (marked.parse(text, { breaks: true, gfm: true }))
+      // Sanitised: a notebook can be a downloaded .ipynb or .md.
+      return renderSafeMarkdown(text)
     } catch {
       return ''
     }
@@ -68,8 +72,22 @@
 
   /** @param {KeyboardEvent} e */
   function onKeydown(e) {
-    if (e.key === 'Escape') { e.preventDefault(); commit() }
-    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); commit() }
+    if (e.key === 'Escape') { e.preventDefault(); commit(); return }
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); commit(); return }
+    // Shift+Enter: done here, on to the next cell (as in Jupyter).
+    if (e.key === 'Enter' && e.shiftKey) { e.preventDefault(); commit(); onadvance(); return }
+    const ta = /** @type {HTMLTextAreaElement} */ (e.currentTarget)
+    // Lists continue on Enter (an empty item ends them); Tab indents them.
+    const r =
+      e.key === 'Enter' && !e.altKey && !e.isComposing ? markdownEnter(ta.value, ta.selectionStart, ta.selectionEnd)
+      : e.key === 'Tab' && !e.ctrlKey && !e.metaKey ? markdownIndent(ta.value, ta.selectionStart, ta.selectionEnd, e.shiftKey)
+      : null
+    if (!r) return
+    e.preventDefault()
+    draft = r.text
+    ta.value = r.text
+    ta.setSelectionRange(r.start, r.end)
+    onInput()
   }
 
   function onInput() {
