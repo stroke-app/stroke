@@ -118,6 +118,24 @@ pub fn tool_list() -> Value {
             }
         },
         {
+            "name": "share_link",
+            "description": "Make an end-to-end encrypted share link for query results, a chart, a SQL query or a Mermaid diagram. Stroke opens its share dialog prefilled with what you pass; the user checks it (columns, masking, expiry, password) and creates the link, and you get the link back. Personal data is masked by default. For results or a chart, pass the read-only SQL that produces the rows; Stroke runs it read-only itself.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "kind": { "type": "string", "enum": ["result", "chart", "query", "diagram"], "description": "What to share" },
+                    "title": { "type": "string", "description": "Short title for the link" },
+                    "sql": { "type": "string", "description": "result/chart: the read-only query that produces the rows. query: the SQL to share as text" },
+                    "chart_type": { "type": "string", "enum": ["bar", "line", "area", "pie", "scatter"], "description": "chart: the chart type (default bar)" },
+                    "x_col": { "type": "string", "description": "chart: the column on the x axis (default: the first)" },
+                    "y_col": { "type": "string", "description": "chart: the value column (default: the second)" },
+                    "group_col": { "type": "string", "description": "chart: an optional series column" },
+                    "code": { "type": "string", "description": "diagram: the Mermaid source" }
+                },
+                "required": ["kind"]
+            }
+        },
+        {
             "name": "open_in_stroke",
             "description": "Show something to the user in Stroke's window: open a table, or open a query in a new SQL editor tab for them to review and run. Nothing is executed. Use it to hand the user a write statement you are not allowed to run, or to show the table you are talking about.",
             "inputSchema": {
@@ -323,6 +341,50 @@ pub async fn call_tool(
             };
             // Always read-only, whatever the session's level.
             execute_sql(conn, &sql, n, true).await
+        }
+        "share_link" => {
+            let kind = args["kind"].as_str().unwrap_or("result").to_string();
+            let title = args["title"].as_str().map(str::trim).filter(|t| !t.is_empty()).unwrap_or("Shared from Stroke").to_string();
+            let sql = args["sql"].as_str().map(str::trim).filter(|q| !q.is_empty()).map(str::to_string);
+            let mut share = crate::mcp::McpShare { id: 0, kind: kind.clone(), title, columns: vec![], rows: vec![], sql: sql.clone(), code: None, chart: None };
+            match kind.as_str() {
+                "result" | "chart" => {
+                    let sql = sql.ok_or("Pass the read-only SQL that produces the rows as `sql`.")?;
+                    let dialect = crate::mcp::access::Dialect::for_driver(conn.driver());
+                    if crate::mcp::access::script_level_in(dialect, &sql) > crate::mcp::access::READ
+                        || crate::mcp::access::statement_count(dialect, &sql) > 1
+                    {
+                        return Err("share_link only runs one read-only query (SELECT, WITH, …).".to_string());
+                    }
+                    let out: Value = serde_json::from_str(&execute_sql(conn, &sql, 5000, true).await?).map_err(|e| e.to_string())?;
+                    share.columns = out["columns"].as_array().map(|c| c.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default();
+                    share.rows = out["rows"].as_array().map(|r| r.iter().map(|row| row.as_array().cloned().unwrap_or_default()).collect()).unwrap_or_default();
+                    if share.rows.is_empty() {
+                        return Err("The query returned no rows, so there is nothing to share.".to_string());
+                    }
+                    if kind == "chart" {
+                        share.chart = Some(json!({
+                            "type": args["chart_type"].as_str().unwrap_or("bar"),
+                            "x": args["x_col"].as_str().map(str::to_string).or_else(|| share.columns.first().cloned()),
+                            "y": args["y_col"].as_str().map(|y| vec![y.to_string()]).unwrap_or_else(|| share.columns.get(1).cloned().into_iter().collect()),
+                            "group": args["group_col"].as_str(),
+                        }));
+                    }
+                }
+                "query" => {
+                    if share.sql.is_none() {
+                        return Err("Pass the SQL to share as `sql`.".to_string());
+                    }
+                }
+                "diagram" => {
+                    share.code = Some(args["code"].as_str().map(str::trim).filter(|c| !c.is_empty()).ok_or("Pass the Mermaid source as `code`.")?.to_string());
+                }
+                other => return Err(format!("Unknown share kind \"{other}\".")),
+            }
+            Ok(match crate::mcp::request_share(share).await? {
+                Some(url) => format!("The user created the link: {url}\nIt is end-to-end encrypted; the key is the part after #, so share the whole link."),
+                None => "The user closed the share dialog without creating a link.".to_string(),
+            })
         }
         "open_in_stroke" => {
             let table = args["table"].as_str().map(str::trim).filter(|t| !t.is_empty());

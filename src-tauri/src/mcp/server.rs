@@ -217,7 +217,7 @@ async fn dispatch(
                 "protocolVersion": version,
                 "capabilities": { "tools": {}, "resources": {}, "prompts": {} },
                 "serverInfo": { "name": "Stroke", "version": env!("CARGO_PKG_VERSION") },
-                "instructions": "Stroke is the user's database client. Tools work on the database connected in Stroke right now. Look before you write: list_tables, describe_table and sample_rows show the real schema and values. Use open_in_stroke to show the user a table or hand them a query to review and run."
+                "instructions": "Stroke is the user's database client. Tools work on the database connected in Stroke right now. Look before you write: list_tables, describe_table and sample_rows show the real schema and values. Use open_in_stroke to show the user a table or hand them a query to review and run. Use share_link when the user wants a link to results, a chart, a query or a diagram."
             }))
         }
 
@@ -525,7 +525,8 @@ mod tests {
     fn every_tool_argument_is_known() {
         // `query` (open_in_stroke) is SQL text but is never run: it only lands
         // in the editor for the user to review, so the gate does not apply.
-        const PLAIN: &[&str] = &["schema", "table", "format", "max_rows", "limit", "query"];
+        // share_link's `code` is Mermaid, and its `sql` is gated like any other.
+        const PLAIN: &[&str] = &["schema", "table", "format", "max_rows", "limit", "query", "kind", "title", "chart_type", "x_col", "y_col", "group_col", "code"];
         for tool in tools::tool_list().as_array().unwrap() {
             let name = tool["name"].as_str().unwrap();
             let props = tool["inputSchema"]["properties"].as_object().unwrap();
