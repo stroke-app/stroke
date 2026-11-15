@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.12.8] - 2026-11-15
+
+### Changes
+- Chart pickers and FieldSelect are searchable (#224)
+
+
 ## [2.12.7] - 2026-11-15
 
 ### Changes
