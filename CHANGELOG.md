@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.9.5] - 2026-11-15
+
+### Changes
+- AUR stroke-nightly-bin on every nightly; Lines table style by default (#191)
+
+
 ## [2.9.4] - 2026-11-15
 
 ### Changes
