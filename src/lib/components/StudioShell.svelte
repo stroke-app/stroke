@@ -3125,6 +3125,22 @@ let rowSearch = $state('')
     return () => window.removeEventListener('stroke:terminal-dock-toggle', on)
   })
   $effect(() => { terminalDockStore.set(terminalDockOpen) })
+  // A column clicked in the sidebar tree: once its table's rows are up, scroll
+  // the grid to that column and light it.
+  let pendingFocusColumn = $state(/** @type {{ schema: string, table: string, column: string } | null} */ (null))
+  $effect(() => {
+    const on = (/** @type {Event} */ e) => { pendingFocusColumn = /** @type {CustomEvent} */ (e).detail ?? null }
+    window.addEventListener('stroke:focus-column', on)
+    return () => window.removeEventListener('stroke:focus-column', on)
+  })
+  $effect(() => {
+    const p = pendingFocusColumn
+    if (!p || loadingRows || activeTab?.kind !== 'table') return
+    if (p.table !== activeTable || p.schema !== activeSchema) return
+    if (!columns.some((/** @type {any} */ c) => c.name === p.column)) return
+    pendingFocusColumn = null
+    requestAnimationFrame(() => focusTableColumn?.(p.column))
+  })
   // A Redis sidebar click while another tab is showing: bring the Redis page up
   // (it then replays the click).
   $effect(() => {

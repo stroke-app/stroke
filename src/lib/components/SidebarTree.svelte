@@ -931,6 +931,9 @@
         openTable(n.data.schema, n.data.name)
         return
       case 'column':
+        openTable(n.data.schema, n.data.table)
+        window.dispatchEvent(new CustomEvent('stroke:focus-column', { detail: { schema: n.data.schema, table: n.data.table, column: n.label } }))
+        return
       case 'key':
       case 'index':
         openTable(n.data.schema, n.data.table)
