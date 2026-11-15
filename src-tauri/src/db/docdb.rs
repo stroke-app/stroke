@@ -39,6 +39,16 @@ pub async fn query(conn: &DocConn, stmt: &str) -> Result<SqlResult, String> {
     }
 }
 
+/// A statement from an agent: like `query`, but Elasticsearch and OpenSearch
+/// may write when the MCP gate allowed it (the other consoles have their own
+/// write paths or only read).
+pub async fn query_as(conn: &DocConn, stmt: &str, allow_write: bool) -> Result<SqlResult, String> {
+    match conn {
+        DocConn::Elastic(c) => super::elastic::query_as(c, stmt, allow_write).await,
+        _ => query(conn, stmt).await,
+    }
+}
+
 /// Collections/tables as the schema cache's table list (names only).
 pub async fn list_tables(conn: &DocConn) -> Result<Vec<TableInfo>, String> {
     let names = match conn {

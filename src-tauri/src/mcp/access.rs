@@ -36,6 +36,8 @@ pub enum Dialect {
     Redis,
     /// CouchDB and Firestore: their consoles only read.
     ReadOnlyDoc,
+    /// Elasticsearch and OpenSearch: Dev Tools requests, by method and path.
+    Elastic,
 }
 
 impl Dialect {
@@ -46,7 +48,8 @@ impl Dialect {
             "oracle" => Self::Oracle,
             "mongodb" => Self::Mongo,
             "redis" => Self::Redis,
-            "couchdb" | "firestore" | "elasticsearch" | "opensearch" => Self::ReadOnlyDoc,
+            "elasticsearch" | "opensearch" => Self::Elastic,
+            "couchdb" | "firestore" => Self::ReadOnlyDoc,
             _ => Self::Sql,
         }
     }
@@ -66,6 +69,11 @@ pub fn script_level_in(dialect: Dialect, sql: &str) -> u8 {
         Dialect::Mongo => mongo_level(sql),
         Dialect::Redis => redis_level(sql),
         Dialect::ReadOnlyDoc => READ,
+        Dialect::Elastic => match crate::db::elastic::parse(sql) {
+            Ok(crate::db::elastic::Statement::Raw { method, path, .. }) => crate::db::elastic::request_level(&method, &path),
+            // SQL, index.search/get/count: reads. Anything unparsable is refused by the console itself.
+            _ => READ,
+        },
         Dialect::Sql | Dialect::Postgres => lexes(dialect)
             .into_iter()
             .flat_map(|lx| split_statements(sql, lx))
@@ -639,6 +647,17 @@ mod tests {
         assert_eq!(script_level("DELETE FROM \"Music\" WHERE Artist = 'x'"), WRITE);
         assert_eq!(script_level("TRUNCATE ks.t"), DANGEROUS);
         assert_eq!(script_level_in(Dialect::ReadOnlyDoc, "anything"), READ);
+        let es = |s| script_level_in(Dialect::Elastic, s);
+        assert_eq!(es("GET products/_search"), READ);
+        assert_eq!(es("POST products/_search\n{\"query\": {\"match_all\": {}}}"), READ);
+        assert_eq!(es("SELECT * FROM products"), READ);
+        assert_eq!(es("POST products/_doc\n{\"name\": \"a\"}"), WRITE);
+        assert_eq!(es("PUT products/_doc/1\n{\"name\": \"a\"}"), WRITE);
+        assert_eq!(es("DELETE products/_doc/1"), WRITE);
+        assert_eq!(es("PUT products"), MODIFY);
+        assert_eq!(es("PUT products/_mapping\n{\"properties\": {}}"), MODIFY);
+        assert_eq!(es("DELETE products"), DANGEROUS);
+        assert_eq!(es("PUT _cluster/settings\n{}"), DANGEROUS);
     }
 
     #[test]
@@ -647,6 +666,8 @@ mod tests {
         assert_eq!(Dialect::for_driver("mongodb"), Dialect::Mongo);
         assert_eq!(Dialect::for_driver("redis"), Dialect::Redis);
         assert_eq!(Dialect::for_driver("couchdb"), Dialect::ReadOnlyDoc);
+        assert_eq!(Dialect::for_driver("elasticsearch"), Dialect::Elastic);
+        assert_eq!(Dialect::for_driver("opensearch"), Dialect::Elastic);
         assert_eq!(Dialect::for_driver("cassandra"), Dialect::Sql);
         assert_eq!(Dialect::for_driver("dynamodb"), Dialect::Sql);
         assert_eq!(Dialect::for_driver("oracle"), Dialect::Oracle);

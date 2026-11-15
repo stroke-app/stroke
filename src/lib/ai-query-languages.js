@@ -47,7 +47,8 @@ export const QUERY_LANGUAGES = {
 - Shell style: <index>.search({body}), <index>.get("id"), <index>.count({"query": {...}}).
 - SQL: SELECT level, COUNT(*) FROM logs GROUP BY level (needs the SQL feature on the server).
 - Text fields match with "match"; exact values, terms aggregations and sorting use the keyword sub-field (name.keyword) unless the mapping says the field is a keyword.
-- The editor only reads (GET, and POST to _search/_count/_sql). Documents are changed in the Browse page.
+- Writes, when your access level allows them: POST <index>/_doc with the document as the body, PUT <index>/_doc/<id> to set one by id, POST <index>/_update/<id> with {"doc": {...}}, DELETE <index>/_doc/<id>. Add ?refresh=true so the next search sees them.
+- Schema changes (schema access): PUT <index> with {"mappings": {"properties": {...}}} creates an index; PUT <index>/_mapping adds fields. Deleting an index is not available.
 - Always set "size" on searches unless the user asks for everything (the server caps from+size at 10,000).`,
   },
   firestore: {
