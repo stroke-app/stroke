@@ -3177,28 +3177,28 @@
     {/if}
 
     <!-- Footer, as in T3: app-wide controls as plain icons, one round action. -->
-    <!-- Bottom-aligned 32px row: the status bar beside it is h-8, so the
-         icons here and its items share one centre line. Centred in 48px they
-         sat 8px higher than the status bar's. -->
-    <div class="flex h-12 shrink-0 items-end gap-1 px-3">
-      <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title="Settings" aria-label="Settings" onclick={onopensettings}><Icon name="settings" class="size-4 shrink-0" /></button>
-      <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title={$isCurrentThemeDark ? 'Light theme' : 'Dark theme'} aria-label="Toggle theme" onclick={() => toggleLightDark()}><Icon name={$isCurrentThemeDark ? 'sun' : 'moon'} class="size-4 shrink-0" /></button>
-      <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title="Keyboard shortcuts" aria-label="Keyboard shortcuts" onclick={onopenshortcuts}><Icon name="keyboard" class="size-4 shrink-0" /></button>
-      {#if onopenlabs}<button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title="Labs: features still being shaped" aria-label="Labs" onclick={onopenlabs}><Icon name="flask-conical" class="size-4 shrink-0" /></button>{/if}
+    <!-- Bottom-aligned with 4px under it, like the status bar beside it (h-9
+         with pb-1), so the icons here and its items share one centre line and
+         neither sits on the window edge. -->
+    <div class="flex h-12 shrink-0 items-end gap-0.5 px-2.5 pb-1">
+      <button type="button" class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title="Settings" aria-label="Settings" onclick={onopensettings}><Icon name="settings" class="size-3.5 shrink-0" /></button>
+      <button type="button" class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title={$isCurrentThemeDark ? 'Light theme' : 'Dark theme'} aria-label="Toggle theme" onclick={() => toggleLightDark()}><Icon name={$isCurrentThemeDark ? 'sun' : 'moon'} class="size-3.5 shrink-0" /></button>
+      <button type="button" class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title="Keyboard shortcuts" aria-label="Keyboard shortcuts" onclick={onopenshortcuts}><Icon name="keyboard" class="size-3.5 shrink-0" /></button>
+      {#if onopenlabs}<button type="button" class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title="Labs: features still being shaped" aria-label="Labs" onclick={onopenlabs}><Icon name="flask-conical" class="size-3.5 shrink-0" /></button>{/if}
       {#if updateState}
         <!-- T3's update pill: there when there is something to do, gone when
              there isn't. Ready means downloaded; Restart installs it. -->
         <button
           type="button"
-          class="ml-auto mb-0.5 inline-flex h-7 items-center gap-1.5 rounded-full bg-primary px-3 text-ui-xs font-medium text-primary-foreground transition-[background-color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-primary/90 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+          class="ml-auto mb-0.5 inline-flex h-6 items-center gap-1 rounded-full bg-primary px-2.5 text-ui-2xs font-medium text-primary-foreground transition-[background-color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-primary/90 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
           title={updateState === 'ready' ? 'The update is downloaded. Restart to install it.' : 'A new version of Stroke is available'}
           onclick={oncheckupdates}
         >
-          <Icon name={updateState === 'ready' ? 'refresh-cw' : 'arrow-up-circle'} class="size-3.5 shrink-0" />
+          <Icon name={updateState === 'ready' ? 'refresh-cw' : 'arrow-up-circle'} class="size-3 shrink-0" />
           {updateState === 'ready' ? 'Restart' : 'Update'}
         </button>
       {:else}
-        <button type="button" class="ml-auto inline-flex size-8 items-center justify-center rounded-full text-muted-foreground outline-none transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none" title={checkingUpdate ? 'Checking for updates…' : 'Check for updates'} aria-label={checkingUpdate ? 'Checking for updates' : 'Check for updates'} aria-busy={checkingUpdate} disabled={checkingUpdate} onclick={oncheckupdates}><Icon name={checkingUpdate ? 'loader-2' : 'arrow-up-circle'} class={checkingUpdate ? 'size-4 shrink-0 animate-spin' : 'size-4 shrink-0'} /></button>
+        <button type="button" class="ml-auto inline-flex size-7 items-center justify-center rounded-full text-muted-foreground outline-none transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none" title={checkingUpdate ? 'Checking for updates…' : 'Check for updates'} aria-label={checkingUpdate ? 'Checking for updates' : 'Check for updates'} aria-busy={checkingUpdate} disabled={checkingUpdate} onclick={oncheckupdates}><Icon name={checkingUpdate ? 'loader-2' : 'arrow-up-circle'} class={checkingUpdate ? 'size-3.5 shrink-0 animate-spin' : 'size-3.5 shrink-0'} /></button>
       {/if}
     </div>
   </aside>

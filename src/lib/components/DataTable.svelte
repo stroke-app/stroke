@@ -9081,17 +9081,23 @@ import FilterX from "@lucide/svelte/icons/filter-x";
                        panel out again on every scroll frame. No `will-change` on
                        it: a promoted layer here painted at a stale offset for a
                        frame on tab switches and resizes (see the canvas anchor). -->
-                  {#if rowViewportY(exIdx) > -_viewportHeight * 2 && rowViewportY(exIdx) < _viewportHeight + ROW_HEIGHT}
+                  {#if rowViewportY(exIdx) > -_viewportHeight * 3 && rowViewportY(exIdx) < _viewportHeight * 3}
                     <!-- Only near the viewport: on a huge table the y would be past
                          WebKit's layout range, and the height a panel had is kept while
-                         it is away (trackExpandHeight), so the rows below do not move. -->
+                         it is away (trackExpandHeight), so the rows below do not move.
+                         Three screens each way: the window below used to end one row
+                         past the bottom edge, so scrolling down built each JSON panel
+                         in the frame it came into view, and it showed as a blank gap
+                         and a dropped frame. Now it is built well before it is seen. -->
                     {@const clipTopScaled = Math.max(0, HEADER_H - (rowViewportY(exIdx) + ROW_HEIGHT))}
                     <div style="position:sticky;top:0;left:0;width:0;height:0;overflow:visible;z-index:10">
                       <div
                         class="absolute left-0 top-0"
                         style="transform:translateY({rowViewportY(exIdx) + ROW_HEIGHT + clipTopScaled}px); width:{_viewportWidth}px{clipTopScaled > 0 ? '; overflow:hidden' : ''}"
                       >
-                        <div style={clipTopScaled > 0 ? `margin-top:-${clipTopScaled}px` : ''} use:trackExpandHeight={exIdx}>
+                        <!-- contain: a panel's own layout and paint stay inside it, so
+                             one changing (a tree node opened) re-lays out only itself. -->
+                        <div style="contain:layout paint style{clipTopScaled > 0 ? `; margin-top:-${clipTopScaled}px` : ''}" use:trackExpandHeight={exIdx}>
                           {@render expandBody(exIdx)}
                         </div>
                       </div>
