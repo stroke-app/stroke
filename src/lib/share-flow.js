@@ -137,12 +137,16 @@ export function forgetShare(id) {
 
 /**
  * Encrypt, upload and remember. Returns the full link, key included.
+ * `onStage` hears each step, so the dialog can say which one it is on.
  * @param {object} payload
  * @param {{ expiresIn: number | null, maxViews: number | null, password?: string | null }} o
+ * @param {(stage: 'encrypt' | 'upload') => void} [onStage]
  */
-export async function publishShare(payload, o) {
+export async function publishShare(payload, o, onStage = () => {}) {
   const p = /** @type {any} */ (payload)
+  onStage('encrypt')
   const sealed = await sealShare(payload, { password: o.password })
+  onStage('upload')
   const res = await shareCreate(
     { kind: p.kind, expiresIn: o.expiresIn, maxViews: o.maxViews, passwordSalt: sealed.passwordSalt },
     sealed.blob,

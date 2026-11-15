@@ -1315,16 +1315,19 @@
     resizeObserver = new ResizeObserver(() => {
       cancelAnimationFrame(fitFrame)
       clearTimeout(fitTimer)
-      // Resizing on the DOM renderer, WebGL again once the size settles.
-      disableGpu()
-      enableGpuSoon()
       if (document.documentElement.hasAttribute('data-resizing')) {
+        // A drag: the DOM renderer while the edge moves, WebGL once it settles.
+        // Only a drag: opening the dock or the panel used to switch renderers
+        // too, and the DOM one measured its cells while the panel was still
+        // collapsed, so the text flashed letter-spaced.
+        disableGpu()
+        enableGpuSoon()
         const since = performance.now() - lastFitAt
         if (since > 50) { lastFitAt = performance.now(); fitFrame = requestAnimationFrame(fit) }
         fitTimer = setTimeout(() => { lastFitAt = performance.now(); fitFrame = requestAnimationFrame(fit) }, 50)
         return
       }
-      fitFrame = requestAnimationFrame(fit)
+      fitFrame = requestAnimationFrame(() => { fit(); if (!webgl) enableGpuSoon(0) })
     })
     resizeObserver.observe(termEl)
     // Theme, font preset and zoom all land as attributes on <html>.
