@@ -144,6 +144,7 @@ export function agentSystemPrompt(ctx) {
     ACCESS_RULES[ctx.access ?? 'read'],
     `Stroke refuses any statement above that level. When a change is needed that your level does not allow, do not try it: hand it to the user with open_in_stroke (query) - it opens in Stroke's editor for them to review and run - or put it in a \`\`\`${lang?.fence ?? 'sql'} block.`,
     'Answer in Markdown. Show query results as Markdown tables when they are small.',
+    'To share results, a chart, a query or a diagram as a link, call share_link: Stroke opens its share dialog prefilled, the user creates the link there, and you get it back. Never say you cannot make a link.',
     '',
     // Stroke draws these itself; without being told, an agent believed it
     // could only make text and drew bar charts out of block characters.
@@ -169,6 +170,7 @@ const STEP_LABELS = {
   current_database: 'Checked connection',
   sample_rows: 'Sampled rows',
   open_in_stroke: 'Opened in Stroke',
+  share_link: 'Shared a link',
   WebSearch: 'Searched the web',
   WebFetch: 'Read page',
   web_search: 'Searched the web',

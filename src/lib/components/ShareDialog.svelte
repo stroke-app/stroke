@@ -11,12 +11,12 @@
   import { cn } from '$lib/utils.js'
   import { shareList } from '$lib/api.js'
   import { detectSensitiveColumns } from '$lib/share-crypto.js'
-  import { shareRequest, buildPayload, publishShare, SHARE_EXPIRIES, loadShareDefaults, openSharesPage } from '$lib/share-flow.js'
+  import { shareRequest, buildPayload, publishShare, settleShare, SHARE_EXPIRIES, loadShareDefaults, openSharesPage } from '$lib/share-flow.js'
 
   const src = $derived($shareRequest)
   let open = $state(false)
   $effect(() => { open = !!src })
-  function close() { open = false; shareRequest.set(null) }
+  function close() { open = false; settleShare(link || null); shareRequest.set(null) }
 
   const KIND = /** @type {Record<string, { label: string, icon: string }>} */ ({
     result: { label: 'query results', icon: 'table-2' },
@@ -126,6 +126,7 @@
         password: usePassword && password ? password : null,
       }, (st) => (stage = st))
       link = res.url
+      settleShare(link)
       await copy()
     } catch (e) {
       error = String(/** @type {any} */ (e)?.message ?? e)

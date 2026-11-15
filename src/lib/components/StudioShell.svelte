@@ -7621,6 +7621,31 @@ let rowSearch = $state('')
     return () => off?.()
   })
 
+  // share_link: an agent asks for a link. The share dialog opens prefilled;
+  // the person creates it (or closes the dialog) and the answer goes back.
+  onMount(() => {
+    /** @type {(() => void) | null} */
+    let off = null
+    void import('@tauri-apps/api/event').then(({ listen }) =>
+      listen('mcp-share', async (e) => {
+        const m = /** @type {{ id: number, kind: string, title: string, columns: string[], rows: unknown[][], sql?: string | null, code?: string | null, chart?: { type: string, x: string, y: string[], group?: string | null } | null }} */ (e.payload)
+        const { invoke } = await import('@tauri-apps/api/core')
+        const answer = (/** @type {string | null} */ url) => void invoke('mcp_share_result', { id: m.id, url }).catch(() => {})
+        const columns = m.columns.map((name) => ({ name }))
+        /** @type {import('$lib/share-flow.js').ShareSource | null} */
+        const src =
+          m.kind === 'chart' && m.chart ? { kind: 'chart', title: m.title, chart: m.chart, columns, rows: m.rows }
+          : m.kind === 'result' ? { kind: 'result', title: m.title, columns, rows: m.rows, sql: m.sql ?? undefined }
+          : m.kind === 'query' && m.sql ? { kind: 'query', title: m.title, sql: m.sql }
+          : m.kind === 'diagram' && m.code ? { kind: 'mermaid', title: m.title, code: m.code }
+          : null
+        if (!src) { answer(null); return }
+        requestShare(src, answer)
+      }).then((u) => { off = u }),
+    ).catch(() => {})
+    return () => off?.()
+  })
+
   // Warm the lazy page/panel chunks during browser idle time so the first
   // navigation to a tab is instant instead of paying a cold chunk fetch+parse.
   // We warm ONE per idle slot - never blocking interaction. Ordered by how

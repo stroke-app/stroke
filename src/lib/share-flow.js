@@ -69,9 +69,27 @@ export function saveShareDefaults(patch) {
 /** The share the dialog is open for, or null. */
 export const shareRequest = writable(/** @type {ShareSource | null} */ (null))
 
-/** Open the share dialog for `source`. @param {ShareSource} source */
-export function requestShare(source) {
+/** @type {((url: string | null) => void) | null} */
+let onShareSettled = null
+
+/**
+ * Open the share dialog for `source`. `onSettled` hears the link once it is
+ * made, or null if the dialog closes without one (an agent's share_link waits
+ * on this).
+ * @param {ShareSource} source
+ * @param {(url: string | null) => void} [onSettled]
+ */
+export function requestShare(source, onSettled) {
+  settleShare(null)
+  onShareSettled = onSettled ?? null
   shareRequest.set(source)
+}
+
+/** The dialog's answer: the link, or null. Only the first answer counts. @param {string | null} url */
+export function settleShare(url) {
+  const cb = onShareSettled
+  onShareSettled = null
+  cb?.(url)
 }
 
 /** Shared links as a tab (or an overlay without a connection). StudioShell opens it. */
