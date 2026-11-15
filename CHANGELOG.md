@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.14.2] - 2026-11-15
+
+### Changes
+- Panels and terminal: no jumps, no blank or stale terminal (#238)
+
+
 ## [2.14.1] - 2026-11-15
 
 ### Changes
