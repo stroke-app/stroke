@@ -57,3 +57,39 @@ export function columnAlignsRight(dataType, mode) {
   // excluded before the numeric test.
   return !/bool/i.test(t) && /(int|numeric|decimal|real|double|float|money|number|serial)/i.test(t)
 }
+
+// ── Auto-fit ────────────────────────────────────────────────────────────────
+// A column starts as wide as what it holds (header included), between these
+// bounds, instead of a fixed width per type. Long text is the reason for the
+// cap: a column of descriptions or JSON stops at AUTO_FIT_MAX and truncates
+// with an ellipsis, so one wide value never pushes the rest off screen.
+
+export const AUTO_FIT_MIN = 72
+export const AUTO_FIT_MAX = 360
+/** Rows read per column: enough to see the shape, cheap on a 10k-row page. */
+export const AUTO_FIT_SAMPLE = 200
+/** Longer values reach the cap anyway, so only this much is ever measured. */
+export const AUTO_FIT_CHARS = 64
+
+/**
+ * The width (logical px) a column needs for its header and a sample of its
+ * values. `measure` returns a string's drawn width in the same units.
+ *
+ * @param {{ headerW: number, values: ArrayLike<string | null | undefined>, measure: (s: string) => number, padX: number, max?: number, min?: number }} o
+ */
+export function fitColumnWidth({ headerW, values, measure, padX, max = AUTO_FIT_MAX, min = AUTO_FIT_MIN }) {
+  const room = max - padX * 2
+  let w = headerW
+  const n = Math.min(values.length, AUTO_FIT_SAMPLE)
+  for (let i = 0; i < n && w < room; i++) {
+    const v = values[i]
+    if (!v) continue
+    // First line only: the grid draws one line per cell.
+    const nl = v.indexOf('\n')
+    let s = nl === -1 ? v : v.slice(0, nl)
+    if (s.length > AUTO_FIT_CHARS) s = s.slice(0, AUTO_FIT_CHARS)
+    const m = measure(s)
+    if (m > w) w = m
+  }
+  return Math.round(Math.min(max, Math.max(min, w + padX * 2)))
+}
