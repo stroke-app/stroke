@@ -471,7 +471,7 @@
 {/snippet}
 
 <div
-  class={cn('@container/sb flex h-8 shrink-0 items-center gap-0.5 bg-panel text-ui-xs text-muted-foreground select-none', 'px-2')}
+  class={cn('@container/sb flex h-9 shrink-0 items-center gap-0.5 bg-panel pb-1 text-ui-xs text-muted-foreground select-none', 'px-2')}
   data-studio-region="statusbar"
 >
   <!-- ── Left group ──────────────────────────────────────────────────── -->

@@ -704,7 +704,7 @@
     root.style.setProperty('--app-titlebar-h', IS_MAC ? '52px' : '40px')
     // The status bar is h-8, which grows with the app zoom; a fixed 32px let
     // the connection page's footer slide over it when zoomed in.
-    root.style.setProperty('--app-statusbar-h', !aiMode && statusBarVisible ? 'calc(var(--spacing) * 8)' : '0px')
+    root.style.setProperty('--app-statusbar-h', !aiMode && statusBarVisible ? 'calc(var(--spacing) * 9)' : '0px')
   })
   // Width for the loading-fallback shell, so the spinner fills a properly-sized
   // sidebar panel (matching saved width) instead of a zero-width strip while the
