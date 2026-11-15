@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.9.8] - 2026-11-15
+
+### Changes
+- Auto-fit column widths (#194)
+
+
 ## [2.9.7] - 2026-11-15
 
 ### Changes
