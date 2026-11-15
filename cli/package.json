@@ -1,6 +1,6 @@
 {
   "name": "strokedb",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Open your project's database in Stroke: the desktop app if it's installed, otherwise the web studio at stroke.click/studio",
   "license": "SEE LICENSE IN LICENSE",
   "homepage": "https://stroke.click/studio",
