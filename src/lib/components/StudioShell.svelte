@@ -4075,6 +4075,13 @@ let rowSearch = $state('')
     whenRefReady(aiTargetRef, (r) => (r.draftMessage ? r.draftMessage(block) : r.sendMessage(`Explain this SQL.${block}`)))
   }
 
+  /** Send a whole prompt to the AI chat as it is (Explain's Ask AI). @param {string} prompt */
+  function askAiPrompt(prompt) {
+    if (!connection || !prompt.trim()) return
+    openAiSurface()
+    whenRefReady(aiTargetRef, (r) => r.sendMessage(prompt))
+  }
+
   /**
    * A statement's New tab action: a fresh editor tab holding it, run there.
    * The console runs it, so its marks and variables start clean for the tab.
@@ -10501,6 +10508,7 @@ let rowSearch = $state('')
             paramScope={`${persistConnectionId ?? ''}|${activeTab?.kind === 'sql' ? (/** @type {any} */ (activeTab).savedQueryId ?? activeTab.title) : ''}`}
             onrunnewtab={(sql) => void runSqlInNewTab(sql)}
             onaskai={askAiAboutSql}
+            onaskaiprompt={askAiPrompt}
             windowed={sqlWindowed}
             dataVersion={sqlDataVersion}
             windowStatus={sqlWindowStatus}

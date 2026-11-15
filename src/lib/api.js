@@ -1665,8 +1665,13 @@ export async function instanceSetConfig(name, value) {
  * @param {string} sql
  * @returns {Promise<{ plan: object, planningTime: number, executionTime: number, driver: string }>}
  */
-export async function explainSql(sql) {
-  return inv('pg_explain_sql', { sql })
+/**
+ * The query plan. `analyze` (Postgres) runs the statement for actual rows and
+ * times, inside a transaction that is rolled back; off, only estimates.
+ * @param {string} sql @param {{ analyze?: boolean }} [opts]
+ */
+export async function explainSql(sql, opts = {}) {
+  return inv('pg_explain_sql', { sql, analyze: opts.analyze ?? true })
 }
 
 /**
