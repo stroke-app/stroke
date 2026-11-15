@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.13.9] - 2026-11-15
+
+### Changes
+- Focus the open tab's search on /, not the sidebar filter (#235)
+
+
 ## [2.13.8] - 2026-11-15
 
 ### Changes
