@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.11.6] - 2026-11-15
+
+### Changes
+- Sidebar follows agent changes; cleaner dock, chips and title-bar buttons (#212)
+
+
 ## [2.11.5] - 2026-11-15
 
 ### Changes
