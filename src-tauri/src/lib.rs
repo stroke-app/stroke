@@ -10,6 +10,8 @@
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 mod account;
+mod shares;
+mod nightly;
 mod agents;
 mod app_lock;
 mod cloudflare;
@@ -703,6 +705,11 @@ pub fn run() {
             commands::test_elastic,
             commands::connect_elastic_db,
             commands::elastic_request,
+            shares::share_create,
+            shares::share_list,
+            shares::share_revoke,
+            nightly::nightly_install,
+            nightly::nightly_open,
             commands::elastic_import,
             commands::test_cassandra,
             commands::connect_cassandra_db,

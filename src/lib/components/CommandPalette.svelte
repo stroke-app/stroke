@@ -79,6 +79,8 @@
     onopenmap = () => {},
     onopenJsonViewer = () => {},
     onopenshortcuts = () => {},
+    /** My shares: share links made on this account. */
+    onopenmyshares = () => {},
     /** Settings ▸ Keybindings, where shortcuts are remapped. */
     onopenkeybindings = () => {},
     onopenabout = () => {},
@@ -1011,6 +1013,10 @@
                 <Icon name="command" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">Shortcut reference</span>
                 <Command.Shortcut command="help.shortcutsKey" />
+              </Command.Item>
+              <Command.Item value="my shares share links shared revoke views encrypted link" onSelect={() => run(onopenmyshares)}>
+                <Icon name="share-2" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                <span data-slot="command-label" class="truncate">My shares</span>
               </Command.Item>
               <Command.Item value="about license version info app" onSelect={() => run(onopenabout)}>
                 <Icon name="info" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />

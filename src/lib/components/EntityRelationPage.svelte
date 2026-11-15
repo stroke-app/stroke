@@ -1,4 +1,6 @@
 <script>
+  import Share2 from '@lucide/svelte/icons/share-2'
+  import { requestShare } from '$lib/share-flow.js'
   import { onDestroy, tick, untrack } from 'svelte'
   import dagre from '@dagrejs/dagre'
   import { getSchemaColumnStructure, listIndexes, getTableDdl, saveExportAs } from '$lib/api.js'
@@ -397,6 +399,40 @@
       setTimeout(() => (copiedCode = false), 1600)
     } catch { /* clipboard unavailable */ }
   }
+  /**
+   * Share what's on screen as an encrypted link: the Mermaid code in the
+   * Mermaid view, otherwise the schema canvas exactly as laid out here (card
+   * positions, columns, keys and the links between them), which the web
+   * viewer draws as a pannable diagram.
+   */
+  function shareDiagram() {
+    const title = focusTable ? `${focusTable} and related tables` : `${activeSchema} schema`
+    if (erdView === 'mermaid') {
+      requestShare({ kind: 'mermaid', title, source: activeSchema, code: mermaidDraft })
+      return
+    }
+    const ids = new Set(nodes.map((n) => n.id))
+    const tables = nodes.flatMap((n) => {
+      const t = tableMeta.get(n.id)
+      if (!t) return []
+      return [{
+        name: t.name,
+        x: Math.round(n.position?.x ?? 0),
+        y: Math.round(n.position?.y ?? 0),
+        columns: t.columns.map((c) => ({ name: c.name, type: c.dataType || '', pk: t.pkCols.has(c.name), fk: c.foreignKey ?? null })),
+      }]
+    })
+    const links = edges
+      .filter((e) => ids.has(e.source) && ids.has(e.target))
+      .map((e) => ({
+        from: e.source,
+        fromCol: typeof e.sourceHandle === 'string' && e.sourceHandle.startsWith('src-') ? e.sourceHandle.slice(4) : '',
+        to: e.target,
+        toCol: typeof e.targetHandle === 'string' && e.targetHandle.startsWith('tgt-') ? e.targetHandle.slice(4) : '',
+      }))
+    requestShare({ kind: 'erd', title, source: activeSchema, tables, links })
+  }
+
   /** Save the code as a diagram of this connection and go there to edit it. */
   function editInDiagrams() {
     saveDiagram(`Schema diagram · ${activeSchema}`, mermaidDraft, 'Schema diagrams')
@@ -2224,6 +2260,18 @@
         </PopoverContent>
       </Popover>
 
+      <!-- Share the diagram as an encrypted link: the canvas as laid out here,
+           or the Mermaid code in the Mermaid view. -->
+      <button
+        type="button"
+        class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,transform] duration-150 ease-out hover:bg-accent hover:text-foreground active:scale-[0.97] disabled:pointer-events-none disabled:opacity-40"
+        disabled={tableMeta.size === 0}
+        onclick={shareDiagram}
+        title="Share as a link"
+        aria-label="Share the diagram as a link"
+      >
+        <Share2 class="size-3.5 shrink-0" />
+      </button>
       <button
         type="button"
         class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,transform] duration-150 ease-out hover:bg-accent hover:text-foreground active:scale-[0.97] disabled:pointer-events-none disabled:opacity-40"

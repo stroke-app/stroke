@@ -253,6 +253,7 @@ const TOPIC_PATTERNS = {
   diagrams: /\b(diagrams?|erd|flow ?charts?|sequence|mermaid|mind ?map|state machine|class diagram|relationship diagram)\b/i,
   design: /\b(index(es)?|migrations?|schema design|normali[sz](e|ation)|create table|alter table|constraints?|partition(ing)?|performance|slow|explain|optimi[sz]e|best practices?)\b/i,
   export: /\b(export|csv|download|spreadsheet|excel)\b/i,
+  share: /\b(share|sharing|shareable|send (?:me |them |him |her )?(?:a |the )?link|link to (?:this|that|it|these)|send (?:it|this) to)\b/i,
   ops: /\b(sizes?|disk|storage|space|bytes|bloat|wal|write.ahead|checkpoint|vacuum|autovacuum|config(uration)?|settings?|parameters?|variables?|pragma|journal|connections?|sessions?|locks?|blocking|deadlocks?|replication|slots?|binlog|uptime|version|cache hit|slow quer(y|ies)|pg_stat|processlist|tuning|memory|buffers?)\b/i,
 }
 /** Every optional part of the harness - what a caller gets without naming topics. */
@@ -289,6 +290,7 @@ export function toolsForTurn(topics, webAccess = false) {
   if (topics.has('charts') || topics.has('diagrams')) want.add('render_chart')
   if (topics.has('diagrams')) want.add('render_diagram')
   if (topics.has('export')) want.add('export_data')
+  if (topics.has('share')) want.add('share_link')
   const tools = AI_TOOLS.filter((t) => want.has(t.function.name))
   return webAccess ? [...tools, ...AI_WEB_TOOLS] : tools
 }
@@ -470,6 +472,34 @@ export const AI_TOOLS = [
           group_col: { type: 'string', description: 'Optional: column for series grouping, heatmap Y axis, sankey target, tree parent' },
         },
         required: ['type', 'title', 'data', 'x_col', 'y_col'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'share_link',
+      description:
+        'Publish an end-to-end encrypted, read-only link the user can send to someone: query results, a chart, a query, or a Mermaid diagram. ' +
+        'The user sees what will be shared and confirms before anything is uploaded; columns that look like personal data are masked unless they say otherwise. ' +
+        'For results and charts, call execute_sql first and pass its `rows` as `data`. Give the user the returned url.',
+      parameters: {
+        type: 'object',
+        properties: {
+          kind: { type: 'string', enum: ['result', 'chart', 'query', 'diagram'], description: 'What to share.' },
+          title: { type: 'string', description: 'A short title shown at the top of the shared page.' },
+          data: { type: 'array', items: { type: 'object' }, description: 'result/chart: the row objects from execute_sql.' },
+          sql: { type: 'string', description: 'query: the SQL. result: the SQL that produced the rows (shown alongside them).' },
+          chart_type: { type: 'string', enum: ['bar', 'bar-horizontal', 'line', 'area', 'pie', 'donut', 'scatter'], description: 'chart: how to draw it.' },
+          x_col: { type: 'string', description: 'chart: category / X column.' },
+          y_col: { type: 'string', description: 'chart: numeric column.' },
+          group_col: { type: 'string', description: 'chart: optional series column.' },
+          code: { type: 'string', description: 'diagram: Mermaid source.' },
+          expires: { type: 'string', enum: ['1h', '1d', '7d', '30d'], description: 'How long the link works. Default 7d.' },
+          once: { type: 'boolean', description: 'Burn after the first view.' },
+          mask_personal_data: { type: 'boolean', description: 'Mask emails, phone numbers, names and secrets. Default true.' },
+        },
+        required: ['kind', 'title'],
       },
     },
   },
