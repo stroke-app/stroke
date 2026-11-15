@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.14.5] - 2026-11-15
+
+### Changes
+- npx strokedb: open a project's database in the app or the web studio (#241)
+
+
 ## [2.14.4] - 2026-11-15
 
 ### Changes
