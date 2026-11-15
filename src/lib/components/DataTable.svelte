@@ -61,6 +61,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     clampColumnWidth,
     columnAlignsRight,
     defaultColumnWidth,
+    fitColumnWidth,
   } from "$lib/table-column-widths.js";
   import { formatCompactCount } from "$lib/table-list.js";
   import { keycaps, comboTitle } from "$lib/shortcuts.js";
@@ -4572,12 +4573,134 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     const stored = key ? loadColumnWidths(key) : {}
     /** @type {Record<string, number>} */
     const next = {}
+    /** @type {Set<string>} */
+    const auto = new Set()
     for (const col of cols) {
       const dt = col.dataType ?? col.data_type ?? ""
+      if (stored[col.name] == null) auto.add(col.name)
       next[col.name] = clampColumnWidth(stored[col.name] ?? defaultColumnWidth(dt))
     }
     columnWidths = next
+    // Columns nobody has sized are fitted to their content once rows arrive.
+    _autoFitCols = auto
   })
+
+  // ── Auto-fit ──────────────────────────────────────────────────────────────
+  // A column nobody has dragged is as wide as its header and its values need,
+  // within AUTO_FIT_MIN..AUTO_FIT_MAX (long text truncates, it never widens a
+  // column past the cap). Measured once per table, when its first rows arrive,
+  // so paging and refreshes never move the columns. Not saved: a width only
+  // sticks when you drag it or double-click the edge.
+
+  /** Columns still waiting to be fitted (no stored width). */
+  let _autoFitCols = $state(/** @type {Set<string>} */ (new Set()))
+  /** @type {CanvasRenderingContext2D | null} */
+  let _measureCtx = null
+  /**
+   * The grid's own context when it exists. Glyph advances differ between it
+   * and a fresh offscreen canvas (13px Geist Mono: 8px there, 7.83 here), and
+   * a width measured on the other one came out a few characters short. Every
+   * draw sets its own font, so borrowing it between frames changes nothing.
+   */
+  function measureCtx() {
+    if (_ctx) return _ctx
+    // The same object the first paint will draw with (getContext is per element).
+    const own = canvasEl?.getContext('2d')
+    if (own) return own
+    // Only before the first paint (a double-click can't come earlier).
+    if (!_measureCtx && typeof document !== 'undefined') _measureCtx = document.createElement('canvas').getContext('2d')
+    return _measureCtx
+  }
+
+  /**
+   * The fitted width of one column, in logical px.
+   * @param {{ name: string, dataType?: string, data_type?: string }} col @param {number} colIdx
+   */
+  function fittedWidth(col, colIdx) {
+    const ctx = measureCtx()
+    if (!ctx || !colorProbe) return null
+    const fonts = _fonts ?? readFonts(colorProbe)
+    const z = canvasZoom || 1
+    const meta = colMeta.get(col.name)
+    const dt = col.dataType ?? col.data_type ?? ''
+    // The header as drawHeaderCell lays it out: name, required mark, key and
+    // link glyphs, the type, and room for the sort arrow.
+    ctx.font = fonts.header
+    let headerW = ctx.measureText(col.name).width / z
+    if (meta && !meta.nullable) headerW += ctx.measureText('*').width / z + 4
+    headerW += 7 + ((meta?.pk ? 1 : 0) + (meta?.fk ? 1 : 0)) * 18
+    if (dt) {
+      ctx.font = fonts.type
+      headerW += 5 + ctx.measureText(dt).width / z
+    }
+    headerW += 13 + 9 + 4
+    ctx.font = fonts.cell
+    // Monospace (the default): one rounded-up advance per character. Canvases
+    // disagree on the fraction (13px Geist Mono is 7.83 on one, 8 on the one
+    // the grid draws with), and the low answer cut values a few characters
+    // short. Rounding up matches the drawn width and never under-fits.
+    const iW = ctx.measureText('i').width
+    const mW = ctx.measureText('W').width
+    const mono = Math.abs(iW - mW) < 0.1
+    const glyph = Math.ceil(mW)
+    const n = Math.min(rows.length, 200)
+    const values = new Array(n)
+    for (let i = 0; i < n; i++) {
+      const v = rows[i]?.[colIdx]
+      values[i] = v == null ? '' : displayCell(v)
+    }
+    // A value only gets the whole cell while it leaves room for the hover
+    // icons (and a foreign key's link), or drawCell shortens it to make room.
+    const slack = ICON_HIT / z + (meta?.fk ? 20 : 0) + 2
+    return fitColumnWidth({
+      headerW,
+      values,
+      measure: (str) => (mono ? str.length * glyph : ctx.measureText(str).width * 1.03) / z + slack,
+      padX: 10,
+    })
+  }
+
+  /** Bumped when web fonts finish loading, so a fit waits for real metrics. */
+  let _fontsReady = $state(typeof document === 'undefined' || document.fonts?.status !== 'loading')
+  /** Bumped to retry a fit once the grid has painted (and has a context). */
+  let _fitRetry = $state(0)
+  $effect(() => {
+    const pending = _autoFitCols
+    void _fitRetry
+    if (pending.size === 0 || rows.length === 0 || !colorProbe) return
+    if (!_ctx && !canvasEl) {
+      requestAnimationFrame(() => { _fitRetry++ })
+      return
+    }
+    // Measured with the fallback face while the grid font is still loading,
+    // every column came out a few characters short.
+    if (!_fontsReady || document.fonts?.status === 'loading') {
+      void document.fonts?.ready.then(() => { _fontsReady = true })
+      _fontsReady = false
+      return
+    }
+    untrack(() => {
+      /** @type {Record<string, number>} */
+      const fitted = {}
+      columns.forEach((col, i) => {
+        if (!pending.has(col.name)) return
+        const w = fittedWidth(col, i)
+        if (w != null) fitted[col.name] = w
+      })
+      _autoFitCols = new Set()
+      if (Object.keys(fitted).length) columnWidths = { ...columnWidths, ...fitted }
+    })
+  })
+
+  /** Fit one column to its content and keep that width (double-click on its edge). @param {string} colName */
+  function fitColumnToContent(colName) {
+    const i = columns.findIndex((c) => c.name === colName)
+    if (i === -1) return
+    const w = fittedWidth(columns[i], i)
+    if (w == null) return
+    columnWidths = { ...columnWidths, [colName]: w }
+    if (columnWidthsKey) saveColumnWidths(columnWidthsKey, columnWidths)
+  }
 
   // Virtual (relationship / expression) column widths persist alongside real
   // ones, under sibling keys so the real-column effect above never clobbers
@@ -4714,10 +4837,17 @@ import FilterX from "@lucide/svelte/icons/filter-x";
 
   /** Reset a column's width to its default. */
   function resetColumnWidth(colName) {
-    const col = columns.find((c) => c.name === colName)
+    const i = columns.findIndex((c) => c.name === colName)
+    const col = columns[i]
     const dt = col?.dataType ?? col?.data_type ?? ''
-    columnWidths = { ...columnWidths, [colName]: clampColumnWidth(defaultColumnWidth(dt)) }
-    if (columnWidthsKey) saveColumnWidths(columnWidthsKey, columnWidths)
+    // Back to automatic: fitted to the content, and no longer stored.
+    const w = col && rows.length ? fittedWidth(col, i) : null
+    columnWidths = { ...columnWidths, [colName]: w ?? clampColumnWidth(defaultColumnWidth(dt)) }
+    if (columnWidthsKey) {
+      const stored = loadColumnWidths(columnWidthsKey)
+      delete stored[colName]
+      saveColumnWidths(columnWidthsKey, stored)
+    }
   }
 
   // ── Per-tab expand/sub-view state preservation ───────────────────────────────
@@ -5118,16 +5248,27 @@ import FilterX from "@lucide/svelte/icons/filter-x";
 
   // Repaint once webfonts finish loading - the canvas may first paint with a
   // fallback font that lacks glyphs (e.g. ʻ, macrons) and renders them as tofu.
+  // The glyph width and the truncation cache are keyed by the font *string*,
+  // which doesn't change when the face behind it arrives: kept, they went on
+  // cutting text at the fallback face's (wider) width, a few characters short.
+  // `loadingdone` covers a face that loads later, on first use.
   $effect(() => {
     if (typeof document === 'undefined' || !document.fonts) return
     let cancelled = false
-    document.fonts.ready.then(() => {
+    const refresh = () => {
       if (cancelled) return
       _fonts = null
       _readColor = null
+      _glyphFont = ''
+      _truncCacheReset()
       _redrawToken++
-    })
-    return () => { cancelled = true }
+    }
+    document.fonts.ready.then(refresh)
+    document.fonts.addEventListener('loadingdone', refresh)
+    return () => {
+      cancelled = true
+      document.fonts.removeEventListener('loadingdone', refresh)
+    }
   })
 
   // Recreate the colour cache when the theme flips (the probe resolves the new
@@ -8648,6 +8789,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
                   class="absolute top-0 w-2.5 -translate-x-1/2 cursor-col-resize pointer-events-auto touch-none"
                   style="left:{h.x}px; height:{HEADER_H}px"
                   onpointerdown={(e) => onResizeHandleDown(e, h.name)}
+                  ondblclick={(e) => { e.preventDefault(); e.stopPropagation(); if (!h.name.startsWith('__')) fitColumnToContent(h.name) }}
                   onpointerenter={() => onResizeHandleEnter(h.name)}
                   onpointerleave={onResizeHandleLeave}
                   onwheel={blockPointerZoom}
