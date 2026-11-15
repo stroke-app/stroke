@@ -91,6 +91,19 @@
     highlight = 0
   }
 
+  // Hovering a provider in the rail shows its models, no click needed. A short
+  // intent delay keeps a pointer sweeping across the rail on its way to the
+  // list from flicking through every provider it passes.
+  let hoverTimer = 0
+  /** @param {string} key */
+  function hoverGroup(key) {
+    clearTimeout(hoverTimer)
+    hoverTimer = window.setTimeout(() => showGroup(key), 70)
+  }
+  function leaveGroup() {
+    clearTimeout(hoverTimer)
+  }
+
   /** The brand mark for a provider; agents borrow their maker's. @param {string} provider */
   function brandOf(provider) {
     const agent = profileAgent({ provider })
@@ -275,6 +288,8 @@
         aria-label="Favourites"
         aria-pressed={railKey === 'fav' && !query}
         onfocus={() => showGroup('fav')}
+        onpointerenter={() => hoverGroup('fav')}
+        onpointerleave={leaveGroup}
         onclick={() => { railKey = 'fav'; query = ''; highlight = 0 }}
       >
         <Star class={cn("size-4 shrink-0", railKey === 'fav' && !query && "fill-current")} />
@@ -292,6 +307,8 @@
           aria-label={g.label}
           aria-pressed={railKey === g.key && !query}
           onfocus={() => showGroup(g.key)}
+          onpointerenter={() => hoverGroup(g.key)}
+          onpointerleave={leaveGroup}
           onclick={() => { railKey = g.key; query = ''; highlight = 0 }}
         >
           {@render mark(g.brand, 'size-4 shrink-0')}
