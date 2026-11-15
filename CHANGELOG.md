@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.15.1] - 2026-11-15
+
+### Changes
+- Diagrams: saved diagrams show at once; no stray half-render; the list folds away (#249)
+
+
 ## [2.15.0] - 2026-11-15
 
 ### Changes
