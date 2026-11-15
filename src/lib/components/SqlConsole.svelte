@@ -14,7 +14,7 @@
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
   import Download from "@lucide/svelte/icons/download";
   import Share2 from "@lucide/svelte/icons/share-2";
-  import { requestShare } from "$lib/share-flow.js";
+  import { requestShare, chartTitle, resultsTitle } from "$lib/share-flow.js";
   import Table2 from "@lucide/svelte/icons/table-2";
   import SlidersHorizontal from "@lucide/svelte/icons/sliders-horizontal";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
@@ -864,7 +864,8 @@
   function shareShown() {
     const { columns: cols, rows: r } = resultSource()
     if (outputView === 'chart' && chartViewRef?.shareSpec) {
-      requestShare({ kind: 'chart', title: shareTitle(), chart: chartViewRef.shareSpec(), columns: cols, rows: r })
+      const spec = chartViewRef.shareSpec()
+      requestShare({ kind: 'chart', title: chartTitle(spec), chart: spec, columns: cols, rows: r })
     } else {
       requestShare({ kind: 'result', title: shareTitle(), columns: cols, rows: r, sql })
     }
@@ -872,8 +873,7 @@
 
   /** A share's default title: the query's first meaningful line. */
   function shareTitle() {
-    const line = sql.split('\n').map((l) => l.trim()).find((l) => l && !l.startsWith('--')) ?? 'Query'
-    return line.length > 60 ? line.slice(0, 57) + '…' : line
+    return resultsTitle(sql)
   }
 </script>
 

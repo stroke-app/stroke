@@ -66,6 +66,35 @@ export function saveShareDefaults(patch) {
   return next
 }
 
+/** `product_count` → `Product count`. @param {string} name */
+function prettyName(name) {
+  const t = String(name ?? '').replace(/[_-]+/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2').trim().toLowerCase()
+  return t ? t[0].toUpperCase() + t.slice(1) : ''
+}
+
+/**
+ * A title for a chart from what it plots: "Product count by category".
+ * @param {{ x?: string, y?: string[], group?: string | null }} spec
+ */
+export function chartTitle(spec) {
+  const y = (spec?.y ?? []).filter(Boolean).map(prettyName).join(' and ')
+  const x = spec?.x ? prettyName(spec.x).toLowerCase() : ''
+  const g = spec?.group ? ` per ${prettyName(spec.group).toLowerCase()}` : ''
+  return y && x ? `${y} by ${x}${g}` : y || prettyName(spec?.x ?? '') || 'Chart'
+}
+
+/**
+ * A title for query results: the table the query reads, or its first line.
+ * @param {string} sql
+ */
+export function resultsTitle(sql) {
+  const text = String(sql ?? '').replace(/--[^\n]*/g, ' ')
+  const m = /\bfrom\s+((?:"[^"]+"|`[^`]+`|\[[^\]]+\]|[\w$]+)(?:\.(?:"[^"]+"|`[^`]+`|\[[^\]]+\]|[\w$]+))?)/i.exec(text)
+  if (m) return m[1].split('.').pop()?.replace(/^["`[]|["`\]]$/g, '') ?? 'Query results'
+  const line = text.split('\n').map((l) => l.trim()).find(Boolean) ?? 'Query results'
+  return line.length > 60 ? line.slice(0, 57) + '…' : line
+}
+
 /** The share the dialog is open for, or null. */
 export const shareRequest = writable(/** @type {ShareSource | null} */ (null))
 
