@@ -9,6 +9,7 @@
   import { untrack } from 'svelte'
   import { Button } from '$lib/components/ui/button/index.js'
   import Icon from './Icon.svelte'
+  import Kbd from './Kbd.svelte'
   import { cn } from '$lib/utils.js'
   import { shareList, shareRevoke } from '$lib/api.js'
   import { localShares, forgetShare } from '$lib/share-flow.js'
@@ -94,6 +95,52 @@
   const activeCount = $derived(rows.filter((r) => r.active).length)
   const liveShown = $derived(shown.filter((r) => r.active))
   const endedShown = $derived(shown.filter((r) => !r.active))
+
+  // ── Keyboard ──────────────────────────────────────────────────────────────
+  // Up/Down move through the links (from the search box too), Enter copies,
+  // Mod+Enter opens, Delete asks to revoke, Esc backs out of that.
+  /** @type {HTMLDivElement | null} */
+  let rootEl = $state(null)
+  // Shown: take the keys, unless something inside already has focus.
+  $effect(() => {
+    if (!active || !rootEl) return
+    const el = rootEl
+    requestAnimationFrame(() => { if (!el.contains(document.activeElement)) el.focus({ preventScroll: true }) })
+  })
+
+  /** Rows in the order they're drawn: active first, then ended. */
+  const order = $derived([...liveShown, ...endedShown])
+  let selId = $state('')
+
+  /** @param {KeyboardEvent} e */
+  function onListKey(e) {
+    if (!active || !order.length) return
+    const t = /** @type {HTMLElement | null} */ (e.target instanceof HTMLElement ? e.target : null)
+    // Typing in the search box keeps its keys, except the arrows and Enter.
+    const inField = !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)
+    const i = order.findIndex((r) => r.id === selId)
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault()
+      const next = e.key === 'ArrowDown' ? Math.min(order.length - 1, i + 1) : Math.max(0, i - 1)
+      selId = order[next].id
+      document.querySelector(`[data-share="${selId}"]`)?.scrollIntoView({ block: 'nearest' })
+      return
+    }
+    const r = order[i]
+    if (!r) return
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      if (confirmId === r.id) { void revoke(r.id); return }
+      const url = local[r.id]?.url
+      if (!url || !r.active) return
+      if (e.metaKey || e.ctrlKey) window.open(url, '_blank', 'noopener')
+      else void copy(r.id)
+      return
+    }
+    if (inField) return
+    if ((e.key === 'Delete' || e.key === 'Backspace') && r.active) { e.preventDefault(); confirmId = r.id; return }
+    if (e.key === 'Escape' && confirmId) { e.preventDefault(); e.stopPropagation(); confirmId = '' }
+  }
   const totalViews = $derived(rows.reduce((n, r) => n + r.views, 0))
   const shown = $derived.by(() => {
     const q = query.trim().toLowerCase()
@@ -133,7 +180,8 @@
   const signedOut = $derived(!$isSignedIn || /sign in/i.test(error))
 </script>
 
-<div class="flex min-h-0 flex-1 flex-col bg-background">
+<!-- svelte-ignore a11y_no_static_element_interactions, a11y_no_noninteractive_tabindex -->
+<div bind:this={rootEl} tabindex="-1" class="flex min-h-0 flex-1 flex-col bg-background outline-none" onkeydown={onListKey}>
   <!-- Header, the same shape as Keyboard shortcuts -->
   <div class="flex h-14 shrink-0 items-center gap-3 border-b border-border/30 px-5">
     <h1 class="min-w-0 flex-1 truncate text-ui-sm font-medium text-foreground">Shared links</h1>
@@ -233,6 +281,7 @@
           <p class="mt-6 flex items-start gap-1.5 text-ui-2xs leading-relaxed text-muted-foreground">
             <Icon name="lock" class="mt-0.5 size-3 shrink-0" />
             A link's key stays on the computer that made it, so links made elsewhere can't be copied here. Revoking deletes the content everywhere at once.
+            <span class="ms-auto hidden shrink-0 items-center gap-1 ps-4 sm:inline-flex"><Kbd combo="ArrowUp" /><Kbd combo="ArrowDown" /> move <Kbd combo="Enter" /> copy <Kbd combo="Backspace" /> revoke</span>
           </p>
         {/if}
       {/if}
@@ -245,12 +294,18 @@
     <span class="text-ui-2xs font-medium text-muted-foreground">{label}</span>
     <span class="text-ui-3xs text-muted-foreground/70 tabular-nums">{list.length}</span>
   </div>
-  <ul class="flex flex-col">
+  <ul class="flex flex-col" role="listbox" aria-label="{label} links">
     {#each list as r (r.id)}
       {@const st = status(r)}
       {@const mine = local[r.id]}
       {@const k = kindOf(r.kind)}
-      <li class="group/row relative flex h-14 items-center gap-3 rounded-lg px-2 transition-colors hover:bg-muted/45">
+      <li
+        role="option"
+        data-share={r.id}
+        aria-selected={selId === r.id}
+        class={cn('group/row relative flex h-14 items-center gap-3 rounded-lg px-2 transition-colors hover:bg-muted/45', selId === r.id && 'bg-muted/55')}
+        onpointerenter={() => (selId = r.id)}
+      >
         <span class={cn('flex size-8 shrink-0 items-center justify-center rounded-lg', st.live ? k.tint : 'bg-muted/60 text-muted-foreground')}>
           <Icon name={k.icon} class="size-4 shrink-0" />
         </span>

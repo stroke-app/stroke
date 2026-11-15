@@ -2525,6 +2525,54 @@ const ROW_ESTIMATE_SQL: &str = "SELECT GREATEST(c.reltuples::bigint, COALESCE(s.
      LEFT JOIN pg_catalog.pg_stat_all_tables s ON s.relid = c.oid \
      WHERE c.oid = $1::regclass";
 
+/// Long-running grid queries by key, so a newer one can cancel the older on
+/// the server. Searching a large table runs a filtered COUNT(*) per settled
+/// keystroke; each scans the whole table, and without this they all ran to
+/// the end (or the 30s timeout) on the database while only the last one was
+/// wanted.
+struct Superseded {
+    /// key -> (ticket, backend pid) of the query in flight under that key.
+    running: std::sync::Mutex<HashMap<String, (u64, i32)>>,
+    next: std::sync::atomic::AtomicU64,
+}
+
+impl Superseded {
+    /// Register `pid` under `key`, cancelling whatever ran there before.
+    fn claim(&self, pool: &sqlx::PgPool, key: &str, pid: i32) -> u64 {
+        let ticket = self.next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let prev = self
+            .running
+            .lock()
+            .ok()
+            .and_then(|mut m| m.insert(key.to_string(), (ticket, pid)));
+        if let Some((_, old)) = prev {
+            if old != pid {
+                let pool = pool.clone();
+                // Fire and forget: the old query's own caller sees 57014 and
+                // reports "unknown", which nobody is waiting for any more.
+                tokio::spawn(async move {
+                    let _ = sqlx::query("SELECT pg_cancel_backend($1)").bind(old).execute(&pool).await;
+                });
+            }
+        }
+        ticket
+    }
+
+    /// Forget `key` if it still holds this ticket (a newer query may own it).
+    fn release(&self, key: &str, ticket: u64) {
+        if let Ok(mut m) = self.running.lock() {
+            if m.get(key).is_some_and(|(t, _)| *t == ticket) {
+                m.remove(key);
+            }
+        }
+    }
+}
+
+static SUPERSEDED: std::sync::LazyLock<Superseded> = std::sync::LazyLock::new(|| Superseded {
+    running: std::sync::Mutex::new(HashMap::new()),
+    next: std::sync::atomic::AtomicU64::new(1),
+});
+
 /// Row count for the main grid, fetched separately so `get_table_rows` can
 /// return rows immediately (include_count = false) while the UI fills the total
 /// in asynchronously. Mirrors the count logic in `get_table_rows`: planner
@@ -2543,6 +2591,8 @@ pub async fn count_table_rows(
     filters: Option<Vec<RowFilter>>,
     // Skip the planner estimate and COUNT(*) a large table too.
     exact: bool,
+    // A newer count under the same key cancels this one (see Superseded).
+    supersede: Option<String>,
 ) -> Result<i64, String> {
     validate_raw_filters(&require_conn(&state)?, filters.as_deref())?;
     match require_conn(&state)? {
@@ -2610,7 +2660,22 @@ pub async fn count_table_rows(
     let _ = sqlx::query(&format!("SET LOCAL statement_timeout = '{GRID_COUNT_TIMEOUT}'"))
         .execute(&mut *tx)
         .await;
+    // This backend's pid, only when a newer count may need to cancel this one.
+    // Inside the transaction it is the backend that runs the COUNT, even behind
+    // a transaction-pooling proxy, so cancelling it can't hit anything else.
+    let pid: Option<i32> = if supersede.is_some() {
+        sqlx::query_scalar::<_, i32>("SELECT pg_backend_pid()").fetch_one(&mut *tx).await.ok()
+    } else {
+        None
+    };
+    let ticket = match (&supersede, pid) {
+        (Some(key), Some(pid)) => Some(SUPERSEDED.claim(&pool, key, pid)),
+        _ => None,
+    };
     let count = count_query.fetch_one(&mut *tx).await;
+    if let (Some(key), Some(t)) = (&supersede, ticket) {
+        SUPERSEDED.release(key, t);
+    }
     // COMMIT resets SET LOCAL exactly like ROLLBACK does, and unlike ROLLBACK it
     // is accepted by Nile's proxy (see execute_sql_pg).
     let _ = tx.commit().await;
@@ -5841,4 +5906,116 @@ mod typed_search_tests {
         assert!(!column_could_contain(&col("x", 'D', "date"), "nov"));
         assert!(column_could_contain(&col("m", 'N', "money"), "$"));
     }
+}
+
+// ── Search index ─────────────────────────────────────────────────────────────
+// A trigram GIN index on lower(column) for each text column makes the grid's
+// `lower(col) LIKE lower($1)` search an index scan: on a 5M-row table a search
+// went from 1.2-2s to 18-110ms. Offered from the grid when a search is slow;
+// nothing here runs on its own.
+
+/// What the search index would cover, and what exists already.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchIndexStatus {
+    /// Text columns the search reads (the ones an index would cover).
+    pub text_columns: Vec<String>,
+    /// Of those, the ones that already have a trigram index on lower(col).
+    pub indexed: Vec<String>,
+    /// pg_trgm is installed, or can be installed here.
+    pub trgm_available: bool,
+    /// Planner estimate of the table's rows.
+    pub row_estimate: i64,
+}
+
+/// Name for the index on one column, within Postgres' 63-byte limit.
+fn search_index_name(table: &str, column: &str) -> String {
+    let mut name = format!("{table}_{column}_search_trgm");
+    if name.len() > 63 {
+        let mut cut = 63;
+        while !name.is_char_boundary(cut) { cut -= 1; }
+        name.truncate(cut);
+    }
+    name
+}
+
+pub async fn search_index_status(
+    state: State<'_, DbState>,
+    schema: String,
+    table: String,
+) -> Result<SearchIndexStatus, String> {
+    let pool = require_pool(&state)?;
+    validate_ident(&schema)?;
+    validate_ident(&table)?;
+    let cols = cached_search_columns(&pool, &schema, &table, true).await?;
+    let text_columns: Vec<String> = cols.iter().filter(|c| c.category == 'S').map(|c| c.name.clone()).collect();
+    // Existing trigram indexes on lower(col) or col, by the columns they cover.
+    let defs: Vec<String> = sqlx::query_scalar(
+        "SELECT indexdef FROM pg_indexes WHERE schemaname = $1 AND tablename = $2 AND indexdef ILIKE '%gin_trgm_ops%'",
+    )
+    .bind(&schema)
+    .bind(&table)
+    .fetch_all(&pool)
+    .await
+    .unwrap_or_default();
+    // Postgres prints the expression as `lower("Name")` or, for varchar,
+    // `lower((name)::text)`: compare with quotes, parens and the cast removed.
+    let flat = |d: &str| d.replace("::text", "").replace(['"', '(', ')'], "");
+    let flat_defs: Vec<String> = defs.iter().map(|d| flat(d)).collect();
+    let indexed = text_columns
+        .iter()
+        .filter(|c| {
+            let want = format!("lower{c} gin_trgm_ops");
+            flat_defs.iter().any(|d| d.contains(&want))
+        })
+        .cloned()
+        .collect();
+    let trgm_available: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'pg_trgm')")
+        .fetch_one(&pool)
+        .await
+        .unwrap_or(false);
+    let row_estimate: i64 = sqlx::query_scalar::<_, i64>(ROW_ESTIMATE_SQL)
+        .bind(format!(r#""{schema}"."{table}""#))
+        .fetch_optional(&pool)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or(-1);
+    Ok(SearchIndexStatus { text_columns, indexed, trgm_available, row_estimate })
+}
+
+/// Create the missing trigram indexes. CONCURRENTLY, so the table stays
+/// readable and writable while they build; returns the indexes created.
+pub async fn create_search_index(
+    state: State<'_, DbState>,
+    schema: String,
+    table: String,
+) -> Result<Vec<String>, String> {
+    let pool = require_pool(&state)?;
+    let status = search_index_status(state, schema.clone(), table.clone()).await?;
+    if !status.trgm_available {
+        return Err("This server doesn't have the pg_trgm extension, which the search index needs.".into());
+    }
+    sqlx::query("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+        .execute(&pool)
+        .await
+        .map_err(|e| format!("Couldn't enable pg_trgm (it needs a role that can create extensions): {e}"))?;
+    let mut created = Vec::new();
+    for col in status.text_columns.iter().filter(|c| !status.indexed.contains(c)) {
+        validate_ident(col)?;
+        let name = search_index_name(&table, col);
+        // CONCURRENTLY can't run in a transaction; a plain pool execute is
+        // its own statement. The statement timeout is lifted for it: a big
+        // table takes longer than the session default allows.
+        let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
+        let _ = sqlx::query("SET statement_timeout = 0").execute(&mut *conn).await;
+        let sql = format!(
+            r#"CREATE INDEX CONCURRENTLY IF NOT EXISTS "{name}" ON "{schema}"."{table}" USING gin (lower("{col}") gin_trgm_ops)"#
+        );
+        let res = sqlx::query(&sql).execute(&mut *conn).await;
+        let _ = sqlx::query("RESET statement_timeout").execute(&mut *conn).await;
+        res.map_err(|e| format!("Couldn't index {col}: {e}"))?;
+        created.push(name);
+    }
+    Ok(created)
 }

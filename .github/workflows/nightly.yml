@@ -65,9 +65,27 @@ jobs:
             echo "Building $VERSION from $SHA (last nightly: ${LAST:-none})."
           fi
 
+  # ── 1b. Tests: unit tests, then every main dialog and page mounted once ────
+  # A Nightly that crashes on open is worse than no Nightly. Two did, from a
+  # missing import and an effect loop; the component smoke tests catch both.
+  test:
+    needs: check
+    if: needs.check.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.check.outputs.sha }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
   # ── 2. Build every platform ────────────────────────────────────────────────
   build:
-    needs: check
+    needs: [check, test]
     if: needs.check.outputs.build == 'true'
     strategy:
       fail-fast: false

@@ -53,7 +53,7 @@ pub use geo::{geo_features, geo_overview, GeoBbox, GeoFeatures, GeoOverview};
 pub use ssh_tunnel::TunnelState;
 pub use query::{
     delete_table_row, delete_table_rows, execute_ddl, execute_sql, execute_sql_multi, execute_sql_on_conn, execute_sql_script, StatementOutcome,
-    fetch_cell_value, CellValueResult, get_column_stats, get_table_rows, count_table_rows, insert_table_row, update_table_cell, ping_connection,
+    fetch_cell_value, CellValueResult, get_column_stats, get_table_rows, count_table_rows, search_index_status, create_search_index, SearchIndexStatus, insert_table_row, update_table_cell, ping_connection,
     ColumnStats, InsertRowResult, KeysetCursor, apply_table_changes, ApplyChangesResult, RowUpdate, RowChunk, RowFilter, RowSink, SortSpec, SqlResult, TableRows,
 };
 pub use schema::{

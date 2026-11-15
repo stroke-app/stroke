@@ -1450,6 +1450,10 @@ pub async fn pg_count_table_rows(
     // Optional - defaults to false. True counts a large table instead of
     // taking the planner's estimate (the "Exact row count" setting).
     exact: Option<bool>,
+    // Optional. A newer count under the same key cancels this one on the
+    // server (the grid passes one per tab), so typing a search doesn't leave
+    // a full-table COUNT(*) running for every keystroke.
+    supersede: Option<String>,
 ) -> Result<i64, String> {
     count_table_rows(
         state,
@@ -1460,8 +1464,29 @@ pub async fn pg_count_table_rows(
         search_case_sensitive.unwrap_or(false),
         filters,
         exact.unwrap_or(false),
+        supersede,
     )
     .await
+}
+
+/// Which text columns a search index would cover, and which have one.
+#[tauri::command]
+pub async fn pg_search_index_status(
+    state: State<'_, DbState>,
+    schema: String,
+    table: String,
+) -> Result<crate::db::SearchIndexStatus, String> {
+    crate::db::search_index_status(state, schema, table).await
+}
+
+/// Create trigram indexes so the grid's search is an index scan.
+#[tauri::command]
+pub async fn pg_create_search_index(
+    state: State<'_, DbState>,
+    schema: String,
+    table: String,
+) -> Result<Vec<String>, String> {
+    crate::db::create_search_index(state, schema, table).await
 }
 
 #[tauri::command]

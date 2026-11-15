@@ -5,6 +5,7 @@
 import { writable } from 'svelte/store'
 import { sealShare, maskValue } from '$lib/share-crypto.js'
 import { shareCreate } from '$lib/api.js'
+import { loadSettings, updateSettings } from '$lib/stores/settings.js'
 
 /** Expiries offered, in seconds (null = never, Pro). Mirrors the server. */
 export const SHARE_EXPIRIES = /** @type {const} */ ([
@@ -34,23 +35,34 @@ const DEFAULTS_KEY = 'stroke:share-defaults'
 /** @type {ShareDefaults} */
 export const SHARE_DEFAULTS = { expiry: 86400, access: 'link', viewLimit: 10, maskPii: true }
 
-/** @returns {ShareDefaults} */
+/**
+ * Whatever was stored, as valid defaults: unknown values fall back one by one.
+ * @param {any} raw @returns {ShareDefaults}
+ */
+export function normalizeShareDefaults(raw) {
+  const r = raw && typeof raw === 'object' ? raw : {}
+  const expiry = r.expiry === null || SHARE_EXPIRIES.some((e) => e.seconds === r.expiry) ? r.expiry : SHARE_DEFAULTS.expiry
+  const access = ['link', 'once', 'limit'].includes(r.access) ? r.access : SHARE_DEFAULTS.access
+  const viewLimit = Number.isInteger(r.viewLimit) && r.viewLimit >= 1 && r.viewLimit <= 10000 ? r.viewLimit : SHARE_DEFAULTS.viewLimit
+  return { expiry: expiry === undefined ? SHARE_DEFAULTS.expiry : expiry, access, viewLimit, maskPii: r.maskPii !== false }
+}
+
+/**
+ * The defaults live in the app settings, so they sync with the account. The
+ * key they had before (this device only) is read once as the starting point.
+ * @returns {ShareDefaults}
+ */
 export function loadShareDefaults() {
-  try {
-    const raw = JSON.parse(localStorage.getItem(DEFAULTS_KEY) || '{}')
-    const expiry = raw.expiry === null || SHARE_EXPIRIES.some((e) => e.seconds === raw.expiry) ? raw.expiry : SHARE_DEFAULTS.expiry
-    const access = ['link', 'once', 'limit'].includes(raw.access) ? raw.access : SHARE_DEFAULTS.access
-    const viewLimit = Number.isInteger(raw.viewLimit) && raw.viewLimit >= 1 && raw.viewLimit <= 10000 ? raw.viewLimit : SHARE_DEFAULTS.viewLimit
-    return { expiry: expiry === undefined ? SHARE_DEFAULTS.expiry : expiry, access, viewLimit, maskPii: raw.maskPii !== false }
-  } catch {
-    return { ...SHARE_DEFAULTS }
-  }
+  const saved = loadSettings().shareDefaults
+  if (saved) return normalizeShareDefaults(saved)
+  try { return normalizeShareDefaults(JSON.parse(localStorage.getItem(DEFAULTS_KEY) || 'null')) } catch { return { ...SHARE_DEFAULTS } }
 }
 
 /** @param {Partial<ShareDefaults>} patch @returns {ShareDefaults} */
 export function saveShareDefaults(patch) {
-  const next = { ...loadShareDefaults(), ...patch }
-  try { localStorage.setItem(DEFAULTS_KEY, JSON.stringify(next)) } catch {}
+  const next = normalizeShareDefaults({ ...loadShareDefaults(), ...patch })
+  updateSettings({ shareDefaults: next })
+  try { localStorage.removeItem(DEFAULTS_KEY) } catch {}
   return next
 }
 
