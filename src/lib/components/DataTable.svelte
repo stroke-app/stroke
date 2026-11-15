@@ -748,8 +748,6 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     const relNavIdx = virtualRelCols.indexOf(vc)
     focusedCol = relNavIdx >= 0 ? visibleColumns.length + relNavIdx : (focusedCol ?? 0)
     const row = rows[rowIdx] ?? []
-    // A different relationship starts at the full dock, not the last one's fit.
-    if (fkSubview?.kind !== 'reverse' || fkSubview?.label !== vc.label) fkFitHeight = 0
     fkSubview = { rowIdx, kind: 'reverse', label: vc.label, relInfo: vc, data: { loading: true, columns: [], rows: [], error: null } }
     scrollRowIntoViewBesideDock(rowIdx)
     void onfetchrelatedrows({ kind: 'reverse', fromSchema: vc.fromSchema, fromTable: vc.fromTable, fromColumns: vc.fromColumns, toColumns: vc.toColumns, row }).then(res => {
@@ -777,9 +775,6 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     return fallback
   }
   let fkDockHeight = $state(loadDockHeight('stroke:fk-dock-height', 260))
-  /** What the related rows need (FkSubviewPanel reports it): the dock never
-   *  stands taller than its rows, and never taller than the height you set. */
-  let fkFitHeight = $state(0)
   /** The full-size cell editor is the second dock, and remembers its own height. */
   let cellDockHeight = $state(loadDockHeight('stroke:cell-dock-height', 220))
   /** The DML review is the third, with its own height too. */
@@ -7986,7 +7981,6 @@ import FilterX from "@lucide/svelte/icons/filter-x";
           }
           // Opening FK sub-view: close JSON expand for the same row (mutually exclusive)
           if (expandedRows.has(idx)) { const s = new Set(expandedRows); s.delete(idx); expandedRows = s }
-          if (fkSubview?.kind !== 'forward') fkFitHeight = 0
           fkSubview = { rowIdx: idx, kind: 'forward', label: fkLbl, colIdx: actualIdx, data: { loading: true, columns: [], rows: [], error: null } }
           scrollRowIntoViewBesideDock(idx)
           void onfetchrelatedrows({ kind: 'forward', fk, row: rows[idx] ?? [] }).then(res => {
@@ -9623,12 +9617,15 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   </ContextMenu.Root>
 
 <!-- Related-rows dock, sits BELOW the scroll container in this flex column, so
-     it never scrolls with the grid and the grid never fights its inner scroll. -->
+     it never scrolls with the grid and the grid never fights its inner scroll.
+     One height whatever it holds (the one the user dragged, kept across
+     sessions): fitting it to its rows made it open at one row, jump when the
+     rows arrived and collapse on "No related rows", moving the grid each time. -->
 {#if fkSubview !== null && rows[fkSubview.rowIdx] !== undefined}
   {@const fkIdx = fkSubview.rowIdx}
   <div
     class="relative z-10 flex shrink-0 flex-col border-t border-border/60 bg-background"
-    style="height:{fkFitHeight > 0 ? Math.min(fkDockHeight, fkFitHeight) : fkDockHeight}px"
+    style="height:{fkDockHeight}px"
   >
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
     <div
@@ -9643,7 +9640,6 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       metrics={gridMetrics}
       fkLabel={fkSubview.label}
       sourceHint={`row ${fkIdx + 1}`}
-      bind:fitHeight={fkFitHeight}
       many={fkSubview.kind === 'reverse'}
       onclose={() => { fkSubview = null }}
       onfullview={() => {
