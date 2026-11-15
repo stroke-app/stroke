@@ -1370,12 +1370,15 @@
     })
     resizeObserver.observe(termEl)
     // Theme, font preset and zoom all land as attributes on <html>.
-    // One repaint per frame: a theme switch (or a preview step) changes several
-    // <html> attributes, and each read here forces a style recalculation.
-    let appearanceFrame = 0
+    // Applied right in the observer's callback, before the frame paints: it
+    // used to wait for the next animation frame, and xterm then waited one
+    // more to redraw, so for a frame or two the terminal kept the old theme's
+    // colours (a black block in a light app, a white one in a dark app).
+    // Several attributes set together still arrive as one callback.
     themeObserver = new MutationObserver(() => {
-      cancelAnimationFrame(appearanceFrame)
-      appearanceFrame = requestAnimationFrame(() => applyAppearance())
+      applyAppearance()
+      // xterm repaints on its own next frame; ask for every row in that same frame.
+      if (term) term.refresh(0, term.rows - 1)
     })
     themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class', 'style'] })
     // The editor font is a web font: measure the cells again once it is in.
