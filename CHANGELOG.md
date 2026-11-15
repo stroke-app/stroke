@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.12.2] - 2026-11-15
+
+### Changes
+- NoSQL Browse: the view is a dropdown (#218)
+
+
 ## [2.12.1] - 2026-11-15
 
 ### Changes
