@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.15.6] - 2026-11-15
+
+### Changes
+- Labs: focus the tree on a database switch (#254)
+
+
 ## [2.15.5] - 2026-11-15
 
 ### Changes
