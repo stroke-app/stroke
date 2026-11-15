@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.10.4] - 2026-11-15
+
+### Changes
+- Fix share crash, faster big-table search, Shared links tab, terminal and AI fixes (#200)
+
+
 ## [2.10.3] - 2026-11-15
 
 ### Changes
