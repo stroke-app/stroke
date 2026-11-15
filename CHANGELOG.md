@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.15.0] - 2026-11-15
+
+### Changes
+- New connection: engine logos stacked on the button (#248)
+
+
 ## [2.14.9] - 2026-11-15
 
 ### Changes
