@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.15.8] - 2026-11-15
+
+### Changes
+- Advisor: a verdict, sharper checks, and fixes you can open (#256)
+
+
 ## [2.15.7] - 2026-11-15
 
 ### Changes
