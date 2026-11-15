@@ -9963,6 +9963,7 @@ let rowSearch = $state('')
               onopenmodelsettings={() => (showAiModelSettings = true)}
               onopendiagramspage={() => { exitAiMode(); openDiagramsTab() }}
               onschemadirty={reloadAfterAiDdl}
+              onsqlran={(sql) => void refreshAfterSql(sqlRunEffects(sql))}
             />
             </svelte:boundary>
           {/await}
@@ -10134,6 +10135,7 @@ let rowSearch = $state('')
                 onopenmodelsettings={() => (showAiModelSettings = true)}
                 onopendiagramspage={openDiagramsTab}
                 onschemadirty={reloadAfterAiDdl}
+              onsqlran={(sql) => void refreshAfterSql(sqlRunEffects(sql))}
               />
               </div>
               {/each}

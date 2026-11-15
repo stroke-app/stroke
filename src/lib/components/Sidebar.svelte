@@ -1530,6 +1530,28 @@
   let objectsPanel = $state(null)
   /** The Tree sidebar (beta), when it is the open tab. @type {SidebarTree | null} */
   let treePanel = $state(null)
+
+  /**
+   * A refresh keeps the list on screen (no loading dots), so `loadingTables`
+   * never turns on for it and the icon never moved: the click looked like it
+   * did nothing. The icon now turns for as long as the refresh runs, and for
+   * a beat at least, so a fast one still reads as done.
+   */
+  let refreshing = $state(false);
+  async function runRefresh(/** @type {(() => unknown)[]} */ ...steps) {
+    if (refreshing) return;
+    refreshing = true;
+    const started = performance.now();
+    try {
+      await Promise.all(steps.map((f) => Promise.resolve().then(f)));
+    } catch {
+      // The shell reports its own failures.
+    } finally {
+      const left = 450 - (performance.now() - started);
+      if (left > 0) await new Promise((r) => setTimeout(r, left));
+      refreshing = false;
+    }
+  }
   /** Rows in the Objects tree before and after the filter, for the tab strip. */
   let objectsTotal = $state(0)
   let objectsShown = $state(0)
@@ -1989,9 +2011,9 @@
               title="Refresh"
               aria-label="Refresh"
               disabled={!connectionName}
-              onclick={() => { onrefresh(); treePanel?.refreshOpen() }}
+              onclick={() => void runRefresh(onrefresh, () => treePanel?.refreshOpen())}
             >
-              <Icon name="refresh-cw" class={cn("size-3.5", loadingTables && "animate-spin")} />
+              <Icon name="refresh-cw" class={cn("size-3.5", (loadingTables || refreshing) && "animate-spin")} />
             </button>
           {:else if sidebarTab === 'objects'}
             <!-- On Objects the bar's refresh and + act on objects, so the list
@@ -2037,10 +2059,10 @@
             class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40"
             title={withShortcut('Refresh tables', 'view.refresh')}
             disabled={loadingTables || !connectionName}
-            onclick={onrefresh}
+            onclick={() => void runRefresh(onrefresh)}
           >
             <Icon name="refresh-cw"
-              class={cn("size-3.5", loadingTables && "animate-spin")}
+              class={cn("size-3.5", (loadingTables || refreshing) && "animate-spin")}
             />
           </button>
           {#if !sqlTables}
