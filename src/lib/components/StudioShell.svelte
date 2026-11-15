@@ -76,6 +76,7 @@
   import ConnectionModal from './ConnectionModal.svelte'
   import { terminalDockOpen as terminalDockStore } from '$lib/stores/redis-nav.js'
   import DbIcon from './DbIcon.svelte'
+  import Icon from './Icon.svelte'
   import DockerLaunchModal from './DockerLaunchModal.svelte'
   import CreateTableDialog from './CreateTableDialog.svelte'
   import CreateSchemaDialog from './CreateSchemaDialog.svelte'
