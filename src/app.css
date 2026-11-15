@@ -534,9 +534,20 @@ html[data-os="linux"]   { --window-radius: 8px; }
      'antialiased' forces consistent grayscale AA regardless of the user's fontconfig
      setup; bumping weight to 450 restores stroke visibility lost without subpixels. */
   html[data-os="linux"] {
-    font-weight: 450;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+  }
+  /* The bump is for the bundled faces only. The System preset is the desktop's
+     own font (Cantarell, Noto Sans, Ubuntu), already tuned for its renderer,
+     and at 450 it read heavier than every other window. */
+  html[data-os="linux"]:not([data-font="apple"]) {
+    font-weight: 450;
+  }
+  /* Small UI text: let the face's own kerning and contextual forms apply on
+     every platform (WebKitGTK and WebView2 left kerning off below ~14px). */
+  html {
+    font-kerning: normal;
+    font-feature-settings: "kern" 1, "calt" 1;
   }
 
   body {
