@@ -216,8 +216,13 @@
                 )}
                 onclick={() => { if (_suppressTabClick) { _suppressTabClick = false; return } onselect(tab.id) }}
               >
-                <Icon name={tabIconName} class={cn('size-3.5 shrink-0', active ? 'text-foreground' : 'text-muted-foreground')} />
-                <span class="truncate">{tabDisplayTitle(tab)}</span>
+                <Icon name={tabIconName} class={cn('size-3.5 shrink-0', active ? 'text-foreground' : 'text-muted-foreground', tab.foreign && 'opacity-60')} />
+                <!-- Labs, several databases open: whose tab it is. A tab of a
+                     database not in front is dimmed; clicking it switches there. -->
+                {#if tab.connLabel}
+                  <span class={cn('max-w-20 shrink-0 truncate rounded px-1 py-px text-ui-3xs', tab.foreign ? 'bg-muted/50 text-muted-foreground/80' : 'bg-primary/10 text-primary')} title={tab.connLabel}>{tab.connLabel}</span>
+                {/if}
+                <span class={cn('truncate', tab.foreign && 'opacity-70')}>{tabDisplayTitle(tab)}</span>
               </button>
 
               {#if tab.pinned}

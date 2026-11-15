@@ -11,6 +11,7 @@ as it stays open, so a session that is left behind is closed automatically after
 `IDLE_TIMEOUT` - see `sweep_idle`.
 */
 
+use crate::db::connection::Db;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -21,7 +22,7 @@ use serde_json::Value;
 use sqlx::{Column, Row, TypeInfo};
 use tauri::State;
 
-use super::connection::{require_conn, ActiveConnection, DbState};
+use super::connection::{require_conn, ActiveConnection};
 use super::query::{
     cell_to_json, is_row_returning_sql, pg_type_label, split_sql_statements, ColumnInfo, SqlResult,
     EXECUTE_SQL_TIMEOUT_MS,
@@ -122,7 +123,7 @@ fn no_session(id: &str) -> String {
 /// Open a transaction and hold its connection until commit or rollback.
 #[tauri::command]
 pub async fn tx_begin(
-    db: State<'_, DbState>,
+    db: Db<'_>,
     tx: State<'_, TxState>,
     session_id: String,
 ) -> Result<TxStatus, String> {

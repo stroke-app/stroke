@@ -16,12 +16,12 @@
 //!   so the GiST index still answers it. Reprojection to WGS84 happens only on
 //!   the rows that survive.
 
-use super::connection::{require_conn, ActiveConnection, DbState};
+use crate::db::connection::Db;
+use super::connection::{require_conn, ActiveConnection};
 use super::query::{build_where, RowFilter};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::{PgPool, Row};
-use tauri::State;
 
 /// Hard ceiling on features returned in one fetch, whatever the caller asks for.
 /// Above this the canvas is drawing more points than the viewport has pixels and
@@ -91,7 +91,7 @@ pub struct GeoFeatures {
 /// PostGIS puts its own tables in these schemas; they are plumbing, not data.
 const HIDDEN_SCHEMAS: &str = "('information_schema', 'pg_catalog', 'topology', 'tiger', 'tiger_data')";
 
-fn pg_pool(state: &State<'_, DbState>) -> Result<Option<PgPool>, String> {
+fn pg_pool(state: &Db<'_>) -> Result<Option<PgPool>, String> {
     match require_conn(state)? {
         ActiveConnection::Postgres(pool) => Ok(Some(pool)),
         _ => Ok(None),
@@ -122,7 +122,7 @@ fn unavailable() -> GeoOverview {
 /// Is PostGIS installed, and what can be mapped? Safe to call on any connection:
 /// a non-Postgres engine, or a Postgres without the extension, reports
 /// `available: false` rather than failing.
-pub async fn geo_overview(state: State<'_, DbState>) -> Result<GeoOverview, String> {
+pub async fn geo_overview(state: Db<'_>) -> Result<GeoOverview, String> {
     let Some(pool) = pg_pool(&state)? else { return Ok(unavailable()) };
 
     let version: Option<String> =
@@ -372,7 +372,7 @@ async fn layer_extent(
 /// holds more than `limit` rows.
 #[allow(clippy::too_many_arguments)]
 pub async fn geo_features(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     table: String,
     column: String,

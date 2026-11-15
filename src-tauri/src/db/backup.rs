@@ -20,6 +20,7 @@ Speed notes (why the code is shaped the way it is):
 - Progress is a per-table event, throttled while a table is being copied.
 */
 
+use crate::db::connection::Db;
 use std::fs::File;
 use std::io::{self, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
@@ -29,9 +30,9 @@ use std::time::{Duration, Instant};
 use futures::{StreamExt, TryStreamExt};
 use serde::{Deserialize, Serialize};
 use sqlx::{Column, Executor, Row, TypeInfo};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter};
 
-use super::connection::{require_conn, ActiveConnection, DbState};
+use super::connection::{require_conn, ActiveConnection};
 
 /// Cooperative cancel flag for the in-flight backup/restore. The frontend sets
 /// it via `backup_cancel`; the export/import loops poll it and stop early.
@@ -446,7 +447,7 @@ fn partial_path(path: &Path) -> PathBuf {
 #[tauri::command]
 pub async fn backup_export(
     app: AppHandle,
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: Option<String>,
     tables: Option<Vec<String>>,
     options: Option<ExportOptions>,
@@ -583,7 +584,7 @@ async fn export_into(
 #[tauri::command]
 pub async fn backup_import(
     app: AppHandle,
-    state: State<'_, DbState>,
+    state: Db<'_>,
     sql: Option<String>,
     path: Option<String>,
 ) -> Result<ImportResult, String> {

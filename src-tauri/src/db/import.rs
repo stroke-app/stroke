@@ -10,14 +10,15 @@ keep going, the batch is replayed one row at a time so the report can name the
 rows that were actually bad instead of blaming all 500.
 */
 
+use crate::db::connection::Db;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter};
 
-use super::connection::{require_conn, ActiveConnection, DbState};
+use super::connection::{require_conn, ActiveConnection};
 use super::query::{bind_typed_value, is_bytea_type, pg_insert_meta, validate_typed_value};
 use super::schema::validate_ident;
 
@@ -123,7 +124,7 @@ fn emit_log(app: &AppHandle, level: &'static str, message: impl Into<String>) {
 #[tauri::command]
 pub async fn import_rows(
     app: AppHandle,
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: Option<String>,
     table: String,
     columns: Vec<String>,

@@ -1,3 +1,4 @@
+use crate::db::connection::Db;
 use std::sync::OnceLock;
 use tauri::Emitter;
 
@@ -364,7 +365,7 @@ use crate::db::{
     list_schemas, list_tables, list_indexes_for, list_enums, list_functions, list_triggers, list_sequences, ping_connection, table_row_counts,
     truncate_table, drop_table, get_table_column_structure, get_schema_column_structure, get_incoming_foreign_keys, get_table_ddl as db_get_table_ddl,
     test_clickhouse_connection, test_connection, test_d1_connection, test_duckdb_connection, test_libsql_connection, test_mssql_connection, test_mysql_connection, test_oracle_connection, test_redis_connection, test_sqlite_connection,
-    update_table_cell, fetch_cell_value, ConnectionConfig, D1Config, DbState, EnumInfo, FunctionInfo, ExplainResult, IndexInfo, LibSqlConfig,
+    update_table_cell, fetch_cell_value, ConnectionConfig, D1Config, EnumInfo, FunctionInfo, ExplainResult, IndexInfo, LibSqlConfig,
     SqlResult, SqliteConfig, TableInfo, TableRowCount, TableRows, TriggerInfo, SequenceInfo,
     ColumnStructureRow, TableColumnStructure, IncomingForeignKey, InsertRowResult, TunnelState,
     apply_table_changes, ApplyChangesResult, RowUpdate,
@@ -385,7 +386,7 @@ pub async fn test_postgres_connection(config: ConnectionConfig) -> Result<(), St
 
 #[tauri::command]
 pub async fn connect_postgres(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     tunnel_state: State<'_, TunnelState>,
     config: ConnectionConfig,
 ) -> Result<(), String> {
@@ -401,7 +402,7 @@ pub async fn test_sqlite(config: SqliteConfig) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn connect_sqlite_db(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     config: SqliteConfig,
 ) -> Result<(), String> {
     connect_sqlite(state, config).await
@@ -416,7 +417,7 @@ pub async fn test_mysql(config: MysqlConfig) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn connect_mysql_db(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     tunnel_state: State<'_, TunnelState>,
     config: MysqlConfig,
 ) -> Result<(), String> {
@@ -432,7 +433,7 @@ pub async fn test_d1(config: D1Config) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn connect_d1_db(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     config: D1Config,
 ) -> Result<(), String> {
     connect_d1(state, config).await
@@ -446,7 +447,7 @@ pub async fn test_libsql(config: LibSqlConfig) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn connect_libsql_db(state: State<'_, DbState>, config: LibSqlConfig) -> Result<(), String> {
+pub async fn connect_libsql_db(state: Db<'_>, config: LibSqlConfig) -> Result<(), String> {
     connect_libsql(state, config).await
 }
 
@@ -459,7 +460,7 @@ pub async fn test_posthog(config: crate::db::connection::PosthogConfig) -> Resul
 
 #[tauri::command]
 pub async fn connect_posthog_db(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     config: crate::db::connection::PosthogConfig,
 ) -> Result<(), String> {
     crate::db::connection::connect_posthog(state, config).await
@@ -473,7 +474,7 @@ pub async fn test_clickhouse(config: ClickhouseConfig) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn connect_clickhouse_db(state: State<'_, DbState>, config: ClickhouseConfig) -> Result<(), String> {
+pub async fn connect_clickhouse_db(state: Db<'_>, config: ClickhouseConfig) -> Result<(), String> {
     connect_clickhouse(state, config).await
 }
 
@@ -485,7 +486,7 @@ pub async fn test_redis(config: RedisConfig) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn connect_redis_db(state: State<'_, DbState>, config: RedisConfig) -> Result<(), String> {
+pub async fn connect_redis_db(state: Db<'_>, config: RedisConfig) -> Result<(), String> {
     connect_redis(state, config).await
 }
 
@@ -493,7 +494,7 @@ pub async fn connect_redis_db(state: State<'_, DbState>, config: RedisConfig) ->
 /// SCAN page (next cursor + keys); the frontend loops until the cursor is "0".
 #[tauri::command]
 pub async fn redis_scan(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     cursor: String,
     pattern: Option<String>,
     count: u32,
@@ -504,7 +505,7 @@ pub async fn redis_scan(
     }
 }
 
-fn require_redis(state: &State<'_, DbState>) -> Result<RedisConfig, String> {
+fn require_redis(state: &Db<'_>) -> Result<RedisConfig, String> {
     match require_conn(state)? {
         ActiveConnection::Redis(cfg) => Ok(cfg),
         _ => Err("Not connected to a Redis database".into()),
@@ -514,7 +515,7 @@ fn require_redis(state: &State<'_, DbState>) -> Result<RedisConfig, String> {
 /// One page of the Redis keys table (keys with type, TTL, size and preview).
 #[tauri::command]
 pub async fn redis_key_page(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     cursor: String,
     pattern: Option<String>,
     key_type: Option<String>,
@@ -527,7 +528,7 @@ pub async fn redis_key_page(
 /// Fresh keys-table rows for specific keys.
 #[tauri::command]
 pub async fn redis_key_rows(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     keys: Vec<crate::db::redis::KeyRef>,
 ) -> Result<Vec<crate::db::redis::KeyRow>, String> {
     let cfg = require_redis(&state)?;
@@ -537,7 +538,7 @@ pub async fn redis_key_rows(
 /// A key's value, paged for collections.
 #[tauri::command]
 pub async fn redis_key_value(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     key: crate::db::redis::KeyRef,
     cursor: Option<String>,
     count: u32,
@@ -548,7 +549,7 @@ pub async fn redis_key_value(
 
 /// One Redis command as structured JSON, for the insight views.
 #[tauri::command]
-pub async fn redis_command(state: State<'_, DbState>, args: Vec<String>) -> Result<serde_json::Value, String> {
+pub async fn redis_command(state: Db<'_>, args: Vec<String>) -> Result<serde_json::Value, String> {
     let cfg = require_redis(&state)?;
     crate::db::redis::command_json(&cfg, args).await
 }
@@ -557,7 +558,7 @@ pub async fn redis_command(state: State<'_, DbState>, args: Vec<String>) -> Resu
 #[tauri::command]
 pub async fn redis_subscribe(
     app: tauri::AppHandle,
-    state: State<'_, DbState>,
+    state: Db<'_>,
     id: String,
     channels: Vec<String>,
     patterns: Vec<String>,
@@ -580,7 +581,7 @@ pub fn redis_unsubscribe(id: String) {
 /// Apply staged Redis writes in one MULTI/EXEC transaction.
 #[tauri::command]
 pub async fn redis_apply(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     ops: Vec<crate::db::redis::RedisOp>,
 ) -> Result<Vec<crate::db::redis::OpOutcome>, String> {
     let cfg = require_redis(&state)?;
@@ -596,7 +597,7 @@ pub async fn test_dynamodb(config: crate::db::dynamodb::DynamoConfig) -> Result<
 
 #[tauri::command]
 pub async fn connect_dynamodb_db(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     config: crate::db::dynamodb::DynamoConfig,
 ) -> Result<(), String> {
     crate::db::connection::connect_dynamodb(state, config).await
@@ -611,7 +612,7 @@ pub fn dynamodb_profiles() -> Vec<String> {
 /// One DynamoDB API call (`op` from an allowlist) on the active connection.
 #[tauri::command]
 pub async fn dynamodb_request(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     op: String,
     body: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
@@ -630,14 +631,14 @@ pub async fn test_couchdb(config: crate::db::couchdb::CouchConfig) -> Result<(),
 }
 
 #[tauri::command]
-pub async fn connect_couchdb_db(state: State<'_, DbState>, config: crate::db::couchdb::CouchConfig) -> Result<(), String> {
+pub async fn connect_couchdb_db(state: Db<'_>, config: crate::db::couchdb::CouchConfig) -> Result<(), String> {
     crate::db::connection::connect_couchdb(state, config).await
 }
 
 /// One CouchDB HTTP call (path allowlisted) on the active connection.
 #[tauri::command]
 pub async fn couchdb_request(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     method: String,
     path: String,
     body: Option<serde_json::Value>,
@@ -658,14 +659,14 @@ pub async fn test_elastic(config: crate::db::elastic::EsConfig) -> Result<crate:
 }
 
 #[tauri::command]
-pub async fn connect_elastic_db(state: State<'_, DbState>, config: crate::db::elastic::EsConfig) -> Result<(), String> {
+pub async fn connect_elastic_db(state: Db<'_>, config: crate::db::elastic::EsConfig) -> Result<(), String> {
     crate::db::connection::connect_elastic(state, config).await
 }
 
 /// One REST call (path allowlisted) on the active connection.
 #[tauri::command]
 pub async fn elastic_request(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     method: String,
     path: String,
     body: Option<serde_json::Value>,
@@ -680,7 +681,7 @@ pub async fn elastic_request(
 /// Import a file into an index (the preview reuses `mongo_import_preview`).
 #[tauri::command]
 pub async fn elastic_import(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     index: String,
     path: String,
     format: Option<String>,
@@ -701,11 +702,11 @@ pub async fn test_mongo(config: crate::db::mongo::MongoConfig) -> Result<(), Str
 }
 
 #[tauri::command]
-pub async fn connect_mongo_db(state: State<'_, DbState>, config: crate::db::mongo::MongoConfig) -> Result<(), String> {
+pub async fn connect_mongo_db(state: Db<'_>, config: crate::db::mongo::MongoConfig) -> Result<(), String> {
     crate::db::connection::connect_mongo(state, config).await
 }
 
-fn require_mongo(state: &State<'_, DbState>) -> Result<crate::db::mongo::MongoHandle, String> {
+fn require_mongo(state: &Db<'_>) -> Result<crate::db::mongo::MongoHandle, String> {
     match require_conn(state)? {
         ActiveConnection::Doc(crate::db::docdb::DocConn::Mongo(m)) => Ok(m),
         _ => Err("Not connected to MongoDB".into()),
@@ -715,7 +716,7 @@ fn require_mongo(state: &State<'_, DbState>) -> Result<crate::db::mongo::MongoHa
 /// Point the query editor at the sidebar's schema: MongoDB's `db`, Cassandra's
 /// keyspace for unqualified table names. A no-op for the other engines.
 #[tauri::command]
-pub async fn doc_use_schema(state: State<'_, DbState>, schema: String) -> Result<(), String> {
+pub async fn doc_use_schema(state: Db<'_>, schema: String) -> Result<(), String> {
     match require_conn(&state)? {
         ActiveConnection::Doc(d) => crate::db::docdb::use_schema(&d, &schema).await,
         _ => Ok(()),
@@ -723,20 +724,20 @@ pub async fn doc_use_schema(state: State<'_, DbState>, schema: String) -> Result
 }
 
 #[tauri::command]
-pub async fn mongo_collections(state: State<'_, DbState>) -> Result<Vec<String>, String> {
+pub async fn mongo_collections(state: Db<'_>) -> Result<Vec<String>, String> {
     let m = require_mongo(&state)?;
     crate::db::mongo::list_collections(&m).await
 }
 
 #[tauri::command]
-pub async fn mongo_describe(state: State<'_, DbState>, collection: String) -> Result<crate::db::mongo::CollInfo, String> {
+pub async fn mongo_describe(state: Db<'_>, collection: String) -> Result<crate::db::mongo::CollInfo, String> {
     let m = require_mongo(&state)?;
     crate::db::mongo::describe(&m, &collection).await
 }
 
 #[tauri::command]
 pub async fn mongo_find(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     collection: String,
     filter: String,
     sort: Option<String>,
@@ -758,14 +759,14 @@ pub async fn mongo_find(
 }
 
 #[tauri::command]
-pub async fn mongo_count(state: State<'_, DbState>, collection: String, filter: String) -> Result<u64, String> {
+pub async fn mongo_count(state: Db<'_>, collection: String, filter: String) -> Result<u64, String> {
     let m = require_mongo(&state)?;
     crate::db::mongo::count(&m, &collection, &filter).await
 }
 
 #[tauri::command]
 pub async fn mongo_save(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     collection: String,
     doc: serde_json::Value,
     prev_id: Option<serde_json::Value>,
@@ -775,14 +776,14 @@ pub async fn mongo_save(
 }
 
 #[tauri::command]
-pub async fn mongo_delete(state: State<'_, DbState>, collection: String, id: serde_json::Value) -> Result<(), String> {
+pub async fn mongo_delete(state: Db<'_>, collection: String, id: serde_json::Value) -> Result<(), String> {
     let m = require_mongo(&state)?;
     crate::db::mongo::delete(&m, &collection, &id).await
 }
 
 #[tauri::command]
 pub async fn mongo_explain(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     collection: String,
     filter: String,
     sort: Option<String>,
@@ -793,20 +794,20 @@ pub async fn mongo_explain(
 }
 
 #[tauri::command]
-pub async fn mongo_schema(state: State<'_, DbState>, collection: String, filter: String, size: Option<i64>) -> Result<crate::db::mongo::SchemaSample, String> {
+pub async fn mongo_schema(state: Db<'_>, collection: String, filter: String, size: Option<i64>) -> Result<crate::db::mongo::SchemaSample, String> {
     let m = require_mongo(&state)?;
     crate::db::mongo::schema_sample(&m, &collection, &filter, size.unwrap_or(1000)).await
 }
 
 #[tauri::command]
-pub async fn mongo_indexes(state: State<'_, DbState>, collection: String) -> Result<Vec<crate::db::mongo::IndexDetail>, String> {
+pub async fn mongo_indexes(state: Db<'_>, collection: String) -> Result<Vec<crate::db::mongo::IndexDetail>, String> {
     let m = require_mongo(&state)?;
     crate::db::mongo::index_details(&m, &collection).await
 }
 
 #[tauri::command]
 pub async fn mongo_create_index(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     collection: String,
     keys: String,
     options: Option<crate::db::mongo::NewIndexOptions>,
@@ -816,7 +817,7 @@ pub async fn mongo_create_index(
 }
 
 #[tauri::command]
-pub async fn mongo_drop_index(state: State<'_, DbState>, collection: String, name: String) -> Result<(), String> {
+pub async fn mongo_drop_index(state: Db<'_>, collection: String, name: String) -> Result<(), String> {
     let m = require_mongo(&state)?;
     crate::db::mongo::drop_index(&m, &collection, &name).await
 }
@@ -824,7 +825,7 @@ pub async fn mongo_drop_index(state: State<'_, DbState>, collection: String, nam
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn mongo_update_field(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     collection: String,
     id: serde_json::Value,
     path: String,
@@ -837,7 +838,7 @@ pub async fn mongo_update_field(
 }
 
 #[tauri::command]
-pub async fn mongo_aggregate(state: State<'_, DbState>, collection: String, pipeline: String, limit: Option<i64>) -> Result<Vec<serde_json::Value>, String> {
+pub async fn mongo_aggregate(state: Db<'_>, collection: String, pipeline: String, limit: Option<i64>) -> Result<Vec<serde_json::Value>, String> {
     let m = require_mongo(&state)?;
     crate::db::mongo::aggregate_preview(&m, &collection, &pipeline, limit.unwrap_or(10)).await
 }
@@ -852,7 +853,7 @@ pub async fn mongo_import_preview(path: String, format: Option<String>, infer: O
 
 #[tauri::command]
 pub async fn mongo_import(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     collection: String,
     path: String,
     format: Option<String>,
@@ -870,14 +871,14 @@ pub async fn test_firestore(config: crate::db::firestore::FirestoreConfig) -> Re
 }
 
 #[tauri::command]
-pub async fn connect_firestore_db(state: State<'_, DbState>, config: crate::db::firestore::FirestoreConfig) -> Result<(), String> {
+pub async fn connect_firestore_db(state: Db<'_>, config: crate::db::firestore::FirestoreConfig) -> Result<(), String> {
     crate::db::connection::connect_firestore(state, config).await
 }
 
 /// One Firestore REST call (document paths of this database only).
 #[tauri::command]
 pub async fn firestore_request(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     method: String,
     path: String,
     body: Option<serde_json::Value>,
@@ -897,11 +898,11 @@ pub async fn test_cassandra(config: crate::db::cassandra::CassandraConfig) -> Re
 }
 
 #[tauri::command]
-pub async fn connect_cassandra_db(state: State<'_, DbState>, config: crate::db::cassandra::CassandraConfig) -> Result<(), String> {
+pub async fn connect_cassandra_db(state: Db<'_>, config: crate::db::cassandra::CassandraConfig) -> Result<(), String> {
     crate::db::connection::connect_cassandra(state, config).await
 }
 
-fn require_cassandra(state: &State<'_, DbState>) -> Result<crate::db::cassandra::CassandraHandle, String> {
+fn require_cassandra(state: &Db<'_>) -> Result<crate::db::cassandra::CassandraHandle, String> {
     match require_conn(state)? {
         ActiveConnection::Doc(crate::db::docdb::DocConn::Cassandra(s)) => Ok(s),
         _ => Err("Not connected to Cassandra".into()),
@@ -909,20 +910,20 @@ fn require_cassandra(state: &State<'_, DbState>) -> Result<crate::db::cassandra:
 }
 
 #[tauri::command]
-pub async fn cassandra_tables(state: State<'_, DbState>) -> Result<Vec<String>, String> {
+pub async fn cassandra_tables(state: Db<'_>) -> Result<Vec<String>, String> {
     let s = require_cassandra(&state)?;
     crate::db::cassandra::list_tables(&s).await
 }
 
 #[tauri::command]
-pub async fn cassandra_describe(state: State<'_, DbState>, table: String) -> Result<crate::db::cassandra::TableShape, String> {
+pub async fn cassandra_describe(state: Db<'_>, table: String) -> Result<crate::db::cassandra::TableShape, String> {
     let s = require_cassandra(&state)?;
     crate::db::cassandra::describe(&s, &table).await
 }
 
 #[tauri::command]
 pub async fn cassandra_page(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     table: String,
     filter: String,
     cursor: Option<String>,
@@ -934,7 +935,7 @@ pub async fn cassandra_page(
 
 #[tauri::command]
 pub async fn cassandra_save(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     table: String,
     row: serde_json::Value,
     prev: Option<serde_json::Value>,
@@ -944,7 +945,7 @@ pub async fn cassandra_save(
 }
 
 #[tauri::command]
-pub async fn cassandra_delete(state: State<'_, DbState>, table: String, row: serde_json::Value) -> Result<(), String> {
+pub async fn cassandra_delete(state: Db<'_>, table: String, row: serde_json::Value) -> Result<(), String> {
     let s = require_cassandra(&state)?;
     crate::db::cassandra::delete(&s, &table, &row).await
 }
@@ -957,7 +958,7 @@ pub async fn test_duckdb(config: DuckdbConfig) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn connect_duckdb_db(state: State<'_, DbState>, config: DuckdbConfig) -> Result<(), String> {
+pub async fn connect_duckdb_db(state: Db<'_>, config: DuckdbConfig) -> Result<(), String> {
     connect_duckdb(state, config).await
 }
 
@@ -969,7 +970,7 @@ pub async fn test_mssql(config: MssqlConfig) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn connect_mssql_db(state: State<'_, DbState>, config: MssqlConfig) -> Result<(), String> {
+pub async fn connect_mssql_db(state: Db<'_>, config: MssqlConfig) -> Result<(), String> {
     connect_mssql(state, config).await
 }
 
@@ -981,13 +982,13 @@ pub async fn test_oracle(config: OracleConfig) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn connect_oracle_db(state: State<'_, DbState>, config: OracleConfig) -> Result<(), String> {
+pub async fn connect_oracle_db(state: Db<'_>, config: OracleConfig) -> Result<(), String> {
     connect_oracle(state, config).await
 }
 
 /// The Oracle container the active connection is in (FREEPDB1, CDB$ROOT).
 #[tauri::command]
-pub async fn oracle_container_name(state: State<'_, DbState>) -> Result<String, String> {
+pub async fn oracle_container_name(state: Db<'_>) -> Result<String, String> {
     match crate::db::connection::require_conn(&state)? {
         ActiveConnection::Oracle(h) => crate::db::oracle::container_name(&h).await,
         _ => Err("Not connected to Oracle".into()),
@@ -1002,7 +1003,7 @@ use crate::db::live::{self, LiveState};
 #[tauri::command]
 pub async fn live_start(
     app: tauri::AppHandle,
-    state: State<'_, DbState>,
+    state: Db<'_>,
     live_state: State<'_, LiveState>,
     schema: String,
     table: String,
@@ -1022,7 +1023,7 @@ pub async fn live_stop(live_state: State<'_, LiveState>) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn disconnect_postgres(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     tunnel_state: State<'_, TunnelState>,
     live_state: State<'_, LiveState>,
 ) -> Result<(), String> {
@@ -1092,7 +1093,7 @@ fn mssql_plan_lines(xml: &str) -> Vec<String> {
 
 #[tauri::command]
 pub async fn pg_explain_sql(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     sql: String,
     analyze: Option<bool>,
 ) -> Result<ExplainResult, String> {
@@ -1179,13 +1180,13 @@ pub async fn pg_explain_sql(
 // ── DB-agnostic query commands ────────────────────────────────────────────────
 
 #[tauri::command]
-pub async fn pg_list_schemas(state: State<'_, DbState>) -> Result<Vec<String>, String> {
+pub async fn pg_list_schemas(state: Db<'_>) -> Result<Vec<String>, String> {
     list_schemas(state).await
 }
 
 #[tauri::command]
 pub async fn pg_list_tables(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
 ) -> Result<Vec<TableInfo>, String> {
     list_tables(state, schema).await
@@ -1195,7 +1196,7 @@ pub async fn pg_list_tables(
 /// unknown (-1) row count. See `db::schema::table_row_counts`.
 #[tauri::command]
 pub async fn pg_table_row_counts(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     tables: Vec<String>,
 ) -> Result<Vec<TableRowCount>, String> {
@@ -1204,7 +1205,7 @@ pub async fn pg_table_row_counts(
 
 #[tauri::command]
 pub async fn pg_list_indexes(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     table: Option<String>,
 ) -> Result<Vec<IndexInfo>, String> {
@@ -1213,7 +1214,7 @@ pub async fn pg_list_indexes(
 
 #[tauri::command]
 pub async fn pg_get_table_column_structure(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     table: String,
 ) -> Result<Vec<ColumnStructureRow>, String> {
@@ -1224,7 +1225,7 @@ pub async fn pg_get_table_column_structure(
 /// table. Used by the ER diagram, which needs the whole schema up front.
 #[tauri::command]
 pub async fn pg_get_schema_column_structure(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
 ) -> Result<Vec<TableColumnStructure>, String> {
     get_schema_column_structure(state, schema).await
@@ -1232,7 +1233,7 @@ pub async fn pg_get_schema_column_structure(
 
 #[tauri::command]
 pub async fn pg_get_incoming_foreign_keys(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     table: String,
 ) -> Result<Vec<IncomingForeignKey>, String> {
@@ -1241,7 +1242,7 @@ pub async fn pg_get_incoming_foreign_keys(
 
 #[tauri::command]
 pub async fn pg_list_enums(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
 ) -> Result<Vec<EnumInfo>, String> {
     list_enums(state, schema).await
@@ -1249,7 +1250,7 @@ pub async fn pg_list_enums(
 
 #[tauri::command]
 pub async fn pg_list_triggers(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
 ) -> Result<Vec<TriggerInfo>, String> {
     list_triggers(state, schema).await
@@ -1257,7 +1258,7 @@ pub async fn pg_list_triggers(
 
 #[tauri::command]
 pub async fn pg_list_sequences(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
 ) -> Result<Vec<SequenceInfo>, String> {
     list_sequences(state, schema).await
@@ -1265,7 +1266,7 @@ pub async fn pg_list_sequences(
 
 #[tauri::command]
 pub async fn pg_list_functions(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
 ) -> Result<Vec<FunctionInfo>, String> {
     list_functions(state, schema).await
@@ -1275,7 +1276,7 @@ pub async fn pg_list_functions(
 /// and which of those kinds the engine has (the sidebar's Objects tab).
 #[tauri::command]
 pub async fn list_db_objects(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
 ) -> Result<crate::db::objects::ObjectListing, String> {
     crate::db::objects::list_db_objects(state, schema).await
@@ -1283,7 +1284,7 @@ pub async fn list_db_objects(
 
 #[tauri::command]
 pub async fn get_object_definition(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     kind: String,
     schema: String,
     name: String,
@@ -1296,7 +1297,7 @@ pub async fn get_object_definition(
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn drop_db_object(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     kind: String,
     schema: String,
     name: String,
@@ -1321,20 +1322,20 @@ pub async fn drop_db_object(
 /// Table and view comments for one schema (the sidebar's comments setting).
 #[tauri::command]
 pub async fn list_object_comments(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
 ) -> Result<Vec<crate::db::objects::ObjectComment>, String> {
     crate::db::objects::list_object_comments(state, schema).await
 }
 
 #[tauri::command]
-pub async fn ping_db_connection(state: State<'_, DbState>) -> Result<(), String> {
+pub async fn ping_db_connection(state: Db<'_>) -> Result<(), String> {
     ping_connection(state).await
 }
 
 #[tauri::command]
 pub async fn pg_truncate_table(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     table: String,
 ) -> Result<(), String> {
@@ -1343,7 +1344,7 @@ pub async fn pg_truncate_table(
 
 #[tauri::command]
 pub async fn pg_drop_table(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     table: String,
     cascade: bool,
@@ -1356,7 +1357,7 @@ pub async fn pg_drop_table(
 /// Copy a database on the current server under a new name, structure and rows.
 #[tauri::command]
 pub async fn pg_clone_database(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     source: String,
     target: String,
 ) -> Result<crate::db::admin::CloneSummary, String> {
@@ -1366,7 +1367,7 @@ pub async fn pg_clone_database(
 
 #[tauri::command]
 pub async fn get_table_ddl(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     table: String,
 ) -> Result<String, String> {
@@ -1384,7 +1385,7 @@ pub async fn get_table_ddl_on_connection(
 
 #[tauri::command]
 pub async fn pg_get_table_rows(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     table: String,
     limit: i64,
@@ -1440,7 +1441,7 @@ pub async fn pg_get_table_rows(
 /// total streams in without blocking the initial paint.
 #[tauri::command]
 pub async fn pg_count_table_rows(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     table: String,
     search: Option<String>,
@@ -1473,7 +1474,7 @@ pub async fn pg_count_table_rows(
 /// Which text columns a search index would cover, and which have one.
 #[tauri::command]
 pub async fn pg_search_index_status(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     table: String,
 ) -> Result<crate::db::SearchIndexStatus, String> {
@@ -1483,7 +1484,7 @@ pub async fn pg_search_index_status(
 /// Create trigram indexes so the grid's search is an index scan.
 #[tauri::command]
 pub async fn pg_create_search_index(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     table: String,
 ) -> Result<Vec<String>, String> {
@@ -1492,7 +1493,7 @@ pub async fn pg_create_search_index(
 
 #[tauri::command]
 pub async fn pg_get_column_stats(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     table: String,
     column: String,
@@ -1504,7 +1505,7 @@ pub async fn pg_get_column_stats(
 
 #[tauri::command]
 pub async fn geo_overview(
-    state: State<'_, DbState>,
+    state: Db<'_>,
 ) -> Result<crate::db::GeoOverview, String> {
     crate::db::geo_overview(state).await
 }
@@ -1512,7 +1513,7 @@ pub async fn geo_overview(
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn geo_features(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     table: String,
     column: String,
@@ -1537,28 +1538,28 @@ pub async fn geo_features(
 
 #[tauri::command]
 pub async fn instance_version(
-    state: State<'_, DbState>,
+    state: Db<'_>,
 ) -> Result<crate::db::InstanceVersion, String> {
     crate::db::instance_version(state).await
 }
 
 #[tauri::command]
 pub async fn instance_activity(
-    state: State<'_, DbState>,
+    state: Db<'_>,
 ) -> Result<crate::db::InstanceActivity, String> {
     crate::db::instance_activity(state).await
 }
 
 #[tauri::command]
 pub async fn instance_state(
-    state: State<'_, DbState>,
+    state: Db<'_>,
 ) -> Result<crate::db::InstanceState, String> {
     crate::db::instance_state(state).await
 }
 
 #[tauri::command]
 pub async fn instance_config(
-    state: State<'_, DbState>,
+    state: Db<'_>,
 ) -> Result<Vec<crate::db::ConfigSetting>, String> {
     crate::db::instance_config(state).await
 }
@@ -1567,7 +1568,7 @@ pub async fn instance_config(
 /// `value = None` resets it to the server default.
 #[tauri::command]
 pub async fn instance_set_config(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     name: String,
     value: Option<String>,
 ) -> Result<crate::db::SetConfigResult, String> {
@@ -1578,7 +1579,7 @@ pub async fn instance_set_config(
 /// only - it never reads user rows and never writes.
 #[tauri::command]
 pub async fn advisor_scan(
-    state: State<'_, DbState>,
+    state: Db<'_>,
 ) -> Result<crate::db::advisor::AdvisorReport, String> {
     let conn = crate::db::connection::require_conn(&state)?;
     crate::db::advisor::scan(&conn).await
@@ -1586,7 +1587,7 @@ pub async fn advisor_scan(
 
 #[tauri::command]
 pub async fn instance_replication(
-    state: State<'_, DbState>,
+    state: Db<'_>,
 ) -> Result<crate::db::InstanceReplication, String> {
     crate::db::instance_replication(state).await
 }
@@ -1595,7 +1596,7 @@ pub async fn instance_replication(
 /// it keeps the single-slot behaviour older callers relied on.
 #[tauri::command]
 pub async fn pg_execute_sql(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     sql: String,
     query_id: Option<String>,
 ) -> Result<SqlResult, String> {
@@ -1604,7 +1605,7 @@ pub async fn pg_execute_sql(
 
 #[tauri::command]
 pub async fn pg_execute_sql_multi(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     sql: String,
     query_id: Option<String>,
 ) -> Result<Vec<SqlResult>, String> {
@@ -1621,7 +1622,7 @@ pub async fn pg_execute_sql_multi(
 /// Stream results). The window reads them with `result_window`.
 #[tauri::command]
 pub async fn pg_execute_sql_stream(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     store: State<'_, crate::db::result_store::ResultStore>,
     sql: String,
     query_id: Option<String>,
@@ -1720,13 +1721,13 @@ pub async fn list_tables_on_connection(
 
 /// Run a DDL statement outside a transaction (required for CREATE/DROP DATABASE etc.).
 #[tauri::command]
-pub async fn pg_execute_ddl(state: State<'_, DbState>, sql: String) -> Result<(), String> {
+pub async fn pg_execute_ddl(state: Db<'_>, sql: String) -> Result<(), String> {
     execute_ddl(state, sql).await
 }
 
 #[tauri::command]
 pub async fn pg_update_table_cell(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     table: String,
     primary_key: HashMap<String, Value>,
@@ -1739,7 +1740,7 @@ pub async fn pg_update_table_cell(
 /// Load one cell in full - the value a browse page deliberately did not fetch.
 #[tauri::command]
 pub async fn pg_fetch_cell_value(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     table: String,
     primary_key: HashMap<String, Value>,
@@ -1751,7 +1752,7 @@ pub async fn pg_fetch_cell_value(
 
 #[tauri::command]
 pub async fn pg_delete_table_row(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     table: String,
     primary_key: HashMap<String, Value>,
@@ -1761,7 +1762,7 @@ pub async fn pg_delete_table_row(
 
 #[tauri::command]
 pub async fn pg_delete_table_rows(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     table: String,
     primary_keys: Vec<HashMap<String, Value>>,
@@ -1772,7 +1773,7 @@ pub async fn pg_delete_table_rows(
 /// Staged grid changes as one transaction (Postgres, MySQL, SQLite) - see `apply_table_changes`.
 #[tauri::command]
 pub async fn pg_apply_table_changes(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     table: String,
     updates: Vec<RowUpdate>,
@@ -1784,7 +1785,7 @@ pub async fn pg_apply_table_changes(
 
 #[tauri::command]
 pub async fn pg_insert_table_row(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     table: String,
     values: HashMap<String, Value>,
@@ -1798,7 +1799,7 @@ pub async fn pg_insert_table_row(
 /// cancels every query in flight (the old whole-app "stop" behaviour).
 #[tauri::command]
 pub async fn cancel_query(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     query_id: Option<String>,
 ) -> Result<(), String> {
     if let Ok(mut map) = state.cancels.lock() {
@@ -2246,7 +2247,7 @@ pub fn set_window_glass(window: tauri::WebviewWindow, enabled: bool, dark: bool)
 
 /// D1 Time Travel: the bookmark for now, or for the moment nearest `timestamp`.
 #[tauri::command]
-pub async fn d1_bookmark(state: State<'_, DbState>, timestamp: Option<String>) -> Result<String, String> {
+pub async fn d1_bookmark(state: Db<'_>, timestamp: Option<String>) -> Result<String, String> {
     match require_conn(&state)? {
         ActiveConnection::D1(cfg) => crate::db::d1::bookmark(&cfg, timestamp.as_deref()).await,
         _ => Err("Time Travel is a Cloudflare D1 feature.".into()),
@@ -2255,7 +2256,7 @@ pub async fn d1_bookmark(state: State<'_, DbState>, timestamp: Option<String>) -
 
 /// D1 Time Travel: rewind the database to a bookmark; returns the previous one.
 #[tauri::command]
-pub async fn d1_restore(state: State<'_, DbState>, bookmark: String) -> Result<String, String> {
+pub async fn d1_restore(state: Db<'_>, bookmark: String) -> Result<String, String> {
     match require_conn(&state)? {
         ActiveConnection::D1(cfg) => crate::db::d1::restore(&cfg, &bookmark).await,
         _ => Err("Time Travel is a Cloudflare D1 feature.".into()),

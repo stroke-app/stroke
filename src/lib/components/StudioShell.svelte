@@ -149,7 +149,7 @@
   import WifiOff from '@lucide/svelte/icons/wifi-off'
   import Unplug from '@lucide/svelte/icons/unplug'
   import RefreshCw from '@lucide/svelte/icons/refresh-cw'
-  import {
+  import { setConnRoute,
     disconnectPostgres,
     prewarmDns,
     listSchemas,
@@ -7633,6 +7633,10 @@ let rowSearch = $state('')
   }
 
   async function onConnected(conn, savedId) {
+    // A fresh pool is in front and unnamed: no routing until the switch that
+    // opened it names it (handleSwitchDatabase), or a call meant for this
+    // database could be sent to a kept one for the database just left.
+    setConnRoute('')
     connectedSavedId = savedId ?? ''
     // Labels belong to the database they were read from.
     void import('$lib/plugins/extensions/fk-labels.js').then((m) => m.clearFkLabels())
@@ -8316,6 +8320,7 @@ let rowSearch = $state('')
     if (!forget && persistConnectionId && activeSchema) setLastSchema(persistConnectionId, activeSchema)
     recordActivity({ type: 'disconnect', title: `Disconnected from ${connection?.name ?? 'database'}`, success: true })
     setWasDisconnected(true)
+    setConnRoute('')
     try { await disconnectPostgres() } catch { /* ignore */ }
     try { await mcpStop() } catch { /* ignore */ }
     mcpRunning = false
@@ -8334,6 +8339,7 @@ let rowSearch = $state('')
     savedConnections = loadSavedConnections()
     // Labs: its kept tabs go with it (its pools are closed by removeConnection).
     for (const key of [..._sessions.keys()]) if (key.startsWith(`${id}|`)) _sessions.delete(key)
+    sessionsTick++
     if (connection && id && (id === persistConnectionId || id === connection.id)) {
       void handleDisconnect({ forget: true })
     }
@@ -8426,27 +8432,55 @@ let rowSearch = $state('')
   // their rows (marked evicted) and refetch when shown, so a kept session
   // costs a tab list, not its data. SSH-tunnelled connections share one
   // tunnel slot, so they still connect each time.
-  /** @type {Map<string, { tabs: StudioTab[], activeTabId: string | null, activeSchema: string }>} */
+  /**
+   * @typedef {{ conn: any, label: string, tabs: StudioTab[], activeTabId: string | null,
+   *   activeSchema: string, activeTable: string | null, schemas: string[], tables: any[] }} KeptSession
+   */
+  /** @type {Map<string, KeptSession>} */
   const _sessions = new Map()
+  /** Bumped on every change to _sessions, so the tab bar re-reads it. */
+  let sessionsTick = $state(0)
+  /** Databases in the order they were first opened: the tab bar groups by it, so tabs don't jump around on a switch. */
+  let sessionOrder = $state(/** @type {string[]} */ ([]))
   const multiConnection = () => loadSettings().multiConnection === true
   /** One key per database, not per saved connection: a server holds several. @param {any} c */
   const sessionKey = (c) => (c ? [c.id ?? '', c.type, c.databaseId ?? c.database ?? c.filePath ?? ''].join('|') : '')
   /** @param {any} c */
   const keepable = (c) => !!c && !c.ssh?.host
+  /** A database's short name for its tabs. @param {any} c */
+  const sessionLabel = (c) => String(c?.database || c?.name || c?.filePath?.split(/[\\/]/).pop() || c?.host || 'database')
+  /** @param {string} key */
+  function noteSession(key) {
+    if (key && !sessionOrder.includes(key)) sessionOrder = [...sessionOrder, key]
+  }
 
-  /** Put the open connection's tabs aside under its key. */
+  /** Put the open connection's tabs (and its sidebar) aside under its key. */
   function keepSession() {
     if (!connection) return
     saveActiveTabState()
+    flushSqlTabs()
     const key = sessionKey(connection)
+    noteSession(key)
     // Newest last, so the cap drops the one used longest ago (as db/parked.rs does).
     _sessions.delete(key)
     _sessions.set(key, {
-      tabs: tabs.map((t) => (t.kind === 'table' && t.state ? { ...t, state: { ...t.state, rows: [], evicted: true } } : t)),
+      conn: connection,
+      label: sessionLabel(connection),
+      // The tab on screen keeps its rows, so coming back to it is instant;
+      // the others refetch when shown, so a kept database costs little.
+      tabs: tabs.map((t) => (t.kind === 'table' && t.state && t.id !== activeTabId ? { ...t, state: { ...t.state, rows: [], evicted: true } } : t)),
       activeTabId,
       activeSchema,
+      activeTable,
+      schemas,
+      tables,
     })
-    while (_sessions.size > 6) _sessions.delete(/** @type {string} */ (_sessions.keys().next().value))
+    while (_sessions.size > 8) {
+      const old = /** @type {string} */ (_sessions.keys().next().value)
+      _sessions.delete(old)
+      sessionOrder = sessionOrder.filter((k) => k !== old)
+    }
+    sessionsTick++
   }
 
   /** Bring a kept session's tabs back over the fresh connection's default tab. @param {any} conn */
@@ -8455,6 +8489,7 @@ let rowSearch = $state('')
     const s = _sessions.get(key)
     if (!s || !s.tabs.length) return
     _sessions.delete(key)
+    sessionsTick++
     tabs = s.tabs
     // Its editor tabs are already here: don't add the stored copies again.
     if (tabs.some((t) => t.kind === 'sql')) _sqlTabsRestoredFor = sqlDraftKey
@@ -8467,8 +8502,108 @@ let rowSearch = $state('')
     await applyTabToEditor(front)
   }
 
-  /** @param {import('$lib/stores/connections.js').SavedConnection} conn */
-  async function handleSwitchDatabase(conn) {
+  /**
+   * Switch to a kept database in place: its pool is already open (resumed in
+   * Rust), so nothing is torn down and nothing reconnects. The connection,
+   * sidebar and tabs are swapped in one go and refreshed quietly behind, so
+   * the switch shows no welcome screen, no empty sidebar and no spinner.
+   * @param {any} conn @param {KeptSession} s @param {string | null} [focusTab]
+   */
+  async function resumeSession(conn, s, focusTab = null) {
+    connectedSavedId = conn.id ?? ''
+    connection = conn
+    savedConnections = loadSavedConnections()
+    tableReadonly = savedConnections.find((c) => c.id === conn.id)?.readOnly ?? conn.readOnly ?? false
+    if (conn.id) setLastConnectionId(conn.id)
+    error = ''
+    connectionLost = false
+    tableColumnsCache = new Map()
+    resetIncomingFkCache()
+    _catalog.clear()
+    _sqlHintsLoadedFor = ''
+    indexes = []
+    enums = []
+    triggers = []
+    sequences = []
+    tableFilter = ''
+    structureColumns = []
+    structureSearch = ''
+    schemas = s.schemas
+    activeSchema = s.activeSchema
+    tables = s.tables
+    activeTable = s.activeTable
+    // The list on screen is this database's: a refresh keeps it up (no dots).
+    _tablesKey = catalogKey(persistConnectionId, 'tables', activeSchema)
+    loadingTables = false
+    tabs = s.tabs
+    if (tabs.some((t) => t.kind === 'sql')) _sqlTabsRestoredFor = sqlDraftKey
+    const front = tabs.find((t) => t.id === focusTab) ?? tabs.find((t) => t.id === s.activeTabId) ?? tabs[0]
+    activeTabId = front?.id ?? null
+    if (front) await applyTabToEditor(front)
+    void refreshQueryStores().catch(() => {})
+    // Catch up quietly: the kept lists can be a little behind.
+    void (async () => {
+      const at = persistConnectionId
+      try { await loadSchemas() } catch { /* the table list still refreshes */ }
+      if (!connectionMoved(at)) await loadTables({ force: true, quiet: true })
+    })()
+  }
+
+  /** The kept session holding a tab, if any. @param {string} id */
+  function sessionOfTab(id) {
+    for (const [key, s] of _sessions) if (s.tabs.some((t) => t.id === id)) return { key, s }
+    return null
+  }
+
+  /** A tab of another open database: switch to that database, on that tab. @param {string} id */
+  async function activateForeignTab(id) {
+    const hit = sessionOfTab(id)
+    if (!hit) return
+    await handleSwitchDatabase(hit.s.conn, { focusTab: id })
+  }
+
+  /** Close a tab of another open database without switching to it. @param {string} id */
+  function closeForeignTab(id) {
+    const hit = sessionOfTab(id)
+    if (!hit) return
+    const left = hit.s.tabs.filter((t) => t.id !== id)
+    if (left.length) _sessions.set(hit.key, { ...hit.s, tabs: left, activeTabId: hit.s.activeTabId === id ? left[0].id : hit.s.activeTabId })
+    else _sessions.set(hit.key, { ...hit.s, tabs: [] })
+    sessionsTick++
+  }
+
+  /**
+   * Labs: one tab bar for every open database. This database's tabs and the
+   * kept ones, grouped in the order the databases were opened, each labelled
+   * with its database once more than one is open.
+   */
+  const barTabs = $derived.by(() => {
+    void sessionsTick
+    const own = $appAiInTab ? tabs : tabs.filter((t) => t.kind !== 'ai')
+    if (!connection || _sessions.size === 0) return own
+    const here = sessionKey(connection)
+    const kept = [..._sessions].filter(([k, s]) => k !== here && s.tabs.some((t) => t.kind !== 'welcome'))
+    if (!kept.length) return own
+    const label = sessionLabel(connection)
+    const order = sessionOrder.includes(here) ? sessionOrder : [...sessionOrder, here]
+    /** @type {any[]} */
+    const out = []
+    for (const k of order) {
+      if (k === here) out.push(...own.map((t) => ({ ...t, connLabel: label })))
+      else {
+        const s = _sessions.get(k)
+        if (!s) continue
+        for (const t of s.tabs) if (t.kind !== 'welcome' && t.kind !== 'ai') out.push({ ...t, connLabel: s.label, foreign: true })
+      }
+    }
+    return out
+  })
+
+  /**
+   * @param {import('$lib/stores/connections.js').SavedConnection} conn
+   * @param {{ focusTab?: string | null }} [opts] Labs: the tab to land on
+   */
+  async function handleSwitchDatabase(conn, opts = {}) {
     // A deliberate switch is the other half of "PIN to open or reconnect".
     // Resolves true immediately unless a PIN is set with the connect prompt on.
     if (!(await requireUnlock('Unlock to connect to a database'))) return
@@ -8477,10 +8612,31 @@ let rowSearch = $state('')
     const previous = connection
     const multi = multiConnection()
     if (multi && keepable(previous)) {
+      if (previous && sessionKey(previous) === sessionKey(conn)) {
+        // Already here: just the tab.
+        if (opts.focusTab) void activateTab(opts.focusTab)
+        return
+      }
       keepSession()
       await liveStop().catch(() => {})
       const { invoke } = await import('@tauri-apps/api/core')
       await invoke('park_connection', { key: sessionKey(previous) }).catch(() => disconnectPostgres().catch(() => {}))
+      // A database kept open comes back in place: no teardown, no overlay,
+      // no welcome screen in between (that was the flicker).
+      const key = sessionKey(conn)
+      const kept = keepable(conn) ? _sessions.get(key) : undefined
+      if (kept) {
+        const resumed = await invoke('resume_connection', { key }).then(Boolean).catch(() => false)
+        if (resumed) {
+          setConnRoute(key)
+          _sessions.delete(key)
+          noteSession(key)
+          sessionsTick++
+          await resumeSession(conn, kept, opts.focusTab ?? null)
+          sidebarShowTables()
+          return
+        }
+      }
     } else {
       await disconnectPostgres().catch(() => {})
     }
@@ -8508,7 +8664,16 @@ let rowSearch = $state('')
         await connectByType(conn)
       }
       await onConnected(conn, conn.id)
+      if (multi && keepable(conn)) {
+        // Name the new front pool, so calls routed to it (and to the kept
+        // ones) find the right database.
+        const key = sessionKey(conn)
+        noteSession(key)
+        setConnRoute(key)
+        void import('@tauri-apps/api/core').then(({ invoke }) => invoke('set_active_conn_key', { key })).catch(() => {})
+      } else setConnRoute('')
       if (multi) await restoreSession(conn)
+      if (opts.focusTab && tabs.some((t) => t.id === opts.focusTab)) void activateTab(opts.focusTab)
       // The switch landed, so the sidebar goes back to the tables of the
       // database you are now in. Every route into a switch - the Databases tab,
       // the status bar, the command palette, a context menu, another saved
@@ -9673,18 +9838,18 @@ let rowSearch = $state('')
   {#snippet tabStrip()}
     {#if tabsInTitle}
       <TabBar
-            tabs={$appAiInTab ? tabs : tabs.filter((t) => t.kind !== 'ai')}
+            tabs={barTabs}
             {activeTabId}
-            onselect={(id) => activateTab(id)}
-            onclose={closeTab}
-            oncloseothers={closeOtherTabs}
+            onselect={(id) => (tabs.some((t) => t.id === id) ? activateTab(id) : activateForeignTab(id))}
+            onclose={(id) => (tabs.some((t) => t.id === id) ? closeTab(id) : closeForeignTab(id))}
+            oncloseothers={(id) => { if (tabs.some((t) => t.id === id)) closeOtherTabs(id) }}
             oncloseall={closeAllTabs}
             onclosemany={(ids, anchorId) => void closeManyTabs(ids, anchorId)}
-            onduplicate={(id) => void duplicateTab(id)}
-            onresettable={(id) => void resetTableTab(id)}
+            onduplicate={(id) => { if (tabs.some((t) => t.id === id)) void duplicateTab(id) }}
+            onresettable={(id) => { if (tabs.some((t) => t.id === id)) void resetTableTab(id) }}
             onreopenclosed={reopenLastClosedTab}
             canreopenclosed={closedTabStack.length > 0}
-            onpintoggle={toggleTabPin}
+            onpintoggle={(id) => { if (tabs.some((t) => t.id === id)) toggleTabPin(id) }}
             onnewsql={() => { if (aiMode) exitAiMode(); openNewSqlTab() }}
           />
     {/if}
@@ -10034,18 +10199,18 @@ let rowSearch = $state('')
              (T3 has one row). A second tab brings the strip back. -->
         {#if tabBarVisible && !tabsInTitle}
           <TabBar
-            tabs={$appAiInTab ? tabs : tabs.filter((t) => t.kind !== 'ai')}
+            tabs={barTabs}
             {activeTabId}
-            onselect={(id) => activateTab(id)}
-            onclose={closeTab}
-            oncloseothers={closeOtherTabs}
+            onselect={(id) => (tabs.some((t) => t.id === id) ? activateTab(id) : activateForeignTab(id))}
+            onclose={(id) => (tabs.some((t) => t.id === id) ? closeTab(id) : closeForeignTab(id))}
+            oncloseothers={(id) => { if (tabs.some((t) => t.id === id)) closeOtherTabs(id) }}
             oncloseall={closeAllTabs}
             onclosemany={(ids, anchorId) => void closeManyTabs(ids, anchorId)}
-            onduplicate={(id) => void duplicateTab(id)}
-            onresettable={(id) => void resetTableTab(id)}
+            onduplicate={(id) => { if (tabs.some((t) => t.id === id)) void duplicateTab(id) }}
+            onresettable={(id) => { if (tabs.some((t) => t.id === id)) void resetTableTab(id) }}
             onreopenclosed={reopenLastClosedTab}
             canreopenclosed={closedTabStack.length > 0}
-            onpintoggle={toggleTabPin}
+            onpintoggle={(id) => { if (tabs.some((t) => t.id === id)) toggleTabPin(id) }}
             onnewsql={() => { if (aiMode) exitAiMode(); openNewSqlTab() }}
           />
         {/if}
@@ -10059,14 +10224,14 @@ let rowSearch = $state('')
             activeTabId={group.activeTabId}
             onselect={(id) => void focusTabInGroup(group.id, id)}
             onclose={(id) => void closeTabInGroup(group.id, id)}
-            oncloseothers={closeOtherTabs}
+            oncloseothers={(id) => { if (tabs.some((t) => t.id === id)) closeOtherTabs(id) }}
             oncloseall={closeAllTabs}
             onclosemany={(ids, anchorId) => void closeManyTabs(ids, anchorId)}
-            onduplicate={(id) => void duplicateTab(id)}
-            onresettable={(id) => void resetTableTab(id)}
+            onduplicate={(id) => { if (tabs.some((t) => t.id === id)) void duplicateTab(id) }}
+            onresettable={(id) => { if (tabs.some((t) => t.id === id)) void resetTableTab(id) }}
             onreopenclosed={reopenLastClosedTab}
             canreopenclosed={closedTabStack.length > 0}
-            onpintoggle={toggleTabPin}
+            onpintoggle={(id) => { if (tabs.some((t) => t.id === id)) toggleTabPin(id) }}
             onnewsql={() => { if (aiMode) exitAiMode(); openNewSqlTab() }}
             ondragtabstart={(id) => beginTabDrag(id)}
             ondragtabmove={(x, y) => moveTabDrag(x, y)}
