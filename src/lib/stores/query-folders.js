@@ -3,6 +3,8 @@
  * per-connection lists (chart groups, diagrams). The queries themselves stay in
  * IndexedDB and point at a folder by id; see query-folders.js for the tree.
  */
+
+import { notifyLocalChange } from '$lib/sync/changes.js'
 import { normalizeFolders } from '$lib/query-folders.js'
 
 /** @param {string | null | undefined} connId */
@@ -28,6 +30,7 @@ export function saveQueryFolders(connId, folders) {
   try {
     if (folders.length) localStorage.setItem(queryFoldersKey(connId), JSON.stringify(normalizeFolders(folders)))
     else localStorage.removeItem(queryFoldersKey(connId))
+    notifyLocalChange('library')
   } catch {
     // Quota/serialization failure must not throw into the sidebar.
   }

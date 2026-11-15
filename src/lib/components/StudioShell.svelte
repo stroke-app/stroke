@@ -2357,6 +2357,12 @@ let rowSearch = $state('')
   $effect(() => {
     if (commandOpen && persistConnectionId) void refreshQueryStores()
   })
+  // Saved queries and folders arriving from another device.
+  $effect(() => {
+    const on = () => void refreshQueryStores()
+    window.addEventListener('stroke:library-synced', on)
+    return () => window.removeEventListener('stroke:library-synced', on)
+  })
 
   $effect(() => {
     // Reload recents, charts, and dashboards whenever the active connection changes

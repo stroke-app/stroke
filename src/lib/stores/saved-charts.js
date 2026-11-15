@@ -3,6 +3,7 @@
  * Charts are scoped per database connection - switching connections loads
  * that connection's charts. An empty connectionId shows nothing.
  */
+import { notifyLocalChange } from '$lib/sync/changes.js'
 import { writable } from 'svelte/store'
 import { debounce } from '$lib/utils.js'
 
@@ -65,6 +66,14 @@ function loadGroups(connectionId) {
 /** @param {any} v @param {string} key */
 function persist(v, key) {
   try { localStorage.setItem(key, JSON.stringify(v)) } catch {}
+  notifyLocalChange('library')
+}
+
+/** Re-read the open connection's charts and groups (sync wrote new ones). */
+export function reloadChartsConnection() {
+  if (!_connId) return
+  savedCharts.set(loadCharts(_connId))
+  chartGroups.set(loadGroups(_connId))
 }
 
 export const savedCharts = writable(/** @type {SavedChart[]} */ ([]))

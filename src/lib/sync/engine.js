@@ -39,7 +39,7 @@ import { loadTombstones, saveTombstones, withLocalChangesMuted } from './changes
 export const META_KEY = 'stroke:sync:meta'
 export const CURSOR_KEY = 'stroke:sync:cursor'
 export const INIT_KEY = 'stroke:sync:initialized'
-export const KINDS = /** @type {SyncKind[]} */ (['workspace', 'connection', 'settings'])
+export const KINDS = /** @type {SyncKind[]} */ (['workspace', 'connection', 'settings', 'query', 'library'])
 const ID_RE = /^[A-Za-z0-9_-]{1,128}$/
 const PUSH_ROUNDS = 3
 
@@ -153,6 +153,8 @@ export function createSyncEngine({ invoke, adapters, storage = globalThis.localS
   function collectLocal() {
     const out = new Map()
     for (const kind of KINDS) {
+      // A kind this caller has no store for (tests, a partial runtime) has nothing local.
+      if (!adapters[kind]) continue
       for (const { id, data } of adapters[kind].list()) {
         if (typeof id === 'string' && ID_RE.test(id)) out.set(recordKey(kind, id), { kind, id, data })
       }

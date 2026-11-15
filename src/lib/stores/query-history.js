@@ -1,5 +1,6 @@
 import { getStudioDb, STORES } from '$lib/stores/studio-db.js'
 import { loadSettings, DEFAULT_MAX_QUERY_HISTORY } from '$lib/stores/settings.js'
+import { notifyLocalChange, recordDeletion } from '$lib/sync/changes.js'
 
 const HISTORY_STORE = STORES.queryHistory
 const SAVED_STORE = STORES.savedQueries
@@ -183,6 +184,7 @@ export async function createSavedQuery(connectionId, name, sql, { folderId = nul
   })
   const db = await getStudioDb()
   await db.put(SAVED_STORE, saved)
+  savedChanged(saved)
   return saved
 }
 
@@ -236,6 +238,7 @@ export async function updateSavedQuery(id, patch) {
     else delete next.folderId
   }
   await db.put(SAVED_STORE, next)
+  savedChanged(next)
   return next
 }
 
@@ -243,10 +246,58 @@ export async function updateSavedQuery(id, patch) {
 export async function deleteSavedQuery(id) {
   const db = await getStudioDb()
   await db.delete(SAVED_STORE, id)
+  _savedSnapshot.delete(id)
+  recordDeletion('query', id)
 }
 
 /** Put back a saved query removed a moment ago (Undo). @param {SavedQuery} entry */
 export async function restoreSavedQuery(entry) {
   const db = await getStudioDb()
   await db.put(SAVED_STORE, entry)
+  savedChanged(entry)
+}
+
+// ── Sync ──────────────────────────────────────────────────────────────────────
+// The sync engine reads every record synchronously, and saved queries live in
+// IndexedDB, so it reads this copy: loaded once at start, kept current by every
+// write above and by sync itself.
+
+/** @type {Map<string, SavedQuery>} */
+const _savedSnapshot = new Map()
+let _snapshotLoaded = false
+
+/** @param {SavedQuery} q */
+function savedChanged(q) {
+  _savedSnapshot.set(q.id, q)
+  notifyLocalChange('query')
+}
+
+/** Load the copy once (the sync runtime awaits this before its first run). */
+export async function loadSavedSnapshot() {
+  if (_snapshotLoaded) return
+  try {
+    const db = await getStudioDb()
+    for (const q of await db.getAll(SAVED_STORE)) _savedSnapshot.set(q.id, q)
+  } catch { /* no IndexedDB (tests): nothing to sync */ }
+  _snapshotLoaded = true
+}
+
+/** Every saved query, for sync. @returns {SavedQuery[]} */
+export function savedSnapshot() {
+  return [..._savedSnapshot.values()]
+}
+
+/** Sync writes a saved query from another device. @param {SavedQuery} q */
+export async function applySyncedQuery(q) {
+  if (!q?.id || !q.connectionId) return
+  _savedSnapshot.set(q.id, q)
+  const db = await getStudioDb()
+  await db.put(SAVED_STORE, q)
+}
+
+/** Sync removes one deleted on another device. @param {string} id */
+export async function removeSyncedQuery(id) {
+  _savedSnapshot.delete(id)
+  const db = await getStudioDb()
+  await db.delete(SAVED_STORE, id)
 }

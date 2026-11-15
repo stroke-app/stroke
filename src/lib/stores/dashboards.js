@@ -1,3 +1,4 @@
+import { notifyLocalChange } from '$lib/sync/changes.js'
 import { writable } from 'svelte/store'
 import { debounce } from '$lib/utils.js'
 
@@ -51,6 +52,7 @@ export const activeDashboardId = writable(/** @type {string | null} */ (null))
 // resize, add) don't JSON.stringify + write on every change.
 const persistDashboards = debounce((/** @type {Dashboard[]} */ v, /** @type {string} */ connId) => {
   try { localStorage.setItem(KEY(connId), JSON.stringify(v)) } catch {}
+  notifyLocalChange('library')
 }, 300)
 dashboards.subscribe(v => {
   if (!_connId) return
@@ -141,4 +143,10 @@ export function reorderItems(dashId, newOrder) {
     const rest = d.items.filter(i => !newOrder.includes(i.id))
     return { ...d, items: [...reordered, ...rest] }
   }))
+}
+
+/** Re-read the open connection's dashboards (sync wrote new ones). */
+export function reloadDashboards() {
+  if (!_connId) return
+  dashboards.set(loadDashboards(_connId))
 }
