@@ -2,6 +2,8 @@
   import { tick, untrack } from "svelte";
   import { toastPosition, TOAST_POSITIONS } from '$lib/stores/toast-position.js'
   import ThemeBuilder from './ThemeBuilder.svelte';
+  import AddThemeDialog from './AddThemeDialog.svelte';
+  import { importedThemes, activeImportedId, removeImportedTheme, applyImportedTheme } from '$lib/stores/imported-themes.js';
   import { comboTitle } from '$lib/shortcuts.js'
   import Kbd from './Kbd.svelte'
   import { trackInstalled, trackInstall, trackOpen } from '$lib/api.js'
@@ -32,6 +34,7 @@
     appThemeId,
     loadSettings,
     updateSettings,
+    systemPreferredTheme,
     increaseZoom,
     decreaseZoom,
     resetZoom,
@@ -210,6 +213,23 @@
 
   /** @param {import('$lib/themes/registry.js').ThemeId} themeId */
   let themeBuilderOpen = $state(false);
+  let addThemeOpen = $state(false);
+
+  /** Use one of the imported themes. @param {string} id */
+  function useImported(id) {
+    activeImportedId.set(id);
+    if ($appThemeId === 'imported') applyImportedTheme();
+    else settings = updateSettings({ theme: 'imported' });
+  }
+
+  /** @param {string} id */
+  function dropImported(id) {
+    removeImportedTheme(id);
+    if ($appThemeId === 'imported') {
+      if ($importedThemes.length) applyImportedTheme();
+      else settings = updateSettings({ theme: systemPreferredTheme() });
+    }
+  }
 
   function setTheme(themeId) {
     if (themeId === $appThemeId) return;
@@ -1361,6 +1381,37 @@
     </div>
   {/if}
 
+  {#if show('Add a theme', 'Import theme community themes vs code json file paste gallery')}
+    <div class={rowCls}>
+      <div class="min-w-0">
+        <p class="text-ui-sm font-medium text-foreground">Add a theme</p>
+        <p class="mt-0.5 text-ui-xs leading-relaxed text-muted-foreground">From stroke.click/themes, a Stroke or VS Code theme file, or pasted JSON.</p>
+      </div>
+      <Button type="button" variant="outline" size="sm" onclick={() => (addThemeOpen = true)}>
+        <Icon name="plus" class="size-3.5 shrink-0" />
+        Add a theme
+      </Button>
+    </div>
+    {#if $importedThemes.length}
+      <ul class="-mt-1 flex flex-col pb-2">
+        {#each $importedThemes as it (it.id)}
+          {@const on = $appThemeId === 'imported' && $activeImportedId === it.id}
+          <li class="group flex h-9 items-center gap-2.5 rounded-md px-2 hover:bg-muted/40">
+            <ThemeSwatch bg={it.colors.background} accent={it.colors.primary} />
+            <button type="button" class="flex min-w-0 flex-1 items-center gap-2 text-left" onclick={() => useImported(it.id)}>
+              <span class="truncate text-ui-xs font-medium text-foreground">{it.name}</span>
+              <span class="truncate text-ui-2xs text-muted-foreground">{it.appearance === 'light' ? 'Light' : 'Dark'}{it.author ? ` · ${it.author}` : ''}</span>
+            </button>
+            {#if on}<Icon name="check" class="size-3.5 shrink-0 text-primary" />{/if}
+            <button type="button" aria-label={`Remove ${it.name}`} class="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 hover:bg-muted hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100" onclick={() => dropImported(it.id)}>
+              <Icon name="trash-2" class="size-3.5 shrink-0" />
+            </button>
+          </li>
+        {/each}
+      </ul>
+    {/if}
+  {/if}
+
   {#if show($t('settings.font'), $t('settings.font.desc'))}
     <div class={rowCls}>
       <div class="min-w-0">
@@ -1912,6 +1963,7 @@
 </style>
 
 <ThemeBuilder bind:open={themeBuilderOpen} />
+<AddThemeDialog bind:open={addThemeOpen} />
 
 <!-- Switching track: what opens, what quits, and what stays. -->
 <Dialog.Root open={switchTo !== null} onOpenChange={(o) => { if (!o && !switchBusy) switchTo = null }}>
