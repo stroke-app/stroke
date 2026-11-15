@@ -3,10 +3,9 @@
   // Settings, Theme and shortcuts, then the help links. Account details used to
   // sit in the status bar; this is the one place for them now.
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js'
-  import { account, signInState, planLabel, signOut, signInWithToast, openManageAccount } from '$lib/stores/account.js'
+  import { account, signInState, planLabel, signInWithToast } from '$lib/stores/account.js'
   import { licenseStatus } from '$lib/stores/license.js'
   import { syncStatus, syncLabel } from '$lib/sync/runtime.js'
-  import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
   import AccountAvatar from './AccountAvatar.svelte'
   import PasteCodeDialog from './PasteCodeDialog.svelte'
   import { cn } from '$lib/utils.js'
@@ -16,7 +15,7 @@
   import Bug from '@lucide/svelte/icons/bug'
   import ExternalLink from '@lucide/svelte/icons/external-link'
   import LogIn from '@lucide/svelte/icons/log-in'
-  import LogOut from '@lucide/svelte/icons/log-out'
+  import Info from '@lucide/svelte/icons/info'
   import KeyRound from '@lucide/svelte/icons/key-round'
   import UserRound from '@lucide/svelte/icons/user-round'
   import ClipboardPaste from '@lucide/svelte/icons/clipboard-paste'
@@ -34,11 +33,6 @@
   /** @param {string} name */
   const run = (name) => () => actions[name]?.()
 
-  async function handleSignOut() {
-    const r = await signOut()
-    if (r.ok) toast.success('Signed out', { description: 'Your local data and any license key stay on this device.' })
-    else toast.error('Could not sign out', { description: r.error })
-  }
 </script>
 
 <DropdownMenu.Root>
@@ -72,11 +66,6 @@
           </p>
         </div>
       </div>
-      <DropdownMenu.Item onSelect={() => void openManageAccount()}>
-        <UserRound class="size-3.5 shrink-0" />
-        <span data-slot="menu-label">Manage account</span>
-        <ExternalLink class="ml-auto size-3 shrink-0 text-muted-foreground" />
-      </DropdownMenu.Item>
     {:else if signedIn}
       <!-- Signed in, profile not loaded (offline, or it failed verification). -->
       <div class="flex items-center gap-2.5 px-2 py-1.5">
@@ -116,9 +105,10 @@
       <Palette class="size-3.5 shrink-0" />
       <span data-slot="menu-label">Theme…</span>
     </DropdownMenu.Item>
-    <DropdownMenu.Item onSelect={run('keybindings')}>
+    <DropdownMenu.Item onSelect={run('shortcuts')}>
       <Keyboard class="size-3.5 shrink-0" />
       <span data-slot="menu-label">Keyboard shortcuts</span>
+      <DropdownMenu.Shortcut command="help.shortcuts" />
     </DropdownMenu.Item>
 
     <DropdownMenu.Separator />
@@ -130,14 +120,13 @@
       <ExternalLink class="size-3.5 shrink-0" />
       <span data-slot="menu-label">Changelog</span>
     </DropdownMenu.Item>
-
-    {#if signedIn}
-      <DropdownMenu.Separator />
-      <DropdownMenu.Item onSelect={() => void handleSignOut()}>
-        <LogOut class="size-3.5 shrink-0" />
-        <span data-slot="menu-label">Sign out</span>
-      </DropdownMenu.Item>
-    {/if}
+    <!-- Sign out lives with the account (Account and license, Settings ▸
+         Account): a menu that opens on every click of the avatar is no place
+         for a one-way action. -->
+    <DropdownMenu.Item onSelect={run('about')}>
+      <Info class="size-3.5 shrink-0" />
+      <span data-slot="menu-label">About Stroke</span>
+    </DropdownMenu.Item>
   </DropdownMenu.Content>
 </DropdownMenu.Root>
 
