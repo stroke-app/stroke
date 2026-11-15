@@ -136,6 +136,11 @@ pub fn tool_list() -> Value {
             }
         },
         {
+            "name": "refresh_sidebar",
+            "description": "Reload Stroke's sidebar (schemas, tables, views, functions and their row counts). Statements run with execute_sql already refresh it; call this after changes made any other way, so the user sees them.",
+            "inputSchema": { "type": "object", "properties": {} }
+        },
+        {
             "name": "open_in_stroke",
             "description": "Show something to the user in Stroke's window: open a table, or open a query in a new SQL editor tab for them to review and run. Nothing is executed. Use it to hand the user a write statement you are not allowed to run, or to show the table you are talking about.",
             "inputSchema": {
@@ -385,6 +390,10 @@ pub async fn call_tool(
                 Some(url) => format!("The user created the link: {url}\nIt is end-to-end encrypted; the key is the part after #, so share the whole link."),
                 None => "The user closed the share dialog without creating a link.".to_string(),
             })
+        }
+        "refresh_sidebar" => {
+            crate::mcp::emit_refresh();
+            Ok("Refreshed Stroke's sidebar.".to_string())
         }
         "open_in_stroke" => {
             let table = args["table"].as_str().map(str::trim).filter(|t| !t.is_empty());

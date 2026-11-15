@@ -38,7 +38,7 @@
 <DropdownMenu.Root>
   <DropdownMenu.Trigger
     class={cn(
-      'relative inline-flex size-7 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-[color,scale] duration-[120ms] ease-[var(--ease-out)] hover:text-foreground active:scale-[0.94] data-[state=open]:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring',
+      'group relative inline-flex size-7 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors duration-[120ms] hover:text-foreground data-[state=open]:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring',
       className,
     )}
     title="Account and settings"
@@ -47,9 +47,9 @@
     {#if waiting}
       <LoaderCircle class="size-3.5 shrink-0 animate-spin" />
     {:else if signedIn && user}
-      <AccountAvatar {user} class="size-[calc(22px*var(--app-scale))]" />
+      <AccountAvatar {user} class="size-[calc(22px*var(--app-scale))] transition-[scale,filter] duration-150 ease-out group-hover:brightness-110 group-hover:ring-2 group-hover:ring-foreground/15 group-active:scale-90 group-data-[state=open]:ring-2 group-data-[state=open]:ring-ring/50" />
     {:else}
-      <Settings class="size-[calc(17px*var(--app-scale))] shrink-0" />
+      <Settings class="size-[calc(17px*var(--app-scale))] shrink-0 transition-[scale] duration-150 ease-out group-active:scale-90" />
     {/if}
   </DropdownMenu.Trigger>
 

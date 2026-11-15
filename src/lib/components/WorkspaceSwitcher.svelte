@@ -42,14 +42,20 @@
   <DropdownMenu.Trigger
     class={cn(
       cn('group flex min-w-0 items-center rounded-md text-left', !compact && 'hover:bg-accent/60 data-[state=open]:bg-accent/60'),
-      compact ? 'size-[calc(28px*var(--app-scale))] justify-center rounded-md transition-[background-color,scale] duration-150 ease-out hover:bg-accent active:scale-[0.94] data-[state=open]:bg-accent' : 'h-8 gap-2 px-1.5',
+      compact ? 'size-[calc(28px*var(--app-scale))] justify-center rounded-md outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring' : 'h-8 gap-2 px-1.5',
       className,
     )}
     title={`Workspace: ${active?.name ?? ""}`}
   >
     <!-- The workspace's mark (its colour and initial), here and in the menu, so
          the same tile means the same workspace everywhere. -->
-    <WorkspaceMark workspace={active} size={compact ? 'chrome' : 'sm'} />
+    <!-- Compact: the box stays still (the menu anchors to it) and the mark
+         itself answers: a ring on hover, a press-in, a ring while open. -->
+    <WorkspaceMark
+      workspace={active}
+      size={compact ? 'chrome' : 'sm'}
+      class={compact ? 'transition-[scale,filter] duration-150 ease-out group-hover:brightness-110 group-hover:ring-2 group-hover:ring-foreground/15 group-active:scale-90 group-data-[state=open]:ring-2 group-data-[state=open]:ring-ring/50' : ''}
+    />
     {#if !compact}<span class="min-w-0 flex-1 truncate text-ui-sm font-medium text-foreground">{active?.name}</span>{/if}
     {#if !compact}<span class="shrink-0 text-ui-2xs tabular-nums text-muted-foreground">{count}</span>{/if}
     {#if !compact}<ChevronsUpDown class="size-3.5 shrink-0 text-muted-foreground/70 group-hover:text-muted-foreground" />{/if}

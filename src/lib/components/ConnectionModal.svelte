@@ -3714,27 +3714,17 @@
                 </button>
                 <!-- Any engine by hand: the form with its engine picker. The
                      stacked logos say what "any" means. Flat, no shadow. -->
+                <!-- Outlined, plus to the left and a chevron to the right: it
+                     opens the engine list. -->
                 <button
                   type="button"
                   onclick={newConnectionForm}
-                  title="Pick an engine and enter its details"
-                  class="group ms-auto inline-flex h-9 shrink-0 items-center gap-2.5 rounded-full bg-muted/70 ps-1.5 pe-3 text-ui-sm font-medium text-foreground outline-none transition-colors duration-150 hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                  title="Pick an engine and enter its details ({IS_MAC ? '⌘' : 'Ctrl+'}N)"
+                  class="ms-auto inline-flex h-9 shrink-0 items-center gap-2 rounded-lg border border-border/80 bg-background/40 ps-3 pe-2.5 text-ui-sm font-medium text-foreground outline-none transition-[background-color,border-color,scale] duration-150 hover:border-border hover:bg-muted/50 active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
                 >
-                  <span class="flex items-center" aria-hidden="true">
-                    {#each ["postgres", "mysql", "sqlite", "mongodb"] as id, i (id)}
-                      <span
-                        class={cn(
-                          "grid size-6 place-items-center rounded-full bg-background ring-2 ring-muted/70 transition-transform duration-200 ease-out group-hover:translate-x-[calc(var(--i)*3px)] group-hover:ring-muted motion-reduce:transition-none",
-                          i > 0 && "-ms-2",
-                        )}
-                        style="z-index: {4 - i}; --i: {i}"
-                      >
-                        <DbIcon {id} class="size-3.5 shrink-0" />
-                      </span>
-                    {/each}
-                  </span>
+                  <Icon name="plus" class="size-4 shrink-0 text-muted-foreground" />
                   New connection
-                  <Kbd combo="Mod+N" size="sm" class="ms-1 shrink-0 text-muted-foreground" />
+                  <Icon name="chevron-down" class="size-3.5 shrink-0 text-muted-foreground" />
                 </button>
               </div>
               <p class="mt-1.5 text-ui-sm text-muted-foreground">Paste a connection string, or pick where your database lives.</p>

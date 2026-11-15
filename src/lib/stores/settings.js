@@ -629,7 +629,7 @@ export const DEFAULT_SETTINGS = {
   agentThinkingStyle: DEFAULT_THINKING_STYLE,
   // On by default: seeing the SQL the agent ran, and what it returned, is how
   // you tell a right answer from a confident one.
-  agentShowQueryCards: true,
+  agentShowQueryCards: false,
   // Off by default. Everything else the agent does stays between the app and
   // your database; searching sends your question to a third party, so it is a
   // decision the user makes rather than one they discover afterwards.
@@ -736,7 +736,7 @@ export const appSidebarStyle = writable(/** @type {SidebarStyleId} */ ('classic'
 export const appAiInTab = writable(false)
 
 /** Whether the agent transcript shows a card per executed query. */
-export const appAgentQueryCards = writable(true)
+export const appAgentQueryCards = writable(false)
 
 /** Whether the agent may search the web and read pages. */
 export const appAgentWebAccess = writable(false)
@@ -989,7 +989,7 @@ export function loadSettings() {
     const agentChatFontSize = migrateAgentFont(parsed.agentChatFontSize, LEGACY_AGENT_CHAT_FONT, DEFAULT_AGENT_CHAT_FONT)
     const agentCodeFontSize = migrateAgentFont(parsed.agentCodeFontSize, LEGACY_AGENT_CODE_FONT, DEFAULT_AGENT_CODE_FONT)
     const agentThinkingStyle = THINKING_STYLE_IDS.includes(parsed.agentThinkingStyle) ? parsed.agentThinkingStyle : DEFAULT_THINKING_STYLE
-    const agentShowQueryCards = parsed.agentShowQueryCards !== false
+    const agentShowQueryCards = parsed.agentShowQueryCards === true
     const agentWebAccess = parsed.agentWebAccess === true
     const tableTextAlign = TABLE_ALIGN_IDS.includes(parsed.tableTextAlign) ? parsed.tableTextAlign : DEFAULT_TABLE_ALIGN
     _settingsCache = { theme, zoom, font, iconStyle, iconSet, tableStyle, jsonTheme, editorTheme, mcpAutoStart, launchAtLogin, autoUpdate, autoReconnectOnStartup, previewDmlBeforeApply, defaultDataView, paginationMode, maxQueryHistory, connectTimeoutMs, socketTimeoutMs, maxAllowedPacket, sessionTimezone, vimMode, cmdkAiEnabled, liveModeEnabled, sidebarStyle, aiInTab, lazyWideColumns, nullSortOrder, agentChatFontSize, agentCodeFontSize, agentThinkingStyle, agentShowQueryCards, agentWebAccess, tableTextAlign, telemetry, jsonWordWrap, nativeScroll, rowSpacing, motion, zebraRows, showRowNumbers, showMenuBar, numberGrouping, imagePreview, openUrlsOnClick, highlightActiveRow, fkAutoExpandJson, gridFontSize, autoSaveQueries, streamResults, sqlUndo, sidebarComments, sidebarRememberGroups, sqlFormat, sqlEditor, shareDefaults }
@@ -1285,7 +1285,7 @@ function applySettingsNow(settings, root, theme, zoom, dark) {
   setStore(appLiveMode, settings.liveModeEnabled === true)
   setStore(appSidebarStyle, settings.sidebarStyle === 'tree' ? 'tree' : 'classic')
   setStore(appAiInTab, settings.aiInTab === true)
-  setStore(appAgentQueryCards, settings.agentShowQueryCards !== false)
+  setStore(appAgentQueryCards, settings.agentShowQueryCards === true)
   setStore(appAgentWebAccess, settings.agentWebAccess === true)
   setStore(appTableAlign, TABLE_ALIGN_IDS.includes(settings.tableTextAlign) ? settings.tableTextAlign : DEFAULT_TABLE_ALIGN)
   setStore(appPaginationMode, PAGINATION_MODE_IDS.includes(settings.paginationMode) ? settings.paginationMode : DEFAULT_PAGINATION_MODE)

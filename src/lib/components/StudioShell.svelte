@@ -7643,6 +7643,33 @@ let rowSearch = $state('')
   onMount(() => installInputShortcuts())
   // Every MCP tool call lands in the Logs page (filter: MCP).
   onMount(() => { void listenMcpActivity() })
+  // An agent's (or any MCP client's) statements change the database behind
+  // the sidebar's back: a CREATE VIEW left the tree saying "Empty". Each
+  // successful execute_sql goes through the same refresh the SQL editor runs
+  // after its own statements, merged over a short burst. refresh_sidebar asks
+  // for a full reload outright.
+  onMount(() => {
+    /** @type {(() => void)[]} */
+    const offs = []
+    /** @type {string[]} */
+    let pending = []
+    let timer = 0
+    void import('@tauri-apps/api/event').then(async ({ listen }) => {
+      offs.push(await listen('mcp-activity', (e) => {
+        const a = /** @type {{ tool?: string, detail?: string, ok?: boolean }} */ (e.payload ?? {})
+        if (a.tool !== 'execute_sql' || !a.ok || !a.detail || !connection) return
+        pending.push(a.detail)
+        clearTimeout(timer)
+        timer = window.setTimeout(() => {
+          const ran = pending.join(';\n')
+          pending = []
+          void refreshAfterSql(sqlRunEffects(ran))
+        }, 300)
+      }))
+      offs.push(await listen('mcp-refresh', () => { if (connection) void handleRefresh() }))
+    }).catch(() => {})
+    return () => { clearTimeout(timer); for (const off of offs) off() }
+  })
   // open_in_stroke: an MCP client (or agent) shows the user a table or hands
   // them a query to review. Nothing is run.
   onMount(() => {

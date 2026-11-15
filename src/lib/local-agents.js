@@ -171,6 +171,7 @@ const STEP_LABELS = {
   sample_rows: 'Sampled rows',
   open_in_stroke: 'Opened in Stroke',
   share_link: 'Shared a link',
+  refresh_sidebar: 'Refreshed the sidebar',
   WebSearch: 'Searched the web',
   WebFetch: 'Read page',
   web_search: 'Searched the web',

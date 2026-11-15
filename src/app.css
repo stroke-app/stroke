@@ -1563,6 +1563,7 @@ pre code,
 }
 .chip-gloss.chip-warning { --chip: var(--warning); }
 .chip-gloss.chip-muted { --chip: var(--muted-foreground); }
+.chip-gloss.chip-primary { --chip: var(--primary); }
 .mark-grain::after {
   opacity: 0.32;
   mix-blend-mode: overlay;

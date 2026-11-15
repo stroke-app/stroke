@@ -295,6 +295,14 @@ pub fn mcp_share_result(id: u64, url: Option<String>) {
     }
 }
 
+/// Ask the window to reload its sidebar (refresh_sidebar).
+pub fn emit_refresh() {
+    if let Some(app) = APP.get() {
+        use tauri::Emitter;
+        let _ = app.emit("mcp-refresh", ());
+    }
+}
+
 /// What `open_in_stroke` asks the window to show.
 #[derive(serde::Serialize, Clone)]
 pub struct McpOpen {
