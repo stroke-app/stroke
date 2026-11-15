@@ -211,6 +211,8 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     embedded = false,
     showSelection = true,
     showRowExpand = true,
+    /** Review writes as SQL first when the setting asks. Off for engines whose writes are not SQL (document stores): their SQL would be fiction. */
+    previewWrites = true,
     /** Persist column widths per table, e.g. "public.users" */
     columnWidthsKey = undefined,
     /** Active connection id - scopes ALL per-table persistence (widths, staged
@@ -512,7 +514,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
    * @param {DmlReview} config
    */
   function requestWrite(config) {
-    if (!$appPreviewDml) { void config.run(); return; }
+    if (!$appPreviewDml || !previewWrites) { void config.run(); return; }
     // Apply again while the review is up: never confirm (a double-click would
     // skip the review) and never throw away SQL the user has typed.
     if (dmlPreview && (dmlPreviewRunning || dmlWasEdited)) { dmlPanel?.focus(); return; }
