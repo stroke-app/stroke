@@ -5280,10 +5280,14 @@
           {/if}
 
           <!-- ── Footer: inline error alert, status chip, then actions ── -->
-          <div class="shrink-0 border-t border-border/15 px-10 py-4">
+          <div class="shrink-0 border-t border-border/15 py-4">
             <!-- min-h-8: the form's buttons are 32px; without it the bar was 18px
-                 taller on the form than on the list and the content above moved. -->
-            <div class="flex min-h-8 max-w-6xl flex-col justify-center">
+                 taller on the form than on the list and the content above moved.
+                 Same column as the header and the page above (w-full max-w-6xl
+                 px-10, padding inside the width): with the padding outside, the
+                 bar ran 80px past the tiles, plain to see once the rail is
+                 collapsed and the window is wide. -->
+            <div class="flex min-h-8 w-full max-w-6xl flex-col justify-center px-10">
               <!-- The alert itself is a toast (see failWith). What stays here is the
                  one-line record of it, so the driver's own words are still
                  readable after the toast has gone - without a panel that shoves
