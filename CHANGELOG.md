@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.15.7] - 2026-11-15
+
+### Changes
+- Model picker: hovering a provider shows its models (#255)
+
+
 ## [2.15.6] - 2026-11-15
 
 ### Changes
