@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.11.8] - 2026-11-15
+
+### Changes
+- DynamoDB: name AWS connections by region; compact credentials switch (#214)
+
+
 ## [2.11.7] - 2026-11-15
 
 ### Changes
