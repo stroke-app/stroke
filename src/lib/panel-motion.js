@@ -76,3 +76,34 @@ export function closePanel(el, prop) {
   const size = prop === 'width' ? el.offsetWidth : el.offsetHeight
   return run(el, prop, size, 0)
 }
+
+/**
+ * Slide a panel in or out from the window edge it is docked to, with a
+ * transform only: the compositor moves it, nothing is laid out per frame. The
+ * caller lays the panel over the content while it moves (absolutely
+ * positioned), so the page beside it changes size once, not on every frame.
+ * @param {HTMLElement | null | undefined} el
+ * @param {'bottom' | 'right'} edge
+ * @param {boolean} open
+ * @returns {Promise<void>}
+ */
+export function slidePanel(el, edge, open) {
+  if (!el || panelMotionOff() || typeof el.animate !== 'function') return Promise.resolve()
+  const prev = running.get(el)
+  prev?.cancel()
+  const away = edge === 'bottom' ? 'translateY(100%)' : 'translateX(100%)'
+  const frames = open ? [{ transform: away }, { transform: 'none' }] : [{ transform: 'none' }, { transform: away }]
+  const anim = el.animate(frames, { duration: PANEL_MS, easing: PANEL_EASE, fill: 'forwards' })
+  running.set(el, anim)
+  return new Promise((resolve) => {
+    const done = () => {
+      if (running.get(el) === anim) running.delete(el)
+      // Leave no transform behind once it has landed open.
+      if (open) anim.cancel()
+      resolve()
+    }
+    anim.onfinish = done
+    anim.oncancel = () => resolve()
+  })
+}
+
