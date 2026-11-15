@@ -115,6 +115,9 @@
     onremoved = (/** @type {string} */ id) => {},
   } = $props();
 
+  /** The logos on the New connection button. */
+  const NEW_CONN_STACK = ["postgres", "mysql", "mongodb", "sqlite"];
+
   const CATEGORIES = [
     {
       label: "Relational",
@@ -3743,9 +3746,23 @@
                   type="button"
                   onclick={newConnectionForm}
                   title="Pick an engine and enter its details ({IS_MAC ? '⌘' : 'Ctrl+'}N)"
-                  class="ms-auto inline-flex h-9 shrink-0 items-center gap-2 rounded-lg border border-border/80 bg-background/40 ps-3 pe-2.5 text-ui-sm font-medium text-foreground outline-none transition-[background-color,border-color,scale] duration-150 hover:border-border hover:bg-muted/50 active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                  class="group/new ms-auto inline-flex h-9 shrink-0 items-center gap-2.5 rounded-lg border border-border/80 bg-background/40 ps-2 pe-2.5 text-ui-sm font-medium text-foreground outline-none transition-[background-color,border-color,scale] duration-150 hover:border-border hover:bg-muted/50 active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
                 >
-                  <Icon name="plus" class="size-4 shrink-0 text-muted-foreground" />
+                  <!-- A few of the engines, stacked like cards; hovering fans
+                       them out. They say what "any engine" means at a glance. -->
+                  <span class="flex items-center" aria-hidden="true">
+                    {#each NEW_CONN_STACK as id, i (id)}
+                      <span
+                        class={cn(
+                          "grid size-5.5 place-items-center rounded-md bg-card ring-1 ring-border/70 shadow-xs transition-[margin,transform] duration-200 ease-out motion-reduce:transition-none",
+                          i > 0 && "-ms-2 group-hover/new:ms-0.5",
+                        )}
+                        style="z-index:{NEW_CONN_STACK.length - i}"
+                      >
+                        <DbIcon id={id} class={cn("size-3.5 shrink-0", engineTint(id))} />
+                      </span>
+                    {/each}
+                  </span>
                   New connection
                   <Icon name="chevron-down" class="size-3.5 shrink-0 text-muted-foreground" />
                 </button>
