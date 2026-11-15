@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.9.6] - 2026-11-15
+
+### Changes
+- Sidebar: no "No tables" while counts load; quieter select box (#192)
+
+
 ## [2.9.5] - 2026-11-15
 
 ### Changes
