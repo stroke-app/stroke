@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.11.5] - 2026-11-15
+
+### Changes
+- One search field with /; tighter Shared links; Settings follows changes from anywhere (#211)
+
+
 ## [2.11.4] - 2026-11-15
 
 ### Changes
