@@ -273,6 +273,21 @@ pub fn call_meta_tool(
 /// `read_only`: the session is at Read only. The access check has already
 /// passed in `server::gate`; this adds a read-only transaction on the engines
 /// that have one, so a side effect the classifier missed still fails.
+/// The database the open connection is actually on, asked of the connection
+/// itself. The saved entry keeps the database it was saved with, so after a
+/// switch in the sidebar (D1 testing -> testingbackup, Postgres app -> app2)
+/// it named the old one while every query ran on the new one.
+pub async fn live_database_name(conn: &ActiveConnection) -> Option<String> {
+    match conn {
+        ActiveConnection::Postgres(pool) => sqlx::query_scalar::<_, String>("SELECT current_database()").fetch_one(pool).await.ok(),
+        ActiveConnection::Mysql(pool) => sqlx::query_scalar::<_, Option<String>>("SELECT DATABASE()").fetch_one(pool).await.ok().flatten(),
+        ActiveConnection::D1(cfg) => Some(cfg.name.clone()).filter(|n| !n.is_empty()).or_else(|| Some(cfg.database_id.clone())),
+        ActiveConnection::Sqlite(pool) => sqlx::query_scalar::<_, String>("SELECT file FROM pragma_database_list WHERE name = 'main'")
+            .fetch_one(pool).await.ok().filter(|f| !f.is_empty()),
+        _ => None,
+    }
+}
+
 pub async fn call_tool(
     conn: &ActiveConnection,
     name: &str,
