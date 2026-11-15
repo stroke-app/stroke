@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.12.7] - 2026-11-15
+
+### Changes
+- Chat code blocks: visible Copy, solid Run, readable request bodies (#223)
+
+
 ## [2.12.6] - 2026-11-15
 
 ### Changes
