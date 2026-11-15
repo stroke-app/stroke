@@ -2330,3 +2330,20 @@ export async function nightlyInstall() {
 export async function nightlyOpen(path) {
   return inv('nightly_open', { path })
 }
+
+/** @typedef {'stable' | 'nightly'} UpdateTrack */
+
+/** Where the app for `track` is installed already, or null. @param {UpdateTrack} track */
+export async function trackInstalled(track) {
+  return /** @type {Promise<string | null>} */ (inv('track_installed', { track }))
+}
+
+/** Download and install the app for `track`; resolves to where it went. @param {UpdateTrack} track */
+export async function trackInstall(track) {
+  return /** @type {Promise<string>} */ (inv('track_install', { track }))
+}
+
+/** Start the app installed for `track`. @param {UpdateTrack} track @param {string} path */
+export async function trackOpen(track, path) {
+  return inv('track_open', { track, path })
+}
