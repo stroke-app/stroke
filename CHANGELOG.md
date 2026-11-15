@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.9.1] - 2026-11-15
+
+### Changes
+- Calmer trial-ended screen (#187)
+
+
 ## [2.9.0] - 2026-11-15
 
 ### Changes
