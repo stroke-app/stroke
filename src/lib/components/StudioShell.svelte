@@ -7,7 +7,7 @@
   import { queryLanguageFor } from '$lib/ai-query-languages.js'
   import { setQueryEngine } from '$lib/ai.js'
   import { revealApp, isRevealed } from '$lib/app-reveal.js'
-  import { setReadOnly } from '$lib/stores/read-only.js'
+  import { setReadOnly, readOnlyMode } from '$lib/stores/read-only.js'
   import { isWriteSql, sqlRunEffects, stripSqlComments } from '$lib/sql-write.js'
   import { parseWrite, runWithUndo, undoDialect, keepUndo, getUndo, dropUndo, revertSummary } from '$lib/sql-undo.js'
   import { bumpObjects } from '$lib/stores/sidebar-objects.svelte.js'
@@ -154,6 +154,8 @@
     getTableRowCounts,
     getTableRows,
     countTableRows,
+    searchIndexStatus,
+    createSearchIndex,
     liveStart,
     liveStop,
     getTableColumnStructure,
@@ -6130,6 +6132,7 @@ let rowSearch = $state('')
           const n = await countTableRows(s.schema, s.table, {
             ...apiSearch(s.rowSearch),
             filters: filtersForApi(s.rowFilters),
+            supersede: tabId ? `${tabId}:count` : undefined,
           })
           if (typeof n === 'number' && n >= 0) {
             patchTab({ total: n })
@@ -6845,6 +6848,43 @@ let rowSearch = $state('')
     }
   }
 
+  /** A searched count slower than this offers a search index (Postgres). */
+  const SLOW_SEARCH_MS = 1500
+  /** Tables already offered one this session: asked once, not on every search. */
+  const searchIndexOffered = new Set()
+
+  /**
+   * A search on this table was slow: offer trigram indexes on its text columns,
+   * which turn the scan into an index lookup (1-2s to well under 0.1s on 5M
+   * rows). Only when there is something to index and pg_trgm is available.
+   * @param {string} schema @param {string} table
+   */
+  async function offerSearchIndex(schema, table) {
+    if (dbType !== 'postgres' || $readOnlyMode) return
+    const key = `${persistConnectionId}:${schema}.${table}`
+    if (searchIndexOffered.has(key)) return
+    searchIndexOffered.add(key)
+    let st
+    try { st = await searchIndexStatus(schema, table) } catch { return }
+    const missing = st.textColumns.filter((c) => !st.indexed.includes(c))
+    if (!st.trgmAvailable || missing.length === 0) return
+    const cols = missing.length <= 3 ? missing.join(', ') : `${missing.slice(0, 3).join(', ')} and ${missing.length - 3} more`
+    toast.info(`Searching ${table} is slow`, {
+      description: `A search index on ${cols} makes it near-instant. It builds in the background and the table stays usable.`,
+      duration: 15000,
+      action: {
+        label: 'Speed up',
+        onClick: () => {
+          toast.promise(createSearchIndex(schema, table), {
+            loading: `Building the search index on ${table}…`,
+            success: (made) => `Search index ready on ${table} (${made.length} column${made.length === 1 ? '' : 's'})`,
+            error: (e) => String(/** @type {any} */ (e)?.message ?? e),
+          })
+        },
+      },
+    })
+  }
+
   /**
    * Background row-count pass for the main grid. Runs after loadRows() has
    * already painted the rows, so COUNT(*) never blocks the initial view. The
@@ -6862,8 +6902,13 @@ let rowSearch = $state('')
   async function refreshRowCount(tabId, seq, schema, table, query, sig = '', viewKey = '') {
     if (!table) return
     try {
-      const n = await countTableRows(schema, table, query)
+      // One count per tab on the server: a newer one cancels this.
+      const countStarted = performance.now()
+      const n = await countTableRows(schema, table, { ...query, supersede: tabId ? `${tabId}:count` : undefined })
       if (seq !== loadSeqOf(tabId)) return
+      if (typeof n === 'number' && n >= 0 && query?.search && !query.searchIsRegex && performance.now() - countStarted > SLOW_SEARCH_MS) {
+        void offerSearchIndex(schema, table)
+      }
       if (typeof n === 'number' && n >= 0) {
         patchTableTab(tabId ?? '', { total: n })
         if (tabId !== activeTabId) return
@@ -10123,9 +10168,10 @@ let rowSearch = $state('')
                 schema={activeSchema}
                 dialect={dbType}
                 active={activeTab?.kind === 'search'}
-                onopentable={(tableName, searchTerm) => {
+                {schemas}
+                onopentable={(tableName, searchTerm, inSchema) => {
                   if (aiMode) exitAiMode()
-                  void openTableTab(activeSchema, tableName, { search: searchTerm })
+                  void openTableTab(inSchema || activeSchema, tableName, { search: searchTerm })
                 }}
               />
             {/await}

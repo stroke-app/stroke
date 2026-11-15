@@ -1644,3 +1644,12 @@ pre code,
     }
   }
 }
+
+/* Popup triggers never take a press scale, from any class. bits-ui opens a
+   menu, popover or select on pointerdown and anchors it to the trigger's box
+   at that instant; scaled to 97% the popup was placed against a smaller box
+   and moved a pixel when the button sprang back. Unlayered and !important so
+   it wins over every `active:scale-*` utility on a trigger. */
+[aria-haspopup]:active {
+  scale: none !important;
+}

@@ -247,7 +247,38 @@ struct WhereClause {
     binds: Vec<String>,
 }
 
+/// The category Postgres would give a MySQL DATA_TYPE, for the search's type
+/// pruning (query::column_could_contain): N numeric, D date/time, S the rest.
+fn search_category(data_type: &str) -> char {
+    match data_type.to_ascii_lowercase().as_str() {
+        "tinyint" | "smallint" | "mediumint" | "int" | "integer" | "bigint" | "decimal" | "numeric" | "float" | "double" | "real" | "bit" | "year" => 'N',
+        "date" | "datetime" | "timestamp" | "time" => 'D',
+        _ => 'S',
+    }
+}
+
+/// The columns a plain search should read: those whose type can print the term.
+/// A word never appears in an INT or a DATETIME, and casting every one of them
+/// to text on every row was most of a search's time on a large table.
+fn searchable_columns(columns: &[(String, String)], term: &str) -> Vec<String> {
+    columns
+        .iter()
+        .filter(|(name, ty)| {
+            let col = super::query::SearchColumn { name: name.clone(), category: search_category(ty), type_name: ty.to_ascii_lowercase() };
+            super::query::column_could_contain(&col, term)
+        })
+        .map(|(n, _)| n.clone())
+        .collect()
+}
+
+#[cfg(test)]
 fn build_where(columns: &[String], search: Option<&str>, search_is_regex: bool, search_case_sensitive: bool, filters: &[RowFilter]) -> Result<WhereClause, String> {
+    build_where_searching(columns, None, search, search_is_regex, search_case_sensitive, filters)
+}
+
+/// build_where with the columns a plain search reads (see searchable_columns);
+/// None searches every column, as before.
+fn build_where_searching(columns: &[String], search_columns: Option<&[String]>, search: Option<&str>, search_is_regex: bool, search_case_sensitive: bool, filters: &[RowFilter]) -> Result<WhereClause, String> {
     // (conjunct - None for first condition, Some("AND"/"OR") for subsequent)
     let mut cond_parts: Vec<(Option<&'static str>, String)> = Vec::new();
     let mut binds: Vec<String> = Vec::new();
@@ -258,7 +289,11 @@ fn build_where(columns: &[String], search: Option<&str>, search_is_regex: bool, 
         // REGEXP operator; the pattern arrives pre-built from the frontend.
         let cast = if search_case_sensitive { "BINARY" } else { "CHAR" };
         let pattern = if search_is_regex { term.to_string() } else { format!("%{}%", escape_like(term)) };
-        let parts: Vec<String> = columns
+        let searched: &[String] = match (search_is_regex, search_columns) {
+            (false, Some(cols)) => cols,
+            _ => columns,
+        };
+        let parts: Vec<String> = searched
             .iter()
             .map(|c| {
                 let qc = bt(c);
@@ -268,7 +303,10 @@ fn build_where(columns: &[String], search: Option<&str>, search_is_regex: bool, 
             .collect();
         if !parts.is_empty() {
             cond_parts.push((None, format!("({})", parts.join(" OR "))));
-            for _ in columns { binds.push(pattern.clone()); }
+            for _ in searched { binds.push(pattern.clone()); }
+        } else if search_columns.is_some() && !search_is_regex && !columns.is_empty() {
+            // No column can hold the term: nothing matches, and nothing is scanned.
+            cond_parts.push((None, "FALSE".to_string()));
         }
     }
 
@@ -429,8 +467,12 @@ pub async fn get_table_rows(
     // BIGINT - decoding the wrong signedness is a hard type-mismatch in sqlx.
     // CAST(... AS SIGNED) normalizes both to i64, which comfortably holds any
     // real row count.
-    let build = |table_columns: &[String]| -> Result<(String, String, Vec<String>), String> {
-        let where_clause = build_where(table_columns, search.as_deref(), search_is_regex, search_case_sensitive, &filters)?;
+    let build = |table_columns: &[String], typed: Option<&[(String, String)]>| -> Result<(String, String, Vec<String>), String> {
+        let search_cols = match (typed, search.as_deref().map(str::trim).filter(|t| !t.is_empty())) {
+            (Some(t), Some(term)) if !search_is_regex => Some(searchable_columns(t, term)),
+            _ => None,
+        };
+        let where_clause = build_where_searching(table_columns, search_cols.as_deref(), search.as_deref(), search_is_regex, search_case_sensitive, &filters)?;
         let order_by = if let Some(col) = sort_col.as_deref() {
             // Validate the sort column against the fetched columns so an unknown
             // name never reaches the query (mirrors the Postgres ensure_column check).
@@ -475,11 +517,15 @@ pub async fn get_table_rows(
         // column list, so it has to land first.
         let meta_rows = meta_q.fetch_all(pool).await.map_err(|e| format!("Failed to load columns: {e}"))?;
         let names: Vec<String> = meta_rows.iter().filter_map(|r| my_text(r, 0)).collect();
-        let (count_sql, data_sql, binds) = build(&names)?;
+        let typed: Vec<(String, String)> = meta_rows
+            .iter()
+            .filter_map(|r| Some((my_text(r, 0)?, my_text(r, 1).unwrap_or_default())))
+            .collect();
+        let (count_sql, data_sql, binds) = build(&names, Some(&typed))?;
         let (page, meta) = tokio::join!(run_page(count_sql, data_sql, binds), pk_fk);
         (meta_rows, page, meta)
     } else {
-        let (count_sql, data_sql, binds) = build(&[])?;
+        let (count_sql, data_sql, binds) = build(&[], None)?;
         let (meta_rows, page, meta) = tokio::join!(meta_q.fetch_all(pool), run_page(count_sql, data_sql, binds), pk_fk);
         (meta_rows.map_err(|e| format!("Failed to load columns: {e}"))?, page, meta)
     };
@@ -1320,5 +1366,45 @@ mod ai_tool_live {
         let quoted = quoted.unwrap_err();
         println!("{quoted}");
         assert!(quoted.contains("Unknown column"), "{quoted}");
+    }
+}
+
+#[cfg(test)]
+mod search_pruning_tests {
+    use super::*;
+
+    fn typed() -> Vec<(String, String)> {
+        vec![
+            ("id".into(), "int".into()),
+            ("name".into(), "varchar".into()),
+            ("price".into(), "decimal".into()),
+            ("created_at".into(), "datetime".into()),
+            ("meta".into(), "json".into()),
+        ]
+    }
+
+    #[test]
+    fn a_word_reads_only_text_columns() {
+        assert_eq!(searchable_columns(&typed(), "Product"), vec!["name".to_string(), "meta".to_string()]);
+    }
+
+    #[test]
+    fn digits_read_numbers_and_dates_too() {
+        assert_eq!(searchable_columns(&typed(), "2026"), vec!["id", "name", "price", "created_at", "meta"]);
+    }
+
+    #[test]
+    fn nothing_searchable_is_false_not_unfiltered() {
+        let names: Vec<String> = vec!["id".into(), "created_at".into()];
+        let w = build_where_searching(&names, Some(&[]), Some("abc"), false, false, &[]).unwrap();
+        assert!(w.sql.contains("FALSE"), "{}", w.sql);
+        assert!(w.binds.is_empty());
+    }
+
+    #[test]
+    fn untyped_search_is_unchanged() {
+        let names: Vec<String> = vec!["id".into(), "name".into()];
+        let a = build_where(&names, Some("x"), false, false, &[]).unwrap();
+        assert_eq!(a.binds.len(), 2);
     }
 }

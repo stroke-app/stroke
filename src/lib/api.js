@@ -1403,7 +1403,7 @@ export async function getTableRows(schema, table, limit, offset, query = {}) {
  * count is unavailable (non-Postgres engine); callers keep their current total.
  * @param {string} schema
  * @param {string} table
- * @param {{ search?: string, searchIsRegex?: boolean, searchCaseSensitive?: boolean, filters?: { column: string, op: string, value?: string }[] }} [query]
+ * @param {{ search?: string, searchIsRegex?: boolean, searchCaseSensitive?: boolean, filters?: { column: string, op: string, value?: string }[], supersede?: string }} [query]
  * @returns {Promise<number>}
  */
 export async function countTableRows(schema, table, query = {}) {
@@ -1419,8 +1419,31 @@ export async function countTableRows(schema, table, query = {}) {
     // Settings → SQL editor → Exact row count: COUNT(*) even where the
     // planner's estimate would answer instantly.
     exact: (() => { try { return loadSettings().sqlEditor?.exactRowCount === true } catch { return false } })(),
+    // A newer count with the same key cancels this one on the server.
+    supersede: query.supersede ?? null,
   })
   return Number(n)
+}
+
+/**
+ * Which text columns a search index would cover, which already have one, and
+ * whether pg_trgm is available (Postgres).
+ * @param {string} schema @param {string} table
+ * @returns {Promise<{ textColumns: string[], indexed: string[], trgmAvailable: boolean, rowEstimate: number }>}
+ */
+export async function searchIndexStatus(schema, table) {
+  return inv('pg_search_index_status', { schema, table })
+}
+
+/**
+ * Create trigram indexes on the table's text columns so searching it is an
+ * index scan. Builds CONCURRENTLY: the table stays usable meanwhile.
+ * @param {string} schema @param {string} table
+ * @returns {Promise<string[]>} the indexes created
+ */
+export async function createSearchIndex(schema, table) {
+  assertWritable('create a search index')
+  return inv('pg_create_search_index', { schema, table })
 }
 
 /**

@@ -1,6 +1,7 @@
 <script>
   import Kbd from './Kbd.svelte'
-  import { getTableRows } from '$lib/api.js'
+  import { getTableRows, listTables } from '$lib/api.js'
+  import { isSystemSchema } from '$lib/system-schemas.js'
   import { buildSearchQuery, searchOptionsSupported, searchOptionHotkey, SEARCH_OPTION_KEYS } from '$lib/search-options.js'
   import Search from '@lucide/svelte/icons/search'
   import X from '@lucide/svelte/icons/x'
@@ -13,7 +14,7 @@
 
   /**
    * @typedef {{ name: string, rowCount?: number, tableKind?: string }} TableInfo
-   * @typedef {{ table: string, count: number, columns: any[], sampleRow: any[] | null, tableKind?: string }} SearchHit
+   * @typedef {{ table: string, schema: string, count: number, columns: any[], sampleRow: any[] | null, tableKind?: string }} SearchHit
    */
 
   let {
@@ -22,8 +23,10 @@
     schema = 'public',
     dialect = 'postgres',
     active = false,
-    /** @param {string} tableName @param {string} searchTerm */
-    onopentable = (tableName, searchTerm) => {},
+    /** Every schema of the connection, for "All schemas". @type {string[]} */
+    schemas = [],
+    /** @param {string} tableName @param {string} searchTerm @param {string} [inSchema] */
+    onopentable = (tableName, searchTerm, inSchema) => {},
     /** Assigned here; the shell calls it for ⌘F. */
     focusSearch = $bindable(/** @type {() => void} */ (() => {})),
   } = $props()
@@ -31,6 +34,12 @@
   let query = $state('')
   let useRegex = $state(false)
   let matchCase = $state(false)
+  /** This schema, or every user schema of the connection. */
+  let scope = $state(/** @type {'schema' | 'all'} */ ('schema'))
+  const userSchemas = $derived(schemas.filter((s) => !isSystemSchema(s)))
+  const canScope = $derived(userSchemas.length > 1)
+  /** Table lists of other schemas, read once per page. @type {Map<string, TableInfo[]>} */
+  const schemaTables = new Map()
   let wholeWord = $state(false)
   const optionsSupported = $derived(searchOptionsSupported(dialect))
   /** @type {SearchHit[]} */
@@ -102,7 +111,7 @@
   $effect(() => {
     const q = query.trim()
     // Re-run when an option changes too: they change what the query means.
-    void matchCase; void wholeWord; void useRegex
+    void matchCase; void wholeWord; void useRegex; void scope
     clearTimeout(debounceTimer)
     if (q.length < MIN_QUERY) {
       untrack(() => resetResults())
@@ -132,11 +141,26 @@
     failed = 0
     selected = -1
 
-    const searchable = tables.filter(
-      (t) =>
-        !t.tableKind ||
-        ['table', 'view', 'foreign_table', 'materialized_view'].includes(t.tableKind),
-    )
+    /** @param {TableInfo & { kind?: string }} t */
+    const searchableKind = (t) => {
+      const k = t.tableKind ?? t.kind
+      return !k || ['table', 'view', 'foreign_table', 'materialized_view'].includes(k)
+    }
+    /** @type {{ schema: string, name: string, tableKind?: string }[]} */
+    let searchable = tables.filter(searchableKind).map((t) => ({ schema, name: t.name, tableKind: t.tableKind ?? /** @type {any} */ (t).kind }))
+    if (scope === 'all' && canScope) {
+      // The other schemas' tables, listed once and kept for the page.
+      const others = userSchemas.filter((s) => s !== schema)
+      await Promise.all(others.filter((s) => !schemaTables.has(s)).map(async (s) => {
+        try { schemaTables.set(s, /** @type {TableInfo[]} */ (await listTables(s))) } catch { schemaTables.set(s, []) }
+      }))
+      if (searchGeneration !== gen) return
+      for (const s of others) {
+        for (const t of schemaTables.get(s) ?? []) {
+          if (searchableKind(t)) searchable.push({ schema: s, name: t.name, tableKind: t.tableKind ?? /** @type {any} */ (t).kind })
+        }
+      }
+    }
     progress = { done: 0, total: searchable.length }
 
     // Run with concurrency cap to avoid overwhelming the DB connection pool.
@@ -149,7 +173,7 @@
         const t = searchable[index++]
         if (!t) continue
         try {
-          const res = await getTableRows(schema, t.name, 1, 0, {
+          const res = await getTableRows(t.schema, t.name, 1, 0, {
             ...searchParams,
             includeMeta: false,
           })
@@ -157,6 +181,7 @@
           if (res.total > 0) {
             results = [...results, /** @type {SearchHit} */ ({
               table: t.name,
+              schema: t.schema,
               count: res.total,
               columns: res.columns ?? [],
               sampleRow: res.rows?.[0] ?? null,
@@ -193,7 +218,7 @@
     }
     if (e.key === 'Enter' && selected >= 0 && results[selected]) {
       e.preventDefault()
-      onopentable(results[selected].table, query.trim())
+      onopentable(results[selected].table, query.trim(), results[selected].schema)
       return
     }
     // Enter is "do not wait for the pause", not a separate way to search.
@@ -338,8 +363,22 @@
         <p class="mt-1.5 px-1 text-ui-xs text-destructive">{regexError}</p>
       {/if}
 
-      <!-- One status line: progress while it runs, totals after. -->
-      <div class="mt-2 flex h-5 items-center gap-2 px-1 text-ui-2xs text-muted-foreground tabular-nums">
+      <!-- One status line: where it looks, then progress while it runs and
+           totals after. -->
+      <div class="mt-2 flex h-6 items-center gap-2 px-1 text-ui-2xs text-muted-foreground tabular-nums">
+        {#if canScope}
+          <div role="radiogroup" aria-label="Search in" class="flex shrink-0 gap-0.5 rounded-full bg-muted/60 p-0.5">
+            {#each [{ v: 'schema', l: schema }, { v: 'all', l: `All schemas (${userSchemas.length})` }] as o (o.v)}
+              <button
+                type="button"
+                role="radio"
+                aria-checked={scope === o.v}
+                class={cn('h-5 max-w-40 truncate rounded-full px-2 text-ui-2xs font-medium transition-colors', scope === o.v ? 'bg-background text-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground')}
+                onclick={() => { scope = /** @type {'schema' | 'all'} */ (o.v); inputEl?.focus() }}
+              >{o.l}</button>
+            {/each}
+          </div>
+        {/if}
         {#if searching}
           <span>Searching {progress.done} of {progress.total} tables</span>
           <span class="h-0.5 w-24 overflow-hidden rounded-full bg-muted">
@@ -349,7 +388,7 @@
         {:else if searched && results.length}
           <span><span class="font-medium text-foreground">{totalMatches.toLocaleString()}</span> {totalMatches === 1 ? 'match' : 'matches'} in <span class="font-medium text-foreground">{results.length}</span> of {progress.total} tables</span>
         {:else if !query.trim()}
-          <span>{tables.length} tables in {schema}</span>
+          {#if !canScope}<span>{tables.length} tables in {schema}</span>{/if}
         {/if}
         {#if failed && !searching}
           <span class="text-warning">· {failed} table{failed === 1 ? '' : 's'} couldn't be searched</span>
@@ -365,7 +404,7 @@
     <div class="mx-auto w-full max-w-3xl">
       {#if results.length > 0}
         <ul id="find-results" role="listbox" aria-label="Tables with matches" class="flex flex-col gap-0.5">
-          {#each results as hit, hi (hit.table)}
+          {#each results as hit, hi (hit.schema + '.' + hit.table)}
             {@const TIcon = tableIcon(hit.tableKind)}
             {@const cells = sampleCells(hit)}
             <li id="find-hit-{hi}" role="option" aria-selected={selected === hi}>
@@ -376,12 +415,12 @@
                   'group flex w-full flex-col gap-1.5 rounded-lg px-3 py-2.5 text-left outline-none transition-colors hover:bg-muted/50 focus-visible:bg-muted/60',
                   selected === hi && 'bg-muted/60',
                 )}
-                onclick={() => onopentable(hit.table, query.trim())}
+                onclick={() => onopentable(hit.table, query.trim(), hit.schema)}
                 onpointerenter={() => (selected = hi)}
               >
                 <div class="flex min-w-0 items-center gap-2.5">
                   <span class="flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground"><TIcon class="size-3.5 shrink-0" /></span>
-                  <span class="min-w-0 truncate font-mono text-ui-sm font-medium text-foreground">{hit.table}</span>
+                  <span class="min-w-0 truncate font-mono text-ui-sm font-medium text-foreground">{#if scope === 'all' && hit.schema !== schema}<span class="font-normal text-muted-foreground">{hit.schema}.</span>{/if}{hit.table}</span>
                   <span class="shrink-0 text-ui-2xs text-muted-foreground tabular-nums">{hit.count.toLocaleString()} {hit.count === 1 ? 'row' : 'rows'}</span>
                   <span class="ms-auto inline-flex shrink-0 items-center gap-1 text-ui-2xs text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 {selected === hi ? 'opacity-100' : ''}">
                     Open <ArrowRight class="size-3.5 shrink-0" />
@@ -408,7 +447,7 @@
           <span class="flex size-11 items-center justify-center rounded-lg bg-muted/60"><Search class="size-5 shrink-0 text-muted-foreground" /></span>
           <p class="mt-1 text-ui-sm font-medium text-foreground">Nothing matches <span class="font-mono">"{query.trim()}"</span></p>
           <p class="max-w-80 text-ui-xs leading-relaxed text-muted-foreground">
-            Searched {progress.total} table{progress.total === 1 ? '' : 's'} in {schema}.
+            Searched {progress.total} table{progress.total === 1 ? '' : 's'} in {scope === 'all' && canScope ? `${userSchemas.length} schemas` : schema}.
             {#if matchCase || wholeWord}Try without {matchCase && wholeWord ? 'Match case and Whole word' : matchCase ? 'Match case' : 'Whole word'}.{/if}
           </p>
         </div>
