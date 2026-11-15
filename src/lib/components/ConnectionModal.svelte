@@ -98,6 +98,14 @@
      * once consumed so the next plain open starts on the picker again.
      */
     initialEngine = $bindable(""),
+    /**
+     * A connection string handed over from outside (a stroke:// link or the
+     * command line): read as if pasted, so the form opens filled in. Nothing
+     * connects until Connect is pressed. Cleared once consumed.
+     */
+    initialUri = $bindable(""),
+    /** Name for that connection, e.g. the project folder it came from. */
+    initialName = $bindable(""),
     onconnected = (conn, id) => {},
     maxConnections = Infinity,
     /** Name of the live session, '' when nothing is connected. Drives Disconnect. */
@@ -1819,6 +1827,13 @@
       engineQuery = "";
       quickUri = "";
       quickHint = "";
+      if (initialUri) {
+        quickUri = initialUri;
+        useQuickUri();
+        if (initialName && step !== "pick") name = initialName;
+        initialUri = "";
+        initialName = "";
+      }
       void refreshLocal();
       // The paste bar takes focus: the modal opens, you paste, you press Enter.
       // Focus alone does not read the clipboard - only a click into the bar does.

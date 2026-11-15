@@ -11,6 +11,13 @@
       "endpoints": [
         "https://github.com/stroke-app/stroke/releases/download/nightly/latest.json"
       ]
+    },
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "stroke-nightly"
+        ]
+      }
     }
   }
 }

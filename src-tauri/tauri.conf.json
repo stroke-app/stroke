@@ -25,6 +25,13 @@
         "installMode": "passive"
       },
       "dialog": false
+    },
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "stroke"
+        ]
+      }
     }
   },
   "bundle": {

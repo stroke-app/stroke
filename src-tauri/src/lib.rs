@@ -20,6 +20,7 @@ mod connection_store;
 mod copilot;
 mod db;
 mod docker;
+mod launch;
 mod license;
 #[cfg(target_os = "macos")]
 mod mac_chrome;
@@ -462,6 +463,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::AppleScript, None))
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_deep_link::init())
         .manage(db_state)
         .manage(mcp_state)
         .manage(agents::AgentsState::default())
@@ -472,6 +474,7 @@ pub fn run() {
         .manage(db::terminal::TerminalState::default())
         .manage(db::result_store::ResultStore::default())
         .manage(updates::UpdateState::default())
+        .manage(launch::LaunchState::default())
         .setup(move |app| {
             // Linux packages renamed the binary from `app` to `stroke` (2.5.6), and
             // a launch-at-login entry stores the binary's path. Re-enabling an
@@ -642,6 +645,8 @@ pub fn run() {
                 _ => {}
             });
 
+            install_open_links(app.handle());
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -661,6 +666,7 @@ pub fn run() {
             commands::ai_fetch_page,
             commands::read_file,
             commands::open_new_window,
+            launch::take_open_request,
             commands::reveal_window,
             commands::restart_app,
             updates::update_check,
@@ -945,4 +951,37 @@ pub fn run() {
             }
             _ => {}
         });
+}
+
+/// `stroke://open?url=…` links and a connection on the command line (see
+/// launch.rs). A link that launches the app arrives in argv on Windows and Linux
+/// and through `get_current` on macOS; one sent to the running app comes to
+/// `on_open_url`. Either way the page only gets a prefilled dialog.
+fn install_open_links(app: &tauri::AppHandle) {
+    use tauri_plugin_deep_link::DeepLinkExt;
+    let links = app.deep_link();
+    // The installers register the scheme; a dev build or an AppImage has no
+    // installer, so it registers itself (per-user, overwritten on each run).
+    #[cfg(any(target_os = "linux", all(debug_assertions, windows)))]
+    {
+        if let Err(e) = links.register_all() {
+            log::warn!("Could not register stroke:// links: {e}");
+        }
+    }
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let first = links
+        .get_current()
+        .ok()
+        .flatten()
+        .and_then(|urls| urls.iter().find_map(|u| launch::parse_link(u.as_str())))
+        .or_else(|| launch::from_args(std::env::args(), &cwd));
+    if let Some(req) = first {
+        launch::deliver(app, req);
+    }
+    let handle = app.clone();
+    links.on_open_url(move |event| {
+        if let Some(req) = event.urls().iter().find_map(|u| launch::parse_link(u.as_str())) {
+            launch::deliver(&handle, req);
+        }
+    });
 }
