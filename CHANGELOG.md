@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.11.3] - 2026-11-15
+
+### Changes
+- Expanded rows build off screen; tighter sidebar footer with room below (#209)
+
+
 ## [2.11.2] - 2026-11-15
 
 ### Changes
