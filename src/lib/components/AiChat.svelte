@@ -292,6 +292,12 @@
     onopendiagramspage = /** @type {(() => void) | undefined} */ (undefined),
     /** The AI changed the schema (CREATE / ALTER / DROP...): reload the tables and database list. */
     onschemadirty = () => {},
+    /**
+     * A statement ran (the Run button on a reply, or the agent's execute_sql):
+     * the shell catches the sidebar and open tables up, as after the SQL editor.
+     * @param {string} sql
+     */
+    onsqlran = (sql) => {},
   } = $props();
 
   /** A statement that changes the schema, so the sidebar must reload. @param {string} sql */
@@ -3281,6 +3287,8 @@
             ? await executeSqlOnConnection(/** @type {any} */ ({ ...connectionConfig, database: otherDb }), guardedSql)
             : await executeSql(guardedSql);
           if (isDdl(sql)) onschemadirty();
+          // Another database's run leaves this one's sidebar as it was.
+          if (!crossDb) onsqlran(sql);
           const cols = data.columns ?? [];
           const rows = data.rows ?? [];
           const total = data.rowCount ?? rows.length;
@@ -3794,6 +3802,10 @@
     await scrollBottom();
     try {
       const data = await executeSql(sql);
+      // A CREATE TABLE or an INSERT from a reply showed up nowhere until a
+      // manual refresh: only the agent's own execute_sql reported schema changes.
+      if (isDdl(sql)) onschemadirty();
+      onsqlran(sql);
       const cols = data.columns ?? [];
       const rows = data.rows ?? [];
       const sqlResId = uid();
