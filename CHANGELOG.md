@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.12.4] - 2026-11-15
+
+### Changes
+- NoSQL pages: Mod+R and agent changes reload them; no flicker on refresh (#220)
+
+
 ## [2.12.3] - 2026-11-15
 
 ### Changes
