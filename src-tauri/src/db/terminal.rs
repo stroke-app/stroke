@@ -545,6 +545,13 @@ async fn mysql_launch(config: MysqlConfig, mariadb: bool) -> Result<Launch, Stri
             }
             _ => args.extend(["--ssl".into(), "--skip-ssl-verify-server-cert".into()]),
         }
+        // On Windows the MariaDB client does TLS through Schannel, whose TLS 1.3
+        // fails against TiDB Cloud and other servers with "ERROR 2026 ... The
+        // specified data could not be decrypted (SEC_E_DECRYPT_FAILURE)".
+        // TLS 1.2 is what those servers and the client agree on.
+        if cfg!(windows) && mode != "DISABLED" {
+            args.push("--tls-version=TLSv1.2".into());
+        }
     } else {
         args.push(format!("--ssl-mode={mode}"));
     }
@@ -821,7 +828,7 @@ pub async fn terminal_install_client(config: AnyConnectionConfig) -> Result<Stri
             v
         }
         ["winget", "install", rest @ ..] if !rest.is_empty() => {
-            let mut v: Vec<String> = ["winget", "install", "--silent", "--accept-source-agreements", "--accept-package-agreements"]
+            let mut v: Vec<String> = ["winget", "install", "--silent", "--disable-interactivity", "--accept-source-agreements", "--accept-package-agreements"]
                 .iter()
                 .map(|s| s.to_string())
                 .collect();
@@ -845,6 +852,9 @@ pub async fn terminal_install_client(config: AnyConnectionConfig) -> Result<Stri
     })?;
     let mut cmd = tokio::process::Command::new(program);
     cmd.args(&argv[1..]).env("PATH", &path).env("HOMEBREW_NO_AUTO_UPDATE", "1").kill_on_drop(true);
+    // No console window: winget is a console program, and Windows gave it a
+    // cmd window of its own in front of Stroke for the whole install.
+    crate::proc::quiet(&mut cmd);
     let out = tokio::time::timeout(std::time::Duration::from_secs(600), cmd.output())
         .await
         .map_err(|_| "The install took longer than 10 minutes and was stopped.".to_string())?

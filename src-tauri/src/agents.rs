@@ -205,11 +205,10 @@ async fn codex_user_mcp_names() -> Vec<String> {
 }
 
 async fn read_codex_user_mcp_names() -> Vec<String> {
-    let out = tokio::process::Command::new("codex")
-        .args(["mcp", "list", "--json"])
-        .stdin(std::process::Stdio::null())
-        .output()
-        .await;
+    let mut cmd = tokio::process::Command::new("codex");
+    cmd.args(["mcp", "list", "--json"]).stdin(std::process::Stdio::null());
+    crate::proc::quiet(&mut cmd);
+    let out = cmd.output().await;
     let Ok(out) = out else { return Vec::new() };
     let Ok(list) = serde_json::from_slice::<Vec<serde_json::Value>>(&out.stdout) else {
         return Vec::new();

@@ -25,6 +25,7 @@
   import X from '@lucide/svelte/icons/x'
   import RotateCw from '@lucide/svelte/icons/rotate-cw'
   import Plus from '@lucide/svelte/icons/plus'
+  import PanelTop from '@lucide/svelte/icons/panel-top'
   import Eraser from '@lucide/svelte/icons/eraser'
   import Copy from '@lucide/svelte/icons/copy'
   import Check from '@lucide/svelte/icons/check'
@@ -38,6 +39,7 @@
   import SquareFunction from '@lucide/svelte/icons/square-function'
   import ArrowRightLeft from '@lucide/svelte/icons/arrow-right-left'
   import Kbd from './Kbd.svelte'
+  import { comboTitle } from '$lib/shortcuts.js'
   import { Button } from '$lib/components/ui/button/index.js'
   import { appSqlEditor } from '$lib/stores/settings.js'
   import { sqlEditorFontSize } from '$lib/sql-editor-options.js'
@@ -69,6 +71,8 @@
     onclose = undefined,
     /** Open another terminal tab beside this one. @type {(() => void) | undefined} */
     onnew = undefined,
+    /** Docked only: move this terminal into a tab of its own. @type {(() => void) | undefined} */
+    onpopout = undefined,
   } = $props()
 
   /** @typedef {'idle' | 'checking' | 'unsupported' | 'missing' | 'failed' | 'starting' | 'running' | 'exited'} Phase */
@@ -1010,9 +1014,13 @@
    * prefix and cancel), and F and H, whose app versions act on the table tabs.
    */
   const APP_CTRL_KEYS = new Set([
-    'b', 'i', 'k', 'm', 'n', 'p', 's', 't', 'w', ',', '/', '?', '=', '-', '+',
+    // j and ` hide the terminal itself (Ctrl+J, Ctrl+`): kept by the terminal,
+    // the panel couldn't be closed from the keyboard once it had focus.
+    'b', 'i', 'j', 'k', 'm', 'n', 'p', 's', 't', 'w', '`', ',', '/', '?', '=', '-', '+',
     '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'enter', 'tab', 'pageup', 'pagedown',
   ])
+  /** Ctrl+Shift app shortcuts (new terminal, command palette, AI mode, ...). */
+  const APP_CTRL_SHIFT_KEYS = new Set(['`', '~', 'p', 'e', 'n', 't', 'w', 'tab'])
 
   /** Ctrl+A selected the typed line; the next key replaces it. */
   let inputSelected = false
@@ -1079,6 +1087,9 @@
     }
     // The app's shortcuts: hand the key back so it bubbles to them, unsent.
     if (e.type === 'keydown' && !IS_MAC && e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && APP_CTRL_KEYS.has(e.key.toLowerCase())) {
+      return false
+    }
+    if (e.type === 'keydown' && !IS_MAC && e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && APP_CTRL_SHIFT_KEYS.has(e.key.toLowerCase())) {
       return false
     }
     return handleClipboardKey(e)
@@ -1310,7 +1321,10 @@
   $effect(() => {
     if (!active) return
     untrack(() => requestAnimationFrame(() => {
-      fit()
+      // Colours and font again, not only the size: a terminal started in the
+      // background (prewarm) read them before it was laid out, fell back to
+      // black, and stayed black on a light theme until the theme changed.
+      applyAppearance()
       if (phase === 'running' || phase === 'exited') term?.focus()
     }))
   })
@@ -1353,21 +1367,12 @@
 </script>
 
 <div class="group/term relative flex min-h-0 flex-1 flex-col overflow-hidden bg-panel">
-  {#if docked}
-    <!-- Docked under a page (⌘J): no bar at all. The output starts at the top
-         left like a real terminal; the four actions float in the corner. -->
-    <div class="absolute top-1 right-2 z-20 flex items-center gap-0.5 rounded-full bg-panel/95 p-0.5 shadow-sm opacity-0 transition-opacity duration-150 group-hover/term:opacity-100 focus-within:opacity-100">
-      <button type="button" class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40" title="Clear" aria-label="Clear scrollback" disabled={phase !== 'running' && phase !== 'exited'} onclick={() => { term?.clear(); term?.focus() }}><Eraser class="size-3.5 shrink-0" /></button>
-      <button type="button" class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40" title="Restart {client?.name || 'the client'}" aria-label="Restart" disabled={!connection || phase === 'checking' || phase === 'starting'} onclick={() => void start()}><RotateCw class="size-3.5 shrink-0" /></button>
-      {#if onclose}
-        <button type="button" class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" title="Hide (⌘J)" aria-label="Hide the terminal" onclick={onclose}><X class="size-3.5 shrink-0" /></button>
-      {/if}
-    </div>
-  {:else}
   <!-- One slim strip, like a terminal window's title bar: which client
        against what, a status dot, and the few actions. It was a 36px header
        with a "Running" label and a 32px command bar under the screen, so a
-       third of a short pane was chrome before any output. -->
+       third of a short pane was chrome before any output. The docked
+       terminal (⌘J) has the same strip: its actions used to float over the
+       output, on top of the install notice's button. -->
   <div class="studio-chrome flex h-7 shrink-0 items-center gap-2 border-b border-border/50 bg-panel ps-2.5 pe-1">
     <span
       class={['size-1.5 shrink-0 rounded-full', statusDot]}
@@ -1439,11 +1444,22 @@
           <Plus class="size-3.5 shrink-0" />
         </button>
       {/if}
+      {#if onpopout}
+        <button
+          type="button"
+          class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          title="Move to a tab"
+          aria-label="Move the terminal to a tab"
+          onclick={onpopout}
+        >
+          <PanelTop class="size-3.5 shrink-0" />
+        </button>
+      {/if}
       {#if onclose}
         <button
           type="button"
           class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          title="Hide (⌘`)"
+          title="Hide ({comboTitle(docked ? 'Mod+J' : 'Mod+`')})"
           aria-label="Hide {client?.name || 'terminal'}"
           onclick={onclose}
         >
@@ -1452,7 +1468,6 @@
       {/if}
     </div>
   </div>
-  {/if}
 
   <div bind:this={bodyEl} class="relative min-h-0 flex-1">
     <!-- The padding lives on this wrapper: FitAddon sizes the grid from the

@@ -159,7 +159,10 @@ async fn gcloud_token() -> Result<String, String> {
     if let Some(t) = cached_token("gcloud") {
         return Ok(t);
     }
-    let fut = tokio::process::Command::new("gcloud").args(["auth", "print-access-token"]).kill_on_drop(true).output();
+    let mut cmd = tokio::process::Command::new("gcloud");
+    cmd.args(["auth", "print-access-token"]).kill_on_drop(true);
+    crate::proc::quiet(&mut cmd);
+    let fut = cmd.output();
     let out = tokio::time::timeout(Duration::from_secs(20), fut)
         .await
         .map_err(|_| "gcloud did not answer in time".to_string())?
