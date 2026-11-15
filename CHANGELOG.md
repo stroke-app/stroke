@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.9.9] - 2026-11-15
+
+### Changes
+- Windows polish: terminal, connection screen, Segoe UI (#195)
+
+
 ## [2.9.8] - 2026-11-15
 
 ### Changes
