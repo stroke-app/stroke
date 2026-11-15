@@ -8588,11 +8588,32 @@ let rowSearch = $state('')
    * the tables, the other objects, and the sidebar's list of databases.
    */
   async function reloadAfterAiDdl() {
+    const connAtCall = persistConnectionId
     invalidateCatalog()
     databasesRefreshKey++
     await loadSchemas()
     await loadTables({ force: true, quiet: true })
     bumpObjects()
+    scheduleCatalogRecheck(connAtCall)
+  }
+
+  /**
+   * One quiet re-read of the table list a second after a catalog change. The
+   * immediate reload can lose a race (an agent's burst, a switch, a load
+   * already in flight that lands last with the old list), and then a CREATE
+   * VIEW from the AI sat as "Empty" in the sidebar until a manual refresh. A
+   * second look costs one catalog query and only follows DDL.
+   * @param {string} connAtCall
+   */
+  let _catalogRecheck = 0
+  function scheduleCatalogRecheck(connAtCall) {
+    clearTimeout(_catalogRecheck)
+    _catalogRecheck = window.setTimeout(() => {
+      if (!connection || connectionMoved(connAtCall)) return
+      _catalog.invalidate(catalogKey(persistConnectionId, 'tables', activeSchema))
+      void loadTables({ force: true, quiet: true })
+      bumpObjects()
+    }, 1000)
   }
 
   async function handleRefresh() {
@@ -8639,6 +8660,7 @@ let rowSearch = $state('')
     if (fx.catalog) {
       _sqlHintsLoadedFor = ''
       await loadTables({ force: true })
+      scheduleCatalogRecheck(connAtCall)
     } else {
       // Rows only: the catalog stands and only counts moved. The tables the run
       // named are re-counted in place; engines that count inline (SQLite and
