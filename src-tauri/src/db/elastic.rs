@@ -142,6 +142,42 @@ pub fn check_path(method: &str, path: &str) -> Result<(), String> {
     }
 }
 
+/// What an agent's request needs from the MCP access gate: reads are READ,
+/// writing documents is WRITE, creating an index or adding to its mapping is
+/// MODIFY, anything else (deleting an index, cluster settings) is DANGEROUS,
+/// which `agent_may` refuses whatever the level.
+pub fn request_level(method: &str, path: &str) -> u8 {
+    use crate::mcp::access::{DANGEROUS, MODIFY, READ, WRITE};
+    if is_read(method, path) {
+        READ
+    } else if check_path(method, path).is_ok() {
+        WRITE
+    } else if creates_schema(method, path) {
+        MODIFY
+    } else {
+        DANGEROUS
+    }
+}
+
+/// `PUT /{index}` (with optional settings and mappings) or `PUT|POST
+/// /{index}/_mapping`: the schema changes an agent at MODIFY may make.
+fn creates_schema(method: &str, path: &str) -> bool {
+    let p = path.trim_start_matches('/');
+    let path_only = p.split('?').next().unwrap_or("").trim_end_matches('/');
+    if path_only.is_empty() || path_only.starts_with('_') || p.contains("..") {
+        return false;
+    }
+    let eps = endpoints(p);
+    (method == "PUT" && eps.is_empty() && !path_only.contains('/'))
+        || (matches!(method, "PUT" | "POST") && eps.first() == Some(&"_mapping"))
+}
+
+/// Requests an agent may send once the gate has passed it: documents, plus
+/// creating an index or its mapping. Index deletion stays unavailable.
+fn agent_may(method: &str, path: &str) -> bool {
+    check_path(method, path).is_ok() || creates_schema(method, path)
+}
+
 /// Whether a request only reads (the console and MCP accept only these).
 pub fn is_read(method: &str, path: &str) -> bool {
     if check_path(method, path).is_err() {
@@ -557,6 +593,13 @@ fn raw_docs(v: &Value) -> (Vec<Value>, Option<String>) {
 
 /// Run one console statement. Only reads.
 pub async fn query(cfg: &EsConfig, stmt: &str) -> Result<super::query::SqlResult, String> {
+    query_as(cfg, stmt, false).await
+}
+
+/// Run one statement for an agent. With `allow_write` (the MCP gate already
+/// checked the session's level) documents can be written and an index or its
+/// mapping created; without it this is the read-only console.
+pub async fn query_as(cfg: &EsConfig, stmt: &str, allow_write: bool) -> Result<super::query::SqlResult, String> {
     let t0 = Instant::now();
     let (docs, message) = match parse(stmt)? {
         Statement::Sql(sql) => {
@@ -576,6 +619,10 @@ pub async fn query(cfg: &EsConfig, stmt: &str) -> Result<super::query::SqlResult
         }
         Statement::Raw { method, path, body } => {
             if !is_read(&method, &path) {
+                if allow_write && agent_may(&method, &path) {
+                    let v = send(cfg, &method, &path, body.as_ref().map(Body::Json)).await?;
+                    return Ok(super::couchdb::docs_result(vec![v], None, stmt, t0));
+                }
                 return Err(format!(
                     "The console only reads. {method} /{path} changes data: edit documents in the browser instead."
                 ));

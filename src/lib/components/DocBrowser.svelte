@@ -64,6 +64,18 @@
 
   const readOnly = $derived($readOnlyMode)
   const noun = $derived(adapter.noun)
+  /** "an index", "a collection". @param {string} w */
+  const article = (w) => (/^[aeiou]/i.test(w) ? 'an' : 'a')
+  const isSearchEngine = $derived(connection?.type === 'elasticsearch' || connection?.type === 'opensearch')
+  /** The first steps on an empty cluster: make an index, add a document, search it. */
+  const ES_STARTER = `PUT products
+
+POST products/_doc
+{ "name": "Wireless Headphones", "price": 79.99, "in_stock": true }
+
+GET products/_search
+{ "query": { "match": { "name": "headphones" } } }
+`
   const options = $derived(adapter.options ?? [])
 
   /** @param {unknown} e */
@@ -666,8 +678,22 @@
   {#if !coll}
     <div class="flex flex-1 flex-col items-center justify-center gap-2 text-center">
       <PanelLeft class="size-6 shrink-0 text-muted-foreground/70" />
-      <p class="text-ui-sm text-foreground">Pick a {noun.collection.toLowerCase()} in the sidebar</p>
+      <p class="text-ui-sm text-foreground">Pick {article(noun.collection)} {noun.collection.toLowerCase()} in the sidebar</p>
       {#if where}<p class="font-mono text-ui-2xs text-muted-foreground">{where}</p>{/if}
+      {#if isSearchEngine}
+        <!-- A new cluster has no indices, so the sidebar says Empty and there is
+             nothing to pick. The console makes the first one. -->
+        <p class="mt-3 max-w-80 text-ui-xs leading-relaxed text-pretty text-muted-foreground">
+          No indices yet? Create one and add a document in the console, then refresh the sidebar.
+        </p>
+        <button
+          type="button"
+          class="mt-1 inline-flex h-8 items-center gap-1.5 rounded-lg border border-border/80 px-3 text-ui-xs font-medium text-foreground transition-colors hover:bg-muted/50"
+          onclick={() => onopensql(ES_STARTER, '')}
+        >
+          <TerminalIcon class="size-3.5 shrink-0 text-muted-foreground" />Open console
+        </button>
+      {/if}
     </div>
   {:else}
     <!-- Header: what this is, and the few things to do with it. No divider. -->

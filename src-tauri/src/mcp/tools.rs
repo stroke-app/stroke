@@ -627,7 +627,7 @@ async fn execute_sql(
             Ok(truncated_result_json(&result, max_rows))
         }
         ActiveConnection::Doc(d) => {
-            let result = crate::db::docdb::query(d, sql).await?;
+            let result = crate::db::docdb::query_as(d, sql, !read_only).await?;
             Ok(truncated_result_json(&result, max_rows))
         }
         ActiveConnection::Duckdb(h) if read_only => {
