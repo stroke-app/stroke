@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.13.0] - 2026-11-15
+
+### Changes
+- Schema snapshots: searchable connection, tidy cards, readable migration (#226)
+
+
 ## [2.12.9] - 2026-11-15
 
 ### Changes
