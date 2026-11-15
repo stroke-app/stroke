@@ -9,7 +9,7 @@
  * web access). AI keys never leave the keychain; AI profiles sync without them.
  */
 export const SYNCED_SETTINGS = /** @type {const} */ ([
-  'theme', 'font', 'iconStyle', 'iconSet', 'motion', 'panelMotion',
+  'theme', 'font', 'iconStyle', 'iconSet', 'motion', 'panelMotion', 'quitGuard',
   'tableStyle', 'rowSpacing', 'zebraRows', 'showRowNumbers', 'numberGrouping', 'gridFontSize',
   'tableTextAlign', 'highlightActiveRow', 'imagePreview', 'openUrlsOnClick', 'fkAutoExpandJson',
   'jsonTheme', 'jsonWordWrap', 'editorTheme', 'vimMode', 'sqlFormat', 'sqlEditor',

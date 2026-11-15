@@ -363,7 +363,7 @@
                     </div>
                   {/if}
                 </div>
-                <div class="absolute inset-x-0 bottom-0 h-[3px] bg-muted"><div class={cn('h-full', heat(n.share))} style="width:{Math.max(2, n.share * 100)}%"></div></div>
+                <div class="absolute inset-x-0 bottom-0 h-0.75 bg-muted"><div class={cn('h-full', heat(n.share))} style="width:{Math.max(2, n.share * 100)}%"></div></div>
               </div>
             {/each}
 
