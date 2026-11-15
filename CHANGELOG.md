@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.10.8] - 2026-11-15
+
+### Changes
+- Smoke tests gate Nightly; cancel stale counts; search index; more (#204)
+
+
 ## [2.10.7] - 2026-11-15
 
 ### Changes
