@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.11.9] - 2026-11-15
+
+### Changes
+- Docker databases start in the background with a progress toast (#215)
+
+
 ## [2.11.8] - 2026-11-15
 
 ### Changes
