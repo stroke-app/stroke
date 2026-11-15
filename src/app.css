@@ -1574,23 +1574,58 @@ pre code,
   .ai-gen-sweep, .ai-gen-bar, .ai-gen-node, .ai-gen-line, .ai-gen-dots i { animation: none; }
 }
 
-/* Press feedback, app-wide. Icon buttons (anything sized with a size-*
-   utility), the shared Button and every menu or popover trigger shrink to 0.97
-   while held, so a click always answers, including the titlebar's avatar and
-   gear. Full-width rows are left alone: a 3% shrink across a whole row reads
-   as a jump, not a press. A component's own active:scale-* (a utility) wins
-   over this base rule. */
+/* Press feedback, app-wide: compact controls only. Icon buttons (sized
+   with a size-* utility), the shared Button and menu, popover and select
+   triggers shrink to 0.97 while held, so a click always answers.
+
+   Only real <button>s, and never a wide one. A right-click menu's trigger
+   wraps a whole area (the sidebar, the tab bar, the data grid), and full-width
+   rows, headers and size-full hit areas are buttons too; shrinking those made
+   the panel jump on every click. A component's own active:scale-* (a utility)
+   still wins over this base rule. */
 @layer base {
-  :where(button[class*="size-"], [data-slot="button"], [data-slot$="-trigger"]):not(:disabled, [aria-disabled="true"], [data-no-press]) {
+  :where(
+      button[class*="size-"],
+      button[data-slot="button"],
+      a[data-slot="button"],
+      button[data-slot="dropdown-menu-trigger"],
+      button[data-slot="popover-trigger"],
+      button[data-slot="select-trigger"],
+      button[data-slot="dialog-trigger"]
+    ):not(
+      :disabled,
+      [aria-disabled="true"],
+      [data-no-press],
+      [class*="size-full"],
+      [class*="w-full"],
+      [class*="flex-1"],
+      [class*="inset-0"]
+    ) {
     transition-property: color, background-color, border-color, box-shadow, opacity, scale;
     transition-duration: 120ms;
     transition-timing-function: cubic-bezier(0.23, 1, 0.32, 1);
   }
-  :where(button[class*="size-"], [data-slot="button"], [data-slot$="-trigger"]):not(:disabled, [aria-disabled="true"], [data-no-press]):active {
+  :where(
+      button[class*="size-"],
+      button[data-slot="button"],
+      a[data-slot="button"],
+      button[data-slot="dropdown-menu-trigger"],
+      button[data-slot="popover-trigger"],
+      button[data-slot="select-trigger"],
+      button[data-slot="dialog-trigger"]
+    ):not(
+      :disabled,
+      [aria-disabled="true"],
+      [data-no-press],
+      [class*="size-full"],
+      [class*="w-full"],
+      [class*="flex-1"],
+      [class*="inset-0"]
+    ):active {
     scale: 0.97;
   }
   @media (prefers-reduced-motion: reduce) {
-    :where(button[class*="size-"], [data-slot="button"], [data-slot$="-trigger"]):active {
+    :where(button, a[data-slot="button"]):active {
       scale: none;
     }
   }
