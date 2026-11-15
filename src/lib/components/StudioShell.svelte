@@ -524,6 +524,38 @@
   let showConnectionModal = $state(false)
   /** Engine chosen on the welcome screen - the modal opens straight into its form. */
   let connectionModalEngine = $state('')
+  /** A connection handed over by a stroke:// link or the command line (launch.rs). */
+  let connectionModalUri = $state('')
+  let connectionModalName = $state('')
+
+  // `npx strokedb`, stroke.click/studio, or `stroke postgres://…`: open the New
+  // Connection dialog filled in from it. Never connects by itself - a link can
+  // come from any page. Taken once on startup (a link that launched the app
+  // lands before this listens) and again on each `open-request`.
+  onMount(() => {
+    /** @type {(() => void) | null} */
+    let off = null
+    let gone = false
+    const take = async () => {
+      const { invoke } = await import('@tauri-apps/api/core')
+      const req = /** @type {{ uri: string, name?: string | null } | null} */ (await invoke('take_open_request').catch(() => null))
+      if (!req?.uri || gone) return
+      // Re-opening re-runs the dialog's open effect, which reads the new string.
+      showConnectionModal = false
+      await tick()
+      connectionModalEngine = ''
+      connectionModalUri = req.uri
+      connectionModalName = req.name ?? ''
+      showConnectionModal = true
+      revealApp()
+    }
+    void import('@tauri-apps/api/event')
+      .then(({ listen }) => listen('open-request', () => void take()))
+      .then((u) => { if (gone) u(); else off = u })
+      .then(() => take())
+      .catch(() => {})
+    return () => { gone = true; off?.() }
+  })
   /** @type {HTMLElement | null} */
   let welcomeConnectBtn = $state(null)
 
@@ -9308,6 +9340,8 @@ let rowSearch = $state('')
 <ConnectionModal
   bind:open={showConnectionModal}
   bind:initialEngine={connectionModalEngine}
+  bind:initialUri={connectionModalUri}
+  bind:initialName={connectionModalName}
   onconnected={(conn, id) => onConnected(conn, id)}
   maxConnections={$hasPro ? Infinity : FREE_CONNECTION_LIMIT}
   activeConnectionName={connection ? (connection.name || connection.database || connection.host || connection.filePath || 'Connected') : ''}
