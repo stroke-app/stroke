@@ -326,6 +326,7 @@
     connectDynamo,
     connectCouch,
     connectElastic,
+    terminalClient,
     elasticRequest,
     elasticImport,
     couchRequest,
@@ -3068,6 +3069,20 @@ let rowSearch = $state('')
     if (!connection) return
     e.preventDefault()
     toggleTerminalDock()
+  })
+  // Find the connection's CLI and read its version while the app is idle, so
+  // the first terminal opens on a cached answer: on Windows that lookup scans
+  // the Program Files installs and spawns `--version`, which was most of the
+  // wait before the prompt appeared. Best effort; errors are the terminal's
+  // to report when it is opened.
+  $effect(() => {
+    const conn = connection
+    const type = dbType
+    if (!conn || !type) return
+    const run = () => { void terminalClient({ ...conn, type }).catch(() => {}) }
+    const ric = /** @type {any} */ (window).requestIdleCallback
+    const id = ric ? ric(run, { timeout: 4000 }) : setTimeout(run, 1500)
+    return () => { (ric ? /** @type {any} */ (window).cancelIdleCallback : clearTimeout)(id) }
   })
   // A new connection gets a fresh client: close the old panel's session.
   $effect(() => {

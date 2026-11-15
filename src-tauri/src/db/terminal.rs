@@ -1250,6 +1250,27 @@ fn write_loop(mut writer: Box<dyn Write + Send>, keystrokes: mpsc::Receiver<Vec<
 
 #[cfg(test)]
 mod tests {
+    /// Where the first terminal of a session spends its time:
+    /// `cargo test --lib terminal_start_bench -- --ignored --nocapture`.
+    #[tokio::test]
+    #[ignore]
+    async fn terminal_start_bench() {
+        let t = std::time::Instant::now();
+        let path = crate::omniroute::user_path().await;
+        println!("user_path (login shell): {:?} ({} dirs)", t.elapsed(), std::env::split_paths(&path).count());
+        let t = std::time::Instant::now();
+        let _ = crate::omniroute::user_path().await;
+        println!("user_path again (cached): {:?}", t.elapsed());
+        for names in [&["psql"][..], &["mariadb", "mysql"][..], &["sqlite3"][..]] {
+            let t = std::time::Instant::now();
+            let found = find_binary(names).await;
+            let find = t.elapsed();
+            let t = std::time::Instant::now();
+            let v = match &found { Some(b) => client_version(b).await, None => None };
+            println!("{names:?}: find {find:?}, version {:?} -> {:?} {:?}", t.elapsed(), found, v);
+        }
+    }
+
     use super::*;
 
     #[cfg(target_os = "linux")]
