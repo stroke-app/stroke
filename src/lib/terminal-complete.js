@@ -536,7 +536,9 @@ function familyOf(client) {
 }
 
 const KIND_ORDER = { translate: 0, meta: 1, command: 1, column: 2, table: 3, function: 4, keyword: 5 }
-const MAX_ITEMS = 8
+/** The list scrolls (10 rows show), so it can carry every reasonable match:
+ * at 8, most of psql's sixty-odd meta-commands could never be reached. */
+const MAX_ITEMS = 60
 
 /** First words of a statement, by client family: all that is offered for the first word. */
 const START_KEYWORDS = [

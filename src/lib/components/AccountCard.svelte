@@ -45,10 +45,9 @@
 {#snippet planPill()}
   <span
     class={cn(
-      'shrink-0 rounded-full border px-2 py-0.5 text-ui-2xs font-medium',
-      plan.tone === 'pro' && 'border-success/25 bg-success/10 text-success',
-      plan.tone === 'trial' && 'border-warning/25 bg-warning/10 text-warning',
-      plan.tone === 'free' && 'border-border/70 bg-muted/40 text-muted-foreground',
+      'chip-gloss h-6 shrink-0 px-2.5 text-ui-2xs font-semibold',
+      plan.tone === 'trial' && 'chip-warning',
+      plan.tone === 'free' && 'chip-muted',
     )}
   >
     {plan.label}

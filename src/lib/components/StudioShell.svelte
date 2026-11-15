@@ -821,7 +821,11 @@
   // cheap change signal (Postgres pg_stat counters / SQLite data_version). Off by
   // default; per-session, applies to the active table tab.
   let liveEnabled = $state(false)
-  const liveSupported = $derived(connection?.type === 'postgres' || connection?.type === 'sqlite')
+  // Every engine with table tabs can go live. Postgres and SQLite have a cheap
+  // native change signal (backend watcher); the rest poll the visible page and
+  // refresh only when its rows changed.
+  const liveNative = $derived(connection?.type === 'postgres' || connection?.type === 'sqlite')
+  const liveSupported = $derived(!!connection)
   // Stable identity of what should be watched - only changes when the target
   // table changes, so row refetches (which replace the tab object) don't churn it.
   const liveTableKey = $derived.by(() => {
@@ -844,7 +848,7 @@
     // cleanup (which stops the watcher) *before* re-executing this effect, so
     // the returned cleanup is the single stop path - calling it again here
     // would be a redundant double-stop.
-    if (!key) return
+    if (!key || !untrack(() => liveNative)) return
     const [schema, table] = JSON.parse(key)
     void liveStart(schema, table).catch((e) => {
       liveEnabled = false
@@ -858,6 +862,41 @@
   // Auto-disable when the connection can't support live mode (switched to MySQL,
   // disconnected, etc.) so the toggle never lingers in an impossible state.
   $effect(() => { if (!liveSupported && liveEnabled) liveEnabled = false })
+
+  // The poll for engines without a native watcher: every LIVE_POLL_MS, fetch
+  // the visible page with the same search, sort and filters and compare it to
+  // what is on screen. Only a real difference refreshes (once), so a quiet
+  // table costs one small query every few seconds and never flickers.
+  const LIVE_POLL_MS = 3000
+  $effect(() => {
+    const key = liveTableKey
+    if (!key || liveNative) return
+    const [schema, table] = JSON.parse(key)
+    let busy = false
+    const timer = setInterval(async () => {
+      if (busy || document.hidden || loadingRows || editingCell || hasAnyUnsavedChanges()) return
+      if (activeTab?.kind !== 'table' || activeSchema !== schema || activeTable !== table) return
+      // A windowed view (very large page) is assembled from many fetches; the
+      // poll covers ordinary pages only.
+      if (effectivePageSize > WINDOW_THRESHOLD || !columns.length) return
+      busy = true
+      try {
+        const { sortColumn, sortDirection, sorts } = sortForApi(rowSort, rowSortMore)
+        const data = await getTableRows(schema, table, effectivePageSize, currentOffset, {
+          ...apiSearch(rowSearch),
+          sortColumn, sortDirection, sorts,
+          filters: filtersForApi(rowFilters, columns),
+          includeMeta: false,
+          includeCount: false,
+        })
+        if (!liveEnabled || liveTableKey !== key || loadingRows || editingCell) return
+        const next = data.rows ?? []
+        if (next.length !== rows.length || JSON.stringify(next) !== JSON.stringify(rows)) onLiveChange({ schema, table })
+      } catch { /* a failed poll is retried next tick */ }
+      finally { busy = false }
+    }, LIVE_POLL_MS)
+    return () => clearInterval(timer)
+  })
 
   /** Refetch the active table (throttled) when the backend reports a change. */
   function onLiveChange(/** @type {{ schema: string, table: string } | undefined} */ payload) {
@@ -11084,6 +11123,7 @@ let rowSearch = $state('')
   onscrolltableright={() => scrollTableRight()}
   live={liveEnabled}
   {liveSupported}
+  {liveNative}
   ontogglelive={() => { liveEnabled = !liveEnabled }}
   onswitchconnection={handleSwitchDatabase}
   {mcpRunning}
