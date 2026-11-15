@@ -306,7 +306,8 @@ async fn dispatch(
             if name == "list_databases" || name == "current_database" {
                 let connections = state.connections.lock().map_err(|e| e.to_string())?.clone();
                 let active_id = state.active_conn_id.lock().map_err(|e| e.to_string())?.clone();
-                let text = tools::call_meta_tool(name, &connections, active_id.as_deref())?;
+                let live = conn.as_ref().map(|c| c.driver());
+                let text = tools::call_meta_tool(name, &connections, active_id.as_deref(), live)?;
                 return Ok(json!({ "content": [{ "type": "text", "text": text }] }));
             }
 

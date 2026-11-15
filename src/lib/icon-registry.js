@@ -57,6 +57,8 @@ import History from '@lucide/svelte/icons/history'
 import ArrowRight from '@lucide/svelte/icons/arrow-right'
 import Clock from '@lucide/svelte/icons/clock'
 import Zap from '@lucide/svelte/icons/zap'
+import Flame from '@lucide/svelte/icons/flame'
+import ShieldAlert from '@lucide/svelte/icons/shield-alert'
 import Settings from '@lucide/svelte/icons/settings'
 import Maximize2 from '@lucide/svelte/icons/maximize-2'
 import Filter from '@lucide/svelte/icons/filter'
@@ -222,6 +224,8 @@ export const ICON_MAP = {
   'arrow-right':    { lucide: ArrowRight,    huge: ArrowRight01Icon },
   'clock':          { lucide: Clock,         huge: Clock01Icon },
   'zap':            { lucide: Zap,           huge: FlashIcon },
+  'flame':          { lucide: Flame },
+  'shield-alert':   { lucide: ShieldAlert },
   'settings':       { lucide: Settings,      huge: Settings01Icon },
   'maximize-2':     { lucide: Maximize2,     huge: Maximize01Icon },
   'filter':         { lucide: Filter,        huge: FilterIcon },

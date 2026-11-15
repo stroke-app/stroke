@@ -25,12 +25,47 @@ export const SHARE_EXPIRIES = /** @type {const} */ ([
  * @typedef {TableSource | QuerySource | ErdSource | MermaidSource | ChartSource} ShareSource
  */
 
+// ── Defaults for new links (Settings → Account & Sync → Sharing) ────────────
+
+const DEFAULTS_KEY = 'stroke:share-defaults'
+
+/** @typedef {{ expiry: number | null, access: 'link' | 'once' | 'limit', viewLimit: number, maskPii: boolean }} ShareDefaults */
+
+/** @type {ShareDefaults} */
+export const SHARE_DEFAULTS = { expiry: 86400, access: 'link', viewLimit: 10, maskPii: true }
+
+/** @returns {ShareDefaults} */
+export function loadShareDefaults() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(DEFAULTS_KEY) || '{}')
+    const expiry = raw.expiry === null || SHARE_EXPIRIES.some((e) => e.seconds === raw.expiry) ? raw.expiry : SHARE_DEFAULTS.expiry
+    const access = ['link', 'once', 'limit'].includes(raw.access) ? raw.access : SHARE_DEFAULTS.access
+    const viewLimit = Number.isInteger(raw.viewLimit) && raw.viewLimit >= 1 && raw.viewLimit <= 10000 ? raw.viewLimit : SHARE_DEFAULTS.viewLimit
+    return { expiry: expiry === undefined ? SHARE_DEFAULTS.expiry : expiry, access, viewLimit, maskPii: raw.maskPii !== false }
+  } catch {
+    return { ...SHARE_DEFAULTS }
+  }
+}
+
+/** @param {Partial<ShareDefaults>} patch @returns {ShareDefaults} */
+export function saveShareDefaults(patch) {
+  const next = { ...loadShareDefaults(), ...patch }
+  try { localStorage.setItem(DEFAULTS_KEY, JSON.stringify(next)) } catch {}
+  return next
+}
+
 /** The share the dialog is open for, or null. */
 export const shareRequest = writable(/** @type {ShareSource | null} */ (null))
 
 /** Open the share dialog for `source`. @param {ShareSource} source */
 export function requestShare(source) {
   shareRequest.set(source)
+}
+
+/** Shared links as a tab (or an overlay without a connection). StudioShell opens it. */
+export const sharesPageRequest = writable(0)
+export function openSharesPage() {
+  sharesPageRequest.update((n) => n + 1)
 }
 
 /**

@@ -991,7 +991,7 @@
     { key: 'Mod-Shift-s', run: () => call(onmodshifts)() },
     { key: 'Mod-l', run: selectStatement, preventDefault: true },
     { key: 'Mod-r', run: runStatement, preventDefault: true },
-    { key: 'Mod-j', run: () => call(onmodj)() },
+    { key: 'Mod-Shift-j', run: () => call(onmodj)() },
     { key: 'Mod-Shift-b', run: () => call(onmodshiftb)() },
     // Wrap on/off: VS Code's key, the one the cell dock uses too.
     { key: 'Alt-z', run: () => { setSqlEditorOption('wrap', !$appSqlEditor.wrap); return true }, preventDefault: true },

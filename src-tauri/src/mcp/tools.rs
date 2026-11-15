@@ -160,10 +160,16 @@ fn sample_sql(conn: &ActiveConnection, schema: &str, table: &str, n: usize) -> R
 // ── Tool dispatchers ──────────────────────────────────────────────────────────
 
 /// Handle tools that don't require an active DB connection.
+///
+/// `live` is the driver of the connection Stroke actually holds, if any. The
+/// saved-connection id can be missing while a database is open (a connection
+/// opened from a URL, or one the app couldn't match to a saved entry); the
+/// live connection is what the data tools use, so it decides "connected".
 pub fn call_meta_tool(
     name: &str,
     connections: &[ConnMeta],
     active_id: Option<&str>,
+    live: Option<&str>,
 ) -> Result<String, String> {
     match name {
         "list_databases" => {
@@ -195,6 +201,7 @@ pub fn call_meta_tool(
                 "total": list.len(),
                 "active_id": active_id,
                 "active_name": active_name,
+                "connected": live.is_some(),
                 "note": if connections.len() > 1 {
                     "Multiple databases available. To switch, open Stroke and connect to the desired database. Then retry your request."
                 } else if connections.is_empty() {
@@ -220,10 +227,19 @@ pub fn call_meta_tool(
                     if let Some(f) = &c.file_path { v["file_path"] = json!(f); }
                     Ok(v.to_string())
                 }
-                None => Ok(json!({
-                    "connected": false,
-                    "note": "No database is currently connected. Open Stroke and connect to a database, then retry."
-                }).to_string()),
+                None => match live {
+                    // Open, just not one of the saved entries: the data tools
+                    // work, so say so rather than sending the agent away.
+                    Some(driver) => Ok(json!({
+                        "connected": true,
+                        "type": driver,
+                        "note": "A database is open in Stroke. list_tables and the other data tools run against it.",
+                    }).to_string()),
+                    None => Ok(json!({
+                        "connected": false,
+                        "note": "No database is currently connected. Open Stroke and connect to a database, then retry."
+                    }).to_string()),
+                },
             }
         }
 

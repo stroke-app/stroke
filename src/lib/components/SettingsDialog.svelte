@@ -1,4 +1,5 @@
 <script>
+  import { tick } from "svelte";
   import { toastPosition, TOAST_POSITIONS } from '$lib/stores/toast-position.js'
   import ThemeBuilder from './ThemeBuilder.svelte';
   import { comboTitle } from '$lib/shortcuts.js'
@@ -76,6 +77,7 @@
     getAutostartStatus,
   } from "$lib/api.js";
   import PinSetupDialog from "./PinSetupDialog.svelte";
+  import { SHARE_EXPIRIES, loadShareDefaults, saveShareDefaults, openSharesPage } from "$lib/share-flow.js";
   import { toast } from "$lib/components/ui/sonner/toast.svelte.js";
   import {
     lockStatus,
@@ -96,6 +98,20 @@
   } = $props();
 
   let settings = $state(loadSettings());
+  let shareDefaults = $state(loadShareDefaults());
+  /** The search results' container, and whether the query matched nothing. */
+  let resultsEl = $state(/** @type {HTMLElement | null} */ (null));
+  let noResults = $state(false);
+  $effect(() => {
+    void q;
+    const el = resultsEl;
+    if (!el) { noResults = false; return; }
+    // Rows render as elements; a query that hides every row leaves only
+    // comments and empty text behind.
+    tick().then(() => { noResults = el.isConnected && el.childElementCount === 0; });
+  });
+  /** @param {Partial<import('$lib/share-flow.js').ShareDefaults>} patch */
+  function setShareDefault(patch) { shareDefaults = saveShareDefaults(patch); }
 
   // ── Category navigation + search ─────────────────────────────────────────
   const CATEGORIES = [
@@ -629,18 +645,27 @@
           {#key searching ? '__search__' : category}
             <div class="settings-pane">
               <h2 class="mb-6 text-ui-lg font-semibold tracking-tight text-foreground">
-                {searching ? $t('common.search') : $t('settings.nav.' + activeCategory.id)}
+                {searching ? `Results for "${query.trim()}"` : $t('settings.nav.' + activeCategory.id)}
               </h2>
 
               {#if searching}
-                {@render generalContent()}
-                {@render databaseContent()}
-                {@render appearanceContent()}
-                {@render agentContent()}
-                {@render accountContent()}
-                {@render integrationsContent()}
-                {@render labsContent()}
-                {@render aboutContent()}
+                <div bind:this={resultsEl}>
+                  {@render generalContent()}
+                  {@render databaseContent()}
+                  {@render appearanceContent()}
+                  {@render agentContent()}
+                  {@render accountContent()}
+                  {@render integrationsContent()}
+                  {@render labsContent()}
+                  {@render aboutContent()}
+                </div>
+                {#if noResults}
+                  <div class="flex flex-col items-center gap-2 py-16 text-center">
+                    <Icon name="search" class="size-5 shrink-0 text-muted-foreground" />
+                    <p class="text-ui-sm font-medium text-foreground">No settings match</p>
+                    <p class="text-ui-xs text-muted-foreground">Try another word, like "font", "theme" or "share".</p>
+                  </div>
+                {/if}
               {:else if category === 'general'}
                 {@render generalContent()}
               {:else if category === 'database'}
@@ -1718,6 +1743,32 @@
         <Button type="button" size="sm" class="shrink-0" onclick={() => void signInWithToast()}>Sign in</Button>
       </div>
     {/if}
+  {/if}
+
+  {@render secLabel('Sharing')}
+  {#if show('Shared links', 'Share links: every link you made, its views and expiry, revoke, my shares')}
+    {@render actionRow('Shared links', 'Every link you\'ve shared, how often it was opened, when it expires. Revoke any of them at once.', 'Open', () => { open = false; openSharesPage(); })}
+  {/if}
+  {#if show('Default expiry', 'Share links: how long a new link lasts')}
+    <div class={rowCls}>
+      <div class="min-w-0">
+        <p class="text-ui-sm font-medium text-foreground">Default expiry</p>
+        <p class="mt-0.5 text-ui-xs leading-relaxed text-muted-foreground">How long a new share link lasts. You can change it for each link.</p>
+      </div>
+      {@render segmented('Default expiry', SHARE_EXPIRIES.filter((e) => e.seconds !== null).map((e) => ({ value: e.seconds, label: e.label })), shareDefaults.expiry, (v) => setShareDefault({ expiry: v }))}
+    </div>
+  {/if}
+  {#if show('Default views', 'Share links: anyone, one view then gone, burn after reading, limited views')}
+    <div class={rowCls}>
+      <div class="min-w-0">
+        <p class="text-ui-sm font-medium text-foreground">Default views</p>
+        <p class="mt-0.5 text-ui-xs leading-relaxed text-muted-foreground">Whether a new link opens any number of times, once, or a set number of times.</p>
+      </div>
+      {@render segmented('Default views', [{ value: 'link', label: 'Unlimited' }, { value: 'once', label: 'Once' }, { value: 'limit', label: `${shareDefaults.viewLimit} views` }], shareDefaults.access, (v) => setShareDefault({ access: v }))}
+    </div>
+  {/if}
+  {#if show('Mask personal data', 'Share links: hide emails, phone numbers, names, tokens, PII')}
+    {@render switchRow('Mask personal data', 'Columns that look like emails, phone numbers, names or secrets start masked in the share dialog.', shareDefaults.maskPii, () => setShareDefault({ maskPii: !shareDefaults.maskPii }))}
   {/if}
 {/snippet}
 

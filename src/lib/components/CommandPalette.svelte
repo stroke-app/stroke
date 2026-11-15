@@ -1,11 +1,13 @@
 <script>
   import Kbd from './Kbd.svelte'
   import Icon from './Icon.svelte'
+  import { cn } from '$lib/utils.js'
   import * as Command from '$lib/components/ui/command/index.js'
   import { formatTableRowCount } from '$lib/table-list.js'
   import { get } from 'svelte/store'
   import { chatCompletionStream, buildSystemPrompt, AI_TOOLS, isDestructiveSql, classifyDbError } from '$lib/ai.js'
   import { aiSettings, isAiConfigured } from '$lib/stores/ai-settings.js'
+  import { profileAgent } from '$lib/local-agents.js'
   import { pinEnabled, lockNow } from '$lib/stores/app-lock.js'
   import { appCmdkAi, appThemeId, appSidebarStyle, previewTheme, endThemePreview, updateSettings } from '$lib/stores/settings.js'
   import { executeSql, dockerTemplates, scanDockerDatabases } from '$lib/api.js'
@@ -318,7 +320,12 @@
     if (!get(appCmdkAi)) return  // experimental ⌘K AI is off
     const q = (question ?? '').trim()
     if (!q) return
-    if (!isAiConfigured(get(aiSettings))) { onopensettings(); open = false; return }
+    const settings = get(aiSettings)
+    if (!isAiConfigured(settings)) { onopensettings(); open = false; return }
+    // A local agent (Claude Code, Codex...) runs as a session in the AI chat,
+    // with Stroke's tools over MCP; it has no HTTP endpoint to stream from
+    // here, and calling one anyway failed with reqwest's bare "builder error".
+    if (profileAgent(settings)) { open = false; onaskcontinue(q); return }
     askApi = []; askTurns = []; askError = ''; askStick = true
     page = 'ask'; paletteSearch = ''
     await askTurn(q)
@@ -344,9 +351,15 @@
     askController?.abort()
     const ac = new AbortController(); askController = ac
     try {
+      if (!String(settings.baseUrl ?? '').trim()) throw new Error('This AI profile has no endpoint URL. Set one in Settings → Agent.')
       await runAskLoop(0, ac, settings)
     } catch (e) {
-      if (!ac.signal.aborted) askError = /** @type {any} */ (e)?.message ?? String(e)
+      if (!ac.signal.aborted) {
+        const msg = String(/** @type {any} */ (e)?.message ?? e)
+        askError = /^builder error/i.test(msg) ? 'The AI endpoint URL or key is malformed. Check it in Settings → Agent.' : msg
+      }
+      // Nothing is streaming any more: drop the empty "Thinking…" answer.
+      askTurns = askTurns.filter((t) => !(t.role === 'assistant' && t.streaming && !t.text)).map((t) => (t.streaming ? { ...t, streaming: false } : t))
     } finally {
       if (askController === ac) { askStreaming = false; askController = null }
     }
@@ -440,8 +453,24 @@
     askStreaming = false
   }
 
-  const askBtn = 'inline-flex items-center gap-1.5 rounded-md border border-border/60 px-2 py-1 text-ui-2xs font-medium text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground'
+  const lastAnswer = $derived([...askTurns].reverse().find((t) => t.role === 'assistant' && t.text)?.text ?? '')
+  let answerCopied = $state(false)
+  async function copyAnswer() {
+    if (!lastAnswer) return
+    await navigator.clipboard?.writeText(lastAnswer).catch(() => {})
+    answerCopied = true
+    setTimeout(() => (answerCopied = false), 1400)
+  }
+  function continueInChat() {
+    const q = lastAskQuestion
+    open = false
+    onaskcontinue(q)
+  }
+  const askModel = $derived(String($aiSettings.model ?? '').split('/').pop() || 'AI')
+
+  const askBtn = 'inline-flex items-center gap-1.5 rounded-md bg-muted/50 px-2 py-1 text-ui-2xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground'
   const askBtnPrimary = 'inline-flex items-center gap-1.5 rounded-md bg-primary px-2 py-1 text-ui-2xs font-medium text-primary-foreground transition-opacity hover:opacity-90'
+  const askBar = 'inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-ui-2xs font-medium transition-colors hover:bg-muted/60 hover:text-foreground'
 
   // Keep the ask thread pinned to the newest message as it streams / grows.
   // Coalesced to one adjustment per frame and gated on "near the bottom" so it
@@ -504,6 +533,14 @@
 
   /** @param {KeyboardEvent} e */
   function handleKeydown(e) {
+    const mod = e.metaKey || e.ctrlKey
+    // Ask page actions, as the footer shows them.
+    if (page === 'ask' && mod && e.key === 'Enter') {
+      e.preventDefault(); e.stopPropagation(); continueInChat(); return
+    }
+    if (page === 'ask' && mod && e.shiftKey && (e.key === 'c' || e.key === 'C')) {
+      e.preventDefault(); e.stopPropagation(); void copyAnswer(); return
+    }
     // On the ask page, Enter continues the conversation with a follow-up.
     if (page === 'ask' && e.key === 'Enter' && !e.isComposing) {
       const q = paletteSearch.trim()
@@ -793,37 +830,35 @@
 
         <!-- ── ASK AI (inline quick-ask) ─────────────────────────────── -->
         {#if page === 'ask'}
-          <div bind:this={askContentEl} class="select-text px-3 py-2.5">
-            {#each askTurns as turn (turn.id)}
+          <div bind:this={askContentEl} class="select-text px-5 pt-4 pb-6">
+            {#each askTurns as turn, ti (turn.id)}
               {#if turn.role === 'user'}
-                <div class="mb-1.5 flex items-start gap-2">
-                  <Icon name="sparkles" class="mt-0.5 size-3.5 shrink-0 text-primary" />
-                  <div class="min-w-0 flex-1 text-ui-sm font-medium text-foreground">{turn.text}</div>
-                </div>
+                <!-- The question, as the heading of its exchange. -->
+                <h3 class={['text-ui-sm font-semibold leading-snug text-foreground', ti > 0 && 'mt-6 border-t border-border/40 pt-5']}>{turn.text}</h3>
               {:else if turn.role === 'tool'}
-                <div class="mb-1.5 ml-[22px] flex flex-col gap-1">
-                  <div class="flex items-center gap-1.5 text-ui-2xs {turn.status === 'error' ? 'text-destructive' : 'text-muted-foreground'}">
-                    {#if turn.status === 'running'}<Icon name="sparkles" class="size-3 shrink-0 animate-pulse" />
+                <div class="mt-2.5 flex flex-col gap-1.5">
+                  <div class={['inline-flex items-center gap-1.5 text-ui-2xs', turn.status === 'error' ? 'text-destructive' : 'text-muted-foreground']}>
+                    {#if turn.status === 'running'}<Icon name="loader-2" class="size-3 shrink-0 animate-spin" />
                     {:else if turn.status === 'error'}<Icon name="x" class="size-3 shrink-0" />
                     {:else}<Icon name="check" class="size-3 shrink-0 text-success" />{/if}
                     <span class="truncate">{turn.label}</span>
                   </div>
                   {#if turn.result && turn.result.columns.length}
-                    <div class="overflow-hidden rounded-lg border border-border/50 bg-card/40">
+                    <div class="overflow-hidden rounded-lg bg-muted/40">
                       <div class="overflow-x-auto">
                         <table class="w-full border-collapse">
                           <thead>
-                            <tr class="bg-muted/25">
+                            <tr>
                               {#each turn.result.columns.slice(0, 5) as c}
-                                <th class="whitespace-nowrap border-b border-border/40 px-2.5 py-1 text-left text-ui-3xs font-medium uppercase tracking-[0.06em] text-muted-foreground">{c}</th>
+                                <th class="whitespace-nowrap px-3 pt-2 pb-1.5 text-left text-ui-3xs font-medium text-muted-foreground">{c}</th>
                               {/each}
                             </tr>
                           </thead>
                           <tbody>
-                            {#each turn.result.rows as row, ri}
-                              <tr class="transition-colors hover:bg-muted/15">
+                            {#each turn.result.rows as row}
+                              <tr class="border-t border-border/30">
                                 {#each row.slice(0, 5) as cell}
-                                  <td class="max-w-[220px] truncate {ri < turn.result.rows.length - 1 ? 'border-b border-border/15' : ''} px-2.5 py-1 font-mono text-ui-2xs {cell === null ? 'italic text-muted-foreground' : 'text-foreground/80'}">{cell === null ? 'NULL' : String(cell)}</td>
+                                  <td class={['max-w-[220px] truncate px-3 py-1.5 font-mono text-ui-2xs', cell === null ? 'text-muted-foreground' : 'text-foreground/85']}>{cell === null ? 'NULL' : String(cell)}</td>
                                 {/each}
                               </tr>
                             {/each}
@@ -831,26 +866,33 @@
                         </table>
                       </div>
                       {#if turn.result.total > turn.result.rows.length}
-                        <div class="border-t border-border/30 bg-muted/10 px-2.5 py-1 text-ui-3xs tabular-nums text-muted-foreground">showing {turn.result.rows.length} of {turn.result.total} rows</div>
+                        <div class="border-t border-border/30 px-3 py-1.5 text-ui-3xs tabular-nums text-muted-foreground">{turn.result.rows.length} of {turn.result.total.toLocaleString()} rows</div>
                       {/if}
                     </div>
                   {/if}
                 </div>
               {:else}
-                <div class="mb-2 ml-[22px]">
+                <div class="mt-2.5">
                   {#if turn.streaming && !turn.text}
-                    <div class="flex items-center gap-2 py-1 text-ui-xs text-muted-foreground"><Icon name="sparkles" class="size-3.5 shrink-0 animate-pulse" /> Thinking…</div>
+                    <div class="flex items-center gap-1.5 text-ui-xs text-muted-foreground">
+                      <span class="flex gap-0.5" aria-hidden="true">
+                        <span class="size-1 animate-pulse rounded-full bg-current"></span>
+                        <span class="size-1 animate-pulse rounded-full bg-current [animation-delay:150ms]"></span>
+                        <span class="size-1 animate-pulse rounded-full bg-current [animation-delay:300ms]"></span>
+                      </span>
+                      Thinking
+                    </div>
                   {:else}
-                    {#await import('./AiMarkdown.svelte') then { default: AiMarkdown }}<AiMarkdown content={turn.text} streaming={turn.streaming} debounceMs={120} class="text-ui-xs" />{/await}
+                    {#await import('./AiMarkdown.svelte') then { default: AiMarkdown }}<AiMarkdown content={turn.text} streaming={turn.streaming} debounceMs={120} class="text-ui-sm leading-relaxed" />{/await}
                   {/if}
                   {#if !turn.streaming && turn.sqls?.length}
-                    <div class="mt-1.5 flex flex-wrap gap-1.5">
+                    <div class="mt-2 flex flex-wrap gap-1.5">
                       {#each turn.sqls as s, i}
                         <button type="button" class={i === 0 ? askBtnPrimary : askBtn} onclick={() => void runAskSql(s)}>
-                          <Icon name="terminal" class="size-3 shrink-0" /> Run{turn.sqls.length > 1 ? ` #${i + 1}` : ''}
+                          <Icon name="play" class="size-3 shrink-0" /> Run{turn.sqls.length > 1 ? ` #${i + 1}` : ''}
                         </button>
                         <button type="button" class={askBtn} onclick={() => { const sql = s; open = false; onqueryselect(sql) }}>
-                          Insert
+                          <Icon name="code-2" class="size-3 shrink-0" /> Open in editor
                         </button>
                       {/each}
                     </div>
@@ -859,17 +901,12 @@
               {/if}
             {/each}
             {#if askError}
-              <div class="ml-[22px] rounded-md border border-destructive/30 bg-destructive/5 px-2.5 py-2 text-ui-xs text-destructive">{askError}</div>
+              <div class="mt-3 flex items-start gap-2 rounded-lg bg-destructive/8 px-3 py-2.5 text-ui-xs text-destructive">
+                <Icon name="alert-circle" class="mt-px size-3.5 shrink-0" />
+                <span class="min-w-0 flex-1">{askError}</span>
+                <button type="button" class="shrink-0 font-medium underline-offset-2 hover:underline" onclick={() => { open = false; onopensettings() }}>Settings</button>
+              </div>
             {/if}
-            <div class="ml-[22px] mt-2 flex flex-wrap items-center gap-1.5">
-              {#if askStreaming}
-                <button type="button" class={askBtn} onclick={stopAsk}><Icon name="square" class="size-3 shrink-0" /> Stop</button>
-              {:else if askTurns.length}
-                <button type="button" class={askBtn} onclick={() => navigator.clipboard?.writeText([...askTurns].reverse().find((t) => t.role === 'assistant')?.text ?? '')}><Icon name="copy" class="size-3 shrink-0" /> Copy</button>
-                <button type="button" class={askBtn} onclick={() => { const q = lastAskQuestion; open = false; onaskcontinue(q) }}><Icon name="bot" class="size-3 shrink-0" /> Continue in chat</button>
-              {/if}
-            </div>
-            <div class="ml-[22px] mt-1.5 text-ui-3xs text-muted-foreground">Type below and press ↵ to follow up</div>
           </div>
         {/if}
 
@@ -1246,6 +1283,26 @@
         {/if}
 
       </Command.List>
+
+      {#if page === 'ask'}
+        <!-- Action bar, like Raycast's: what's answering on the left, the
+             actions and their keys on the right. -->
+        <div class="flex h-10 shrink-0 items-center gap-2 border-t border-border/50 bg-muted/20 ps-4 pe-2 text-ui-2xs text-muted-foreground">
+          <Icon name="sparkles" class="size-3.5 shrink-0 text-primary" />
+          <span class="min-w-0 truncate">{askModel}</span>
+          {#if askStreaming}<span class="shrink-0 text-muted-foreground/70">· answering</span>{/if}
+          <span class="flex-1"></span>
+          {#if askStreaming}
+            <button type="button" class={askBar} onclick={stopAsk}><Icon name="square" class="size-3 shrink-0" />Stop</button>
+          {:else}
+            {#if lastAnswer}
+              <button type="button" class={askBar} onclick={() => void copyAnswer()}>{answerCopied ? 'Copied' : 'Copy answer'} <Kbd combo="Mod+Shift+C" /></button>
+            {/if}
+            <span class="h-4 w-px shrink-0 bg-border/60" aria-hidden="true"></span>
+            <button type="button" class={cn(askBar, 'text-foreground')} onclick={continueInChat}>Continue in chat <Kbd combo="Mod+Enter" /></button>
+          {/if}
+        </div>
+      {/if}
       <!-- The keys, said once at the bottom, as the palette's own legend. -->
       {#if page === 'theme'}
         <div class="flex h-10 shrink-0 items-center gap-4 border-t border-border/50 bg-muted/25 px-3.5 text-ui-2xs text-muted-foreground">

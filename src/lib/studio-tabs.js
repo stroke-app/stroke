@@ -1,4 +1,4 @@
-/** @typedef {'table' | 'sql' | 'ddl' | 'welcome' | 'ai' | 'schema' | 'orm' | 'security' | 'logs' | 'extensions' | 'extension-detail' | 'backup' | 'json' | 'charts' | 'dashboard' | 'erd' | 'reltree' | 'diagrams' | 'search' | 'notebook' | 'schema-timeline' | 'data-diff' | 'insights' | 'objects' | 'redis' | 'dynamodb' | 'docs' | 'license' | 'orm-schema' | 'map' | 'advisor' | 'golf' | 'terminal' | 'shortcuts'} StudioTabKind */
+/** @typedef {'table' | 'sql' | 'ddl' | 'welcome' | 'ai' | 'schema' | 'orm' | 'security' | 'logs' | 'extensions' | 'extension-detail' | 'backup' | 'json' | 'charts' | 'dashboard' | 'erd' | 'reltree' | 'diagrams' | 'search' | 'notebook' | 'schema-timeline' | 'data-diff' | 'insights' | 'objects' | 'redis' | 'dynamodb' | 'docs' | 'license' | 'orm-schema' | 'map' | 'advisor' | 'golf' | 'terminal' | 'shortcuts' | 'shares'} StudioTabKind */
 
 import { loadDefaultPageSize } from '$lib/table-query.js'
 
@@ -236,6 +236,7 @@ const SINGLETON_TAB_TITLES = {
   golf: 'VACUUM',
   terminal: 'Terminal',
   shortcuts: 'Keyboard shortcuts',
+  shares: 'Shared links',
 }
 
 /** @param {StudioTabKind} kind */
@@ -284,6 +285,8 @@ export const createDataDiffTab = () => createKindTab('data-diff')
 export const createTerminalTab = () => createKindTab('terminal')
 /** Every shortcut, searchable and remappable. */
 export const createShortcutsTab = () => createKindTab('shortcuts')
+/** Every share link this account made: views, expiry, revoke. */
+export const createSharesTab = () => createKindTab('shares')
 
 /** @type {(tabs: StudioTab[]) => StudioTab | null} */
 export const findAiTab = (tabs) => findTabByKind(tabs, 'ai')
@@ -334,6 +337,8 @@ export const findErdTab = (tabs) => findTabByKind(tabs, 'erd')
 export const findLicenseTab = (tabs) => findTabByKind(tabs, 'license')
 /** @type {(tabs: StudioTab[]) => StudioTab | null} */
 export const findShortcutsTab = (tabs) => findTabByKind(tabs, 'shortcuts')
+/** @type {(tabs: StudioTab[]) => StudioTab | null} */
+export const findSharesTab = (tabs) => findTabByKind(tabs, 'shares')
 /** @type {(tabs: StudioTab[]) => StudioTab | null} */
 export const findSearchTab = (tabs) => findTabByKind(tabs, 'search')
 /** @type {(tabs: StudioTab[]) => StudioTab | null} */

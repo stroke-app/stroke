@@ -1665,6 +1665,19 @@
     </DropdownMenu.Root>
 
     <!-- ⋯ More menu: structure / ∞ / export / delete -->
+    {#if onshare}
+      <!-- Share what's shown (the chart in Chart view) as an encrypted link. -->
+      <button
+        type="button"
+        class={cn(iconBtn, "shrink-0 @max-[30rem]/tb:hidden")}
+        title={dataViewMode === "chart" ? "Share this chart as a link" : "Share these rows as a link"}
+        aria-label={dataViewMode === "chart" ? "Share chart" : "Share rows"}
+        disabled={loading || total === 0 || tableViewMode === "structure"}
+        onclick={() => onshare(dataViewMode)}
+      >
+        <Icon name="share-2" class="size-3.5 shrink-0" />
+      </button>
+    {/if}
     <DropdownMenu.Root
       bind:open={moreMenuOpen}
       onOpenChange={(open) => {

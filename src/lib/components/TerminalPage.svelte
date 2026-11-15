@@ -13,6 +13,7 @@
    */
   import { onDestroy, onMount, untrack } from 'svelte'
   import { Terminal } from '@xterm/xterm'
+  import { WebglAddon } from '@xterm/addon-webgl'
   import { FitAddon } from '@xterm/addon-fit'
   import { WebLinksAddon } from '@xterm/addon-web-links'
   import { SearchAddon } from '@xterm/addon-search'
@@ -53,7 +54,8 @@
   import { suggest, keystrokesFor } from '$lib/terminal-complete.js'
   import { lineEditorFor, clearLineKeys, consoleKeystrokes, consoleInput, consoleClearCommand } from '$lib/terminal-keys.js'
   import { wantsTerminator } from '$lib/sql-terminator.js'
-  import ArrowDownToLine from '@lucide/svelte/icons/arrow-down-to-line'
+  import ArrowDown from '@lucide/svelte/icons/arrow-down'
+  import SquareTerminal from '@lucide/svelte/icons/square-terminal'
 
   let {
     active = false,
@@ -902,6 +904,44 @@
     try { fitAddon.fit() } catch { /* not laid out yet */ }
   }
 
+  // ── Renderer ───────────────────────────────────────────────────────────────
+  // WebGL while the size holds still, the DOM renderer while it changes.
+  // Only xterm's GPU renderer draws box-drawing characters itself; the DOM one
+  // uses the font's glyphs, which in most fonts stop short of the cell, so
+  // psql's table borders came out as dashed lines with gaps at every joint.
+  // But the WebGL canvas is stretched and blanked by the browser on a resize
+  // before xterm repaints it, which flickered while the dock was dragged. So
+  // a resize drops to the DOM renderer, and WebGL comes back once it settles.
+  /** @type {WebglAddon | null} */
+  let webgl = null
+  let webglTimer = 0
+  /** The GPU context was lost or never came up: stay on the DOM renderer. */
+  let webglBroken = false
+
+  function enableGpu() {
+    if (!term || webgl || webglBroken || !termEl || termEl.clientWidth === 0) return
+    try {
+      const addon = new WebglAddon()
+      addon.onContextLoss(() => { webglBroken = true; disableGpu() })
+      term.loadAddon(addon)
+      webgl = addon
+    } catch {
+      webglBroken = true
+    }
+  }
+
+  function disableGpu() {
+    if (!webgl) return
+    try { webgl.dispose() } catch { /* already gone with the context */ }
+    webgl = null
+  }
+
+  /** @param {number} [ms] */
+  function enableGpuSoon(ms = 150) {
+    clearTimeout(webglTimer)
+    webglTimer = window.setTimeout(enableGpu, ms)
+  }
+
   /**
    * Make xterm measure its cells again. It caches the character size from the
    * first measure; if the editor web font was still loading then, it measured
@@ -1220,11 +1260,8 @@
       findTotal = resultCount
     })
     term.open(termEl)
-    // DOM renderer everywhere. The WebGL canvas was stretched and blanked by the
-    // browser on every size change before xterm repainted it: while the dock was
-    // dragged that read as flicker, overlapping lines and blank bands. The DOM
-    // renderer reflows with the layout in the same frame, and a database shell
-    // never prints fast enough to need the GPU path.
+    // Renderer: see enableGpu. The resize observer below starts WebGL once the
+    // terminal has a size.
     term.attachCustomKeyEventHandler(handleKey)
     // psql's prompt marks (OSC 133, set in db/terminal.rs): A starts a prompt,
     // `A;k=s` a continuation one, B is where typing starts. Not on Windows:
@@ -1278,6 +1315,9 @@
     resizeObserver = new ResizeObserver(() => {
       cancelAnimationFrame(fitFrame)
       clearTimeout(fitTimer)
+      // Resizing on the DOM renderer, WebGL again once the size settles.
+      disableGpu()
+      enableGpuSoon()
       if (document.documentElement.hasAttribute('data-resizing')) {
         const since = performance.now() - lastFitAt
         if (since > 50) { lastFitAt = performance.now(); fitFrame = requestAnimationFrame(fit) }
@@ -1339,7 +1379,9 @@
     generation++
     cancelAnimationFrame(fitFrame)
     cancelAnimationFrame(suggestFrame)
+    clearTimeout(webglTimer)
     resizeObserver?.disconnect()
+    disableGpu()
     themeObserver?.disconnect()
     void endSession()
     term?.dispose()
@@ -1373,20 +1415,25 @@
        third of a short pane was chrome before any output. The docked
        terminal (⌘J) has the same strip: its actions used to float over the
        output, on top of the install notice's button. -->
-  <div class="studio-chrome flex h-7 shrink-0 items-center gap-2 border-b border-border/50 bg-panel ps-2.5 pe-1">
-    <span
-      class={['size-1.5 shrink-0 rounded-full', statusDot]}
-      title={statusLabel || undefined}
-      aria-label={statusLabel || undefined}
-      role={statusLabel ? 'status' : undefined}
-    ></span>
-    <span class="shrink-0 font-mono text-ui-2xs font-medium text-foreground">{client?.name || 'Terminal'}</span>
+  <div class="studio-chrome flex h-8 shrink-0 items-center gap-2 border-b border-border/40 bg-panel ps-2 pe-1">
+    <!-- Client: a glyph with the status dot on its corner, the name, the version. -->
+    <span class="relative flex size-5 shrink-0 items-center justify-center rounded-md bg-muted/70 text-muted-foreground">
+      <SquareTerminal class="size-3 shrink-0" />
+      <span
+        class={['absolute -right-0.5 -bottom-0.5 size-2 rounded-full ring-2 ring-panel', statusDot]}
+        title={statusLabel || undefined}
+        aria-label={statusLabel || undefined}
+        role={statusLabel ? 'status' : undefined}
+      ></span>
+    </span>
+    <span class="shrink-0 text-ui-xs font-medium text-foreground">{client?.name || 'Terminal'}</span>
     {#if shortVersion}
-      <span class="shrink-0 font-mono text-ui-3xs text-muted-foreground tabular-nums" title={client?.version ?? ''}>{shortVersion}</span>
+      <span class="shrink-0 rounded bg-muted/60 px-1 font-mono text-ui-3xs leading-4 text-muted-foreground tabular-nums" title={client?.version ?? ''}>{shortVersion}</span>
     {/if}
     {#if target}
+      <span class="h-3.5 w-px shrink-0 bg-border/70" aria-hidden="true"></span>
       <span class="min-w-0 truncate font-mono text-ui-2xs" title={target}>
-        <span class="text-muted-foreground/70">{targetParts.lead}</span><span class="text-muted-foreground">{targetParts.db}</span>
+        <span class="text-muted-foreground/60">{targetParts.lead}</span><span class="text-muted-foreground">{targetParts.db}</span>
       </span>
     {/if}
     <div class="flex-1"></div>
@@ -1404,7 +1451,7 @@
       {#if quickCommands.length}
         <button
           type="button"
-          class={['inline-flex size-6 items-center justify-center rounded-md transition-colors hover:bg-accent hover:text-foreground', showQuickBar ? 'text-foreground' : 'text-muted-foreground']}
+          class={['inline-flex size-7 items-center justify-center rounded-md transition-colors hover:bg-accent hover:text-foreground', showQuickBar ? 'text-foreground' : 'text-muted-foreground']}
           title={showQuickBar ? 'Hide common commands' : 'Show common commands'}
           aria-label="Common commands"
           aria-pressed={showQuickBar}
@@ -1415,7 +1462,7 @@
       {/if}
       <button
         type="button"
-        class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+        class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
         title="Clear scrollback"
         aria-label="Clear scrollback"
         disabled={phase !== 'running' && phase !== 'exited'}
@@ -1425,7 +1472,7 @@
       </button>
       <button
         type="button"
-        class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+        class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
         title="Restart {client?.name || 'the client'}"
         aria-label="Restart {client?.name || 'the client'}"
         disabled={!connection || phase === 'checking' || phase === 'starting'}
@@ -1436,7 +1483,7 @@
       {#if onnew}
         <button
           type="button"
-          class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           title="New terminal (Ctrl+Shift+`)"
           aria-label="New terminal"
           onclick={onnew}
@@ -1447,7 +1494,7 @@
       {#if onpopout}
         <button
           type="button"
-          class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           title="Move to a tab"
           aria-label="Move the terminal to a tab"
           onclick={onpopout}
@@ -1456,9 +1503,10 @@
         </button>
       {/if}
       {#if onclose}
+        <span class="mx-0.5 h-4 w-px shrink-0 bg-border/70" aria-hidden="true"></span>
         <button
           type="button"
-          class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           title="Hide ({comboTitle(docked ? 'Mod+J' : 'Mod+`')})"
           aria-label="Hide {client?.name || 'terminal'}"
           onclick={onclose}
@@ -1586,11 +1634,12 @@
     {#if scrolledUp && (phase === 'running' || phase === 'exited')}
       <button
         type="button"
-        class="absolute right-4 bottom-3 z-10 flex h-7 items-center gap-1.5 rounded-full border border-border/60 bg-popover px-3 text-ui-2xs text-muted-foreground elevate-2-rim transition-colors hover:text-foreground"
+        class="absolute right-3 bottom-2.5 z-10 flex h-6 items-center gap-1 rounded-md bg-muted px-2 text-ui-2xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        title="Scroll to the end"
         onclick={scrollToLatest}
       >
-        <ArrowDownToLine class="size-3.5 shrink-0" />
-        Jump to latest
+        <ArrowDown class="size-3 shrink-0" />
+        Latest
       </button>
     {/if}
 
