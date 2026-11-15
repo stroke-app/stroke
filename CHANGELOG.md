@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.15.3] - 2026-11-15
+
+### Changes
+- Restore into D1/libSQL settles foreign keys; libSQL/Turso gets backup and restore (#251)
+
+
 ## [2.15.2] - 2026-11-15
 
 ### Changes
