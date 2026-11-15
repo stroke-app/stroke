@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.9.3] - 2026-11-15
+
+### Changes
+- Borderless AI composer, theme contrast fixes, SF Pro on Mac (#189)
+
+
 ## [2.9.2] - 2026-11-15
 
 ### Changes
