@@ -295,9 +295,10 @@ function normalizeIconSet(/** @type {unknown} */ id) {
  * @type {Record<TableStyleId, TableStyleDef>}
  */
 export const TABLE_STYLES = {
+  // The default: a solid grid, so every cell sits in its own column.
+  lines:    { label: 'Lines',    description: 'Solid grid lines (classic)',        rows: true,  cols: true,  dash: null,   dots: false },
   // Faint row rules, no column rules: data reads as a calm list (T3-style).
   calm:     { label: 'Calm',     description: 'Faint row rules, no column lines',  rows: true,  cols: false, dash: null,   dots: false, soft: true },
-  lines:    { label: 'Lines',    description: 'Solid grid lines (classic)',        rows: true,  cols: true,  dash: null,   dots: false },
   double:   { label: 'Double',   description: 'Twin rules - a ledger/print feel',  rows: true,  cols: true,  dash: null,   dots: false, double: true },
   hairline: { label: 'Hairline', description: 'The finest dash - barely there',    rows: true,  cols: true,  dash: [1, 5], dots: false },
   none:     { label: 'None',     description: 'No rules at all - text only',       rows: false, cols: false, dash: null,   dots: false },
@@ -317,7 +318,7 @@ export const TABLE_STYLES = {
   columns:  { label: 'Columns',  description: 'Vertical rails only, open rows',    rows: false, cols: true,  dash: null,   dots: false },
 }
 /** @type {TableStyleId} */
-export const DEFAULT_TABLE_STYLE = 'calm'
+export const DEFAULT_TABLE_STYLE = 'lines'
 
 /**
  * Row spacing for the data grid, as a row height in CSS pixels at 100% zoom.
@@ -886,27 +887,29 @@ export function loadSettings() {
     // Set when the Claude move rewrites the font, so the new value is written
     // straight back. Left only in the cache, the next save from anything still
     // holding the old settings object put `mono` back after the marker was set.
-    let fontMigrated = false
+    let settingsMigrated = false
     if (!fontClaudeDefaultApplied()) {
       // Same rule for the next default: only the previous one (mono) moves.
-      if (font === 'mono') { font = DEFAULT_FONT; fontMigrated = true }
+      if (font === 'mono') { font = DEFAULT_FONT; settingsMigrated = true }
       markFontClaudeDefaultApplied()
     }
     if (!fontGeistDefaultApplied()) {
       // Back to Geist: both earlier defaults move, because an install that
       // skipped the Claude move (marker set, value still mono) is still on a
       // default nobody picked.
-      if (font === 'claude' || font === 'mono') { font = DEFAULT_FONT; fontMigrated = true }
+      if (font === 'claude' || font === 'mono') { font = DEFAULT_FONT; settingsMigrated = true }
       markFontGeistDefaultApplied()
     }
     const iconStyle = normalizeIconStyle(parsed.iconStyle)
     const iconSet = normalizeIconSet(parsed.iconSet)
-    // One-time move to the calm grid for anyone still on the old default.
+    // Lines is the default again. Calm was the default before, so an install
+    // on Calm moves back once; anyone who picks Calm afterwards keeps it.
     let tableStyle = normalizeTableStyle(parsed.tableStyle)
     try {
-      if (localStorage.getItem('stroke:table-style-calm-v1') !== '1') {
-        if (tableStyle === 'lines') tableStyle = 'calm'
+      if (localStorage.getItem('stroke:table-style-lines-v2') !== '1') {
+        if (tableStyle === 'calm') { tableStyle = 'lines'; settingsMigrated = true }
         localStorage.setItem('stroke:table-style-calm-v1', '1')
+        localStorage.setItem('stroke:table-style-lines-v2', '1')
       }
     } catch {}
     const jsonTheme = normalizeJsonTheme(parsed.jsonTheme)
@@ -974,7 +977,8 @@ export function loadSettings() {
     const agentWebAccess = parsed.agentWebAccess === true
     const tableTextAlign = TABLE_ALIGN_IDS.includes(parsed.tableTextAlign) ? parsed.tableTextAlign : DEFAULT_TABLE_ALIGN
     _settingsCache = { theme, zoom, font, iconStyle, iconSet, tableStyle, jsonTheme, editorTheme, mcpAutoStart, launchAtLogin, autoUpdate, autoReconnectOnStartup, previewDmlBeforeApply, defaultDataView, paginationMode, maxQueryHistory, connectTimeoutMs, socketTimeoutMs, maxAllowedPacket, sessionTimezone, vimMode, cmdkAiEnabled, liveModeEnabled, sidebarStyle, aiInTab, lazyWideColumns, nullSortOrder, agentChatFontSize, agentCodeFontSize, agentThinkingStyle, agentShowQueryCards, agentWebAccess, tableTextAlign, telemetry, jsonWordWrap, nativeScroll, rowSpacing, motion, zebraRows, showRowNumbers, showMenuBar, numberGrouping, imagePreview, openUrlsOnClick, highlightActiveRow, fkAutoExpandJson, gridFontSize, autoSaveQueries, streamResults, sqlUndo, sidebarComments, sidebarRememberGroups, sqlFormat, sqlEditor }
-    if (fontMigrated) {
+    // A migrated value is saved at once, or the next launch reads the old one.
+    if (settingsMigrated) {
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify(_settingsCache)) } catch {}
     }
     return { ..._settingsCache }
