@@ -1,4 +1,5 @@
 <script>
+  import Kbd from './Kbd.svelte'
   // Manage workspaces: search, create, and per row switch / edit / delete.
   // Rows show the workspace's mark, name and how many connections it holds.
   import * as Dialog from '$lib/components/ui/dialog/index.js'
@@ -70,8 +71,9 @@
             aria-label="Search workspaces"
             spellcheck="false"
             autocomplete="off"
-            class="field-surface h-8 w-full rounded-lg bg-input/30 pl-8 pr-2 text-ui-sm text-foreground placeholder:text-muted-foreground"
+            class="peer field-surface h-8 w-full rounded-lg bg-input/30 pl-8 pr-2 text-ui-sm text-foreground placeholder:text-muted-foreground"
           />
+          <Kbd combo="/" class="pointer-events-none hidden peer-placeholder-shown:inline-flex peer-focus:hidden absolute top-1/2 right-2 -translate-y-1/2" aria-hidden="true" />
         </div>
         <Button size="sm" class="h-8 rounded-lg" onclick={() => edit(null)}><Plus /> Create</Button>
       </div>

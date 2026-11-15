@@ -1,4 +1,5 @@
 <script>
+  import Kbd from './Kbd.svelte'
   import { toggleLightDark, isCurrentThemeDark } from '$lib/stores/settings.js'
   import DbIcon from './DbIcon.svelte'
   import { workspaces, activeWorkspaceId, inWorkspace } from '$lib/stores/workspaces.js'
@@ -2296,11 +2297,12 @@
                 if (first) { e.preventDefault(); kbdNav = true; focusRow(first) }
               }
             }}
-            class="no-field-frame h-8 w-full min-w-0 rounded-md bg-sidebar-accent/35 pl-[34px] pr-7 text-ui-sm text-foreground outline-none transition-colors duration-150 placeholder:text-muted-foreground hover:bg-sidebar-accent/50 focus-visible:bg-sidebar-accent/70 disabled:cursor-not-allowed disabled:opacity-40 [&::-webkit-search-cancel-button]:appearance-none"
+            class="peer no-field-frame h-8 w-full min-w-0 rounded-md bg-sidebar-accent/35 pl-[34px] pr-7 text-ui-sm text-foreground outline-none transition-colors duration-150 placeholder:text-muted-foreground hover:bg-sidebar-accent/50 focus-visible:bg-sidebar-accent/70 disabled:cursor-not-allowed disabled:opacity-40 [&::-webkit-search-cancel-button]:appearance-none"
             aria-label="Filter {activeTabLabel.toLowerCase()}"
             aria-describedby="sidebar-filter-hint"
             data-sidebar-filter
           />
+          <Kbd combo="/" class="pointer-events-none hidden peer-placeholder-shown:inline-flex peer-focus:hidden absolute top-1/2 right-2 -translate-y-1/2" aria-hidden="true" />
           {#if localFilter}
             <button
               type="button"
