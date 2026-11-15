@@ -14,6 +14,7 @@
   import { installPlatformClass } from '$lib/platform.js'
   import { installClipboardBridge } from '$lib/clipboard.js'
   import { installShiftWheel } from '$lib/shift-wheel.js'
+  import { installSlashFocus } from '$lib/slash-focus.js'
 
   onMount(async () => {
     installPlatformClass()
@@ -21,6 +22,8 @@
     installZoomShortcuts()
     // Shift + wheel scrolls sideways in every scroll area, whatever the webview does.
     installShiftWheel()
+    // `/` focuses the search field in view.
+    installSlashFocus()
     // Route clipboard through Tauri's native plugin so copy works in the WKWebview
     // (navigator.clipboard is denied there, incl. Monaco's internal copy).
     void installClipboardBridge()

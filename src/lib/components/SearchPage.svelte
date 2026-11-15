@@ -239,6 +239,8 @@
       <input
         bind:this={inputEl}
         type="text"
+        data-slash-focus="25"
+        aria-keyshortcuts="/"
         placeholder={useRegex ? 'Regex pattern…' : `Search ${schema}…`}
         class="no-focus-ring min-w-0 flex-1 bg-transparent text-ui-xs outline-none placeholder:text-muted-foreground"
         bind:value={query}
