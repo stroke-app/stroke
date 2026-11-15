@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.15.4] - 2026-11-15
+
+### Changes
+- Theme picker shows its shortcut (⌘⌥T) where you find it (#252)
+
+
 ## [2.15.3] - 2026-11-15
 
 ### Changes
