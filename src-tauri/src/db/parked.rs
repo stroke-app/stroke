@@ -3,18 +3,18 @@
 //! database costs nothing. Only the pool handle moves (it is an Arc inside),
 //! so this never touches the network.
 
-use super::connection::{close_in_background, DbState};
-use tauri::State;
+use super::connection::{close_in_background, Db};
 
 /// More than this many set-aside pools and the oldest is closed.
-const MAX_PARKED: usize = 6;
+const MAX_PARKED: usize = 8;
 
 /// Set the open connection aside under `key`. Nothing open: nothing to do.
 #[tauri::command]
-pub fn park_connection(state: State<'_, DbState>, key: String) -> Result<(), String> {
+pub fn park_connection(state: Db<'_>, key: String) -> Result<(), String> {
     let Some(conn) = state.conn.lock().map_err(|e| e.to_string())?.take() else {
         return Ok(());
     };
+    *state.active_key.lock().map_err(|e| e.to_string())? = None;
     let mut parked = state.parked.lock().map_err(|e| e.to_string())?;
     parked.retain(|(k, _)| k != &key);
     parked.push((key, conn));
@@ -28,13 +28,14 @@ pub fn park_connection(state: State<'_, DbState>, key: String) -> Result<(), Str
 /// Make the pool set aside under `key` the open one. False when there is none
 /// (the page then connects as usual).
 #[tauri::command]
-pub fn resume_connection(state: State<'_, DbState>, key: String) -> Result<bool, String> {
+pub fn resume_connection(state: Db<'_>, key: String) -> Result<bool, String> {
     let found = {
         let mut parked = state.parked.lock().map_err(|e| e.to_string())?;
         parked.iter().position(|(k, _)| k == &key).map(|i| parked.remove(i).1)
     };
     let Some(conn) = found else { return Ok(false) };
     let previous = state.conn.lock().map_err(|e| e.to_string())?.replace(conn);
+    *state.active_key.lock().map_err(|e| e.to_string())? = Some(key);
     if let Some(prev) = previous {
         close_in_background(prev);
     }
@@ -46,7 +47,7 @@ pub fn resume_connection(state: State<'_, DbState>, key: String) -> Result<bool,
 /// at the old server or login), or all of them (Labs turned off).
 #[tauri::command]
 pub fn close_parked(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     key: Option<String>,
     connection: Option<String>,
 ) -> Result<(), String> {
@@ -66,6 +67,14 @@ pub fn close_parked(
 
 /// Which connections are set aside, oldest first.
 #[tauri::command]
-pub fn parked_connections(state: State<'_, DbState>) -> Result<Vec<String>, String> {
+pub fn parked_connections(state: Db<'_>) -> Result<Vec<String>, String> {
     Ok(state.parked.lock().map_err(|e| e.to_string())?.iter().map(|(k, _)| k.clone()).collect())
+}
+
+/// The page's key for the pool now in front, after it connects fresh (a
+/// resume sets it itself). Routed calls compare against it.
+#[tauri::command]
+pub fn set_active_conn_key(state: Db<'_>, key: Option<String>) -> Result<(), String> {
+    *state.active_key.lock().map_err(|e| e.to_string())? = key.filter(|k| !k.is_empty());
+    Ok(())
 }

@@ -13,6 +13,7 @@
 //!   than failing the whole command. The dashboard must never hard-fail because,
 //!   e.g., `pg_stat_replication` requires a privileged role.
 
+use crate::db::connection::Db;
 use super::connection::{require_conn, ActiveConnection, ClickhouseConfig, DbState};
 use super::query::SqlResult;
 use serde::Serialize;
@@ -265,7 +266,7 @@ pub struct InstanceVersion {
 }
 
 /// Cheap engine + version lookup so the dashboard header can render immediately.
-pub async fn instance_version(state: State<'_, DbState>) -> Result<InstanceVersion, String> {
+pub async fn instance_version(state: Db<'_>) -> Result<InstanceVersion, String> {
     match require_conn(&state)? {
         ActiveConnection::Postgres(pool) => {
             let version = sqlx::query("SHOW server_version")
@@ -369,7 +370,7 @@ fn usage_pct(total: i64, max: i64) -> f64 {
     }
 }
 
-pub async fn instance_activity(state: State<'_, DbState>) -> Result<InstanceActivity, String> {
+pub async fn instance_activity(state: Db<'_>) -> Result<InstanceActivity, String> {
     match require_conn(&state)? {
         ActiveConnection::Postgres(pool) => Ok(pg_activity(&pool).await),
         ActiveConnection::Mysql(pool) => Ok(mysql_activity(&pool).await),
@@ -566,7 +567,7 @@ pub struct InstanceState {
     pub prepared_transactions: Vec<Value>,
 }
 
-pub async fn instance_state(state: State<'_, DbState>) -> Result<InstanceState, String> {
+pub async fn instance_state(state: Db<'_>) -> Result<InstanceState, String> {
     match require_conn(&state)? {
         ActiveConnection::Postgres(pool) => {
             let sessions = pg_query_objects(
@@ -692,7 +693,7 @@ pub struct ConfigSetting {
     pub editable: bool,
 }
 
-pub async fn instance_config(state: State<'_, DbState>) -> Result<Vec<ConfigSetting>, String> {
+pub async fn instance_config(state: Db<'_>) -> Result<Vec<ConfigSetting>, String> {
     match require_conn(&state)? {
         ActiveConnection::Postgres(pool) => {
             let rows = sqlx::query(
@@ -863,7 +864,7 @@ fn sql_literal(value: &str) -> String {
 /// hold `pg_write_all_settings`) - the server's own error is passed straight
 /// through when it is not.
 pub async fn instance_set_config(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     name: String,
     value: Option<String>,
 ) -> Result<SetConfigResult, String> {
@@ -983,7 +984,7 @@ pub struct InstanceReplication {
     pub slots: Vec<Value>,
 }
 
-pub async fn instance_replication(state: State<'_, DbState>) -> Result<InstanceReplication, String> {
+pub async fn instance_replication(state: Db<'_>) -> Result<InstanceReplication, String> {
     match require_conn(&state)? {
         ActiveConnection::Postgres(pool) => {
             let stats = pg_query_objects(

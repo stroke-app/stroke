@@ -11,6 +11,7 @@
 //! Postgres routine's argument list for DROP is read back from the catalog
 //! rather than taken from the caller.
 
+use crate::db::connection::Db;
 use serde::Serialize;
 use serde_json::Value;
 use sqlx::{MySqlPool, PgPool, Row, SqlitePool};
@@ -232,7 +233,7 @@ fn trigger_row(name: String, table: String, detail: String, comment: Option<Stri
 
 // ── Listing ───────────────────────────────────────────────────────────────────
 
-pub async fn list_db_objects(state: State<'_, DbState>, schema: String) -> Result<ObjectListing, String> {
+pub async fn list_db_objects(state: Db<'_>, schema: String) -> Result<ObjectListing, String> {
     let conn = require_conn(&state)?;
     let kinds: Vec<String> = kinds_for(&conn).iter().map(|k| k.to_string()).collect();
     let cascade = matches!(conn, ActiveConnection::Postgres(_));
@@ -654,7 +655,7 @@ async fn list_clickhouse(cfg: &super::connection::ClickhouseConfig) -> Result<Ve
 /// The object as a statement that recreates it: CREATE OR REPLACE where the
 /// engine has it, a DROP ... IF EXISTS in front where it does not.
 pub async fn get_object_definition(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     kind: String,
     schema: String,
     name: String,
@@ -1041,7 +1042,7 @@ async fn def_clickhouse(cfg: &super::connection::ClickhouseConfig, kind: &str, d
 /// Drop one object. Returns the statement that ran, for the log.
 #[allow(clippy::too_many_arguments)]
 pub async fn drop_object(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     kind: String,
     schema: String,
     name: String,
@@ -1155,7 +1156,7 @@ pub async fn drop_object(
 
 /// Table and view comments for one schema, in one query. Engines that keep
 /// none (SQLite and its relatives) return an empty list.
-pub async fn list_object_comments(state: State<'_, DbState>, schema: String) -> Result<Vec<ObjectComment>, String> {
+pub async fn list_object_comments(state: Db<'_>, schema: String) -> Result<Vec<ObjectComment>, String> {
     let pairs = |r: SqlResult| -> Vec<ObjectComment> {
         r.rows
             .iter()

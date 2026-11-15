@@ -1,3 +1,4 @@
+use crate::db::connection::Db;
 use super::connection::{require_conn, require_pool, ActiveConnection, DbState};
 use super::schema::validate_ident;
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
@@ -1958,7 +1959,7 @@ pub(crate) fn validate_raw_filters(conn: &ActiveConnection, filters: Option<&[Ro
 }
 
 pub async fn get_table_rows(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     table: String,
     limit: i64,
@@ -2580,7 +2581,7 @@ static SUPERSEDED: std::sync::LazyLock<Superseded> = std::sync::LazyLock::new(||
 /// (the WHERE clause bounds the scan). Non-Postgres engines return -1 - their
 /// `get_table_rows` already carries a real total, so the UI keeps that.
 pub async fn count_table_rows(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     table: String,
     search: Option<String>,
@@ -2689,7 +2690,7 @@ pub async fn count_table_rows(
 }
 
 pub async fn update_table_cell(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     table: String,
     primary_key: HashMap<String, Value>,
@@ -2908,7 +2909,7 @@ pub(crate) async fn pg_insert_meta(
 }
 
 pub async fn insert_table_row(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     table: String,
     values: HashMap<String, Value>,
@@ -3034,7 +3035,7 @@ pub async fn insert_table_row(
 }
 
 pub async fn delete_table_row(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     table: String,
     primary_key: HashMap<String, Value>,
@@ -3047,7 +3048,7 @@ pub async fn delete_table_row(
 }
 
 pub async fn delete_table_rows(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     table: String,
     primary_keys: Vec<HashMap<String, Value>>,
@@ -3263,7 +3264,7 @@ pub(crate) fn describe_pk(pk_columns: &[String], primary_key: &HashMap<String, V
 /// Order is updates, deletes, then the insert, matching the review the user
 /// confirmed.
 pub async fn apply_table_changes(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     table: String,
     updates: Vec<RowUpdate>,
@@ -3514,7 +3515,7 @@ pub(crate) fn is_row_returning_sql(sql: &str) -> bool {
 
 /// Execute a single DDL statement that must run outside a transaction (e.g.
 /// CREATE DATABASE), directly on the connection, on any engine that has DDL.
-pub async fn execute_ddl(state: State<'_, DbState>, sql: String) -> Result<(), String> {
+pub async fn execute_ddl(state: Db<'_>, sql: String) -> Result<(), String> {
     let sql_str = sql.trim();
     if sql_str.is_empty() {
         return Err("Statement is empty".into());
@@ -3523,7 +3524,7 @@ pub async fn execute_ddl(state: State<'_, DbState>, sql: String) -> Result<(), S
 }
 
 pub async fn execute_sql(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     sql: String,
     query_id: Option<String>,
 ) -> Result<SqlResult, String> {
@@ -4479,7 +4480,7 @@ async fn run_sql_multi_pg(
 }
 
 pub async fn execute_sql_multi(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     sql: String,
     query_id: Option<String>,
 ) -> Result<Vec<SqlResult>, String> {
@@ -4594,7 +4595,7 @@ impl StatementOutcome {
 /// A single Postgres statement streams through `sink` (into the result store,
 /// in store mode). A script's results come back in the reply.
 pub async fn execute_sql_script(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     sql: String,
     query_id: Option<String>,
     sink: Option<&mut RowSink>,
@@ -5146,7 +5147,7 @@ const CELL_FETCH_HARD_MAX: i64 = 64 * 1024 * 1024;
 const CELL_FETCH_DEFAULT_MAX: i64 = 32 * 1024 * 1024;
 
 pub async fn fetch_cell_value(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     table: String,
     primary_key: HashMap<String, Value>,
@@ -5260,7 +5261,7 @@ pub async fn fetch_cell_value(
 }
 
 pub async fn get_column_stats(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     table: String,
     column: String,
@@ -5354,7 +5355,7 @@ pub async fn get_column_stats(
 /// MIN/MAX/DISTINCT on the column type (e.g. JSON/BLOB), so the panel still shows
 /// total + null counts instead of erroring.
 async fn column_stats_generic(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     table: String,
     column: String,
@@ -5457,7 +5458,7 @@ async fn dispatch_stats_sql(conn: &ActiveConnection, sql: &str) -> Result<SqlRes
 /// connection. HTTP-based engines (D1, LibSQL, Clickhouse) are stateless so we
 /// return Ok immediately; a real request would validate their tokens but also
 /// incur network cost every 30 s.
-pub async fn ping_connection(state: State<'_, DbState>) -> Result<(), String> {
+pub async fn ping_connection(state: Db<'_>) -> Result<(), String> {
     let conn = require_conn(&state)?;
     match conn {
         // Remote pools: touch every idle connection, not just one (see keepalive_idle).
@@ -5940,7 +5941,7 @@ fn search_index_name(table: &str, column: &str) -> String {
 }
 
 pub async fn search_index_status(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     table: String,
 ) -> Result<SearchIndexStatus, String> {
@@ -5987,7 +5988,7 @@ pub async fn search_index_status(
 /// Create the missing trigram indexes. CONCURRENTLY, so the table stays
 /// readable and writable while they build; returns the indexes created.
 pub async fn create_search_index(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     table: String,
 ) -> Result<Vec<String>, String> {

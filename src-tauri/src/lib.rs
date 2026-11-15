@@ -452,6 +452,7 @@ pub fn run() {
     let db_state = DbState {
         conn: Arc::clone(&db_conn),
         parked: Arc::new(Mutex::new(Vec::new())),
+        active_key: Arc::new(Mutex::new(None)),
         cancels: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
     };
     let db_conn_for_setup = Arc::clone(&db_conn);
@@ -912,6 +913,7 @@ pub fn run() {
             quit::cancel_quit,
             quit::set_quit_guard,
             db::parked::park_connection,
+            db::parked::set_active_conn_key,
             db::parked::resume_connection,
             db::parked::close_parked,
             db::parked::parked_connections,

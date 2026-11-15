@@ -1,3 +1,4 @@
+use crate::db::connection::Db;
 use super::connection::{require_conn, ActiveConnection, AnyConnectionConfig, DbState};
 use serde::Serialize;
 use sqlx::{MySqlPool, PgPool, Row};
@@ -219,7 +220,7 @@ pub struct TableRowCount {
 /// `list_tables` already returns exact counts inline (SQLite/D1/libSQL/…)
 /// never report -1, so they return an empty list here.
 pub async fn table_row_counts(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     tables: Vec<String>,
 ) -> Result<Vec<TableRowCount>, String> {
@@ -1138,7 +1139,7 @@ async fn list_sequences_pg(pool: &PgPool, schema: &str) -> Result<Vec<SequenceIn
 
 // ── Public dispatch ───────────────────────────────────────────────────────────
 
-pub async fn list_schemas(state: State<'_, DbState>) -> Result<Vec<String>, String> {
+pub async fn list_schemas(state: Db<'_>) -> Result<Vec<String>, String> {
     match require_conn(&state)? {
         ActiveConnection::Postgres(pool) => list_schemas_pg(&pool).await,
         ActiveConnection::Mysql(pool) => list_schemas_mysql(&pool).await,
@@ -1153,7 +1154,7 @@ pub async fn list_schemas(state: State<'_, DbState>) -> Result<Vec<String>, Stri
     }
 }
 
-pub async fn list_tables(state: State<'_, DbState>, schema: String) -> Result<Vec<TableInfo>, String> {
+pub async fn list_tables(state: Db<'_>, schema: String) -> Result<Vec<TableInfo>, String> {
     match require_conn(&state)? {
         ActiveConnection::Postgres(pool) => {
             validate_ident(&schema)?;
@@ -1197,7 +1198,7 @@ pub async fn list_tables(state: State<'_, DbState>, schema: String) -> Result<Ve
 /// clustering keys, DynamoDB partition and sort keys): the tree shows them under
 /// Keys, not Indexes.
 pub async fn list_indexes_for(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     table: Option<String>,
 ) -> Result<Vec<IndexInfo>, String> {
@@ -1295,7 +1296,7 @@ async fn list_functions_mysql(pool: &sqlx::MySqlPool, schema: &str) -> Result<Ve
         .collect()
 }
 
-pub async fn list_functions(state: State<'_, DbState>, schema: String) -> Result<Vec<FunctionInfo>, String> {
+pub async fn list_functions(state: Db<'_>, schema: String) -> Result<Vec<FunctionInfo>, String> {
     match require_conn(&state)? {
         ActiveConnection::Postgres(pool) => {
             validate_ident(&schema)?;
@@ -1309,7 +1310,7 @@ pub async fn list_functions(state: State<'_, DbState>, schema: String) -> Result
     }
 }
 
-pub async fn list_enums(state: State<'_, DbState>, schema: String) -> Result<Vec<EnumInfo>, String> {
+pub async fn list_enums(state: Db<'_>, schema: String) -> Result<Vec<EnumInfo>, String> {
     match require_conn(&state)? {
         ActiveConnection::Postgres(pool) => {
             validate_ident(&schema)?;
@@ -1319,7 +1320,7 @@ pub async fn list_enums(state: State<'_, DbState>, schema: String) -> Result<Vec
     }
 }
 
-pub async fn list_triggers(state: State<'_, DbState>, schema: String) -> Result<Vec<TriggerInfo>, String> {
+pub async fn list_triggers(state: Db<'_>, schema: String) -> Result<Vec<TriggerInfo>, String> {
     match require_conn(&state)? {
         ActiveConnection::Postgres(pool) => {
             validate_ident(&schema)?;
@@ -1334,7 +1335,7 @@ pub async fn list_triggers(state: State<'_, DbState>, schema: String) -> Result<
     }
 }
 
-pub async fn list_sequences(state: State<'_, DbState>, schema: String) -> Result<Vec<SequenceInfo>, String> {
+pub async fn list_sequences(state: Db<'_>, schema: String) -> Result<Vec<SequenceInfo>, String> {
     match require_conn(&state)? {
         ActiveConnection::Postgres(pool) => {
             validate_ident(&schema)?;
@@ -1349,19 +1350,19 @@ pub async fn list_sequences(state: State<'_, DbState>, schema: String) -> Result
 
 // Both spell the statement per engine in `admin`; this used to know Postgres
 // and SQLite only and told every other engine it was unsupported.
-pub async fn truncate_table(state: State<'_, DbState>, schema: String, table: String) -> Result<(), String> {
+pub async fn truncate_table(state: Db<'_>, schema: String, table: String) -> Result<(), String> {
     let conn = require_conn(&state)?;
     super::admin::truncate_table(&conn, &schema, &table).await
 }
 
-pub async fn drop_table(state: State<'_, DbState>, schema: String, table: String, cascade: bool, kind: Option<String>) -> Result<(), String> {
+pub async fn drop_table(state: Db<'_>, schema: String, table: String, cascade: bool, kind: Option<String>) -> Result<(), String> {
     let kind = super::admin::ObjectKind::parse(kind.as_deref())?;
     let conn = require_conn(&state)?;
     super::admin::drop_object(&conn, &schema, &table, kind, cascade).await
 }
 
 pub async fn get_table_column_structure(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     table: String,
 ) -> Result<Vec<ColumnStructureRow>, String> {
@@ -1720,7 +1721,7 @@ async fn get_column_structure_pg(
 /// MongoDB, CouchDB, Firestore, DynamoDB and Redis have no schema-wide column
 /// catalog: they answer empty at once, and the caller reads per table.
 pub async fn get_schema_column_structure(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
 ) -> Result<Vec<TableColumnStructure>, String> {
     match require_conn(&state)? {
@@ -2502,7 +2503,7 @@ async fn get_incoming_fks_mssql(handle: &super::connection::MssqlHandle, schema:
 }
 
 pub async fn get_incoming_foreign_keys(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     table: String,
 ) -> Result<Vec<IncomingForeignKey>, String> {
@@ -2677,7 +2678,7 @@ async fn get_ddl_libsql(
 }
 
 pub async fn get_table_ddl(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     table: String,
 ) -> Result<String, String> {
