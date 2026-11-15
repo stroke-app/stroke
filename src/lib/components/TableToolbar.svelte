@@ -1444,77 +1444,83 @@
           <!-- Go to page: a number field over a small grid of nearby pages,
                instead of a viewport-tall list of single numbers you had to
                scroll through with arrow buttons. -->
-          <Popover bind:open={pageMenuOpen}>
-            <PopoverTrigger
-              class={cn(pageSelectTrigger, "inline-flex items-center")}
-              title="Go to page"
-              aria-label="Go to page {page}"
-              disabled={loading || total === 0 || (!counting && pageCount <= 1)}
+          <!-- One pager: previous, "page / pages" (click to jump), next. The
+               page select and a separate "of N" said the same thing twice. -->
+          <div class="flex shrink-0 items-center">
+            <button
+              type="button"
+              class={iconBtn}
+              disabled={!canPrev || loading}
+              onclick={onprev}
+              aria-label="Previous page"
             >
-              {page}
-              <Icon name="chevron-down" class="size-3.5 shrink-0 opacity-60" />
-            </PopoverTrigger>
-            <PopoverContent align="end" sideOffset={6} class="w-56 p-2">
-              <form
-                class="flex items-center gap-2"
-                onsubmit={(e) => {
-                  e.preventDefault();
-                  const n = Math.round(Number(pageJump));
-                  if (!Number.isFinite(n) || n < 1) return;
-                  const target = counting ? n : Math.min(n, pageCount);
-                  if (target !== page) onpagechange(target);
-                  pageMenuOpen = false;
-                }}
+              <Icon name="chevron-left" class="size-3.5 shrink-0" />
+            </button>
+            <Popover bind:open={pageMenuOpen}>
+              <PopoverTrigger
+                class="inline-flex h-7 min-w-[4.5ch] items-center justify-center rounded-md px-1.5 text-ui-xs tabular-nums text-foreground transition-colors hover:bg-accent disabled:text-muted-foreground disabled:hover:bg-transparent data-[state=open]:bg-accent"
+                title="Go to page"
+                aria-label="Page {page}{counting ? '' : ` of ${pageCount}`}, go to page"
+                disabled={loading || total === 0 || (!counting && pageCount <= 1)}
               >
-                <input
-                  bind:value={pageJump}
-                  inputmode="numeric"
-                  placeholder="Page"
-                  aria-label="Page number"
-                  class="field-surface h-7 min-w-0 flex-1 px-2 font-mono text-ui-sm tabular-nums shadow-none outline-none placeholder:font-sans placeholder:text-muted-foreground"
-                  use:autofocusSelect
-                />
-                <span class="shrink-0 text-ui-xs tabular-nums text-muted-foreground">{#if counting}counting…{:else}of {pageCount.toLocaleString()}{/if}</span>
-              </form>
-              <div class="mt-2 grid grid-cols-5 gap-1">
-                {#each pageGrid as p (p)}
-                  <button
-                    type="button"
-                    aria-current={p === page ? "page" : undefined}
-                    class={cn(
-                      "h-7 rounded-md font-mono text-ui-xs tabular-nums transition-colors",
-                      p === page ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
-                    )}
-                    onclick={() => { if (p !== page) onpagechange(p); pageMenuOpen = false; }}
-                  >{p.toLocaleString()}</button>
-                {/each}
-              </div>
-            </PopoverContent>
-          </Popover>
-
-          <span
-            class={cn("min-w-[6ch] shrink-0 text-ui-xs text-muted-foreground tabular-nums @max-[31.25rem]/tb:hidden", hideAt(10))}
-            title={counting ? "Counting rows…" : `${pageCount.toLocaleString("en-US")} pages`}
-          >of {#if counting}<Icon name="loader-2" class="inline size-3 shrink-0 animate-spin align-[-2px]" aria-label="Counting rows" />{:else}{formatCompactCount(pageCount)}{/if}</span>
-
-          <button
-            type="button"
-            class={iconBtn}
-            disabled={!canPrev || loading}
-            onclick={onprev}
-            aria-label="Previous page"
-          >
-            <Icon name="chevron-left" class="size-3.5 shrink-0" />
-          </button>
-          <button
-            type="button"
-            class={iconBtn}
-            disabled={!canNext || loading}
-            onclick={onnext}
-            aria-label="Next page"
-          >
-            <Icon name="chevron-right" class="size-3.5 shrink-0" />
-          </button>
+                {page.toLocaleString()}<span class="px-0.5 text-muted-foreground">/</span>{#if counting}<Icon name="loader-2" class="inline size-3 shrink-0 animate-spin text-muted-foreground" aria-label="Counting rows" />{:else}<span class="text-muted-foreground">{formatCompactCount(pageCount)}</span>{/if}
+              </PopoverTrigger>
+              <PopoverContent align="end" sideOffset={6} class="w-52 p-1.5">
+                <form
+                  class="flex items-center gap-1.5 px-0.5 pt-0.5"
+                  onsubmit={(e) => {
+                    e.preventDefault();
+                    const n = Math.round(Number(pageJump));
+                    if (!Number.isFinite(n) || n < 1) return;
+                    const target = counting ? n : Math.min(n, pageCount);
+                    if (target !== page) onpagechange(target);
+                    pageMenuOpen = false;
+                  }}
+                >
+                  <label class="flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-lg bg-muted/60 px-2.5 text-ui-xs text-muted-foreground focus-within:ring-1 focus-within:ring-ring/60">
+                    Page
+                    <input
+                      bind:value={pageJump}
+                      inputmode="numeric"
+                      aria-label="Page number"
+                      class="no-field-frame min-w-0 flex-1 border-0 bg-transparent p-0 text-ui-sm font-medium tabular-nums text-foreground outline-none"
+                      use:autofocusSelect
+                    />
+                    <span class="shrink-0 tabular-nums">{#if counting}…{:else}of {pageCount.toLocaleString()}{/if}</span>
+                  </label>
+                </form>
+                <div class="mt-1.5 grid grid-cols-5 gap-0.5">
+                  {#each pageGrid as p (p)}
+                    <button
+                      type="button"
+                      aria-current={p === page ? "page" : undefined}
+                      class={cn(
+                        "h-7 rounded-md text-ui-xs tabular-nums transition-colors",
+                        p === page ? "bg-primary/12 font-medium text-primary" : "text-muted-foreground hover:bg-accent hover:text-foreground",
+                      )}
+                      onclick={() => { if (p !== page) onpagechange(p); pageMenuOpen = false; }}
+                    >{p.toLocaleString()}</button>
+                  {/each}
+                </div>
+                {#if !counting && pageCount > pageGrid.length}
+                  <div class="mt-1 flex items-center justify-between gap-1 border-t border-border/50 px-0.5 pt-1.5">
+                    <button type="button" class="h-6 rounded-md px-2 text-ui-2xs text-muted-foreground hover:bg-accent hover:text-foreground" onclick={() => { onpagechange(1); pageMenuOpen = false; }}>First</button>
+                    <span class="text-ui-3xs text-muted-foreground">Enter to go</span>
+                    <button type="button" class="h-6 rounded-md px-2 text-ui-2xs text-muted-foreground hover:bg-accent hover:text-foreground" onclick={() => { onpagechange(pageCount); pageMenuOpen = false; }}>Last</button>
+                  </div>
+                {/if}
+              </PopoverContent>
+            </Popover>
+            <button
+              type="button"
+              class={iconBtn}
+              disabled={!canNext || loading}
+              onclick={onnext}
+              aria-label="Next page"
+            >
+              <Icon name="chevron-right" class="size-3.5 shrink-0" />
+            </button>
+          </div>
         {/if}
         </div>
       {/if}
