@@ -37,6 +37,7 @@
   import DbIcon from './DbIcon.svelte'
   import * as ContextMenu from '$lib/components/ui/context-menu/index.js'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
+  import { loadSettings } from '$lib/stores/settings.js'
   import { listTables, listDbObjects, getTableColumnStructure, getSchemaColumnStructure, listIndexes } from '$lib/api.js'
   import { listDatabases, canSwitchDatabase, currentDatabaseKey, isCurrentDatabase } from '$lib/databases.js'
   import { isSystemSchema } from '$lib/system-schemas.js'
@@ -222,6 +223,39 @@
         }
       }
       expanded = next
+    })
+  })
+
+  // Labs (treeFocusOnSwitch): a switch to another database folds the tree to
+  // it, with its default schema open on the tables. The schema list arrives
+  // after the switch, so the fold waits for it rather than opening whatever
+  // schema the last database had.
+  let lastPlace = untrack(() => placeKey)
+  let focusPending = false
+  $effect(() => {
+    const place = placeKey
+    if (place === lastPlace) return
+    lastPlace = place
+    untrack(() => { focusPending = !!loadSettings().treeFocusOnSwitch })
+  })
+  $effect(() => {
+    void schemas.length
+    const schema = activeSchema
+    const root = activeRootId
+    if (!root || !schema) return
+    untrack(() => {
+      if (!focusPending || (schemas.length && !schemas.includes(schema))) return
+      focusPending = false
+      const s = schemaNodeId(schema)
+      const next = new Set([root])
+      if (schemaParentId !== root) next.add(schemaParentId)
+      for (const a of ancestorIds(s)) next.add(a)
+      next.add(s)
+      next.add(childId(s, 'g', 'tables'))
+      expanded = next
+      persistExpanded()
+      if (scroller) scroller.scrollTop = 0
+      scrollTop = 0
     })
   })
 
