@@ -790,6 +790,14 @@
       },
     )}
   {/if}
+  {#if show('Focus the tree on switch', 'Labs, collapse the sidebar tree to the new database tables when you switch')}
+    {@render switchRow(
+      'Focus the tree on switch',
+      'Switching to another database folds the tree to that database: its default schema (public, main) open on its tables, everything else closed.',
+      settings.treeFocusOnSwitch === true,
+      () => { settings = updateSettings({ treeFocusOnSwitch: settings.treeFocusOnSwitch !== true }) },
+    )}
+  {/if}
   {#if show('Live mode', 'Labs, auto-refresh the active table when its data changes')}
     {@render switchRow('Live mode', 'Shows the Live toggle in the status bar, which refreshes the open table when its data changes.', settings.liveModeEnabled, toggleLiveMode)}
   {/if}
