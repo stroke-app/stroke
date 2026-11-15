@@ -52,6 +52,12 @@
       try { collapsed = new Set(JSON.parse(localStorage.getItem(collapsedKey(cid)) ?? '[]')) } catch { collapsed = new Set() }
     })
   })
+  // Folders synced from another device.
+  $effect(() => {
+    const on = () => { folders = loadQueryFolders(connectionId) }
+    window.addEventListener('stroke:library-synced', on)
+    return () => window.removeEventListener('stroke:library-synced', on)
+  })
   /** @param {QueryFolder[]} next */
   function setFolders(next) {
     folders = next

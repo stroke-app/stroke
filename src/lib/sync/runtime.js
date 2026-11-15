@@ -12,6 +12,9 @@ import { loadSettings, updateSettings } from '$lib/stores/settings.js'
 import { aiProfiles, activeProfileId, replaceProfiles } from '$lib/stores/ai-settings.js'
 import { keybindings, replaceKeybindings } from '$lib/stores/keybindings.js'
 import { onLocalChange } from './changes.js'
+import { savedSnapshot, loadSavedSnapshot, applySyncedQuery, removeSyncedQuery } from '$lib/stores/query-history.js'
+import { reloadChartsConnection } from '$lib/stores/saved-charts.js'
+import { reloadDashboards } from '$lib/stores/dashboards.js'
 import { createSyncEngine, resetSyncBookkeeping, clearSyncBookkeeping } from './engine.js'
 import { pickSyncedSettings } from './policy.js'
 
@@ -47,6 +50,20 @@ const adapters = {
     conflictCopy: (data) =>
       upsertConnection({ ...data, id: newConnectionId(), name: `${data.name || 'Connection'} (conflicted copy)` }),
   },
+  // One saved query per record (the editor's Saved list).
+  query: {
+    list: () => savedSnapshot().map((q) => ({ id: q.id, data: q })),
+    upsert: (data) => void applySyncedQuery(data),
+    remove: (id) => void removeSyncedQuery(id),
+  },
+  // One connection's saved charts, chart groups, dashboards and query
+  // folders. Connection ids are the same on every device, so the record id is
+  // the connection's.
+  library: {
+    list: () => libraryRecords(),
+    upsert: (data) => applyLibrary(data),
+    remove: () => {},
+  },
   settings: {
     list: () => [
       {
@@ -71,6 +88,48 @@ const adapters = {
   },
 }
 
+/** localStorage keys a connection's library is made of, by field. */
+const LIBRARY_KEYS = /** @type {const} */ ({
+  charts: 'stroke:saved-charts:',
+  chartGroups: 'stroke:chart-groups:',
+  dashboards: 'stroke:dashboards:',
+  queryFolders: 'stroke:query-folders:',
+})
+
+/** Every connection's library from localStorage. */
+function libraryRecords() {
+  /** @type {Map<string, Record<string, any>>} */
+  const byConn = new Map()
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i) ?? ''
+      for (const [field, prefix] of Object.entries(LIBRARY_KEYS)) {
+        if (!key.startsWith(prefix)) continue
+        const id = key.slice(prefix.length)
+        if (!id) continue
+        let value
+        try { value = JSON.parse(localStorage.getItem(key) ?? 'null') } catch { continue }
+        if (value == null) continue
+        const rec = byConn.get(id) ?? { id }
+        rec[field] = value
+        byConn.set(id, rec)
+      }
+    }
+  } catch { /* storage blocked */ }
+  return [...byConn.values()].map((data) => ({ id: data.id, data }))
+}
+
+/** Write a connection's library from another device, then reload what is open. @param {Record<string, any>} data */
+function applyLibrary(data) {
+  if (!data?.id) return
+  for (const [field, prefix] of Object.entries(LIBRARY_KEYS)) {
+    if (data[field] === undefined) continue
+    try { localStorage.setItem(prefix + data.id, JSON.stringify(data[field])) } catch { /* full */ }
+  }
+  reloadChartsConnection()
+  reloadDashboards()
+}
+
 const engine = createSyncEngine({
   invoke,
   adapters,
@@ -78,6 +137,10 @@ const engine = createSyncEngine({
     // StudioShell and the connection picker read the saved list on demand.
     if (kinds.has('connection')) {
       try { window.dispatchEvent(new CustomEvent('stroke:connections-synced')) } catch { /* no window */ }
+    }
+    // The Saved list and the query folders read on demand: tell them to.
+    if (kinds.has('query') || kinds.has('library')) {
+      try { window.dispatchEvent(new CustomEvent('stroke:library-synced')) } catch { /* no window */ }
     }
   },
 })
@@ -204,6 +267,9 @@ async function runOnce() {
   // Whatever changed until now goes out with this run.
   pendingLocal = false
   try {
+    // Saved queries are read from a copy loaded out of IndexedDB; never run
+    // before it is there, or this device would look as if it had none.
+    await loadSavedSnapshot()
     const r = await engine.run()
     const last = { lastSyncedAt: Date.now(), items: r.items }
     try { localStorage.setItem(LAST_KEY, JSON.stringify(last)) } catch { /* shown, not kept */ }

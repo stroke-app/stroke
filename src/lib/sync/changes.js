@@ -6,7 +6,7 @@
 // no imports on purpose: the stores import it, and the engine imports the
 // stores, so it must not import either.
 
-/** @typedef {'workspace' | 'connection' | 'settings'} SyncKind */
+/** @typedef {'workspace' | 'connection' | 'settings' | 'query' | 'library'} SyncKind */
 /** @typedef {{ kind: SyncKind, id: string, at: number }} Tombstone */
 
 const TOMBSTONES_KEY = 'stroke:sync:tombstones'

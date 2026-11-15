@@ -16,7 +16,7 @@ export const SYNCED_SETTINGS = /** @type {const} */ ([
   'defaultDataView', 'paginationMode', 'nullSortOrder', 'previewDmlBeforeApply', 'sqlUndo',
   'maxQueryHistory', 'autoSaveQueries', 'cmdkAiEnabled', 'sidebarComments', 'sidebarRememberGroups',
   'agentChatFontSize', 'agentCodeFontSize', 'agentThinkingStyle', 'agentShowQueryCards',
-  'shareDefaults',
+  'shareDefaults', 'sidebarStyle', 'aiInTab', 'streamResults', 'lazyWideColumns', 'liveModeEnabled',
 ])
 
 /** @param {Record<string, any>} s */
