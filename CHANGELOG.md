@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.11.4] - 2026-11-15
+
+### Changes
+- Live mode on every engine; all terminal suggestions; glossy plan chips (#210)
+
+
 ## [2.11.3] - 2026-11-15
 
 ### Changes
