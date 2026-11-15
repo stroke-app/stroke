@@ -1,4 +1,7 @@
 <script>
+  import Share2 from '@lucide/svelte/icons/share-2'
+  import { buildPayload, publishShare } from '$lib/share-flow.js'
+  import { detectSensitiveColumns } from '$lib/share-crypto.js'
   import CollapsibleCode from './CollapsibleCode.svelte'
   import { tick, onMount, onDestroy, untrack } from "svelte";
   import { get } from "svelte/store";
@@ -164,6 +167,8 @@
    *   | { id: string, kind: 'result', sql: string, columns: {name:string,dataType?:string}[], rows: unknown[][], total: number, error: string|null, isSchema?: boolean, capped?: boolean }
    *   | { id: string, kind: 'chart', spec: { type: string, title: string, data: object[], x_col: string, y_col: string, z_col?: string, group_col?: string }, error: string|null }
    *   | { id: string, kind: 'confirm', sql: string, resolve: (ok: boolean) => void }
+   *   | { id: string, kind: 'share-confirm', summary: { what: string, title: string, rows: number, masked: string[], expires: string, once: boolean }, resolve: (ok: boolean) => void }
+   *   | { id: string, kind: 'share-link', url: string, title: string }
    *   | { id: string, kind: 'thinking' }
    *   | { id: string, kind: 'executing', sql: string, op: 'query' | 'schema' | 'describe' | 'run' | 'diagram' }
    *   | { id: string, kind: 'diagram', code: string, title: string }
@@ -1776,7 +1781,7 @@
     }
   }
 
-  const hasPendingConfirm = $derived(items.some((i) => i.kind === "confirm"));
+  const hasPendingConfirm = $derived(items.some((i) => i.kind === "confirm" || i.kind === "share-confirm"));
   const suggestions = $derived(generateSuggestions(schemaContext));
   /** The database the chat is about, for the landing headline. */
   const dbName = $derived(String(/** @type {any} */ (schemaContext).database ?? ""));
@@ -3563,6 +3568,8 @@
             message: "Chart rendered successfully.",
           });
         }
+      } else if (call.function.name === "share_link") {
+        toolResult = JSON.stringify(await runShareLink(args));
       } else if (call.function.name === "render_diagram") {
         const diagramType = String(args.type ?? "flowchart");
         const title = String(args.title ?? "Diagram").trim() || "Diagram";
@@ -3821,6 +3828,79 @@
     } finally {
       if (turn === turnSeq) loading = false;
     }
+  }
+
+  /**
+   * The agent's share_link tool. Nothing leaves the machine until the user
+   * confirms the card that says what will be shared (kind, rows, masked
+   * columns, expiry); then it is encrypted here and only ciphertext uploads.
+   * @param {Record<string, any>} args
+   */
+  async function runShareLink(args) {
+    const kind = String(args.kind ?? '')
+    const title = String(args.title ?? '').trim() || 'Shared from Stroke'
+    const EXP = /** @type {Record<string, number>} */ ({ '1h': 3600, '1d': 86400, '7d': 7 * 86400, '30d': 30 * 86400 })
+    const expiresIn = EXP[String(args.expires ?? '7d')] ?? 7 * 86400
+    const once = args.once === true
+    /** @type {import('$lib/share-flow.js').ShareSource | null} */
+    let source = null
+    if (kind === 'result' || kind === 'chart') {
+      const data = chartRows(args.data, args)
+      if (!data.length) return { error: 'No rows to share. Run execute_sql first and pass its rows as `data`.' }
+      const names = Object.keys(data[0] ?? {})
+      const columns = names.map((name) => ({ name }))
+      const rows = data.map((r) => names.map((n) => r[n]))
+      source = kind === 'chart'
+        ? { kind: 'chart', title, chart: { type: String(args.chart_type ?? 'bar'), x: String(args.x_col ?? names[0] ?? ''), y: args.y_col ? [String(args.y_col)] : names.slice(1, 2), group: args.group_col ? String(args.group_col) : null }, columns, rows }
+        : { kind: 'result', title, columns, rows, sql: args.sql ? String(args.sql) : undefined }
+    } else if (kind === 'query') {
+      if (!args.sql) return { error: 'No SQL to share.' }
+      source = { kind: 'query', title, sql: String(args.sql) }
+    } else if (kind === 'diagram') {
+      if (!args.code) return { error: 'No Mermaid code to share.' }
+      source = { kind: 'mermaid', title, code: String(args.code) }
+    } else {
+      return { error: `Unknown share kind "${kind}".` }
+    }
+    const tabular = source.kind === 'result' || source.kind === 'chart'
+    const sensitive = tabular && args.mask_personal_data !== false ? detectSensitiveColumns(source.columns, source.rows) : []
+    const mask = new Set(sensitive.map((h) => h.index))
+    const ok = await waitForShareConfirm({
+      what: source.kind === 'mermaid' ? 'diagram' : source.kind,
+      title,
+      rows: tabular ? source.rows.length : 0,
+      masked: sensitive.map((h) => h.name),
+      expires: String(args.expires ?? '7d'),
+      once,
+    })
+    if (!ok) return { cancelled: true, message: 'The user chose not to share it.' }
+    try {
+      const payload = buildPayload(source, { title, mask, rowCap: 100_000 })
+      const res = await publishShare(payload, { expiresIn, maxViews: once ? 1 : null })
+      items.push(/** @type {ChatItem} */ ({ id: uid(), kind: 'share-link', url: res.url, title }))
+      await scrollBottom()
+      return { url: res.url, expires: args.expires ?? '7d', masked: sensitive.map((h) => h.name), note: 'Give the user this url. It is end-to-end encrypted; the key is in the part after #.' }
+    } catch (e) {
+      return { error: String(/** @type {any} */ (e)?.message ?? e) }
+    }
+  }
+
+  /** @param {{ what: string, title: string, rows: number, masked: string[], expires: string, once: boolean }} summary @returns {Promise<boolean>} */
+  function waitForShareConfirm(summary) {
+    return new Promise((resolve) => {
+      const itemId = uid()
+      items.push(/** @type {ChatItem} */ ({
+        id: itemId,
+        kind: 'share-confirm',
+        summary,
+        resolve: (ok) => {
+          const idx = items.findIndex((i) => i.id === itemId)
+          if (idx >= 0) items.splice(idx, 1)
+          resolve(ok)
+        },
+      }))
+      void scrollBottom()
+    })
   }
 
   /** @param {string} sql @returns {Promise<boolean>} */
@@ -5576,6 +5656,40 @@
                       >
                     </div>
                   </div>
+                </div>
+
+              {:else if item.kind === "share-confirm"}
+                <!-- Share: what leaves the machine, before it does. -->
+                <div class="mx-3.5 overflow-hidden rounded-lg border border-border/70 bg-card/60">
+                  <div class="flex items-center gap-2 border-b border-border/50 px-3 py-2">
+                    <Share2 class="size-3.5 shrink-0 text-muted-foreground" />
+                    <span class="text-ui-xs font-medium text-foreground">Share {item.summary.what} as a link?</span>
+                  </div>
+                  <div class="flex flex-col gap-1 px-3 py-2.5 text-ui-xs text-muted-foreground">
+                    <p class="text-foreground">{item.summary.title}</p>
+                    <p>
+                      {#if item.summary.rows}{item.summary.rows.toLocaleString()} row{item.summary.rows === 1 ? '' : 's'} · {/if}expires in {item.summary.expires}{item.summary.once ? ' · opens once' : ''}
+                    </p>
+                    {#if item.summary.masked.length}
+                      <p>Masked: <span class="font-mono text-foreground/80">{item.summary.masked.join(', ')}</span></p>
+                    {/if}
+                    <p>Encrypted here first; stroke.click can't read it.</p>
+                  </div>
+                  <div class="flex justify-end gap-1.5 border-t border-border/50 px-3 py-2">
+                    <button type="button" class="field-surface inline-flex h-7 items-center px-3 text-ui-xs text-muted-foreground hover:bg-accent" onclick={() => item.resolve(false)}>Cancel</button>
+                    <button type="button" class="inline-flex h-7 items-center rounded-md bg-primary px-3 text-ui-xs font-medium text-primary-foreground hover:opacity-90" onclick={() => item.resolve(true)}>Share</button>
+                  </div>
+                </div>
+
+              {:else if item.kind === "share-link"}
+                <div class="mx-3.5 flex items-center gap-2 rounded-lg border border-border/70 bg-card/60 py-1.5 pr-1.5 pl-3">
+                  <Share2 class="size-3.5 shrink-0 text-muted-foreground" />
+                  <span class="min-w-0 flex-1 truncate text-ui-xs text-foreground" title={item.url}>{item.title}</span>
+                  <button
+                    type="button"
+                    class="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-ui-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                    onclick={() => void copyText(item.url)}
+                  ><Copy class="size-3.5 shrink-0" />Copy link</button>
                 </div>
 
                 <!-- ── Chart card ─────────────────────────── -->

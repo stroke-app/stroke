@@ -2268,3 +2268,42 @@ export function agentInterrupt(conversationId) {
 export function agentStop(conversationId) {
   return invoke('agent_stop', { conversationId })
 }
+
+// ── Share links ─────────────────────────────────────────────────────────────
+// The content is encrypted in the webview (share-crypto.js); Rust only carries
+// ciphertext to stroke.click with the account token.
+
+/**
+ * @param {{ kind: string, expiresIn: number | null, maxViews: number | null, passwordSalt: string | null }} meta
+ * @param {Uint8Array} blob
+ * @returns {Promise<{ id: string, url: string }>}
+ */
+export async function shareCreate(meta, blob) {
+  return inv('share_create', { meta, blob: Array.from(blob) })
+}
+
+/**
+ * @typedef {{ id: string, kind: string, size: number, createdAt: number, expiresAt: number | null, maxViews: number | null, views: number, lastViewedAt: number | null, hasPassword: boolean, revoked: boolean, active: boolean }} ShareRow
+ * @typedef {{ maxBytes: number, maxActive: number | null, maxExpirySeconds: number | null, never: boolean, password: boolean, rows: number }} ShareLimits
+ * @returns {Promise<{ plan: 'free' | 'pro', limits: ShareLimits, shares: ShareRow[] }>}
+ */
+export async function shareList() {
+  return inv('share_list')
+}
+
+/** @param {string} id */
+export async function shareRevoke(id) {
+  return inv('share_revoke', { id })
+}
+
+// ── Stroke Nightly beside a stable install ──────────────────────────────────
+
+/** Download and install Stroke Nightly next to this app. Resolves to where it went. */
+export async function nightlyInstall() {
+  return /** @type {Promise<string>} */ (inv('nightly_install'))
+}
+
+/** @param {string} path what nightlyInstall returned */
+export async function nightlyOpen(path) {
+  return inv('nightly_open', { path })
+}

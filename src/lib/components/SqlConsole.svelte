@@ -13,6 +13,8 @@
   import Code2 from "@lucide/svelte/icons/code-2";
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
   import Download from "@lucide/svelte/icons/download";
+  import Share2 from "@lucide/svelte/icons/share-2";
+  import { requestShare } from "$lib/share-flow.js";
   import Table2 from "@lucide/svelte/icons/table-2";
   import SlidersHorizontal from "@lucide/svelte/icons/sliders-horizontal";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
@@ -814,6 +816,12 @@
     if (queryCopiedTimer) clearTimeout(queryCopiedTimer)
     if (errorCopyTimer) clearTimeout(errorCopyTimer)
   })
+
+  /** A share's default title: the query's first meaningful line. */
+  function shareTitle() {
+    const line = sql.split('\n').map((l) => l.trim()).find((l) => l && !l.startsWith('--')) ?? 'Query'
+    return line.length > 60 ? line.slice(0, 57) + '…' : line
+  }
 </script>
 
 <div class="flex min-h-0 flex-1 overflow-hidden">
@@ -1051,6 +1059,19 @@
           <DropdownMenu.Item onSelect={() => copyQueryAs('prisma')}>
             <Code2 class="size-3.5 shrink-0 text-muted-foreground" />
             <span data-slot="menu-label">Copy as Prisma</span>
+          </DropdownMenu.Item>
+          <DropdownMenu.Separator />
+          <!-- An encrypted link: the results (columns you choose, personal
+               data masked) or just the query. -->
+          {#if columns.length > 0}
+            <DropdownMenu.Item onSelect={() => requestShare({ kind: 'result', title: shareTitle(), columns: columns.map((c) => ({ name: c.name ?? String(c), type: c.dataType ?? c.data_type ?? c.type })), rows, sql })}>
+              <Share2 class="size-3.5 shrink-0 text-muted-foreground" />
+              <span data-slot="menu-label">Share results…</span>
+            </DropdownMenu.Item>
+          {/if}
+          <DropdownMenu.Item onSelect={() => requestShare({ kind: 'query', title: shareTitle(), sql })}>
+            <Share2 class="size-3.5 shrink-0 text-muted-foreground" />
+            <span data-slot="menu-label">Share query…</span>
           </DropdownMenu.Item>
         </DropdownMenu.Content>
       </DropdownMenu.Root>

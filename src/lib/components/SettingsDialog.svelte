@@ -3,6 +3,7 @@
   import ThemeBuilder from './ThemeBuilder.svelte';
   import { comboTitle } from '$lib/shortcuts.js'
   import Kbd from './Kbd.svelte'
+  import { nightlyInstall, nightlyOpen } from '$lib/api.js'
   import KeybindingsSettings from './KeybindingsSettings.svelte'
   import { bindingFor } from '$lib/stores/keybindings.js'
   import { startTelemetry, stopTelemetry } from "$lib/telemetry.js";
@@ -554,6 +555,29 @@
     if (s?.status === "Trial") return { label: `Trial · ${s.days_remaining}d`, class: "border-warning/25 bg-warning/10 text-warning" };
     return { label: "Free", class: "border-border/70 bg-muted/40 text-muted-foreground" };
   });
+
+  // ── Stroke Nightly ─────────────────────────────────────────────────────
+  let onNightly = $state(false)
+  let nightlyBusy = $state(false)
+  let nightlyPath = $state('')
+  let nightlyError = $state('')
+  $effect(() => {
+    void import('@tauri-apps/api/app')
+      .then((m) => m.getVersion())
+      .then((v) => { onNightly = /-nightly\./.test(v) })
+      .catch(() => {})
+  })
+  async function installNightly() {
+    nightlyBusy = true
+    nightlyError = ''
+    try {
+      nightlyPath = await nightlyInstall()
+    } catch (e) {
+      nightlyError = String(/** @type {any} */ (e)?.message ?? e)
+    } finally {
+      nightlyBusy = false
+    }
+  }
 </script>
 
 <Dialog.Root bind:open onOpenChange={handleOpenChange}>
@@ -1145,6 +1169,37 @@
       settings.autoUpdate,
       toggleAutoUpdate,
     )}
+  {/if}
+
+  <!-- Nightly is a separate app (its own name and data), so trying it never
+       touches this install: it goes in beside Stroke and opens. In Nightly
+       itself the row says so instead. -->
+  {#if show('Try Stroke Nightly', 'The daily build, installed beside Stroke')}
+    <div class={rowCls}>
+      <div class="min-w-0">
+        <p class="text-ui-sm font-medium text-foreground">{onNightly ? "You're on Stroke Nightly" : 'Try Stroke Nightly'}</p>
+        <p class="mt-0.5 text-ui-xs leading-relaxed text-muted-foreground">
+          {#if onNightly}
+            Built every night from the newest code. Stroke itself stays installed beside it, with its own settings.
+          {:else if nightlyError}
+            <span class="text-destructive">{nightlyError}</span>
+          {:else if nightlyPath}
+            Installed. It's a separate app with its own settings, so this one is untouched.
+          {:else}
+            The daily build with the newest features, installed beside Stroke as a separate app. Your connections and settings here stay as they are.
+          {/if}
+        </p>
+      </div>
+      {#if !onNightly}
+        {#if nightlyPath}
+          <Button type="button" size="sm" class="shrink-0" onclick={() => void nightlyOpen(nightlyPath)}>Open Nightly</Button>
+        {:else}
+          <Button type="button" variant="outline" size="sm" class="shrink-0 gap-1.5" disabled={nightlyBusy} onclick={() => void installNightly()}>
+            {#if nightlyBusy}<Icon name="loader-2" class="size-3.5 shrink-0 animate-spin" />Installing{:else}<Icon name="download" class="size-3.5 shrink-0" />Install Nightly{/if}
+          </Button>
+        {/if}
+      {/if}
+    </div>
   {/if}
 
   <!-- Privacy lives in General, not Agent: this switch covers the whole app, and

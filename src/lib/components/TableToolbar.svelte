@@ -102,6 +102,8 @@
     ondeleteselected = () => {},
     /** @type {(format: 'csv' | 'json' | 'sql' | 'tsv' | 'md' | 'jsonl') => void | Promise<void>} */
     onexport = () => {},
+    /** Share what's on screen (rows, or the chart in chart view) as a link. */
+    onshare = undefined,
     onimport = () => {},
     /** Diagram exports, offered alongside the row formats while the ERD view is open. */
     /** @type {(kind: 'png' | 'copy-png' | 'svg' | 'mermaid') => void | Promise<void>} */
@@ -1777,6 +1779,12 @@
               </DropdownMenu.Group>
             </DropdownMenu.SubContent>
           </DropdownMenu.Sub>
+          {#if onshare}
+            <DropdownMenu.Item disabled={total === 0} onSelect={() => onshare(dataViewMode)}>
+              <Icon name="share-2" class="size-3.5 shrink-0" />
+              <span data-slot="menu-label">{dataViewMode === 'chart' ? 'Share chart…' : 'Share rows…'}</span>
+            </DropdownMenu.Item>
+          {/if}
           <DropdownMenu.Item disabled={readonly} onSelect={() => onimport()}>
             <Icon name="file-up" class="size-3.5 shrink-0" />
             <span data-slot="menu-label">Import data…</span>

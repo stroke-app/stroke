@@ -76,6 +76,9 @@
   import ConnectionModal from './ConnectionModal.svelte'
   import { terminalDockOpen as terminalDockStore } from '$lib/stores/redis-nav.js'
   import DbIcon from './DbIcon.svelte'
+  import ShareDialog from './ShareDialog.svelte'
+  import { requestShare } from '$lib/share-flow.js'
+  import MySharesDialog from './MySharesDialog.svelte'
   import Icon from './Icon.svelte'
   import DockerLaunchModal from './DockerLaunchModal.svelte'
   import CreateTableDialog from './CreateTableDialog.svelte'
@@ -579,6 +582,8 @@
   let showInsiderModal = $state(false)
   let showAboutModal = $state(false)
   let showReportIssueDialog = $state(false)
+  /** My shares (share links made on this account). */
+  let showMyShares = $state(false)
   let showDisconnectDialog = $state(false)
   let showAiModelSettings = $state(false)
   let showProGate = $state(false)
@@ -6909,6 +6914,22 @@ let rowSearch = $state('')
   /** @param {'csv' | 'json'} format */
   let exportingData = $state(false)
 
+  /** Share the open table's rows, or its chart, as an encrypted link. @param {string} mode */
+  function shareTableView(mode) {
+    const visibleIdxs = columns.map((_, i) => i).filter((i) => !hiddenColumns.has(columns[i].name))
+    const picked = (selected.size > 0 && selected.size < rows.length)
+      ? [...selected].sort((a, b) => a - b).map((i) => rows[i]).filter(Boolean)
+      : rows.filter(Boolean)
+    const cols = visibleIdxs.map((i) => ({ name: columns[i].name, type: columns[i].dataType ?? columns[i].data_type }))
+    const cells = picked.map((r) => visibleIdxs.map((i) => r[i]))
+    const source = connection?.name ? `${connection.name} · ${activeSchema ? activeSchema + '.' : ''}${activeTable}` : String(activeTable ?? '')
+    if (mode === 'chart' && chartPane?.shareSpec) {
+      requestShare({ kind: 'chart', title: `${activeTable} chart`, source, chart: chartPane.shareSpec(), columns: dataViewColumns.map((c) => ({ name: c.name, type: c.dataType ?? c.data_type })), rows: dataViewRows })
+      return
+    }
+    requestShare({ kind: 'table', title: String(activeTable ?? 'Rows'), source, columns: cols, rows: cells, totalRows: Math.max(total || 0, cells.length) })
+  }
+
   async function handleExport(format) {
     if (exportingData) return
     exportingData = true
@@ -9050,6 +9071,9 @@ let rowSearch = $state('')
 
 <AboutDialog bind:open={showAboutModal} onopenreport={() => (showReportIssueDialog = true)} />
 <ReportIssueDialog bind:open={showReportIssueDialog} />
+<!-- Share links: one dialog for every kind, opened through requestShare(). -->
+<ShareDialog onopenmyshares={() => (showMyShares = true)} />
+<MySharesDialog bind:open={showMyShares} />
 
 <Dialog.Root bind:open={showProGate} closeOnEscape={true} closeOnOutsideClick={true}>
   <Dialog.Portal>
@@ -9157,6 +9181,7 @@ let rowSearch = $state('')
   {hasAdvisor}
   onopenJsonViewer={() => { if (aiMode) exitAiMode(); openJsonTab() }}
   onopenshortcuts={() => openShortcuts()}
+  onopenmyshares={() => { commandOpen = false; showMyShares = true }}
   onopenkeybindings={() => { settingsSection = 'keybindings'; showSettingsModal = true }}
   onopenabout={() => (showAboutModal = true)}
   onopenreport={() => (showReportIssueDialog = true)}
@@ -10420,6 +10445,7 @@ let rowSearch = $state('')
             onfindreplace={() => openFindReplacePanel()}
             ondeleteselected={() => stageDeleteSelectedRows()}
             onexport={handleExport}
+            onshare={shareTableView}
             onimport={() => (importDataOpen = true)}
             onexportdiagram={(kind) => erdPane?.exportDiagram?.(kind)}
             onexportchart={(kind) => chartPane?.exportChart?.(kind)}
