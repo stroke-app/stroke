@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.9.4] - 2026-11-15
+
+### Changes
+- / focuses the search field in view (#190)
+
+
 ## [2.9.3] - 2026-11-15
 
 ### Changes
