@@ -566,8 +566,8 @@ async fn export_into(
         ActiveConnection::Sqlite(pool) => export_sqlite(rep, &pool, tables.as_deref(), opts, out).await,
         ActiveConnection::Postgres(pool) => export_postgres(rep, &pool, schema.as_deref(), tables.as_deref(), opts, out).await,
         ActiveConnection::Mysql(pool) => export_mysql(rep, &pool, schema.as_deref(), tables.as_deref(), opts, out).await,
-        ActiveConnection::D1(cfg) => export_d1(rep, &cfg, tables.as_deref(), opts, out).await,
-        ActiveConnection::LibSql(_) => Err("Backup export is not supported for LibSQL/Turso connections".to_string()),
+        ActiveConnection::D1(cfg) => export_d1(rep, Remote::D1(&cfg), tables.as_deref(), opts, out).await,
+        ActiveConnection::LibSql(cfg) => export_d1(rep, Remote::LibSql(&cfg), tables.as_deref(), opts, out).await,
         ActiveConnection::Clickhouse(_) => Err("Backup export is not supported for ClickHouse connections".to_string()),
         ActiveConnection::Posthog(_) => Err("Backup is not supported for PostHog".to_string()),
         ActiveConnection::Redis(_) => Err("Backup is not supported on Redis".to_string()),
@@ -598,8 +598,8 @@ pub async fn backup_import(
         ActiveConnection::Sqlite(pool) => import_sqlite(&rep, &pool, &script).await,
         ActiveConnection::Postgres(pool) => import_postgres(&rep, &pool, &script).await,
         ActiveConnection::Mysql(pool) => import_mysql(&rep, &pool, &script).await,
-        ActiveConnection::D1(cfg) => import_d1(&rep, &cfg, &script).await,
-        ActiveConnection::LibSql(_) => Err("Backup import is not supported for LibSQL/Turso connections".to_string()),
+        ActiveConnection::D1(cfg) => import_d1(&rep, Remote::D1(&cfg), &script).await,
+        ActiveConnection::LibSql(cfg) => import_d1(&rep, Remote::LibSql(&cfg), &script).await,
         ActiveConnection::Clickhouse(_) => Err("Backup import is not supported for ClickHouse connections".to_string()),
         ActiveConnection::Posthog(_) => Err("Backup is not supported for PostHog".to_string()),
         ActiveConnection::Redis(_) => Err("Backup is not supported on Redis".to_string()),
@@ -2374,21 +2374,64 @@ fn is_d1_internal_table(name: &str) -> bool {
     name.starts_with("_cf_") || name.starts_with("sqlite_")
 }
 
+/// SQLite served over HTTP: Cloudflare D1 and libSQL/Turso. Both take one
+/// statement per request, keep no client transaction between requests and
+/// always enforce foreign keys, so they share the export and the restore.
+#[derive(Clone, Copy)]
+enum Remote<'a> {
+    D1(&'a super::connection::D1Config),
+    LibSql(&'a super::connection::LibSqlConfig),
+}
+
+impl Remote<'_> {
+    async fn query(&self, sql: &str) -> Result<super::query::SqlResult, String> {
+        match self {
+            Remote::D1(c) => super::d1::query(c, sql, vec![]).await,
+            Remote::LibSql(c) => super::libsql::query(c, sql, vec![]).await,
+        }
+    }
+    fn label(&self) -> &'static str {
+        match self {
+            Remote::D1(_) => "Cloudflare D1 (SQLite)",
+            Remote::LibSql(_) => "libSQL / Turso (SQLite)",
+        }
+    }
+}
+
+/// Tables in an order that loads parents before the rows that point at them:
+/// a table follows every table its foreign keys reference. Cycles (and
+/// self-references) keep their given order; the restore's retry pass settles
+/// those. `deps[i]` lists the tables `tables[i]` references.
+fn fk_order(tables: &[String], deps: &[Vec<String>]) -> Vec<String> {
+    let mut placed: Vec<String> = Vec::with_capacity(tables.len());
+    let mut left: Vec<usize> = (0..tables.len()).collect();
+    while !left.is_empty() {
+        let ready: Vec<usize> = left
+            .iter()
+            .copied()
+            .filter(|&i| deps[i].iter().all(|d| d == &tables[i] || placed.contains(d) || !tables.contains(d)))
+            .collect();
+        // A cycle: take the next one as it came, so the order stays stable.
+        let take = if ready.is_empty() { vec![left[0]] } else { ready };
+        for i in &take { placed.push(tables[*i].clone()); }
+        left.retain(|i| !take.contains(i));
+    }
+    placed
+}
+
 async fn export_d1(
     rep: &Reporter,
-    cfg: &super::connection::D1Config,
+    cfg: Remote<'_>,
     filter: Option<&[String]>,
     opts: &ExportOptions,
     out: &mut Out,
 ) -> Result<Stats, String> {
-    rep.log("info", "Starting Cloudflare D1 export…");
-    out.push_str(&backup_header("Cloudflare D1 (SQLite)", None));
+    rep.log("info", format!("Starting {} export…", cfg.label()));
+    out.push_str(&backup_header(cfg.label(), None));
     out.push_str("PRAGMA foreign_keys=OFF;\nBEGIN TRANSACTION;\n\n");
 
-    let ddl_result = super::d1::query(
-        cfg,
+    let ddl_result = cfg.query(
         "SELECT type, name, tbl_name, sql FROM sqlite_master WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' ORDER BY CASE type WHEN 'table' THEN 0 WHEN 'index' THEN 1 WHEN 'view' THEN 2 ELSE 3 END, name",
-        vec![],
     ).await?;
 
     let type_idx = ddl_result.columns.iter().position(|c| c.name == "type").unwrap_or(0);
@@ -2420,6 +2463,21 @@ async fn export_d1(
         }
     }
 
+    // Rows go out parents first: these engines enforce foreign keys on every
+    // statement, so a dump in name order (movie_cast before movies) could not
+    // be loaded back.
+    if opts.include_data && tables.len() > 1 {
+        let mut deps = Vec::with_capacity(tables.len());
+        for t in &tables {
+            let sql = format!("SELECT DISTINCT \"table\" FROM pragma_foreign_key_list({})", ql(t));
+            let refs = cfg.query(&sql).await.map(|r| {
+                r.rows.iter().filter_map(|row| row.first().and_then(|v| v.as_str()).map(str::to_string)).collect()
+            }).unwrap_or_default();
+            deps.push(refs);
+        }
+        tables = fk_order(&tables, &deps);
+    }
+
     rep.plan(tables.iter().map(|t| PlanEntry { schema: None, name: t.clone(), est_rows: None }).collect());
 
     let mut stats = Stats { tables: tables.len(), ..Stats::default() };
@@ -2427,7 +2485,7 @@ async fn export_d1(
         if is_cancelled() { break; }
         if !opts.include_data { rep.table(None, table, "done", 0, None); continue; }
         rep.table(None, table, "running", 0, None);
-        let data_result = match super::d1::query(cfg, &format!("SELECT * FROM {}", qi(table)), vec![]).await {
+        let data_result = match cfg.query(&format!("SELECT * FROM {}", qi(table))).await {
             Ok(r) => r,
             Err(e) => {
                 // A single unreadable/prohibited table shouldn't abort the whole backup.
@@ -2491,23 +2549,53 @@ fn json_to_sql_val(v: &serde_json::Value) -> String {
 
 // ── D1 import ────────────────────────────────────────────────────────────────
 
-async fn import_d1(rep: &Reporter, cfg: &super::connection::D1Config, sql: &str) -> Result<ImportResult, String> {
+/// A foreign key failed: the parent row may simply not be loaded yet.
+fn is_fk_error(e: &str) -> bool {
+    let l = e.to_ascii_lowercase();
+    l.contains("foreign key constraint") || l.contains("constraint_foreignkey")
+}
+
+async fn import_d1(rep: &Reporter, cfg: Remote<'_>, sql: &str) -> Result<ImportResult, String> {
     let started = Instant::now();
     rep.log("info", "Starting restore…");
     let mut run = Runner::new(rep, sql.len());
     let mut sp = Splitter::new(sql, Escapes::Standard);
+    // Rows a foreign key turned away, tried again once the rest are in.
+    let mut waiting: Vec<(String, String)> = Vec::new();
     while let Some(stmt) = sp.next() {
         let Stmt::Sql(s) = stmt else { continue };
         run.total += 1;
-        // D1 has no client transactions and manages FK enforcement itself.
+        // No client transactions over HTTP, and no turning foreign keys off:
+        // D1 and libSQL enforce them on every statement.
         if head_lower(&s, 24).starts_with("pragma foreign_keys") || is_tx_control(&s) { run.ok += 1; continue; }
-        match super::d1::query(cfg, &s, vec![]).await {
+        match cfg.query(&s).await {
             Ok(_) => run.ok += 1,
+            Err(e) if is_fk_error(&e) => waiting.push((s, e)),
             Err(e) => run.errors.push(stmt_error(e, &s)),
         }
         run.meter.tick(sp.position(), run.ok, run.errors.len(), false);
         if is_cancelled() { run.total += sp.count(); break; }
     }
+    // A dump in name order (or one with references in a cycle) loads children
+    // before parents. Retry what a foreign key refused while a pass still lands
+    // something; only rows whose parent is really missing end as errors.
+    let mut pass = 0;
+    while !waiting.is_empty() && !is_cancelled() {
+        pass += 1;
+        rep.log("info", format!("Retrying {} statement(s) that waited on a parent row (pass {pass})…", waiting.len()));
+        let before = waiting.len();
+        let mut still = Vec::new();
+        for (s, _) in waiting {
+            match cfg.query(&s).await {
+                Ok(_) => run.ok += 1,
+                Err(e) if is_fk_error(&e) => still.push((s, e)),
+                Err(e) => run.errors.push(stmt_error(e, &s)),
+            }
+        }
+        waiting = still;
+        if waiting.len() == before { break; }
+    }
+    for (s, e) in waiting { run.errors.push(stmt_error(e, &s)); }
     run.meter.tick(sql.len(), run.ok, run.errors.len(), true);
     Ok(finish_import(rep, run.total, run.ok, run.errors, started))
 }
@@ -2952,6 +3040,24 @@ mod tests {
         let p = std::env::temp_dir().join(format!("stroke-backup-test-{}-{name}", std::process::id()));
         let _ = std::fs::remove_file(&p);
         p
+    }
+
+    #[test]
+    fn fk_order_loads_parents_first() {
+        let t = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let tables = t(&["genres", "movie_cast", "movie_genres", "movies", "people"]);
+        let deps = vec![t(&[]), t(&["movies", "people"]), t(&["movies", "genres"]), t(&["people"]), t(&[])];
+        let order = fk_order(&tables, &deps);
+        let pos = |n: &str| order.iter().position(|x| x == n).unwrap();
+        assert!(pos("people") < pos("movies"));
+        assert!(pos("movies") < pos("movie_cast"));
+        assert!(pos("genres") < pos("movie_genres"));
+        assert_eq!(order.len(), 5);
+        // A cycle and a self-reference still place every table once.
+        let cyc = fk_order(&t(&["a", "b", "c"]), &[t(&["b"]), t(&["a"]), t(&["c"])]);
+        assert_eq!(cyc.len(), 3);
+        assert!(is_fk_error("FOREIGN KEY constraint failed: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_FOREIGNKEY)"));
+        assert!(!is_fk_error("UNIQUE constraint failed"));
     }
 
     #[tokio::test]

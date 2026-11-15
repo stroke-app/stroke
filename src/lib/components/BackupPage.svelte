@@ -53,13 +53,14 @@
 
   const supportsSchemaFilter = $derived(dbType === 'postgres' || dbType === 'mysql')
   const isPostgres = $derived(dbType === 'postgres')
-  const isSqliteFamily = $derived(dbType === 'sqlite' || dbType === 'd1')
+  const isSqliteFamily = $derived(dbType === 'sqlite' || dbType === 'd1' || dbType === 'libsql')
   const dbLabel = $derived(
     /** @type {Record<string, string>} */ ({
       postgres: 'PostgreSQL',
       mysql: 'MySQL',
       sqlite: 'SQLite',
       d1: 'Cloudflare D1',
+      libsql: 'libSQL / Turso',
       duckdb: 'DuckDB',
       mssql: 'SQL Server',
     })[dbType ?? ''] ?? 'Database',
@@ -417,7 +418,7 @@
     const ok =
       dbType === 'postgres' ? e.includes('postgres')
       : dbType === 'mysql' ? e.includes('mysql') || e.includes('maria')
-      : dbType === 'sqlite' || dbType === 'd1' ? e.includes('sqlite') || e.includes('d1')
+      : dbType === 'sqlite' || dbType === 'd1' || dbType === 'libsql' ? e.includes('sqlite') || e.includes('d1') || e.includes('libsql')
       : true
     return ok ? null : importInfo?.engine ?? null
   })
