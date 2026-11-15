@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.11.2] - 2026-11-15
+
+### Changes
+- Agents can share: share_link MCP tool opens the share dialog (#208)
+
+
 ## [2.11.1] - 2026-11-15
 
 ### Changes
