@@ -1,4 +1,5 @@
 <script>
+  import SelectMenu from './SelectMenu.svelte'
   // One page for document and wide-column databases (MongoDB, CouchDB,
   // Cassandra, Firestore). The collection comes from the app sidebar. Layout
   // follows the SQL table page: a dense toolbar, a query bar in the engine's
@@ -305,6 +306,8 @@ GET products/_search
 
   // ── View ───────────────────────────────────────────────────────────────────
   const VIEW_KEY = 'stroke:docs:view'
+  /** @type {Record<string, string>} */
+  const VIEW_ICON = { table: 'table-2', json: 'braces', schema: 'list-tree', indexes: 'layers', aggregate: 'workflow' }
   /** @typedef {'table' | 'json' | 'schema' | 'indexes' | 'aggregate'} View */
   const views = $derived([
     { v: 'table', l: 'Table', I: Sheet },
@@ -725,19 +728,17 @@ GET products/_search
         {/if}
       </div>
       <span class={cn('mx-1 h-4 w-px shrink-0 bg-border/50', !dataView && 'hidden')} aria-hidden="true"></span>
-      <!-- Views: with more than two, only the current one keeps its label. -->
-      <!-- One segmented control, text only: five icons in a row read as a puzzle. -->
-      <div class="flex h-8 items-center gap-0.5 rounded-lg bg-muted/50 p-0.5" role="group" aria-label="View">
-        {#each views as m (m.v)}
-          {@const on = view === m.v}
-          <button
-            type="button"
-            aria-pressed={on}
-            class={cn('inline-flex h-full items-center rounded-md px-2.5 text-ui-xs transition-colors', on ? 'bg-background text-foreground shadow-sm ring-1 ring-border/50' : 'text-muted-foreground hover:text-foreground')}
-            onclick={() => setView(/** @type {View} */ (m.v))}
-          >{m.v === 'table' ? noun.items.replace(/^./, (c) => c.toUpperCase()) : m.l}</button>
-        {/each}
-      </div>
+      <!-- Views: one dropdown (the current view, its icon, a chevron), the
+           same select the rest of the app uses. -->
+      <SelectMenu
+        ariaLabel="View"
+        triggerClass="h-8 w-36"
+        contentClass="w-[var(--bits-popover-anchor-width)] min-w-[11rem]"
+        align="end"
+        value={view}
+        onValueChange={(v) => setView(/** @type {View} */ (v))}
+        items={views.map((m) => ({ value: m.v, label: m.v === 'table' ? noun.items.replace(/^./, (c) => c.toUpperCase()) : m.l, icon: VIEW_ICON[m.v] }))}
+      />
       <button type="button" class={iconBtn} onclick={() => void load(page)} disabled={!info} title="Refresh" aria-label="Refresh">
         <RefreshCw class={cn('size-3.5', loading && 'animate-spin')} />
       </button>
