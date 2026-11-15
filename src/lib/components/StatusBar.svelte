@@ -676,9 +676,7 @@
                     {/if}
                     <span class="min-w-0 flex-1 truncate">{db.label}</span>
                     {#if isCurrent}
-                      <span class="ml-auto flex shrink-0 items-center gap-1 font-sans text-ui-3xs text-muted-foreground">
-                        current <Icon name="check" class="size-3.5 shrink-0 text-foreground" />
-                      </span>
+                      <Icon name="check" class="ml-auto size-3.5 shrink-0 text-foreground" />
                     {/if}
                   </button>
                 {/each}

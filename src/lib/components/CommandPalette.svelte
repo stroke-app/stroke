@@ -936,7 +936,7 @@
                     <Icon name="database" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                     <span data-slot="command-label" class="truncate font-mono">{schema}</span>
                     {#if schema === activeSchema}
-                      <span data-slot="command-trailing" class="shrink-0 text-ui-xs text-muted-foreground">current</span>
+                      <span data-slot="command-trailing" class="ml-auto shrink-0"><Icon name="check" class="size-3.5 shrink-0 text-foreground" /><span class="sr-only">(current)</span></span>
                     {/if}
                   </Command.Item>
                 {/each}
