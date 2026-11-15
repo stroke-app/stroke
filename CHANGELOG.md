@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.12.3] - 2026-11-15
+
+### Changes
+- Document stores: docked apply bar, no SQL review, Mod+S works (#219)
+
+
 ## [2.12.2] - 2026-11-15
 
 ### Changes
