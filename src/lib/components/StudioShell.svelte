@@ -10385,6 +10385,7 @@ let rowSearch = $state('')
                 connectionLabel={connection?.name ?? connection?.database ?? connection?.filePath ?? ''}
                 dbType={dbType}
                 connections={savedConnections}
+                onopensql={(sql) => { if (aiMode) exitAiMode(); void openQueryInEditor(sql) }}
               />
             {/await}
           </svelte:boundary>

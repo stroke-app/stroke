@@ -1,4 +1,9 @@
 <script>
+  import AlertTriangle from '@lucide/svelte/icons/triangle-alert'
+  import PenLine from '@lucide/svelte/icons/pen-line'
+  import SelectMenu from './SelectMenu.svelte'
+  import DbIcon from './DbIcon.svelte'
+  import { engineLabel } from '$lib/db-capabilities.js'
   import Camera from '@lucide/svelte/icons/camera'
   import Trash2 from '@lucide/svelte/icons/trash-2'
   import ArrowLeftRight from '@lucide/svelte/icons/arrow-left-right'
@@ -42,7 +47,9 @@
    *   connections?: SavedConnection[],
    * }}
    */
-  let { connectionId, connectionLabel, dbType = 'postgres', connections = [] } = $props()
+  let { connectionId, connectionLabel, dbType = 'postgres', connections = [], onopensql = /** @type {((sql: string) => void) | null} */ (null) } = $props()
+  /** The "Read before running" list, folded to one line until opened. */
+  let warningsOpen = $state(false)
 
   /** @type {SchemaSnapshot[]} */
   let snapshots = $state([])
@@ -539,7 +546,26 @@
               <span class="min-w-0 flex-1 truncate text-ui-xs font-medium text-foreground" title={snap.connectionLabel}>
                 {displayName}
               </span>
+              <!-- Base / Compare: one small two-part control. The picked side
+                   stays lit; both show on hover. -->
+              <div class={cn('flex shrink-0 items-center rounded-md border border-border/60 bg-background/60 p-px', !isActive && 'hidden group-hover:flex')}>
+                <button
+                  type="button"
+                  onclick={() => { beforeId = snap.id }}
+                  class={cn('h-5 rounded-sm px-1.5 text-ui-3xs font-medium transition-colors', isBefore ? 'bg-foreground text-background' : 'text-muted-foreground hover:text-foreground')}
+                  title="Use as the baseline"
+                  aria-pressed={isBefore}
+                >Base</button>
+                <button
+                  type="button"
+                  onclick={() => { afterId = snap.id }}
+                  class={cn('h-5 rounded-sm px-1.5 text-ui-3xs font-medium transition-colors', isAfter ? 'bg-foreground text-background' : 'text-muted-foreground hover:text-foreground')}
+                  title="Compare against the baseline"
+                  aria-pressed={isAfter}
+                >Compare</button>
+              </div>
               <button
+                type="button"
                 onclick={() => remove(snap.id)}
                 class="flex size-5 shrink-0 items-center justify-center rounded text-transparent group-hover:text-muted-foreground hover:!text-destructive"
                 aria-label="Delete snapshot"
@@ -547,28 +573,10 @@
                 <X class="size-3 shrink-0" />
               </button>
             </div>
-            <div class="mt-1 flex items-center gap-1.5 text-ui-2xs text-muted-foreground">
+            <div class="mt-0.5 flex items-center gap-1.5 text-ui-2xs text-muted-foreground">
               <span class="shrink-0 tabular-nums">{fmtDate(snap.capturedAt)}</span>
               <span aria-hidden="true">·</span>
-              <span class="min-w-0 truncate tabular-nums">{tableCount} tables</span>
-              <span class="flex-1"></span>
-              <!-- Base / Compare slots -->
-              <button
-                onclick={() => { beforeId = snap.id }}
-                class={cn(
-                  'h-5 shrink-0 rounded-full px-2 text-ui-3xs transition-colors',
-                  isBefore ? 'bg-foreground text-background' : 'hidden text-muted-foreground group-hover:inline-block hover:bg-background/60 hover:text-foreground',
-                )}
-                title="Use as the baseline"
-              >Base</button>
-              <button
-                onclick={() => { afterId = snap.id }}
-                class={cn(
-                  'h-5 shrink-0 rounded-full px-2 text-ui-3xs transition-colors',
-                  isAfter ? 'bg-foreground text-background' : 'hidden text-muted-foreground group-hover:inline-block hover:bg-background/60 hover:text-foreground',
-                )}
-                title="Compare against the baseline"
-              >Compare</button>
+              <span class="min-w-0 truncate tabular-nums">{tableCount} {tableCount === 1 ? 'table' : 'tables'}</span>
             </div>
           </div>
         {/each}
@@ -729,60 +737,37 @@
       <div class="overflow-y-auto">
         <!-- Title input -->
         <div class="border-t border-border/25 px-5 py-3">
+          <p class="mb-1.5 text-ui-2xs font-medium text-muted-foreground">Title</p>
           <input
             bind:value={captureTitle}
-            placeholder="Snapshot title (optional), e.g. Before migration v2"
-            class="w-full bg-transparent text-ui-xs text-foreground/75 outline-none placeholder:text-muted-foreground"
+            placeholder="Optional, e.g. Before migration v2"
+            class="no-field-frame h-9 w-full rounded-lg border-0 bg-muted/55 px-3 text-ui-sm text-foreground outline-none placeholder:text-muted-foreground focus:bg-muted/80"
           />
         </div>
 
-        <!-- Connection list -->
-        <div class="border-t border-border/25">
-          <div class="flex items-center px-5 py-2">
-            <span class="text-ui-3xs font-semibold uppercase tracking-widest text-muted-foreground">Connection</span>
-          </div>
-          <div>
-            {#if connectionId}
-              <button
-                onclick={() => selectCaptureConn(null)}
-                class={cn(
-                  'flex w-full items-center gap-3 px-5 py-2 text-left text-ui-xs transition-colors',
-                  captureConn === null ? 'bg-muted/[0.08]' : 'hover:bg-muted/[0.05]',
-                )}
-              >
-                <!-- Radio dot -->
-                <span class={cn(
-                  'flex size-3.5 shrink-0 items-center justify-center rounded-full border',
-                  captureConn === null ? 'border-primary/60 bg-primary/20' : 'border-border/50',
-                )}>
-                  {#if captureConn === null}<span class="size-1.5 rounded-full bg-primary/80"></span>{/if}
-                </span>
-                <span class="min-w-0 flex-1 truncate font-medium text-foreground/75" title={connectionLabel}>{shortName(connectionLabel)}</span>
-                <span class="shrink-0 rounded bg-success/10 px-1.5 py-0.5 text-ui-3xs font-medium text-success">active</span>
-              </button>
-            {/if}
-            {#each connections.filter((c) => c.id !== connectionId) as conn (conn.id)}
-              <button
-                onclick={() => selectCaptureConn(conn)}
-                class={cn(
-                  'flex w-full items-center gap-3 px-5 py-2 text-left text-ui-xs transition-colors',
-                  captureConn?.id === conn.id ? 'bg-muted/[0.08]' : 'hover:bg-muted/[0.05]',
-                )}
-              >
-                <span class={cn(
-                  'flex size-3.5 shrink-0 items-center justify-center rounded-full border',
-                  captureConn?.id === conn.id ? 'border-primary/60 bg-primary/20' : 'border-border/50',
-                )}>
-                  {#if captureConn?.id === conn.id}<span class="size-1.5 rounded-full bg-primary/80"></span>{/if}
-                </span>
-                <span class="min-w-0 flex-1 truncate text-foreground/65" title={conn.name}>{shortName(conn.name)}</span>
-                <span class="shrink-0 text-ui-3xs uppercase text-muted-foreground">{conn.type}</span>
-              </button>
-            {/each}
-            {#if !connectionId && connections.length === 0}
-              <p class="px-5 py-3 text-ui-xs text-muted-foreground">No connections configured</p>
-            {/if}
-          </div>
+        <!-- Connection: one searchable picker instead of a radio row per
+             saved connection (twenty-odd rows pushed the schema list off the
+             bottom of the window). -->
+        <div class="border-t border-border/25 px-5 py-3">
+          <p class="mb-1.5 text-ui-2xs font-medium text-muted-foreground">Connection</p>
+          {#if !connectionId && connections.length === 0}
+            <p class="text-ui-xs text-muted-foreground">No connections configured</p>
+          {:else}
+            <SelectMenu
+              ariaLabel="Connection"
+              triggerClass="h-9 w-full"
+              contentClass="w-[var(--bits-popover-anchor-width)]"
+              searchPlaceholder="Search connections"
+              value={captureConn?.id ?? '__active'}
+              onValueChange={(v) => selectCaptureConn(v === '__active' ? null : (connections.find((c) => c.id === v) ?? null))}
+              items={[
+                ...(connectionId ? [{ value: '__active', label: shortName(connectionLabel), hint: 'Active', engine: connections.find((c) => c.id === connectionId)?.type ?? '', keywords: [connectionLabel] }] : []),
+                ...connections.filter((c) => c.id !== connectionId).map((c) => ({ value: c.id, label: shortName(c.name), hint: engineLabel(c.type), engine: c.type, keywords: [c.name, c.type] })),
+              ]}
+            >
+              {#snippet lead(it)}<DbIcon id={it.engine} class="size-4 shrink-0" />{/snippet}
+            </SelectMenu>
+          {/if}
         </div>
 
         <!-- Database + Schema side by side -->
@@ -895,35 +880,50 @@
 {/if}
 
 <Dialog.Root bind:open={migrationOpen}>
-  <Dialog.Content class="flex max-h-[85vh] max-w-3xl flex-col gap-0 overflow-hidden p-0">
-    <Dialog.Header class="border-b border-border/60 px-5 py-4">
-      <Dialog.Title class="text-ui-sm">Migration SQL</Dialog.Title>
-      <Dialog.Description class="text-ui-2xs">
-        {migration?.statementCount ?? 0} statement{(migration?.statementCount ?? 0) === 1 ? '' : 's'}
-        taking the earlier snapshot to the later one. Review it before running — the
-        rollback below is commented out.
+  <Dialog.Content class="flex h-[min(44rem,85vh)] max-w-3xl flex-col gap-0 overflow-hidden p-0">
+    <Dialog.Header class="gap-1 px-6 pt-5 pb-4">
+      <Dialog.Title class="text-ui-lg font-semibold tracking-tight">Migration SQL</Dialog.Title>
+      <Dialog.Description class="text-ui-xs text-muted-foreground">
+        {migration?.statementCount ?? 0} statement{(migration?.statementCount ?? 0) === 1 ? '' : 's'} taking the earlier snapshot to the later one. Review before running; the rollback at the end is commented out.
       </Dialog.Description>
     </Dialog.Header>
 
-    <div class="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-      {#if migration && migration.warnings.length > 0}
-        <div class="mb-3 rounded-lg border border-warning/30 bg-warning/8 px-3 py-2.5">
-          <p class="text-ui-2xs font-semibold text-foreground">Read before running</p>
-          <ul class="mt-1.5 flex flex-col gap-1">
+    {#if migration && migration.warnings.length > 0}
+      <!-- One line until opened: eight near-identical warnings took half the
+           dialog before a single line of SQL. -->
+      <div class="mx-6 mb-3 overflow-hidden rounded-lg border border-warning/30 bg-warning/8">
+        <button type="button" class="flex w-full items-center gap-2 px-3 py-2 text-left" onclick={() => (warningsOpen = !warningsOpen)} aria-expanded={warningsOpen}>
+          <AlertTriangle class="size-3.5 shrink-0 text-warning" />
+          <span class="min-w-0 flex-1 text-ui-xs font-medium text-foreground">
+            {migration.warnings.length} {migration.warnings.length === 1 ? 'thing' : 'things'} to read before running
+          </span>
+          <ChevronRight class={cn('size-3.5 shrink-0 text-muted-foreground transition-transform duration-150', warningsOpen && 'rotate-90')} />
+        </button>
+        {#if warningsOpen}
+          <ul class="app-scroll flex max-h-40 flex-col gap-1 overflow-y-auto border-t border-warning/20 px-3 py-2">
             {#each migration.warnings as warning (warning)}
-              <li class="text-ui-3xs text-muted-foreground">• {warning}</li>
+              <li class="text-ui-2xs leading-relaxed text-muted-foreground">{warning}</li>
             {/each}
           </ul>
-        </div>
-      {/if}
-      <pre class="overflow-x-auto rounded-lg border border-border/60 bg-background p-3 font-mono text-ui-3xs leading-relaxed text-foreground"><code>{migrationScript}</code></pre>
+        {/if}
+      </div>
+    {/if}
+
+    <div class="mx-6 mb-4 flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-border/60">
+      {#await import('./CodeEditor.svelte') then { default: CodeEditor }}
+        <CodeEditor value={migrationScript} lang="sql" readOnly ariaLabel="Migration SQL" />
+      {/await}
     </div>
 
-    <Dialog.Footer class="border-t border-border/60 px-5 py-3">
-      <Button variant="outline" size="sm" onclick={() => (migrationOpen = false)}>Close</Button>
-      <Button size="sm" onclick={copyMigration}>
-        <Copy class="size-3.5 shrink-0" />
-        Copy
+    <Dialog.Footer class="mx-0 mb-0 flex-row items-center gap-2 border-t border-border/40 px-6 py-3 sm:justify-end">
+      <Button variant="ghost" size="sm" onclick={() => (migrationOpen = false)}>Close</Button>
+      {#if onopensql}
+        <Button variant="outline" size="sm" class="gap-1.5" onclick={() => { onopensql?.(migrationScript); migrationOpen = false }}>
+          <PenLine class="size-3.5 shrink-0" />Open in editor
+        </Button>
+      {/if}
+      <Button size="sm" class="gap-1.5" onclick={copyMigration}>
+        <Copy class="size-3.5 shrink-0" />Copy
       </Button>
     </Dialog.Footer>
   </Dialog.Content>
