@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.9.0] - 2026-11-15
+
+### Changes
+- Offer the update on the crash screen (#186)
+
+
 ## [2.8.9] - 2026-11-15
 
 ### Changes
