@@ -15,6 +15,9 @@ import http from 'node:http'
 import crypto from 'node:crypto'
 
 export const STUDIO_ORIGIN = 'https://stroke.click'
+/** Bumped with the package; the page reads `features` to know what it may offer. */
+export const BRIDGE_VERSION = '0.2.0'
+export const FEATURES = ['structure', 'where', 'edit', 'rowCounts']
 const MAX_BODY = 1 << 20
 
 /**
@@ -37,10 +40,24 @@ export async function startBridge({ engine, name, origins = [STUDIO_ORIGIN], por
 
   /** @type {Record<string, (body: any) => Promise<unknown>>} */
   const routes = {
-    '/info': async () => ({ ...(await engine.info()), name }),
+    '/info': async () => ({ ...(await engine.info()), name, bridge: BRIDGE_VERSION, features: FEATURES }),
     '/tables': () => engine.tables(),
     '/columns': (b) => engine.columns(str(b.schema), str(b.table)),
-    '/rows': (b) => engine.rows({ schema: str(b.schema), table: str(b.table), limit: Number(b.limit) || 100, offset: Number(b.offset) || 0, sort: b.sort ?? null }),
+    '/structure': (b) => engine.structure(str(b.schema), str(b.table)),
+    '/rows': (b) => engine.rows({
+      schema: str(b.schema),
+      table: str(b.table),
+      limit: Number(b.limit) || 100,
+      offset: Number(b.offset) || 0,
+      sort: b.sort ?? null,
+      where: typeof b.where === 'string' ? b.where : '',
+    }),
+    '/update': (b) => engine.update({ schema: str(b.schema), table: str(b.table), key: obj(b.key), set: obj(b.set) }),
+    '/insert': (b) => engine.insert({ schema: str(b.schema), table: str(b.table), values: obj(b.values) }),
+    '/delete': (b) => {
+      if (!Array.isArray(b.keys) || !b.keys.length) throw new Error('Expected keys')
+      return engine.remove({ schema: str(b.schema), table: str(b.table), keys: b.keys.map(obj) })
+    },
     '/query': async (b) => {
       const t = performance.now()
       const r = await engine.query(str(b.sql))
@@ -98,6 +115,12 @@ export async function startBridge({ engine, name, origins = [STUDIO_ORIGIN], por
       server.close(() => resolve())
     }),
   }
+}
+
+/** @param {unknown} v @returns {Record<string, unknown>} */
+function obj(v) {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) throw new Error('Expected an object')
+  return /** @type {Record<string, unknown>} */ (v)
 }
 
 /** @param {unknown} v */
