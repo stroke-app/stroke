@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.12.1] - 2026-11-15
+
+### Changes
+- Table pager: one control, cleaner go-to-page (#217)
+
+
 ## [2.12.0] - 2026-11-15
 
 ### Changes
