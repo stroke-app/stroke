@@ -79,6 +79,7 @@
   } from "$lib/export.js";
   import DataTable from "$lib/components/DataTable.svelte";
   import AiMarkdown from "$lib/components/AiMarkdown.svelte";
+  import { markdownEnter, markdownIndent } from "$lib/md-input.js";
   import AiSqlBlock from "$lib/components/AiSqlBlock.svelte";
   import ShikiBlock from "$lib/components/ShikiBlock.svelte";
   import AiChartRenderer from "$lib/components/AiChartRenderer.svelte";
@@ -2024,11 +2025,35 @@
   }
 
   /** @param {KeyboardEvent} e */
+  /** Put a markdown edit (md-input.js) into the composer, undoable like typing. @param {{ text: string, start: number, end: number }} r */
+  function applyComposerEdit(r) {
+    inputText = r.text;
+    if (inputRef) {
+      inputRef.value = r.text;
+      inputRef.setSelectionRange(r.start, r.end);
+    }
+    resizeInput();
+    pushHistory(inputText);
+  }
+
   function handleKeydown(/** @type {KeyboardEvent} */ e) {
-    if (e.key === "Enter" && !e.shiftKey) {
+    const ta = /** @type {HTMLTextAreaElement} */ (e.currentTarget);
+    // Markdown typing: Enter continues a list (an empty item ends it) and is a
+    // newline inside an open ``` fence; anywhere else it sends.
+    if (e.key === "Enter" && !e.shiftKey && !e.altKey && !e.isComposing) {
       e.preventDefault();
-      void send();
+      const r = markdownEnter(ta.value, ta.selectionStart, ta.selectionEnd);
+      if (r) applyComposerEdit(r);
+      else void send();
       return;
+    }
+    if (e.key === "Tab" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      const r = markdownIndent(ta.value, ta.selectionStart, ta.selectionEnd, e.shiftKey);
+      if (r) {
+        e.preventDefault();
+        applyComposerEdit(r);
+        return;
+      }
     }
     // Ctrl/Cmd + Z → undo. The key is lower-cased: with Shift held it arrives
     // as "Z", so the redo chord below never matched.
@@ -5065,10 +5090,16 @@
               <!-- ── User message ───────────────────────── -->
               {#if item.kind === "user"}
                 <div class="group/msg flex flex-col items-end px-3.5 pt-4">
+                  <!-- Markdown, like the replies: a fenced query or a list
+                       written in the composer reads as one, not as backticks. -->
                   <div
-                    class="ai-user-bubble max-w-[80%] rounded-2xl border border-border/50 bg-card px-4 py-2.5 whitespace-pre-wrap break-words text-foreground"
+                    class="ai-user-bubble max-w-[80%] min-w-0 rounded-2xl border border-border/50 bg-card px-4 py-2.5 break-words text-foreground"
                   >
-                    {item.text}
+                    {#if /[`*_#>\[\]|-]|^\s*\d+[.)]\s/m.test(item.text)}
+                      <AiMarkdown content={item.text} />
+                    {:else}
+                      <span class="whitespace-pre-wrap">{item.text}</span>
+                    {/if}
                   </div>
                   {@render msgActions(item.id, item.text, item.ts, "end", false)}
                 </div>
@@ -6917,6 +6948,9 @@
     line-height: 1.6;
     letter-spacing: -0.011em;
   }
+  /* Markdown in a user turn: the bubble's padding is the margin. */
+  :global(.ai-user-bubble > * > :first-child) { margin-top: 0 !important; }
+  :global(.ai-user-bubble > * > :last-child) { margin-bottom: 0 !important; }
 
   :global(.prose-ai) {
     /* Follow the app's font setting through its reading face (the sans, or a
