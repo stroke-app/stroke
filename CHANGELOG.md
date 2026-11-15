@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.15.5] - 2026-11-15
+
+### Changes
+- MCP current_database names the database queries actually run on (#253)
+
+
 ## [2.15.4] - 2026-11-15
 
 ### Changes
