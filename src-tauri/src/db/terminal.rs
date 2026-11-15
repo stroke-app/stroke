@@ -624,11 +624,21 @@ fn mssql_launch(c: &MssqlConfig) -> Launch {
 /// `sqlplus user@connect_string`. Neither SQL*Plus nor SQLcl reads a password
 /// from the environment, and one on the command line is visible to every
 /// process, so the client asks for it in the terminal.
-fn oracle_launch(c: &OracleConfig) -> Launch {
+/// SQL*Plus takes the target alone. SQLcl gets `-thin` first: it otherwise
+/// switches to the OCI (thick) driver whenever it sees an Instant Client or an
+/// Oracle Home nearby, and without Oracle's native library on its
+/// java.library.path that fails with "no ocijdbc23 in java.library.path",
+/// whatever the password. The thin driver needs nothing installed.
+fn oracle_launch(c: &OracleConfig, sqlcl: bool) -> Launch {
     let cs = super::oracle::connect_string(c);
     let user = c.user.trim();
     let target = if user.is_empty() { format!("/@{cs}") } else { format!("{user}@{cs}") };
-    Launch { args: vec![target], env: Vec::new(), unset: &["TWO_TASK"], tunnel: None }
+    let mut args = Vec::new();
+    if sqlcl {
+        args.push("-thin".to_string());
+    }
+    args.push(target);
+    Launch { args, env: Vec::new(), unset: &["TWO_TASK"], tunnel: None }
 }
 
 fn redis_launch(c: &RedisConfig) -> Launch {
@@ -915,7 +925,10 @@ async fn open_session(
         }
         AnyConnectionConfig::Sqlite(c) => sqlite_launch(&c, client_version(&binary).await.as_deref()),
         AnyConnectionConfig::Mssql(c) => mssql_launch(&c),
-        AnyConnectionConfig::Oracle(c) => oracle_launch(&c),
+        AnyConnectionConfig::Oracle(c) => {
+            let sqlcl = binary.file_stem().and_then(|s| s.to_str()).is_some_and(|s| s.eq_ignore_ascii_case("sql"));
+            oracle_launch(&c, sqlcl)
+        }
         AnyConnectionConfig::Redis(c) => redis_launch(&c),
         // The URI carries host, credentials and options; mongosh reads it as is.
         // `--quiet` drops the startup banner.

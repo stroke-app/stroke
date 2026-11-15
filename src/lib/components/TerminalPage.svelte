@@ -1250,6 +1250,10 @@
       // table borders join from row to row. Any taller and the DOM renderer
       // leaves a gap in every vertical line.
       lineHeight: 1,
+      // Bold one step up rather than a full 700: a client's bold prompts and
+      // headings read as emphasis, not as a different, heavier face.
+      fontWeight: 'normal',
+      fontWeightBold: '600',
       // A blinking block: what Terminal.app, iTerm and every shell default to.
       cursorBlink: true,
       cursorStyle: 'block',
@@ -1329,12 +1333,9 @@
       cancelAnimationFrame(fitFrame)
       clearTimeout(fitTimer)
       if (document.documentElement.hasAttribute('data-resizing')) {
-        // A drag: the DOM renderer while the edge moves, WebGL once it settles.
-        // Only a drag: opening the dock or the panel used to switch renderers
-        // too, and the DOM one measured its cells while the panel was still
-        // collapsed, so the text flashed letter-spaced.
-        disableGpu()
-        enableGpuSoon()
+        // A drag keeps the WebGL renderer: switching to the DOM one while the
+        // edge moved drew the same font heavier and wider, so the text changed
+        // weight under the pointer and changed back when it was let go.
         const since = performance.now() - lastFitAt
         if (since > 50) { lastFitAt = performance.now(); fitFrame = requestAnimationFrame(fit) }
         fitTimer = setTimeout(() => { lastFitAt = performance.now(); fitFrame = requestAnimationFrame(fit) }, 50)

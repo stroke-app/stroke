@@ -1701,6 +1701,14 @@
       />
     </div>
   {/if}
+  {#if show('Animate panels', 'Slide the terminal and the AI panel open and closed')}
+    {@render switchRow(
+      'Animate panels',
+      'The terminal dock and the AI panel slide open and closed. Off, they appear at once.',
+      settings.panelMotion !== false,
+      () => { settings = updateSettings({ panelMotion: settings.panelMotion === false }); },
+    )}
+  {/if}
   {#if show('Alternating row colors', 'Shade every other grid row')}
     {@render switchRow(
       'Alternating row colors',
