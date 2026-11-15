@@ -16,10 +16,10 @@
   import { updateCheck, updateDownload, updateStatus, updateRestart } from '$lib/api.js'
   import { loadSettings, updateSettings } from '$lib/stores/settings.js'
   import ReleaseNotes from './ReleaseNotes.svelte'
-  import Logo from './Logo.svelte'
   import { isRevealed }  from '$lib/app-reveal.js'
-  import { parseChangelog, parseReleases, releasesBetween } from '$lib/changelog.js'
+  import { parseChangelog, parseReleases, releasesBetween, releasesInRange } from '$lib/changelog.js'
   import WhatsNewDialog  from './WhatsNewDialog.svelte'
+  import { updateState, updateActions } from '$lib/stores/update-state.js'
 
   let {
     /** An update was found ('available'), or is downloaded and waiting ('ready'). */
@@ -52,8 +52,10 @@
 
   /** First background check, once startup has settled. */
   const FIRST_CHECK_MS = 5_000
-  /** Stroke often stays open for days, so it looks again this often. */
+  /** Stroke often stays open for days, so it looks again this often. Nightly
+   *  ships several times a day, so it looks every hour. */
   const RECHECK_MS = 6 * 60 * 60 * 1000
+  const NIGHTLY_RECHECK_MS = 60 * 60 * 1000
 
   /** Manually trigger an update check (e.g. from the command palette). */
   export async function checkNow() {
@@ -73,7 +75,13 @@
     try {
       const info = await updateCheck()
       if (info?.staged) markReady(info, false)
-      else if (info) {
+      else if (info && loadSettings().autoUpdate) {
+        // Automatic updates: no window. It downloads in the background and
+        // says so once, then again when it is ready.
+        adopt(info)
+        toast.info(`Downloading Stroke ${info.version}`, { description: 'It downloads in the background and installs the next time Stroke starts.' })
+        void install(true)
+      } else if (info) {
         adopt(info)
         status = 'available'
         onupdatefound('available')
@@ -96,6 +104,14 @@
     }
   }
 
+  // Settings → Updates shows the same state.
+  $effect(() => {
+    updateState.set({ status, checking, version: updateVersion, progress, applyOnQuit })
+  })
+
+  /** "2.10.8" from "2.10.8-nightly.202611150842": the title stays one line. */
+  const shortVersion = $derived(updateVersion.replace(/-nightly\.\d+$/, ''))
+
   const visible = $derived(
     !dismissed &&
     (status === 'available' ||
@@ -115,13 +131,22 @@
    * The update's notes as releases: Nightly's feed carries CHANGELOG.md
    * sections for several versions (## [x.y.z]); a stable release carries one
    * version's sections without the heading.
-   * @type {import('$lib/changelog.js').ChangelogRelease[]}
+   * @type {{ releases: import('$lib/changelog.js').ChangelogRelease[], omitted: number }}
    */
-  const changelog = $derived.by(() => {
+  const notes = $derived.by(() => {
     const many = parseReleases(releaseNotes)
-    if (many.length) return many
+    if (many.length) {
+      // The feed carries the whole recent changelog. Only what this install
+      // has not got yet: the versions after the running one, up to the update.
+      if (appVersion) {
+        const between = releasesInRange(many, appVersion, updateVersion, 8)
+        if (between.releases.length) return between
+      }
+      const own = many.filter((r) => r.version === updateVersion.replace(/-.*$/, ''))
+      return { releases: own.length ? own : many.slice(0, 1), omitted: 0 }
+    }
     const sections = parseChangelog(releaseNotes)
-    return sections.length ? [{ version: updateVersion, date: '', sections }] : []
+    return { releases: sections.length ? [{ version: updateVersion, date: '', sections }] : [], omitted: 0 }
   })
 
   // Actionable states are true modals (dark backdrop, blocks the app);
@@ -137,6 +162,9 @@
   let announceTimer
 
   onMount(() => {
+    updateActions.check = () => void checkNow()
+    updateActions.show = () => { dismissed = false }
+    updateActions.restart = () => void restart()
     import('@tauri-apps/api/app').then((m) => m.getVersion()).then((v) => (appVersion = v)).catch(() => {})
     // Runs in dev too: it is a version comparison, not an update check, and a
     // dev build that has genuinely changed version should say so.
@@ -147,10 +175,25 @@
       .catch(() => { /* browser dev: no backend */ })
     if (import.meta.env.DEV) return () => clearTimeout(announceTimer)
     const first = setTimeout(() => void backgroundCheck(), FIRST_CHECK_MS)
-    const again = setInterval(() => void backgroundCheck(), RECHECK_MS)
+    /** @type {ReturnType<typeof setInterval> | undefined} */
+    let again
+    import('@tauri-apps/api/app')
+      .then((m) => m.getVersion())
+      .catch(() => '')
+      .then((v) => { again = setInterval(() => void backgroundCheck(), /-nightly/.test(v) ? NIGHTLY_RECHECK_MS : RECHECK_MS) })
+    // Back at the computer after a while: look then too, rather than waiting
+    // out the timer.
+    let lastCheck = Date.now()
+    const onFocus = () => {
+      if (Date.now() - lastCheck < 30 * 60 * 1000) return
+      lastCheck = Date.now()
+      void backgroundCheck()
+    }
+    window.addEventListener('focus', onFocus)
     return () => {
       clearTimeout(first)
       clearInterval(again)
+      window.removeEventListener('focus', onFocus)
       clearTimeout(announceTimer)
     }
   })
@@ -231,7 +274,7 @@
     let notes = { releases: [], omitted: 0 }
     try {
       const { default: markdown } = await import('../../../CHANGELOG.md?raw')
-      notes = releasesBetween(markdown, previous, current)
+      notes = releasesBetween(markdown, previous, current, 8)
     } catch (e) {
       console.error('[updater] changelog unavailable:', e)
     }
@@ -325,7 +368,10 @@
    * it always has.
    */
   async function backgroundCheck() {
-    if (checking || status === 'available' || status === 'downloading' || status === 'ready') return
+    if (checking || status === 'downloading' || status === 'ready') return
+    // Offered and waiting: only worth asking again when it will download by
+    // itself (a quiet download that failed last time gets another go).
+    if (status === 'available' && !(loadSettings().autoUpdate && dismissed)) return
     if (status === 'error' && !dismissed) return
     let info
     try {
@@ -375,7 +421,9 @@
         }
       })
       // Opened from the status bar mid-download: show the result there.
+      const unseen = dismissed
       markReady(info, dismissed)
+      if (unseen) announceReady(info)
     } catch (e) {
       console.error('[updater] download failed:', e)
       if (quiet && dismissed) {
@@ -386,6 +434,22 @@
       }
       fail('install', e)
     }
+  }
+
+  /**
+   * A quiet download finished: say so once, with the one thing to do about it.
+   * Where the build installs on quit, nothing has to be done at all.
+   * @param {import('$lib/api.js').UpdateInfo} info
+   */
+  function announceReady(info) {
+    toast.success(`Stroke ${info.version} is ready`, {
+      id: 'update-ready',
+      description: info.applyOnQuit
+        ? 'It installs when you quit, so the next start is the new version.'
+        : 'Restart Stroke to install it.',
+      duration: 10000,
+      action: { label: 'Restart now', onClick: () => void restart() },
+    })
   }
 
   async function restart() {
@@ -455,33 +519,35 @@
     ></button>
 
     <div class="pointer-events-auto relative flex max-h-[min(40rem,calc(100vh-2rem))] w-[min(34rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-lg border border-border/60 bg-background elevate-3-rim">
-      <div class="flex items-start gap-3.5 px-6 pt-6 pe-12">
-        <Logo class="size-11 shrink-0" />
-        <div class="min-w-0">
-          <h2 id="update-title" class="text-ui-lg font-semibold text-balance text-foreground">
-            {#if status === 'error'}
-              {failedAction === 'install' ? 'The download did not finish' : failedAction === 'restart' ? "Couldn't install the update" : "Couldn't check for updates"}
-            {:else if status === 'ready'}
-              Stroke {updateVersion} is ready
-            {:else if status === 'downloading'}
-              Downloading Stroke {updateVersion}
-            {:else}
-              Stroke {updateVersion} is available
-            {/if}
-          </h2>
+      <!-- Like What's new: a plain title with the short version, then the
+           exact build in mono and what this install is on. -->
+      <div class="flex flex-col gap-1 px-6 pt-6 pe-12">
+        <h2 id="update-title" class="text-ui-xl font-semibold tracking-tight text-balance text-foreground">
+          {#if status === 'error'}
+            {failedAction === 'install' ? 'The download did not finish' : failedAction === 'restart' ? "Couldn't install the update" : "Couldn't check for updates"}
+          {:else if status === 'ready'}
+            Stroke {shortVersion} is ready
+          {:else if status === 'downloading'}
+            Downloading Stroke {shortVersion}
+          {:else}
+            Stroke {shortVersion} is available
+          {/if}
+        </h2>
+        {#if status === 'error'}
+          <p class="text-ui-xs break-words font-mono text-destructive">{errorMsg}</p>
+        {:else}
+          <p class="flex min-w-0 flex-wrap items-baseline gap-x-1.5 text-ui-sm text-muted-foreground">
+            <span class="truncate font-mono text-ui-xs tabular-nums" title={updateVersion}>{updateVersion}</span>
+            {#if appVersion}<span class="text-ui-xs">· you have <span class="font-mono tabular-nums">{appVersion.replace(/-nightly\.\d+$/, '')}</span></span>{/if}
+          </p>
           <p class="mt-1 text-ui-xs text-pretty text-muted-foreground">
-            {#if status === 'error'}
-              <span class="break-words font-mono text-destructive">{errorMsg}</span>
-            {:else if status === 'ready'}
-              {applyOnQuit ? 'It installs when you quit Stroke. Restart now to use it straight away.' : 'Restart Stroke to finish installing it.'}
-              {#if appVersion}<span class="tabular-nums"> You have v{appVersion}.</span>{/if}
+            {#if status === 'ready'}
+              {applyOnQuit ? 'It installs when you quit, so the next start is the new version. Restart now to use it straight away.' : 'Restart Stroke to finish installing it.'}
             {:else if status === 'downloading'}
-              {totalBytes > 0 ? `${fmt(downloadedBytes)} of ${fmt(totalBytes)}` : 'Starting…'} · it keeps going if you close this.
-            {:else}
-              {appVersion ? `You have v${appVersion}.` : 'A newer version of Stroke is out.'}
+              {totalBytes > 0 ? `${fmt(downloadedBytes)} of ${fmt(totalBytes)}` : 'Starting'}. It keeps going if you close this.
             {/if}
           </p>
-        </div>
+        {/if}
         <button
           type="button"
           onclick={() => (dismissed = true)}
@@ -502,8 +568,8 @@
 
       {#if status !== 'error'}
         <div class="mt-5 min-h-0 flex-1 overflow-y-auto border-t border-border/40 px-6 py-4 [scrollbar-gutter:stable]">
-          {#if changelog.length}
-            <ReleaseNotes releases={changelog} compact />
+          {#if notes.releases.length}
+            <ReleaseNotes releases={notes.releases} omitted={notes.omitted} compact />
           {:else}
             <p class="text-ui-sm text-muted-foreground">
               The notes for this version are on the release page.

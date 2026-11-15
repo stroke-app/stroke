@@ -103,6 +103,13 @@ describe('releasesBetween', () => {
     expect(releasesBetween(CHANGELOG, '2.3.0', '2.3.0').releases).toEqual([])
     expect(releasesBetween(CHANGELOG, 'dev', '2.3.0').releases).toEqual([])
   })
+
+  it('reads Nightly versions as the release they were built from', () => {
+    // 2.2.4 Nightly already has 2.2.4's notes; 2.3.0 Nightly has 2.3.0's.
+    const { releases } = releasesBetween(CHANGELOG, '2.2.4-nightly.202611150642', '2.3.0-nightly.202611150842')
+    expect(releases.map((r) => r.version)).toEqual(['2.3.0', '2.2.5'])
+    expect(releasesBetween(CHANGELOG, '2.3.0-nightly.1', '2.3.0-nightly.2').releases).toEqual([])
+  })
 })
 
 describe('splitInlineCode', () => {

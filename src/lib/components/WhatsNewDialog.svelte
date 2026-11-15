@@ -6,7 +6,6 @@
   import ArrowRight from '@lucide/svelte/icons/arrow-right'
   import { appSidebarStyle } from '$lib/stores/settings.js'
   import ReleaseNotes from './ReleaseNotes.svelte'
-  import Logo from './Logo.svelte'
   import { cn } from '$lib/utils.js'
 
   /**
@@ -57,26 +56,21 @@
 
 
 <Dialog.Root bind:open>
-  <Dialog.Content class="max-w-[28rem] gap-0 p-0">
-    <!-- A compact header: the mark, "What's new", and the version as a short
-         figure with its channel beside it. The full nightly build id wrapped
-         the title over two lines; it stays in the tooltip. -->
-    <Dialog.Header class="flex-row items-center gap-3 px-5 pt-5 pe-12">
-      <Logo class="size-8 shrink-0" />
-      <div class="flex min-w-0 flex-col gap-0.5">
-        <Dialog.Title class="text-ui-lg">What's new</Dialog.Title>
-        <Dialog.Description class="flex min-w-0 items-center gap-1.5 text-ui-xs tabular-nums" title={previous ? `${current}, updated from ${previous}` : current}>
-          <span class="font-medium text-foreground">{short(current)}</span>
-          {#if isNightly(current)}
-            <span class="rounded-sm bg-muted px-1 py-px text-ui-3xs font-medium text-muted-foreground">Nightly</span>
-          {/if}
-          {#if previous}<span class="truncate">from {short(previous)}</span>{/if}
-          {#if changeCount}<span aria-hidden="true">·</span><span class="shrink-0">{changeCount} {changeCount === 1 ? 'change' : 'changes'}</span>{/if}
-        </Dialog.Description>
-      </div>
+  <Dialog.Content class="max-w-[32rem] gap-0 p-0">
+    <!-- The title, then the exact build in mono (the one to quote in a bug
+         report), then where it came from. No mark: the window is the app. -->
+    <Dialog.Header class="gap-1 px-6 pt-6 pe-12">
+      <Dialog.Title class="text-ui-xl font-semibold tracking-tight">What's new</Dialog.Title>
+      <Dialog.Description class="flex min-w-0 flex-wrap items-baseline gap-x-1.5 text-ui-sm text-muted-foreground">
+        <span>{isNightly(current) ? 'Stroke Nightly' : 'Stroke'}</span>
+        <span class="min-w-0 truncate font-mono text-ui-xs tabular-nums" title={current}>{current}</span>
+      </Dialog.Description>
+      {#if previous}
+        <p class="mt-2 text-ui-xs text-muted-foreground">Updated from <span class="font-mono tabular-nums">{short(previous)}</span>.</p>
+      {/if}
     </Dialog.Header>
 
-    <div class="mt-4 max-h-[min(30rem,64vh)] overflow-y-auto border-t border-border/40 px-5 pt-4 pb-2 [scrollbar-gutter:stable]">
+    <div class="mt-5 max-h-[min(30rem,62vh)] overflow-y-auto border-t border-border/40 px-6 pt-4 pb-2 [scrollbar-gutter:stable]">
       {#if hero}
         <!-- The lead feature: the only filled button in the dialog. -->
         <section class="flex flex-col gap-1.5" aria-labelledby="whats-new-hero">
@@ -135,12 +129,17 @@
       {/if}
     </div>
 
-    <Dialog.Footer class="mx-0 mb-0 border-t border-border/40 px-5 py-3">
-      <Button variant="ghost" size="sm" class="text-muted-foreground hover:text-foreground" onclick={onfullchangelog}>
-        <ExternalLink class="size-3.5 shrink-0" />
-        Full changelog
-      </Button>
-      <Button size="sm" variant={hero ? 'outline' : 'default'} onclick={() => (open = false)}>Done</Button>
+    <!-- Summary left, actions right, like a confirm dialog's footer. -->
+    <Dialog.Footer class="mx-0 mb-0 flex-row items-center gap-3 border-t border-border/40 px-6 py-4 sm:justify-between">
+      <p class="min-w-0 truncate text-ui-xs text-muted-foreground">
+        {#if changeCount}{`${changeCount} ${changeCount === 1 ? 'change' : 'changes'}${releases.length > 1 ? ` across ${releases.length} versions` : ''}`}{/if}
+      </p>
+      <div class="flex shrink-0 items-center gap-2">
+        <Button variant="outline" onclick={onfullchangelog}>
+          Full changelog<ExternalLink class="size-3.5 shrink-0" />
+        </Button>
+        <Button onclick={() => (open = false)}>Done</Button>
+      </div>
     </Dialog.Footer>
   </Dialog.Content>
 </Dialog.Root>

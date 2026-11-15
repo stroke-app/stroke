@@ -130,10 +130,34 @@ export function parseReleases(markdown) {
  * @returns {{ releases: ChangelogRelease[], omitted: number }}
  */
 export function releasesBetween(markdown, previous, current, limit = 5) {
-  if (!(compareVersions(current, previous) > 0)) return { releases: [], omitted: 0 }
-  const inRange = parseReleases(markdown)
+  return releasesInRange(parseReleases(markdown), previous, current, limit)
+}
+
+/**
+ * A Nightly build is `x.y.z-nightly.stamp`, but it carries the whole of x.y.z:
+ * CHANGELOG.md's `## [x.y.z]` is the change it was built from. So Nightly
+ * versions compare by x.y.z, or 2.10.2-nightly would sort before 2.10.2's own
+ * notes and show them again after the update.
+ * @param {string} v
+ */
+export function changelogVersion(v) {
+  return String(v ?? '').trim().replace(/^v/, '').replace(/-nightly(?:\.[0-9A-Za-z.-]*)?$/, '')
+}
+
+/**
+ * Releases in (previous, current], newest first, up to `limit`.
+ * @param {ChangelogRelease[]} all
+ * @param {string} previous @param {string} current
+ * @param {number} [limit]
+ * @returns {{ releases: ChangelogRelease[], omitted: number }}
+ */
+export function releasesInRange(all, previous, current, limit = 5) {
+  const from = changelogVersion(previous)
+  const to = changelogVersion(current)
+  if (!(compareVersions(to, from) > 0)) return { releases: [], omitted: 0 }
+  const inRange = all
     .filter((r) => r.sections.length > 0)
-    .filter((r) => compareVersions(r.version, previous) > 0 && compareVersions(r.version, current) <= 0)
+    .filter((r) => compareVersions(r.version, from) > 0 && compareVersions(r.version, to) <= 0)
     .sort((a, b) => compareVersions(b.version, a.version))
   return { releases: inRange.slice(0, limit), omitted: Math.max(0, inRange.length - limit) }
 }

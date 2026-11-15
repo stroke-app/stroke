@@ -112,3 +112,28 @@ describe('dialogs', () => {
     expect(search).toBeTruthy()
   })
 })
+
+describe('updates', () => {
+  const releases = [
+    { version: '2.10.8', date: '2026-11-15', sections: [{ title: 'New Features', group: 'New Features', type: 'feature', items: ['Smoke tests gate Nightly'] }] },
+    { version: '2.10.7', date: '2026-11-15', sections: [{ title: 'Changes', group: 'Changes', type: 'change', items: ['Inset tree rows'] }] },
+  ]
+
+  it("What's new lists each version on its own", async () => {
+    const { default: WhatsNewDialog } = await import('./WhatsNewDialog.svelte')
+    render(WhatsNewDialog, { open: true, current: '2.10.8-nightly.202611150842', previous: '2.10.6-nightly.1', releases })
+    await settle()
+    const text = document.body.textContent ?? ''
+    expect(text).toContain('Stroke Nightly')
+    expect(text).toContain('2.10.7')
+    expect(text).toContain('2 changes across 2 versions')
+  })
+
+  it('Settings opens the switch dialog for the other track', async () => {
+    const { default: SettingsDialog } = await import('./SettingsDialog.svelte')
+    render(SettingsDialog, { open: true })
+    await settle()
+    expect(document.body.textContent).toContain('Update track')
+  })
+})
+

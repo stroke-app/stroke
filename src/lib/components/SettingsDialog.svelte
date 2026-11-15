@@ -4,7 +4,8 @@
   import ThemeBuilder from './ThemeBuilder.svelte';
   import { comboTitle } from '$lib/shortcuts.js'
   import Kbd from './Kbd.svelte'
-  import { nightlyInstall, nightlyOpen } from '$lib/api.js'
+  import { trackInstalled, trackInstall, trackOpen } from '$lib/api.js'
+  import { updateState, updateActions } from '$lib/stores/update-state.js'
   import KeybindingsSettings from './KeybindingsSettings.svelte'
   import { bindingFor } from '$lib/stores/keybindings.js'
   import { startTelemetry, stopTelemetry } from "$lib/telemetry.js";
@@ -573,26 +574,66 @@
     return { label: "Free", class: "border-border/70 bg-muted/40 text-muted-foreground" };
   });
 
-  // ── Stroke Nightly ─────────────────────────────────────────────────────
-  let onNightly = $state(false)
-  let nightlyBusy = $state(false)
-  let nightlyPath = $state('')
-  let nightlyError = $state('')
+  // ── Updates: version and track ─────────────────────────────────────
+  // Stable and Nightly are separate apps (own name and data), so the track is
+  // which app runs: switching installs the other one if needed, opens it and
+  // quits this one.
+  let appVersion = $state('')
+  const onNightly = $derived(/-nightly\./.test(appVersion))
   $effect(() => {
     void import('@tauri-apps/api/app')
       .then((m) => m.getVersion())
-      .then((v) => { onNightly = /-nightly\./.test(v) })
+      .then((v) => { appVersion = v })
       .catch(() => {})
   })
-  async function installNightly() {
-    nightlyBusy = true
-    nightlyError = ''
+
+  /** A check asked for from here came back with nothing: say so on the button. */
+  let upToDate = $state(false)
+  let askedCheck = $state(false)
+  $effect(() => {
+    const u = $updateState
+    if (!askedCheck || u.checking) return
+    upToDate = u.status === 'idle'
+    askedCheck = false
+  })
+  function checkUpdates() {
+    upToDate = false
+    askedCheck = true
+    updateActions.check()
+  }
+
+  /** @type {import('$lib/api.js').UpdateTrack | null} */
+  let switchTo = $state(null)
+  let switchInstalled = $state(/** @type {string | null} */ (null))
+  let switchBusy = $state(false)
+  let switchError = $state('')
+  const switchName = $derived(switchTo === 'nightly' ? 'Stroke Nightly' : 'Stroke')
+
+  /** @param {import('$lib/api.js').UpdateTrack} track */
+  async function askSwitch(track) {
+    if (track === (onNightly ? 'nightly' : 'stable')) return
+    switchError = ''
+    switchInstalled = null
+    switchTo = track
+    try { switchInstalled = await trackInstalled(track) } catch { /* browser dev */ }
+  }
+
+  async function confirmSwitch() {
+    if (!switchTo) return
+    const track = switchTo
+    switchBusy = true
+    switchError = ''
     try {
-      nightlyPath = await nightlyInstall()
+      const path = switchInstalled ?? (await trackInstall(track))
+      await trackOpen(track, path)
+      switchTo = null
+      // The ordinary quit: unsaved edits still get asked about.
+      const { emit } = await import('@tauri-apps/api/event')
+      await emit('app-quit-requested')
     } catch (e) {
-      nightlyError = String(/** @type {any} */ (e)?.message ?? e)
+      switchError = String(/** @type {any} */ (e)?.message ?? e)
     } finally {
-      nightlyBusy = false
+      switchBusy = false
     }
   }
 </script>
@@ -1197,6 +1238,58 @@
   {/if}
 
   {@render secLabel('Updates')}
+  {#if show('Version', 'Current version, check for updates')}
+    <div class={rowCls}>
+      <div class="min-w-0">
+        <p class="flex items-baseline gap-2 text-ui-sm font-medium text-foreground">
+          Version
+          {#if appVersion}<span class="min-w-0 truncate font-mono text-ui-xs font-normal tabular-nums text-muted-foreground" title={appVersion}>{appVersion}</span>{/if}
+        </p>
+        <p class="mt-0.5 text-ui-xs leading-relaxed text-muted-foreground">
+          {#if $updateState.status === 'ready'}
+            {$updateState.version} is downloaded. {$updateState.applyOnQuit ? 'It installs when you quit.' : 'Restart to install it.'}
+          {:else if $updateState.status === 'downloading'}
+            Downloading {$updateState.version} in the background.
+          {:else if $updateState.status === 'available'}
+            {$updateState.version} is available.
+          {:else}
+            Current version of the application.
+          {/if}
+        </p>
+      </div>
+      {#if $updateState.status === 'ready'}
+        <Button type="button" size="sm" class="shrink-0 gap-1.5" onclick={() => updateActions.restart()}><Icon name="refresh-cw" class="size-3.5 shrink-0" />Restart to update</Button>
+      {:else if $updateState.status === 'downloading'}
+        <Button type="button" variant="outline" size="sm" class="shrink-0 gap-1.5 tabular-nums" onclick={() => updateActions.show()}><Icon name="loader-2" class="size-3.5 shrink-0 animate-spin" />{$updateState.progress}%</Button>
+      {:else if $updateState.status === 'available'}
+        <Button type="button" size="sm" class="shrink-0" onclick={() => updateActions.show()}>Update</Button>
+      {:else if $updateState.checking}
+        <Button type="button" variant="outline" size="sm" class="shrink-0 gap-1.5" disabled><Icon name="loader-2" class="size-3.5 shrink-0 animate-spin" />Checking</Button>
+      {:else}
+        <Button type="button" variant="outline" size="sm" class="shrink-0" onclick={checkUpdates}>{upToDate ? 'Up to date' : 'Check for updates'}</Button>
+      {/if}
+    </div>
+  {/if}
+  {#if show('Update track', 'Stable or Nightly')}
+    <div class={rowCls}>
+      <div class="min-w-0">
+        <p class="text-ui-sm font-medium text-foreground">Update track</p>
+        <p class="mt-0.5 text-ui-xs leading-relaxed text-muted-foreground">
+          Nightly is built every night from the newest code. Each track is its own app with its own settings, so switching leaves the other as it is.
+        </p>
+      </div>
+      <div class="shrink-0">
+        <SelectMenu
+          triggerClass="h-8 w-32"
+          contentClass="w-[var(--bits-popover-anchor-width)] min-w-[8rem]"
+          ariaLabel="Update track"
+          value={onNightly ? 'nightly' : 'stable'}
+          onValueChange={(v) => void askSwitch(v)}
+          items={[{ value: 'stable', label: 'Stable', keywords: ['stable'] }, { value: 'nightly', label: 'Nightly', keywords: ['nightly', 'beta'] }]}
+        />
+      </div>
+    </div>
+  {/if}
   {#if show('Download updates in the background', 'Install new versions automatically when you quit')}
     {@render switchRow(
       'Download updates in the background',
@@ -1204,37 +1297,6 @@
       settings.autoUpdate,
       toggleAutoUpdate,
     )}
-  {/if}
-
-  <!-- Nightly is a separate app (its own name and data), so trying it never
-       touches this install: it goes in beside Stroke and opens. In Nightly
-       itself the row says so instead. -->
-  {#if show('Try Stroke Nightly', 'The daily build, installed beside Stroke')}
-    <div class={rowCls}>
-      <div class="min-w-0">
-        <p class="text-ui-sm font-medium text-foreground">{onNightly ? "You're on Stroke Nightly" : 'Try Stroke Nightly'}</p>
-        <p class="mt-0.5 text-ui-xs leading-relaxed text-muted-foreground">
-          {#if onNightly}
-            Built every night from the newest code. Stroke itself stays installed beside it, with its own settings.
-          {:else if nightlyError}
-            <span class="text-destructive">{nightlyError}</span>
-          {:else if nightlyPath}
-            Installed. It's a separate app with its own settings, so this one is untouched.
-          {:else}
-            The daily build with the newest features, installed beside Stroke as a separate app. Your connections and settings here stay as they are.
-          {/if}
-        </p>
-      </div>
-      {#if !onNightly}
-        {#if nightlyPath}
-          <Button type="button" size="sm" class="shrink-0" onclick={() => void nightlyOpen(nightlyPath)}>Open Nightly</Button>
-        {:else}
-          <Button type="button" variant="outline" size="sm" class="shrink-0 gap-1.5" disabled={nightlyBusy} onclick={() => void installNightly()}>
-            {#if nightlyBusy}<Icon name="loader-2" class="size-3.5 shrink-0 animate-spin" />Installing{:else}<Icon name="download" class="size-3.5 shrink-0" />Install Nightly{/if}
-          </Button>
-        {/if}
-      {/if}
-    </div>
   {/if}
 
   <!-- Privacy lives in General, not Agent: this switch covers the whole app, and
@@ -1847,3 +1909,50 @@
 </style>
 
 <ThemeBuilder bind:open={themeBuilderOpen} />
+
+<!-- Switching track: what opens, what quits, and what stays. -->
+<Dialog.Root open={switchTo !== null} onOpenChange={(o) => { if (!o && !switchBusy) switchTo = null }}>
+  <Dialog.Content class="max-w-[30rem] gap-0 p-0" showCloseButton={false}>
+    <Dialog.Header class="gap-1 px-6 pt-6">
+      <Dialog.Title class="text-ui-xl font-semibold tracking-tight">Switch to {switchTo === 'nightly' ? 'Nightly' : 'Stable'}?</Dialog.Title>
+      <Dialog.Description class="text-ui-sm text-muted-foreground">
+        {switchName} opens and this app quits.
+      </Dialog.Description>
+    </Dialog.Header>
+    <div class="px-6 pt-5">
+      <table class="w-full text-ui-sm">
+        <thead>
+          <tr class="border-b border-border/60 text-start text-ui-xs text-muted-foreground">
+            <th class="pb-2 pe-6 text-start font-normal">App</th>
+            <th class="pb-2 text-start font-normal">Version</th>
+            <th class="pb-2 text-end font-normal"></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="border-b border-border/40">
+            <td class="py-3 pe-6 whitespace-nowrap text-foreground">{switchName}</td>
+            <td class="py-3 text-muted-foreground">{switchInstalled ? 'Installed' : switchTo === 'nightly' ? 'Latest Nightly' : 'Latest release'}</td>
+            <td class="py-3 text-end text-ui-xs {switchInstalled ? 'text-muted-foreground' : 'text-warning'}">{switchInstalled ? 'opens' : 'downloads, then opens'}</td>
+          </tr>
+          <tr>
+            <td class="py-3 pe-6 whitespace-nowrap text-foreground">This app</td>
+            <td class="py-3 pe-4 font-mono text-ui-xs tabular-nums text-muted-foreground">{appVersion.replace(/-nightly\.\d+$/, '')}{#if /-nightly\./.test(appVersion)}<span class="ms-1.5 font-sans text-ui-2xs">Nightly</span>{/if}</td>
+            <td class="py-3 text-end text-ui-xs text-muted-foreground">quits, stays installed</td>
+          </tr>
+        </tbody>
+      </table>
+      {#if switchError}<p class="mt-3 text-ui-xs text-destructive">{switchError}</p>{/if}
+    </div>
+    <div class="mt-4 flex items-center gap-4 border-t border-border/40 px-6 py-4">
+      <p class="min-w-0 flex-1 text-ui-xs leading-relaxed text-muted-foreground">
+        Connections and settings stay with each app. Signed in, synced ones follow you.
+      </p>
+      <div class="flex shrink-0 items-center gap-2">
+        <Button type="button" variant="outline" disabled={switchBusy} onclick={() => (switchTo = null)}>Cancel</Button>
+        <Button type="button" class="gap-1.5" disabled={switchBusy} onclick={() => void confirmSwitch()}>
+          {#if switchBusy}<Icon name="loader-2" class="size-3.5 shrink-0 animate-spin" />{switchInstalled ? 'Opening' : 'Downloading'}{:else}Switch to {switchTo === 'nightly' ? 'Nightly' : 'Stable'}{/if}
+        </Button>
+      </div>
+    </div>
+  </Dialog.Content>
+</Dialog.Root>
