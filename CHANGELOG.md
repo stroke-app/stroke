@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.16.2] - 2026-11-15
+
+### Changes
+- Labs: several databases open together, one tab bar, switching in place (#260)
+
+
 ## [2.16.1] - 2026-11-15
 
 ### Changes
