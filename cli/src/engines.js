@@ -202,8 +202,9 @@ export async function openPostgres(uri) {
       const r = await pool.query(`
         select n.nspname as schema, c.relname as name,
                case when c.relkind in ('v', 'm') then 'view' else 'table' end as kind,
-               case when c.relkind in ('r', 'p') and c.reltuples >= 0 then c.reltuples::bigint end as rows
+               case when c.relkind in ('r', 'p') then coalesce(nullif(c.reltuples, -1)::bigint, st.n_live_tup) end as rows
         from pg_class c join pg_namespace n on n.oid = c.relnamespace
+        left join pg_stat_user_tables st on st.relid = c.oid
         where c.relkind in ('r', 'p', 'v', 'm', 'f')
           and n.nspname not in ('pg_catalog', 'information_schema') and n.nspname not like 'pg_toast%' and n.nspname not like 'pg_temp%'
           and not c.relispartition
