@@ -834,11 +834,18 @@
    * is a dropdown on the form now - searchable, in reading order with the rest
    * of the connection - so the step is gone and so is the grid.
    */
+  /** The engine dropdown on the form. */
+  let enginePickerOpen = $state(false);
+
+  /** New connection: the form, with the engine list already open to pick from. */
   function newConnectionForm() {
     error = "";
     testOk = false;
     quickHint = "";
     pickEngine("postgres");
+    // After the form step has rendered its trigger, or the popover has
+    // nothing to anchor to.
+    tick().then(() => requestAnimationFrame(() => (enginePickerOpen = true)));
   }
 
   /** Every driver, for the form's engine dropdown. */
@@ -3705,6 +3712,30 @@
                     aria-hidden="true"
                   />
                 </button>
+                <!-- Any engine by hand: the form with its engine picker. The
+                     stacked logos say what "any" means. Flat, no shadow. -->
+                <button
+                  type="button"
+                  onclick={newConnectionForm}
+                  title="Pick an engine and enter its details"
+                  class="group ms-auto inline-flex h-9 shrink-0 items-center gap-2.5 rounded-full bg-muted/70 ps-1.5 pe-3 text-ui-sm font-medium text-foreground outline-none transition-colors duration-150 hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                >
+                  <span class="flex items-center" aria-hidden="true">
+                    {#each ["postgres", "mysql", "sqlite", "mongodb"] as id, i (id)}
+                      <span
+                        class={cn(
+                          "grid size-6 place-items-center rounded-full bg-background ring-2 ring-muted/70 transition-transform duration-200 ease-out group-hover:translate-x-[calc(var(--i)*3px)] group-hover:ring-muted motion-reduce:transition-none",
+                          i > 0 && "-ms-2",
+                        )}
+                        style="z-index: {4 - i}; --i: {i}"
+                      >
+                        <DbIcon {id} class="size-3.5 shrink-0" />
+                      </span>
+                    {/each}
+                  </span>
+                  New connection
+                  <Kbd combo="Mod+N" size="sm" class="ms-1 shrink-0 text-muted-foreground" />
+                </button>
               </div>
               <p class="mt-1.5 text-ui-sm text-muted-foreground">Paste a connection string, or pick where your database lives.</p>
             {:else}
@@ -3728,6 +3759,7 @@
                      mind meant going back a page. It is one field of the
                      connection, so it sits in the form like one. -->
                 <SearchableMenu
+                  bind:open={enginePickerOpen}
                   items={engineItems}
                   placeholder="Search databases…"
                   contentClass="w-[26rem]"
@@ -4121,28 +4153,6 @@
                   {@render localGroup("Docker", dockerTargets, false, "docker")}
                 {/if}
 
-                  <!-- Everything else: the form, on its own engine dropdown.
-                       This used to be a second page of seventeen driver tiles. -->
-                  <div>
-                    <h3 class="text-ui-sm font-medium text-foreground/80">
-                      Something else
-                    </h3>
-                    <!-- A real button, not a tile: a muted fill on the grey canvas
-                         washed out on Windows and Linux. Solid surface, a hairline,
-                         the plus in the accent, the shortcut at the end. -->
-                    <button
-                      type="button"
-                      onclick={newConnectionForm}
-                      title="Pick an engine and enter its details"
-                      class="group mt-2.5 inline-flex h-9 items-center gap-2.5 rounded-lg border border-border bg-card ps-1.5 pe-2.5 text-ui-sm font-medium text-foreground shadow-xs outline-none transition-[background-color,border-color,scale] duration-150 ease-out hover:border-foreground/20 hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring active:scale-[0.98]"
-                    >
-                      <span class="grid size-6 shrink-0 place-items-center rounded-md bg-primary text-primary-foreground" aria-hidden="true">
-                        <Icon name="plus" class="size-3.5 shrink-0" />
-                      </span>
-                      New connection
-                      <Kbd combo="Mod+N" size="sm" class="ms-3 shrink-0 text-muted-foreground" />
-                    </button>
-                  </div>
 
               </div>
             </ScrollArea>

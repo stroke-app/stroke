@@ -297,7 +297,8 @@ export const ICON_MAP = {
   'panel-left-close':{ lucide: PanelLeftClose, huge: SidebarLeftIcon },
   'panel-left-open': { lucide: PanelLeftOpen,  huge: SidebarLeft01Icon },
   'link-2':         { lucide: Link2,          huge: Link01Icon },
-  'list-filter':    { lucide: ListFilter,     huge: FilterIcon },
+  // Lucide only: Hugeicons' nearest glyph is a funnel, not the three lines.
+  'list-filter':    { lucide: ListFilter },
   'network':        { lucide: Network,        huge: WorkflowSquare01Icon },
   'list-tree':      { lucide: ListTree },
   'package':        { lucide: Package,        huge: PackageIcon },

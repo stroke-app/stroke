@@ -1,4 +1,5 @@
 <script>
+  import { isReadOnly, guardWrite } from '$lib/stores/read-only.js';
   import { tick, onDestroy, untrack } from "svelte";
   import {
     pgArrayElem, pgArrayText, isSqlArrayType, isVectorType, foldLines, valuesEqual,
@@ -1860,7 +1861,9 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     if (openVectorViewer(rowIdx, colIdx)) return;
     if (openGeometryViewer(rowIdx, colIdx)) return;
 
-    if (readonly) return;
+    // Read-only mode says why nothing happened; a grid that is read-only by
+    // nature (query results) stays quiet.
+    if (readonly) { if (isReadOnly()) guardWrite('edit cells'); return; }
 
     const blocked = cellEditBlock?.(rowIdx, colIdx);
     if (blocked) {
@@ -2467,7 +2470,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   }
 
   function openInsertDraft(anchorRow = null) {
-    if (readonly) return
+    if (readonly) { if (isReadOnly()) guardWrite('add rows'); return }
     // Add on an open band appends: pressing it three times is three rows, not
     // the same row reset twice.
     newRowDrafts = [...(newRowDrafts ?? []), blankDraft()]
@@ -5550,8 +5553,9 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     // Alt+D copies the focused row into the insert draft, beside the Alt+F /
     // Alt+E pair - all three act on what the cursor is standing on.
     if (!editingCell && e.altKey && !e.ctrlKey && !e.metaKey && (e.key === "d" || e.key === "D")) {
-      if (!readonly && focusedRow !== null) {
+      if (focusedRow !== null) {
         e.preventDefault();
+        if (readonly) { if (isReadOnly()) guardWrite('duplicate rows'); return; }
         duplicateRow(focusedRow);
         return;
       }

@@ -48,7 +48,8 @@
   import { dbAdminKind } from '$lib/database-admin.js'
   import { appNativeScroll } from '$lib/stores/settings.js'
   import { workspaces, activeWorkspaceId, inWorkspace, colorOf } from '$lib/stores/workspaces.js'
-  import { loadTreeExpanded, saveTreeExpanded } from '$lib/stores/sidebar-tree.js'
+  import { loadTreeExpanded, saveTreeExpanded, treeConnectionScope } from '$lib/stores/sidebar-tree.js'
+  import ConfirmDialog from './ConfirmDialog.svelte'
   import { smoothScroll } from '$lib/smooth-scroll.js'
   import {
     childId, ancestorIds, makeNode, filterTree, flattenTree, rowIndex,
@@ -105,6 +106,10 @@
     onnewdatabase = () => {},
     /** A connection's pin changed; carries the saved list. @type {(list: SavedConnection[]) => void} */
     onconnectionmeta = () => {},
+    /** The display options' Row counts toggle. */
+    showRowCounts = true,
+    /** Delete a saved connection (after the confirm below). @type {(id: string) => void} */
+    onremoveconnection = () => {},
   } = $props()
 
   const uid = $props.id()
@@ -254,6 +259,11 @@
 
   // ── Roots ───────────────────────────────────────────────────────────────
   const shownConnections = $derived.by(() => {
+    // Connected only: the open connection is the tree, and the Connections
+    // list under it switches. With nothing open, every connection shows.
+    if ($treeConnectionScope === 'connected' && connection) {
+      return [connections.find((c) => c.id === connection?.id) ?? connection]
+    }
     const list = inWorkspace(connections, $activeWorkspaceId, $workspaces)
     if (connection && !list.some((c) => c.id === connection?.id)) {
       const live = connections.find((c) => c.id === connection?.id) ?? connection
@@ -277,6 +287,17 @@
       })
       .sort((a, b) => Number(b.data.pinned) - Number(a.data.pinned)),
   )
+
+  // Removing deletes the connection's history and saved work, so it asks first.
+  /** @type {SavedConnection | null} */
+  let pendingRemove = $state(null)
+  let confirmRemoveOpen = $state(false)
+  /** @param {SavedConnection} c */
+  function askRemove(c) {
+    if (!c?.id) return
+    pendingRemove = c
+    confirmRemoveOpen = true
+  }
 
   /** @param {SavedConnection} c */
   function togglePinned(c) {
@@ -1148,6 +1169,7 @@
   /** @param {TreeNode} n */
   function countText(n) {
     if (n.count == null) return ''
+    if (n.kind === 'table' && !showRowCounts) return ''
     return n.kind === 'table' ? formatTableRowCount(n.count) : String(n.count)
   }
 
@@ -1433,6 +1455,12 @@
                 <Icon name={n.data.pinned ? 'pin-off' : 'pin'} />
                 {n.data.pinned ? 'Unpin connection' : 'Pin connection'}
               </ContextMenu.Item>
+              {#if connection}
+                <ContextMenu.Item onSelect={() => treeConnectionScope.set($treeConnectionScope === 'connected' ? 'all' : 'connected')}>
+                  <Icon name={$treeConnectionScope === 'connected' ? 'layout-list' : 'plug'} />
+                  {$treeConnectionScope === 'connected' ? 'Show all connections' : 'Show only the connected one'}
+                </ContextMenu.Item>
+              {/if}
             {/if}
             {#if opensBySwitching(n)}
               <ContextMenu.Item onSelect={() => toggleNode(n, true)}>
@@ -1484,9 +1512,32 @@
                 Refresh
               </ContextMenu.Item>
             {/if}
+            {#if n.kind === 'connection' && n.data.conn?.id}
+              <ContextMenu.Separator />
+              <ContextMenu.Item variant="destructive" onSelect={() => askRemove(n.data.conn)}>
+                <Icon name="trash-2" />
+                Remove connection…
+              </ContextMenu.Item>
+            {/if}
           {/if}
         {/if}
       </ContextMenu.Content>
     </ContextMenu.Root>
   {/if}
 </div>
+
+<ConfirmDialog
+  bind:open={confirmRemoveOpen}
+  icon="trash-2"
+  title="Delete connection?"
+  description={`"${pendingRemove?.name || pendingRemove?.database || pendingRemove?.host || pendingRemove?.filePath || 'this connection'}" will be removed from your saved connections.`}
+  note="Its query history, saved queries, charts and AI chats are deleted with it. This can't be undone."
+  confirmLabel="Delete"
+  confirmIcon="trash-2"
+  variant="destructive"
+  onconfirm={() => {
+    if (pendingRemove?.id) onremoveconnection(pendingRemove.id)
+    pendingRemove = null
+  }}
+  oncancel={() => (pendingRemove = null)}
+/>

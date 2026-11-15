@@ -77,6 +77,7 @@
     getAutostartStatus,
   } from "$lib/api.js";
   import PinSetupDialog from "./PinSetupDialog.svelte";
+  import { treeConnectionScope } from "$lib/stores/sidebar-tree.js";
   import { SHARE_EXPIRIES, loadShareDefaults, saveShareDefaults, openSharesPage } from "$lib/share-flow.js";
   import { toast } from "$lib/components/ui/sonner/toast.svelte.js";
   import {
@@ -710,6 +711,15 @@
   {/if}
   {#if show('Tree sidebar', 'Labs, browse connections, schemas, tables and columns as one explorer tree')}
     {@render switchRow('Tree sidebar', 'One explorer tree in the sidebar: connection, database, schema, tables, views and routines, columns. Replaces the Tables, Objects and Databases tabs; Queries, Recent and Find & replace stay.', settings.sidebarStyle === 'tree', toggleTreeSidebar)}
+    {#if settings.sidebarStyle === 'tree'}
+      <div class={rowCls}>
+        <div class="min-w-0">
+          <p class="text-ui-sm font-medium text-foreground">Connections in the tree</p>
+          <p class="mt-0.5 text-ui-xs leading-relaxed text-muted-foreground">Every saved connection as a root, or only the connected one with the rest in a Connections list below it.</p>
+        </div>
+        {@render segmented('Connections in the tree', [{ value: 'all', label: 'All' }, { value: 'connected', label: 'Connected only' }], $treeConnectionScope, (v) => treeConnectionScope.set(v))}
+      </div>
+    {/if}
   {/if}
   {#if show('Live mode', 'Labs, auto-refresh the active table when its data changes')}
     {@render switchRow('Live mode', 'Shows the Live toggle in the status bar, which refreshes the open table when its data changes.', settings.liveModeEnabled, toggleLiveMode)}

@@ -1622,14 +1622,15 @@ pre code,
       button[class*="size-"],
       button[data-slot="button"],
       a[data-slot="button"],
-      button[data-slot="dropdown-menu-trigger"],
-      button[data-slot="popover-trigger"],
-      button[data-slot="select-trigger"],
       button[data-slot="dialog-trigger"]
     ):not(
       :disabled,
       [aria-disabled="true"],
       [data-no-press],
+      /* Menu, popover and select triggers: bits-ui opens them on pointerdown
+         and anchors to the button's box at that moment, scaled to 97%, so the
+         popup moved down a pixel when the button sprang back. */
+      [aria-haspopup],
       [class*="size-full"],
       [class*="w-full"],
       [class*="flex-1"],

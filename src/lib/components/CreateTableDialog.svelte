@@ -18,6 +18,7 @@
   import ChevronDown from '@lucide/svelte/icons/chevron-down'
   import MessageSquare from '@lucide/svelte/icons/message-square'
   import ArrowRight from '@lucide/svelte/icons/arrow-right'
+  import Sparkles from '@lucide/svelte/icons/sparkles'
 
   let {
     open = $bindable(false),
@@ -129,6 +130,47 @@
       ;/** @type {HTMLInputElement | undefined} */ (inputs[inputs.length - 1])?.focus()
     })
   }
+  /** Add a column, or a few, from a preset; focuses the first new name. @param {ColRow[]} add */
+  function addCols(add) {
+    const taken = new Set(cols.map((c) => c.name.trim()))
+    const fresh = add.filter((c) => !c.name || !taken.has(c.name))
+    if (!fresh.length) return
+    cols = [...cols, ...fresh]
+    const firstId = fresh[0].id
+    requestAnimationFrame(() => /** @type {HTMLInputElement | null} */ (document.querySelector(`[data-col-id="${firstId}"]`))?.focus())
+  }
+
+  /** Columns most tables start with, in this engine's types. */
+  const PRESETS = $derived.by(() => {
+    const pg = family === 'postgres', my = family === 'mysql'
+    const ts = pg ? 'timestamptz' : my ? 'DATETIME' : 'TEXT'
+    const now = pg ? 'now()' : 'CURRENT_TIMESTAMP'
+    const text = pg ? 'text' : my ? 'VARCHAR' : 'TEXT'
+    const int = pg ? 'integer' : my ? 'INT' : 'INTEGER'
+    /** @type {{ label: string, hint: string, make: () => ColRow[] }[]} */
+    const list = [
+      { label: 'id', hint: pg ? 'bigserial key' : my ? 'auto-increment key' : 'integer key', make: () => [
+        pg ? col('id', 'bigserial', { pk: true, notNull: true })
+          : my ? col('id', 'BIGINT', { pk: true, notNull: true, defaultVal: 'AUTO_INCREMENT' })
+          : col('id', 'INTEGER', { pk: true, notNull: true })] },
+      ...(pg ? [{ label: 'uuid id', hint: 'gen_random_uuid()', make: () => [col('id', 'uuid', { pk: true, notNull: true, defaultVal: 'gen_random_uuid()' })] }] : []),
+      { label: 'Timestamps', hint: 'created_at, updated_at', make: () => [
+        col('created_at', ts, { notNull: true, defaultVal: now }),
+        col('updated_at', ts, { notNull: true, defaultVal: now })] },
+      { label: 'email', hint: 'unique, not null', make: () => [col('email', text, { notNull: true, unique: true })] },
+      { label: 'name', hint: text, make: () => [col('name', text, { notNull: true })] },
+      { label: 'is_active', hint: 'boolean', make: () => [col('is_active', pg ? 'boolean' : my ? 'BOOLEAN' : 'INTEGER', { notNull: true, defaultVal: pg ? 'true' : '1' })] },
+      { label: 'price', hint: 'decimal(10, 2)', make: () => [col('price', pg ? 'numeric' : my ? 'DECIMAL' : 'NUMERIC', { notNull: true, defaultVal: '0' })] },
+      { label: 'metadata', hint: pg ? 'jsonb' : my ? 'JSON' : 'TEXT', make: () => [col('metadata', pg ? 'jsonb' : my ? 'JSON' : 'TEXT')] },
+      { label: 'Reference', hint: '…_id and a foreign key', make: () => {
+        const c = col('', int, { notNull: true })
+        fks = [...fks, { id: uid(), column: '', refTable: '', refColumn: '', onDelete: 'NO ACTION', onUpdate: 'NO ACTION' }]
+        return [c]
+      } },
+    ]
+    return list
+  })
+
   /** @param {string} id */
   const removeCol = (id) => { cols = cols.filter((c) => c.id !== id) }
   /** @param {string} id @param {Partial<ColRow>} patch */
@@ -205,11 +247,11 @@
   const cell = 'no-field-frame h-7 w-full min-w-0 rounded-md bg-transparent px-2 font-mono text-ui-sm text-foreground outline-none placeholder:text-muted-foreground hover:bg-accent/60 focus:bg-accent'
   const flag = (/** @type {boolean} */ on) => cn(
     'inline-flex h-6 min-w-7 items-center justify-center rounded-md px-1 font-mono text-ui-2xs transition-colors',
-    on ? 'bg-primary/15 font-medium text-foreground ring-1 ring-primary/30' : 'text-muted-foreground hover:bg-accent hover:text-foreground',
+    on ? 'bg-primary/15 font-semibold text-primary' : 'text-muted-foreground/70 hover:bg-accent hover:text-foreground',
   )
   const iconBtn = 'hit-area inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-[color,background-color,scale] duration-[120ms] ease-[var(--ease-out)] active:scale-[0.97] hover:bg-accent hover:text-foreground'
   const sectionHead = 'flex items-center gap-2'
-  const grid = 'grid grid-cols-[1.25rem_minmax(0,1fr)_minmax(0,1.15fr)_auto_minmax(0,0.9fr)_3.25rem] items-center gap-1'
+  const grid = 'grid grid-cols-[1.25rem_minmax(0,1fr)_minmax(0,1.3fr)_auto_minmax(0,0.9fr)_3.25rem] items-center gap-1'
 </script>
 
 <DdlDialogShell
@@ -220,7 +262,7 @@
   {canSubmit}
   busy={submitting || saving}
   submitLabel="Create table"
-  size="sm:max-w-3xl"
+  size="sm:max-w-4xl"
   onsubmit={handleCreate}
   onopensql={onopensql ? openInEditor : null}
 >
@@ -245,9 +287,28 @@
     <div class={sectionHead}>
       <span class="text-ui-sm font-medium text-foreground" id="create-table-cols">Columns</span>
       <span class="font-mono text-ui-2xs tabular-nums text-muted-foreground">{cols.length}</span>
-      <Button variant="ghost" size="sm" class="ml-auto text-muted-foreground" onclick={addCol}>
-        <Plus class="size-3.5 shrink-0" />Add column
-      </Button>
+      <div class="ml-auto flex items-center gap-0.5">
+        <DropdownMenu.Root>
+          <DropdownMenu.Trigger>
+            {#snippet child({ props })}
+              <Button {...props} variant="ghost" size="sm" class="gap-1.5 text-muted-foreground">
+                <Sparkles class="size-3.5 shrink-0" />Quick add<ChevronDown class="size-3 shrink-0" />
+              </Button>
+            {/snippet}
+          </DropdownMenu.Trigger>
+          <DropdownMenu.Content align="end" class="z-[130] min-w-56">
+            {#each PRESETS as p (p.label)}
+              <DropdownMenu.Item onSelect={() => addCols(p.make())}>
+                <span data-slot="menu-label" class="font-mono">{p.label}</span>
+                <span data-slot="menu-trailing" class="ml-auto ps-4 text-ui-2xs text-muted-foreground">{p.hint}</span>
+              </DropdownMenu.Item>
+            {/each}
+          </DropdownMenu.Content>
+        </DropdownMenu.Root>
+        <Button variant="ghost" size="sm" class="gap-1.5 text-muted-foreground" onclick={addCol} title="Add column (Enter in a column name)">
+          <Plus class="size-3.5 shrink-0" />Add column
+        </Button>
+      </div>
     </div>
     {#if err('columns')}<p class={errCls}>{err('columns')}</p>{/if}
     <div class="{grid} px-0.5 text-ui-2xs text-muted-foreground" aria-hidden="true">
@@ -283,23 +344,34 @@
               data-grip={c.id}
             ><GripVertical class="size-3.5 shrink-0" /></button>
 
-            <input class={cell} data-col-name placeholder="column_name" aria-label="Column {i + 1} name"
-              bind:value={c.name} autocomplete="off" spellcheck="false" aria-invalid={!!(errors[c.id] && (attempted || c.name.trim())) || undefined} />
+            <input class={cell} data-col-name data-col-id={c.id} placeholder="column_name" aria-label="Column {i + 1} name"
+              bind:value={c.name} autocomplete="off" spellcheck="false" aria-invalid={!!(errors[c.id] && (attempted || c.name.trim())) || undefined}
+              onkeydown={(e) => {
+                // Enter on the last named column starts the next one; the
+                // dialog's Mod+Enter still creates the table.
+                if (e.key !== 'Enter' || e.metaKey || e.ctrlKey || e.isComposing) return
+                e.preventDefault()
+                if (i === cols.length - 1 && c.name.trim()) addCol()
+                else /** @type {HTMLInputElement | null} */ (document.querySelector(`[data-col-id="${cols[i + 1]?.id}"]`))?.focus()
+              }} />
 
-            <div class="flex min-w-0 items-center gap-0.5">
+            <!-- Type and its size as one control. The size boxes have their own
+                 fixed widths: they used to share the name cell's w-full, which
+                 took the whole cell and squeezed the type picker to nothing,
+                 so a VARCHAR column's type could no longer be changed. -->
+            <div class="flex min-w-0 items-center gap-1">
               <div class="min-w-0 flex-1">
                 <PickerField size="sm" mono value={c.type} items={typeItems} search="Search types…" empty="No matching type"
                   aria-label="Column {i + 1} type" onchange={(v) => setType(c.id, v)} />
               </div>
               {#if def?.params}
-                <span class="text-muted-foreground">(</span>
-                <input class="{cell} w-10 px-1 text-center tabular-nums" inputmode="numeric" aria-label="Column {i + 1} {def.params === 2 ? 'precision' : 'length'}"
-                  placeholder={def.params === 2 ? 'p' : 'n'} bind:value={c.length} />
-                {#if def.params === 2}
-                  <span class="text-muted-foreground">,</span>
-                  <input class="{cell} w-8 px-1 text-center tabular-nums" inputmode="numeric" aria-label="Column {i + 1} scale" placeholder="s" bind:value={c.scale} />
-                {/if}
-                <span class="text-muted-foreground">)</span>
+                <span class="flex h-7 shrink-0 items-center rounded-md bg-muted/50 px-1 font-mono text-ui-xs text-muted-foreground focus-within:bg-accent">
+                  (<input class="no-field-frame h-6 w-9 bg-transparent px-0.5 text-center text-foreground tabular-nums outline-none placeholder:text-muted-foreground"
+                    inputmode="numeric" aria-label="Column {i + 1} {def.params === 2 ? 'precision' : 'length'}"
+                    placeholder={def.params === 2 ? 'p' : 'n'} bind:value={c.length} />{#if def.params === 2},<input
+                    class="no-field-frame h-6 w-6 bg-transparent px-0.5 text-center text-foreground tabular-nums outline-none placeholder:text-muted-foreground"
+                    inputmode="numeric" aria-label="Column {i + 1} scale" placeholder="s" bind:value={c.scale} />{/if})
+                </span>
               {/if}
             </div>
 
