@@ -98,9 +98,10 @@ export function isTypingTarget(target) {
  * cannot see.
  *
  * @param {Document | HTMLElement} [root]
+ * @param {(el: HTMLInputElement) => boolean} [skip] fields to leave out
  * @returns {HTMLInputElement | null}
  */
-export function findSearchInput(root = document) {
+export function findSearchInput(root = document, skip) {
   const doc = root instanceof Document ? root : root.ownerDocument
   if (!doc) return null
 
@@ -118,6 +119,7 @@ export function findSearchInput(root = document) {
   for (const el of all) {
     if (!(el instanceof HTMLInputElement)) continue
     if (el.disabled || el.readOnly) continue
+    if (skip?.(el)) continue
     // offsetParent is null for display:none and for anything inside it, which is
     // how the app hides inactive tabs - exactly the fields that must not win.
     if (el.offsetParent === null) continue

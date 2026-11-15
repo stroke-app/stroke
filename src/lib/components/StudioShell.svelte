@@ -41,7 +41,8 @@
   import { createHotkey } from '@tanstack/svelte-hotkeys'
   import { createCommandHotkey, matchesCommand } from '$lib/command-hotkey.js'
   import { IS_MAC } from '$lib/shortcuts.js'
-  import { findSearchInput, isTypingTarget } from '$lib/focus-search.js'
+  import { isTypingTarget } from '$lib/focus-search.js'
+  import { slashFocusTarget } from '$lib/slash-focus.js'
   import { appFkAutoExpandJson, cycleTheme, restorePreviousTheme, isCurrentThemeDark, loadSettings, appPaginationMode, appVimMode, appAutoSaveQueries, appStreamResults, appSqlUndo, appSqlEditor, appAiInTab, increaseZoom, decreaseZoom, resetZoom, updateSettings } from '$lib/stores/settings.js'
   import { requireUnlock } from '$lib/stores/app-lock.js'
   import { isTextEntryTarget, setVimSubMode } from '$lib/vim/vim.js'
@@ -3821,7 +3822,7 @@ let rowSearch = $state('')
   // reachable without anyone registering it. See $lib/focus-search.js.
   createCommandHotkey('search.focus', (e) => {
     if (isTypingTarget(document.activeElement)) return
-    const el = findSearchInput()
+    const el = /** @type {HTMLInputElement | null} */ (slashFocusTarget())
     if (!el) return
     e.preventDefault()
     el.focus()
