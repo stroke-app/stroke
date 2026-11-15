@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.13.4] - 2026-11-15
+
+### Changes
+- Live mode on MongoDB, the other document stores and Redis (#230)
+
+
 ## [2.13.3] - 2026-11-15
 
 ### Changes
