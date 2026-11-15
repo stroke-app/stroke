@@ -569,9 +569,9 @@
 
   const planBadge = $derived.by(() => {
     const s = $licenseStatus;
-    if (s?.status === "Valid") return { label: "Pro", class: "border-success/25 bg-success/10 text-success" };
-    if (s?.status === "Trial") return { label: `Trial · ${s.days_remaining}d`, class: "border-warning/25 bg-warning/10 text-warning" };
-    return { label: "Free", class: "border-border/70 bg-muted/40 text-muted-foreground" };
+    if (s?.status === "Valid") return { label: "Pro", class: "chip-gloss" };
+    if (s?.status === "Trial") return { label: `Trial · ${s.days_remaining}d`, class: "chip-gloss chip-warning" };
+    return { label: "Free", class: "chip-gloss chip-muted" };
   });
 
   // ── Updates: version and track ─────────────────────────────────────
@@ -805,7 +805,7 @@
     <div class="min-w-0">
       <p class="flex items-center gap-2 text-ui-sm font-medium text-foreground">
         {label}
-        {#if badge}<span class="rounded-full border px-1.5 py-px text-ui-3xs font-medium leading-4 {badge.class}">{badge.label}</span>{/if}
+        {#if badge}<span class="h-5 px-2 text-ui-2xs font-semibold {badge.class}">{badge.label}</span>{/if}
       </p>
       <p class="mt-0.5 text-ui-xs leading-relaxed text-muted-foreground">{desc}</p>
     </div>

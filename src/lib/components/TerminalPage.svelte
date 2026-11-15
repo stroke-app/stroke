@@ -753,7 +753,7 @@
     // gap (4 + 8 + 12 + 8 px) sit to its left.
     const left = s.left - h.left + Math.max(0, buf.cursorX - token.length) * cellW - 32
     const lineTop = s.top - h.top + buf.cursorY * cellH
-    const listHeight = suggestItems.length * 24 + 10
+    const listHeight = Math.min(suggestItems.length, SUGGEST_ROWS) * 24 + (suggestItems.length > SUGGEST_ROWS ? 34 : 10)
     const above = lineTop + cellH + listHeight > h.height && lineTop > h.height / 2
     suggestPos = {
       left: Math.max(4, Math.min(left, h.width - 300)),
@@ -764,6 +764,17 @@
   }
 
   /** @param {number} [i] */
+  /** Rows the suggestion list shows before it scrolls. */
+  const SUGGEST_ROWS = 10
+  /** @type {HTMLElement | null} */
+  let suggestListEl = $state(null)
+  /** Keep the highlighted suggestion in view as the arrows move past the edge. */
+  function revealSuggestion() {
+    requestAnimationFrame(() => {
+      suggestListEl?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' })
+    })
+  }
+
   function acceptSuggestion(i = suggestIndex) {
     const item = suggestItems[i]
     if (!item) return
@@ -782,8 +793,10 @@
   function suggestKey(e) {
     const n = suggestItems.length
     switch (e.key) {
-      case 'ArrowDown': suggestIndex = (suggestIndex + 1) % n; return true
-      case 'ArrowUp': suggestIndex = (suggestIndex - 1 + n) % n; return true
+      case 'ArrowDown': suggestIndex = (suggestIndex + 1) % n; revealSuggestion(); return true
+      case 'ArrowUp': suggestIndex = (suggestIndex - 1 + n) % n; revealSuggestion(); return true
+      case 'PageDown': suggestIndex = Math.min(n - 1, suggestIndex + SUGGEST_ROWS); revealSuggestion(); return true
+      case 'PageUp': suggestIndex = Math.max(0, suggestIndex - SUGGEST_ROWS); revealSuggestion(); return true
       case 'Tab': acceptSuggestion(); return true
       case 'Escape': hideSuggest(); return true
       case 'Enter':
@@ -1608,8 +1621,13 @@
 
     {#if suggestItems.length}
       <div
-        class="absolute z-20 w-max max-w-[min(26rem,calc(100%-1rem))] min-w-44 overflow-hidden rounded-lg border border-border/60 bg-popover p-1 elevate-2-rim"
+        class="absolute z-20 flex w-max max-w-[min(26rem,calc(100%-1rem))] min-w-44 flex-col overflow-hidden rounded-lg border border-border/60 bg-popover elevate-2-rim"
         style="left: {suggestPos.left}px; {suggestPos.above ? `bottom: ${suggestPos.bottom}px` : `top: ${suggestPos.top}px`}; font-family: var(--editor-font-family, var(--font-mono));"
+      >
+      <div
+        bind:this={suggestListEl}
+        class="app-scroll overflow-y-auto overscroll-contain p-1"
+        style="max-height: {SUGGEST_ROWS * 24 + 8}px"
         role="listbox"
         aria-label="Suggestions"
       >
@@ -1631,6 +1649,13 @@
             {/if}
           </div>
         {/each}
+      </div>
+      {#if suggestItems.length > SUGGEST_ROWS}
+        <div class="flex h-6 shrink-0 items-center justify-between gap-3 border-t border-border/50 px-2.5 font-sans text-ui-3xs text-muted-foreground">
+          <span class="tabular-nums">{suggestIndex + 1} of {suggestItems.length}</span>
+          <span>↑↓ PgUp PgDn</span>
+        </div>
+      {/if}
       </div>
     {/if}
 

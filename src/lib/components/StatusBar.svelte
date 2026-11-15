@@ -92,6 +92,8 @@
     /** Live mode (auto-refresh active table) - Postgres/SQLite only. */
     live = false,
     liveSupported = false,
+    /** The engine has a native change signal (Postgres, SQLite); the rest poll. */
+    liveNative = false,
     ontogglelive = /** @type {() => void} */ (() => {}),
     oncreatedatabase = /** @type {(opts: import('./CreateDatabaseDialog.svelte').CreateDbOptions) => Promise<void>} */ (async () => {}),
     /** Global read-only toggle - prevents all writes across the whole session */
@@ -750,25 +752,31 @@
       <!-- Live mode toggle (experimental, only shown when enabled in Settings) -->
       {#if showTableNav && liveSupported && $appLiveMode}
         {@render sep()}
+        <!-- A pill: a ringed dot that breathes while it is watching, a hollow
+             one while it is not. The tooltip says how changes are detected. -->
         <button
           type="button"
           class={cn(
-            'flex h-7 items-center gap-1.5 rounded-md px-2 transition-[background-color,color] duration-150',
+            'mx-0.5 inline-flex h-6 items-center gap-1.5 rounded-full border px-2 text-ui-2xs font-medium transition-[background-color,color,border-color] duration-150',
             live
-              ? 'font-medium text-success bg-success/10 hover:bg-success/16'
-              : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground',
+              ? 'border-success/30 bg-success/10 text-success hover:bg-success/15'
+              : 'border-border/70 text-muted-foreground hover:bg-muted/50 hover:text-foreground',
           )}
           onclick={ontogglelive}
           aria-pressed={live}
-          title={live ? 'Live: on, auto-refreshes when this table changes' : 'Live: off, click to auto-refresh on changes'}
+          title={live
+            ? `Live: refreshes when this table changes (${liveNative ? 'watching its change counter' : 'checking every 3 seconds'}). Click to stop.`
+            : 'Live: refresh this table automatically when its rows change'}
         >
-          {#if live}
-            <span class="size-1.5 shrink-0 rounded-full bg-success motion-safe:animate-pulse"></span>
-            <span>Live</span>
-          {:else}
-            <Icon name="radio" class="size-3 shrink-0" />
-            <span>Live</span>
-          {/if}
+          <span class="relative flex size-2 shrink-0 items-center justify-center" aria-hidden="true">
+            {#if live}
+              <span class="absolute inline-flex size-full rounded-full bg-success/60 motion-safe:animate-ping"></span>
+              <span class="relative inline-flex size-1.5 rounded-full bg-success"></span>
+            {:else}
+              <span class="inline-flex size-1.5 rounded-full border border-current"></span>
+            {/if}
+          </span>
+          Live
         </button>
       {/if}
 
