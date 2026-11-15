@@ -4,6 +4,7 @@
   import Bug from '@lucide/svelte/icons/bug'
   // Static: StudioShell already imports it, so it is in the main chunk either way.
   import ReportIssueDialog from './ReportIssueDialog.svelte'
+  import CrashUpdate from './CrashUpdate.svelte'
   import { revealApp } from '$lib/app-reveal.js'
 
   let { children } = $props()
@@ -44,6 +45,10 @@
       </div>
 
       <pre class="max-h-40 w-full max-w-lg overflow-auto rounded-lg border border-border/60 bg-muted/30 p-3 text-left font-mono text-ui-2xs leading-relaxed text-muted-foreground select-text">{String(/** @type {any} */ (error)?.message ?? error)}</pre>
+
+      <!-- A crash can be a bad build: offer the next one right here, since the
+           app's own update button may be behind the error. -->
+      <CrashUpdate />
 
       <div class="flex items-center gap-2">
         <button
