@@ -479,8 +479,10 @@ GET products/_search
     }
   }
   $effect(() => {
-    window.addEventListener('keydown', onStagedKey)
-    return () => window.removeEventListener('keydown', onStagedKey)
+    // Capture phase: the grid and the app's own Mod+S stop the key before it
+    // bubbles to the window, which is why Apply's shortcut did nothing here.
+    window.addEventListener('keydown', onStagedKey, true)
+    return () => window.removeEventListener('keydown', onStagedKey, true)
   })
 
   async function applyStaged() {
@@ -867,22 +869,6 @@ GET products/_search
     <div class="flex min-h-0 flex-1 overflow-hidden">
       <!-- Data: the one framed surface on the page, pager inside it. -->
       <section class="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" aria-label={`${noun.items} in ${coll}`}>
-        {#if pendingEditCount > 0}
-          <!-- Staged edits float over the grid, out of the header's way: nothing
-               is written until Apply, as on SQL tables. -->
-          <!-- Compact, with the keys beside each action: the bar is there to be
-               dismissed or committed from the keyboard, not hunted for. -->
-          <div class="absolute bottom-4 left-1/2 z-30 flex h-9 -translate-x-1/2 items-center gap-0.5 whitespace-nowrap rounded-full border border-border/60 bg-popover pr-1 pl-3 elevate-2-rim" role="status">
-            <span class="size-1.5 shrink-0 rounded-full bg-warning" aria-hidden="true"></span>
-            <span class="ms-2 me-1.5 text-ui-xs tabular-nums text-foreground">{pendingEditCount.toLocaleString()} unsaved</span>
-            <Button size="sm" variant="ghost" class="h-7 gap-1.5 rounded-full px-2.5 text-muted-foreground hover:text-foreground" disabled={applying} onclick={() => resetEdits()}>
-              Discard<Kbd command="table.discard" />
-            </Button>
-            <Button size="sm" class="h-7 gap-1.5 rounded-full px-2.5" disabled={applying || readOnly} title={readOnly ? READ_ONLY_HINT : 'Write the staged changes'} onclick={() => void applyStaged()}>
-              {#if applying}<LoaderCircle class="animate-spin" />{/if}Apply<Kbd command="table.apply" class="text-primary-foreground/80" />
-            </Button>
-          </div>
-        {/if}
         {#if !dataView}
           {#if !info}
             <div class="flex flex-1 items-center justify-center">{#if error}<p class="text-ui-xs text-destructive">{error}</p>{:else}<LoaderCircle class="size-4 shrink-0 animate-spin text-muted-foreground" />{/if}</div>
@@ -935,6 +921,7 @@ GET products/_search
               bind:resetEdits
               cellEditBlock={inlineEdit ? cellEditBlock : null}
               cellParser={inlineEdit ? parseDocCell : null}
+              previewWrites={false}
             />
           </div>
         {:else}
@@ -945,6 +932,23 @@ GET products/_search
           </div>
         {/if}
 
+        {#if pendingEditCount > 0}
+          <!-- Staged edits: a bar docked under the grid, like the SQL review,
+               instead of a pill floating over the rows. Nothing is written
+               until Apply; each document is saved by its id. -->
+          <div class="flex h-10 shrink-0 items-center gap-2 border-t border-border/50 bg-muted/20 ps-3 pe-2" role="status">
+            <span class="size-1.5 shrink-0 rounded-full bg-warning" aria-hidden="true"></span>
+            <span class="text-ui-xs font-medium tabular-nums text-foreground">{pendingEditCount.toLocaleString()} unsaved {pendingEditCount === 1 ? 'change' : 'changes'}</span>
+            <span class="hidden min-w-0 truncate text-ui-2xs text-muted-foreground sm:inline">Each {noun.item.toLowerCase()} is saved by its id when you apply.</span>
+            <span class="flex-1"></span>
+            <Button size="sm" variant="ghost" class="h-7 gap-1.5 px-2.5 text-muted-foreground hover:text-foreground" disabled={applying} onclick={() => resetEdits()}>
+              Discard<Kbd command="table.discard" />
+            </Button>
+            <Button size="sm" class="h-7 gap-1.5 ps-2.5 pe-1.5" disabled={applying || readOnly} title={readOnly ? READ_ONLY_HINT : 'Write the staged changes'} onclick={() => void applyStaged()}>
+              {#if applying}<LoaderCircle class="animate-spin" />{:else}<Check class="size-3.5 shrink-0" />{/if}Apply changes<Kbd command="table.apply" class="text-primary-foreground/80" />
+            </Button>
+          </div>
+        {/if}
       </section>
 
       {#if explainQuery && dataView && adapter.explain}
