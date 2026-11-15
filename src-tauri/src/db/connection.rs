@@ -400,6 +400,10 @@ impl ActiveConnection {
 
 pub struct DbState {
     pub conn: Arc<Mutex<Option<ActiveConnection>>>,
+    /// Labs, several connections at once: pools set aside by a switch, by the
+    /// connection key the page chose, oldest first. Switching back resumes one
+    /// without connecting again. Capped (see `parked`).
+    pub parked: Arc<Mutex<Vec<(String, ActiveConnection)>>>,
     /// Cancel handles for the queries currently in flight, keyed by the id the
     /// caller sent. Keyed rather than a single slot because the UI runs several
     /// queries at once (one per editor tab) - with one slot, the second run
@@ -412,6 +416,7 @@ impl Default for DbState {
     fn default() -> Self {
         Self {
             conn: Arc::new(Mutex::new(None)),
+            parked: Arc::new(Mutex::new(Vec::new())),
             cancels: Arc::new(Mutex::new(std::collections::HashMap::new())),
         }
     }
@@ -483,6 +488,11 @@ fn set_conn(state: &State<'_, DbState>, conn: Option<ActiveConnection>) -> Resul
 async fn close_existing(state: &State<'_, DbState>) {
     let old = state.conn.lock().ok().and_then(|mut g| g.take());
     let Some(conn) = old else { return };
+    close_in_background(conn);
+}
+
+/// Drain a pool off the request path (see close_existing).
+pub fn close_in_background(conn: ActiveConnection) {
     // Drain the old pool in the background. Pool::close() waits for every
     // connection to be handed back - and against a dead peer (sleep/wake,
     // network change: exactly the state a reconnect follows) that stalls for

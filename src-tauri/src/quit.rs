@@ -49,12 +49,16 @@ pub fn cancel_quit() {
 }
 
 // ── ⌘Q guard ────────────────────────────────────────────────────────────────
+// Only the macOS menu (mac_chrome.rs) calls into this; elsewhere it is unused.
 // The menu's Quit asks for a second ⌘Q (or a held one: key repeat sends the
 // shortcut again) within the window below. The first press only shows a hint.
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub const QUIT_MENU_ID: &str = "stroke-quit";
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 const SECOND_PRESS: Duration = Duration::from_millis(1600);
 static GUARD_OFF: AtomicBool = AtomicBool::new(false);
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 static FIRST_PRESS: Mutex<Option<Instant>> = Mutex::new(None);
 
 /// Settings: "Press ⌘Q twice to quit". Off quits on the first press.
@@ -64,6 +68,7 @@ pub fn set_quit_guard(on: bool) {
 }
 
 /// The menu's Quit item (and its ⌘Q).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn menu_quit<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     let now = Instant::now();
     let second = {

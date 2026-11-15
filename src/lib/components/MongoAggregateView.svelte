@@ -1,4 +1,5 @@
 <script>
+  import SelectMenu from './SelectMenu.svelte'
   // Aggregation pipeline builder: a list of stages (operator, JSON5 body, on/off),
   // each with a live preview of the documents coming out of it. Run full shows
   // the result in the grid; pipelines save per collection.
@@ -6,7 +7,6 @@
   import { cn } from '$lib/utils.js'
   import { Button } from '$lib/components/ui/button/index.js'
   import { Switch } from '$lib/components/ui/switch/index.js'
-  import * as Select from '$lib/components/ui/select/index.js'
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
   import { docGrid } from '$lib/doc-adapters.js'
@@ -302,12 +302,7 @@
           {#if i < stages.length - 1}<span class="absolute bottom-0 left-3 top-8 w-px bg-border/50" aria-hidden="true"></span>{/if}
 
           <div class="flex h-8 items-center gap-2">
-            <Select.Root type="single" value={s.op} onValueChange={(v) => { if (v) setOp(s, v) }}>
-              <Select.Trigger size="sm" class="h-7 w-auto gap-1.5 rounded-md border-transparent! bg-transparent! px-2 font-mono text-ui-sm font-medium text-foreground shadow-none hover:bg-accent/50!" aria-label="Stage operator">{s.op}</Select.Trigger>
-              <Select.Content>
-                {#each OPS as op (op)}<Select.Item value={op} label={op} class="font-mono" />{/each}
-              </Select.Content>
-            </Select.Root>
+            <SelectMenu ariaLabel="Stage operator" value={s.op} onValueChange={(v) => { if (v) setOp(s, v) }} items={OPS.map((op) => ({ value: op, label: op }))} searchPlaceholder="Search stages" triggerClass="h-7 w-auto gap-1.5 border-transparent bg-transparent px-2 font-mono text-ui-sm hover:bg-accent/50" contentClass="w-56" />
             {#if !s.open}<span class="min-w-0 flex-1 truncate font-mono text-ui-2xs text-muted-foreground">{s.body.replace(/\s+/g, ' ')}</span>{:else}<span class="flex-1"></span>{/if}
             {#if p?.loading}<LoaderCircle class="size-3.5 shrink-0 animate-spin text-muted-foreground" />{:else if p?.docs && s.on}<span class="shrink-0 text-ui-2xs tabular-nums text-muted-foreground">{p.docs.length}{p.docs.length === PREVIEW ? '+' : ''} {p.docs.length === 1 ? 'doc' : 'docs'} out</span>{/if}
             <Switch checked={s.on} onCheckedChange={(v) => (s.on = v)} aria-label="Enable stage" title={s.on ? 'Turn this stage off' : 'Turn this stage on'} />

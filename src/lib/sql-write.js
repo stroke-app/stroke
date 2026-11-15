@@ -126,6 +126,11 @@ export function isWriteSql(sql) {
     // MongoDB shell statements: `db.users.insertOne(…)`, `db.x.deleteMany(…)`.
     if (head === 'db' && /\.\s*(insert(One|Many)|update(One|Many)|replaceOne|delete(One|Many)|bulkWrite|drop|findOneAnd\w+)\s*\(/.test(stmt)) return true
 
+    // Elasticsearch / OpenSearch console requests: `PUT idx/_doc/1 {…}`,
+    // `POST idx/_update/1 {…}`, `POST _bulk`. A POST that searches only reads.
+    if (head === 'put') return true
+    if (head === 'post' && /\/?_(update|doc|create|bulk|delete_by_query|update_by_query|reindex)\b/.test(stmt)) return true
+
     // A CTE hides the real verb behind the WITH list: `WITH x AS (…) DELETE …`.
     if (head === 'with' && /\b(insert\s+into|update\s+[\w"`.]|delete\s+from|merge\s+into)\b/i.test(stmt))
       return true

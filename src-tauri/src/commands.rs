@@ -2262,3 +2262,81 @@ pub async fn d1_restore(state: State<'_, DbState>, bookmark: String) -> Result<S
     }
 }
 
+
+/// Write a result as a Parquet file, through an in-memory DuckDB (bundled, so
+/// nothing is needed on the machine). `types` per column: BIGINT, DOUBLE,
+/// BOOLEAN or VARCHAR, inferred by the page from the values.
+#[tauri::command]
+pub async fn export_parquet(
+    path: String,
+    columns: Vec<String>,
+    types: Vec<String>,
+    rows: Vec<Vec<serde_json::Value>>,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || write_parquet(&path, &columns, &types, &rows))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn write_parquet(
+    path: &str,
+    columns: &[String],
+    types: &[String],
+    rows: &[Vec<serde_json::Value>],
+) -> Result<(), String> {
+    use ::duckdb::types::Value as V;
+    if columns.is_empty() {
+        return Err("Nothing to export: the result has no columns.".into());
+    }
+    let ty = |i: usize| match types.get(i).map(|t| t.to_ascii_uppercase()) {
+        Some(t) if t == "BIGINT" || t == "DOUBLE" || t == "BOOLEAN" => t,
+        _ => "VARCHAR".to_string(),
+    };
+    let ident = |s: &str| format!("\"{}\"", s.replace('"', "\"\""));
+    let conn = ::duckdb::Connection::open_in_memory().map_err(|e| e.to_string())?;
+    // Parquet is a DuckDB extension. The bundled build doesn't compile it in
+    // (it doubles the C++ build); DuckDB fetches it once and keeps it in its
+    // own cache, so later exports work offline.
+    conn.execute_batch("INSTALL parquet; LOAD parquet;").map_err(|e| {
+        format!("Parquet needs DuckDB's parquet extension, downloaded once from extensions.duckdb.org: {e}")
+    })?;
+    let cols = columns
+        .iter()
+        .enumerate()
+        .map(|(i, c)| format!("{} {}", ident(c), ty(i)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    conn.execute_batch(&format!("CREATE TABLE t ({cols})"))
+        .map_err(|e| e.to_string())?;
+    {
+        let mut app = conn.appender("t").map_err(|e| e.to_string())?;
+        for row in rows {
+            let vals: Vec<V> = (0..columns.len())
+                .map(|i| {
+                    let v = row.get(i).unwrap_or(&serde_json::Value::Null);
+                    match (ty(i).as_str(), v) {
+                        (_, serde_json::Value::Null) => V::Null,
+                        ("BIGINT", serde_json::Value::Number(n)) => {
+                            n.as_i64().map(V::BigInt).unwrap_or(V::Null)
+                        }
+                        ("DOUBLE", serde_json::Value::Number(n)) => {
+                            n.as_f64().map(V::Double).unwrap_or(V::Null)
+                        }
+                        ("BOOLEAN", serde_json::Value::Bool(b)) => V::Boolean(*b),
+                        (_, serde_json::Value::String(s)) => V::Text(s.clone()),
+                        (_, other) => V::Text(other.to_string()),
+                    }
+                })
+                .collect();
+            app.append_row(::duckdb::appender_params_from_iter(vals))
+                .map_err(|e| e.to_string())?;
+        }
+        app.flush().map_err(|e| e.to_string())?;
+    }
+    conn.execute_batch(&format!(
+        "COPY t TO '{}' (FORMAT PARQUET, COMPRESSION ZSTD)",
+        path.replace('\'', "''")
+    ))
+    .map_err(|e| format!("Couldn't write the Parquet file: {e}"))?;
+    Ok(())
+}

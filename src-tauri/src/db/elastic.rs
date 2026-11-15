@@ -10,7 +10,7 @@
 //!   logs.get("id-1")                                 one document
 //!   logs.count({"query": {...}})                     a count
 //!   SELECT level, COUNT(*) FROM logs GROUP BY level  SQL (x-pack / SQL plugin)
-//! The console only reads: requests that change data go through the browser.
+//! The console runs reads and document writes; deleting an index is not offered.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -591,9 +591,11 @@ fn raw_docs(v: &Value) -> (Vec<Value>, Option<String>) {
     }
 }
 
-/// Run one console statement. Only reads.
+/// Run one console statement I typed: reads, document writes, and creating
+/// an index or its mapping. A read-only connection is stopped by the page
+/// before it gets here.
 pub async fn query(cfg: &EsConfig, stmt: &str) -> Result<super::query::SqlResult, String> {
-    query_as(cfg, stmt, false).await
+    query_as(cfg, stmt, true).await
 }
 
 /// Run one statement for an agent. With `allow_write` (the MCP gate already
@@ -623,9 +625,13 @@ pub async fn query_as(cfg: &EsConfig, stmt: &str, allow_write: bool) -> Result<s
                     let v = send(cfg, &method, &path, body.as_ref().map(Body::Json)).await?;
                     return Ok(super::couchdb::docs_result(vec![v], None, stmt, t0));
                 }
-                return Err(format!(
-                    "The console only reads. {method} /{path} changes data: edit documents in the browser instead."
-                ));
+                return Err(match check_path(&method, &path) {
+                    Err(why) => why,
+                    Ok(()) if !allow_write => format!(
+                        "Agents only read on this connection. {method} /{path} changes data; allow writes for the agent, or run it in the editor."
+                    ),
+                    Ok(()) => format!("{method} /{path} isn't available from Stroke."),
+                });
             }
             let v = request(cfg, &method, &path, body.as_ref()).await?;
             raw_docs(&v)

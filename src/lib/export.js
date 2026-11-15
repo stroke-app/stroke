@@ -222,7 +222,7 @@ export function rowsToSql(columns, rows, tableName = 'exported_table') {
 /**
  * Build a default filename like "users_2025-05-24.csv"
  * @param {string | null} tableName
- * @param {'csv' | 'json' | 'sql' | 'tsv' | 'md' | 'jsonl'} format
+ * @param {string} format
  */
 export function buildExportFilename(tableName, format) {
   const base = tableName ?? 'export'
@@ -230,8 +230,105 @@ export function buildExportFilename(tableName, format) {
   return `${base}_${date}.${format}`
 }
 
+/**
+ * Every format a grid or a result can be saved as, in menu order.
+ * @type {{ id: ExportFormat, label: string, hint: string }[]}
+ */
+export const EXPORT_FORMATS = [
+  { id: 'csv', label: 'CSV', hint: 'Comma-separated' },
+  { id: 'xlsx', label: 'Excel', hint: '.xlsx workbook' },
+  { id: 'json', label: 'JSON', hint: 'Array of objects' },
+  { id: 'jsonl', label: 'JSON Lines', hint: 'One object per line' },
+  { id: 'parquet', label: 'Parquet', hint: 'Columnar, typed' },
+  { id: 'md', label: 'Markdown', hint: 'Table' },
+  { id: 'sql', label: 'SQL INSERT', hint: 'Statements' },
+  { id: 'tsv', label: 'TSV', hint: 'Tab-separated' },
+]
+
+/** @typedef {'csv' | 'json' | 'sql' | 'tsv' | 'md' | 'jsonl' | 'xlsx' | 'parquet'} ExportFormat */
+
+/**
+ * Parquet column types from the values: whole numbers, decimals, booleans,
+ * and text for everything else (dates and JSON included).
+ * @param {number} ncols @param {unknown[][]} rows
+ * @returns {('BIGINT' | 'DOUBLE' | 'BOOLEAN' | 'VARCHAR')[]}
+ */
+export function inferParquetTypes(ncols, rows) {
+  return Array.from({ length: ncols }, (_, i) => {
+    let kind = /** @type {'none' | 'BIGINT' | 'DOUBLE' | 'BOOLEAN' | 'VARCHAR'} */ ('none')
+    for (const row of rows) {
+      const v = row[i]
+      if (v === null || v === undefined) continue
+      const k = typeof v === 'boolean' ? 'BOOLEAN'
+        : typeof v === 'number' && Number.isFinite(v) ? (Number.isSafeInteger(v) ? 'BIGINT' : 'DOUBLE')
+        : 'VARCHAR'
+      if (kind === 'none') kind = k
+      else if (kind !== k) kind = (kind === 'BIGINT' && k === 'DOUBLE') || (kind === 'DOUBLE' && k === 'BIGINT') ? 'DOUBLE' : 'VARCHAR'
+      if (kind === 'VARCHAR') break
+    }
+    return kind === 'none' ? 'VARCHAR' : kind
+  })
+}
+
+/** Bytes as base64, in chunks so a large file doesn't overflow the call stack. @param {Uint8Array} bytes */
+function toBase64(bytes) {
+  let bin = ''
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+  return btoa(bin)
+}
+
+/**
+ * Build and save rows in any format, with the native Save dialog.
+ * @param {ExportFormat} format
+ * @param {Array<{ name: string }>} columns
+ * @param {unknown[][]} rows
+ * @param {string} [name] table or result name, for the file and SQL INSERTs
+ * @returns {Promise<boolean>} false when cancelled
+ */
+export async function exportRows(format, columns, rows, name = 'query_result') {
+  const filename = buildExportFilename(name, format)
+  if (format === 'xlsx' || format === 'parquet') {
+    const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+    const meta = FORMAT_META[format]
+    if (format === 'parquet' && !isTauri) throw new Error('Parquet export needs the desktop app.')
+    const bytes = format === 'xlsx' ? (await import('./export-xlsx.js')).rowsToXlsx(columns, rows, name) : null
+    if (!isTauri) {
+      const blob = new Blob([/** @type {Uint8Array} */ (bytes)], { type: meta.mime })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 0)
+      return true
+    }
+    const { save } = await import('@tauri-apps/plugin-dialog')
+    const { invoke } = await import('@tauri-apps/api/core')
+    const path = await save({ defaultPath: filename, filters: [{ name: meta.name, extensions: [format] }] })
+    if (!path) return false
+    if (bytes) await invoke('save_file_bytes', { path, base64: toBase64(bytes) })
+    else {
+      const plain = rows.map((r) => r.map((v) => (typeof v === 'bigint' ? Number(v) : v)))
+      await invoke('export_parquet', { path, columns: columns.map((c) => String(c.name)), types: inferParquetTypes(columns.length, plain), rows: plain })
+    }
+    return true
+  }
+  const content =
+    format === 'csv' ? rowsToCsv(columns, rows)
+      : format === 'json' ? rowsToJson(columns, rows)
+      : format === 'sql' ? rowsToSql(columns, rows, name)
+      : format === 'tsv' ? rowsToTsv(columns, rows)
+      : format === 'md' ? rowsToMarkdown(columns, rows)
+      : rowsToJsonl(columns, rows)
+  return saveExportFile(content, filename, format)
+}
+
 /** @type {Record<string, { name: string, mime: string }>} */
 const FORMAT_META = {
+  xlsx: { name: 'Excel workbooks', mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' },
+  parquet: { name: 'Parquet files', mime: 'application/vnd.apache.parquet' },
   csv: { name: 'CSV files', mime: 'text/csv;charset=utf-8;' },
   json: { name: 'JSON files', mime: 'application/json' },
   sql: { name: 'SQL files', mime: 'text/plain' },

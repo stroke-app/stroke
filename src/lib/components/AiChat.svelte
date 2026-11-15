@@ -1,5 +1,6 @@
 <script>
   import Share2 from '@lucide/svelte/icons/share-2'
+  import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js'
   import { buildPayload, publishShare } from '$lib/share-flow.js'
   import { detectSensitiveColumns } from '$lib/share-crypto.js'
   import CollapsibleCode from './CollapsibleCode.svelte'
@@ -72,6 +73,8 @@
     rowsToCsvAsync,
     rowsToJsonAsync,
     saveExportFile,
+    exportRows,
+    EXPORT_FORMATS,
     buildExportFilename,
   } from "$lib/export.js";
   import DataTable from "$lib/components/DataTable.svelte";
@@ -4070,28 +4073,20 @@
   });
 
   /**
-   * Export a chat query result to a file as CSV / JSON / Markdown, reusing the
-   * same formatters + native save flow as the table view.
+   * Save a chat query result in any format (export.js), with the native Save dialog.
    * @param {{ columns: any[], rows: any[][] }} item
-   * @param {'csv'|'json'|'md'} format
+   * @param {import('$lib/export.js').ExportFormat} format
    */
   async function exportResultAs(item, format) {
     if (!item?.rows?.length) return;
-    const content =
-      format === "csv"
-        ? rowsToCsv(item.columns, item.rows)
-        : format === "md"
-          ? rowsToMarkdown(item.columns, item.rows)
-          : rowsToJson(item.columns, item.rows);
-    const filename = buildExportFilename("query", format);
     try {
-      const saved = await saveExportFile(content, filename, format);
+      const saved = await exportRows(format, item.columns.map((c) => ({ name: c?.name ?? String(c) })), item.rows, "query");
       if (saved)
         toast.success(`Exported ${formatCompactCount(item.rows.length)} rows`, {
-          description: filename,
+          description: buildExportFilename("query", format),
         });
     } catch (e) {
-      toast.error("Export failed", { description: String(e) });
+      toast.error("Export failed", { description: String(/** @type {any} */ (e)?.message ?? e) });
     }
   }
 
@@ -5574,14 +5569,25 @@
                           {/if}
                         </span>
                         <Download class="size-3 shrink-0" />
-                        {#each [["csv", "CSV"], ["json", "JSON"], ["md", "MD"]] as [fmt, label]}
+                        {#each [["csv", "CSV"], ["xlsx", "Excel"]] as [fmt, label]}
                           <button
                             type="button"
                             class="rounded px-1 py-0.5 transition-colors hover:bg-accent hover:text-foreground"
-                            onclick={() => exportResultAs(item, fmt)}
-                            title={`Download as ${label === "MD" ? "Markdown" : label}`}>{label}</button
+                            onclick={() => exportResultAs(item, /** @type {any} */ (fmt))}
+                            title={`Download as ${label}`}>{label}</button
                           >
                         {/each}
+                        <DropdownMenu.Root>
+                          <DropdownMenu.Trigger class="rounded px-1 py-0.5 transition-colors hover:bg-accent hover:text-foreground data-[state=open]:bg-accent" aria-label="More formats">More</DropdownMenu.Trigger>
+                          <DropdownMenu.Content align="end" class="min-w-52">
+                            {#each EXPORT_FORMATS as f (f.id)}
+                              <DropdownMenu.Item onSelect={() => exportResultAs(item, f.id)}>
+                                <span data-slot="menu-label">{f.label}</span>
+                                <span class="ml-auto text-ui-2xs text-muted-foreground">{f.hint}</span>
+                              </DropdownMenu.Item>
+                            {/each}
+                          </DropdownMenu.Content>
+                        </DropdownMenu.Root>
                       </div>
                     {/if}
                   {/if}

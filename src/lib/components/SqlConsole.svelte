@@ -1,6 +1,6 @@
 <script>
   import { IS_MAC } from '$lib/shortcuts.js'
-  import { rowsToCsv, rowsToJson, rowsToSql, rowsToTsv, rowsToMarkdown, rowsToJsonl, rowsToObjects, saveExportFile, buildExportFilename } from '$lib/export.js'
+  import { rowsToCsv, rowsToJson, rowsToSql, rowsToTsv, rowsToMarkdown, rowsToJsonl, rowsToObjects, saveExportFile, buildExportFilename, exportRows, EXPORT_FORMATS } from '$lib/export.js'
   import Play from "@lucide/svelte/icons/play";
   import WifiOff from "@lucide/svelte/icons/wifi-off";
   import Braces from "@lucide/svelte/icons/braces";
@@ -655,20 +655,17 @@
   const jsonText = $derived(rowObjects.length > 0 ? JSON.stringify(rowObjects, null, 2) : '[]')
 
   // ── Export helpers ──────────────────────────────────────────────────────────
-  /** Unified export via the shared generators + native Save dialog.
-   * @param {'csv'|'json'|'sql'|'tsv'|'md'|'jsonl'} format */
+  /** Save the result in any format (export.js), with the native Save dialog.
+   * @param {import('$lib/export.js').ExportFormat} format */
   async function exportAs(format) {
     const columns = currentDisplay.columns.map((c) => ({ name: c.name ?? String(c) }))
     // A windowed result holds only the rows near the viewport here.
     const rows = /** @type {any[][]} */ (windowed ? await onloadallrows() : currentDisplay.rows)
-    const content =
-      format === 'csv' ? rowsToCsv(columns, rows)
-        : format === 'json' ? rowsToJson(columns, rows)
-        : format === 'sql' ? rowsToSql(columns, rows, 'query_result')
-        : format === 'tsv' ? rowsToTsv(columns, rows)
-        : format === 'md' ? rowsToMarkdown(columns, rows)
-        : rowsToJsonl(columns, rows)
-    await saveExportFile(content, buildExportFilename('query_result', format), format)
+    try {
+      await exportRows(format, columns, rows, 'query_result')
+    } catch (e) {
+      toast.error('Export failed', { description: String(/** @type {any} */ (e)?.message ?? e) })
+    }
   }
 
   /** @type {HTMLElement | null} */
@@ -1537,25 +1534,14 @@
             >
               <Download class="size-3.5" />
             </DropdownMenu.Trigger>
-            <DropdownMenu.Content align="end" class="min-w-36">
-              <DropdownMenu.Item class="gap-2 font-mono text-ui-xs" onclick={() => exportAs('csv')}>
-                <Download class="size-3.5 shrink-0 text-muted-foreground" />CSV
-              </DropdownMenu.Item>
-              <DropdownMenu.Item class="gap-2 font-mono text-ui-xs" onclick={() => exportAs('json')}>
-                <Download class="size-3.5 shrink-0 text-muted-foreground" />JSON
-              </DropdownMenu.Item>
-              <DropdownMenu.Item class="gap-2 font-mono text-ui-xs" onclick={() => exportAs('sql')}>
-                <Download class="size-3.5 shrink-0 text-muted-foreground" />SQL (INSERT)
-              </DropdownMenu.Item>
-              <DropdownMenu.Item class="gap-2 font-mono text-ui-xs" onclick={() => exportAs('tsv')}>
-                <Download class="size-3.5 shrink-0 text-muted-foreground" />TSV
-              </DropdownMenu.Item>
-              <DropdownMenu.Item class="gap-2 font-mono text-ui-xs" onclick={() => exportAs('md')}>
-                <Download class="size-3.5 shrink-0 text-muted-foreground" />Markdown
-              </DropdownMenu.Item>
-              <DropdownMenu.Item class="gap-2 font-mono text-ui-xs" onclick={() => exportAs('jsonl')}>
-                <Download class="size-3.5 shrink-0 text-muted-foreground" />JSON Lines
-              </DropdownMenu.Item>
+            <DropdownMenu.Content align="end" class="min-w-52">
+              {#each EXPORT_FORMATS as fmt (fmt.id)}
+                <DropdownMenu.Item onclick={() => void exportAs(fmt.id)}>
+                  <Download class="size-3.5 shrink-0 text-muted-foreground" />
+                  <span data-slot="menu-label">{fmt.label}</span>
+                  <span class="ml-auto text-ui-2xs text-muted-foreground">{fmt.hint}</span>
+                </DropdownMenu.Item>
+              {/each}
             </DropdownMenu.Content>
           </DropdownMenu.Root>
         {/if}

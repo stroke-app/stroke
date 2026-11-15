@@ -1,4 +1,5 @@
 <script>
+  import { EXPORT_FORMATS as ALL_EXPORT_FORMATS } from '$lib/export.js';
   import { Button } from '$lib/components/ui/button/index.js'
   import Icon from "./Icon.svelte";
   import SlidersHorizontal from "@lucide/svelte/icons/sliders-horizontal";
@@ -555,14 +556,8 @@
     { id: "svg", label: "SVG vector", icon: "code-2" },
   ];
 
-  const EXPORT_FORMATS = [
-    { id: "csv", label: "CSV" },
-    { id: "json", label: "JSON" },
-    { id: "sql", label: "SQL" },
-    { id: "tsv", label: "TSV" },
-    { id: "md", label: "Markdown" },
-    { id: "jsonl", label: "JSONL" },
-  ];
+  // Every format, shared with the SQL console and the AI chat (export.js).
+  const EXPORT_FORMATS = ALL_EXPORT_FORMATS;
 
   // ── Searchable-menu item lists ──────────────────────────────────────────
   // Sort: two rows per column (ascending / descending), searchable by name.
