@@ -4198,6 +4198,19 @@
     }
   });
   const isMacChrome = typeof document !== 'undefined' && document.documentElement.dataset.os === 'macos'
+  /** The block whose Copy was just pressed, for its "Copied" moment. */
+  let copiedBlock = $state('')
+  /**
+   * A Dev Tools request (METHOD path, then a JSON body) with its body laid out
+   * over lines, for reading. Copy and Run use the text as written.
+   * @param {string} text
+   */
+  function prettyBlock(text) {
+    const t = String(text ?? '').trim()
+    const m = /^(GET|POST|PUT|DELETE|HEAD)\s+\S+[^\n]*\n([\s\S]+)$/i.exec(t)
+    if (!m) return text
+    try { return `${t.split('\n')[0]}\n${JSON.stringify(JSON.parse(m[2]), null, 2)}` } catch { return text }
+  }
 </script>
 
 <!-- Single, unified agent loading indicator (icon + phase label + dots). Used for
@@ -5320,28 +5333,29 @@
                             <div class="flex shrink-0 items-center gap-0.5">
                               <button
                                 type="button"
-                                class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity duration-150 hover:bg-accent hover:text-foreground group-hover/sqlbar:opacity-100 focus-visible:opacity-100"
-                                title="Copy SQL"
-                                onclick={() => copyText(part.content)}
-                                ><Copy class="size-3 shrink-0" /></button
+                                class="inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-ui-2xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                                title="Copy"
+                                onclick={() => { copyText(part.content); copiedBlock = sqlKey; setTimeout(() => { if (copiedBlock === sqlKey) copiedBlock = '' }, 1400) }}
+                                >{#if copiedBlock === sqlKey}<Check class="size-3 shrink-0" />Copied{:else}<Copy class="size-3 shrink-0" />Copy{/if}</button
                               >
                               <button
                                 type="button"
-                                class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity duration-150 hover:bg-accent hover:text-foreground group-hover/sqlbar:opacity-100 focus-visible:opacity-100"
-                                title="Write to editor"
+                                class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                                title="Open in the editor"
+                                aria-label="Open in the editor"
                                 onclick={() => onwritesql(part.content)}
                                 ><PenLine class="size-3 shrink-0" /></button
                               >
                               <button
                                 type="button"
-                                class= "field-surface ml-0.5 inline-flex h-6 items-center gap-1 bg-muted/40 px-2 text-ui-2xs font-medium text-foreground/80 transition-colors hover:border-primary/40 hover:bg-primary hover:text-primary-foreground disabled:opacity-40"
+                                class="ml-1 inline-flex h-6 items-center gap-1 rounded-md bg-primary px-2 text-ui-2xs font-medium text-primary-foreground transition-[background-color,scale] hover:bg-primary/90 active:scale-[0.97] disabled:opacity-40"
                                 disabled={loading}
                                 onclick={() => void runSqlBlock(part.content)}
                                 ><Play class="size-3 shrink-0 fill-current" />Run</button
                               >
                             </div>
                           </div>
-                          <AiSqlBlock sql={part.content} open={sqlOpen} />
+                          <AiSqlBlock sql={prettyBlock(part.content)} open={sqlOpen} />
                         </div>
                       {:else if part.type === "error"}
                         <div
