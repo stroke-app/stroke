@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.14.0] - 2026-11-15
+
+### Changes
+- Explain: findings, step details, tree view; never keep ANALYZE writes (#236)
+
+
 ## [2.13.9] - 2026-11-15
 
 ### Changes
