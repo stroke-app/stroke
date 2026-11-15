@@ -714,6 +714,8 @@ pub fn run() {
             nightly::track_install,
             nightly::track_open,
             mcp::mcp_share_result,
+            commands::d1_bookmark,
+            commands::d1_restore,
             commands::elastic_import,
             commands::test_cassandra,
             commands::connect_cassandra_db,
