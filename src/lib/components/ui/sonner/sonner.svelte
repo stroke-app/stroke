@@ -7,6 +7,7 @@
   import OctagonX from '@lucide/svelte/icons/octagon-x'
   import TriangleAlert from '@lucide/svelte/icons/triangle-alert'
   import X from '@lucide/svelte/icons/x'
+  import LoaderCircle from '@lucide/svelte/icons/loader-circle'
   import { toast } from './toast.svelte.js'
   import { cn } from '$lib/utils.js'
 
@@ -85,6 +86,7 @@
     error: 'text-destructive',
     info: 'text-info',
     warning: 'text-warning',
+    loading: 'text-muted-foreground',
   }
 
   /** @param {string} pos @param {string | Record<string, string | number>} off */
@@ -174,6 +176,8 @@
             <Info class="size-4 shrink-0" strokeWidth={2} />
           {:else if t.type === 'warning'}
             <TriangleAlert class="size-4 shrink-0" strokeWidth={2} />
+          {:else if t.type === 'loading'}
+            <LoaderCircle class="size-4 shrink-0 animate-spin" strokeWidth={2} />
           {/if}
         </span>
       {/if}
@@ -192,6 +196,16 @@
               {t.description}
             </div>
           {/if}
+        {/if}
+        {#if t.progress != null}
+          <!-- Determinate when a fraction is known, a sweep while it is not. -->
+          <div class="mt-2 h-1 w-full overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={t.progress >= 0 ? Math.round(t.progress * 100) : undefined}>
+            {#if t.progress >= 0}
+              <div class="h-full rounded-full bg-primary transition-[width] duration-300 ease-out" style="width: {Math.max(4, Math.min(100, t.progress * 100))}%"></div>
+            {:else}
+              <div class="toast-indeterminate h-full w-1/3 rounded-full bg-primary"></div>
+            {/if}
+          </div>
         {/if}
         {#if t.action}
           <button
