@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.14.7] - 2026-11-15
+
+### Changes
+- AI chat Run refreshes the sidebar; refresh buttons show they ran (#244)
+
+
 ## [2.14.6] - 2026-11-15
 
 ### Changes
