@@ -8,6 +8,7 @@
   import Search from '@lucide/svelte/icons/search'
   import LayoutDashboard from '@lucide/svelte/icons/layout-dashboard'
   import KeyRound from '@lucide/svelte/icons/key-round'
+  import Link2 from '@lucide/svelte/icons/link-2'
   import Link from '@lucide/svelte/icons/link'
   import X from '@lucide/svelte/icons/x'
   import ChevronDown from '@lucide/svelte/icons/chevron-down'
@@ -93,7 +94,7 @@
   ]
 
   // ── Config ────────────────────────────────────────────────────────────────
-  const NODE_W = 300
+  const NODE_W = 256
   const ROW_H = 30
   const HDR_H = 48
   const PAD_B = 10
@@ -2501,8 +2502,9 @@
       {#if nodes.length > 0}
         <div class="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center">
           <div class="flex h-7 items-center gap-3 rounded-md border border-border/40 bg-panel/95 px-3 text-ui-2xs text-muted-foreground">
-            <span class="flex items-center gap-1"><span class="size-1.5 rounded-full" style="background:{ink.pk}"></span>PK</span>
-            <span class="flex items-center gap-1"><span class="size-1.5 rounded-full" style="background:{ink.fk}"></span>FK</span>
+            <!-- The same glyphs the cards draw before a key column. -->
+            <span class="flex items-center gap-1"><KeyRound class="size-3 shrink-0" style="color:{ink.pk}" aria-hidden="true" />Primary key</span>
+            <span class="flex items-center gap-1"><Link2 class="size-3 shrink-0" style="color:{ink.fk}" aria-hidden="true" />Foreign key</span>
             <span class="h-2.5 w-px bg-border/60"></span>
             <!-- Crow's foot: fork on the FK side, bar on the referenced side. -->
             <span class="flex items-center gap-1" title="One-to-many: the fork sits on the foreign key side">

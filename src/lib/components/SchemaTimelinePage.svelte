@@ -16,6 +16,7 @@
   import FileCode from '@lucide/svelte/icons/file-code'
   import Copy from '@lucide/svelte/icons/copy'
   import { buildMigration, formatMigrationScript } from '$lib/schema-migration.js'
+  import { diffLines, pairWordDiffs } from '$lib/line-diff.js'
   import { listSchemas, listSchemasOnConnection, executeSql, executeSqlOnConnection } from '$lib/api.js'
   import {
     captureSnapshot,
@@ -31,7 +32,7 @@
   /** @typedef {import('$lib/stores/schema-snapshots.js').SnapshotColumn} SnapshotColumn */
   /** @typedef {import('$lib/stores/connections.js').SavedConnection} SavedConnection */
   /** @typedef {{ type: 'same'|'add'|'remove', content: string, lineA?: number, lineB?: number }} DiffLine */
-  /** @typedef {DiffLine | { type: 'ellipsis', count: number }} CollapsedLine */
+  /** @typedef {DiffLine | { type: 'ellipsis', count: number, from: number }} CollapsedLine */
 
   /**
    * @type {{
@@ -153,15 +154,40 @@
       ?? pseudoDdl(schema, name, (afterSnap.tables?.[schema] ?? []).find((t) => t.name === name)?.columns ?? [])
 
     if (!bDdl && !aDdl) return null
+    /** @type {DiffLine[]} */
     let lines
     if (!bDdl) {
       lines = aDdl.split('\n').map((content, i) => /** @type {DiffLine} */ ({ type: 'add',    content, lineB: i + 1 }))
     } else if (!aDdl) {
       lines = bDdl.split('\n').map((content, i) => /** @type {DiffLine} */ ({ type: 'remove', content, lineA: i + 1 }))
     } else {
-      lines = computeLineDiff(bDdl.split('\n'), aDdl.split('\n'))
+      lines = diffLines(bDdl.split('\n'), aDdl.split('\n'))
     }
-    return collapseContext(lines, 3)
+    let adds = 0, removes = 0
+    for (const l of lines) { if (l.type === 'add') adds++; else if (l.type === 'remove') removes++ }
+    // Word parts keyed by the line object itself, so the view finds them in O(1).
+    const pw = pairWordDiffs(lines)
+    /** @type {Map<DiffLine, import('$lib/line-diff.js').WordPart[]>} */
+    const words = new Map()
+    for (const [idx, parts] of pw) words.set(lines[idx], parts)
+    return { lines, words, adds, removes }
+  })
+
+  /** Unchanged runs the reader opened (keyed by their first line), per table. */
+  let expandedGaps = $state(/** @type {Set<number>} */ (new Set()))
+  $effect(() => { void selectedTable; expandedGaps = new Set() })
+  const shownDdlLines = $derived(selectedDdlDiff ? collapseContext(selectedDdlDiff.lines, 3, expandedGaps) : null)
+
+  /** Status of every changed table, built once per diff (the row list asked
+   *  three linear scans per row before). */
+  const tableStatus = $derived.by(() => {
+    /** @type {Map<string, 'added' | 'removed' | 'modified'>} */
+    const m = new Map()
+    if (!diff) return m
+    for (const t of diff.addedTables) m.set(`${t.schema}.${t.name}`, 'added')
+    for (const t of diff.removedTables) m.set(`${t.schema}.${t.name}`, 'removed')
+    for (const t of diff.modifiedTables) m.set(`${t.schema}.${t.name}`, 'modified')
+    return m
   })
 
   onMount(load)
@@ -392,50 +418,12 @@
     return groups
   }
 
-  function getTableStatus(/** @type {SnapshotDiff | null} */ d, key) {
-    if (!d) return /** @type {'modified'} */ ('modified')
-    const dot = key.indexOf('.')
-    const schema = key.slice(0, dot), name = key.slice(dot + 1)
-    if (d.addedTables.some((t) => t.schema === schema && t.name === name))   return /** @type {'added'} */   ('added')
-    if (d.removedTables.some((t) => t.schema === schema && t.name === name)) return /** @type {'removed'} */ ('removed')
-    return /** @type {'modified'} */ ('modified')
+  function getTableStatus(/** @type {SnapshotDiff | null} */ d, /** @type {string} */ key) {
+    void d
+    return tableStatus.get(key) ?? /** @type {'modified'} */ ('modified')
   }
 
-  function computeLineDiff(/** @type {string[]} */ a, /** @type {string[]} */ b) {
-    // Normalize lines for comparison: strip trailing commas so that a column
-    // gaining/losing a comma (due to being last vs. non-last) is not a diff.
-    const norm = (/** @type {string} */ s) => s.trimEnd().replace(/,$/, '')
-    const na = a.map(norm), nb = b.map(norm)
-    const m = a.length, n = b.length
-    // Pathological pairs (m×n in the millions) would allocate a huge LCS matrix
-    // and stall the UI - render those as remove-all/add-all instead.
-    if (m * n > 4_000_000) {
-      return [
-        ...a.map((content, i) => /** @type {DiffLine} */ ({ type: 'remove', content, lineA: i + 1 })),
-        ...b.map((content, i) => /** @type {DiffLine} */ ({ type: 'add', content, lineB: i + 1 })),
-      ]
-    }
-    // Typed-array rows (zero-initialized) - plain arrays box every slot.
-    const dp = Array.from({ length: m + 1 }, () => new Uint32Array(n + 1))
-    for (let i = 1; i <= m; i++)
-      for (let j = 1; j <= n; j++)
-        dp[i][j] = na[i-1] === nb[j-1] ? dp[i-1][j-1] + 1 : Math.max(dp[i-1][j], dp[i][j-1])
-    /** @type {DiffLine[]} */
-    const result = []
-    let i = m, j = n
-    while (i > 0 || j > 0) {
-      if (i > 0 && j > 0 && na[i-1] === nb[j-1]) {
-        result.unshift({ type: 'same', content: a[i-1], lineA: i, lineB: j }); i--; j--
-      } else if (j > 0 && (i === 0 || dp[i][j-1] >= dp[i-1][j])) {
-        result.unshift({ type: 'add',    content: b[j-1], lineB: j }); j--
-      } else {
-        result.unshift({ type: 'remove', content: a[i-1], lineA: i }); i--
-      }
-    }
-    return result
-  }
-
-  function collapseContext(/** @type {DiffLine[]} */ lines, ctx) {
+  function collapseContext(/** @type {DiffLine[]} */ lines, ctx, /** @type {Set<number>} */ open = new Set()) {
     const changeset = new Set()
     lines.forEach((l, i) => { if (l.type !== 'same') changeset.add(i) })
     if (changeset.size === 0) return lines
@@ -446,14 +434,21 @@
     /** @type {CollapsedLine[]} */
     const out = []
     let gap = 0
+    let gapFrom = 0
     for (let i = 0; i < lines.length; i++) {
       if (visible.has(i)) {
-        if (gap > 0) out.push({ type: 'ellipsis', count: gap })
+        if (gap > 0) {
+          if (open.has(gapFrom)) for (let k = gapFrom; k < i; k++) out.push(lines[k])
+          else out.push({ type: 'ellipsis', count: gap, from: gapFrom })
+        }
         gap = 0
         out.push(lines[i])
-      } else { gap++ }
+      } else { if (gap === 0) gapFrom = i; gap++ }
     }
-    if (gap > 0) out.push({ type: 'ellipsis', count: gap })
+    if (gap > 0) {
+      if (open.has(gapFrom)) for (let k = gapFrom; k < lines.length; k++) out.push(lines[k])
+      else out.push({ type: 'ellipsis', count: gap, from: gapFrom })
+    }
     return out
   }
 </script>
@@ -553,16 +548,16 @@
               </button>
             </div>
             <div class="mt-1 flex items-center gap-1.5 text-ui-2xs text-muted-foreground">
-              <span class="truncate">{fmtDate(snap.capturedAt)}</span>
+              <span class="shrink-0 tabular-nums">{fmtDate(snap.capturedAt)}</span>
               <span aria-hidden="true">·</span>
-              <span class="shrink-0 tabular-nums">{tableCount} tables</span>
+              <span class="min-w-0 truncate tabular-nums">{tableCount} tables</span>
               <span class="flex-1"></span>
               <!-- Base / Compare slots -->
               <button
                 onclick={() => { beforeId = snap.id }}
                 class={cn(
                   'h-5 shrink-0 rounded-full px-2 text-ui-3xs transition-colors',
-                  isBefore ? 'bg-foreground text-background' : 'text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-background/60 hover:text-foreground',
+                  isBefore ? 'bg-foreground text-background' : 'hidden text-muted-foreground group-hover:inline-block hover:bg-background/60 hover:text-foreground',
                 )}
                 title="Use as the baseline"
               >Base</button>
@@ -570,7 +565,7 @@
                 onclick={() => { afterId = snap.id }}
                 class={cn(
                   'h-5 shrink-0 rounded-full px-2 text-ui-3xs transition-colors',
-                  isAfter ? 'bg-foreground text-background' : 'text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-background/60 hover:text-foreground',
+                  isAfter ? 'bg-foreground text-background' : 'hidden text-muted-foreground group-hover:inline-block hover:bg-background/60 hover:text-foreground',
                 )}
                 title="Compare against the baseline"
               >Compare</button>
@@ -997,55 +992,57 @@
 
 {#snippet DdlDiff(tableKey)}
   {@const status = getTableStatus(diff, tableKey)}
-  {@const statusColor = status === 'added' ? 'text-success' : status === 'removed' ? 'text-destructive' : 'text-warning'}
-  {@const addCount = selectedDdlDiff?.filter((l) => l.type === 'add').length    ?? 0}
-  {@const removeCount = selectedDdlDiff?.filter((l) => l.type === 'remove').length ?? 0}
+  {@const addCount = selectedDdlDiff?.adds ?? 0}
+  {@const removeCount = selectedDdlDiff?.removes ?? 0}
 
-  <div class="flex h-8 shrink-0 items-center gap-2 border-b border-border/40 px-4">
-    <span class={cn('font-mono text-ui-xs font-semibold', statusColor)}>
-      {status === 'added' ? '+' : status === 'removed' ? '−' : '~'}
-    </span>
-    <span class="min-w-0 flex-1 truncate font-mono text-ui-xs font-medium text-foreground/75">{tableKey}</span>
-    <div class="ml-auto flex shrink-0 items-center gap-2 text-ui-2xs">
-      {#if removeCount > 0}<span class="font-medium text-destructive">−{removeCount}</span>{/if}
-      {#if addCount > 0}<span class="font-medium text-success">+{addCount}</span>{/if}
+  <!-- One quiet header: what kind of change, which table, how many lines. -->
+  <div class="flex h-9 shrink-0 items-center gap-2.5 border-b border-border/40 px-4">
+    <span
+      class={cn(
+        'inline-flex h-5 shrink-0 items-center rounded-md px-1.5 text-ui-3xs font-medium',
+        status === 'added' ? 'bg-success/12 text-success' : status === 'removed' ? 'bg-destructive/12 text-destructive' : 'bg-warning/12 text-warning',
+      )}
+    >{status === 'added' ? 'Added' : status === 'removed' ? 'Removed' : 'Changed'}</span>
+    <span class="min-w-0 flex-1 truncate font-mono text-ui-xs font-medium text-foreground">{tableKey}</span>
+    <div class="ml-auto flex shrink-0 items-center gap-2.5 font-mono text-ui-2xs tabular-nums">
+      {#if removeCount > 0}<span class="text-destructive">−{removeCount}</span>{/if}
+      {#if addCount > 0}<span class="text-success">+{addCount}</span>{/if}
     </div>
   </div>
 
-  <div class="min-h-0 flex-1 overflow-auto">
-    {#if !selectedDdlDiff}
+  <div class="min-h-0 flex-1 overflow-auto bg-panel">
+    {#if !shownDdlLines}
       <div class="flex items-center justify-center py-10 text-ui-xs text-muted-foreground">No DDL available</div>
     {:else}
-      <table class="w-full border-collapse font-mono text-ui-xs leading-5">
+      <!-- A unified diff: two line-number gutters, a sign column, the line.
+           Changed lines carry a 2px accent at the edge and a light tint; the
+           part of a line that actually changed is marked inside it. -->
+      <table class="w-full border-collapse font-mono text-ui-xs leading-[1.6]">
         <tbody>
-          {#each selectedDdlDiff as line, i (i)}
+          {#each shownDdlLines as line, i (i)}
             {#if line.type === 'ellipsis'}
-              <tr class="bg-muted/10">
-                <td class="w-10 select-none border-r border-border/15 px-2 text-right text-ui-3xs text-muted-foreground"></td>
-                <td class="w-10 select-none border-r border-border/15 px-2 text-right text-ui-3xs text-muted-foreground"></td>
-                <td class="w-5 select-none"></td>
-                <td class="px-4 py-0.5 text-ui-3xs text-muted-foreground">··· {line.count} unchanged line{line.count !== 1 ? 's' : ''}</td>
-              </tr>
-            {:else if line.type === 'add'}
-              <tr class="bg-success/[0.06] hover:bg-success/[0.1]">
-                <td class="w-10 select-none border-r border-success/10 px-2 text-right text-ui-3xs text-muted-foreground"></td>
-                <td class="w-10 select-none border-r border-success/10 px-2 text-right text-ui-3xs text-success">{line.lineB}</td>
-                <td class="w-5 select-none text-center text-success">+</td>
-                <td class="px-4 py-px text-success"><span class="whitespace-pre">{line.content}</span></td>
-              </tr>
-            {:else if line.type === 'remove'}
-              <tr class="bg-destructive/[0.06] hover:bg-destructive/[0.1]">
-                <td class="w-10 select-none border-r border-destructive/10 px-2 text-right text-ui-3xs text-destructive">{line.lineA}</td>
-                <td class="w-10 select-none border-r border-destructive/10 px-2 text-right text-ui-3xs text-muted-foreground"></td>
-                <td class="w-5 select-none text-center text-destructive">−</td>
-                <td class="px-4 py-px text-destructive"><span class="whitespace-pre">{line.content}</span></td>
+              <tr>
+                <td colspan="4" class="p-0">
+                  <button
+                    type="button"
+                    class="flex h-7 w-full items-center gap-2 border-y border-border/30 bg-muted/25 px-4 text-left text-ui-3xs text-muted-foreground transition-colors hover:bg-muted/45 hover:text-foreground"
+                    onclick={() => { const n = new Set(expandedGaps); n.add(line.from); expandedGaps = n }}
+                  >
+                    <ChevronDown class="size-3 shrink-0" aria-hidden="true" />
+                    Show {line.count} unchanged line{line.count !== 1 ? 's' : ''}
+                  </button>
+                </td>
               </tr>
             {:else}
-              <tr class="hover:bg-muted/8">
-                <td class="w-10 select-none border-r border-border/10 px-2 text-right text-ui-3xs text-muted-foreground">{line.lineA}</td>
-                <td class="w-10 select-none border-r border-border/10 px-2 text-right text-ui-3xs text-muted-foreground">{line.lineB}</td>
-                <td class="w-5 select-none"></td>
-                <td class="px-4 py-px text-muted-foreground"><span class="whitespace-pre">{line.content}</span></td>
+              {@const parts = selectedDdlDiff?.words.get(line)}
+              {@const tone = line.type === 'add' ? 'success' : line.type === 'remove' ? 'destructive' : ''}
+              <tr class={cn(tone === 'success' && 'bg-success/[0.07]', tone === 'destructive' && 'bg-destructive/[0.07]')}>
+                <td class={cn('w-11 select-none py-0 pr-2 pl-3 text-right text-ui-3xs tabular-nums text-muted-foreground/60', tone && 'shadow-[inset_2px_0_0_var(--accent-bar)]')} style={tone ? `--accent-bar: var(--${tone})` : ''}>{line.lineA ?? ''}</td>
+                <td class="w-10 select-none py-0 pr-2 text-right text-ui-3xs tabular-nums text-muted-foreground/60">{line.lineB ?? ''}</td>
+                <td class={cn('w-5 select-none text-center', tone === 'success' ? 'text-success' : tone === 'destructive' ? 'text-destructive' : 'text-transparent')}>{line.type === 'add' ? '+' : line.type === 'remove' ? '−' : ' '}</td>
+                <td class={cn('py-0 pr-4 pl-1', tone ? 'text-foreground' : 'text-muted-foreground')}>
+                  <span class="whitespace-pre">{#if parts}{#each parts as p, k (k)}{#if p.changed}<mark class={cn('rounded-sm px-px text-inherit', tone === 'success' ? 'bg-success/25' : 'bg-destructive/25')}>{p.text}</mark>{:else}{p.text}{/if}{/each}{:else}{line.content}{/if}</span>
+                </td>
               </tr>
             {/if}
           {/each}

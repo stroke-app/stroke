@@ -47,7 +47,7 @@ export const SCOPE_DEFAULTS = {
  */
 export const SPACING_PRESETS = {
   compact:     { rankSep: 110, nodeSep: 36,  colGap: 80,  rowGap: 44,  sideGap: 220 },
-  comfortable: { rankSep: 150, nodeSep: 52,  colGap: 110, rowGap: 64,  sideGap: 300 },
+  comfortable: { rankSep: 120, nodeSep: 48,  colGap: 96,  rowGap: 56,  sideGap: 260 },
   spacious:    { rankSep: 240, nodeSep: 88,  colGap: 170, rowGap: 108, sideGap: 430 },
 }
 

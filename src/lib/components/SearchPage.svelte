@@ -1,4 +1,5 @@
 <script>
+  import Kbd from './Kbd.svelte'
   import { getTableRows } from '$lib/api.js'
   import { buildSearchQuery, searchOptionsSupported, searchOptionHotkey, SEARCH_OPTION_KEYS } from '$lib/search-options.js'
   import Search from '@lucide/svelte/icons/search'
@@ -242,13 +243,14 @@
         data-slash-focus="25"
         aria-keyshortcuts="/"
         placeholder={useRegex ? 'Regex pattern…' : `Search ${schema}…`}
-        class="no-focus-ring min-w-0 flex-1 bg-transparent text-ui-xs outline-none placeholder:text-muted-foreground"
+        class="peer no-focus-ring min-w-0 flex-1 bg-transparent text-ui-xs outline-none placeholder:text-muted-foreground"
         bind:value={query}
         onkeydown={handleKeydown}
         oninput={() => { regexError = '' }}
         spellcheck="false"
         autocomplete="off"
       />
+      <Kbd combo="/" class="pointer-events-none hidden peer-placeholder-shown:inline-flex peer-focus:hidden shrink-0" aria-hidden="true" />
       <!-- VS Code-style option toggles (Postgres regex path only) -->
       {#if optionsSupported}
         <button
