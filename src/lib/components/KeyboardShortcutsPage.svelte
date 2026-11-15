@@ -1,4 +1,5 @@
 <script>
+  import SearchField from './SearchField.svelte'
   /**
    * Every shortcut, by group, searchable and remappable in place. Opens as a
    * tab (Keyboard shortcuts, ⌘/); KeyboardShortcutsDialog shows the same page
@@ -117,29 +118,11 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="flex min-h-0 flex-1 flex-col bg-background" onkeydown={handleGlobalKey}>
   <!-- Header -->
-  <div class="flex h-14 shrink-0 items-center gap-4 border-b border-border/30 px-5">
+  <div class="flex h-12 shrink-0 items-center gap-3 border-b border-border/40 px-4">
     <h1 class="min-w-0 flex-1 truncate text-ui-sm font-medium text-foreground">Keyboard shortcuts</h1>
 
     <!-- Search -->
-    <div class="relative w-64 shrink-0">
-      <Search class="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
-      <input
-        bind:this={searchEl}
-        type="text"
-        placeholder="Search shortcuts…"
-        bind:value={query}
-        class="no-field-frame h-8 w-full rounded-full border-0 bg-sidebar-accent/50 pl-8 pr-7 text-ui-xs text-foreground outline-none placeholder:text-muted-foreground focus:bg-sidebar-accent"
-      />
-      {#if query}
-        <button
-          type="button"
-          class="absolute top-1/2 right-2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-          onclick={() => (query = "")}
-        >
-          <X class="size-3 shrink-0" />
-        </button>
-      {/if}
-    </div>
+    <SearchField bind:value={query} bind:ref={searchEl} placeholder="Search shortcuts" class="w-60 shrink-0" />
 
     {#if onclose}
       <button

@@ -10,6 +10,7 @@
   import { Button } from '$lib/components/ui/button/index.js'
   import Icon from './Icon.svelte'
   import Kbd from './Kbd.svelte'
+  import SearchField from './SearchField.svelte'
   import { cn } from '$lib/utils.js'
   import { shareList, shareRevoke } from '$lib/api.js'
   import { localShares, forgetShare } from '$lib/share-flow.js'
@@ -183,27 +184,18 @@
 <!-- svelte-ignore a11y_no_static_element_interactions, a11y_no_noninteractive_tabindex -->
 <div bind:this={rootEl} tabindex="-1" class="flex min-h-0 flex-1 flex-col bg-background outline-none" onkeydown={onListKey}>
   <!-- Header, the same shape as Keyboard shortcuts -->
-  <div class="flex h-14 shrink-0 items-center gap-3 border-b border-border/30 px-5">
+  <div class="flex h-12 shrink-0 items-center gap-2 border-b border-border/40 px-4">
     <h1 class="min-w-0 flex-1 truncate text-ui-sm font-medium text-foreground">Shared links</h1>
     {#if rows.length}
-      <div class="relative w-60 shrink-0">
-        <Icon name="search" class="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
-        <input
-          bind:value={query}
-          data-slash-focus="1"
-          placeholder="Search links"
-          aria-label="Search shared links"
-          class="no-field-frame h-8 w-full rounded-full border-0 bg-sidebar-accent/50 pr-3 pl-8 text-ui-xs text-foreground outline-none placeholder:text-muted-foreground focus:bg-sidebar-accent"
-        />
-      </div>
-      <div role="radiogroup" aria-label="Show" class="flex shrink-0 gap-0.5 rounded-full bg-sidebar-accent/50 p-0.5">
+      <SearchField bind:value={query} placeholder="Search links" label="Search shared links" class="w-56 shrink-0" />
+      <div role="radiogroup" aria-label="Show" class="flex shrink-0 gap-0.5 rounded-lg bg-muted/55 p-0.5">
         {#each [{ v: 'active', l: 'Active' }, { v: 'all', l: 'All' }] as f (f.v)}
           <button
             type="button"
             role="radio"
             aria-checked={filter === f.v}
             onclick={() => (filter = /** @type {'active' | 'all'} */ (f.v))}
-            class={cn('h-7 rounded-full px-3 text-ui-xs font-medium transition-colors', filter === f.v ? 'bg-background text-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground')}
+            class={cn('h-7 rounded-md px-2.5 text-ui-xs font-medium transition-colors', filter === f.v ? 'bg-background text-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground')}
           >{f.l}</button>
         {/each}
       </div>
@@ -219,7 +211,7 @@
   </div>
 
   <div class="app-scroll min-h-0 flex-1 overflow-y-auto">
-    <div class="mx-auto flex w-full max-w-3xl flex-col px-6 pt-6 pb-10">
+    <div class="mx-auto flex w-full max-w-3xl flex-col px-4 pt-3 pb-8">
       {#if signedOut && loaded}
         <div class="flex flex-col items-center gap-3 py-24 text-center">
           <span class="flex size-12 items-center justify-center rounded-lg bg-muted/60"><Icon name="lock" class="size-5 shrink-0 text-muted-foreground" /></span>
@@ -235,7 +227,7 @@
         <!-- One quiet line of totals instead of a row of boxes. -->
         {#if plan}
           {@const cap = plan.limits.maxActive}
-          <div class="mb-5 flex flex-wrap items-center gap-x-4 gap-y-2 text-ui-xs text-muted-foreground">
+          <div class="mb-1 flex flex-wrap items-center gap-x-4 gap-y-2 px-2 text-ui-2xs text-muted-foreground">
             <span class="inline-flex items-center gap-1.5"><span class="size-1.5 rounded-full bg-success"></span><span class="font-medium text-foreground tabular-nums">{activeCount}</span> active</span>
             <span class="inline-flex items-center gap-1.5"><Icon name="eye" class="size-3.5 shrink-0" /><span class="font-medium text-foreground tabular-nums">{totalViews.toLocaleString()}</span> views</span>
             <span class="flex-1"></span>
@@ -247,7 +239,7 @@
                 </span>
               </span>
             {:else}
-              <span class="inline-flex h-5 items-center rounded-full bg-primary/12 px-2 text-ui-3xs font-semibold text-primary">PRO</span>
+              <span class="chip-gloss h-5 px-2 text-ui-3xs font-semibold">Pro</span>
             {/if}
           </div>
         {/if}
@@ -278,7 +270,7 @@
           {#if endedShown.length}
             {@render section('Ended', endedShown)}
           {/if}
-          <p class="mt-6 flex items-start gap-1.5 text-ui-2xs leading-relaxed text-muted-foreground">
+          <p class="mt-4 flex items-start gap-1.5 px-2 text-ui-3xs leading-relaxed text-muted-foreground">
             <Icon name="lock" class="mt-0.5 size-3 shrink-0" />
             A link's key stays on the computer that made it, so links made elsewhere can't be copied here. Revoking deletes the content everywhere at once.
             <span class="ms-auto hidden shrink-0 items-center gap-1 ps-4 sm:inline-flex"><Kbd combo="ArrowUp" /><Kbd combo="ArrowDown" /> move <Kbd combo="Enter" /> copy <Kbd combo="Backspace" /> revoke</span>
@@ -290,7 +282,7 @@
 </div>
 
 {#snippet section(/** @type {string} */ label, /** @type {import('$lib/api.js').ShareRow[]} */ list)}
-  <div class="mb-1 flex items-center gap-2 px-2 pt-3 pb-1.5">
+  <div class="flex items-center gap-2 px-2 pt-3 pb-1">
     <span class="text-ui-2xs font-medium text-muted-foreground">{label}</span>
     <span class="text-ui-3xs text-muted-foreground/70 tabular-nums">{list.length}</span>
   </div>
@@ -303,19 +295,19 @@
         role="option"
         data-share={r.id}
         aria-selected={selId === r.id}
-        class={cn('group/row relative flex h-14 items-center gap-3 rounded-lg px-2 transition-colors hover:bg-muted/45', selId === r.id && 'bg-muted/55')}
+        class={cn('group/row relative flex h-11 items-center gap-2.5 rounded-md px-2 transition-colors hover:bg-muted/45', selId === r.id && 'bg-muted/55')}
         onpointerenter={() => (selId = r.id)}
       >
-        <span class={cn('flex size-8 shrink-0 items-center justify-center rounded-lg', st.live ? k.tint : 'bg-muted/60 text-muted-foreground')}>
-          <Icon name={k.icon} class="size-4 shrink-0" />
+        <span class={cn('flex size-7 shrink-0 items-center justify-center rounded-md', st.live ? k.tint : 'bg-muted/60 text-muted-foreground')}>
+          <Icon name={k.icon} class="size-3.5 shrink-0" />
         </span>
         <div class="min-w-0 flex-1">
           <div class="flex min-w-0 items-center gap-1.5">
-            <span class={cn('truncate text-ui-sm', st.live ? 'font-medium text-foreground' : 'text-muted-foreground')}>{mine?.title ?? k.label}</span>
+            <span class={cn('truncate text-ui-xs', st.live ? 'font-medium text-foreground' : 'text-muted-foreground')}>{mine?.title ?? k.label}</span>
             {#if r.hasPassword}<Icon name="lock" class="size-3 shrink-0 text-muted-foreground" aria-label="Password protected" />{/if}
             {#if r.maxViews === 1 && st.live}<Icon name="flame" class="size-3 shrink-0 text-warning" aria-label="Burns after one view" />{/if}
           </div>
-          <div class="mt-0.5 truncate text-ui-2xs text-muted-foreground">
+          <div class="truncate text-ui-3xs text-muted-foreground">
             {k.label} · {when(r.createdAt)} · {bytes(r.size)}
           </div>
         </div>

@@ -1432,6 +1432,13 @@ export function installZoomShortcuts() {
 }
 
 /** @param {Partial<AppSettings>} patch */
+/**
+ * Bumped on every settings write, from anywhere (Settings, the palette, a
+ * menu, sync). Views that keep their own copy of the settings reload on it,
+ * so a change made elsewhere shows up at once.
+ */
+export const settingsRevision = writable(0)
+
 export function updateSettings(patch) {
   const current = loadSettings()
   const next = { ...current, ...patch }
@@ -1443,6 +1450,7 @@ export function updateSettings(patch) {
 
   saveSettings(next)
   applySettings(next)
+  settingsRevision.update((n) => n + 1)
   return next
 }
 

@@ -1,5 +1,5 @@
 <script>
-  import { tick } from "svelte";
+  import { tick, untrack } from "svelte";
   import { toastPosition, TOAST_POSITIONS } from '$lib/stores/toast-position.js'
   import ThemeBuilder from './ThemeBuilder.svelte';
   import { comboTitle } from '$lib/shortcuts.js'
@@ -18,6 +18,7 @@
   import ThemeSwatchStrip from "$lib/components/ThemeSwatchStrip.svelte";
   import SearchableMenu from "$lib/components/SearchableMenu.svelte";
   import SelectMenu from "$lib/components/SelectMenu.svelte";
+  import SearchField from "./SearchField.svelte";
   import EditorThemePicker from "$lib/components/EditorThemePicker.svelte";
   import { getThemeDefinition, themesByGroup } from "$lib/themes/registry.js";
   import { sidebarSideStore, setSidebarSide } from "$lib/stores/layout.js";
@@ -55,6 +56,7 @@
     DEFAULT_SESSION_TIMEZONE,
     AGENT_FONT_SIZES,
     THINKING_STYLES,
+    settingsRevision,
   } from "$lib/stores/settings.js";
   import { PAGE_SIZE_OPTIONS, loadDefaultPageSize, saveDefaultPageSize } from '$lib/table-query.js';
   import {
@@ -194,6 +196,14 @@
   }
 
   /** @param {boolean} next */
+  // Reload the copy whenever the settings change elsewhere (⌘K, a menu, sync)
+  // and whenever the dialog opens. onOpenChange alone missed both: bits-ui
+  // does not call it when `open` is set from code, as the palette does.
+  $effect(() => {
+    void $settingsRevision;
+    if (open) untrack(() => refreshSettings());
+  });
+
   function handleOpenChange(next) {
     if (next) { refreshSettings(); category = section || 'general'; section = ''; query = ''; void refreshLockStatus(); }
   }
@@ -646,22 +656,7 @@
     <div class="grid min-h-0 flex-1 grid-cols-[13rem_minmax(0,1fr)] overflow-hidden">
       <!-- ── Left: search + category nav ─────────────────────────── -->
       <aside class="flex min-h-0 flex-col gap-3 border-r border-border/40 bg-muted/[0.015] p-3">
-        <div class="relative">
-          <Icon name="search" class="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-          <input
-            bind:value={query}
-            data-slash-focus="30"
-            placeholder="Search settings…"
-            aria-keyshortcuts="/"
-            onfocus={() => (settingsSearchFocused = true)}
-            onblur={() => (settingsSearchFocused = false)}
-            onkeydown={(e) => { if (e.key === 'Escape' && query) { e.stopPropagation(); query = ''; } }}
-            class= "field-surface h-8 w-full bg-transparent pl-8 pr-7 text-ui-xs text-foreground outline-none placeholder:text-muted-foreground"
-          />
-          {#if !query && !settingsSearchFocused}
-            <Kbd combo="/" class="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2" aria-hidden="true" />
-          {/if}
-        </div>
+        <SearchField bind:value={query} placeholder="Search" label="Search settings" rank={30} />
         <nav class="flex flex-col gap-0.5">
           {#each CATEGORIES as c (c.id)}
             <button
