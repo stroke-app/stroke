@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.14.3] - 2026-11-15
+
+### Changes
+- Dashboard: live cards, numbers, refresh; list picker; Bro theme (#239)
+
+
 ## [2.14.2] - 2026-11-15
 
 ### Changes
