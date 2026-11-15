@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.15.2] - 2026-11-15
+
+### Changes
+- AI chat: your messages render markdown; the composer types it (#250)
+
+
 ## [2.15.1] - 2026-11-15
 
 ### Changes
