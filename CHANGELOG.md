@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.11.7] - 2026-11-15
+
+### Changes
+- Agents can write to Elasticsearch and OpenSearch at the right level (#213)
+
+
 ## [2.11.6] - 2026-11-15
 
 ### Changes
