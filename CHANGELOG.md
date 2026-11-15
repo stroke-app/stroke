@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.14.4] - 2026-11-15
+
+### Changes
+- Labs: several connections at once; Parquet and Excel export; searchable dropdowns (#240)
+
+
 ## [2.14.3] - 2026-11-15
 
 ### Changes
