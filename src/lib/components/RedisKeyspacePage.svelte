@@ -52,7 +52,7 @@
    */
 
   /** @type {{ active?: boolean, connection?: import('$lib/stores/connections.js').SavedConnection | null }} */
-  let { active = false, connection = null } = $props()
+  let { active = false, connection = null, live = false } = $props()
 
   // ── Sidebar: databases, views, namespaces ───────────────────────────────
   /** @typedef {'keys' | 'insights' | 'slowlog' | 'clients' | 'pubsub'} RedisView */
@@ -686,6 +686,24 @@
     const on = () => { if (active) reload() }
     window.addEventListener('stroke:refresh-view', on)
     return () => window.removeEventListener('stroke:refresh-view', on)
+  })
+  // Live mode: the keys on screen reload every few seconds, unless edits are staged.
+  $effect(() => {
+    if (!live || !active) return
+    let busy = false
+    const timer = setInterval(async () => {
+      if (busy || document.hidden || staged.length > 0 || loading) return
+      busy = true
+      try {
+        // The first page as it is now, compared with what is on screen: only
+        // a real change reloads (keeping the rest of the list otherwise).
+        const page = await redisKeyPage('0', { pattern: toPattern(filterInput), type: typeFilter, target: PAGE_TARGET })
+        const strip = (/** @type {any[]} */ list) => JSON.stringify(list.map(({ at: _at, ...r }) => r))
+        if (strip(page.rows) !== strip(rows.slice(0, page.rows.length))) reload()
+      } catch { /* the next tick tries again */ }
+      finally { busy = false }
+    }, 3000)
+    return () => clearInterval(timer)
   })
 </script>
 

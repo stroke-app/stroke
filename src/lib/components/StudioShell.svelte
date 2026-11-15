@@ -10119,7 +10119,7 @@ let rowSearch = $state('')
         >
           <svelte:boundary failed={tabError}>
             {#await import('./RedisKeyspacePage.svelte')}<TabLoading />{:then { default: RedisKeyspacePage }}
-              <RedisKeyspacePage active={activeTab?.kind === 'redis'} {connection} />
+              <RedisKeyspacePage active={activeTab?.kind === 'redis'} {connection} live={liveEnabled} />
             {/await}
           </svelte:boundary>
         </div>
@@ -10155,6 +10155,7 @@ let rowSearch = $state('')
               {#key dbType}
                 <DocBrowser
                   active={activeTab?.kind === 'docs'}
+                  live={liveEnabled}
                   {connection}
                   adapter={docAdapter}
                   collection={docCollection}
@@ -11179,7 +11180,7 @@ let rowSearch = $state('')
   onscrolltableleft={() => scrollTableLeft()}
   onscrolltableright={() => scrollTableRight()}
   live={liveEnabled}
-  {liveSupported}
+  liveSupported={liveSupported && (activeTab?.kind === 'table' || activeTab?.kind === 'docs' || activeTab?.kind === 'redis')}
   {liveNative}
   ontogglelive={() => { liveEnabled = !liveEnabled }}
   onswitchconnection={handleSwitchDatabase}

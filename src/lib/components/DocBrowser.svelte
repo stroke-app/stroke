@@ -61,7 +61,7 @@
    *   onopensql?: (text: string, collection: string) => void,
    * }}
    */
-  let { active = false, connection = null, adapter, collection = '', where = '', onopensql = () => {} } = $props()
+  let { active = false, connection = null, adapter, collection = '', where = '', onopensql = () => {}, live = false } = $props()
 
   const readOnly = $derived($readOnlyMode)
   const noun = $derived(adapter.noun)
@@ -695,6 +695,18 @@ GET products/_search
     const on = () => { if (active) { void refreshInfo(); void load(page) } }
     window.addEventListener('stroke:refresh-view', on)
     return () => window.removeEventListener('stroke:refresh-view', on)
+  })
+  // Live mode: reload the page on screen every few seconds. A refresh that
+  // brings back the same documents changes nothing (see load), so a quiet
+  // collection costs one small query per tick and never repaints.
+  $effect(() => {
+    if (!live || !active) return
+    const timer = setInterval(() => {
+      if (document.hidden || loading || applying || pendingEditCount > 0 || !coll || !info) return
+      if (view !== 'table' && view !== 'json') return
+      void load(page)
+    }, 3000)
+    return () => clearInterval(timer)
   })
 </script>
 
