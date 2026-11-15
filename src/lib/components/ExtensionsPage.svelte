@@ -1,4 +1,5 @@
 <script>
+  import SearchField from './SearchField.svelte'
   import { untrack } from "svelte";
   import { cn } from "$lib/utils.js";
   import { Button } from "$lib/components/ui/button/index.js";
@@ -436,16 +437,7 @@
       </div>
 
       <div class="mt-6 flex flex-wrap items-center gap-2">
-        <div class="relative min-w-0 flex-1 basis-56">
-          <Search class="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-          <input
-            type="search"
-            bind:value={query}
-            placeholder="Search {EXTENSIONS.length} extensions"
-            aria-label="Search extensions"
-            class="field-surface h-8 w-full bg-transparent pl-8 pr-3 text-ui-sm text-foreground placeholder:text-muted-foreground"
-          />
-        </div>
+        <SearchField bind:value={query} placeholder="Search {EXTENSIONS.length} extensions" label="Search extensions" class="min-w-0 flex-1 basis-56" />
         <!-- All / On: a segmented control, the current option raised. -->
         <div class="flex h-8 shrink-0 items-center gap-0.5 rounded-md bg-muted/50 p-0.5" role="group" aria-label="Show">
           {#each [["all", `All`, EXTENSIONS.length], ["on", "On", enabledCount]] as [v, label, n] (v)}

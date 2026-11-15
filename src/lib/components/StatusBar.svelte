@@ -825,11 +825,10 @@
     {#if $appVimMode}
       <span
         class={cn(
-          'inline-flex h-6 items-center rounded-md px-1.5 font-mono text-ui-3xs font-semibold uppercase tracking-[0.06em]',
-          $vimSubMode === 'insert' && 'bg-success/15 text-success',
-          $vimSubMode === 'visual' && 'bg-warning/15 text-warning',
-          $vimSubMode === 'command' && 'bg-primary/15 text-primary',
-          $vimSubMode === 'normal' && 'bg-muted/40 text-muted-foreground',
+          'chip-gloss mx-0.5 h-6 px-2.5 font-mono text-ui-3xs font-semibold uppercase tracking-[0.08em]',
+          $vimSubMode === 'visual' && 'chip-warning',
+          $vimSubMode === 'command' && 'chip-primary',
+          $vimSubMode === 'normal' && 'chip-muted',
         )}
         title="Vim mode · {VIM_MODE_LABEL[$vimSubMode]} (experimental)"
       >{VIM_MODE_LABEL[$vimSubMode]}</span>

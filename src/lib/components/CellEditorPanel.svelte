@@ -575,7 +575,7 @@
 
   <!-- One bar, not a header and a footer: the counts and the two actions fit
        beside the name, and a 28px row of value did not need 92px of chrome. -->
-  <div class="flex h-8 shrink-0 items-center gap-2 border-b border-border/40 bg-muted/20 px-2.5">
+  <div class="flex h-9 shrink-0 items-center gap-2 border-b border-border/40 bg-muted/20 ps-3 pe-1.5">
     <Pencil class="size-3.5 shrink-0 text-muted-foreground" />
     <!-- One shrinking group for everything that describes the value, so a
          narrow dock takes room from the description rather than pushing the
@@ -586,18 +586,18 @@
     <!-- title: this is the only place the column is named, and it is the first
          thing to be truncated when the bar runs out of room. -->
     <span
-      class="min-w-0 truncate font-mono text-ui-2xs font-medium text-foreground/85"
+      class="min-w-0 truncate text-ui-xs font-medium text-foreground"
       title={colType ? `${colName} · ${colType}` : colName}
     >{colName}</span>
     {#if colType}
-      <span class="shrink-0 rounded-[3px] border border-border/50 bg-muted/40 px-1.5 py-px font-mono text-ui-3xs text-muted-foreground">{colType}</span>
+      <span class="shrink-0 rounded-md bg-muted/70 px-1.5 py-px font-mono text-ui-3xs text-muted-foreground">{colType}</span>
     {/if}
     {#if sourceHint}
       <!-- ms-2: the gap between identity (name, type) and the facts about
            this value is twice the gap inside either group. -->
       <!-- tabular-nums: this counts up as the cursor moves, and proportional
            digits made everything after it shift on the step from row 9 to 10. -->
-      <span class="ms-2 shrink-0 font-mono text-ui-3xs tabular-nums text-muted-foreground">{sourceHint}</span>
+      <span class="ms-1.5 shrink-0 text-ui-2xs tabular-nums text-muted-foreground">{sourceHint.replace(/^row\b/, "Row")}</span>
     {/if}
     {#if isNull && !dirty}
       <span class="shrink-0 font-mono text-ui-3xs text-muted-foreground">NULL</span>
@@ -607,8 +607,8 @@
         {detached ? 'inside a row · read-only' : 'read-only'}
       </span>
     {/if}
-    <span class="shrink-0 font-mono text-ui-3xs tabular-nums text-muted-foreground">
-      {lines.toLocaleString()}L · {chars.toLocaleString()}c
+    <span class="shrink-0 text-ui-2xs tabular-nums text-muted-foreground">
+      · {lines.toLocaleString()} {lines === 1 ? 'line' : 'lines'} · {chars.toLocaleString()} {chars === 1 ? 'character' : 'characters'}
     </span>
     {#if oversize}
       <span
@@ -617,7 +617,7 @@
       >{formatBytes(oversize.bytes)} · not loaded</span>
     {/if}
     {#if dirty && !readOnly}
-      <span class="shrink-0 text-ui-3xs text-primary">edited</span>
+      <span class="inline-flex shrink-0 items-center gap-1 text-ui-2xs font-medium text-primary"><span class="size-1.5 rounded-full bg-primary"></span>Edited</span>
     {/if}
     </div>
 
@@ -679,13 +679,13 @@
         </button>
         <button
           type="button"
-          class="ms-3 inline-flex h-7 items-center gap-1.5 rounded-md bg-primary/10 px-2.5 font-mono text-ui-2xs text-primary transition-colors hover:bg-primary/15 disabled:bg-transparent disabled:text-muted-foreground disabled:opacity-60"
+          class="ms-2 inline-flex h-7 items-center gap-2 rounded-lg bg-primary ps-2.5 pe-1.5 text-ui-xs font-medium text-primary-foreground transition-[background-color,opacity,scale] hover:bg-primary/90 active:scale-[0.97] disabled:bg-muted disabled:text-muted-foreground disabled:active:scale-100"
           disabled={!dirty}
           onclick={apply}
           title="Stage this value with your other pending edits"
         >
           Stage change
-          <Kbd combo="Mod+Enter" />
+          <Kbd combo="Mod+Enter" class="opacity-80" />
         </button>
       {/if}
       <button
