@@ -155,3 +155,44 @@ export function reportSummary(report) {
   if (failed) return `${head} · ${failed} check${failed === 1 ? '' : 's'} could not run`
   return head
 }
+
+/** What one finding takes off the score, by severity. */
+const PENALTY = { error: 12, warning: 4, info: 1 }
+/** One check can cost at most this much: 40 tables without RLS is one problem, not forty. */
+const CHECK_CAP = 25
+
+/**
+ * A 0-100 health score for a set of findings. Each check's penalty is capped,
+ * so one widespread pattern can't drown out everything else, and info-level
+ * notes barely move it.
+ * @param {Array<{ checkId: string, severity: string }>} findings
+ * @returns {{ score: number, label: string, tone: 'good' | 'fair' | 'poor' }}
+ */
+export function healthScore(findings) {
+  /** @type {Map<string, number>} */
+  const byCheck = new Map()
+  for (const f of findings) {
+    const p = PENALTY[/** @type {keyof typeof PENALTY} */ (f.severity)] ?? 0
+    byCheck.set(f.checkId, (byCheck.get(f.checkId) ?? 0) + p)
+  }
+  let lost = 0
+  for (const p of byCheck.values()) lost += Math.min(CHECK_CAP, p)
+  const score = Math.max(0, Math.round(100 - lost))
+  const tone = score >= 85 ? 'good' : score >= 60 ? 'fair' : 'poor'
+  const label = tone === 'good' ? 'Healthy' : tone === 'fair' ? 'Needs attention' : 'At risk'
+  return { score, label, tone }
+}
+
+/** A finding's identity for "ignore": the check and the entity. @param {{ checkId: string, entity: string }} f */
+export const ignoreKey = (f) => `${f.checkId}|${f.entity}`
+
+/**
+ * The fixes of a group as one script, each under a comment naming its entity.
+ * @param {Array<{ entity: string, remediation?: string | null }>} findings
+ */
+export function combinedFix(findings) {
+  return findings
+    .filter((f) => f.remediation)
+    .map((f) => `-- ${f.entity}\n${f.remediation}`)
+    .join('\n\n')
+}

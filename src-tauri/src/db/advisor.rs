@@ -92,12 +92,21 @@ fn bytes_pretty(bytes: f64) -> String {
 /// error would mean every ordinary deployment opens this tab to a wall of red -
 /// which teaches people to ignore the tab.
 async fn check_rls_disabled(pool: &PgPool) -> Result<Vec<AdvisorFinding>, String> {
+    // Is there a role that untrusted clients use (Supabase's anon/authenticated,
+    // PostgREST's web_anon)? Without one, Postgres is reached through an app
+    // server and RLS is simply not the access model: say so quietly (info)
+    // instead of opening every ordinary database on a wall of warnings.
     let sql = format!(
-        "SELECT n.nspname, c.relname
+        "WITH api AS (SELECT rolname FROM pg_roles WHERE rolname IN ('anon','authenticated','web_anon','authenticator'))
+         SELECT n.nspname, c.relname,
+                EXISTS (SELECT 1 FROM api) AS exposed,
+                EXISTS (SELECT 1 FROM api WHERE api.rolname IN ('anon','web_anon')
+                          AND has_table_privilege(api.rolname, c.oid, 'SELECT')) AS anon_reads
            FROM pg_class c
            JOIN pg_namespace n ON n.oid = c.relnamespace
           WHERE c.relkind = 'r'
             AND NOT c.relrowsecurity
+            AND NOT EXISTS (SELECT 1 FROM pg_policy p WHERE p.polrelid = c.oid)
             AND n.nspname NOT IN ({SYSTEM_SCHEMAS})
             AND n.nspname NOT LIKE 'pg\\_temp%'
           ORDER BY 1, 2"
@@ -108,29 +117,235 @@ async fn check_rls_disabled(pool: &PgPool) -> Result<Vec<AdvisorFinding>, String
         .map(|r| {
             let schema: String = r.get(0);
             let table: String = r.get(1);
+            let exposed: bool = r.get(2);
+            let anon_reads: bool = r.get(3);
+            let (severity, description, detail) = if anon_reads {
+                ("error", "The anonymous API role can SELECT this table and nothing filters the rows: anyone with the public key reads all of it.", Some("anon can SELECT · no RLS".to_string()))
+            } else if exposed {
+                ("warning", "This database has API roles that clients use directly (PostgREST, Supabase). Without RLS, any of them granted access to the table reads every row.", None)
+            } else {
+                ("info", "No API roles here, so access goes through an application server and RLS is not how it is enforced. Turn it on before exposing the database to clients directly.", None)
+            };
             AdvisorFinding {
                 check_id: "rls_disabled".into(),
                 category: "security".into(),
-                severity: "warning".into(),
+                severity: severity.into(),
                 title: "Table without row-level security".into(),
                 entity: format!("{schema}.{table}"),
                 entity_kind: "table".into(),
-                description: "Any role that can reach this table reads every row. That is what you want behind a trusted application server, and a hole if clients connect to Postgres directly.".into(),
-                detail: None,
+                description: description.into(),
+                detail,
                 remediation: Some(format!(
                     "ALTER TABLE \"{schema}\".\"{table}\" ENABLE ROW LEVEL SECURITY;\n-- then add at least one policy, or the table denies everything:\n-- CREATE POLICY \"{table}_select\" ON \"{schema}\".\"{table}\" FOR SELECT USING (true);"
                 )),
-                metric: 0.0,
+                metric: if anon_reads { 2.0 } else if exposed { 1.0 } else { 0.0 },
             }
         })
         .collect())
 }
 
-/// Foreign keys whose columns aren't the leading columns of any index.
-///
-/// Postgres indexes the referenced side automatically and the referencing side not
-/// at all, so every join and every `ON DELETE` check on this constraint is a
-/// sequential scan of the child table.
+/// Policies written for a table whose RLS is off: they look like protection and
+/// enforce nothing.
+async fn check_policies_ignored(pool: &PgPool) -> Result<Vec<AdvisorFinding>, String> {
+    let sql = format!(
+        "SELECT n.nspname, c.relname, count(p.*)::int8
+           FROM pg_class c
+           JOIN pg_namespace n ON n.oid = c.relnamespace
+           JOIN pg_policy p ON p.polrelid = c.oid
+          WHERE c.relkind IN ('r','p') AND NOT c.relrowsecurity
+            AND n.nspname NOT IN ({SYSTEM_SCHEMAS})
+          GROUP BY 1, 2 ORDER BY 1, 2"
+    );
+    let rows = sqlx::query(&sql).fetch_all(pool).await.map_err(|e| e.to_string())?;
+    Ok(rows.iter().map(|r| {
+        let schema: String = r.get(0);
+        let table: String = r.get(1);
+        let n: i64 = r.get(2);
+        AdvisorFinding {
+            check_id: "policies_ignored".into(),
+            category: "security".into(),
+            severity: "error".into(),
+            title: "Policies that are not enforced".into(),
+            entity: format!("{schema}.{table}"),
+            entity_kind: "table".into(),
+            description: "The table has row-level policies, but RLS is off on it, so Postgres ignores every one of them and each role sees all rows.".into(),
+            detail: Some(format!("{n} polic{} defined · RLS off", if n == 1 { "y" } else { "ies" })),
+            remediation: Some(format!("ALTER TABLE \"{schema}\".\"{table}\" ENABLE ROW LEVEL SECURITY;")),
+            metric: n as f64,
+        }
+    }).collect())
+}
+
+/// RLS switched on with no policy: only the owner (and superusers) see rows.
+async fn check_rls_no_policy(pool: &PgPool) -> Result<Vec<AdvisorFinding>, String> {
+    let sql = format!(
+        "SELECT n.nspname, c.relname
+           FROM pg_class c
+           JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE c.relkind IN ('r','p') AND c.relrowsecurity
+            AND NOT EXISTS (SELECT 1 FROM pg_policy p WHERE p.polrelid = c.oid)
+            AND n.nspname NOT IN ({SYSTEM_SCHEMAS})
+          ORDER BY 1, 2"
+    );
+    let rows = sqlx::query(&sql).fetch_all(pool).await.map_err(|e| e.to_string())?;
+    Ok(rows.iter().map(|r| {
+        let schema: String = r.get(0);
+        let table: String = r.get(1);
+        AdvisorFinding {
+            check_id: "rls_no_policy".into(),
+            category: "security".into(),
+            severity: "warning".into(),
+            title: "RLS on, but no policy".into(),
+            entity: format!("{schema}.{table}"),
+            entity_kind: "table".into(),
+            description: "Row-level security is enabled and no policy grants anything, so every role except the owner and superusers sees an empty table. Usually a policy that was meant to follow.".into(),
+            detail: None,
+            remediation: Some(format!("CREATE POLICY \"{table}_select\" ON \"{schema}\".\"{table}\" FOR SELECT USING (true);")),
+            metric: 0.0,
+        }
+    }).collect())
+}
+
+/// SECURITY DEFINER functions run as their owner; without a pinned search_path
+/// a caller can put their own objects first on it and run code as that owner.
+async fn check_definer_search_path(pool: &PgPool) -> Result<Vec<AdvisorFinding>, String> {
+    let sql = format!(
+        "SELECT n.nspname, p.proname, pg_get_function_identity_arguments(p.oid)
+           FROM pg_proc p
+           JOIN pg_namespace n ON n.oid = p.pronamespace
+          WHERE p.prosecdef
+            AND n.nspname NOT IN ({SYSTEM_SCHEMAS})
+            AND NOT EXISTS (SELECT 1 FROM unnest(coalesce(p.proconfig, '{{}}'::text[])) c WHERE c LIKE 'search\\_path=%')
+          ORDER BY 1, 2"
+    );
+    let rows = sqlx::query(&sql).fetch_all(pool).await.map_err(|e| e.to_string())?;
+    Ok(rows.iter().map(|r| {
+        let schema: String = r.get(0);
+        let name: String = r.get(1);
+        let args: String = r.get(2);
+        AdvisorFinding {
+            check_id: "definer_search_path".into(),
+            category: "security".into(),
+            severity: "warning".into(),
+            title: "SECURITY DEFINER without a search_path".into(),
+            entity: format!("{schema}.{name}({args})"),
+            entity_kind: "function".into(),
+            description: "The function runs with its owner's rights and resolves names through the caller's search_path, so a caller who can create objects can shadow a table or function it uses and run code as the owner.".into(),
+            detail: None,
+            remediation: Some(format!("ALTER FUNCTION \"{schema}\".\"{name}\"({args}) SET search_path = pg_catalog, \"{schema}\";")),
+            metric: 0.0,
+        }
+    }).collect())
+}
+
+/// Two indexes with the same definition: one is pure cost.
+async fn check_duplicate_index(pool: &PgPool) -> Result<Vec<AdvisorFinding>, String> {
+    let sql = format!(
+        "SELECT n.nspname, t.relname, i2.relname, i1.relname, pg_relation_size(x2.indexrelid)::float8,
+                x2.indisprimary OR x2.indisunique OR EXISTS (SELECT 1 FROM pg_constraint c WHERE c.conindid = x2.indexrelid)
+           FROM pg_index x1
+           JOIN pg_index x2 ON x1.indrelid = x2.indrelid AND x1.indexrelid < x2.indexrelid
+            AND x1.indkey = x2.indkey AND x1.indclass = x2.indclass
+            AND coalesce(pg_get_expr(x1.indexprs, x1.indrelid), '') = coalesce(pg_get_expr(x2.indexprs, x2.indrelid), '')
+            AND coalesce(pg_get_expr(x1.indpred, x1.indrelid), '') = coalesce(pg_get_expr(x2.indpred, x2.indrelid), '')
+           JOIN pg_class i1 ON i1.oid = x1.indexrelid
+           JOIN pg_class i2 ON i2.oid = x2.indexrelid
+           JOIN pg_class t ON t.oid = x1.indrelid
+           JOIN pg_namespace n ON n.oid = t.relnamespace
+          WHERE n.nspname NOT IN ({SYSTEM_SCHEMAS})
+          ORDER BY 5 DESC"
+    );
+    let rows = sqlx::query(&sql).fetch_all(pool).await.map_err(|e| e.to_string())?;
+    Ok(rows.iter().map(|r| {
+        let schema: String = r.get(0);
+        let table: String = r.get(1);
+        let dup: String = r.get(2);
+        let keep: String = r.get(3);
+        let bytes: f64 = r.get(4);
+        let backs_constraint: bool = r.get(5);
+        AdvisorFinding {
+            check_id: "duplicate_index".into(),
+            category: "performance".into(),
+            severity: if bytes > 64.0 * 1024.0 * 1024.0 { "warning" } else { "info" }.into(),
+            title: "Duplicate index".into(),
+            entity: format!("{schema}.{dup}"),
+            entity_kind: "index".into(),
+            description: "Another index on the same table has the same columns, operator classes, expressions and predicate. Every write maintains both and the planner only needs one.".into(),
+            detail: Some(format!("{} on {schema}.{table} · same as {keep}", bytes_pretty(bytes))),
+            remediation: Some(if backs_constraint {
+                format!("-- \"{dup}\" backs a constraint; drop \"{keep}\" instead:\nDROP INDEX CONCURRENTLY \"{schema}\".\"{keep}\";")
+            } else {
+                format!("DROP INDEX CONCURRENTLY \"{schema}\".\"{dup}\";")
+            }),
+            metric: bytes,
+        }
+    }).collect())
+}
+
+/// Sequences close to the end of their type: inserts start failing at the max.
+async fn check_sequence_exhaustion(pool: &PgPool) -> Result<Vec<AdvisorFinding>, String> {
+    let sql = format!(
+        "SELECT schemaname, sequencename, data_type::text, last_value::float8, max_value::float8
+           FROM pg_sequences
+          WHERE last_value IS NOT NULL AND max_value > 0
+            AND schemaname NOT IN ({SYSTEM_SCHEMAS})
+            AND last_value::float8 / max_value::float8 > 0.5
+          ORDER BY last_value::float8 / max_value::float8 DESC"
+    );
+    let rows = sqlx::query(&sql).fetch_all(pool).await.map_err(|e| e.to_string())?;
+    Ok(rows.iter().map(|r| {
+        let schema: String = r.get(0);
+        let seq: String = r.get(1);
+        let ty: String = r.get(2);
+        let last: f64 = r.get(3);
+        let max: f64 = r.get(4);
+        let ratio = last / max;
+        AdvisorFinding {
+            check_id: "sequence_exhaustion".into(),
+            category: "schema".into(),
+            severity: if ratio > 0.85 { "error" } else { "warning" }.into(),
+            title: "Sequence running out".into(),
+            entity: format!("{schema}.{seq}"),
+            entity_kind: "sequence".into(),
+            description: "The sequence has used most of its range. When it reaches the maximum, every insert that needs a new id fails.".into(),
+            detail: Some(format!("{:.0}% of {ty} used · {last:.0} of {max:.0}", ratio * 100.0)),
+            remediation: Some(format!("ALTER SEQUENCE \"{schema}\".\"{seq}\" AS bigint;\n-- and widen the column it feeds to bigint (ALTER TABLE ... ALTER COLUMN ... TYPE bigint)")),
+            metric: ratio,
+        }
+    }).collect())
+}
+
+/// Tables the planner is guessing about: never analyzed, or changed a lot since.
+async fn check_stale_stats(pool: &PgPool) -> Result<Vec<AdvisorFinding>, String> {
+    let sql = "SELECT s.schemaname, s.relname, s.n_live_tup::int8, s.n_mod_since_analyze::int8,
+                      (s.last_analyze IS NULL AND s.last_autoanalyze IS NULL)
+                 FROM pg_stat_user_tables s
+                WHERE s.n_live_tup > 1000
+                  AND ((s.last_analyze IS NULL AND s.last_autoanalyze IS NULL)
+                       OR s.n_mod_since_analyze > GREATEST(10000, s.n_live_tup / 5))
+                ORDER BY s.n_mod_since_analyze DESC";
+    let rows = sqlx::query(sql).fetch_all(pool).await.map_err(|e| e.to_string())?;
+    Ok(rows.iter().map(|r| {
+        let schema: String = r.get(0);
+        let table: String = r.get(1);
+        let live: i64 = r.get(2);
+        let changed: i64 = r.get(3);
+        let never: bool = r.get(4);
+        AdvisorFinding {
+            check_id: "stale_stats".into(),
+            category: "performance".into(),
+            severity: if never { "warning" } else { "info" }.into(),
+            title: "Planner statistics out of date".into(),
+            entity: format!("{schema}.{table}"),
+            entity_kind: "table".into(),
+            description: "The planner chooses joins and indexes from these statistics. A table never analyzed, or changed a lot since, gets plans built on guesses.".into(),
+            detail: Some(if never { format!("never analyzed · ~{live} rows") } else { format!("{changed} rows changed since the last ANALYZE · ~{live} rows") }),
+            remediation: Some(format!("ANALYZE \"{schema}\".\"{table}\";")),
+            metric: changed as f64,
+        }
+    }).collect())
+}
+
 async fn check_unindexed_fk(pool: &PgPool) -> Result<Vec<AdvisorFinding>, String> {
     let sql = format!(
         "SELECT n.nspname, c.relname, con.conname, pg_get_constraintdef(con.oid),
@@ -193,6 +408,15 @@ async fn check_unused_index(pool: &PgPool) -> Result<Vec<AdvisorFinding>, String
                 WHERE s.idx_scan = 0
                   AND NOT i.indisunique
                   AND NOT i.indisprimary
+                  -- Tiny indexes are noise: dropping them saves nothing.
+                  AND pg_relation_size(s.indexrelid) >= 1048576
+                  -- The index a foreign key's checks use: dropping it would turn
+                  -- every parent DELETE into a scan of this table.
+                  AND NOT EXISTS (
+                        SELECT 1 FROM pg_constraint con
+                         WHERE con.contype = 'f' AND con.conrelid = i.indrelid
+                           AND (i.indkey::int2[])[1:cardinality(con.conkey::int2[])] @> con.conkey::int2[]
+                      )
                 ORDER BY 4 DESC";
     let rows = sqlx::query(sql).fetch_all(pool).await.map_err(|e| e.to_string())?;
     Ok(rows
@@ -429,7 +653,13 @@ pub async fn scan(conn: &super::connection::ActiveConnection) -> Result<AdvisorR
         }};
     }
 
+    run_check!("policies_ignored", "Policies that are not enforced", "security", check_policies_ignored);
     run_check!("rls_disabled", "Tables without row-level security", "security", check_rls_disabled);
+    run_check!("rls_no_policy", "RLS on, but no policy", "security", check_rls_no_policy);
+    run_check!("definer_search_path", "SECURITY DEFINER without a search_path", "security", check_definer_search_path);
+    run_check!("duplicate_index", "Duplicate indexes", "performance", check_duplicate_index);
+    run_check!("stale_stats", "Planner statistics out of date", "performance", check_stale_stats);
+    run_check!("sequence_exhaustion", "Sequences running out", "schema", check_sequence_exhaustion);
     run_check!("unindexed_fk", "Foreign keys without an index", "performance", check_unindexed_fk);
     run_check!("unused_index", "Indexes never used", "performance", check_unused_index);
     run_check!("dead_tuples", "Tables bloated with dead rows", "performance", check_dead_tuples);

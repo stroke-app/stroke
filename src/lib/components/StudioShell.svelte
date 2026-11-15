@@ -10235,7 +10235,7 @@ let rowSearch = $state('')
         >
           <svelte:boundary failed={tabError}>
             {#await import('./AdvisorPage.svelte')}<TabLoading />{:then { default: AdvisorPage }}
-              <AdvisorPage connectionId={persistConnectionId} />
+              <AdvisorPage connectionId={persistConnectionId} onopensql={(sql) => void openQueryInEditor(sql)} />
             {/await}
           </svelte:boundary>
         </div>
