@@ -1590,6 +1590,14 @@
         libsqlUrl.replace(/^\w+:\/\//, "").split(".")[0] || activeDriver.label
       );
     if (dbType === "d1") return "Cloudflare D1";
+    // DynamoDB has no host field of its own: the form's leftover 127.0.0.1
+    // named an AWS connection after localhost. Name it after where it goes.
+    if (dbType === "dynamodb") {
+      const ep = awsEndpoint.trim();
+      if (ep) return `DynamoDB@${ep.replace(/^\w+:\/\//, "")}`;
+      const where = awsRegion.trim() || (awsAuth === "profile" ? (awsProfile.trim() || "default") : "AWS");
+      return `DynamoDB · ${where}`;
+    }
     if (host.trim())
       return `${database.trim() || activeDriver.label}@${host.trim()}`;
     return activeDriver.label;
@@ -4961,13 +4969,13 @@
                           {:else if dbType === "dynamodb"}
                             <div>
                               <span class={lbl} id="cn-aws-auth-label">Credentials</span>
-                              <div class="flex h-8 items-center gap-0.5 rounded-[var(--radius-field)] bg-muted/40 p-0.5" role="group" aria-labelledby="cn-aws-auth-label">
+                              <div class="flex h-8 w-fit items-center gap-0.5 rounded-lg bg-muted/50 p-0.5" role="group" aria-labelledby="cn-aws-auth-label">
                                 {#each [{ v: "profile", l: "AWS profile" }, { v: "keys", l: "Access keys" }] as m (m.v)}
                                   <button
                                     type="button"
                                     aria-pressed={awsAuth === m.v}
                                     class={cn(
-                                      "inline-flex h-7 flex-1 items-center justify-center rounded-md text-ui-xs font-medium transition-colors",
+                                      "inline-flex h-7 items-center justify-center rounded-md px-3 text-ui-xs font-medium transition-colors",
                                       awsAuth === m.v ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
                                     )}
                                     onclick={() => (awsAuth = /** @type {'profile'|'keys'} */ (m.v))}
