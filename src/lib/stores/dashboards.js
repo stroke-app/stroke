@@ -7,6 +7,7 @@ import { debounce } from '$lib/utils.js'
  *   id: string,
  *   chartId: string | null,
  *   span: 1 | 2 | 3,
+ *   size?: 's' | 'm' | 'l',
  * }} DashItem
  *
  * @typedef {{
@@ -15,6 +16,7 @@ import { debounce } from '$lib/utils.js'
  *   columns: 2 | 3,
  *   items: DashItem[],
  *   createdAt: number,
+ *   refreshSec?: number,
  * }} Dashboard
  */
 
@@ -130,6 +132,15 @@ export function setItemSpan(dashId, itemId, span) {
   dashboards.update(ds => ds.map(d =>
     d.id === dashId
       ? { ...d, items: d.items.map(i => i.id === itemId ? { ...i, span } : i) }
+      : d
+  ))
+}
+
+/** Card height. @param {string} dashId @param {string} itemId @param {'s'|'m'|'l'} size */
+export function setItemSize(dashId, itemId, size) {
+  dashboards.update(ds => ds.map(d =>
+    d.id === dashId
+      ? { ...d, items: d.items.map(i => i.id === itemId ? { ...i, size } : i) }
       : d
   ))
 }

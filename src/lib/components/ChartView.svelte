@@ -1,4 +1,5 @@
 <script>
+  import SelectMenu from './SelectMenu.svelte'
   import Icon from './Icon.svelte'
   import SearchableMenu from './SearchableMenu.svelte'
   import { Button } from '$lib/components/ui/button/index.js'
@@ -557,18 +558,15 @@
                 <span class="text-ui-xs text-muted-foreground">Group</span>
                 <div class="flex items-center gap-1">
                   {#if !newGroupMode}
-                    <Select.Root type="single" value={saveGroup} onValueChange={(v) => v && (saveGroup = v)}>
-                      <Select.Trigger
-                        size="sm"
-                        aria-label="Chart group"
-                        class="h-8 min-w-0 flex-1 gap-1.5 rounded-md border-0 bg-sidebar-accent/50 px-2.5 text-ui-sm [&_svg]:size-3.5 [&_svg]:text-muted-foreground"
-                      >
-                        <span class="truncate">{saveGroup}</span>
-                      </Select.Trigger>
-                      <Select.Content class={axisContent} sideOffset={6}>
-                        {#each $chartGroups as g (g)}<Select.Item value={g} label={g} class={axisItem}>{g}</Select.Item>{/each}
-                      </Select.Content>
-                    </Select.Root>
+                    <SelectMenu
+                      ariaLabel="Chart group"
+                      value={saveGroup}
+                      onValueChange={(v) => { if (v) saveGroup = v }}
+                      items={$chartGroups.map((g) => ({ value: g, label: g, icon: 'folder' }))}
+                      searchPlaceholder="Search groups…"
+                      empty="No group by that name. Use + to add it."
+                      triggerClass="h-8 min-w-0 flex-1"
+                    />
                     <button type="button" class="inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" title="New group" onclick={() => { newGroupMode = true }}>
                       <Plus class="size-3.5 shrink-0" />
                     </button>
