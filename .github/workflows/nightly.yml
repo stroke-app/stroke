@@ -297,3 +297,49 @@ jobs:
             --prerelease \
             --latest=false
           echo "✅ Published Stroke Nightly ${VERSION}"
+
+  # Arch: refresh stroke-nightly-bin on the AUR with this build. Skipped
+  # without the AUR_SSH_PRIVATE_KEY secret (forks).
+  update-aur:
+    needs: [check, publish]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.check.outputs.sha }}
+
+      - name: Fill in the PKGBUILD
+        id: pkg
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+          COMMIT: ${{ needs.check.outputs.sha }}
+          AUR_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$AUR_KEY" ]; then
+            echo "No AUR_SSH_PRIVATE_KEY secret: skipping the AUR publish."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # pacman versions can't hold "-": 2.8.8-nightly.2026... -> 2.8.8.nightly.2026...
+          PKGVER="${VERSION//-/.}"
+          curl -fsSL --retry 5 --retry-delay 5 -o stroke-nightly.deb \
+            "https://github.com/${GITHUB_REPOSITORY}/releases/download/nightly/stroke-nightly_amd64.deb"
+          SHA=$(sha256sum stroke-nightly.deb | cut -d' ' -f1)
+          mkdir -p aur
+          sed -e "s/@PKGVER@/${PKGVER}/" -e "s/@SHA256@/${SHA}/" -e "s/@COMMIT@/${COMMIT}/" \
+            packaging/aur/stroke-nightly-bin/PKGBUILD.in > aur/PKGBUILD
+          cat aur/PKGBUILD
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Push to the AUR
+        if: steps.pkg.outputs.skip == 'false'
+        uses: KSXGitHub/github-actions-deploy-aur@v4.1.1
+        with:
+          pkgname: stroke-nightly-bin
+          pkgbuild: aur/PKGBUILD
+          commit_username: broisnees
+          commit_email: broisnees@users.noreply.github.com
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: "Update to ${{ needs.check.outputs.version }}"
+          ssh_keyscan_types: rsa,ecdsa,ed25519
