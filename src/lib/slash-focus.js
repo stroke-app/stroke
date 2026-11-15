@@ -4,6 +4,11 @@
 // Inside an open dialog only that dialog's fields count: the page behind it
 // isn't reachable anyway.
 
+import { findSearchInput } from './focus-search.js'
+
+/** The sidebar's filter ranks 10: it has its own key (Mod+Shift+F). */
+const SIDEBAR_RANK = 10
+
 /** @param {Element | null} el */
 export function isEditable(el) {
   if (!el || !(el instanceof HTMLElement)) return false
@@ -48,6 +53,20 @@ export function slashTarget(root = document) {
 }
 
 /**
+ * The field `/` focuses: the tab or dialog in front first, and the sidebar
+ * filter only when nothing else on screen is a search box. Fields that opted
+ * in with a rank win; any other search-looking field in the page beats the
+ * sidebar.
+ * @returns {HTMLElement | null}
+ */
+export function slashFocusTarget() {
+  const ranked = slashTarget()
+  if (ranked && (Number(ranked.dataset.slashFocus) || 0) > SIDEBAR_RANK) return ranked
+  const page = findSearchInput(document, (el) => (Number(el.dataset.slashFocus) || 0) <= SIDEBAR_RANK && el.hasAttribute('data-slash-focus'))
+  return page ?? ranked
+}
+
+/**
  * Install the `/` handler; returns its remover.
  * @param {Window} [win]
  */
@@ -61,7 +80,7 @@ export function installSlashFocus(win = window) {
     // titlebar, the grid) stops keys from bubbling. A page's own `/` (the AI
     // chat focuses its box) runs later in the same event, so the field is
     // focused after the event, and only if nothing else took focus.
-    const target = slashTarget()
+    const target = slashFocusTarget()
     if (!target) return
     e.preventDefault()
     setTimeout(() => {
