@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.12.9] - 2026-11-15
+
+### Changes
+- Terminal: steady font while resizing, Oracle via SQLcl thin, panel animation setting (#225)
+
+
 ## [2.12.8] - 2026-11-15
 
 ### Changes
