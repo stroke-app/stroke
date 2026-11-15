@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.14.6] - 2026-11-15
+
+### Changes
+- Connect screen: the footer lines up with the page above it (#243)
+
+
 ## [2.14.5] - 2026-11-15
 
 ### Changes
