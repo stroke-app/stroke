@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.12.0] - 2026-11-15
+
+### Changes
+- Grid Vim: visual selection, yank, paste, screen and page motions (#216)
+
+
 ## [2.11.9] - 2026-11-15
 
 ### Changes
