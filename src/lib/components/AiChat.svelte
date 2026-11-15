@@ -4564,14 +4564,12 @@
   {/if}
 
 {#snippet composerCard()}
-        <!-- Soft-cornered surface rather than a hard-edged box: the field should
-             read as one calm object floating over the transcript, and only pick up
-             weight (border, lift) once it has focus. -->
+        <!-- A filled surface, no border, ring or shadow: the field is one calm
+             tone a step off the transcript, and focus only lifts that tone a
+             little. The caret already says where typing goes. -->
         <div
           class={cn(
-            // One clear edge at rest, a focus ring when typing: the field shows
-            // where it is without a heavy box, and focus is unmistakable.
-            "rounded-2xl border border-border bg-sidebar shadow-[0_1px_2px_rgb(0_0_0/0.05)] transition-[border-color,box-shadow] duration-150 focus-within:border-ring/50 focus-within:shadow-[0_0_0_3px_color-mix(in_oklch,var(--ring)_14%,transparent)]",
+            "rounded-2xl bg-muted/50 transition-[background-color] duration-150 ease-[var(--ease-out)] hover:bg-muted/60 focus-within:bg-muted/70",
             hasPendingConfirm && "opacity-50",
           )}
         >

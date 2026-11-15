@@ -131,8 +131,10 @@ const DEFAULT_ZOOM = 1
  * follow the sans.
  * `reading` (optional) sets `--reading-font` for long prose (the AI chat);
  * without it prose follows the sans.
- * @type {Record<FontId, { label: string, description: string, sans: string, mono: string, heading?: string, reading?: string }>}
+ * @type {Record<FontId, { label: string, description: string, sans: string, mono: string, heading?: string, reading?: string, keywords?: string[] }>}
  */
+const IS_MAC = typeof navigator !== 'undefined' && detectOs() === 'macos'
+
 export const FONT_PRESETS = {
   // The claude.ai look with open faces: its own Anthropic Sans/Serif are not
   // licensed for reuse, so Inter carries the UI and Source Serif 4 the
@@ -156,9 +158,13 @@ export const FONT_PRESETS = {
     sans: 'ui-serif, "New York", "Iowan Old Style", Georgia, "Times New Roman", serif',
     mono: 'ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace',
   },
+  // The system face. On a Mac that's SF Pro, the font every native app uses,
+  // and it's named so; elsewhere the same stack resolves to the platform's own
+  // UI font (Segoe UI, Cantarell, ...).
   apple: {
-    label: 'Apple',
-    description: 'San Francisco + SF Mono',
+    label: IS_MAC ? 'SF Pro' : 'System',
+    description: IS_MAC ? 'macOS system font + SF Mono' : "Your system's UI font",
+    keywords: ['SF Pro', 'San Francisco', 'Apple', 'System', 'macOS', 'native'],
     sans: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", system-ui, sans-serif',
     mono: 'ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Monaco, Consolas, monospace',
   },
@@ -219,7 +225,7 @@ export const FONT_PRESETS = {
  * @type {FontId}
  */
 // The system face on macOS, as T3 and native Mac apps use; Geist elsewhere.
-export const DEFAULT_FONT = typeof navigator !== 'undefined' && detectOs() === 'macos' ? 'apple' : 'geist'
+export const DEFAULT_FONT = IS_MAC ? 'apple' : 'geist'
 /** @returns {FontId} */
 function normalizeFont(/** @type {unknown} */ id) {
   return FONT_PRESETS[/** @type {FontId} */ (id)] ? /** @type {FontId} */ (id) : DEFAULT_FONT

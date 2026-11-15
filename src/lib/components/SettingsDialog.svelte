@@ -34,6 +34,7 @@
     canIncreaseZoom,
     canDecreaseZoom,
     FONT_PRESETS,
+    DEFAULT_FONT,
     ICON_STYLES,
     ICON_SETS,
     TABLE_STYLES,
@@ -193,7 +194,8 @@
     if (font === settings.font) return;
     settings = updateSettings({ font });
   }
-  const fontEntries = Object.entries(FONT_PRESETS);
+  // The default face leads the list (SF Pro on a Mac, Geist elsewhere).
+  const fontEntries = Object.entries(FONT_PRESETS).sort(([a], [b]) => Number(b === DEFAULT_FONT) - Number(a === DEFAULT_FONT));
   const iconStyleEntries = Object.entries(ICON_STYLES);
   const iconSetEntries = Object.entries(ICON_SETS);
   const tableStyleEntries = Object.entries(TABLE_STYLES);
@@ -1212,7 +1214,7 @@
         ariaLabel="Font family"
         value={settings.font}
         onValueChange={(v) => { if (v) setFont(/** @type {import('$lib/stores/settings.js').FontId} */ (v)); }}
-        items={fontEntries.map(([id, preset]) => ({ value: id, label: preset.label, sans: preset.sans, keywords: [preset.label, preset.description, id === 'mono' ? 'monospace' : 'sans'] }))}
+        items={fontEntries.map(([id, preset]) => ({ value: id, label: preset.label, sans: preset.sans, keywords: [preset.label, preset.description, id === 'mono' ? 'monospace' : 'sans', ...(preset.keywords ?? [])] }))}
         searchPlaceholder="Search fonts…"
       >
         {#snippet lead(it)}
