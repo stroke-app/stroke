@@ -1562,6 +1562,57 @@ pre code,
   background-size: 120px 120px;
 }
 .chip-gloss.chip-warning { --chip: var(--warning); }
+/* ── Glossy key ──────────────────────────────────────────────────────────────
+   A neutral lacquered key, like the workspace marks: a surface lifted a step
+   off the page, a sheen across the top, a shade at the foot, a hairline ring
+   and fine grain. Built from --foreground/--background, so it reads as a key
+   in every theme, light or dark. `--key-dot` tints the optional status dot. */
+.key-gloss {
+  --key-dot: var(--success);
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 7px;
+  color: var(--foreground);
+  background: linear-gradient(
+    to bottom,
+    color-mix(in oklch, var(--foreground) 13%, var(--background)),
+    color-mix(in oklch, var(--foreground) 5%, var(--background))
+  );
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklch, white 16%, transparent),
+    inset 0 0 0 1px color-mix(in oklch, var(--foreground) 12%, transparent),
+    0 1px 2px rgb(0 0 0 / 0.22);
+}
+.key-gloss::before,
+.key-gloss::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  border-radius: inherit;
+}
+.key-gloss::before {
+  background:
+    radial-gradient(120% 80% at 50% -15%, color-mix(in oklch, white 22%, transparent), transparent 65%),
+    linear-gradient(to bottom, transparent 50%, rgb(0 0 0 / 0.12));
+}
+.key-gloss::after {
+  opacity: 0.18;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='1.1' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0.6 0.6 0.6 0 -0.4  0.6 0.6 0.6 0 -0.4  0.6 0.6 0.6 0 -0.4  0 0 0 0 1'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  background-size: 120px 120px;
+}
+.key-gloss .key-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: var(--key-dot);
+  box-shadow: 0 0 6px color-mix(in oklch, var(--key-dot) 70%, transparent);
+}
 .chip-gloss.chip-muted { --chip: var(--muted-foreground); }
 .chip-gloss.chip-primary { --chip: var(--primary); }
 .mark-grain::after {

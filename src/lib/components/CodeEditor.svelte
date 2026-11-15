@@ -372,7 +372,10 @@
     '.cm-selectionMatch': { backgroundColor: 'color-mix(in oklch, var(--foreground) 8%, transparent)' },
     // Find/replace panel (createFindPanel): the app's field, icon-button and
     // focus language. 28px controls, 6px radius, the field hairline, one ring.
-    '.cm-panels': { backgroundColor: 'var(--background)', color: 'var(--foreground)' },
+    // CodeMirror's base theme lifts panels to z-index 300, over the app's
+    // popovers and dialogs (the vim --INSERT-- line sat on top of Workspaces).
+    // A sticky panel only has to clear the editor's own content.
+    '.cm-panels': { backgroundColor: 'var(--background)', color: 'var(--foreground)', zIndex: '2' },
     '.cm-panels-top': { borderBottom: '1px solid color-mix(in oklch, var(--border) 45%, transparent)' },
     '.cm-find': { display: 'flex', flexDirection: 'column', gap: '6px', padding: '8px 10px', fontFamily: 'var(--font-sans)' },
     '.cm-find-row': { display: 'flex', alignItems: 'center', gap: '2px', minWidth: '0' },

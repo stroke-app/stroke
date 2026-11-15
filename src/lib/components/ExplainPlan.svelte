@@ -55,8 +55,19 @@
   const ROW_GAP = 28
   const PAD = 40
   const QR_W = 96
+  /**
+   * Line heights of the card's two text sizes, measured: the type scale follows
+   * the app zoom, so fixed pixel heights left the last row cut off (with the
+   * share bar drawn over it) whenever the text ran larger than 14px.
+   */
+  let lineTitle = $state(18)
+  let lineSmall = $state(16)
   /** Card height, from what the card shows. @param {PlanNode} n */
-  const cardH = (n) => 62 + (n.actualRows != null || n.planRows != null ? 18 : 0) + (n.selfTime != null || n.selfCost != null ? 18 : 0)
+  const cardH = (n) => {
+    const stats = (n.actualRows != null || n.planRows != null ? 1 : 0) + (n.selfTime != null || n.selfCost != null ? 1 : 0)
+    // 10 top + title + relation + (8 gap + stats) + 10 bottom
+    return Math.ceil(10 + lineTitle + lineSmall + (stats ? 8 + stats * (lineSmall + 2) : 0) + 10)
+  }
   const ROW_H = $derived(Math.max(...a.nodes.map(cardH), 60) + ROW_GAP)
 
   /** @typedef {{ n: PlanNode, col: number, row: number }} Placed */
@@ -309,6 +320,9 @@
   <div class="flex min-h-0 flex-1">
     <!-- Steps -->
     <div class="relative min-w-0 flex-1 overflow-hidden" bind:clientWidth={cw} bind:clientHeight={ch}>
+      <!-- Line-height probes for cardH: the card text follows the app zoom. -->
+      <span class="pointer-events-none invisible absolute text-ui-xs font-semibold" aria-hidden="true" bind:clientHeight={lineTitle}>Ag</span>
+      <span class="pointer-events-none invisible absolute text-ui-2xs" aria-hidden="true" bind:clientHeight={lineSmall}>Ag</span>
       {#if view === 'diagram'}
         <div
           class={cn('absolute inset-0 select-none', panning && start.moved ? 'cursor-grabbing' : 'cursor-grab')}
@@ -336,7 +350,7 @@
                 data-plan-node={n.id}
                 style="left:{px(p)}px;top:{py(p)}px;width:{NODE_W}px;height:{cardH(n)}px"
                 class={cn(
-                  'absolute flex cursor-pointer flex-col overflow-hidden rounded-lg border bg-card transition-[border-color,box-shadow] duration-150',
+                  'absolute flex cursor-pointer flex-col overflow-hidden rounded-xl border bg-card shadow-sm transition-[border-color,box-shadow] duration-150',
                   sel ? 'border-foreground/40 ring-1 ring-foreground/15' : 'border-border/70 hover:border-foreground/25',
                 )}
               >
@@ -349,21 +363,29 @@
                     <span class="mt-1.5 size-1.5 shrink-0 rounded-full bg-warning" title={n.warnings.join('\n')} aria-label={n.warnings.join('; ')}></span>
                   {/if}
                 </div>
-                <div class="mt-auto flex flex-col gap-0.5 px-3 pb-2.5 text-ui-2xs tabular-nums">
-                  {#if n.actualRows != null || n.planRows != null}
-                    <div class="flex items-center justify-between gap-2 text-muted-foreground">
-                      <span>rows</span>
-                      <span class="text-foreground">{fmtCount(n.actualRows ?? n.planRows)}{#if n.actualRows != null && n.planRows != null}<span class="text-muted-foreground">&nbsp;/ est {fmtCount(n.planRows)}</span>{/if}{#if misText(n.misestimate)}<span class={cn('ms-1', Math.abs(n.misestimate ?? 0) >= 10 ? 'text-foreground' : 'text-muted-foreground')}>{misText(n.misestimate)}</span>{/if}</span>
-                    </div>
-                  {/if}
-                  {#if n.selfTime != null || n.selfCost != null}
-                    <div class="flex items-center justify-between gap-2 text-muted-foreground">
-                      <span>{n.selfTime != null ? 'own time' : 'own cost'}</span>
-                      <span class="text-foreground">{n.selfTime != null ? fmtMs(n.selfTime) : (n.selfCost ?? 0).toFixed(2)} <span class="text-muted-foreground">· {pct(n.share)}</span></span>
-                    </div>
-                  {/if}
-                </div>
-                <div class="absolute inset-x-0 bottom-0 h-0.75 bg-muted"><div class={cn('h-full', heat(n.share))} style="width:{Math.max(2, n.share * 100)}%"></div></div>
+                {#if n.actualRows != null || n.planRows != null || n.selfTime != null || n.selfCost != null}
+                  <div class="mt-2 flex flex-col gap-0.5 px-3 pb-2.5 text-ui-2xs tabular-nums">
+                    {#if n.actualRows != null || n.planRows != null}
+                      <div class="flex items-center justify-between gap-2 text-muted-foreground">
+                        <span>rows</span>
+                        <span class="truncate text-foreground">{fmtCount(n.actualRows ?? n.planRows)}{#if n.actualRows != null && n.planRows != null}<span class="text-muted-foreground">&nbsp;/ est {fmtCount(n.planRows)}</span>{/if}{#if misText(n.misestimate)}<span class={cn('ms-1', Math.abs(n.misestimate ?? 0) >= 10 ? 'text-foreground' : 'text-muted-foreground')}>{misText(n.misestimate)}</span>{/if}</span>
+                      </div>
+                    {/if}
+                    {#if n.selfTime != null || n.selfCost != null}
+                      <!-- The step's share of the plan as a small meter beside its
+                           number, instead of a bar along the card's edge that read
+                           as a border (and sat over this row when it overflowed). -->
+                      <div class="flex items-center justify-between gap-2 text-muted-foreground">
+                        <span>{n.selfTime != null ? 'own time' : 'own cost'}</span>
+                        <span class="flex min-w-0 items-center gap-1.5">
+                          <span class="truncate text-foreground">{n.selfTime != null ? fmtMs(n.selfTime) : (n.selfCost ?? 0).toFixed(2)}</span>
+                          <span class="h-1 w-8 shrink-0 overflow-hidden rounded-full bg-muted" aria-hidden="true"><span class={cn('block h-full rounded-full', heat(n.share))} style="width:{Math.max(6, n.share * 100)}%"></span></span>
+                          <span class="w-8 shrink-0 text-right">{pct(n.share)}</span>
+                        </span>
+                      </div>
+                    {/if}
+                  </div>
+                {/if}
               </div>
             {/each}
 
