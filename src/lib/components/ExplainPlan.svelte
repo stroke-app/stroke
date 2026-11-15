@@ -350,7 +350,7 @@
                 data-plan-node={n.id}
                 style="left:{px(p)}px;top:{py(p)}px;width:{NODE_W}px;height:{cardH(n)}px"
                 class={cn(
-                  'absolute flex cursor-pointer flex-col overflow-hidden rounded-xl border bg-card shadow-sm transition-[border-color,box-shadow] duration-150',
+                  'absolute flex cursor-pointer flex-col overflow-hidden rounded-lg border bg-card shadow-sm transition-[border-color,box-shadow] duration-150',
                   sel ? 'border-foreground/40 ring-1 ring-foreground/15' : 'border-border/70 hover:border-foreground/25',
                 )}
               >
