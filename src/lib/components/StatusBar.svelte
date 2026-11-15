@@ -750,7 +750,7 @@
       {/if}
 
       <!-- Live mode toggle (experimental, only shown when enabled in Settings) -->
-      {#if showTableNav && liveSupported && $appLiveMode}
+      {#if liveSupported && $appLiveMode}
         {@render sep()}
         <!-- A pill: a ringed dot that breathes while it is watching, a hollow
              one while it is not. The tooltip says how changes are detected. -->
