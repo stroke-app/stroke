@@ -700,7 +700,7 @@
    */
   const hiddenByDisplay = $derived(
     hideEmpty || hideSystem
-      ? tables.filter((t) => t.kind === 'table' && ((hideEmpty && (t.rowCount ?? 0) === 0) || (hideSystem && (t.system ?? isSystemTable(t.name))))).length
+      ? tables.filter((t) => t.kind === 'table' && ((hideEmpty && t.rowCount === 0) || (hideSystem && (t.system ?? isSystemTable(t.name))))).length
       : 0,
   )
   /** True when the tab has rows but the filter hid all of them. @param {SidebarTab} t */
@@ -799,6 +799,8 @@
   // ── Selection state ───────────────────────────────────────────────────────
   /** @type {Set<string>} */
   let selectedItems = $state(new Set())
+  /** A selection is under way: every row shows its select box. */
+  const selecting = $derived(selectedItems.size > 0)
   const menuTableSelected = $derived(selectedItems.has(menuTable))
   /** Anchor for shift range-select. @type {string | null} */
   let lastSelectedName = $state(null)
@@ -963,7 +965,10 @@
   /** @param {any[]} list */
   function applySortBy(list) {
     let result = list
-    if (hideEmpty) result = result.filter((t) => (t.rowCount ?? 0) > 0)
+    // Only a table known to be empty hides. Counts arrive after the list (null
+    // until counted); reading unknown as empty hid every table on connect and
+    // showed "No tables" until the counts came in.
+    if (hideEmpty) result = result.filter((t) => t.rowCount !== 0)
     // The engine's own flag where it gives one (Oracle), the name otherwise.
     if (hideSystem) result = result.filter((t) => !(t.system ?? isSystemTable(t.name)))
     if (sortBy === 'rowCount') {
@@ -2824,7 +2829,7 @@
                           }}
                         >
                           <span
-                            class="relative size-4 shrink-0"
+                            class="group/sel relative size-4 shrink-0"
                             onclick={(e) => { e.stopPropagation(); selectItem(tableName, e.shiftKey) }}
                             onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); selectItem(tableName, e.shiftKey); } }}
                             role="checkbox"
@@ -2834,8 +2839,8 @@
                             {#if isSelected}
                               <Icon name="square-check" class="size-4 shrink-0 text-primary" />
                             {:else}
-                              <Icon name="pin" class="absolute inset-0 size-4 text-muted-foreground group-hover:opacity-0" />
-                              <Icon name="square" class="absolute inset-0 size-4 text-muted-foreground opacity-0 group-hover:opacity-100" />
+                              <Icon name="pin" class={cn("absolute inset-0 size-4 text-muted-foreground group-hover/sel:opacity-0", selecting && "opacity-0")} />
+                              <Icon name="square" class={cn("absolute inset-0 size-4 text-muted-foreground opacity-0 group-hover/sel:opacity-100", selecting && "opacity-100")} />
                             {/if}
                           </span>
                           <span class="min-w-0 truncate text-ui-sm leading-4">{@render hl(tableName)}</span>
@@ -3047,7 +3052,7 @@
                       title={comments.get(table.name) ? `${table.name}\n${comments.get(table.name)}` : table.name}
                     >
                       <span
-                        class="relative size-4 shrink-0"
+                        class="group/sel relative size-4 shrink-0"
                         onclick={(e) => { e.stopPropagation(); selectItem(table.name, e.shiftKey) }}
                         onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); selectItem(table.name, e.shiftKey); } }}
                         role="checkbox"
@@ -3057,8 +3062,11 @@
                         {#if isSelected}
                           <Icon name="square-check" class="size-4 shrink-0 text-primary" />
                         {:else}
-                          <Icon name="table-2" class={cn("absolute inset-0 size-4 group-hover:opacity-0", activeTable === table.name ? "text-foreground" : "text-muted-foreground")} />
-                          <Icon name="square" class="absolute inset-0 size-4 text-muted-foreground opacity-0 group-hover:opacity-100" />
+                          <!-- The table icon stays put on a row hover; the select box
+                               shows when the pointer is on the icon itself, or on
+                               every row once a selection has started. -->
+                          <Icon name="table-2" class={cn("absolute inset-0 size-4 group-hover/sel:opacity-0", activeTable === table.name ? "text-foreground" : "text-muted-foreground", selecting && "opacity-0")} />
+                          <Icon name="square" class={cn("absolute inset-0 size-4 text-muted-foreground opacity-0 group-hover/sel:opacity-100", selecting && "opacity-100")} />
                         {/if}
                       </span>
                       <span class="flex min-w-0 items-center gap-1.5">
