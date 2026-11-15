@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.14.9] - 2026-11-15
+
+### Changes
+- Vim chip as a glossy key; editor panels stay under popovers; Explain cards fit their text (#246)
+
+
 ## [2.14.8] - 2026-11-15
 
 ### Changes
