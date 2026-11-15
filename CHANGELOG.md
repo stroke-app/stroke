@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.12.6] - 2026-11-15
+
+### Changes
+- Saved charts: search, group filter, one menu per chart, share (#222)
+
+
 ## [2.12.5] - 2026-11-15
 
 ### Changes
