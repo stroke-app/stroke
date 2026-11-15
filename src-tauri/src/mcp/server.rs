@@ -307,7 +307,20 @@ async fn dispatch(
                 let connections = state.connections.lock().map_err(|e| e.to_string())?.clone();
                 let active_id = state.active_conn_id.lock().map_err(|e| e.to_string())?.clone();
                 let live = conn.as_ref().map(|c| c.driver());
-                let text = tools::call_meta_tool(name, &connections, active_id.as_deref(), live)?;
+                let mut text = tools::call_meta_tool(name, &connections, active_id.as_deref(), live)?;
+                // Say which database the queries really run on: after a switch
+                // the saved entry still names the one it was saved with.
+                if name == "current_database" {
+                    if let Some(db) = match conn.as_ref() { Some(c) => tools::live_database_name(c).await, None => None } {
+                        if let Ok(mut v) = serde_json::from_str::<Value>(&text) {
+                            if v.get("database").and_then(|d| d.as_str()).is_some_and(|saved| saved != db) {
+                                v["saved_database"] = v["database"].clone();
+                            }
+                            v["database"] = json!(db);
+                            text = v.to_string();
+                        }
+                    }
+                }
                 return Ok(json!({ "content": [{ "type": "text", "text": text }] }));
             }
 
