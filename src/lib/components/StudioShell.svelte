@@ -316,7 +316,7 @@
     engineFamily,
   } from '$lib/stores/connections.js'
   import { hasPro, FREE_CONNECTION_LIMIT } from '$lib/stores/license.js'
-  import { engineSupports, engineLabel } from '$lib/db-capabilities.js'
+  import { engineSupports, engineLabel, isKeyValue } from '$lib/db-capabilities.js'
   import * as Dialog from '$lib/components/ui/dialog/index.js'
   import KeyRound from '@lucide/svelte/icons/key-round'
   import {
@@ -3894,6 +3894,13 @@ let rowSearch = $state('')
     }
     if (activeTab?.kind === 'dashboard') {
       await refreshDashboardCharts()
+      return
+    }
+    // Document stores and Redis browse in pages of their own: they reload on
+    // this event, and the sidebar's collections and keys re-list beside them.
+    if (activeTab?.kind === 'docs' || activeTab?.kind === 'redis') {
+      window.dispatchEvent(new CustomEvent('stroke:refresh-view'))
+      await loadTables({ force: true, quiet: true })
       return
     }
     await loadTables({ force: true })
@@ -7664,6 +7671,12 @@ let rowSearch = $state('')
           const ran = pending.join(';\n')
           pending = []
           void refreshAfterSql(sqlRunEffects(ran))
+          // Mongo, Redis, Elasticsearch...: their statements are not SQL, so the
+          // effects above read nothing. Their pages reload, and the sidebar.
+          if (isKeyValue(connection?.type)) {
+            window.dispatchEvent(new CustomEvent('stroke:refresh-view'))
+            void loadTables({ force: true, quiet: true })
+          }
         }, 300)
       }))
       offs.push(await listen('mcp-refresh', () => { if (connection) void handleRefresh() }))

@@ -223,14 +223,15 @@
       fontSize: 'var(--cm-font-size, var(--fs-sm))',
       fontVariantNumeric: 'tabular-nums',
     },
-    // Five digits reserved up front. The gutter sizes to the widest number, so
+    // Three digits reserved up front (a document or a value rarely passes 999
+    // lines; five left a wide empty strip). The gutter sizes to the widest number, so
     // typing line 100 (or 1,000) widened it and pushed every line of text
     // sideways mid-keystroke. `ch` is one digit in the mono face; the gutter
     // elements are border-box, hence the padding added in. Past 99,999 lines
     // it still grows, once.
     '.cm-lineNumbers .cm-gutterElement': {
-      padding: '0 4px 0 12px',
-      minWidth: 'calc(5ch + 16px)',
+      padding: '0 4px 0 8px',
+      minWidth: 'calc(3ch + 12px)',
       textAlign: 'right',
     },
     '.cm-activeLineGutter': { backgroundColor: 'transparent', color: 'var(--muted-foreground)' },

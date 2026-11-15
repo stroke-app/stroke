@@ -279,14 +279,18 @@ GET products/_search
       ])
       if (t !== token) return
       if (!isAll) capped = false
-      docs = res.docs
+      // A refresh that brings back the same documents changes nothing on
+      // screen: no new arrays, no repaint, the open document stays open.
+      const samePage = p === page && res.docs.length === docs.length && JSON.stringify(res.docs) === JSON.stringify(docs)
+      if (!samePage) docs = res.docs
+      const turned = p !== page
       page = p
       const next = cursors.slice(0, p + 1)
       if (res.cursor != null) next[p + 1] = res.cursor
       cursors = next
       total = count ?? null
-      dataVersion += 1
-      closePanel()
+      if (!samePage) dataVersion += 1
+      if (turned) closePanel()
     } catch (e) {
       if (t === token) error = msg(e)
     } finally {
@@ -301,7 +305,16 @@ GET products/_search
     void restart()
   }
 
-  const grid = $derived(docGrid(docs, keys))
+  /** The previous grid's columns, reused while the fields are the same so the
+   *  table keeps its layout across a refresh instead of rebuilding it. */
+  let _gridCols = /** @type {any[]} */ ([])
+  const grid = $derived.by(() => {
+    const g = docGrid(docs, keys)
+    const same = g.columns.length === _gridCols.length && g.columns.every((c, i) => c.name === _gridCols[i]?.name && c.dataType === _gridCols[i]?.dataType)
+    if (same) g.columns = _gridCols
+    else _gridCols = g.columns
+    return g
+  })
   const ids = $derived(docs.map((d) => adapter.idOf(d, info?.meta)))
 
   // ── View ───────────────────────────────────────────────────────────────────
@@ -677,6 +690,12 @@ GET products/_search
   /** A quiet text toggle: the on state is foreground, the rest muted. No pill, no frame. */
   const pageSelectTrigger = 'h-8 min-w-0 gap-1 rounded-lg! border-transparent! bg-transparent! focus-visible:border-ring! data-[state=open]:border-ring! px-2 text-ui-xs font-normal tabular-nums shadow-none hover:bg-accent!'
   const textToggle = 'inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-ui-xs transition-colors hover:text-foreground'
+  // ⌘R, or an agent's change: reload what is on screen.
+  $effect(() => {
+    const on = () => { if (active) { void refreshInfo(); void load(page) } }
+    window.addEventListener('stroke:refresh-view', on)
+    return () => window.removeEventListener('stroke:refresh-view', on)
+  })
 </script>
 
 <div class="flex min-h-0 flex-1 flex-col overflow-hidden bg-panel">
