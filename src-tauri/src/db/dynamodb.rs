@@ -138,10 +138,10 @@ async fn export_credentials(profile: &str) -> Result<Creds, String> {
     if let Some(c) = cached(profile) {
         return Ok(c);
     }
-    let fut = tokio::process::Command::new("aws")
-        .args(["configure", "export-credentials", "--format", "process", "--profile", profile])
-        .kill_on_drop(true)
-        .output();
+    let mut cmd = tokio::process::Command::new("aws");
+    cmd.args(["configure", "export-credentials", "--format", "process", "--profile", profile]).kill_on_drop(true);
+    crate::proc::quiet(&mut cmd);
+    let fut = cmd.output();
     let out = tokio::time::timeout(Duration::from_secs(20), fut)
         .await
         .map_err(|_| format!("`aws configure export-credentials` timed out for profile \"{profile}\""))?

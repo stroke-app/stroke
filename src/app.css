@@ -519,11 +519,13 @@ html[data-os="linux"]   { --window-radius: 8px; }
        a WebKit font assertion on Linux startup; text-size-adjust is a no-op on desktop. */
   }
 
-  /* Windows renders variable fonts noticeably lighter than macOS/Linux due to
-     DirectWrite's grayscale AA. Bump weight slightly so strokes look consistent. */
-  html[data-os="windows"] {
+  /* Windows renders the bundled variable fonts noticeably lighter than
+     macOS/Linux due to DirectWrite's grayscale AA. Bump weight slightly so
+     strokes look consistent. The system face (Segoe UI, the Windows default)
+     is drawn at its own weight: it is hinted for ClearType, and 430 made it
+     heavier than every other window on screen. */
+  html[data-os="windows"]:not([data-font="apple"]) {
     font-weight: 430;
-    -webkit-font-smoothing: antialiased;
   }
 
   /* Linux/WebKitGTK: subpixel rendering is unavailable on Wayland (the compositor

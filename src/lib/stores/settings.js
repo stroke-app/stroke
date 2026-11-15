@@ -134,6 +134,7 @@ const DEFAULT_ZOOM = 1
  * @type {Record<FontId, { label: string, description: string, sans: string, mono: string, heading?: string, reading?: string, keywords?: string[] }>}
  */
 const IS_MAC = typeof navigator !== 'undefined' && detectOs() === 'macos'
+const IS_WINDOWS = typeof navigator !== 'undefined' && detectOs() === 'windows'
 
 export const FONT_PRESETS = {
   // The claude.ai look with open faces: its own Anthropic Sans/Serif are not
@@ -162,11 +163,11 @@ export const FONT_PRESETS = {
   // and it's named so; elsewhere the same stack resolves to the platform's own
   // UI font (Segoe UI, Cantarell, ...).
   apple: {
-    label: IS_MAC ? 'SF Pro' : 'System',
-    description: IS_MAC ? 'macOS system font + SF Mono' : "Your system's UI font",
-    keywords: ['SF Pro', 'San Francisco', 'Apple', 'System', 'macOS', 'native'],
-    sans: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", system-ui, sans-serif',
-    mono: 'ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Monaco, Consolas, monospace',
+    label: IS_MAC ? 'SF Pro' : IS_WINDOWS ? 'Segoe UI' : 'System',
+    description: IS_MAC ? 'macOS system font + SF Mono' : IS_WINDOWS ? 'Windows system font + Cascadia Mono' : "Your system's UI font",
+    keywords: ['SF Pro', 'San Francisco', 'Apple', 'Segoe UI', 'Windows', 'System', 'macOS', 'native'],
+    sans: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif',
+    mono: 'ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Monaco, "Cascadia Mono", Consolas, monospace',
   },
   // Both faces below ship with the app (fontsource imports in app.css), so
   // these presets render identically on every platform - no system fallback.
@@ -225,7 +226,11 @@ export const FONT_PRESETS = {
  * @type {FontId}
  */
 // The system face on macOS, as T3 and native Mac apps use; Geist elsewhere.
-export const DEFAULT_FONT = IS_MAC ? 'apple' : 'geist'
+// The system face on macOS and Windows, as native apps use: SF Pro there, Segoe
+// UI here, each hinted for its platform's renderer. Geist, a web font, drew
+// thin and soft on Windows next to everything else on screen. Linux keeps
+// Geist, since its system UI font varies by desktop.
+export const DEFAULT_FONT = IS_MAC || IS_WINDOWS ? 'apple' : 'geist'
 /** @returns {FontId} */
 function normalizeFont(/** @type {unknown} */ id) {
   return FONT_PRESETS[/** @type {FontId} */ (id)] ? /** @type {FontId} */ (id) : DEFAULT_FONT
@@ -900,6 +905,13 @@ export function loadSettings() {
       if (font === 'claude' || font === 'mono') { font = DEFAULT_FONT; settingsMigrated = true }
       markFontGeistDefaultApplied()
     }
+    // Windows moves to its system face once, from the Geist default it had.
+    try {
+      if (IS_WINDOWS && localStorage.getItem('stroke:font-windows-system-v1') !== '1') {
+        if (font === 'geist') { font = DEFAULT_FONT; settingsMigrated = true }
+        localStorage.setItem('stroke:font-windows-system-v1', '1')
+      }
+    } catch {}
     const iconStyle = normalizeIconStyle(parsed.iconStyle)
     const iconSet = normalizeIconSet(parsed.iconSet)
     // Lines is the default again. Calm was the default before, so an install
@@ -1202,6 +1214,8 @@ function applySettingsNow(settings, root, theme, zoom, dark) {
   // font metrics via the documentElement style MutationObserver.
   const font = normalizeFont(settings.font)
   setStyleVar(root, '--font-sans', FONT_PRESETS[font].sans)
+  // For CSS that depends on the face (the Windows weight bump is Geist's, not Segoe's).
+  setAttr(root, 'data-font', font)
   setStyleVar(root, '--font-mono', FONT_PRESETS[font].mono)
   setStyleVar(root, '--heading-font', FONT_PRESETS[font].heading ?? FONT_PRESETS[font].sans)
   setStyleVar(root, '--reading-font', FONT_PRESETS[font].reading ?? FONT_PRESETS[font].sans)

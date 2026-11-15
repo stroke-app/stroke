@@ -10773,7 +10773,7 @@ let rowSearch = $state('')
         <div class="absolute inset-x-0 -top-1 z-10 h-2 cursor-row-resize" onpointerdown={startTerminalDockResize}></div>
         <svelte:boundary failed={tabError}>
           {#await import('./TerminalPage.svelte')}<TabLoading />{:then { default: TerminalPage }}
-            <TerminalPage active={terminalDockOpen} prewarm {connection} {dbType} getHints={buildSqlHints} docked onclose={() => (terminalDockOpen = false)} />
+            <TerminalPage active={terminalDockOpen} prewarm {connection} {dbType} getHints={buildSqlHints} docked onclose={() => (terminalDockOpen = false)} onpopout={() => { terminalDockOpen = false; openNewTerminalTab() }} />
           {/await}
         </svelte:boundary>
       </div>

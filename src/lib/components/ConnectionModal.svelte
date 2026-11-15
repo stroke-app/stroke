@@ -3251,18 +3251,15 @@
               focusFirstSavedRow();
             }}
           >
-            <!-- Title row: name, count, then New and Hide as quiet icon buttons. -->
+            <!-- Title row: Hide, the name, then the match count. Hide sits where
+                 Show appears once the rail is gone (same inset, same row height
+                 as the form panel's title row), so the toggle never moves: at
+                 the rail's far end, and in a 48px row against the panel's 40px,
+                 it jumped across and down on every collapse. -->
             <div
-              class={cn("flex h-12 shrink-0 items-center gap-2 ps-4 pe-2", isMacChrome && "h-[52px] ps-[92px]")}
+              class={cn("flex h-(--app-titlebar-h) shrink-0 items-center gap-1.5 ps-3 pe-2", isMacChrome && "ps-[92px]")}
               data-tauri-drag-region
             >
-              <h2 class="text-ui-sm font-medium text-foreground" data-tauri-drag-region>Connections</h2>
-              <!-- The workspace row below already shows the count; here it only
-                   appears while filtering, as matches. -->
-              {#if savedQuery}
-                <span class="text-ui-2xs tabular-nums text-muted-foreground">{savedMatches.length} of {savedInWs.length}</span>
-              {/if}
-              <span class="flex-1"></span>
               <button
                 type="button"
                 onclick={() => {
@@ -3275,6 +3272,12 @@
               >
                 <Icon name="panel-left-close" class="size-4 shrink-0" />
               </button>
+              <h2 class="text-ui-sm font-medium text-foreground" data-tauri-drag-region>Connections</h2>
+              <!-- The workspace row below already shows the count; here it only
+                   appears while filtering, as matches. -->
+              {#if savedQuery}
+                <span class="text-ui-2xs tabular-nums text-muted-foreground">{savedMatches.length} of {savedInWs.length}</span>
+              {/if}
             </div>
 
             <!-- The workspace scopes everything below it, so it heads the rail. -->
@@ -3620,8 +3623,10 @@
              nobody has picked yet. -->
           <!-- The header lines up with whatever is under it: the tile column on
                step 1, the full-width form on step 2. -->
+          <!-- The same top inset on both steps, so going from the list to the
+               form doesn't nudge the page up (it was pt-4, then pt-2). -->
           <div
-            class={cn("w-full max-w-6xl shrink-0 px-10", step === "pick" ? "pt-4" : "pt-2")}
+            class="w-full max-w-6xl shrink-0 px-10 pt-3"
           >
             {#if step === "pick"}
               <!-- pe-6 keeps the rescan button clear of the dialog's own close
@@ -4076,23 +4081,21 @@
                     <h3 class="text-ui-sm font-medium text-foreground/80">
                       Something else
                     </h3>
-                    <!-- A tile in the provider grid's own columns and in the provider
-                         cards' own style (border, fill, hover, press), so it reads as
-                         one more card in the same set rather than a different kind of
-                         control. It was a primary Button, whose label rendered
-                         unreadable on this surface. -->
-                    <div class="mt-2.5 grid grid-cols-2 gap-2 @2xl:grid-cols-4">
-                      <button
-                        type="button"
-                        onclick={newConnectionForm}
-                        title="Pick an engine and enter its details"
-                        class="group flex h-10 @2xl:col-span-2 min-w-0 items-center gap-2.5 rounded-md bg-muted/30 px-3 text-left text-foreground outline-none transition-colors hover:bg-accent focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
-                      >
-                        <Icon name="plus" class="size-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground" aria-hidden="true" />
-                        <span class="min-w-0 flex-1 truncate text-ui-sm">New connection</span>
-                        <Kbd combo="Mod+N" size="sm" class="shrink-0 text-muted-foreground" />
-                      </button>
-                    </div>
+                    <!-- A real button, not a tile: a muted fill on the grey canvas
+                         washed out on Windows and Linux. Solid surface, a hairline,
+                         the plus in the accent, the shortcut at the end. -->
+                    <button
+                      type="button"
+                      onclick={newConnectionForm}
+                      title="Pick an engine and enter its details"
+                      class="group mt-2.5 inline-flex h-9 items-center gap-2.5 rounded-lg border border-border bg-card ps-1.5 pe-2.5 text-ui-sm font-medium text-foreground shadow-xs outline-none transition-[background-color,border-color,scale] duration-150 ease-out hover:border-foreground/20 hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring active:scale-[0.98]"
+                    >
+                      <span class="grid size-6 shrink-0 place-items-center rounded-md bg-primary text-primary-foreground" aria-hidden="true">
+                        <Icon name="plus" class="size-3.5 shrink-0" />
+                      </span>
+                      New connection
+                      <Kbd combo="Mod+N" size="sm" class="ms-3 shrink-0 text-muted-foreground" />
+                    </button>
                   </div>
 
               </div>
@@ -5155,7 +5158,9 @@
 
           <!-- ── Footer: inline error alert, status chip, then actions ── -->
           <div class="shrink-0 border-t border-border/15 px-10 py-4">
-            <div class="max-w-6xl">
+            <!-- min-h-8: the form's buttons are 32px; without it the bar was 18px
+                 taller on the form than on the list and the content above moved. -->
+            <div class="flex min-h-8 max-w-6xl flex-col justify-center">
               <!-- The alert itself is a toast (see failWith). What stays here is the
                  one-line record of it, so the driver's own words are still
                  readable after the toast has gone - without a panel that shoves
