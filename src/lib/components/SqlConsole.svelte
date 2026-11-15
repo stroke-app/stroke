@@ -164,6 +164,8 @@
     onrunnewtab = undefined,
     /** Ask the AI chat about a statement (its Ask AI action). @type {((sql: string) => void) | undefined} */
     onaskai = undefined,
+    /** Send a ready prompt to the AI chat (Explain's Ask AI). @type {((prompt: string) => void) | undefined} */
+    onaskaiprompt = undefined,
   } = $props();
 
   /** @type {{ focus: () => void, markRunning: (ranStatement?: string | null) => void, markExecuted: (ranStatement?: string | null, run?: { ms?: number | null, rows?: number | null }) => void, markOutcomes: (outcomes: Array<{ sql: string, sent?: string, error: string | null, position: number | null, ms?: number | null, rows?: number | null, affected?: number | null }>) => void, clearRunMarks: () => void, markReverted: (undoId: string) => void, replaceInFailed: (name: string, replacement: string) => boolean, getStatementAtCursor: () => string, getSelectionText: () => string } | null} */
@@ -568,7 +570,15 @@
     if (windowed) onstoredsort(resultSort)
   }
 
-  async function handleExplain() {
+  // Postgres: measure (runs, then rolls back) or only estimate. Kept per app.
+  let explainAnalyze = $state((() => { try { return localStorage.getItem('stroke:explain-analyze') !== 'false' } catch { return true } })())
+
+  /** @param {boolean} [analyze] */
+  async function handleExplain(analyze = explainAnalyze) {
+    if (analyze !== explainAnalyze) {
+      explainAnalyze = analyze
+      try { localStorage.setItem('stroke:explain-analyze', String(analyze)) } catch { /* blocked */ }
+    }
     const querySql = sql.trim()
     if (!querySql) return
     outputView = 'explain'
@@ -577,7 +587,7 @@
     explainResult = null
     if (!outputVisible) outputVisible = true
     try {
-      explainResult = await explainSql(querySql)
+      explainResult = await explainSql(querySql, { analyze: explainAnalyze })
     } catch (e) {
       explainError = String(e)
     } finally {
@@ -1071,7 +1081,7 @@
           outputView === 'explain' ? 'text-foreground' : 'text-muted-foreground',
         )}
         disabled={!sql.trim() || explainLoading}
-        onclick={handleExplain}
+        onclick={() => void handleExplain()}
         aria-label="Explain plan"
         title={tipText('Explain plan', 'Visualize how the database executes this query, spot slow scans and missing indexes.')}
       >
@@ -1639,7 +1649,7 @@
                 <p class="font-mono text-ui-xs text-destructive">{explainError}</p>
               </div>
             {:else if explainResult}
-              <ExplainPlan result={explainResult} />
+              <ExplainPlan result={explainResult} sql={sql} analyze={explainAnalyze} onrerun={(on) => void handleExplain(on)} onaskai={onaskaiprompt} />
             {:else}
               <div class="flex h-full flex-col items-center justify-center gap-2 text-center">
                 <ScanSearch class="size-6 text-muted-foreground" />

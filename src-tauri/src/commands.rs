@@ -1094,9 +1094,10 @@ fn mssql_plan_lines(xml: &str) -> Vec<String> {
 pub async fn pg_explain_sql(
     state: State<'_, DbState>,
     sql: String,
+    analyze: Option<bool>,
 ) -> Result<ExplainResult, String> {
     match require_conn(&state)? {
-        ActiveConnection::Postgres(pool) => explain_pg(&pool, &sql).await,
+        ActiveConnection::Postgres(pool) => explain_pg(&pool, &sql, analyze.unwrap_or(true)).await,
         ActiveConnection::Mysql(pool) => explain_mysql(&pool, &sql).await,
         ActiveConnection::Sqlite(pool) => explain_sqlite(&pool, &sql).await,
         ActiveConnection::Duckdb(h) => {
