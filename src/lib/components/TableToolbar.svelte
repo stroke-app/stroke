@@ -941,6 +941,8 @@
             localSearch.trim() && "border-ring!",
           )}
           placeholder="Search…"
+          data-slash-focus="20"
+          aria-keyshortcuts="/"
           value={localSearch}
           disabled={columns.length === 0}
           oninput={(e) => handleSearchInput(e.currentTarget.value)}

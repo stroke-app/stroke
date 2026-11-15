@@ -2225,6 +2225,8 @@
           <input
             type="search"
             bind:this={filterEl}
+            data-slash-focus="10"
+            aria-keyshortcuts="/"
             placeholder={connectionName ? "Search" : "Not connected"}
             value={localFilter}
             disabled={!connectionName}

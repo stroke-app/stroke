@@ -226,6 +226,8 @@
         bind:value={filter}
         oninput={() => (cursor = 0)}
         onkeydown={onListKey}
+        data-slash-focus="25"
+        aria-keyshortcuts="/"
         placeholder={view === 'history' ? 'Search history…' : view === 'saved' ? 'Search saved queries…' : 'Search saved charts…'}
         aria-label={view === 'history' ? 'Search history' : view === 'saved' ? 'Search saved queries' : 'Search saved charts'}
         aria-controls="query-list"

@@ -110,6 +110,8 @@
   ];
   let category = $state('general');
   let query = $state('');
+  /** The search field has focus: its `/` hint steps aside. */
+  let settingsSearchFocused = $state(false);
   const q = $derived(query.trim().toLowerCase());
   const searching = $derived(q.length > 0);
   /** Row visibility under the current search query. */
@@ -566,9 +568,17 @@
           <Icon name="search" class="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <input
             bind:value={query}
+            data-slash-focus="30"
             placeholder="Search settings…"
-            class= "field-surface h-8 w-full bg-transparent pl-8 pr-2.5 text-ui-xs text-foreground outline-none placeholder:text-muted-foreground"
+            aria-keyshortcuts="/"
+            onfocus={() => (settingsSearchFocused = true)}
+            onblur={() => (settingsSearchFocused = false)}
+            onkeydown={(e) => { if (e.key === 'Escape' && query) { e.stopPropagation(); query = ''; } }}
+            class= "field-surface h-8 w-full bg-transparent pl-8 pr-7 text-ui-xs text-foreground outline-none placeholder:text-muted-foreground"
           />
+          {#if !query && !settingsSearchFocused}
+            <Kbd combo="/" class="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2" aria-hidden="true" />
+          {/if}
         </div>
         <nav class="flex flex-col gap-0.5">
           {#each CATEGORIES as c (c.id)}

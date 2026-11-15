@@ -64,6 +64,8 @@
           <Search class="pointer-events-none absolute left-2.5 size-3.5 text-muted-foreground" />
           <input
             bind:value={query}
+            data-slash-focus="25"
+            aria-keyshortcuts="/"
             placeholder="Search…"
             aria-label="Search workspaces"
             spellcheck="false"
