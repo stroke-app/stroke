@@ -2242,3 +2242,22 @@ pub fn set_window_glass(window: tauri::WebviewWindow, enabled: bool, dark: bool)
     let _ = (window, enabled, dark);
     Ok(())
 }
+
+/// D1 Time Travel: the bookmark for now, or for the moment nearest `timestamp`.
+#[tauri::command]
+pub async fn d1_bookmark(state: State<'_, DbState>, timestamp: Option<String>) -> Result<String, String> {
+    match require_conn(&state)? {
+        ActiveConnection::D1(cfg) => crate::db::d1::bookmark(&cfg, timestamp.as_deref()).await,
+        _ => Err("Time Travel is a Cloudflare D1 feature.".into()),
+    }
+}
+
+/// D1 Time Travel: rewind the database to a bookmark; returns the previous one.
+#[tauri::command]
+pub async fn d1_restore(state: State<'_, DbState>, bookmark: String) -> Result<String, String> {
+    match require_conn(&state)? {
+        ActiveConnection::D1(cfg) => crate::db::d1::restore(&cfg, &bookmark).await,
+        _ => Err("Time Travel is a Cloudflare D1 feature.".into()),
+    }
+}
+

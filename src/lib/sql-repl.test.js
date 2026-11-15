@@ -52,3 +52,34 @@ describe('built-in prompt keys', () => {
     vi.unstubAllGlobals()
   })
 })
+
+describe('engine commands', () => {
+  it('runs /name as .name and asks before a confirmed command', async () => {
+    const { createSqlRepl } = await import('./sql-repl.js')
+    let out = ''
+    let restored = ''
+    const repl = createSqlRepl({
+      write: (s) => { out += s },
+      run: async () => [],
+      name: 'd1',
+      cols: () => 120,
+      commands: {
+        '.bookmark': { usage: '.bookmark', help: 'b', run: async () => 'BM-1' },
+        '.restore': {
+          usage: '.restore <id>', help: 'r',
+          run: async (arg, ask) => ((await ask('sure? ')) === 'yes' ? ((restored = arg), 'Restored.') : 'Not restored.'),
+        },
+      },
+    })
+    repl.start()
+    const type = async (text) => { repl.input(text); repl.input('\r'); await new Promise((r) => setTimeout(r, 0)) }
+    await type('/bookmark')
+    expect(out).toContain('BM-1')
+    await type('/restore BM-1')
+    expect(out).toContain('sure?')
+    await type('yes')
+    await new Promise((r) => setTimeout(r, 0))
+    expect(restored).toBe('BM-1')
+    expect(out).toContain('Restored.')
+  })
+})

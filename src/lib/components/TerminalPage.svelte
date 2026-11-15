@@ -47,7 +47,7 @@
   import { IS_MAC } from '$lib/shortcuts.js'
   import { detectOs } from '$lib/platform.js'
   import Icon from './Icon.svelte'
-  import { terminalClient, terminalInstallClient, terminalOpen, terminalClose, executeSqlMulti, dynamoRequest } from '$lib/api.js'
+  import { terminalClient, terminalInstallClient, terminalOpen, terminalClose, executeSqlMulti, dynamoRequest, d1Bookmark, d1Restore } from '$lib/api.js'
   import { createSqlRepl } from '$lib/sql-repl.js'
   import { terminalTheme, terminalIsTranslucent, terminalFont } from '$lib/terminal-theme.js'
   import { createHighlighter } from '$lib/terminal-highlight.js'
@@ -166,12 +166,37 @@
       name: dbType === 'dynamodb' ? (connection.name || connection.region || 'dynamodb') : (connection.database || connection.name || dbType),
       historyKey: `stroke:sql-repl:${connectionKey}`,
       ...catalogFor(dbType),
+      commands: dbType === 'd1' ? D1_COMMANDS : {},
     })
     phase = 'running'
     fit()
     if (note) term.write(`\x1b[2m${note}\x1b[0m\r\n`)
     repl.start()
     if (active) term.focus()
+  }
+
+  /**
+   * Cloudflare D1's Time Travel, as its console has it: a bookmark for now or
+   * for a moment in the last 30 days, and restoring the whole database to one.
+   * @type {Record<string, import('$lib/sql-repl.js').ExtraCommand>}
+   */
+  const D1_COMMANDS = {
+    '.bookmark': {
+      usage: '.bookmark [timestamp]',
+      help: "a bookmark for now, or nearest an RFC 3339 time (2026-11-15T10:00:00Z), to restore to later",
+      run: async (arg) => `\x1b[1m${await d1Bookmark(arg || undefined)}\x1b[0m\n\x1b[2mRestore with .restore <bookmark>\x1b[0m`,
+    },
+    '.restore': {
+      usage: '.restore <bookmark>',
+      help: 'rewind the whole database to a bookmark',
+      run: async (arg, ask) => {
+        if (!arg) return '\x1b[2mUsage: .restore <bookmark>. Get one with .bookmark\x1b[0m'
+        const answer = await ask(`\x1b[33mThis rewinds the whole database to ${arg}. Type yes to restore:\x1b[0m `)
+        if (answer.toLowerCase() !== 'yes') return '\x1b[2mNot restored.\x1b[0m'
+        const previous = await d1Restore(arg)
+        return `Restored.${previous ? `\n\x1b[2mTo undo: .restore ${previous}\x1b[0m` : ''}`
+      },
+    },
   }
 
   /** Install the missing CLI, then restart on it. */

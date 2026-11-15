@@ -2347,3 +2347,15 @@ export async function trackInstall(track) {
 export async function trackOpen(track, path) {
   return inv('track_open', { track, path })
 }
+
+/** D1 Time Travel: the bookmark for now, or nearest an RFC 3339 timestamp. @param {string} [timestamp] */
+export async function d1Bookmark(timestamp) {
+  return /** @type {Promise<string>} */ (inv('d1_bookmark', { timestamp: timestamp || null }))
+}
+
+/** D1 Time Travel: rewind the database to a bookmark; resolves to the previous one. @param {string} bookmark */
+export async function d1Restore(bookmark) {
+  assertWritable('restore the database')
+  return /** @type {Promise<string>} */ (inv('d1_restore', { bookmark }))
+}
+
