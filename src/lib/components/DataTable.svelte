@@ -7893,9 +7893,27 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       scroller?.sync()
     }
 
+    // The axis is decided once per gesture. A trackpad keeps sending wheel events
+    // for a second or more after the fingers lift (momentum), and reading Shift
+    // per event turned that coast sideways the moment Shift went down, or back
+    // to vertical when it came up. A gap of more than GESTURE_GAP ms between
+    // events starts a new gesture, which reads Shift afresh.
+    const GESTURE_GAP = 100
+    let _gestureAt = -Infinity
+    let _gestureShift = false
+    /** @param {WheelEvent} e @returns {boolean} the gesture scrolls sideways */
+    const gestureShift = (e) => {
+      const now = performance.now()
+      if (now - _gestureAt > GESTURE_GAP) _gestureShift = e.shiftKey
+      _gestureAt = now
+      return _gestureShift
+    }
+    const gestureLive = () => performance.now() - _gestureAt <= GESTURE_GAP
+
     // Non-passive: live for every tick under eased scrolling, otherwise only while
     // a modifier that needs preventDefault is down.
     const onWheelActive = (/** @type {WheelEvent} */ e) => {
+      const sideways = gestureShift(e)
       if (e.ctrlKey) { e.preventDefault(); doZoom(e.deltaY); return }
       if (e.altKey && !e.shiftKey && !e.metaKey) {
         const { dy } = wheelPixels(e, el.clientHeight)
@@ -7909,7 +7927,19 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       const inner = e.target instanceof Element
         ? e.target.closest('[data-fk-subview-scroll]')
         : null
-      if (e.shiftKey) {
+      if (e.shiftKey && !sideways) {
+        // Shift went down during a vertical coast: keep it vertical. macOS may
+        // already have swapped the deltas onto X for Shift, so take either.
+        if (inner && inner !== el) return
+        const { dx, dy } = wheelPixels(e, el.clientHeight)
+        const delta = dy || dx
+        if (!delta) return
+        e.preventDefault()
+        if (scroller) scroller.push(0, delta)
+        else el.scrollTop += delta
+        return
+      }
+      if (sideways) {
         // Normalize FIRST. A mouse that reports deltaMode 1 (lines) sends ±1..3,
         // and treating that as pixels moved the grid by three pixels a notch -
         // horizontal scrolling looked broken under eased scrolling while native
@@ -7963,6 +7993,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     // active listener is attached so a real Ctrl+wheel isn't handled twice.
     const onWheelPassive = (/** @type {WheelEvent} */ e) => {
       if (_activeAttached) return
+      gestureShift(e)
       if (e.ctrlKey) doZoom(e.deltaY)
     }
 
@@ -7979,10 +8010,16 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     // Under eased scrolling the listener stays attached; the modifier gating below
     // is what keeps it OFF the hot path when the OS is doing the scrolling.
     /** @param {KeyboardEvent} e */
+    let _detachTimer = 0
     const onKey = (e) => {
       if (easedScroll) return
-      if (e.ctrlKey || e.shiftKey || e.altKey) attach()
-      else detach()
+      clearTimeout(_detachTimer)
+      if (e.ctrlKey || e.shiftKey || e.altKey) { attach(); return }
+      // Shift came up mid-gesture: stay attached until the coast ends, or the
+      // rest of a sideways swipe would fall to the browser and go vertical.
+      if (!gestureLive()) { detach(); return }
+      const later = () => { if (gestureLive()) _detachTimer = window.setTimeout(later, GESTURE_GAP); else detach() }
+      _detachTimer = window.setTimeout(later, GESTURE_GAP)
     }
     // A keyboard scroll, scrollIntoView, or a scrollbar drag moved the element
     // without us: adopt the new position so the next wheel tick eases from there.
@@ -8008,6 +8045,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     window.addEventListener('blur', onBlur)
     return () => {
       scroller?.stop()
+      clearTimeout(_detachTimer)
       detach()
       el.removeEventListener('pointerdown', onInterrupt)
       el.removeEventListener('scroll', onScrollSync)

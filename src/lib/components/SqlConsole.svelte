@@ -41,6 +41,7 @@
   import Square from "@lucide/svelte/icons/square";
   import Variable from "@lucide/svelte/icons/variable";
   import X from "@lucide/svelte/icons/x";
+  import Search from "@lucide/svelte/icons/search";
   import TextCursorInput from "@lucide/svelte/icons/text-cursor-input";
   import TextSelect from "@lucide/svelte/icons/text-select";
   import { Button } from "$lib/components/ui/button/index.js";
@@ -601,7 +602,9 @@
       if (!active) return
       const mod = e.metaKey || e.ctrlKey
       if (!mod || e.altKey) return
-      if (e.key === 'j' && !e.shiftKey) {
+      // Mod+Shift+J: Mod+J is the terminal dock everywhere, and binding it here
+      // too flipped the results and the terminal with one press.
+      if ((e.key === 'j' || e.key === 'J') && e.shiftKey) {
         e.preventDefault()
         toggleOutput()
       } else if ((e.key === 'b' || e.key === 'B') && e.shiftKey) {
@@ -816,6 +819,56 @@
     if (queryCopiedTimer) clearTimeout(queryCopiedTimer)
     if (errorCopyTimer) clearTimeout(errorCopyTimer)
   })
+
+  /** @type {any} */
+  let chartViewRef = $state(null)
+
+  // ── Find in results ───────────────────────────────────────────────────────
+  // Narrows the grid to rows with a cell containing the text (any case) and
+  // highlights it. A windowed result is not all in memory, so there it only
+  // highlights what is loaded.
+  let findOpen = $state(false)
+  let findText = $state('')
+  /** @type {HTMLInputElement | null} */
+  let findInput = $state(null)
+  const findTerm = $derived(findText.trim().toLowerCase())
+  /** @param {unknown} v */
+  const cellText = (v) => (v === null || v === undefined ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v))
+  const foundRows = $derived.by(() => {
+    const all = currentDisplay.rows
+    if (!findOpen || !findTerm || windowed) return all
+    return all.filter((/** @type {unknown[]} */ r) => r.some((v) => cellText(v).toLowerCase().includes(findTerm)))
+  })
+  function openFind() {
+    findOpen = true
+    if (outputView !== 'table') outputView = 'table'
+    if (!outputVisible) toggleOutput()
+    tick().then(() => { findInput?.focus(); findInput?.select() })
+  }
+  function closeFind() {
+    findOpen = false
+    findText = ''
+  }
+  /** @param {KeyboardEvent} e */
+  function onFindKey(e) {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeFind() }
+  }
+
+  /** The results as a share source, in the order and columns shown. */
+  function resultSource() {
+    const cols = currentDisplay.columns.map((/** @type {any} */ c) => ({ name: c.name ?? String(c), type: c.dataType ?? c.data_type ?? c.type }))
+    return { columns: cols, rows: currentDisplay.rows }
+  }
+
+  /** Share what's on screen: the chart in Chart view, otherwise the rows. */
+  function shareShown() {
+    const { columns: cols, rows: r } = resultSource()
+    if (outputView === 'chart' && chartViewRef?.shareSpec) {
+      requestShare({ kind: 'chart', title: shareTitle(), chart: chartViewRef.shareSpec(), columns: cols, rows: r })
+    } else {
+      requestShare({ kind: 'result', title: shareTitle(), columns: cols, rows: r, sql })
+    }
+  }
 
   /** A share's default title: the query's first meaningful line. */
   function shareTitle() {
@@ -1064,7 +1117,7 @@
           <!-- An encrypted link: the results (columns you choose, personal
                data masked) or just the query. -->
           {#if columns.length > 0}
-            <DropdownMenu.Item onSelect={() => requestShare({ kind: 'result', title: shareTitle(), columns: columns.map((c) => ({ name: c.name ?? String(c), type: c.dataType ?? c.data_type ?? c.type })), rows, sql })}>
+            <DropdownMenu.Item onSelect={() => requestShare({ kind: 'result', title: shareTitle(), ...resultSource(), sql })}>
               <Share2 class="size-3.5 shrink-0 text-muted-foreground" />
               <span data-slot="menu-label">Share results…</span>
             </DropdownMenu.Item>
@@ -1372,6 +1425,44 @@
           </button>
         {/each}
       </div>
+      {#if resultShown && currentDisplay.rows.length > 0}
+        <span class="mx-1 h-4 w-px shrink-0 bg-border/60" aria-hidden="true"></span>
+        {#if findOpen}
+          <div class="flex h-7 items-center gap-1 rounded-md bg-muted/50 ps-2 pe-0.5" role="search">
+            <Search class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+            <input
+              bind:this={findInput}
+              bind:value={findText}
+              onkeydown={onFindKey}
+              placeholder="Find in results"
+              aria-label="Find in results"
+              spellcheck="false"
+              autocomplete="off"
+              class="no-field-frame no-focus-ring h-full w-40 min-w-0 border-0 bg-transparent px-1 text-ui-xs text-foreground shadow-none outline-none placeholder:text-muted-foreground"
+            />
+            {#if findTerm}
+              <span class="shrink-0 pe-1 text-ui-2xs text-muted-foreground tabular-nums" aria-live="polite">
+                {#if windowed}highlighting{:else}{foundRows.length.toLocaleString()} of {currentDisplay.rows.length.toLocaleString()}{/if}
+              </span>
+            {/if}
+            <button
+              type="button"
+              class="inline-flex size-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              title="Close (Esc)"
+              aria-label="Close find"
+              onclick={closeFind}
+            ><X class="size-3 shrink-0" /></button>
+          </div>
+        {:else}
+          <button
+            type="button"
+            class="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+            title={tipText('Find in results', 'Show only the rows that contain some text.', [mod, 'F'])}
+            aria-label="Find in results"
+            onclick={openFind}
+          ><Search class="size-3.5 shrink-0" /></button>
+        {/if}
+      {/if}
       </div>
 
 
@@ -1414,6 +1505,18 @@
 
 
         <div class="flex items-center gap-0.5">
+        {#if resultShown && currentDisplay.rows.length > 0 && (outputView === 'table' || outputView === 'chart' || outputView === 'json')}
+          <!-- Share what's shown as an encrypted link (the chart in Chart view). -->
+          <button
+            type="button"
+            class="flex h-7 items-center gap-1.5 rounded-md px-2 text-ui-xs text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+            title={outputView === 'chart' ? 'Share this chart as a link' : 'Share these results as a link'}
+            aria-label={outputView === 'chart' ? 'Share chart' : 'Share results'}
+            onclick={shareShown}
+          >
+            <Share2 class="size-3.5 shrink-0" />Share
+          </button>
+        {/if}
         <!-- Export dropdown, only when there are results -->
         {#if resultShown && currentDisplay.rows.length > 0}
           <DropdownMenu.Root>
@@ -1451,7 +1554,7 @@
           type="button"
           onclick={toggleOutput}
           class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
-          title={tipText(outputVisible ? 'Hide results' : 'Show results', 'Collapse the results panel to give the editor the full height.', [mod, 'J'])}
+          title={tipText(outputVisible ? 'Hide results' : 'Show results', 'Collapse the results panel to give the editor the full height.', [mod, '⇧', 'J'])}
         >
           <ChevronDown class={cn('size-3.5 transition-transform duration-150', outputVisible ? '' : 'rotate-180')} />
         </button>
@@ -1460,7 +1563,19 @@
     </div>
 
     {#if outputVisible}
-      <div class="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-panel">
+      <!-- Mod+F inside the results finds in them; in the editor it stays the
+           editor's own find. -->
+      <div
+        class="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-panel"
+        role="presentation"
+        onkeydown={(e) => {
+          if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (e.key === 'f' || e.key === 'F') && currentDisplay.rows.length && (outputView === 'table' || outputView === 'json' || outputView === 'chart')) {
+            e.preventDefault()
+            e.stopPropagation()
+            openFind()
+          }
+        }}
+      >
         {#key `${outputView}:${Math.min(activeResultIdx, Math.max(resultSets.length - 1, 0))}`}
           {#if outputView === 'history' || outputView === 'saved' || outputView === 'charts'}
             <QueryHistoryPanel
@@ -1536,6 +1651,7 @@
               <JsonViewer json={jsonText} data={rowObjects} shownRows={rowObjects.length} rowCount={currentDisplay.rows.length} onshowtable={() => (outputView = 'table')} />
             {:else if outputView === 'chart'}
               <ChartView
+                bind:this={chartViewRef}
                 columns={currentDisplay.columns}
                 rows={currentDisplay.rows}
                 {sql}
@@ -1545,7 +1661,8 @@
             {:else}
               <DataTable
                 columns={currentDisplay.columns}
-                rows={currentDisplay.rows}
+                rows={foundRows}
+                searchQuery={findOpen ? findText : ''}
                 loading={loading || sorting}
                 bind:selected
                 rowSort={resultSort}

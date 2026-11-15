@@ -286,16 +286,16 @@
     }
   }
 
-  /**
-   * Image exports, driven from the table toolbar's Export submenu so the chart
-   * offers the same PNG / SVG / Copy set the ERD does.
-   * @param {'png' | 'svg' | 'copy-png'} kind
-   */
   /** What a share link needs to redraw this chart: its type and axes. */
   export function shareSpec() {
     return { type: chartType, x: xCol, y: yCol ? [yCol] : [], group: groupCol || null }
   }
 
+  /**
+   * Image exports, driven from the table toolbar's Export submenu so the chart
+   * offers the same PNG / SVG / Copy set the ERD does.
+   * @param {'png' | 'svg' | 'copy-png'} kind
+   */
   export function exportChart(kind) {
     if (kind === 'png') return void downloadPng()
     if (kind === 'svg') return void downloadSvg()

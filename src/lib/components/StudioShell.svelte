@@ -77,7 +77,7 @@
   import { terminalDockOpen as terminalDockStore } from '$lib/stores/redis-nav.js'
   import DbIcon from './DbIcon.svelte'
   import ShareDialog from './ShareDialog.svelte'
-  import { requestShare } from '$lib/share-flow.js'
+  import { requestShare, sharesPageRequest } from '$lib/share-flow.js'
   import MySharesDialog from './MySharesDialog.svelte'
   import Icon from './Icon.svelte'
   import DockerLaunchModal from './DockerLaunchModal.svelte'
@@ -236,6 +236,8 @@
     findLicenseTab,
     createShortcutsTab,
     findShortcutsTab,
+    createSharesTab,
+    findSharesTab,
     findTableTab,
     findSchemaTab,
     findOrmTab,
@@ -2206,9 +2208,25 @@ let rowSearch = $state('')
     return 'Stroke'
   })
 
+  /** The saved connection last connected from, as onConnected was told it. */
+  let connectedSavedId = $state('')
+  /**
+   * The saved connection the AI tools should call active. activeConnectionId
+   * matches on host, database and user, which misses after switching database
+   * inside a connection, for URL and provider connections, and so on; the AI
+   * then said "no database is connected" while one was. The id the connection
+   * was opened with is exact. (activeConnectionId stays as it is: drafts and
+   * history are keyed by it.)
+   */
+  const mcpActiveId = $derived(
+    connection
+      ? (connectedSavedId && savedConnections.some((c) => c.id === connectedSavedId) ? connectedSavedId : activeConnectionId) || null
+      : null,
+  )
+
   // Keep MCP layer in sync with saved connections + active connection (no passwords sent).
   $effect(() => {
-    void mcpUpdateConnections(savedConnections, activeConnectionId || null)
+    void mcpUpdateConnections(savedConnections, mcpActiveId)
   })
 
   // Persist the Query Editor buffer per connection so reopening the tab (or
@@ -3493,6 +3511,7 @@ let rowSearch = $state('')
     // Each branch prevents lower-priority handlers from firing.
     if (commandOpen)           { e.preventDefault(); commandOpen = false;           return }
     if (showShortcutsModal)    { e.preventDefault(); showShortcutsModal = false;    return }
+    if (showMyShares)          { e.preventDefault(); showMyShares = false;          return }
     if (showAiModelSettings)   { e.preventDefault(); showAiModelSettings = false;   return }
     if (showAboutModal)        { e.preventDefault(); showAboutModal = false;        return }
     if (showInsiderModal)      { e.preventDefault(); showInsiderModal = false;      return }
@@ -4373,6 +4392,27 @@ let rowSearch = $state('')
     activeTabId = tab.id
     clearTableEditor()
   }
+
+  /** Shared links as a tab; without a connection there is no tab bar, so the overlay. */
+  function openSharesTab() {
+    commandOpen = false
+    showSettingsModal = false
+    if (!connection) { showMyShares = true; return }
+    const existing = findSharesTab(tabs)
+    if (existing) { void activateTab(existing.id); return }
+    saveActiveTabState()
+    dropWelcomeTabs()
+    const tab = createSharesTab()
+    tabs = [...tabs, tab]
+    activeTabId = tab.id
+    clearTableEditor()
+  }
+  // Anything can ask for the page (the share dialog, Settings, the AI's link
+  // card) through share-flow.js without a callback chain.
+  let _sharesReq = 0
+  onMount(() => sharesPageRequest.subscribe((n) => {
+    if (n > _sharesReq) { _sharesReq = n; openSharesTab() }
+  }))
 
   /** Keyboard shortcuts as a tab; without a connection there is no tab bar, so the overlay. */
   function openShortcuts() {
@@ -7360,6 +7400,7 @@ let rowSearch = $state('')
   }
 
   async function onConnected(conn, savedId) {
+    connectedSavedId = savedId ?? ''
     // Labels belong to the database they were read from.
     void import('$lib/plugins/extensions/fk-labels.js').then((m) => m.clearFkLabels())
     recordActivity({ type: 'connect', title: `Connected to ${conn.name ?? conn.database ?? conn.filePath ?? 'database'}`, success: true })
@@ -9072,7 +9113,7 @@ let rowSearch = $state('')
 <AboutDialog bind:open={showAboutModal} onopenreport={() => (showReportIssueDialog = true)} />
 <ReportIssueDialog bind:open={showReportIssueDialog} />
 <!-- Share links: one dialog for every kind, opened through requestShare(). -->
-<ShareDialog onopenmyshares={() => (showMyShares = true)} />
+<ShareDialog />
 <MySharesDialog bind:open={showMyShares} />
 
 <Dialog.Root bind:open={showProGate} closeOnEscape={true} closeOnOutsideClick={true}>
@@ -9181,7 +9222,7 @@ let rowSearch = $state('')
   {hasAdvisor}
   onopenJsonViewer={() => { if (aiMode) exitAiMode(); openJsonTab() }}
   onopenshortcuts={() => openShortcuts()}
-  onopenmyshares={() => { commandOpen = false; showMyShares = true }}
+  onopenmyshares={() => openSharesTab()}
   onopenkeybindings={() => { settingsSection = 'keybindings'; showSettingsModal = true }}
   onopenabout={() => (showAboutModal = true)}
   onopenreport={() => (showReportIssueDialog = true)}
@@ -9310,6 +9351,7 @@ let rowSearch = $state('')
         aiChatMatch={aiChatMatch}
         onopenaichat={openAiChat}
         onopensettings={() => (showSettingsModal = true)}
+        onopenlabs={() => { settingsSection = 'labs'; showSettingsModal = true }}
         onopenshortcuts={() => openShortcuts()}
         oncheckupdates={() => void updateDialog?.checkNow?.()}
         {checkingUpdate}
@@ -9951,6 +9993,17 @@ let rowSearch = $state('')
             </svelte:boundary>
           </div>
         {/key}
+      {/if}
+
+      <!-- Shared links tab: mounts while active, and reloads each time it is shown -->
+      {#if activeTab?.kind === 'shares'}
+        <div class="flex min-h-0 flex-1 flex-col">
+          <svelte:boundary failed={tabError}>
+            {#await import('./SharesPage.svelte')}<TabLoading />{:then { default: SharesPage }}
+              <SharesPage />
+            {/await}
+          </svelte:boundary>
+        </div>
       {/if}
 
       <!-- Keyboard shortcuts tab: light, so it mounts while it is the active tab only -->
@@ -10764,7 +10817,7 @@ let rowSearch = $state('')
             <!-- The one main control: everything starts in ⌘K. -->
             <button
               type="button"
-              class="flex h-11 w-full cursor-pointer items-center gap-3 rounded-md border border-border/60 bg-sidebar px-3.5 text-left text-ui-sm text-muted-foreground shadow-sm transition-[border-color,background-color,color,box-shadow,scale] duration-150 ease-[var(--ease-out)] hover:border-border hover:bg-accent/40 hover:text-foreground hover:shadow-md active:scale-[0.99] focus-visible:outline-2 focus-visible:outline-ring"
+              class="flex h-11 w-full cursor-pointer items-center gap-3 rounded-lg bg-muted/40 px-3.5 text-left text-ui-sm text-muted-foreground transition-colors duration-150 hover:bg-muted/70 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
               onclick={() => { commandPage = 'root'; commandOpen = true }}
             >
               <Search class="size-4 shrink-0" />

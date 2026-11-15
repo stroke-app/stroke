@@ -97,6 +97,8 @@
     /** Sidebar footer (T3-style). */
     onopensettings = () => {},
     onopenshortcuts = () => {},
+    /** Settings, on the Labs page. @type {(() => void) | null} */
+    onopenlabs = null,
     oncheckupdates = () => {},
     /** A manual update check is running: the button spins. */
     checkingUpdate = false,
@@ -3243,6 +3245,7 @@
       <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title="Settings" aria-label="Settings" onclick={onopensettings}><Icon name="settings" class="size-4 shrink-0" /></button>
       <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title={$isCurrentThemeDark ? 'Light theme' : 'Dark theme'} aria-label="Toggle theme" onclick={() => toggleLightDark()}><Icon name={$isCurrentThemeDark ? 'sun' : 'moon'} class="size-4 shrink-0" /></button>
       <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title="Keyboard shortcuts" aria-label="Keyboard shortcuts" onclick={onopenshortcuts}><Icon name="keyboard" class="size-4 shrink-0" /></button>
+      {#if onopenlabs}<button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title="Labs: features still being shaped" aria-label="Labs" onclick={onopenlabs}><Icon name="flask-conical" class="size-4 shrink-0" /></button>{/if}
       {#if updateState}
         <!-- T3's update pill: there when there is something to do, gone when
              there isn't. Ready means downloaded; Restart installs it. -->

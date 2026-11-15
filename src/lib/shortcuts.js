@@ -180,7 +180,7 @@ export const SHORTCUT_GROUPS = [
       { combo: 'Mod+Shift+K', desc: 'Delete line' },
       { combo: 'Mod+D', desc: 'Select the next match of the selection' },
       { combo: 'Mod+]', desc: 'Indent line (Mod+[: outdent)' },
-      { combo: 'Mod+J', desc: 'Toggle output panel' },
+      { combo: 'Mod+Shift+J', desc: 'Show or hide the results' },
       { combo: 'Mod+Shift+B', desc: 'History list in the results pane' },
     ],
   },
