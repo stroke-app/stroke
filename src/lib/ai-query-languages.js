@@ -35,6 +35,21 @@ export const QUERY_LANGUAGES = {
 - <db>.get("doc-id") for one document, <db>.all() for every document (capped).
 - Keys in selectors and options are quoted JSON strings. The editor is read-only for CouchDB: changes are made in the Browse page.`,
   },
+  elasticsearch: {
+    name: 'Elasticsearch / OpenSearch requests',
+    fence: 'json',
+    collectionNoun: 'index',
+    guide: `Write one request per block. Three forms run in the query editor:
+- Dev Tools style: a request line, then the JSON body on the next lines:
+  GET logs/_search
+  {"query": {"bool": {"filter": [{"term": {"level": "error"}}, {"range": {"@timestamp": {"gte": "now-1d"}}}]}}, "size": 50, "sort": [{"@timestamp": "desc"}]}
+  Aggregations: "size": 0 and "aggs": {"by_level": {"terms": {"field": "level.keyword"}}}; buckets come back as rows.
+- Shell style: <index>.search({body}), <index>.get("id"), <index>.count({"query": {...}}).
+- SQL: SELECT level, COUNT(*) FROM logs GROUP BY level (needs the SQL feature on the server).
+- Text fields match with "match"; exact values, terms aggregations and sorting use the keyword sub-field (name.keyword) unless the mapping says the field is a keyword.
+- The editor only reads (GET, and POST to _search/_count/_sql). Documents are changed in the Browse page.
+- Always set "size" on searches unless the user asks for everything (the server caps from+size at 10,000).`,
+  },
   firestore: {
     name: 'Firestore query chain',
     fence: 'javascript',
@@ -87,6 +102,8 @@ QUERY_LANGUAGES.valkey = QUERY_LANGUAGES.redis
 export function queryLanguageFor(engine) {
   // Valkey is Redis on the wire: same commands, same prompt.
   if (engine === 'valkey') engine = 'redis'
+  // OpenSearch speaks Elasticsearch's REST API and Query DSL.
+  if (engine === 'opensearch') engine = 'elasticsearch'
   return (engine && QUERY_LANGUAGES[engine]) || null
 }
 
@@ -129,6 +146,9 @@ export function sampleQuery(engine, schema, coll, n) {
       return /^[A-Za-z_$][\w$]*$/.test(coll) ? `db.${coll}.find({}).limit(${n})` : `db.getCollection(${JSON.stringify(coll)}).find({}).limit(${n})`
     case 'couchdb':
       return `${coll}.find({}, {"limit": ${n}})`
+    case 'elasticsearch':
+    case 'opensearch':
+      return `GET ${coll}/_search\n{"size": ${n}}`
     case 'firestore':
       return `${coll}.limit(${n})`
     case 'cassandra':
@@ -166,6 +186,6 @@ export function describeFromSample(coll, result) {
 export function runnableFences(engine) {
   const lang = queryLanguageFor(engine)
   if (!lang) return null
-  const extra = { mongodb: ['javascript', 'js', 'mongodb', 'mongo'], couchdb: ['javascript', 'js', 'json'], firestore: ['javascript', 'js'], cassandra: ['sql', 'cql'], dynamodb: ['sql', 'partiql'], redis: ['redis', 'text', 'bash'], valkey: ['redis', 'text', 'bash'] }
+  const extra = { mongodb: ['javascript', 'js', 'mongodb', 'mongo'], couchdb: ['javascript', 'js', 'json'], elasticsearch: ['json', 'http', 'text', 'sql'], opensearch: ['json', 'http', 'text', 'sql'], firestore: ['javascript', 'js'], cassandra: ['sql', 'cql'], dynamodb: ['sql', 'partiql'], redis: ['redis', 'text', 'bash'], valkey: ['redis', 'text', 'bash'] }
   return new Set([lang.fence, ...(/** @type {Record<string, string[]>} */ (extra)[/** @type {string} */ (engine)] ?? [])])
 }

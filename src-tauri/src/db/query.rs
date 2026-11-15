@@ -3405,6 +3405,7 @@ pub async fn execute_sql_on_conn(
         AnyConnectionConfig::Redis(c) => super::redis::query(&c, sql).await,
         AnyConnectionConfig::Dynamodb(c) => super::dynamodb::query(&c, sql).await,
         AnyConnectionConfig::Couchdb(c) => super::couchdb::query(&c, sql).await,
+        AnyConnectionConfig::Elasticsearch(c) => super::elastic::query(&c, sql).await,
         AnyConnectionConfig::Mongodb(_) => Err("Run MongoDB queries from the MongoDB console".into()),
         AnyConnectionConfig::Duckdb(c) => {
             let h = super::connection::open_duckdb(&c).await?;

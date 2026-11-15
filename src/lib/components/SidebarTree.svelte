@@ -6,8 +6,8 @@
    */
   const places = new Map()
 
-  /** NoSQL engines whose collections expand: MongoDB and CouchDB into indexes, Cassandra and DynamoDB into typed key columns, keys and indexes. Firestore and Redis stay flat. */
-  const SHAPED_NOSQL = new Set(['mongodb', 'couchdb', 'cassandra', 'dynamodb'])
+  /** NoSQL engines whose collections expand: MongoDB and CouchDB into indexes, Cassandra and DynamoDB into typed key columns, keys and indexes, Elasticsearch/OpenSearch into mapped fields. Firestore and Redis stay flat. */
+  const SHAPED_NOSQL = new Set(['mongodb', 'couchdb', 'cassandra', 'dynamodb', 'elasticsearch', 'opensearch'])
   const PER_TABLE_INDEXES = new Set(['mongodb', 'couchdb', 'dynamodb'])
 </script>
 

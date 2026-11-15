@@ -626,6 +626,63 @@ export async function couchRequest(method, path, body) {
   return inv('couchdb_request', { method, path, body: body ?? null })
 }
 
+// ── Elasticsearch / OpenSearch ────────────────────────────────────────────────
+
+/** @typedef {{ type?: string, name?: string, url?: string, user?: string, password?: string, apiKey?: string, insecure?: boolean }} EsConnConfig */
+
+/** @param {EsConnConfig} config */
+function normalizeEs(config) {
+  const flavor = config.type === 'opensearch' ? 'opensearch' : 'elasticsearch'
+  return {
+    type: flavor,
+    flavor,
+    name: String(config.name || (flavor === 'opensearch' ? 'OpenSearch' : 'Elasticsearch')),
+    url: String(config.url || 'http://localhost:9200').trim(),
+    user: (config.user && String(config.user).trim()) || null,
+    password: config.password || null,
+    apiKey: (config.apiKey && String(config.apiKey).trim()) || null,
+    insecure: !!config.insecure,
+  }
+}
+
+/**
+ * Connection test; resolves to what the server says it is.
+ * @param {EsConnConfig} config
+ * @returns {Promise<{ flavor: 'elasticsearch' | 'opensearch', version: string, cluster: string }>}
+ */
+export async function testElastic(config) {
+  return inv('test_elastic', { config: normalizeEs(config) })
+}
+
+/** @param {EsConnConfig} config */
+export async function connectElastic(config) {
+  return connectInv('connect_elastic_db', { config: normalizeEs(config) })
+}
+
+/** Endpoints that only read even when sent as a POST (search bodies). */
+const ES_POST_READS = /(^|\/)_(search|count|msearch|mget|explain|field_caps|validate|analyze|sql|plugins|pit|search_shards|termvectors)(\/|\?|$)/
+
+/**
+ * One REST call on the active connection (`path` relative to the server).
+ * Cluster administration and index deletion are refused by the backend.
+ * @param {'GET'|'POST'|'PUT'|'DELETE'} method @param {string} path @param {any} [body]
+ * @returns {Promise<any>}
+ */
+export async function elasticRequest(method, path, body) {
+  if (method !== 'GET' && !(method === 'POST' && ES_POST_READS.test(path))) assertWritable('change documents')
+  return inv('elastic_request', { method, path, body: body ?? null })
+}
+
+/**
+ * Import a JSON, JSON Lines or CSV file into an index (`_bulk`, 500 at a time).
+ * @param {string} index @param {string} path @param {{ format?: string, infer?: boolean }} [opts]
+ * @returns {Promise<{ inserted: number, failed: number, errors: string[] }>}
+ */
+export async function elasticImport(index, path, opts = {}) {
+  assertWritable('import documents')
+  return inv('elastic_import', { index, path, format: opts.format || null, infer: opts.infer ?? true })
+}
+
 // ── MongoDB ───────────────────────────────────────────────────────────────────
 
 /** @typedef {{ name?: string, uri?: string, database?: string }} MongoConnConfig */

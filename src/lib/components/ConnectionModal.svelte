@@ -32,6 +32,8 @@
     connectDynamo,
     testCouch,
     connectCouch,
+    testElastic,
+    connectElastic,
     testCassandra,
     connectCassandra,
     testFirestore,
@@ -179,6 +181,8 @@
         { id: "dynamodb", label: "DynamoDB", desc: "AWS key-value and document tables" },
         { id: "mongodb", label: "MongoDB", desc: "Document database, also Atlas (mongodb+srv)" },
         { id: "couchdb", label: "CouchDB", desc: "JSON documents over HTTP, Mango queries" },
+        { id: "elasticsearch", label: "Elasticsearch", desc: "Search and analytics, also Elastic Cloud" },
+        { id: "opensearch", label: "OpenSearch", desc: "Search and analytics, also Amazon OpenSearch Service" },
         { id: "cassandra", label: "Cassandra", desc: "Wide-column store, also ScyllaDB (CQL)" },
         { id: "firestore", label: "Firestore", desc: "Google Cloud document database" },
       ],
@@ -276,6 +280,8 @@
     "dynamodb",
     "mongodb",
     "couchdb",
+    "elasticsearch",
+    "opensearch",
     "cassandra",
     "firestore",
   ];
@@ -416,6 +422,13 @@
   // custom endpoint (DynamoDB Local) are optional.
   // CouchDB: the server URL; user and password reuse the shared fields.
   let couchUrl = $state("http://localhost:5984");
+  // Elasticsearch / OpenSearch: the server URL (shared with CouchDB's field),
+  // a login or an API key, and whether to accept a self-signed certificate.
+  let esAuth = $state(/** @type {'basic' | 'apikey'} */ ("basic"));
+  let esApiKey = $state("");
+  let esInsecure = $state(false);
+  /** What the last test said the server is, e.g. "OpenSearch 2.17.0". */
+  let esServer = $state("");
   // Workspace and colour label of the connection being edited or created.
   let connColor = $state(/** @type {string | null} */ (null));
   let connWorkspace = $state(DEFAULT_WORKSPACE_ID);
@@ -1020,6 +1033,14 @@
       return { type: "cassandra", name: nm, hosts: cqlHosts.trim(), user: user.trim(), password, keyspace: cqlKeyspace.trim() };
     if (dbType === "couchdb")
       return { type: "couchdb", name: nm, url: couchUrl.trim(), user: user.trim(), password };
+    if (dbType === "elasticsearch" || dbType === "opensearch")
+      return {
+        type: dbType,
+        name: nm,
+        url: couchUrl.trim(),
+        ...(esAuth === "apikey" ? { apiKey: esApiKey.trim(), user: "", password: "" } : { user: user.trim(), password, apiKey: "" }),
+        insecure: esInsecure,
+      };
     if (dbType === "dynamodb")
       return {
         type: "dynamodb",
@@ -1137,7 +1158,14 @@
       }
       connColor = conn.color ?? null;
       connWorkspace = conn.workspaceId ?? DEFAULT_WORKSPACE_ID;
-      couchUrl = conn.type === "couchdb" ? (conn.url ?? "http://localhost:5984") : "http://localhost:5984";
+      couchUrl =
+        conn.type === "couchdb" ? (conn.url ?? "http://localhost:5984")
+        : conn.type === "elasticsearch" || conn.type === "opensearch" ? (conn.url ?? "http://localhost:9200")
+        : "http://localhost:5984";
+      esAuth = conn.apiKey ? "apikey" : "basic";
+      esApiKey = conn.apiKey ?? "";
+      esInsecure = !!conn.insecure;
+      esServer = "";
       awsAuth = conn.accessKeyId ? "keys" : "profile";
       awsProfile = conn.profile ?? "";
       awsKeyId = conn.accessKeyId ?? "";
@@ -1362,6 +1390,8 @@
     valkey:      { database: "0", user: "" },
     dynamodb:    { database: "", user: "" },
     couchdb:     { database: "", user: "admin" },
+    elasticsearch: { database: "", user: "elastic" },
+    opensearch:  { database: "", user: "admin" },
     cassandra:   { database: "", user: "" },
     firestore:   { database: "", user: "" },
     mongodb:     { database: "", user: "" },
@@ -1387,6 +1417,11 @@
     if (user === "" || user === prev.user) user = next.user ?? "";
     if (id === "sqlite-memory" || id === "duckdb-memory") filePath = ":memory:";
     if (id === "duckdb") filePath = "";
+    // The HTTP engines share one URL field; move it to the new engine's port
+    // while it still holds the previous one's local default.
+    const HTTP_DEFAULT = /** @type {Record<string, string>} */ ({ couchdb: "http://localhost:5984", elasticsearch: "http://localhost:9200", opensearch: "http://localhost:9200" });
+    if (HTTP_DEFAULT[id] && (!couchUrl.trim() || Object.values(HTTP_DEFAULT).includes(couchUrl.trim()))) couchUrl = HTTP_DEFAULT[id];
+    esServer = "";
     error = "";
     testOk = false;
     connectionUri = "";
@@ -1413,6 +1448,7 @@
     // a username, and a Turso URL carries its token in the query string.
     if (t === "redis" || t === "valkey") return "redis";
     if (t === "libsql") return "libsql";
+    if (t === "couchdb" || t === "elasticsearch" || t === "opensearch") return "couchdb";
     return "postgres";
   }
 
@@ -1733,7 +1769,7 @@
     if (conn.type === "posthog") return conn.projectId ? `project ${conn.projectId}` : "—";
     // Redis has no database name worth showing; where it lives is the useful bit.
     if (engineFamily(conn.type) === "redis") return conn.host ? `${conn.host}${conn.port ? `:${conn.port}` : ""}` : "—";
-    if (conn.type === "couchdb") return conn.url || "—";
+    if (conn.type === "couchdb" || conn.type === "elasticsearch" || conn.type === "opensearch") return conn.url || "—";
     if (conn.type === "mongodb") return conn.uri ? uriHost(conn.uri) : "—";
     if (conn.type === "firestore") return [conn.projectId, conn.auth === "emulator" ? "emulator" : null].filter(Boolean).join(" · ") || "—";
     if (conn.type === "cassandra") return [conn.hosts, conn.keyspace].filter(Boolean).join(" · ") || "—";
@@ -1830,6 +1866,7 @@
     if (engineFamily(conn.type) === "redis") return connectRedis(conn);
     if (conn.type === "dynamodb") return connectDynamo(conn);
     if (conn.type === "couchdb") return connectCouch(conn);
+    if (conn.type === "elasticsearch" || conn.type === "opensearch") return connectElastic(conn);
     if (conn.type === "cassandra") return connectCassandra(conn);
     if (conn.type === "firestore") return connectFirestore(conn);
     if (conn.type === "mongodb") return connectMongo(conn);
@@ -2119,6 +2156,9 @@
         return { uri: `mongodb://${auth}${hp}/${d.user ? "?authSource=admin" : ""}`, database: d.database };
       case "couchdb":
         return { url: `http://${hp}`, user: d.user, password: d.password };
+      case "elasticsearch":
+      case "opensearch":
+        return { url: `http://${hp}`, user: d.user, password: d.password, apiKey: "", insecure: false };
       case "cassandra":
         return { hosts: hp, user: d.user, password: d.password, keyspace: "" };
       case "dynamodb":
@@ -2141,7 +2181,7 @@
           ? { encrypt: true, trustCert: true }
           : d.engine === "clickhouse"
             ? { secure: false }
-            : ["oracle", "mongodb", "couchdb", "cassandra", "dynamodb"].includes(d.engine)
+            : ["oracle", "mongodb", "couchdb", "elasticsearch", "opensearch", "cassandra", "dynamodb"].includes(d.engine)
               ? {}
               : { ssl: false };
     return /** @type {LocalTarget} */ ({
@@ -2322,6 +2362,12 @@
       else if (engineFamily(p.type) === "redis") await testRedis(p);
       else if (p.type === "dynamodb") await testDynamo(p);
       else if (p.type === "couchdb") await testCouch(p);
+      else if (p.type === "elasticsearch" || p.type === "opensearch") {
+        const info = await testElastic(p);
+        esServer = `${info.flavor === "opensearch" ? "OpenSearch" : "Elasticsearch"} ${info.version}`.trim();
+        // A server that answers as the other engine: switch the label to match.
+        if (info.flavor !== p.type && dbType === p.type) dbType = info.flavor;
+      }
       else if (p.type === "cassandra") await testCassandra(p);
       else if (p.type === "firestore") await testFirestore(p);
       else if (p.type === "mongodb") await testMongo(p);
@@ -2549,7 +2595,7 @@
       return filePath || ":memory:";
     if (dbType === "libsql") return uriHost(libsqlUrl.replace(/^libsql:/, "https:")) || libsqlUrl || "—";
     if (dbType === "d1") return databaseId ? `${databaseId.slice(0, 8)}…` : "—";
-    if (dbType === "couchdb") return couchUrl || "—";
+    if (dbType === "couchdb" || dbType === "elasticsearch" || dbType === "opensearch") return couchUrl || "—";
     if (dbType === "cassandra") return cqlHosts || "—";
     if (dbType === "firestore") return fsProject || "—";
     if (dbType === "mongodb") return uriHost(mongoUri) || "—";
@@ -4856,6 +4902,60 @@
                             <p class="-mt-1 text-ui-3xs text-muted-foreground">
                               Leave the user blank for a server without a login (admin party).
                             </p>
+
+                            <!-- ── Elasticsearch / OpenSearch ─────────────── -->
+                          {:else if dbType === "elasticsearch" || dbType === "opensearch"}
+                            <div>
+                              <label for="cn-es-url" class={lbl}>Server URL</label>
+                              <Input id="cn-es-url" bind:value={couchUrl} placeholder={dbType === "opensearch" ? "https://localhost:9200" : "http://localhost:9200"} spellcheck="false" autocomplete="off" class={cn(inp, "font-mono")} />
+                              {#if esServer}
+                                <p class="mt-1 text-ui-3xs text-muted-foreground">Server: {esServer}</p>
+                              {/if}
+                            </div>
+                            <div>
+                              <span class={lbl} id="cn-es-auth-label">Sign in with</span>
+                              <div class="flex h-8 items-center gap-0.5 rounded-[var(--radius-field)] bg-muted/40 p-0.5" role="group" aria-labelledby="cn-es-auth-label">
+                                {#each [{ v: "basic", l: "User and password" }, { v: "apikey", l: "API key" }] as m (m.v)}
+                                  <button
+                                    type="button"
+                                    aria-pressed={esAuth === m.v}
+                                    class={cn(
+                                      "inline-flex h-7 flex-1 items-center justify-center rounded-md text-ui-xs font-medium transition-colors",
+                                      esAuth === m.v ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+                                    )}
+                                    onclick={() => (esAuth = /** @type {'basic'|'apikey'} */ (m.v))}
+                                  >{m.l}</button>
+                                {/each}
+                              </div>
+                            </div>
+                            {#if esAuth === "basic"}
+                              <div class="grid grid-cols-2 gap-2">
+                                <div>
+                                  <label for="cn-es-user" class={lbl}>User</label>
+                                  <Input id="cn-es-user" bind:value={user} autocomplete="username" spellcheck="false" class={inp} />
+                                </div>
+                                <div>
+                                  <label for="cn-es-pass" class={lbl}>Password</label>
+                                  <PasswordInput id="cn-es-pass" bind:value={password} autocomplete="current-password" class={inp} />
+                                </div>
+                              </div>
+                              <p class="-mt-1 text-ui-3xs text-muted-foreground">
+                                Leave the user blank for a server with security turned off.
+                              </p>
+                            {:else}
+                              <div>
+                                <label for="cn-es-key" class={lbl}>API key</label>
+                                <PasswordInput id="cn-es-key" bind:value={esApiKey} autocomplete="off" class={cn(inp, "font-mono")} />
+                                <p class="mt-1 text-ui-3xs text-muted-foreground">The encoded key Kibana shows once when the key is created.</p>
+                              </div>
+                            {/if}
+                            <label for="cn-es-insecure" class="flex cursor-pointer select-none items-start gap-2">
+                              <Checkbox id="cn-es-insecure" checked={esInsecure} onCheckedChange={(v) => (esInsecure = v === true)} class="mt-px" />
+                              <span class="flex flex-col">
+                                <span class="text-ui-xs text-foreground/75">Accept self-signed certificate</span>
+                                <span class="text-ui-3xs leading-snug text-muted-foreground">For a local server with its demo TLS certificate, like OpenSearch's.</span>
+                              </span>
+                            </label>
 
                             <!-- ── DynamoDB ───────────────────────────────── -->
                           {:else if dbType === "dynamodb"}

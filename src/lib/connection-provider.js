@@ -65,6 +65,8 @@ const ENGINE_SHORT = {
   valkey: 'Valkey',
   dynamodb: 'DynamoDB',
   couchdb: 'CouchDB',
+  elasticsearch: 'Elasticsearch',
+  opensearch: 'OpenSearch',
   cassandra: 'Cassandra',
   firestore: 'Firestore',
   mongodb: 'MongoDB',

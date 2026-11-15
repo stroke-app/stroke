@@ -29,6 +29,8 @@ export const ENGINE_TINT = {
   valkey: "text-sky-500/80",
   dynamodb: "text-blue-500/80",
   couchdb: "text-red-600/80",
+  elasticsearch: "text-teal-500/80",
+  opensearch: "text-sky-600/80",
   mongodb: "text-green-600/80",
   cassandra: "text-sky-600/80",
   firestore: "text-amber-500/80",

@@ -194,7 +194,7 @@ fn client_for(config: &AnyConnectionConfig) -> Result<Client, String> {
             Err("PostHog is queried over its HTTP API and has no shell.".into())
         }
         AnyConnectionConfig::Mongodb(_) => client("mongosh", &["mongosh", "mongo"], MONGOSH_INSTALL),
-        AnyConnectionConfig::Dynamodb(_) | AnyConnectionConfig::Couchdb(_) => {
+        AnyConnectionConfig::Dynamodb(_) | AnyConnectionConfig::Couchdb(_) | AnyConnectionConfig::Elasticsearch(_) => {
             Err("This database has no interactive shell here; use the query editor instead.".into())
         }
     }

@@ -1262,7 +1262,7 @@ pub struct ImportPreview {
 
 const IMPORT_MAX_BYTES: u64 = 256 * 1024 * 1024;
 
-fn read_import(path: &str) -> Result<(String, String), String> {
+pub(crate) fn read_import(path: &str) -> Result<(String, String), String> {
     let p = std::path::Path::new(path);
     let len = std::fs::metadata(p).map_err(|e| format!("Couldn't read the file: {e}"))?.len();
     if len > IMPORT_MAX_BYTES {
