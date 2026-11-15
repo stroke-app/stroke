@@ -16,9 +16,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter};
 
-use super::connection::{require_conn, ActiveConnection, DbState};
+use super::connection::{require_conn, ActiveConnection};
 use super::query::{bind_typed_value, is_bytea_type, pg_insert_meta, validate_typed_value};
 use super::schema::validate_ident;
 

@@ -77,8 +77,21 @@ async function healD1Auth(msg) {
   }
 }
 
+/**
+ * Labs, several connections at once: the key of the database the page is on.
+ * Every call carries it as `__conn` (read by the Rust `Db` extractor), so a
+ * call sent just before a switch still runs on the database it was made for,
+ * whichever pool is in front by the time it lands. Empty: no routing.
+ */
+let _connRoute = ''
+/** @param {string} key */
+export function setConnRoute(key) {
+  _connRoute = key || ''
+}
+
 async function inv(command, args = {}) {
   const t0 = performance.now()
+  if (_connRoute && args && typeof args === 'object' && !('__conn' in args)) args = { ...args, __conn: _connRoute }
   try {
     const r = await invoke(command, args)
     traceIpc(command, performance.now() - t0, true)

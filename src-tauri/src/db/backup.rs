@@ -30,9 +30,9 @@ use std::time::{Duration, Instant};
 use futures::{StreamExt, TryStreamExt};
 use serde::{Deserialize, Serialize};
 use sqlx::{Column, Executor, Row, TypeInfo};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter};
 
-use super::connection::{require_conn, ActiveConnection, DbState};
+use super::connection::{require_conn, ActiveConnection};
 
 /// Cooperative cancel flag for the in-flight backup/restore. The frontend sets
 /// it via `backup_cancel`; the export/import loops poll it and stop early.

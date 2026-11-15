@@ -1,5 +1,5 @@
 use crate::db::connection::Db;
-use super::connection::{require_conn, require_pool, ActiveConnection, DbState};
+use super::connection::{require_conn, require_pool, ActiveConnection};
 use super::schema::validate_ident;
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use futures::TryStreamExt;
@@ -10,7 +10,6 @@ use sqlx::{Column, Decode, Postgres, Row, TypeInfo, ValueRef};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use tauri::State;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize)]

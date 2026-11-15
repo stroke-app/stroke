@@ -17,12 +17,11 @@
 //!   the rows that survive.
 
 use crate::db::connection::Db;
-use super::connection::{require_conn, ActiveConnection, DbState};
+use super::connection::{require_conn, ActiveConnection};
 use super::query::{build_where, RowFilter};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::{PgPool, Row};
-use tauri::State;
 
 /// Hard ceiling on features returned in one fetch, whatever the caller asks for.
 /// Above this the canvas is drawing more points than the viewport has pixels and

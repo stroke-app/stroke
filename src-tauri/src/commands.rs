@@ -365,7 +365,7 @@ use crate::db::{
     list_schemas, list_tables, list_indexes_for, list_enums, list_functions, list_triggers, list_sequences, ping_connection, table_row_counts,
     truncate_table, drop_table, get_table_column_structure, get_schema_column_structure, get_incoming_foreign_keys, get_table_ddl as db_get_table_ddl,
     test_clickhouse_connection, test_connection, test_d1_connection, test_duckdb_connection, test_libsql_connection, test_mssql_connection, test_mysql_connection, test_oracle_connection, test_redis_connection, test_sqlite_connection,
-    update_table_cell, fetch_cell_value, ConnectionConfig, D1Config, DbState, EnumInfo, FunctionInfo, ExplainResult, IndexInfo, LibSqlConfig,
+    update_table_cell, fetch_cell_value, ConnectionConfig, D1Config, EnumInfo, FunctionInfo, ExplainResult, IndexInfo, LibSqlConfig,
     SqlResult, SqliteConfig, TableInfo, TableRowCount, TableRows, TriggerInfo, SequenceInfo,
     ColumnStructureRow, TableColumnStructure, IncomingForeignKey, InsertRowResult, TunnelState,
     apply_table_changes, ApplyChangesResult, RowUpdate,

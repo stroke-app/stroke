@@ -15,9 +15,8 @@ use crate::db::connection::Db;
 use serde::Serialize;
 use serde_json::Value;
 use sqlx::{MySqlPool, PgPool, Row, SqlitePool};
-use tauri::State;
 
-use super::connection::{require_conn, ActiveConnection, D1Config, DbState, LibSqlConfig};
+use super::connection::{require_conn, ActiveConnection, D1Config, LibSqlConfig};
 use super::mysql::my_text_named;
 use super::query::SqlResult;
 use super::sql_util::{esc_backslash_quote, esc_single_quote, quote_backtick, quote_bracket, quote_double};

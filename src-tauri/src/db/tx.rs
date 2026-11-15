@@ -22,7 +22,7 @@ use serde_json::Value;
 use sqlx::{Column, Row, TypeInfo};
 use tauri::State;
 
-use super::connection::{require_conn, ActiveConnection, DbState};
+use super::connection::{require_conn, ActiveConnection};
 use super::query::{
     cell_to_json, is_row_returning_sql, pg_type_label, split_sql_statements, ColumnInfo, SqlResult,
     EXECUTE_SQL_TIMEOUT_MS,

@@ -1,8 +1,7 @@
 use crate::db::connection::Db;
-use super::connection::{require_conn, ActiveConnection, AnyConnectionConfig, DbState};
+use super::connection::{require_conn, ActiveConnection, AnyConnectionConfig};
 use serde::Serialize;
 use sqlx::{MySqlPool, PgPool, Row};
-use tauri::State;
 
 use super::mysql::{my_int, my_text, my_text_named};
 

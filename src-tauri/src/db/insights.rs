@@ -14,13 +14,12 @@
 //!   e.g., `pg_stat_replication` requires a privileged role.
 
 use crate::db::connection::Db;
-use super::connection::{require_conn, ActiveConnection, ClickhouseConfig, DbState};
+use super::connection::{require_conn, ActiveConnection, ClickhouseConfig};
 use super::query::SqlResult;
 use serde::Serialize;
 use serde_json::{Map, Value};
 use sqlx::{Column, MySqlPool, PgPool, Row, SqlitePool};
 use std::collections::HashMap;
-use tauri::State;
 
 /// Returned when Instance Insights is requested on an unsupported engine.
 const UNSUPPORTED: &str =
