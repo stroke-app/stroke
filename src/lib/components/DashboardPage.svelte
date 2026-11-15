@@ -31,6 +31,9 @@
   import LayoutGrid from "@lucide/svelte/icons/layout-grid";
   import Presentation from "@lucide/svelte/icons/presentation";
   import Minimize2 from "@lucide/svelte/icons/minimize-2";
+  import MoreHorizontal from "@lucide/svelte/icons/more-horizontal";
+  import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
+  import SelectMenu from "./SelectMenu.svelte";
 
   let {
     /** @type {import('$lib/stores/connections.js').SavedConnection | null} */
@@ -103,6 +106,18 @@
     createDashboard(n);
     nameInput = "";
     namingOpen = false;
+  }
+
+  /** A new dashboard, named and ready to rename in place. */
+  function newDashboard() {
+    const d = createDashboard(`Dashboard ${$dashboards.length + 1}`);
+    if (d?.id) activeDashboardId.set(d.id);
+    void tick().then(() => startEditName());
+  }
+
+  /** Focus and select a field as it appears. @param {HTMLInputElement} el */
+  function focusSelect(el) {
+    queueMicrotask(() => { el.focus(); el.select(); });
   }
 
   function startEditName() {
@@ -262,176 +277,72 @@
   {/if}
   <!-- Header -->
   {#if !presenting}
+  <!-- Toolbar: which dashboard (searchable), New, one menu for the rest,
+       then View only and Add chart. -->
   <div
-    class="studio-chrome flex h-10 shrink-0 items-center gap-2 border-b border-border bg-panel px-3"
+    class="studio-chrome flex h-12 shrink-0 items-center gap-2 border-b border-border/40 bg-panel px-4"
     data-studio-chrome
   >
-    <LayoutGrid class="size-4 shrink-0 text-muted-foreground" />
-
-    <!-- Dashboard selector -->
-    <div class="relative">
-      <button
-        type="button"
-        class="flex h-8 items-center gap-1.5 rounded-md bg-sidebar-accent/50 px-3 text-ui-sm hover:bg-sidebar-accent"
-        onclick={() => (dashDropdownOpen = !dashDropdownOpen)}
-      >
-        {#if editingName}
-          <span class="flex items-center gap-1">
-            <input
-              type="text"
-              bind:value={editNameInput}
-              class="w-32 bg-transparent font-medium outline-none"
-              onblur={commitEditName}
-              onkeydown={(e) => {
-                if (e.key === "Enter") commitEditName();
-                if (e.key === "Escape") editingName = false;
-              }}
-              onclick={(e) => e.stopPropagation()}
-            />
-            <span
-              role="button"
-              tabindex="0"
-              class="cursor-pointer text-primary"
-              onclick={(e) => { e.stopPropagation(); commitEditName(); }}
-              onkeydown={(e) => { if (e.key === "Enter") commitEditName(); }}
-            >
-              <Check class="size-3 shrink-0" />
-            </span>
-          </span>
-        {:else}
-          <span>{activeDash?.name ?? "Select dashboard"}</span>
-          <ChevronDown class="size-3 shrink-0 text-muted-foreground" />
-        {/if}
-      </button>
-
-      {#if dashDropdownOpen}
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div
-          class="absolute left-0 top-full z-50 mt-1 min-w-[180px] overflow-hidden rounded-[10px] border border-border/60 bg-popover p-1 elevate-2-rim"
-          onmouseleave={() => (dashDropdownOpen = false)}
-        >
-          {#each $dashboards as d (d.id)}
-            <button
-              type="button"
-              class={cn(
-                "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-ui-sm transition-colors hover:bg-accent",
-                d.id === $activeDashboardId
-                  ? "font-medium text-foreground"
-                  : "text-muted-foreground",
-              )}
-              onclick={() => { activeDashboardId.set(d.id); dashDropdownOpen = false; }}
-            >
-              <LayoutGrid class="size-3 shrink-0" />
-              <span class="flex-1 truncate">{d.name}</span>
-              {#if d.id !== $activeDashboardId}
-                <span
-                  role="button"
-                  tabindex="0"
-                  class="cursor-pointer text-muted-foreground hover:text-destructive"
-                  onclick={(e) => { e.stopPropagation(); deleteDashboard(d.id); }}
-                  onkeydown={(e) => { if (e.key === "Enter") { e.stopPropagation(); deleteDashboard(d.id); } }}
-                >
-                  <X class="size-3 shrink-0" />
-                </span>
-              {/if}
-            </button>
-          {/each}
-
-          <div class="border-t border-border/50 px-2 py-1.5">
-            {#if namingOpen}
-              <div class="flex items-center gap-1">
-                <input
-                  type="text"
-                  bind:value={nameInput}
-                  placeholder="Dashboard name…"
-                  class="no-field-frame h-8 flex-1 rounded-md border-0 bg-sidebar-accent/50 px-2.5 text-ui-sm outline-none focus:bg-sidebar-accent"
-                  onkeydown={(e) => {
-                    if (e.key === "Enter") handleCreateDashboard();
-                    if (e.key === "Escape") namingOpen = false;
-                  }}
-                />
-                <button type="button" class="text-primary" onclick={handleCreateDashboard}>
-                  <Check class="size-3 shrink-0" />
-                </button>
-              </div>
-            {:else}
-              <button
-                type="button"
-                class="flex w-full items-center gap-1.5 rounded-md px-1 py-0.5 text-ui-xs text-muted-foreground transition-colors hover:text-foreground"
-                onclick={() => { namingOpen = true; nameInput = ""; }}
-              >
-                <Plus class="size-3 shrink-0" />
-                New
-              </button>
-            {/if}
-          </div>
-        </div>
-      {/if}
-    </div>
-
+    {#if editingName && activeDash}
+      <input
+        type="text"
+        bind:value={editNameInput}
+        aria-label="Dashboard name"
+        class="no-field-frame h-8 w-56 rounded-lg border-0 bg-muted/60 px-2.5 text-ui-sm font-medium text-foreground outline-none focus:bg-muted/80"
+        onblur={commitEditName}
+        onkeydown={(e) => {
+          if (e.key === "Enter") commitEditName();
+          if (e.key === "Escape") editingName = false;
+        }}
+        use:focusSelect
+      />
+    {:else if $dashboards.length}
+      <SelectMenu
+        ariaLabel="Dashboard"
+        triggerClass="h-8 w-56"
+        contentClass="w-[var(--bits-popover-anchor-width)] min-w-[14rem]"
+        searchPlaceholder="Search dashboards"
+        value={$activeDashboardId ?? ""}
+        onValueChange={(v) => activeDashboardId.set(v)}
+        items={$dashboards.map((d) => ({ value: d.id, label: d.name, icon: "layout-grid", hint: `${d.items.length}`, keywords: [d.name] }))}
+      />
+    {/if}
+    <Button variant="outline" size="sm" class="gap-1.5" onclick={newDashboard}>
+      <Plus class="size-3.5 shrink-0" />New
+    </Button>
     {#if activeDash}
-      <!-- Rename -->
-      <button
-        type="button"
-        class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-        title="Rename dashboard"
-        onclick={startEditName}
-      >
-        <Pencil class="size-3.5 shrink-0" />
-      </button>
-
-      <!-- Column count cycle -->
-      <div class="flex items-center gap-px rounded-md border border-border/50">
-        {#each COL_OPTIONS as cols (cols)}
-          <button
-            type="button"
-            class={cn(
-              "flex h-7 w-7 items-center justify-center text-ui-2xs transition-colors first:rounded-l-md last:rounded-r-md",
-              activeDash.columns === cols
-                ? "bg-primary/15 text-primary font-medium"
-                : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
-            )}
-            title="{cols} columns"
-            onclick={() => updateDashboard(activeDash.id, { columns: cols })}
-          >{cols}</button>
-        {/each}
-      </div>
-
-      <!-- Delete -->
-      <button
-        type="button"
-        class={cn(
-          "inline-flex size-7 items-center justify-center rounded-md transition-colors",
-          confirmDeleteDash
-            ? "bg-destructive/15 text-destructive hover:bg-destructive/25"
-            : "text-muted-foreground hover:bg-muted/60 hover:text-destructive",
-        )}
-        title={confirmDeleteDash ? "Click again to confirm delete" : "Delete dashboard"}
-        onclick={handleDeleteDashboard}
-      >
-        <Trash2 class="size-3.5 shrink-0" />
-      </button>
+      <DropdownMenu.DropdownMenu>
+        <DropdownMenu.DropdownMenuTrigger class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground data-[state=open]:bg-accent" aria-label="Dashboard actions">
+          <MoreHorizontal class="size-4 shrink-0" />
+        </DropdownMenu.DropdownMenuTrigger>
+        <DropdownMenu.DropdownMenuContent align="start" class="min-w-48">
+          <DropdownMenu.DropdownMenuItem onclick={startEditName}><Pencil class="size-3.5 shrink-0" />Rename</DropdownMenu.DropdownMenuItem>
+          <DropdownMenu.DropdownMenuSub>
+            <DropdownMenu.DropdownMenuSubTrigger><LayoutGrid class="size-3.5 shrink-0" />Columns</DropdownMenu.DropdownMenuSubTrigger>
+            <DropdownMenu.DropdownMenuSubContent class="min-w-32">
+              {#each [1, 2, 3, 4] as cols (cols)}
+                <DropdownMenu.DropdownMenuItem onclick={() => updateDashboard(activeDash.id, { columns: cols })}>
+                  <span class="flex-1">{cols} {cols === 1 ? "column" : "columns"}</span>
+                  {#if activeDash.columns === cols}<Check class="size-3.5 shrink-0 text-primary" />{/if}
+                </DropdownMenu.DropdownMenuItem>
+              {/each}
+            </DropdownMenu.DropdownMenuSubContent>
+          </DropdownMenu.DropdownMenuSub>
+          <DropdownMenu.DropdownMenuSeparator />
+          <DropdownMenu.DropdownMenuItem variant="destructive" onclick={() => { if (activeDash) deleteDashboard(activeDash.id); }}><Trash2 class="size-3.5 shrink-0" />Delete dashboard</DropdownMenu.DropdownMenuItem>
+        </DropdownMenu.DropdownMenuContent>
+      </DropdownMenu.DropdownMenu>
     {/if}
 
     <div class="ml-auto flex items-center gap-1.5">
       {#if activeDash}
         {#if activeDash.items.length > 0}
-          <button
-            type="button"
-            class="inline-flex h-8 items-center gap-1.5 rounded-md bg-sidebar-accent/50 px-3 text-ui-sm text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
-            title="View only - hide every control (Esc to exit)"
-            onclick={() => setViewOnly(true)}
-          >
-            <Presentation class="size-3.5 shrink-0" />
-            View only
-          </button>
+          <Button variant="ghost" size="sm" class="gap-1.5 text-muted-foreground hover:text-foreground" title="View only: hide every control (Esc to exit)" onclick={() => setViewOnly(true)}>
+            <Presentation class="size-3.5 shrink-0" />View only
+          </Button>
         {/if}
-        <Button
-           size="sm"
-          onclick={() => (pickerOpen = true)}
->
-          <Plus class="size-3.5 shrink-0" />
-          Add Chart
+        <Button size="sm" class="gap-1.5" onclick={() => (pickerOpen = true)}>
+          <Plus class="size-3.5 shrink-0" />Add chart
         </Button>
       {/if}
     </div>
