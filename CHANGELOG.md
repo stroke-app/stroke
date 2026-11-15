@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.10.5] - 2026-11-15
+
+### Changes
+- Polish connection, search, table and keybinding screens; tree options (#201)
+
+
 ## [2.10.4] - 2026-11-15
 
 ### Changes
