@@ -1,4 +1,5 @@
 import { applyCustomTheme, applyNoise, customTheme, customIsGlass } from '$lib/stores/custom-theme.js'
+import { applyImportedTheme } from '$lib/stores/imported-themes.js'
 import { writable, get } from 'svelte/store'
 import { setMode } from 'mode-watcher'
 import {
@@ -808,7 +809,7 @@ let _settingsCache = null
  * chosen theme wins and this is never used again.
  * @returns {ThemeId}
  */
-function systemPreferredTheme() {
+export function systemPreferredTheme() {
   try {
     if (
       typeof window !== 'undefined' &&
@@ -1178,6 +1179,7 @@ function applySettingsNow(settings, root, theme, zoom, dark) {
   // The custom theme's stylesheet (and the grain, which applies to any theme)
   // has to be in place before anything reads the tokens below.
   if (theme === 'custom') applyCustomTheme()
+  if (theme === 'imported') applyImportedTheme()
   else applyNoise(get(customTheme).noise)
   setAttr(root, 'data-theme', theme)
   if (root.classList.contains('dark') !== dark) root.classList.toggle('dark', dark)
@@ -1550,6 +1552,7 @@ export function previewTheme(id) {
   // control faded on its own clock per step, which is the lag on Windows/Linux.
   const resume = document.body ? pauseTransitions() : null
   if (theme === 'custom') applyCustomTheme(undefined, { persist: false })
+  if (theme === 'imported') applyImportedTheme()
   setAttr(root, 'data-theme', theme)
   if (root.classList.contains('dark') !== dark) root.classList.toggle('dark', dark)
   syncWindowGlass(theme)

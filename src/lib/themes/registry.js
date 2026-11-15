@@ -1,8 +1,9 @@
 import { customIsDark } from '$lib/stores/custom-theme.js'
+import { importedIsDark } from '$lib/stores/imported-themes.js'
 
 /** @typedef {'light' | 'dark'} ThemeGroup */
 
-/** @typedef {'matte' | 'light' | 'parchment' | 'clay' | 'claude-light' | 'moss-light' | 'orchid-light' | 'ice' | 'github-light' | 'light-high-contrast' | 'dark' | 'obsidian' | 'claude' | 'moss' | 'orchid' | 'graphite' | 'midnight' | 'vitesse' | 'slate' | 'forest' | 'mono' | 'rose-pine' | 'catppuccin' | 'solarized' | 'dark-high-contrast' | 'hotdog' | 'glass-dark' | 'glass-light' | 'custom'} ThemeId */
+/** @typedef {'matte' | 'light' | 'parchment' | 'clay' | 'claude-light' | 'moss-light' | 'orchid-light' | 'ice' | 'github-light' | 'light-high-contrast' | 'dark' | 'obsidian' | 'claude' | 'moss' | 'orchid' | 'graphite' | 'midnight' | 'vitesse' | 'slate' | 'forest' | 'mono' | 'rose-pine' | 'catppuccin' | 'solarized' | 'dark-high-contrast' | 'hotdog' | 'glass-dark' | 'glass-light' | 'custom' | 'imported'} ThemeId */
 
 /**
  * `hidden` keeps a theme out of the picker until it is found. Only the easter
@@ -113,6 +114,15 @@ export const APP_THEMES = [
     isDark: true,
     group: 'dark',
     preview: { bg: '#2a2438', fg: '#f0f0f0', accent: '#9b7cf0' },
+  },
+  {
+    id: 'imported',
+    name: 'Imported',
+    description: 'A theme added from a file or stroke.click/themes',
+    // Resolved from the imported theme in use (see isDarkTheme).
+    isDark: true,
+    group: 'dark',
+    preview: { bg: '#1e1e2e', fg: '#e6e6e6', accent: '#89b4fa' },
   },
   {
     id: 'glass-dark',
@@ -291,6 +301,7 @@ export function getThemeDefinition(id) {
 /** @param {ThemeId} id */
 export function isDarkTheme(id) {
   if (id === 'custom') return customIsDark()
+  if (id === 'imported') return importedIsDark()
   return getThemeDefinition(id)?.isDark ?? true
 }
 
