@@ -104,6 +104,7 @@
     <DropdownMenu.Item onSelect={run('theme')}>
       <Palette class="size-3.5 shrink-0" />
       <span data-slot="menu-label">Theme…</span>
+      <DropdownMenu.Shortcut command="theme.pick" />
     </DropdownMenu.Item>
     <DropdownMenu.Item onSelect={run('shortcuts')}>
       <Keyboard class="size-3.5 shrink-0" />

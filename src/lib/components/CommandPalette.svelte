@@ -1127,6 +1127,8 @@
               <span data-slot="command-label" class="truncate">Theme…</span>
               <span data-slot="command-trailing" class="flex shrink-0 items-center gap-2">
                 <span class="text-ui-xs text-muted-foreground">{getThemeDefinition($appThemeId)?.name}</span>
+                <!-- The picker has its own chord (Mod+Alt+T): say so where it is found. -->
+                <Command.Shortcut command="theme.pick" />
                 <Icon name="chevron-right" class="size-3.5 shrink-0 text-muted-foreground" />
               </span>
             </Command.Item>
