@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.8.9] - 2026-11-15
+
+### Changes
+- AUR: keep placeholders out of the PKGBUILD header comment (#185)
+
+
 ## [2.8.8] - 2026-11-15
 
 ### Changes
