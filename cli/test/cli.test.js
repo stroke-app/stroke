@@ -83,7 +83,7 @@ test('sqlite engine and bridge, end to end', async () => {
   const file = path.join(tmp(), 'app.db')
   const db = await openSqlite(file)
   await db.query(`create table users (id integer primary key, name text not null); insert into users (name) values ('ada'), ('bob')`)
-  assert.deepEqual(await db.tables(), [{ schema: 'main', name: 'users', kind: 'table' }])
+  assert.deepEqual(await db.tables(), [{ schema: 'main', name: 'users', kind: 'table', rows: 2 }])
   const cols = await db.columns('main', 'users')
   assert.deepEqual(cols.map((c) => [c.name, c.primaryKey, c.nullable]), [['id', true, true], ['name', false, false]])
 
@@ -146,4 +146,39 @@ test('studioUrl keeps the token in the fragment', () => {
   const f = new URLSearchParams(u.hash.slice(1))
   assert.equal(f.get('bridge'), 'http://127.0.0.1:4321')
   assert.equal(f.get('token'), 'abc')
+})
+
+test('sqlite: structure, where, and edits by primary key', async () => {
+  const db = await openSqlite(path.join(tmp(), 'edit.db'))
+  try {
+    await db.query(`create table teams (id integer primary key, name text);
+      create table users (id integer primary key, email text not null default 'x', team integer references teams(id));
+      create unique index users_email on users(email);
+      insert into teams (name) values ('core');
+      insert into users (email, team) values ('a@x.io', 1), ('b@x.io', 1), ('c@x.io', null)`)
+    const t = await db.tables()
+    assert.equal(t.find((x) => x.name === 'users')?.rows, 3)
+
+    const s = await db.structure('main', 'users')
+    assert.equal(s.columns.find((c) => c.name === 'email')?.default, "'x'")
+    assert.ok(s.indexes.some((i) => i.name === 'users_email' && i.unique && i.columns[0] === 'email'))
+    assert.deepEqual(s.foreignKeys.map((f) => [f.columns[0], f.refTable, f.refColumns[0]]), [['team', 'teams', 'id']])
+
+    // A key that matches more than one row changes nothing.
+    await assert.rejects(db.update({ schema: 'main', table: 'users', key: { team: 1 }, set: { team: null } }), /2 rows/)
+    assert.equal((await db.query('select count(*) from users where team = 1')).rows[0][0], 2)
+
+    const filtered = await db.rows({ schema: 'main', table: 'users', limit: 10, offset: 0, where: 'team is not null' })
+    assert.equal(filtered.total, 2)
+
+    assert.equal((await db.update({ schema: 'main', table: 'users', key: { id: 2 }, set: { email: 'bob@x.io', team: null } })).rowCount, 1)
+    assert.equal((await db.insert({ schema: 'main', table: 'users', values: { email: 'd@x.io' } })).rowCount, 1)
+    assert.equal((await db.remove({ schema: 'main', table: 'users', keys: [{ id: 1 }, { id: 3 }] })).rowCount, 2)
+    const left = await db.query('select id, email, team from users order by id')
+    assert.deepEqual(left.rows, [[2, 'bob@x.io', null], [4, 'd@x.io', null]])
+
+    await assert.rejects(db.update({ schema: 'main', table: 'users', key: {}, set: { email: 'z' } }), /primary key/)
+  } finally {
+    await db.close()
+  }
 })
