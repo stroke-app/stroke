@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.14.1] - 2026-11-15
+
+### Changes
+- Hold ⌘Q or press it twice to quit on macOS (#237)
+
+
 ## [2.14.0] - 2026-11-15
 
 ### Changes
