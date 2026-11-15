@@ -1407,6 +1407,10 @@
       // background (prewarm) read them before it was laid out, fell back to
       // black, and stayed black on a light theme until the theme changed.
       applyAppearance()
+      // A hidden WebGL canvas can come back blank (the browser drops its
+      // drawing buffer while it is display:none), and xterm only repaints
+      // rows that change: draw every row again so it never shows empty.
+      if (term) { fit(); term.refresh(0, term.rows - 1) }
       if (phase === 'running' || phase === 'exited') term?.focus()
     }))
   })

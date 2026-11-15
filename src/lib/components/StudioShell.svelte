@@ -3069,17 +3069,20 @@ let rowSearch = $state('')
   let terminalDockHeight = $state(Number(loadLayout().terminalDockHeight) || 260)
   /** @type {HTMLDivElement | null} */
   let terminalDockEl = $state(null)
-  // The dock slides up from the bottom edge with a transform only. While it
-  // moves it lies over the page (absolutely positioned), so the page above
-  // changes size once (at the end of an open, the start of a close) instead of
-  // on every frame, which is what made the animation stutter.
+  // The dock slides up from the bottom edge with a transform only, and the
+  // page above changes size once, at the keypress, never mid-slide: an open
+  // takes its room first and slides into it; a close gives the room back and
+  // slides out over the page. Resizing the page on every frame is what made it
+  // stutter, and resizing it at the end of the slide is what made it jump.
   /** @type {'closed' | 'opening' | 'open' | 'closing'} */
   let terminalDockPhase = $state('closed')
   const terminalDockShown = $derived(terminalDockPhase !== 'closed')
-  const terminalDockOverlay = $derived(terminalDockPhase === 'opening' || terminalDockPhase === 'closing')
+  const terminalDockOverlay = $derived(terminalDockPhase === 'closing')
+  const terminalDockMoving = $derived(terminalDockPhase === 'opening' || terminalDockPhase === 'closing')
   $effect(() => {
     const open = terminalDockOpen
     untrack(() => {
+      if (panelMotionOff()) { terminalDockPhase = open ? 'open' : 'closed'; return }
       if (open) {
         if (terminalDockPhase === 'open') return
         terminalDockPhase = 'opening'
@@ -3991,7 +3994,7 @@ let rowSearch = $state('')
   /** @type {'closed' | 'opening' | 'open' | 'closing'} */
   let aiPanelPhase = $state(untrack(() => (aiSidebarOpen && !aiMode ? 'open' : 'closed')))
   const aiPanelShown = $derived(aiPanelPhase !== 'closed')
-  const aiPanelOverlay = $derived(aiPanelPhase === 'opening' || aiPanelPhase === 'closing')
+  const aiPanelOverlay = $derived(aiPanelPhase === 'closing')
   let aiPanelMode = untrack(() => aiMode)
   $effect(() => {
     const want = aiSidebarOpen && !aiMode
@@ -9703,7 +9706,7 @@ let rowSearch = $state('')
   <div class="flex min-h-0 min-w-0 flex-1 flex-col">
 {#if !aiMode && IS_MAC}{@render titleBar()}{/if}
   <div class="relative flex min-h-0 flex-1 overflow-hidden">
-  <main class="relative flex min-h-0 min-w-0 flex-1 flex-col bg-panel" data-studio-region="main">
+  <main class={cn("relative flex min-h-0 min-w-0 flex-1 flex-col bg-panel", terminalDockMoving && "overflow-hidden")} data-studio-region="main">
     {#if accountPageOpen && !connection}
       <div class="absolute inset-0 z-30 flex flex-col bg-panel">
         <div class="flex h-9 shrink-0 items-center border-b border-border/50 px-2">
