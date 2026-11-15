@@ -649,6 +649,50 @@ pub async fn couchdb_request(
     crate::db::couchdb::request(&cfg, &method, &path, body.as_ref()).await
 }
 
+// ── Elasticsearch / OpenSearch ────────────────────────────────────────────────
+
+/// Connection test; answers which engine and version the server is.
+#[tauri::command]
+pub async fn test_elastic(config: crate::db::elastic::EsConfig) -> Result<crate::db::elastic::ServerInfo, String> {
+    crate::db::elastic::ping(&config).await
+}
+
+#[tauri::command]
+pub async fn connect_elastic_db(state: State<'_, DbState>, config: crate::db::elastic::EsConfig) -> Result<(), String> {
+    crate::db::connection::connect_elastic(state, config).await
+}
+
+/// One REST call (path allowlisted) on the active connection.
+#[tauri::command]
+pub async fn elastic_request(
+    state: State<'_, DbState>,
+    method: String,
+    path: String,
+    body: Option<serde_json::Value>,
+) -> Result<serde_json::Value, String> {
+    let cfg = match require_conn(&state)? {
+        ActiveConnection::Doc(crate::db::docdb::DocConn::Elastic(cfg)) => cfg,
+        _ => return Err("Not connected to Elasticsearch or OpenSearch".into()),
+    };
+    crate::db::elastic::request(&cfg, &method, &path, body.as_ref()).await
+}
+
+/// Import a file into an index (the preview reuses `mongo_import_preview`).
+#[tauri::command]
+pub async fn elastic_import(
+    state: State<'_, DbState>,
+    index: String,
+    path: String,
+    format: Option<String>,
+    infer: Option<bool>,
+) -> Result<crate::db::mongo::ImportResult, String> {
+    let cfg = match require_conn(&state)? {
+        ActiveConnection::Doc(crate::db::docdb::DocConn::Elastic(cfg)) => cfg,
+        _ => return Err("Not connected to Elasticsearch or OpenSearch".into()),
+    };
+    crate::db::elastic::import_file(&cfg, &index, &path, format.as_deref().unwrap_or(""), infer.unwrap_or(true)).await
+}
+
 // ── MongoDB ───────────────────────────────────────────────────────────────────
 
 #[tauri::command]

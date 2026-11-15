@@ -242,7 +242,7 @@
   const pageItems = $derived([
     { icon: 'key-round',       label: 'Redis keyspace',                action: onopenredis,      show: connected && isRedis, value: 'redis keyspace keys browse key value store console cli' },
     { icon: 'database',        label: 'DynamoDB tables',               action: onopendynamo,     show: connected && isDynamo, value: 'dynamodb tables items scan query partiql aws' },
-    { icon: 'database',        label: 'Browse documents',              action: onopendocs,       show: connected && isDoc, value: 'browse collections documents mongodb mongo couchdb cassandra firestore tables rows' },
+    { icon: 'database',        label: 'Browse documents',              action: onopendocs,       show: connected && isDoc, value: 'browse collections documents mongodb mongo couchdb elasticsearch opensearch indices cassandra firestore tables rows' },
     { icon: 'table-2',         label: 'Table data',       keys: '⌘⇧D', action: onopentable,      show: connected && !isKeyValue, value: 'open table data browser rows' },
     { icon: 'search',          label: 'Find in database', keys: '⌘⇧G', action: onglobalsearch,   show: connected && !isKeyValue, value: 'find search rows data across all tables global database' },
     { icon: 'terminal',        label: 'SQL editor',       keys: '⌘⇧S', action: onopensql,        show: connected && (!isKeyValue || isDynamo || isDoc), value: 'open sql editor query console' },
@@ -1070,7 +1070,7 @@
 
           <!-- ── Drill-in: Docker ───────────────────────────────────── -->
           <Command.Group heading="Launch">
-            <Command.Item value="docker containers launch run postgresql mysql mariadb mongodb redis valkey sql server oracle cockroachdb clickhouse cassandra couchdb dynamodb libsql pgvector postgis timescale" onSelect={() => navigate('docker')}>
+            <Command.Item value="docker containers launch run postgresql mysql mariadb mongodb redis valkey sql server oracle cockroachdb clickhouse cassandra couchdb elasticsearch opensearch dynamodb libsql pgvector postgis timescale" onSelect={() => navigate('docker')}>
               <DbIcon id="docker" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
               <span data-slot="command-label" class="truncate">Docker</span>
               <Icon name="chevron-right" class="size-3.5 shrink-0 text-muted-foreground" />

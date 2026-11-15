@@ -3,7 +3,7 @@
   import { onMount, onDestroy, untrack, tick } from 'svelte'
   import { fade } from 'svelte/transition'
   import { traceInteraction } from '$lib/perf.js'
-  import { couchAdapter, cassandraAdapter, firestoreAdapter, mongoAdapter, uriHost } from '$lib/doc-adapters.js'
+  import { couchAdapter, cassandraAdapter, elasticAdapter, firestoreAdapter, mongoAdapter, uriHost } from '$lib/doc-adapters.js'
   import { queryLanguageFor } from '$lib/ai-query-languages.js'
   import { setQueryEngine } from '$lib/ai.js'
   import { revealApp, isRevealed } from '$lib/app-reveal.js'
@@ -325,6 +325,9 @@
     connectRedis,
     connectDynamo,
     connectCouch,
+    connectElastic,
+    elasticRequest,
+    elasticImport,
     couchRequest,
     connectCassandra,
     connectFirestore,
@@ -592,7 +595,7 @@
   const isRedis = $derived(dbType === 'redis')
   const isDynamo = $derived(dbType === 'dynamodb')
   /** Document / wide-column engines browsed with DocBrowser. */
-  const isDoc = $derived(dbType === 'couchdb' || dbType === 'cassandra' || dbType === 'firestore' || dbType === 'mongodb')
+  const isDoc = $derived(dbType === 'couchdb' || dbType === 'cassandra' || dbType === 'firestore' || dbType === 'mongodb' || dbType === 'elasticsearch' || dbType === 'opensearch')
   /** Key-value and document engines have their own page and none of the relational UI. */
   const isKV = $derived(isRedis || isDynamo || isDoc)
   // AI replies on a NoSQL connection get Run buttons on blocks in its own language.
@@ -602,6 +605,7 @@
   /** The engine's adapter for DocBrowser. */
   const docAdapter = $derived(
     dbType === 'couchdb' ? couchAdapter(couchRequest)
+    : dbType === 'elasticsearch' || dbType === 'opensearch' ? elasticAdapter(elasticRequest, dbType, { pick: pickImportFile, preview: mongoImportPreview, run: elasticImport })
     : dbType === 'mongodb' ? mongoAdapter({ collections: mongoCollections, describe: mongoDescribe, find: mongoFind, count: mongoCount, save: mongoSave, remove: mongoDelete, explain: mongoExplain, schema: mongoSchema, indexes: { list: mongoIndexes, create: mongoCreateIndex, drop: mongoDropIndex }, updateField: mongoUpdateField, aggregate: mongoAggregate, import: { pick: pickImportFile, preview: mongoImportPreview, run: mongoImport } })
     : dbType === 'firestore' ? firestoreAdapter(firestoreRequest, { projectId: connection?.projectId ?? '', database: connection?.database ?? '' })
     : dbType === 'cassandra' ? cassandraAdapter({ tables: cassandraTables, describe: cassandraDescribe, page: cassandraPage, save: cassandraSave, remove: cassandraDelete })
@@ -7373,7 +7377,7 @@ let rowSearch = $state('')
     // open the keyspace workspace instead of the welcome tab + tables sidebar.
     const fam = engineFamily(conn.type)
     const connIsDynamo = fam === 'dynamodb'
-    const connIsDoc = fam === 'couchdb' || fam === 'cassandra' || fam === 'firestore' || fam === 'mongodb'
+    const connIsDoc = fam === 'couchdb' || fam === 'cassandra' || fam === 'firestore' || fam === 'mongodb' || fam === 'elasticsearch' || fam === 'opensearch'
     const connIsRedis = fam === 'redis'
     docCollection = ''
     dynamoTable = ''
@@ -7627,6 +7631,7 @@ let rowSearch = $state('')
       else if (engineFamily(last.type) === 'redis') await withTimeout(connectRedis(last))
       else if (last.type === 'dynamodb') await withTimeout(connectDynamo(last))
       else if (last.type === 'couchdb') await withTimeout(connectCouch(last))
+      else if (last.type === 'elasticsearch' || last.type === 'opensearch') await withTimeout(connectElastic(last))
       else if (last.type === 'cassandra') await withTimeout(connectCassandra(last))
       else if (last.type === 'firestore') await withTimeout(connectFirestore(last))
       else if (last.type === 'mongodb') await withTimeout(connectMongo(last))
@@ -8037,6 +8042,7 @@ let rowSearch = $state('')
     else if (engineFamily(conn.type) === 'redis') await connectRedis(conn)
     else if (conn.type === 'dynamodb') await connectDynamo(conn)
     else if (conn.type === 'couchdb') await connectCouch(conn)
+    else if (conn.type === 'elasticsearch' || conn.type === 'opensearch') await connectElastic(conn)
     else if (conn.type === 'cassandra') await connectCassandra(conn)
     else if (conn.type === 'firestore') await connectFirestore(conn)
     else if (conn.type === 'mongodb') await connectMongo(conn)

@@ -376,6 +376,23 @@ const MONGO_WRITE_RE = /\.\s*(insert|insertOne|insertMany|update|updateOne|updat
 /** Firestore and CouchDB shell-style writes. */
 const DOC_WRITE_RE = /\.\s*(add|set|update|delete|insert|put|remove|bulkDocs|destroy|create)\s*\(/
 
+/** Elasticsearch endpoints that only read even when sent as a POST. */
+const ES_POST_READ_RE = /(^|\/)_(search|count|msearch|mget|explain|field_caps|validate|analyze|sql|plugins|pit|search_shards|termvectors)(\/|\?|$)/
+
+/**
+ * A Dev Tools request that changes something: PUT, DELETE, or a POST to an
+ * endpoint other than search/count/SQL. Shell-style `index.search()` reads.
+ * @param {string} text
+ */
+function isEsWrite(text) {
+  const m = /^\s*(GET|HEAD|POST|PUT|DELETE|PATCH)\s+(\S+)/i.exec(text)
+  if (!m) return false
+  const method = m[1].toUpperCase()
+  if (method === 'GET' || method === 'HEAD') return false
+  if (method === 'POST') return !ES_POST_READ_RE.test(m[2].replace(/^\//, ''))
+  return true
+}
+
 /**
  * `isWriteSql`, knowing which language it is reading. The AI runs every engine
  * through one `execute_sql` tool, and the SQL rules alone let some writes
@@ -397,6 +414,9 @@ export function isWriteFor(sql, engine) {
     case 'firestore':
     case 'couchdb':
       return DOC_WRITE_RE.test(text)
+    case 'elasticsearch':
+    case 'opensearch':
+      return isEsWrite(text)
     default:
       return false
   }

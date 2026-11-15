@@ -129,6 +129,10 @@ const TEMPLATES: &[Template] = &[
     Template { id: "redis", label: "Redis 7", engine: "redis", icon: "redis", group: "Document and key-value", image: "redis:7-alpine", note: "", port: 6379, host_port: 6380, env: &[], cmd: &[], user: "", password: "", database: "", ready: Ready::Log("Ready to accept connections", 1), wait_secs: 60 },
     Template { id: "valkey", label: "Valkey 8", engine: "valkey", icon: "valkey", group: "Document and key-value", image: "valkey/valkey:8-alpine", note: "", port: 6379, host_port: 6381, env: &[], cmd: &[], user: "", password: "", database: "", ready: Ready::Log("Ready to accept connections", 1), wait_secs: 60 },
     Template { id: "couchdb", label: "CouchDB 3", engine: "couchdb", icon: "couchdb", group: "Document and key-value", image: "couchdb:3", note: "", port: 5984, host_port: 5985, env: &["COUCHDB_USER=admin", "COUCHDB_PASSWORD=couchdb"], cmd: &[], user: "admin", password: "couchdb", database: "", ready: Ready::Log("Apache CouchDB has started", 1), wait_secs: 90 },
+    // Security off and one node: a local sandbox over plain HTTP. The heap is
+    // capped so the default (half the machine's memory) doesn't swamp a laptop.
+    Template { id: "elasticsearch", label: "Elasticsearch 8", engine: "elasticsearch", icon: "elasticsearch", group: "Search", image: "docker.elastic.co/elasticsearch/elasticsearch:8.15.3", note: "Security off, single node", port: 9200, host_port: 9201, env: &["discovery.type=single-node", "xpack.security.enabled=false", "ES_JAVA_OPTS=-Xms512m -Xmx512m"], cmd: &[], user: "", password: "", database: "", ready: Ready::Http("/_cluster/health?wait_for_status=yellow&timeout=1s"), wait_secs: 180 },
+    Template { id: "opensearch", label: "OpenSearch 2", engine: "opensearch", icon: "opensearch", group: "Search", image: "opensearchproject/opensearch:2.17.1", note: "Security off, single node", port: 9200, host_port: 9202, env: &["discovery.type=single-node", "DISABLE_SECURITY_PLUGIN=true", "DISABLE_INSTALL_DEMO_CONFIG=true", "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"], cmd: &[], user: "", password: "", database: "", ready: Ready::Http("/_cluster/health?wait_for_status=yellow&timeout=1s"), wait_secs: 180 },
     Template { id: "dynamodb", label: "DynamoDB Local", engine: "dynamodb", icon: "dynamodb", group: "Document and key-value", image: "amazon/dynamodb-local:latest", note: "", port: 8000, host_port: 8001, env: &[], cmd: &[], user: "", password: "", database: "", ready: Ready::Http("/"), wait_secs: 60 },
     Template { id: "cassandra", label: "Cassandra 5", engine: "cassandra", icon: "cassandra", group: "Document and key-value", image: "cassandra:5", note: "Starts in about a minute", port: 9042, host_port: 9043, env: &[], cmd: &[], user: "", password: "", database: "", ready: Ready::Log("Starting listening for CQL clients", 1), wait_secs: 240 },
     Template { id: "clickhouse", label: "ClickHouse", engine: "clickhouse", icon: "clickhouse", group: "Analytics", image: "clickhouse/clickhouse-server:latest", note: "", port: 8123, host_port: 8124, env: &["CLICKHOUSE_USER=default", "CLICKHOUSE_PASSWORD=clickhouse", "CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1"], cmd: &[], user: "default", password: "clickhouse", database: "default", ready: Ready::Http("/ping"), wait_secs: 90 },
@@ -173,6 +177,7 @@ fn connection_for(t: &Template, port: u16) -> Value {
         "mongodb" => serde_json::json!({ "type": "mongodb", "name": name, "uri": format!("mongodb://{}:{}@{host}:{port}/?authSource=admin", t.user, t.password), "database": t.database }),
         "redis" | "valkey" => serde_json::json!({ "type": t.engine, "name": name, "host": host, "port": port, "db": 0 }),
         "couchdb" => serde_json::json!({ "type": "couchdb", "name": name, "url": format!("http://{host}:{port}"), "user": t.user, "password": t.password }),
+        "elasticsearch" | "opensearch" => serde_json::json!({ "type": t.engine, "name": name, "url": format!("http://{host}:{port}"), "insecure": false }),
         "dynamodb" => serde_json::json!({ "type": "dynamodb", "name": name, "region": "us-east-1", "endpoint": format!("http://{host}:{port}"), "accessKeyId": "local", "secretAccessKey": "local" }),
         "cassandra" => serde_json::json!({ "type": "cassandra", "name": name, "hosts": format!("{host}:{port}") }),
         "libsql" => serde_json::json!({ "type": "libsql", "name": name, "url": format!("http://{host}:{port}") }),
@@ -340,6 +345,7 @@ fn engine_port(engine: &str) -> u16 {
         "oracle" => 1521,
         "mongodb" => 27017,
         "couchdb" => 5984,
+        "elasticsearch" | "opensearch" => 9200,
         "cassandra" => 9042,
         "dynamodb" => 8000,
         _ => 5432,
@@ -383,6 +389,13 @@ fn engine_for_image(image: &str) -> Option<&'static str> {
     if i.contains("couchdb") {
         return Some("couchdb");
     }
+    // Dashboards and Kibana share the names but are UIs, not the server.
+    if i.contains("opensearch") && !i.contains("dashboards") {
+        return Some("opensearch");
+    }
+    if i.contains("elasticsearch") {
+        return Some("elasticsearch");
+    }
     if i.contains("cassandra") || i.contains("scylla") {
         return Some("cassandra");
     }
@@ -408,6 +421,7 @@ fn engine_for_ports(ports: &Value) -> Option<&'static str> {
             1521 => "oracle",
             27017 => "mongodb",
             5984 => "couchdb",
+            9200 => "elasticsearch",
             9042 => "cassandra",
             _ => continue,
         };
@@ -478,6 +492,15 @@ fn credentials(engine: &str, env: &std::collections::HashMap<String, String>) ->
             String::new(),
         ),
         "cassandra" | "dynamodb" => (String::new(), String::new(), String::new()),
+        // The official images log in as `elastic` / `admin` with these set.
+        "elasticsearch" => match get(&["ELASTIC_PASSWORD"]) {
+            Some(p) => ("elastic".into(), p, String::new()),
+            None => (String::new(), String::new(), String::new()),
+        },
+        "opensearch" => match get(&["OPENSEARCH_INITIAL_ADMIN_PASSWORD"]) {
+            Some(p) if get(&["DISABLE_SECURITY_PLUGIN"]).as_deref() != Some("true") => ("admin".into(), p, String::new()),
+            _ => (String::new(), String::new(), String::new()),
+        },
         _ => {
             let user = get(&["POSTGRES_USER", "PGUSER"]).unwrap_or_else(|| "postgres".into());
             let db = get(&["POSTGRES_DB", "PGDATABASE"]).unwrap_or_else(|| user.clone());
@@ -665,6 +688,9 @@ mod tests {
         assert_eq!(engine_for_image("mongo:7"), Some("mongodb"));
         assert_eq!(engine_for_image("mongo-express"), None);
         assert_eq!(engine_for_image("couchdb:3"), Some("couchdb"));
+        assert_eq!(engine_for_image("docker.elastic.co/elasticsearch/elasticsearch:8.15.3"), Some("elasticsearch"));
+        assert_eq!(engine_for_image("opensearchproject/opensearch:2"), Some("opensearch"));
+        assert_eq!(engine_for_image("opensearchproject/opensearch-dashboards:2"), None);
         assert_eq!(engine_for_image("scylladb/scylla"), Some("cassandra"));
         assert_eq!(engine_for_image("amazon/dynamodb-local"), Some("dynamodb"));
         assert_eq!(engine_for_image("timescale/timescaledb:latest-pg16"), Some("postgres"));

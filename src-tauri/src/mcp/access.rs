@@ -46,7 +46,7 @@ impl Dialect {
             "oracle" => Self::Oracle,
             "mongodb" => Self::Mongo,
             "redis" => Self::Redis,
-            "couchdb" | "firestore" => Self::ReadOnlyDoc,
+            "couchdb" | "firestore" | "elasticsearch" | "opensearch" => Self::ReadOnlyDoc,
             _ => Self::Sql,
         }
     }

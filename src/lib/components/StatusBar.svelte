@@ -269,7 +269,7 @@
   )
   // Document and key-value stores (other than Redis, which has numbered dbs)
   // have no "current database" to show or switch; the chip only said "No database".
-  const NO_DB_ENGINES = new Set(['dynamodb', 'couchdb', 'cassandra', 'firestore', 'valkey', 'mongodb'])
+  const NO_DB_ENGINES = new Set(['dynamodb', 'couchdb', 'elasticsearch', 'opensearch', 'cassandra', 'firestore', 'valkey', 'mongodb'])
   const hideDbChip = $derived(NO_DB_ENGINES.has(connection?.type ?? '') && !currentDbLabel)
   /** Key of the active db, used to mark the current row. */
   const currentDbKey = $derived(currentDatabaseKey(connection))
@@ -323,6 +323,8 @@
       : connection?.type === 'valkey' ? 'Valkey'
       : connection?.type === 'dynamodb' ? 'DynamoDB'
       : connection?.type === 'couchdb' ? 'CouchDB'
+      : connection?.type === 'elasticsearch' ? 'Elasticsearch'
+      : connection?.type === 'opensearch' ? 'OpenSearch'
       : connection?.type === 'cassandra' ? 'Cassandra'
       : connection?.type === 'firestore' ? 'Firestore'
       : connection?.type === 'mongodb' ? 'MongoDB'

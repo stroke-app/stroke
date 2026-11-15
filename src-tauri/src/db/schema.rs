@@ -2763,6 +2763,7 @@ pub async fn list_tables_on_conn(
         AnyConnectionConfig::Redis(c) => super::redis::list_tables(&c).await.map(to_names),
         AnyConnectionConfig::Dynamodb(c) => super::dynamodb::list_tables(&c).await.map(to_names),
         AnyConnectionConfig::Couchdb(c) => super::couchdb::list_databases(&c).await,
+        AnyConnectionConfig::Elasticsearch(c) => Ok(super::elastic::list_indices(&c).await?.into_iter().map(|i| i.name).collect()),
         AnyConnectionConfig::Mongodb(_) => Ok(Vec::new()),
         AnyConnectionConfig::Duckdb(c) => {
             let h = super::connection::open_duckdb(&c).await?;
@@ -2816,7 +2817,10 @@ pub async fn get_table_ddl_on_conn(
         AnyConnectionConfig::Clickhouse(c) => super::clickhouse::get_ddl(&c, &schema, &table).await,
         AnyConnectionConfig::Posthog(c) => super::posthog::get_ddl(&c, &table).await,
         AnyConnectionConfig::Redis(c) => super::redis::get_ddl(&c, &table).await,
-        AnyConnectionConfig::Dynamodb(_) | AnyConnectionConfig::Couchdb(_) | AnyConnectionConfig::Mongodb(_) => Ok(String::new()),
+        AnyConnectionConfig::Dynamodb(_)
+        | AnyConnectionConfig::Couchdb(_)
+        | AnyConnectionConfig::Elasticsearch(_)
+        | AnyConnectionConfig::Mongodb(_) => Ok(String::new()),
         AnyConnectionConfig::Duckdb(c) => {
             let h = super::connection::open_duckdb(&c).await?;
             super::duckdb::get_ddl(&h, &table).await

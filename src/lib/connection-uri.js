@@ -329,6 +329,8 @@ export function parseOracleUri(uri) {
  */
 export function parseConnectionUri(type, uri) {
   if (type === 'couchdb') return parseCouchUri(uri)
+  // Same shape: a server URL with the login moved to its own fields.
+  if (type === 'elasticsearch' || type === 'opensearch') return parseCouchUri(uri)
   if (type === 'cassandra') return parseCassandraUri(uri)
   if (type === 'sqlite') return parseSqliteUri(uri)
   if (type === 'mysql') return parseMysqlUri(uri)
@@ -526,6 +528,9 @@ function detectByScheme(scheme, s, host, port) {
       if (/\.turso\.io$/i.test(host) || scheme.startsWith('ws')) return { type: 'libsql', uriType: 'libsql' }
       if (/clickhouse/i.test(host) || port === 8123 || port === 8443) return { type: 'clickhouse', uriType: 'clickhouse' }
       if (/couch|cloudant/i.test(host) || port === 5984) return { type: 'couchdb', uriType: 'couchdb' }
+      // Amazon OpenSearch Service domains end in .es.amazonaws.com.
+      if (/opensearch|\.(es|aoss)\.amazonaws\.com$/i.test(host)) return { type: 'opensearch', uriType: 'couchdb' }
+      if (/elastic|\.es\.[a-z0-9-]+\.(gcp|azure|aws)\./i.test(host) || port === 9200 || port === 9243) return { type: 'elasticsearch', uriType: 'couchdb' }
       return null
     case 'duckdb':
       return { type: 'duckdb', uriType: 'sqlite' }
@@ -700,7 +705,9 @@ export function connectionUrl(p) {
       return p.uri || ''
     case 'libsql':
       return p.url ? `${p.url}${p.authToken ? `${p.url.includes('?') ? '&' : '?'}authToken=${enc(p.authToken)}` : ''}` : ''
-    case 'couchdb': {
+    case 'couchdb':
+    case 'elasticsearch':
+    case 'opensearch': {
       const m = /^(https?:\/\/)(.*)$/i.exec(p.url || '')
       return m ? `${m[1]}${auth(p.user, p.password)}${m[2]}` : p.url || ''
     }

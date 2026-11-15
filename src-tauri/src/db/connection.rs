@@ -341,6 +341,8 @@ pub enum AnyConnectionConfig {
     Dynamodb(crate::db::dynamodb::DynamoConfig),
     #[serde(rename = "couchdb")]
     Couchdb(crate::db::couchdb::CouchConfig),
+    #[serde(rename = "elasticsearch", alias = "opensearch")]
+    Elasticsearch(crate::db::elastic::EsConfig),
     #[serde(rename = "duckdb")]
     Duckdb(DuckdbConfig),
     #[serde(rename = "mssql")]
@@ -1557,6 +1559,11 @@ pub async fn connect_firestore(state: State<'_, DbState>, config: crate::db::fir
 pub async fn connect_couchdb(state: State<'_, DbState>, config: crate::db::couchdb::CouchConfig) -> Result<(), String> {
     crate::db::couchdb::ping(&config).await?;
     set_conn(&state, Some(ActiveConnection::Doc(crate::db::docdb::DocConn::Couch(config))))
+}
+
+pub async fn connect_elastic(state: State<'_, DbState>, config: crate::db::elastic::EsConfig) -> Result<(), String> {
+    let config = crate::db::elastic::connect(config).await?;
+    set_conn(&state, Some(ActiveConnection::Doc(crate::db::docdb::DocConn::Elastic(config))))
 }
 
 // ── Redis connect / test ──────────────────────────────────────────────────────

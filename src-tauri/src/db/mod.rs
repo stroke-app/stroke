@@ -17,6 +17,7 @@ pub mod objects;
 pub mod redis;
 pub mod dynamodb;
 pub mod couchdb;
+pub mod elastic;
 pub mod cassandra;
 pub mod firestore;
 pub mod mongo;

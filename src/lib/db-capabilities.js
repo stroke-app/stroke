@@ -8,7 +8,7 @@
  * no triggers." These flags let the UI say *why* a section is empty ("Triggers
  * require PostgreSQL") and let callers skip pointless round-trips entirely.
  *
- * @typedef {'postgres'|'mysql'|'sqlite'|'d1'|'libsql'|'clickhouse'|'duckdb'|'mssql'|'oracle'|'redis'|'dynamodb'|'couchdb'|'cassandra'|'firestore'|'mongodb'|'posthog'} Engine
+ * @typedef {'postgres'|'mysql'|'sqlite'|'d1'|'libsql'|'clickhouse'|'duckdb'|'mssql'|'oracle'|'redis'|'dynamodb'|'couchdb'|'elasticsearch'|'opensearch'|'cassandra'|'firestore'|'mongodb'|'posthog'} Engine
  */
 
 /**
@@ -96,6 +96,8 @@ const ENGINE_LABEL = /** @type {Record<string, string>} */ ({
   valkey: 'Valkey',
   dynamodb: 'DynamoDB',
   couchdb: 'CouchDB',
+  elasticsearch: 'Elasticsearch',
+  opensearch: 'OpenSearch',
   cassandra: 'Cassandra',
   firestore: 'Firestore',
   mongodb: 'MongoDB',
@@ -125,7 +127,7 @@ export function unsupportedReason(featureLabel, feature) {
  * this set.
  * @type {Set<string>}
  */
-export const KEY_VALUE_ENGINES = new Set(['redis', 'dynamodb', 'couchdb', 'cassandra', 'firestore', 'mongodb'])
+export const KEY_VALUE_ENGINES = new Set(['redis', 'dynamodb', 'couchdb', 'cassandra', 'firestore', 'mongodb', 'elasticsearch', 'opensearch'])
 
 /** @param {string | null | undefined} engine */
 export function isKeyValue(engine) {

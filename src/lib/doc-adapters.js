@@ -1,5 +1,5 @@
 // Per-engine adapters for DocBrowser.svelte: the one page that browses and
-// edits CouchDB, Cassandra and Firestore. Each adapter turns that engine's API
+// edits CouchDB, Cassandra, Firestore, MongoDB and Elasticsearch/OpenSearch. Each adapter turns that engine's API
 // into the same few verbs (list collections, load a page, save, delete). The
 // API calls are injected so the logic is unit-tested without Tauri.
 
@@ -262,6 +262,157 @@ export function mongoAdapter(api) {
     updateField: api.updateField ? (coll, doc, path, value, o) => /** @type {any} */ (api.updateField)(coll, doc._id, path, value, o) : undefined,
     aggregate: api.aggregate,
     import: api.import,
+  }
+}
+
+// ── Elasticsearch / OpenSearch ──────────────────────────────────────────────
+
+/** `from + size` past this is refused by the server (index.max_result_window). */
+export const ES_WINDOW = 10_000
+
+/**
+ * The browser's filter as a query: empty matches everything, `{...}` is Query
+ * DSL, anything else is a query string (`level:error AND ms:>100`).
+ * @param {string} filter
+ */
+export function esQuery(filter) {
+  const f = filter.trim()
+  if (!f) return { match_all: {} }
+  if (f.startsWith('{')) {
+    let q
+    try {
+      q = JSON.parse(f)
+    } catch (e) {
+      throw new Error(`The filter starts with { so it's read as Query DSL, which must be JSON: ${e instanceof Error ? e.message : e}`)
+    }
+    // Accept a whole search body as well as the query inside it.
+    return q && typeof q === 'object' && 'query' in q ? q.query : q
+  }
+  return { query_string: { query: f } }
+}
+
+/**
+ * `field:desc, other` or JSON (`[{"ts": "desc"}]`) as a search `sort`.
+ * @param {string | undefined} sort
+ */
+export function esSort(sort) {
+  const s = (sort ?? '').trim()
+  if (!s) return undefined
+  if (s.startsWith('[') || s.startsWith('{')) {
+    try {
+      return JSON.parse(s)
+    } catch (e) {
+      throw new Error(`Sort isn't valid JSON: ${e instanceof Error ? e.message : e}`)
+    }
+  }
+  return s.split(',').map((p) => p.trim()).filter(Boolean).map((p) => {
+    const [field, dir] = p.split(':').map((x) => x.trim())
+    return dir ? { [field]: { order: dir.toLowerCase() === 'desc' ? 'desc' : 'asc' } } : field
+  })
+}
+
+/**
+ * A hit as a browser document: `_id` and the source. The version fields used
+ * for safe saves ride along as non-enumerable properties, so they don't show
+ * as columns or in the editor.
+ * @param {any} h
+ */
+export function esDoc(h) {
+  const doc = { _id: h._id, ...(h._source ?? {}) }
+  Object.defineProperty(doc, '__es', { value: { seq: h._seq_no, term: h._primary_term }, enumerable: false })
+  return doc
+}
+
+/** @param {Record<string, any>} doc */
+function esSource(doc) {
+  const { _id, _index, _score, ...src } = doc
+  return src
+}
+
+/**
+ * @param {(method: 'GET'|'POST'|'PUT'|'DELETE', path: string, body?: any) => Promise<any>} req
+ * @param {'elasticsearch' | 'opensearch'} [flavor]
+ * @param {DocAdapter['import']} [importer]
+ * @returns {DocAdapter}
+ */
+export function elasticAdapter(req, flavor = 'elasticsearch', importer) {
+  return {
+    engine: flavor,
+    noun: { collection: 'Index', collections: 'Indices', item: 'Document', items: 'documents' },
+    consoleLabel: 'Query DSL',
+    filterPlaceholder: 'level:error AND ms:>100   or   {"term": {"level": "error"}}',
+    filterHint: 'A query string (Lucene syntax), or Query DSL as JSON; empty matches every document',
+    options: [{ key: 'sort', label: 'Sort', placeholder: '@timestamp:desc' }],
+
+    async listCollections() {
+      const rows = await req('GET', '_cat/indices?format=json&h=index&s=index')
+      return rows.map((/** @type {any} */ r) => String(r.index)).filter((/** @type {string} */ n) => !n.startsWith('.'))
+    },
+
+    async describe(index) {
+      const [stats] = await req('GET', `_cat/indices/${enc(index)}?format=json&h=docs.count,store.size,health,pri,rep`)
+      const mapping = await req('GET', `${enc(index)}/_mapping`).catch(() => ({}))
+      const props = Object.values(mapping)[0]?.mappings?.properties ?? {}
+      const fields = Object.keys(props).length
+      return {
+        keys: ['_id'],
+        summary: [
+          `${Number(stats?.['docs.count'] ?? 0).toLocaleString()} docs`,
+          `${fields} ${fields === 1 ? 'field' : 'fields'}`,
+          ...(stats?.['store.size'] ? [stats['store.size']] : []),
+          ...(stats?.health ? [stats.health] : []),
+        ],
+      }
+    },
+
+    async load(index, { cursor, filter, size = PAGE_SIZE, sort }) {
+      const from = Number(cursor) || 0
+      const take = Math.min(size, ES_WINDOW - from)
+      if (take <= 0) return { docs: [], cursor: null }
+      /** @type {Record<string, any>} */
+      const body = { query: esQuery(filter), from, size: take, seq_no_primary_term: true }
+      const s = esSort(sort)
+      if (s) body.sort = s
+      const out = await req('POST', `${enc(index)}/_search`, body)
+      const hits = out.hits?.hits ?? []
+      const total = out.hits?.total?.value ?? out.hits?.total ?? 0
+      const next = from + hits.length
+      return { docs: hits.map(esDoc), cursor: hits.length === take && next < Math.min(total, ES_WINDOW) ? next : null }
+    },
+
+    async count(index, filter) {
+      const out = await req('POST', `${enc(index)}/_count`, { query: esQuery(filter) })
+      return typeof out.count === 'number' ? out.count : null
+    },
+
+    idOf: (doc) => String(doc._id ?? ''),
+
+    async save(index, next, prev) {
+      const id = typeof next._id === 'string' ? next._id.trim() : next._id != null ? String(next._id) : ''
+      const src = esSource(next)
+      if (!prev || id !== String(prev._id)) {
+        const out = id
+          ? await req('PUT', `${enc(index)}/_create/${enc(id)}?refresh=wait_for`, src)
+          : await req('POST', `${enc(index)}/_doc?refresh=wait_for`, src)
+        if (prev) await req('DELETE', `${enc(index)}/_doc/${enc(String(prev._id))}?refresh=wait_for`)
+        return esDoc({ _id: out._id, _source: src, _seq_no: out._seq_no, _primary_term: out._primary_term })
+      }
+      // Only overwrite the version that was loaded: someone else's change in
+      // between is a conflict, not silently lost.
+      const v = /** @type {any} */ (prev).__es
+      const guard = v?.seq != null && v?.term != null ? `&if_seq_no=${v.seq}&if_primary_term=${v.term}` : ''
+      const out = await req('PUT', `${enc(index)}/_doc/${enc(id)}?refresh=wait_for${guard}`, src)
+      return esDoc({ _id: id, _source: src, _seq_no: out._seq_no, _primary_term: out._primary_term })
+    },
+
+    async remove(index, doc) {
+      await req('DELETE', `${enc(index)}/_doc/${enc(String(doc._id))}?refresh=wait_for`)
+    },
+
+    template: () => ({ _id: '' }),
+    keyChangeWarning: 'The _id changed. This creates a new document and deletes the old one. Continue?',
+    querySeed: (index) => `GET ${index}/_search\n{\n  "query": { "match_all": {} },\n  "size": 50\n}`,
+    import: importer,
   }
 }
 
