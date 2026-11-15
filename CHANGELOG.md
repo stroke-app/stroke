@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.9.7] - 2026-11-15
+
+### Changes
+- Related-rows panel keeps one height (#193)
+
+
 ## [2.9.6] - 2026-11-15
 
 ### Changes
