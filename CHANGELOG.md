@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.16.4] - 2026-11-16
+
+### Changes
+- Labs: flat tab bar, one name per database, quiet swap; smaller plan tag (#263)
+
+
 ## [2.16.3] - 2026-11-16
 
 ### Changes
