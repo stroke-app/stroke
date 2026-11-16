@@ -20,6 +20,10 @@
     initialBody = "",
     /** Verbatim technical detail (stack trace, …) appended as a code block. */
     details = "",
+    /** The dialog's title; a crash found at launch says what happened instead. */
+    heading = "Report an issue",
+    /** A line above the form, e.g. what the crash report holds. */
+    lead = "",
   } = $props();
 
   /** @type {'bug'|'crash'|'feature'} */
@@ -128,13 +132,16 @@
 <Dialog.Root bind:open>
   <Dialog.Content class="w-[min(32rem,calc(100vw-2rem))] gap-0 p-0">
     <Dialog.Header class="gap-1 px-6 pt-6 pe-12">
-      <Dialog.Title class="text-ui-lg">Report an issue</Dialog.Title>
+      <Dialog.Title class="text-ui-lg">{heading}</Dialog.Title>
       <Dialog.Description class="text-ui-xs">
         Opens a GitHub issue with this filled in, plus Stroke <span class="font-mono tabular-nums">v{appVersion}</span> on {platform || "this computer"}{details ? " and the error details" : ""}.
       </Dialog.Description>
     </Dialog.Header>
 
     <div class="flex flex-col gap-5 px-6 pt-5 pb-6">
+      {#if lead}
+        <p class="text-ui-sm text-muted-foreground">{lead}</p>
+      {/if}
       <!-- Kind: a segmented control, one choice, no icons. -->
       <div role="radiogroup" aria-label="Kind of report" class="grid grid-cols-3 gap-0.5 rounded-lg bg-muted/40 p-0.5">
         {#each TYPES as t (t.id)}

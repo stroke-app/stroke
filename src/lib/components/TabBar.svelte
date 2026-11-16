@@ -178,6 +178,10 @@
       {@const tabIconName = tabIcon(tab)}
       {@const active = tab.id === activeTabId}
 
+      <!-- Labs, several databases open: each database's tabs are a group. -->
+      {#if tab.groupStart}
+        <span aria-hidden="true" class="mx-1 h-4 w-px shrink-0 self-center bg-border"></span>
+      {/if}
       <ContextMenu.Root>
         <ContextMenu.Trigger>
           {#snippet child({ props: ctxProps })}
@@ -204,7 +208,7 @@
                 type="button"
                 role="tab"
                 aria-selected={active}
-                title={tabDisplayTitle(tab)}
+                title={tab.connLabel ? `${tabDisplayTitle(tab)} · ${tab.connLabel}` : tabDisplayTitle(tab)}
                 class={cn(
                   'flex min-w-0 flex-1 items-center gap-2 pl-2.5 text-left text-ui-xs leading-none transition-colors duration-100',
                   // Every tab keeps the close button's slot, shown or not, so a
@@ -217,11 +221,6 @@
                 onclick={() => { if (_suppressTabClick) { _suppressTabClick = false; return } onselect(tab.id) }}
               >
                 <Icon name={tabIconName} class={cn('size-3.5 shrink-0', active ? 'text-foreground' : 'text-muted-foreground', tab.foreign && 'opacity-60')} />
-                <!-- Labs, several databases open: whose tab it is. A tab of a
-                     database not in front is dimmed; clicking it switches there. -->
-                {#if tab.connLabel}
-                  <span class={cn('max-w-20 shrink-0 truncate rounded px-1 py-px text-ui-3xs', tab.foreign ? 'bg-muted/50 text-muted-foreground/80' : 'bg-primary/10 text-primary')} title={tab.connLabel}>{tab.connLabel}</span>
-                {/if}
                 <span class={cn('truncate', tab.foreign && 'opacity-70')}>{tabDisplayTitle(tab)}</span>
               </button>
 

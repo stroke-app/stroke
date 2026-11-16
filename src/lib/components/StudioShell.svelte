@@ -105,6 +105,7 @@
   import InsiderDialog from './InsiderDialog.svelte'
   import AboutDialog from './AboutDialog.svelte'
   import ReportIssueDialog from './ReportIssueDialog.svelte'
+  import { crashReportFields } from '$lib/crash-report.js'
   import UpdateDialog from './UpdateDialog.svelte'
   import StatusBar from './StatusBar.svelte'
   import QueryLogConsole from './QueryLogConsole.svelte'
@@ -621,6 +622,35 @@
   let showInsiderModal = $state(false)
   let showAboutModal = $state(false)
   let showReportIssueDialog = $state(false)
+  /**
+   * The last run crashed (src-tauri/src/crash.rs left a report): offered once,
+   * as a prefilled crash report, shortly after launch.
+   * @type {{ title: string, body: string, details: string } | null}
+   */
+  let crashReport = $state(null)
+  let crashReportShown = false
+  onMount(() => {
+    const t = setTimeout(() => {
+      void import('@tauri-apps/api/core')
+        .then(({ invoke }) => invoke('take_crash_report'))
+        .then((r) => {
+          const c = /** @type {{ message: string, location: string, thread: string, version: string, os: string, at: number, backtrace: string } | null} */ (r)
+          if (!c) return
+          crashReport = crashReportFields(c)
+          crashReportShown = true
+          showReportIssueDialog = true
+        })
+        .catch(() => {})
+    }, 1200)
+    return () => clearTimeout(t)
+  })
+  $effect(() => {
+    // Closed: later reports from the menu start blank again.
+    if (!showReportIssueDialog && crashReportShown) {
+      crashReportShown = false
+      crashReport = null
+    }
+  })
   /** My shares (share links made on this account). */
   let showMyShares = $state(false)
   let showDisconnectDialog = $state(false)
@@ -7676,14 +7706,10 @@ let rowSearch = $state('')
     flushSqlTabs()
     _sqlTabsRestoredFor = ''
     tabs = []
-    _liveRowsByTab.clear()
-    _tabRowsMru = []
-    _loadSeqByTab.clear()
-    fetchingTabIds.clear()
-    _sqlQueryIdByTab.clear()
-    for (const id of [..._sqlViewsByTab.keys()]) forgetSqlResult(id)
-    _sqlRowsByTab.clear()
-    _autoRefreshByTab.clear()
+    // Labs: the tabs kept for the other open databases keep their rows and
+    // results. Wiping them handed a resumed grid the proxied copy of its rows
+    // (slow to scroll) and dropped every kept SQL result.
+    forgetTabCaches(keptTabIds())
     _autoRefreshTick += 1
     _busyJobs.clear()
     _busyTick += 1
@@ -8319,6 +8345,20 @@ let rowSearch = $state('')
     // Remember where the user was so reconnecting restores this schema.
     if (!forget && persistConnectionId && activeSchema) setLastSchema(persistConnectionId, activeSchema)
     recordActivity({ type: 'disconnect', title: `Disconnected from ${connection?.name ?? 'database'}`, success: true })
+    // Labs, other databases still open: close this one and go to the one used
+    // last, the way closing a window leaves the others up.
+    const here = sessionKey(connection)
+    sessionOrder = sessionOrder.filter((k) => k !== here)
+    const next = [..._sessions].filter(([k]) => k !== here).at(-1)
+    if (next && multiConnection()) {
+      const left = connection?.name ?? connection?.database ?? 'database'
+      setConnRoute('')
+      try { await disconnectPostgres() } catch { /* ignore */ }
+      if (await resumeKept(next[0], next[1], null)) {
+        toast.success(`Disconnected from ${left}`, { description: `Now on ${next[1].label}.` })
+        return
+      }
+    }
     setWasDisconnected(true)
     setConnRoute('')
     try { await disconnectPostgres() } catch { /* ignore */ }
@@ -8440,6 +8480,8 @@ let rowSearch = $state('')
   const _sessions = new Map()
   /** Bumped on every change to _sessions, so the tab bar re-reads it. */
   let sessionsTick = $state(0)
+  /** Labs: the database being opened while the one on screen stays up ('' when none). */
+  let switchingTo = $state('')
   /** Databases in the order they were first opened: the tab bar groups by it, so tabs don't jump around on a switch. */
   let sessionOrder = $state(/** @type {string[]} */ ([]))
   const multiConnection = () => loadSettings().multiConnection === true
@@ -8452,6 +8494,28 @@ let rowSearch = $state('')
   /** @param {string} key */
   function noteSession(key) {
     if (key && !sessionOrder.includes(key)) sessionOrder = [...sessionOrder, key]
+  }
+
+  /** Every tab id kept for another open database. */
+  function keptTabIds() {
+    /** @type {Set<string>} */
+    const ids = new Set()
+    for (const s of _sessions.values()) for (const t of s.tabs) ids.add(t.id)
+    return ids
+  }
+
+  /** Drop the per-tab row and result caches, except for the tabs in `keep`. @param {Set<string>} keep */
+  function forgetTabCaches(keep) {
+    /** @param {Map<string, any> | Set<string>} m */
+    const prune = (m) => { for (const id of [...m.keys()]) if (!keep.has(id)) m.delete(id) }
+    prune(_liveRowsByTab)
+    _tabRowsMru = _tabRowsMru.filter((id) => keep.has(id))
+    prune(_loadSeqByTab)
+    prune(fetchingTabIds)
+    prune(_sqlQueryIdByTab)
+    for (const id of [..._sqlViewsByTab.keys()]) if (!keep.has(id)) forgetSqlResult(id)
+    prune(_sqlRowsByTab)
+    prune(_autoRefreshByTab)
   }
 
   /** Put the open connection's tabs (and its sidebar) aside under its key. */
@@ -8468,7 +8532,11 @@ let rowSearch = $state('')
       label: sessionLabel(connection),
       // The tab on screen keeps its rows, so coming back to it is instant;
       // the others refetch when shown, so a kept database costs little.
-      tabs: tabs.map((t) => (t.kind === 'table' && t.state && t.id !== activeTabId ? { ...t, state: { ...t.state, rows: [], evicted: true } } : t)),
+      tabs: tabs.map((t) => {
+        if (!(t.kind === 'table' && t.state && t.id !== activeTabId)) return t
+        _liveRowsByTab.delete(t.id)
+        return { ...t, state: { ...t.state, rows: [], selected: new Set(), windowedHead: false, windowedLoaded: [], windowCount: 0, loadingRows: false, evicted: true } }
+      }),
       activeTabId,
       activeSchema,
       activeTable,
@@ -8574,8 +8642,9 @@ let rowSearch = $state('')
 
   /**
    * Labs: one tab bar for every open database. This database's tabs and the
-   * kept ones, grouped in the order the databases were opened, each labelled
-   * with its database once more than one is open.
+   * kept ones, grouped in the order the databases were opened. A group after
+   * the first starts with a divider; which database a tab belongs to is in its
+   * tooltip and in the status bar (openDatabases), not on the tab.
    */
   const barTabs = $derived.by(() => {
     void sessionsTick
@@ -8589,15 +8658,35 @@ let rowSearch = $state('')
     /** @type {any[]} */
     const out = []
     for (const k of order) {
-      if (k === here) out.push(...own.map((t) => ({ ...t, connLabel: label })))
-      else {
-        const s = _sessions.get(k)
-        if (!s) continue
-        for (const t of s.tabs) if (t.kind !== 'welcome' && t.kind !== 'ai') out.push({ ...t, connLabel: s.label, foreign: true })
-      }
+      const group = k === here
+        ? own.map((t) => ({ ...t, connLabel: label }))
+        : (_sessions.get(k)?.tabs ?? []).filter((t) => t.kind !== 'welcome' && t.kind !== 'ai').map((t) => ({ ...t, connLabel: _sessions.get(k)?.label, foreign: true }))
+      if (group.length && out.length) group[0] = { ...group[0], groupStart: true }
+      out.push(...group)
     }
     return out
   })
+
+  /** Labs: the databases open now, in tab-bar order, for the status bar. */
+  const openDatabases = $derived.by(() => {
+    void sessionsTick
+    if (!connection || _sessions.size === 0) return []
+    const here = sessionKey(connection)
+    const order = sessionOrder.includes(here) ? sessionOrder : [...sessionOrder, here]
+    /** @type {{ key: string, label: string, current: boolean }[]} */
+    const out = []
+    for (const k of order) {
+      if (k === here) out.push({ key: k, label: sessionLabel(connection), current: true })
+      else if (_sessions.has(k)) out.push({ key: k, label: /** @type {KeptSession} */ (_sessions.get(k)).label, current: false })
+    }
+    return out.length > 1 ? out : []
+  })
+
+  /** Status bar: bring an open database to the front. @param {string} key */
+  function openKeptDatabase(key) {
+    const s = _sessions.get(key)
+    if (s) void handleSwitchDatabase(s.conn)
+  }
 
   /**
    * @param {import('$lib/stores/connections.js').SavedConnection} conn
@@ -8607,62 +8696,58 @@ let rowSearch = $state('')
     // A deliberate switch is the other half of "PIN to open or reconnect".
     // Resolves true immediately unless a PIN is set with the connect prompt on.
     if (!(await requireUnlock('Unlock to connect to a database'))) return
+    if (switchingTo) return
     // Disconnect current before connecting to the new one to avoid the race
     // where set_conn(None) could fire after connect_* sets the new connection.
     const previous = connection
     const multi = multiConnection()
+    /** Labs: the database left stays open and on screen until the new one is ready. */
+    let kept = ''
     if (multi && keepable(previous)) {
       if (previous && sessionKey(previous) === sessionKey(conn)) {
         // Already here: just the tab.
         if (opts.focusTab) void activateTab(opts.focusTab)
         return
       }
+      kept = sessionKey(previous)
       keepSession()
       await liveStop().catch(() => {})
       const { invoke } = await import('@tauri-apps/api/core')
-      await invoke('park_connection', { key: sessionKey(previous) }).catch(() => disconnectPostgres().catch(() => {}))
+      const parked = await invoke('park_connection', { key: kept }).then(() => true).catch(() => false)
+      if (!parked) {
+        kept = ''
+        await disconnectPostgres().catch(() => {})
+      } else {
+        // What is on screen keeps working while the next database opens: its
+        // calls name its pool, which now waits in the parked list.
+        setConnRoute(kept)
+      }
       // A database kept open comes back in place: no teardown, no overlay,
       // no welcome screen in between (that was the flicker).
       const key = sessionKey(conn)
-      const kept = keepable(conn) ? _sessions.get(key) : undefined
-      if (kept) {
-        const resumed = await invoke('resume_connection', { key }).then(Boolean).catch(() => false)
-        if (resumed) {
-          setConnRoute(key)
-          _sessions.delete(key)
-          noteSession(key)
-          sessionsTick++
-          await resumeSession(conn, kept, opts.focusTab ?? null)
-          sidebarShowTables()
-          return
-        }
-      }
+      const session = keepable(conn) ? _sessions.get(key) : undefined
+      if (session && (await resumeKept(key, session, opts.focusTab ?? null))) return
     } else {
       await disconnectPostgres().catch(() => {})
     }
-    connection = null
-    clearConnectionState()
     // Labs: a kept pool for this database comes back at once, no overlay.
     let resumed = false
     if (multi && keepable(conn)) {
       const { invoke } = await import('@tauri-apps/api/core')
       resumed = await invoke('resume_connection', { key: sessionKey(conn) }).then(Boolean).catch(() => false)
     }
-    // Connect to the chosen saved connection
-    if (!resumed) beginConnectOverlay(conn.name ?? conn.database ?? conn.host ?? '')
+    if (kept) {
+      // The page stays as it is; the status bar says what is opening.
+      switchingTo = conn.name ?? conn.database ?? conn.host ?? ''
+    } else {
+      connection = null
+      clearConnectionState()
+      if (!resumed) beginConnectOverlay(conn.name ?? conn.database ?? conn.host ?? '')
+    }
     try {
-      try {
-        if (!resumed) await connectByType(conn)
-      } catch (e) {
-        // Provider credentials revoked or rotated in the provider's console:
-        // mint fresh ones once, the same recovery the connect dialog does.
-        const { AUTH_FAILURE, providerBuildConnection, providerToSaved } = await import('$lib/providers.js')
-        if (!(conn.provider && conn.providerRef && AUTH_FAILURE.test(String(e)))) throw e
-        const fresh = await providerBuildConnection(conn.provider, conn.providerRef)
-        if (fresh.needs_password) throw e
-        conn = { ...providerToSaved({ ...fresh, providerRef: conn.providerRef }, { provider: conn.provider, saved: [conn], readOnly: conn.readOnly, newId: newConnectionId }), id: conn.id, name: conn.name }
-        await connectByType(conn)
-      }
+      if (!resumed) conn = await connectWithRecovery(conn)
+      if (kept) clearConnectionState()
+      switchingTo = ''
       await onConnected(conn, conn.id)
       if (multi && keepable(conn)) {
         // Name the new front pool, so calls routed to it (and to the kept
@@ -8682,23 +8767,67 @@ let rowSearch = $state('')
       // at any more, and the Databases tab is a switcher, not a destination.
       sidebarShowTables()
     } catch (e) {
+      switchingTo = ''
       // Say why, then put the user back where they were instead of leaving
       // them disconnected behind a dialog with no message in it.
       toast.error(`Could not connect to ${conn.name ?? conn.database ?? conn.host ?? 'the database'}`, { description: String(e) })
+      const back = kept ? _sessions.get(kept) : undefined
+      if (back && (await resumeKept(kept, back, null))) return
       let restored = false
       if (previous) {
         try {
+          if (kept) clearConnectionState()
           await connectByType(previous)
           await onConnected(previous, previous.id)
           restored = true
         } catch { /* fall through to the dialog */ }
       }
       if (!restored) {
+        connection = null
         error = String(e)
         showConnectionModal = true
       }
     } finally {
       autoConnecting = false
+    }
+  }
+
+  /**
+   * Labs: bring a kept database to the front, in place. False when its pool
+   * is gone (closed by the cap, or its connection edited): connect instead.
+   * @param {string} key @param {KeptSession} session @param {string | null} focusTab
+   */
+  async function resumeKept(key, session, focusTab) {
+    const { invoke } = await import('@tauri-apps/api/core')
+    const ok = await invoke('resume_connection', { key }).then(Boolean).catch(() => false)
+    if (!ok) return false
+    setConnRoute(key)
+    _sessions.delete(key)
+    noteSession(key)
+    sessionsTick++
+    await resumeSession(session.conn, session, focusTab)
+    sidebarShowTables()
+    return true
+  }
+
+  /**
+   * Connect, and when a provider's credentials were revoked or rotated in its
+   * console, mint fresh ones once: the same recovery the connect dialog does.
+   * Returns the connection as connected (fresh credentials included).
+   * @param {any} conn
+   */
+  async function connectWithRecovery(conn) {
+    try {
+      await connectByType(conn)
+      return conn
+    } catch (e) {
+      const { AUTH_FAILURE, providerBuildConnection, providerToSaved } = await import('$lib/providers.js')
+      if (!(conn.provider && conn.providerRef && AUTH_FAILURE.test(String(e)))) throw e
+      const fresh = await providerBuildConnection(conn.provider, conn.providerRef)
+      if (fresh.needs_password) throw e
+      const next = { ...providerToSaved({ ...fresh, providerRef: conn.providerRef }, { provider: conn.provider, saved: [conn], readOnly: conn.readOnly, newId: newConnectionId }), id: conn.id, name: conn.name }
+      await connectByType(next)
+      return next
     }
   }
 
@@ -9656,7 +9785,15 @@ let rowSearch = $state('')
 <InsiderDialog bind:open={showInsiderModal} />
 
 <AboutDialog bind:open={showAboutModal} onopenreport={() => (showReportIssueDialog = true)} />
-<ReportIssueDialog bind:open={showReportIssueDialog} />
+<ReportIssueDialog
+  bind:open={showReportIssueDialog}
+  initialType={crashReport ? 'crash' : 'bug'}
+  initialTitle={crashReport?.title ?? ''}
+  initialBody={crashReport?.body ?? ''}
+  details={crashReport?.details ?? ''}
+  heading={crashReport ? 'Stroke quit unexpectedly' : 'Report an issue'}
+  lead={crashReport ? 'Stroke closed by itself last time. This report holds the error and where in Stroke it happened, nothing else; read it over before you send it.' : ''}
+/>
 <!-- Share links: one dialog for every kind, opened through requestShare(). -->
 <ShareDialog />
 <MySharesDialog bind:open={showMyShares} />
@@ -10219,11 +10356,13 @@ let rowSearch = $state('')
 
       {#snippet groupPane(/** @type {import('$lib/pane-layout.js').GroupNode} */ group, /** @type {boolean} */ isFocused)}
         {#if tabBarVisible && !tabsInTitle}
+          <!-- One pane: the same bar as without panes, so Labs' other open
+               databases show their tabs here too. Split, each pane lists its own. -->
           <TabBar
-            tabs={group.tabIds.map((id) => tabsById.get(id)).filter(Boolean)}
+            tabs={paneCount <= 1 && barTabs.some((t) => t.foreign) ? barTabs : group.tabIds.map((id) => tabsById.get(id)).filter(Boolean)}
             activeTabId={group.activeTabId}
-            onselect={(id) => void focusTabInGroup(group.id, id)}
-            onclose={(id) => void closeTabInGroup(group.id, id)}
+            onselect={(id) => (tabs.some((t) => t.id === id) ? void focusTabInGroup(group.id, id) : void activateForeignTab(id))}
+            onclose={(id) => (tabs.some((t) => t.id === id) ? void closeTabInGroup(group.id, id) : closeForeignTab(id))}
             oncloseothers={(id) => { if (tabs.some((t) => t.id === id)) closeOtherTabs(id) }}
             oncloseall={closeAllTabs}
             onclosemany={(ids, anchorId) => void closeManyTabs(ids, anchorId)}
@@ -10233,7 +10372,7 @@ let rowSearch = $state('')
             canreopenclosed={closedTabStack.length > 0}
             onpintoggle={(id) => { if (tabs.some((t) => t.id === id)) toggleTabPin(id) }}
             onnewsql={() => { if (aiMode) exitAiMode(); openNewSqlTab() }}
-            ondragtabstart={(id) => beginTabDrag(id)}
+            ondragtabstart={(id) => { if (tabs.some((t) => t.id === id)) beginTabDrag(id) }}
             ondragtabmove={(x, y) => moveTabDrag(x, y)}
             ondragtabend={() => endTabDrag()}
           />
@@ -11524,6 +11663,9 @@ let rowSearch = $state('')
   {liveNative}
   ontogglelive={() => { liveEnabled = !liveEnabled }}
   onswitchconnection={handleSwitchDatabase}
+  {openDatabases}
+  onopendatabase={openKeptDatabase}
+  {switchingTo}
   {mcpRunning}
   latencyMs={dbLatencyMs}
   {offline}
