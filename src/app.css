@@ -1538,21 +1538,28 @@ pre code,
     linear-gradient(to bottom, transparent 45%, rgb(0 0 0 / 0.24));
 }
 
-/* ── Plan tag ────────────────────────────────────────────────────────────────
-   A small flat tag in `--chip` (a colour): a faint tint and a hairline ring,
-   nothing more. It sits beside a name or a setting label, so it stays at the
-   text's own height and never reads as a button. Used for plan badges (Pro,
-   Trial, Free). */
+/* ── Plan key ────────────────────────────────────────────────────────────────
+   A small dark keycap: a body a shade off the page, a hairline ring, a lit top
+   edge and a shade at the foot, bold light text. Plan badges (Pro, Trial,
+   Free); `--chip` only tints the text, so Pro reads plain and Trial amber. */
 .chip-gloss {
-  --chip: var(--success);
+  --chip: var(--foreground);
   display: inline-flex;
   align-items: center;
   border-radius: 0.3125rem;
-  letter-spacing: 0.01em;
   line-height: 1;
-  color: color-mix(in oklch, var(--chip) 85%, var(--foreground));
-  background: color-mix(in oklch, var(--chip) 12%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--chip) 24%, transparent);
+  letter-spacing: 0.01em;
+  color: color-mix(in oklch, var(--chip) 92%, var(--foreground));
+  background: linear-gradient(
+    to bottom,
+    color-mix(in oklch, var(--foreground) 11%, var(--background)),
+    color-mix(in oklch, var(--foreground) 4%, var(--background))
+  );
+  box-shadow:
+    inset 0 0 0 1px color-mix(in oklch, var(--foreground) 26%, transparent),
+    inset 0 1px 0 color-mix(in oklch, white 20%, transparent),
+    inset 0 -1px 0 rgb(0 0 0 / 0.22),
+    0 1px 2px rgb(0 0 0 / 0.3);
 }
 .chip-gloss.chip-warning { --chip: var(--warning); }
 /* ── Glossy key ──────────────────────────────────────────────────────────────

@@ -45,7 +45,7 @@
 {#snippet planPill()}
   <span
     class={cn(
-      'chip-gloss h-[1.125rem] shrink-0 px-1.5 text-ui-3xs font-medium',
+      'chip-gloss h-5 shrink-0 px-1.5 text-ui-3xs font-semibold',
       plan.tone === 'trial' && 'chip-warning',
       plan.tone === 'free' && 'chip-muted',
     )}
