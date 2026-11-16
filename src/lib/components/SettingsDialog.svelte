@@ -841,7 +841,7 @@
     <div class="min-w-0">
       <p class="flex items-center gap-2 text-ui-sm font-medium text-foreground">
         {label}
-        {#if badge}<span class="h-[1.125rem] px-1.5 text-ui-3xs font-medium {badge.class}">{badge.label}</span>{/if}
+        {#if badge}<span class="h-5 px-1.5 text-ui-3xs font-semibold {badge.class}">{badge.label}</span>{/if}
       </p>
       <p class="mt-0.5 text-ui-xs leading-relaxed text-muted-foreground">{desc}</p>
     </div>
