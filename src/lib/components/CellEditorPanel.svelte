@@ -50,7 +50,9 @@
   import X from '@lucide/svelte/icons/x'
   import { cn } from '$lib/utils.js'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
-  import Kbd from './Kbd.svelte'
+  import { detectOs } from '$lib/platform.js'
+  /** The stage shortcut as one glyph run: ⌘↵ on a Mac, Ctrl↵ elsewhere. */
+  const modEnter = detectOs() === 'macos' ? '⌘↵' : 'Ctrl ↵'
 
   let {
     open = $bindable(false),
@@ -677,16 +679,20 @@
         >
           <Undo2 class="size-3.5 shrink-0" />
         </button>
-        <button
-          type="button"
-          class="ms-2 inline-flex h-7 items-center gap-2 rounded-lg bg-primary ps-2.5 pe-1.5 text-ui-xs font-medium text-primary-foreground transition-[background-color,opacity,scale] hover:bg-primary/90 active:scale-[0.97] disabled:bg-muted disabled:text-muted-foreground disabled:active:scale-100"
+        <!-- The shared button (same corner, height and focus ring as every
+             other primary action), with the shortcut as a quiet glyph after the
+             label. Two boxed key chips inside a filled button read as a second
+             set of buttons. -->
+        <Button
+          size="sm"
+          class="ms-2 gap-1.5"
           disabled={!dirty}
           onclick={apply}
-          title="Stage this value with your other pending edits"
+          title="Stage this value with your other pending edits ({modEnter})"
         >
           Stage change
-          <Kbd combo="Mod+Enter" class="opacity-80" />
-        </button>
+          <span class="font-mono text-ui-2xs opacity-60" aria-hidden="true">{modEnter}</span>
+        </Button>
       {/if}
       <button
         type="button"

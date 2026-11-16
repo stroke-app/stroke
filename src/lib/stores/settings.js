@@ -165,10 +165,15 @@ export const FONT_PRESETS = {
   // UI font (Segoe UI, Cantarell, ...).
   apple: {
     label: IS_MAC ? 'SF Pro' : IS_WINDOWS ? 'Segoe UI' : 'System',
-    description: IS_MAC ? 'macOS system font + SF Mono' : IS_WINDOWS ? 'Windows system font + Cascadia Mono' : "Your system's UI font",
+    description: IS_MAC ? 'macOS system font + SF Mono' : IS_WINDOWS ? 'Windows system font + JetBrains Mono' : "Your system's UI font + JetBrains Mono",
     keywords: ['SF Pro', 'San Francisco', 'Apple', 'Segoe UI', 'Windows', 'System', 'macOS', 'native'],
     sans: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif',
-    mono: 'ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Monaco, "Cascadia Mono", Consolas, monospace',
+    // A Mac has SF Mono. Windows and Linux get the JetBrains Mono that ships
+    // with the app: Cascadia Mono is missing from many Windows installs, and the
+    // Consolas it fell back to read dated and heavy beside Segoe UI.
+    mono: IS_MAC
+      ? 'ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Monaco, monospace'
+      : '"JetBrains Mono Variable", "Cascadia Mono", Consolas, monospace',
   },
   // Both faces below ship with the app (fontsource imports in app.css), so
   // these presets render identically on every platform - no system fallback.

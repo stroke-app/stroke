@@ -110,7 +110,14 @@ pub(crate) fn client_dir_candidates(explicit: &str) -> Vec<PathBuf> {
     let mut parents: Vec<PathBuf> = Vec::new();
     if let Some(home) = dirs_home() {
         parents.push(home.clone());
-        parents.push(home.join("Downloads"));
+        // Not on macOS: Downloads is a protected folder there, and listing it
+        // (even just to look for an `instantclient_*`) makes macOS ask whether
+        // Stroke may read your Downloads, at launch, for a client most people
+        // never use. Unzipped there, it is found once its path is set in the
+        // connection or STROKE_ORACLE_CLIENT_DIR.
+        if !cfg!(target_os = "macos") {
+            parents.push(home.join("Downloads"));
+        }
         parents.push(home.join("oracle"));
     }
     if cfg!(target_os = "windows") {

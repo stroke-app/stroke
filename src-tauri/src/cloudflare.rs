@@ -324,12 +324,16 @@ pub async fn cloudflare_start_oauth(app: tauri::AppHandle) -> Result<CfOAuthStat
 
     crate::providers::open_sign_in_page(&app, &auth_url);
 
-    let code = tokio::time::timeout(
-        std::time::Duration::from_secs(AUTH_TIMEOUT_SECS),
-        crate::providers::await_oauth_callback(listener, &state, "code", "Cloudflare"),
-    )
-    .await
-    .map_err(|_| "Authorization timed out - please try again.".to_string())??;
+    // Cancel (provider_cancel_oauth) drops the wait and frees the port, the
+    // same as for the other providers.
+    let cancelled = crate::providers::oauth_cancel().notified();
+    let code = tokio::select! {
+        r = tokio::time::timeout(
+            std::time::Duration::from_secs(AUTH_TIMEOUT_SECS),
+            crate::providers::await_oauth_callback(listener, &state, "code", "Cloudflare"),
+        ) => r.map_err(|_| "Authorization timed out - please try again.".to_string())??,
+        _ = cancelled => return Err("cancelled".to_string()),
+    };
 
     let token = exchange_code(&code, &verifier, &redirect_uri).await?;
 

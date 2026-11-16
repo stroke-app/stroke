@@ -310,7 +310,13 @@ fn install_dirs() -> Vec<PathBuf> {
     // and SQLcl unzipped next to it.
     out.extend(super::oracle::client_dir_candidates(""));
     if let Some(home) = home_dir() {
-        for parent in [home.clone(), home.join("Downloads"), home.join("oracle")] {
+        // Downloads only off macOS: touching it there raises the "would like
+        // to access files in your Downloads folder" prompt (see oracle.rs).
+        let mut parents = vec![home.clone(), home.join("oracle")];
+        if !cfg!(target_os = "macos") {
+            parents.push(home.join("Downloads"));
+        }
+        for parent in parents {
             out.push(parent.join("sqlcl").join("bin"));
         }
     }

@@ -111,6 +111,10 @@
     showRowCounts = true,
     /** Delete a saved connection (after the confirm below). @type {(id: string) => void} */
     onremoveconnection = () => {},
+    /** Labs: the other open databases and the table lists they had. @type {{ key: string, conn: any, schema: string, tables: any[] }[]} */
+    keptTrees = [],
+    /** Labs: open a table of another open database (switches to it). @type {(key: string, schema: string, name: string) => void} */
+    onopenkepttable = () => {},
   } = $props()
 
   const uid = $props.id()
@@ -248,6 +252,13 @@
       focusPending = false
       const s = schemaNodeId(schema)
       const next = new Set([root])
+      // Other open databases stay as they were: folding them shut on every
+      // switch is what made only one database usable at a time.
+      for (const id of expanded) {
+        for (const k of keptChildren.keys()) {
+          if (id === k || id.startsWith(k + '\u001f') || k.startsWith(id + '\u001f')) { next.add(id); break }
+        }
+      }
       if (schemaParentId !== root) next.add(schemaParentId)
       for (const a of ancestorIds(s)) next.add(a)
       next.add(s)
@@ -441,12 +452,57 @@
     return out
   })
 
+  /**
+   * Labs, several databases open: each other open database keeps its branch
+   * in the tree, listing the tables it had, so both can stay expanded and a
+   * table can be opened from either. A database on this server hangs where
+   * it always does (its database node); one on another connection hangs
+   * from that connection, under its database where the engine has several.
+   * Their rows open by switching (onopenkepttable); they have no columns
+   * here, because that would mean reading a database that is not in front.
+   */
+  const keptChildren = $derived.by(() => {
+    /** @type {Map<string, { status: 'ready', nodes: TreeNode[] }>} */
+    const out = new Map()
+    /** @type {Map<string, TreeNode[]>} */
+    const rootDbs = new Map()
+    for (const k of keptTrees) {
+      const cid = k.conn?.id
+      if (!cid) continue
+      const root = childId('', 'c', cid)
+      let parent = root
+      if (canSwitchDatabase(k.conn)) {
+        const dbKey = currentDatabaseKey(k.conn) ?? k.conn.database ?? ''
+        parent = childId(root, 'd', dbKey)
+        if (root !== activeRootId) {
+          const label = k.conn.database || k.conn.name || dbKey
+          const list = rootDbs.get(root) ?? []
+          list.push(makeNode(parent, 'database', label, { branch: true, data: { entry: { key: dbKey, label }, current: false, kept: k.key } }))
+          rootDbs.set(root, list)
+        }
+      } else if (root === activeRootId) continue
+      out.set(parent, {
+        status: 'ready',
+        nodes: (k.tables ?? []).map((t) => {
+          const name = String(t?.name ?? t?.table_name ?? t ?? '')
+          const kind = t?.kind === 'view' ? 'view' : t?.kind === 'materialized_view' || t?.kind === 'matview' ? 'matview' : 'table'
+          return makeNode(childId(parent, 'k', name), kind, name, {
+            count: kind === 'table' ? normalizeTableRowCount(t?.rowCount ?? t?.row_count) : null,
+            data: { schema: k.schema, name, kind, kept: k.key },
+          })
+        }).filter((n) => n.label),
+      })
+    }
+    for (const [root, nodes] of rootDbs) out.set(root, { status: 'ready', nodes })
+    return out
+  })
+
   /** @param {string} id */
-  const getChildren = (id) => live.get(id) ?? cache.get(id)
+  const getChildren = (id) => keptChildren.get(id) ?? live.get(id) ?? cache.get(id)
 
   /** A connection that is not live, or a database that is not current, opens by switching to it. @param {TreeNode} n */
   const opensBySwitching = (n) =>
-    (n.kind === 'connection' && !n.data?.live) || (n.kind === 'database' && !n.data?.current)
+    !keptChildren.has(n.id) && ((n.kind === 'connection' && !n.data?.live) || (n.kind === 'database' && !n.data?.current))
 
   // ── The rows ────────────────────────────────────────────────────────────
   const q = $derived(filter.trim().toLowerCase())
@@ -459,10 +515,11 @@
     const isOpen = (/** @type {string} */ id) => expanded.has(id)
     return flattenTree(roots, (id) => {
       // Roots that are not live never open: their children are another server's.
-      if (id.indexOf('\u001f') < 0 && id !== activeRootId) return { status: 'ready', nodes: [] }
+      if (id.indexOf('\u001f') < 0 && id !== activeRootId) return keptChildren.get(id) ?? { status: 'ready', nodes: [] }
       return getChildren(id)
     }, (id) => {
       if (!isOpen(id)) return false
+      if (keptChildren.has(id)) return true
       if (id.indexOf('\u001f') < 0) return id === activeRootId
       // A database other than the current one opens by switching.
       if (canSwitchDb && id.startsWith(activeRootId + '\u001fd:') && id.split('\u001f').length === 2) return id === schemaParentId
@@ -958,6 +1015,10 @@
 
   /** Enter, or a click on a row that is not a folder. @param {TreeNode} n */
   function activate(n) {
+    if (n.data?.kept && !n.branch) {
+      onopenkepttable(n.data.kept, n.data.schema, n.data.name)
+      return
+    }
     switch (n.kind) {
       case 'table':
       case 'view':
@@ -1441,7 +1502,7 @@
         {#if menuRow?.t === 'node'}
           {@const n = menuRow.node}
           {@const open = expanded.has(n.id)}
-          {#if n.kind === 'table' && n.data.schema === activeSchema && tableMenu}
+          {#if n.kind === 'table' && !n.data.kept && n.data.schema === activeSchema && tableMenu}
             <ContextMenu.Item onSelect={() => openTable(n.data.schema, n.data.name)}>
               <Icon name="external-link" />
               Open table

@@ -8369,6 +8369,18 @@ let rowSearch = $state('')
     showConnectionModal = true
   }
 
+  /** Labs: close every open database at once (the dialog's Disconnect all). */
+  async function handleDisconnectAll() {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core')
+      await invoke('close_parked', { key: null, connection: null })
+    } catch { /* the pools close with the app anyway */ }
+    _sessions.clear()
+    sessionOrder = []
+    sessionsTick++
+    await handleDisconnect()
+  }
+
   /**
    * A saved connection was deleted (sidebar or connection modal). Deleting the
    * one that is open also ends its session: staying connected to a connection
@@ -8684,6 +8696,32 @@ let rowSearch = $state('')
     }
     return out.length > 1 ? out : []
   })
+
+  /**
+   * Labs, tree sidebar: the other open databases with the table list they
+   * had, so their branches can stay open beside this one's.
+   */
+  const keptTrees = $derived.by(() => {
+    void sessionsTick
+    if (!connection || _sessions.size === 0) return []
+    const here = sessionKey(connection)
+    return [..._sessions]
+      .filter(([k]) => k !== here)
+      .map(([key, s]) => ({ key, conn: s.conn, schema: s.activeSchema ?? '', tables: s.tables ?? [] }))
+  })
+
+  /**
+   * A table under another open database in the tree: bring that database
+   * forward, on that table (its tab when one is open, a new one otherwise).
+   * @param {string} key @param {string} schema @param {string} name
+   */
+  async function openKeptTable(key, schema, name) {
+    const s = _sessions.get(key)
+    if (!s) return
+    const tab = findTableTab(s.tabs, schema, name)
+    await handleSwitchDatabase(s.conn, { focusTab: tab?.id ?? null })
+    if (!tab && connection && sessionKey(connection) === key) await openTableTab(schema, name)
+  }
 
   /** Status bar: bring an open database to the front. @param {string} key */
   function openKeptDatabase(key) {
@@ -9734,7 +9772,7 @@ let rowSearch = $state('')
   loading={dbInfoLoading}
   error={dbInfoError}
 />
-<DisconnectDialog bind:open={showDisconnectDialog} connectionName={connection ? (connection.name || connection.database || connection.host || connection.filePath || 'Connected') : ''} ondisconnect={() => handleDisconnect()} />
+<DisconnectDialog bind:open={showDisconnectDialog} connectionName={connection ? (connection.name || connection.database || connection.host || connection.filePath || 'Connected') : ''} others={keptTrees.map((k) => _sessions.get(k.key)?.label ?? 'database')} ondisconnect={() => handleDisconnect()} ondisconnectall={() => void handleDisconnectAll()} />
 <CreateTableDialog
   bind:open={showCreateTableDialog}
   {activeSchema}
@@ -10078,6 +10116,8 @@ let rowSearch = $state('')
         onsetconnectiongroup={(id, group) => { savedConnections = setConnectionGroup(id, group) }}
         onconnectionmeta={(list) => { savedConnections = list }}
         ondisconnectconnection={() => handleDisconnect()}
+        {keptTrees}
+        onopenkepttable={(k, sc, n) => void openKeptTable(k, sc, n)}
         onopenextensiondetail={(ext) => openExtensionDetailTab(ext)}
         side={sidebarSide}
         onmoveside={moveSidebar}
@@ -11481,7 +11521,9 @@ let rowSearch = $state('')
             <Icon class={cn('size-4 shrink-0', toneCls)} />
             <span class="min-w-0 truncate text-ui-sm">{label}</span>
             {#if locked}<Lock class="size-3 shrink-0 text-warning" aria-label="Pro feature" />{/if}
-            {#if opts.keys}<span class="ml-auto shrink-0 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">{@render chord(opts.keys)}</span>{/if}
+            <!-- In the layout only while it shows: hidden but laid out, the chord
+                 kept its width and cut "Search" to "Se..." at every pane size. -->
+            {#if opts.keys}<span class="ml-auto hidden shrink-0 group-hover:inline-flex group-focus-visible:inline-flex">{@render chord(opts.keys)}</span>{/if}
           </button>
         {/snippet}
 

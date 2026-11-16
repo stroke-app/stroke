@@ -16,6 +16,7 @@
   import { Button } from '$lib/components/ui/button/index.js'
   import ConfirmDialog from './ConfirmDialog.svelte'
   import { cfStartOAuth, cfOAuthStatus, cfLogout, cfGetValidToken } from '$lib/cloudflare.js'
+  import { providerCancelOAuth } from '$lib/providers.js'
   import { readProviderList, writeProviderList, clearProviderLists } from '$lib/provider-list-cache.js'
   import { cloudflareListAccounts, cloudflareListD1Databases, cloudflareCreateD1Database } from '$lib/api.js'
   import { cn } from '$lib/utils.js'
@@ -182,7 +183,11 @@
     } catch { /* clipboard blocked */ }
   }
 
+  /** Set by Cancel, so the wait's own error on the way out is not shown as a failure. */
+  let cancelled = false
+
   async function startAuth() {
+    cancelled = false
     phase = 'authorizing'
     errorMsg = ''
     authUrl = ''
@@ -200,12 +205,21 @@
       phase = 'fetching'
       await loadAccounts()
     } catch (e) {
-      phase = 'error'
-      errorMsg = String(e)
+      // Cancel lands here too: back to the start, not an error.
+      if (cancelled || /cancel/i.test(String(e))) { phase = 'idle'; errorMsg = '' }
+      else { phase = 'error'; errorMsg = String(e) }
     } finally {
       unlisten?.()
       authUrl = ''
     }
+  }
+
+  /** Stop waiting on the browser: frees the callback port and goes back to Sign in. */
+  async function cancelAuth() {
+    cancelled = true
+    try { await providerCancelOAuth() } catch { /* the wait ends on its own */ }
+    phase = 'idle'
+    errorMsg = ''
   }
 
   /**
@@ -365,9 +379,9 @@
     <ProviderAuthPanel
       title="Sign in with Cloudflare"
       subtitle="Opens your browser to authorize. Stroke gets a scoped token for D1 - your Cloudflare password never passes through it."
-      hint="Same PKCE flow as Wrangler"
+      hint="Cloudflare's own sign-in, the one Wrangler uses"
     >
-      {#snippet mark()}<DbIcon id="d1" class="size-4 shrink-0" />{/snippet}
+      {#snippet mark()}<DbIcon id="d1" class="size-5 shrink-0" />{/snippet}
       {#snippet action()}
         <Button class="group" onclick={startAuth}>
           Sign in
@@ -380,23 +394,28 @@
     <ProviderAuthPanel
       tone="busy"
       progress
-      title="Waiting for Cloudflare…"
-      subtitle="Finish authorizing in the browser tab, then come back here."
-      hint="Times out in 5 min"
+      title="Waiting for Cloudflare"
+      subtitle="Approve Stroke in the Cloudflare tab in your browser. This page carries on by itself."
+      timeout={300}
     >
-      {#snippet mark()}<DbIcon id="d1" class="size-4 shrink-0" />{/snippet}
+      {#snippet mark()}<DbIcon id="d1" class="size-5 shrink-0" />{/snippet}
+      {#snippet action()}
+        <Button variant="ghost" size="sm" onclick={cancelAuth}>Cancel</Button>
+      {/snippet}
+      {#snippet footer()}
+        {#if authUrl}
+          <span class="me-1">Browser didn't open?</span>
+          <Button variant="ghost" size="xs" onclick={reopenAuthPage}>Open again</Button>
+          <Button variant="ghost" size="xs" onclick={copyAuthLink}>
+            {#if linkCopied}<Check class="size-3 shrink-0 text-success" aria-hidden="true" /> Copied{:else}Copy link{/if}
+          </Button>
+          <span class="sr-only" role="status">{linkCopied ? 'Link copied' : ''}</span>
+        {:else}
+          <Loader2 class="size-3 shrink-0 animate-spin" aria-hidden="true" />
+          <span class="ms-1">Opening your browser</span>
+        {/if}
+      {/snippet}
     </ProviderAuthPanel>
-    {#if authUrl}
-      <!-- Same recovery row as the other providers' waiting panel. -->
-      <div class="flex flex-wrap items-center gap-x-1 gap-y-1 ps-11 text-ui-2xs text-muted-foreground">
-        <span class="me-1">Browser didn't open?</span>
-        <Button variant="ghost" size="xs" onclick={reopenAuthPage}>Open again</Button>
-        <Button variant="ghost" size="xs" onclick={copyAuthLink}>
-          {#if linkCopied}<Check class="size-3 shrink-0 text-success" aria-hidden="true" /> Copied{:else}Copy link{/if}
-        </Button>
-        <span class="sr-only" role="status">{linkCopied ? 'Link copied' : ''}</span>
-      </div>
-    {/if}
 
   {:else if phase === 'fetching'}
     <ProviderAuthPanel
@@ -406,7 +425,7 @@
       subtitle="Loading your Cloudflare accounts…"
       hint={email}
     >
-      {#snippet mark()}<Check class="size-4 shrink-0 text-success" />{/snippet}
+      {#snippet mark()}<Check class="size-5 shrink-0 text-success" />{/snippet}
     </ProviderAuthPanel>
 
   {:else if phase === 'error'}
@@ -420,7 +439,7 @@
       subtitle={shownError.detail}
       hint={signedIn ? email : 'Nothing was saved'}
     >
-      {#snippet mark()}<AlertTriangle class="size-4 shrink-0 text-destructive" />{/snippet}
+      {#snippet mark()}<AlertTriangle class="size-5 shrink-0 text-destructive" />{/snippet}
       {#snippet action()}
         <div class="flex shrink-0 items-center gap-2">
           <Button variant="outline" class="group" onclick={() => (signedIn ? loadAccounts() : startAuth())}>

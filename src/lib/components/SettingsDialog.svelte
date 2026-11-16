@@ -146,6 +146,12 @@
   // A caller asking for a page (the command palette's "Keyboard shortcuts")
   // sets `section` and opens the dialog programmatically, which may not go
   // through onOpenChange.
+  // Closing forgets the search, however the dialog closed (Escape, the close
+  // button, or a caller setting `open`): reopening shows the full page, not
+  // the last query's results.
+  $effect(() => {
+    if (!open) query = '';
+  });
   $effect(() => {
     if (open && section) { category = section; query = ''; section = ''; }
   });
