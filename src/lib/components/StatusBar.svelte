@@ -59,6 +59,12 @@
     onswitchd1database = /** @type {(db: { databaseId: string, name: string }) => void} */ ((_db) => {}),
     onswitchproviderdb = /** @type {(db: { provider: string, dbRef: string, name: string }) => void} */ ((_db) => {}),
     onswitchconnection = /** @type {(conn: import('$lib/stores/connections.js').SavedConnection) => void} */ ((_c) => {}),
+    /** Labs, several databases open: all of them, the one in front marked. Empty otherwise. */
+    openDatabases = /** @type {{ key: string, label: string, current: boolean }[]} */ ([]),
+    /** Bring an open database to the front. */
+    onopendatabase = /** @type {(key: string) => void} */ ((_k) => {}),
+    /** Labs: the database being opened while the one on screen stays up. */
+    switchingTo = '',
     oncheckupdate = /** @type {() => void} */ (() => {}),
     onopenmodelsettings = /** @type {() => void} */ (() => {}),
     aiMode = false,
@@ -717,6 +723,36 @@
         </DropdownMenu.Root>
 
       </div>
+      {/if}
+
+      <!-- Labs, several databases open: every one of them, the one in front
+           marked. Clicking one brings it forward; its tabs are already in the
+           tab bar. While one opens, this says so and the page stays as it is. -->
+      {#if switchingTo}
+        {@render sep()}
+        <span role="status" class="flex h-7 min-w-0 shrink-0 items-center gap-1.5 px-2 text-ui-xs text-muted-foreground">
+          <Icon name="loader-2" class="size-3.5 shrink-0 animate-spin" />
+          Opening <span class="max-w-[8rem] truncate text-foreground">{switchingTo}</span>
+        </span>
+      {:else if openDatabases.length}
+        {@render sep()}
+        <div role="group" aria-label="Open databases" class="flex min-w-0 items-center gap-0.5 @max-[48rem]/sb:hidden">
+          {#each openDatabases as db (db.key)}
+            <button
+              type="button"
+              class={cn(
+                'flex h-6 min-w-0 max-w-[9rem] items-center gap-1.5 rounded-md px-2 text-ui-2xs transition-colors duration-100',
+                db.current ? 'bg-sidebar-accent text-foreground' : 'text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground',
+              )}
+              aria-current={db.current ? 'true' : undefined}
+              title={db.current ? `${db.label}: open now` : `Switch to ${db.label}`}
+              onclick={() => { if (!db.current) onopendatabase(db.key) }}
+            >
+              <span aria-hidden="true" class={cn('size-1.5 shrink-0 rounded-full', db.current ? 'bg-success' : 'bg-muted-foreground/40')}></span>
+              <span class="truncate">{db.label}</span>
+            </button>
+          {/each}
+        </div>
       {/if}
 
       <!-- Read-only is a fact about this connection, so it sits with it and says

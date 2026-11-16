@@ -18,6 +18,7 @@ mod cloudflare;
 mod commands;
 mod connection_store;
 mod copilot;
+mod crash;
 mod db;
 mod docker;
 mod launch;
@@ -409,6 +410,8 @@ fn unlock_macos_webview_frame_rate(window: &tauri::WebviewWindow) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // First, so a panic anywhere after this leaves a report (see crash.rs).
+    crash::install();
     // One TLS crypto provider for the whole process. Two are compiled in
     // (ring, which every driver used so far, and aws-lc-rs from tiberius 0.13),
     // and with both rustls has no default: any client built without naming one
@@ -501,6 +504,7 @@ pub fn run() {
             // driver refreshing an expired Cloudflare token mid-session.
             cloudflare::set_app_handle(app.handle().clone());
             if let Ok(dir) = app.path().app_data_dir() {
+                crash::set_dir(dir.clone());
                 db::connection::set_data_dir(dir);
             }
             db::connection::register_active_conn(std::sync::Arc::clone(&db_conn_for_setup));
@@ -651,6 +655,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            crash::take_crash_report,
             plugins::plugins_list,
             plugins::plugins_read_source,
             plugins::plugins_install,

@@ -564,7 +564,12 @@ pub fn close_in_background(conn: ActiveConnection) {
     // seconds. Nothing downstream needs the drain to finish - the state slot
     // is already empty - so never make connect/switch wait on it. The timeout
     // caps the drain; after that the OS cleans up the sockets.
-    tokio::spawn(async move {
+    //
+    // tauri's runtime, not tokio::spawn: this is also called from sync
+    // commands (park_connection, resume_connection, close_parked), which run
+    // outside any Tokio context. tokio::spawn panics there, and with
+    // panic = "abort" that closed the whole app on a Labs switch or disconnect.
+    tauri::async_runtime::spawn(async move {
         let timeout = std::time::Duration::from_secs(3);
         match conn {
             ActiveConnection::Postgres(p) => {

@@ -78,3 +78,20 @@ pub fn set_active_conn_key(state: Db<'_>, key: Option<String>) -> Result<(), Str
     *state.active_key.lock().map_err(|e| e.to_string())? = key.filter(|k| !k.is_empty());
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::connection::ActiveConnection;
+    use super::*;
+
+    /// park/resume/close_parked are sync commands: they run on a thread with
+    /// no Tokio runtime. Closing a pool there used to call tokio::spawn, which
+    /// panics outside a runtime, and release builds abort on a panic: turning
+    /// Labs off or disconnecting closed the app.
+    #[test]
+    fn closing_a_pool_outside_a_runtime_does_not_panic() {
+        let pool = tauri::async_runtime::block_on(sqlx::SqlitePool::connect("sqlite::memory:")).unwrap();
+        let handle = std::thread::spawn(move || close_in_background(ActiveConnection::Sqlite(pool)));
+        handle.join().expect("close_in_background panicked outside a runtime");
+    }
+}
