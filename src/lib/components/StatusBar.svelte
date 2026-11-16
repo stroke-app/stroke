@@ -725,30 +725,24 @@
       </div>
       {/if}
 
-      <!-- Labs, several databases open: every one of them, the one in front
-           marked. Clicking one brings it forward; its tabs are already in the
-           tab bar. While one opens, this says so and the page stays as it is. -->
+      <!-- Labs, several databases open: the database chip above is the one in
+           front; the others follow it, once each, as plain names. Clicking one
+           brings it forward (its tabs are already in the tab bar). While one
+           opens, its name shows with a spinner and the page stays as it is. -->
       {#if switchingTo}
-        {@render sep()}
         <span role="status" class="flex h-7 min-w-0 shrink-0 items-center gap-1.5 px-2 text-ui-xs text-muted-foreground">
           <Icon name="loader-2" class="size-3.5 shrink-0 animate-spin" />
-          Opening <span class="max-w-[8rem] truncate text-foreground">{switchingTo}</span>
+          <span class="max-w-[8rem] truncate">{switchingTo}</span>
         </span>
-      {:else if openDatabases.length}
-        {@render sep()}
-        <div role="group" aria-label="Open databases" class="flex min-w-0 items-center gap-0.5 @max-[48rem]/sb:hidden">
-          {#each openDatabases as db (db.key)}
+      {:else if openDatabases.length > 1}
+        <div role="group" aria-label="Other open databases" class="flex min-w-0 items-center @max-[48rem]/sb:hidden">
+          {#each openDatabases.filter((d) => !d.current) as db (db.key)}
             <button
               type="button"
-              class={cn(
-                'flex h-6 min-w-0 max-w-[9rem] items-center gap-1.5 rounded-md px-2 text-ui-2xs transition-colors duration-100',
-                db.current ? 'bg-sidebar-accent text-foreground' : 'text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground',
-              )}
-              aria-current={db.current ? 'true' : undefined}
-              title={db.current ? `${db.label}: open now` : `Switch to ${db.label}`}
-              onclick={() => { if (!db.current) onopendatabase(db.key) }}
+              class="flex h-7 min-w-0 max-w-[9rem] items-center rounded-md px-2 text-ui-xs text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground"
+              title={`Switch to ${db.label}`}
+              onclick={() => onopendatabase(db.key)}
             >
-              <span aria-hidden="true" class={cn('size-1.5 shrink-0 rounded-full', db.current ? 'bg-success' : 'bg-muted-foreground/40')}></span>
               <span class="truncate">{db.label}</span>
             </button>
           {/each}

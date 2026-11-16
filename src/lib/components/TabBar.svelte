@@ -178,10 +178,6 @@
       {@const tabIconName = tabIcon(tab)}
       {@const active = tab.id === activeTabId}
 
-      <!-- Labs, several databases open: each database's tabs are a group. -->
-      {#if tab.groupStart}
-        <span aria-hidden="true" class="mx-1 h-4 w-px shrink-0 self-center bg-border"></span>
-      {/if}
       <ContextMenu.Root>
         <ContextMenu.Trigger>
           {#snippet child({ props: ctxProps })}
@@ -220,8 +216,8 @@
                 )}
                 onclick={() => { if (_suppressTabClick) { _suppressTabClick = false; return } onselect(tab.id) }}
               >
-                <Icon name={tabIconName} class={cn('size-3.5 shrink-0', active ? 'text-foreground' : 'text-muted-foreground', tab.foreign && 'opacity-60')} />
-                <span class={cn('truncate', tab.foreign && 'opacity-70')}>{tabDisplayTitle(tab)}</span>
+                <Icon name={tabIconName} class={cn('size-3.5 shrink-0', active ? 'text-foreground' : 'text-muted-foreground')} />
+                <span class="truncate">{tabDisplayTitle(tab)}</span>
               </button>
 
               {#if tab.pinned}

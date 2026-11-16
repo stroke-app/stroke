@@ -239,7 +239,7 @@
                 </span>
               </span>
             {:else}
-              <span class="chip-gloss h-5 px-2 text-ui-3xs font-semibold">Pro</span>
+              <span class="chip-gloss h-[1.125rem] px-1.5 text-ui-3xs font-medium">Pro</span>
             {/if}
           </div>
         {/if}
