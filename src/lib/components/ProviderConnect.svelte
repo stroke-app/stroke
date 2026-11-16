@@ -9,7 +9,6 @@
   import AlertTriangle from '@lucide/svelte/icons/alert-triangle'
   import RefreshCw from '@lucide/svelte/icons/refresh-cw'
   import ArrowRight from '@lucide/svelte/icons/arrow-right'
-  import X from '@lucide/svelte/icons/x'
   import Plus from '@lucide/svelte/icons/plus'
   import ExternalLink from '@lucide/svelte/icons/external-link'
   import DbIcon from './DbIcon.svelte'
@@ -598,7 +597,7 @@
         subtitle={meta?.token?.help ?? `Paste your ${meta?.name} credentials.`}
         hint="Stored in this machine's keychain"
       >
-        {#snippet mark()}<DbIcon id={provider} class="size-4 shrink-0" />{/snippet}
+        {#snippet mark()}<DbIcon id={provider} class="size-5 shrink-0" />{/snippet}
         {#snippet action()}
           {#if meta?.token?.helpUrl}
             <Button
@@ -670,7 +669,7 @@
         subtitle="Opens your browser to authorize. Your {meta?.name} password never passes through Stroke."
         hint={meta?.signIn ?? ''}
       >
-        {#snippet mark()}<DbIcon id={provider} class="size-4 shrink-0" />{/snippet}
+        {#snippet mark()}<DbIcon id={provider} class="size-5 shrink-0" />{/snippet}
         {#snippet action()}
           <Button class="group" onclick={startAuth}>
             Sign in
@@ -684,48 +683,40 @@
     <ProviderAuthPanel
       tone="busy"
       progress
-      title="Waiting for {meta?.name}…"
+      title="Waiting for {meta?.name}"
       subtitle={deviceCode
-        ? `Confirm this code on the ${meta?.name} page in your browser, then come back here.`
-        : 'Finish authorizing in the browser tab, then come back here.'}
-      hint="Times out in 5 min"
+        ? `Confirm this code on the ${meta?.name} page in your browser. This page carries on by itself.`
+        : `Approve Stroke in the ${meta?.name} tab in your browser. This page carries on by itself.`}
+      timeout={300}
     >
-      {#snippet mark()}<DbIcon id={provider} class="size-4 shrink-0" />{/snippet}
+      {#snippet mark()}<DbIcon id={provider} class="size-5 shrink-0" />{/snippet}
       {#snippet action()}
-        <Button variant="ghost" size="sm" onclick={cancelAuth}>
-          <X class="size-3.5 shrink-0" /> Cancel
-        </Button>
+        <Button variant="ghost" size="sm" onclick={cancelAuth}>Cancel</Button>
+      {/snippet}
+      {#snippet footer()}
+        {#if deviceCode}
+          <output
+            aria-label="Confirmation code"
+            class="me-2 rounded-md border border-border/60 bg-background px-2.5 py-1 font-mono text-ui-sm font-semibold tracking-[0.2em] tabular-nums text-foreground select-all"
+          >{deviceCode.userCode}</output>
+          <Button variant="ghost" size="xs" onclick={copyDeviceCode}>
+            {#if codeCopied}<Check class="size-3 shrink-0 text-success" aria-hidden="true" /> Copied{:else}Copy code{/if}
+          </Button>
+          <Button variant="ghost" size="xs" onclick={reopenDevicePage}>Open the page again</Button>
+          <span class="sr-only" role="status">{codeCopied ? 'Code copied' : ''}</span>
+        {:else if authUrl}
+          <span class="me-1">Browser didn't open?</span>
+          <Button variant="ghost" size="xs" onclick={reopenAuthPage}>Open again</Button>
+          <Button variant="ghost" size="xs" onclick={copyAuthLink}>
+            {#if linkCopied}<Check class="size-3 shrink-0 text-success" aria-hidden="true" /> Copied{:else}Copy link{/if}
+          </Button>
+          <span class="sr-only" role="status">{linkCopied ? 'Link copied' : ''}</span>
+        {:else}
+          <Loader2 class="size-3 shrink-0 animate-spin" aria-hidden="true" />
+          <span class="ms-1">Opening your browser</span>
+        {/if}
       {/snippet}
     </ProviderAuthPanel>
-    {#if deviceCode}
-      <!-- Sits on the panel's text edge (32px well + 12px gap), so the code
-           reads as part of the step above rather than a new section. -->
-      <div class="flex flex-wrap items-center gap-3 ps-11">
-        <output
-          aria-label="Confirmation code"
-          class="rounded-lg border border-border/60 bg-muted/30 px-3.5 py-2 font-mono text-ui-lg font-semibold tracking-[0.2em] tabular-nums text-foreground select-all"
-        >{deviceCode.userCode}</output>
-        <Button variant="outline" size="sm" onclick={copyDeviceCode}>
-          {#if codeCopied}<Check class="size-3.5 shrink-0 text-success" aria-hidden="true" /> Copied{:else}Copy code{/if}
-        </Button>
-        <Button variant="ghost" size="sm" class="text-muted-foreground" onclick={reopenDevicePage}>
-          Open the page again
-        </Button>
-        <span class="sr-only" role="status">{codeCopied ? 'Code copied' : ''}</span>
-      </div>
-    {:else if authUrl}
-      <!-- The way back when the browser didn't open (no default browser set)
-           or the tab was closed: open it again, or copy the link into any
-           browser. Same text edge as the panel above. -->
-      <div class="flex flex-wrap items-center gap-x-1 gap-y-1 ps-11 text-ui-2xs text-muted-foreground">
-        <span class="me-1">Browser didn't open?</span>
-        <Button variant="ghost" size="xs" onclick={reopenAuthPage}>Open again</Button>
-        <Button variant="ghost" size="xs" onclick={copyAuthLink}>
-          {#if linkCopied}<Check class="size-3 shrink-0 text-success" aria-hidden="true" /> Copied{:else}Copy link{/if}
-        </Button>
-        <span class="sr-only" role="status">{linkCopied ? 'Link copied' : ''}</span>
-      </div>
-    {/if}
 
   {:else if phase === 'fetching'}
     <ProviderAuthPanel
@@ -735,7 +726,7 @@
       subtitle="Loading your databases…"
       hint={meta?.name ?? ''}
     >
-      {#snippet mark()}<Check class="size-4 shrink-0 text-success" />{/snippet}
+      {#snippet mark()}<Check class="size-5 shrink-0 text-success" />{/snippet}
     </ProviderAuthPanel>
 
   {:else if phase === 'error'}
@@ -743,7 +734,7 @@
          in through the browser again even when the sign-in was fine and only
          the database list fell over. -->
     <ProviderAuthPanel tone="error" title={shownError.title} subtitle={shownError.detail} hint="Nothing was saved">
-      {#snippet mark()}<AlertTriangle class="size-4 shrink-0 text-destructive" />{/snippet}
+      {#snippet mark()}<AlertTriangle class="size-5 shrink-0 text-destructive" />{/snippet}
       {#snippet action()}
         <div class="flex shrink-0 items-center gap-2">
           {#if sessionExpired && meta?.mode === 'token'}

@@ -302,7 +302,10 @@
   } = $props();
 
   /** A statement that changes the schema, so the sidebar must reload. @param {string} sql */
-  const isDdl = (sql) => /^\s*(?:--[^\n]*\n\s*)*(create|alter|drop|rename|truncate|comment\s+on)\b/i.test(sql ?? "") || /;\s*(create|alter|drop|rename|truncate)\b/i.test(sql ?? "");
+  // A statement that changes the catalog, wherever it sits in the batch: at the
+  // start, after a `;`, or after a `--` or `/* */` comment (an agent often opens
+  // with `SET search_path ...;` or a comment line before its CREATE VIEW).
+  const isDdl = (sql) => /(?:^|;|\*\/|\n)\s*(?:--[^\n]*\n\s*)*(create|alter|drop|rename|truncate|comment\s+on)\b/i.test(sql ?? "");
 
   $effect(() => {
     if (isActive) {
@@ -2886,7 +2889,9 @@
             : s,
         ),
       }));
-      if (t.name === "execute_sql" && !res.is_error && isDdl(t.detail)) onschemadirty();
+      // An empty detail means the result beat the call's full input here: the
+      // SQL is unknown, so the sidebar re-reads rather than miss a CREATE VIEW.
+      if (t.name === "execute_sql" && !res.is_error && (!t.detail || isDdl(t.detail))) onschemadirty();
       const parsed = t.name === "execute_sql" && !res.is_error ? parseSqlResult(out) : null;
       // Rows still get their table; a failure is already shown in the fold.
       if (parsed && parsed.total > 0) {

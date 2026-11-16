@@ -3616,11 +3616,11 @@
                   </div>
                 </ScrollArea>
               {:else}
-                <div class="flex h-full items-center justify-center pb-8">
-                  <p class="text-ui-2xs text-muted-foreground">
-                    No saved connections
-                  </p>
-                </div>
+                <!-- At the top, where the first saved one will appear, not
+                     floating halfway down an empty rail. -->
+                <p class="px-3 pt-1 text-ui-xs text-muted-foreground">
+                  Saved connections show up here.
+                </p>
               {/if}
             </div>
             <!-- Drag the rail wider when connection names are long. -->
@@ -3705,7 +3705,7 @@
           <!-- The same top inset on both steps, so going from the list to the
                form doesn't nudge the page up (it was pt-4, then pt-2). -->
           <div
-            class="w-full max-w-6xl shrink-0 px-10 pt-3"
+            class="mx-auto w-full max-w-6xl shrink-0 px-10 pt-3"
           >
             {#if step === "pick"}
               <!-- pe-6 keeps the rescan button clear of the dialog's own close
@@ -3897,12 +3897,13 @@
                    auto-fill grid with 200px of air between them, and "New
                    connection" put its chevron 1800px from its own label. One
                    42rem column, one leading edge. -->
-              <!-- Left-aligned, not centred: the rail is on the left and the
-                   header sits above this, so a column centred in the panel
-                   starts somewhere neither of them does. One leading edge. -->
+              <!-- Centred in the panel, like the header and footer (all three
+                   mx-auto at the same width, so they keep one leading edge).
+                   Pinned left, a wide window left a third of the panel empty
+                   on the right. -->
               <!-- Full width: the grids below are four columns, so a wide window
                    buys wider tiles and fewer truncated names, not empty margin. -->
-              <div class="@container flex w-full max-w-6xl flex-col gap-7 px-10 py-6">
+              <div class="@container mx-auto flex w-full max-w-6xl flex-col gap-7 px-10 py-6">
                   <!-- ── Paste a connection string ─────────────────────────
                        The fastest path there is, and the one a developer already
                        has in a clipboard from their provider dashboard or a
@@ -4197,7 +4198,7 @@
                    same layout roomier - and the panel already runs the header,
                    the footer and the URL bar edge to edge, so a capped form in
                    the middle of them was the odd one out. -->
-              <div class="flex w-full max-w-6xl items-start gap-10 px-10 py-6">
+              <div class="mx-auto flex w-full max-w-6xl items-start gap-10 px-10 py-6">
                 <!-- Enter connects, from any field - filling a form and having to go
                  find the button is the one interaction nobody expects here. The
                  paste bar's own Enter handler runs first and marks the event
@@ -5304,7 +5305,7 @@
                  px-10, padding inside the width): with the padding outside, the
                  bar ran 80px past the tiles, plain to see once the rail is
                  collapsed and the window is wide. -->
-            <div class="flex min-h-8 w-full max-w-6xl flex-col justify-center px-10">
+            <div class="mx-auto flex min-h-8 w-full max-w-6xl flex-col justify-center px-10">
               <!-- The alert itself is a toast (see failWith). What stays here is the
                  one-line record of it, so the driver's own words are still
                  readable after the toast has gone - without a panel that shoves

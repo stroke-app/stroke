@@ -351,7 +351,7 @@
       : `${providerName} is setting up the ${spec.noun}${providerState ? ` (${providerState.toLowerCase()})` : ''}. Stroke connects as soon as it's ready.`}
     hint={step === 'provisioning' ? `${clock(elapsed)} elapsed${spec.slow ? ' · usually 1 to 2 min' : ''}` : ''}
   >
-    {#snippet mark()}<DbIcon id={iconId} class="size-4 shrink-0" />{/snippet}
+    {#snippet mark()}<DbIcon id={iconId} class="size-5 shrink-0" />{/snippet}
     {#snippet action()}
       {#if step === 'provisioning'}
         <Button variant="ghost" size="sm" onclick={stopWaiting}>Stop waiting</Button>

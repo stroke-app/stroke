@@ -57,7 +57,7 @@ const TOKEN_PROXY: &str = "https://stroke.click/api/oauth/token";
 // drops the callback listener future, which frees the localhost port instead of
 // holding it until the 5-minute timeout.
 static OAUTH_CANCEL: OnceLock<tokio::sync::Notify> = OnceLock::new();
-fn oauth_cancel() -> &'static tokio::sync::Notify {
+pub(crate) fn oauth_cancel() -> &'static tokio::sync::Notify {
     OAUTH_CANCEL.get_or_init(tokio::sync::Notify::new)
 }
 

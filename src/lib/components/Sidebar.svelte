@@ -112,6 +112,10 @@
     /** A connection's colour or workspace changed; carries the saved list. @type {(list: any[]) => void} */
     onconnectionmeta = () => {},
     ondisconnectconnection = () => {},
+    /** Labs: the other open databases' table lists, for the tree. */
+    keptTrees = /** @type {{ key: string, conn: any, schema: string, tables: any[] }[]} */ ([]),
+    /** Labs: a table under another open database was opened in the tree. */
+    onopenkepttable = /** @type {(key: string, schema: string, name: string) => void} */ ((_k, _s, _n) => {}),
     /** Open an extension's detail tab (Extensions panel). @type {(ext: any) => void} */
     onopenextensiondetail = () => {},
     /** Which side the sidebar docks to. @type {'left' | 'right'} */
@@ -2196,6 +2200,15 @@
             disabled={!connectionName}
             oninput={(e) => handleFilterInput(e.currentTarget.value)}
             onkeydown={(e) => {
+              // Escape clears the filter (the full list comes back at once, no
+              // debounce). Nothing typed: Escape is left for whatever is around.
+              if (e.key === 'Escape' && localFilter) {
+                e.preventDefault()
+                e.stopPropagation()
+                handleFilterInput('')
+                flushFilter()
+                return
+              }
               // Enter opens the match when the filter has left exactly one. The
               // debounce is committed first, or a fast typist who narrows to one
               // row and hits Enter within 200ms is judged against the previous
@@ -2361,6 +2374,8 @@
               ontablefilter('')
             }}
             tableMenu={treeTableMenu}
+            {keptTrees}
+            {onopenkepttable}
             {ontableselect}
             onopentable={onrecentselect}
             {onschemachange}
