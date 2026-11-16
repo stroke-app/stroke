@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.16.5] - 2026-11-16
+
+### Changes
+- Plan badge: a small dark keycap (#264)
+
+
 ## [2.16.4] - 2026-11-16
 
 ### Changes
