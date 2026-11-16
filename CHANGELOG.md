@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.16.6] - 2026-11-16
+
+### Changes
+- Polish connect page, provider sign-in, tree with several databases (#265)
+
+
 ## [2.16.5] - 2026-11-16
 
 ### Changes
