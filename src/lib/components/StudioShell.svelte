@@ -8627,8 +8627,12 @@ let rowSearch = $state('')
   async function activateForeignTab(id) {
     const hit = sessionOfTab(id)
     if (!hit) return
-    await handleSwitchDatabase(hit.s.conn, { focusTab: id })
+    // The clicked tab lights up now, not when its database is in front.
+    pressedTab = id
+    try { await handleSwitchDatabase(hit.s.conn, { focusTab: id }) } finally { pressedTab = '' }
   }
+  /** Labs: a tab of another database that was clicked and is being brought forward. */
+  let pressedTab = $state('')
 
   /** Close a tab of another open database without switching to it. @param {string} id */
   function closeForeignTab(id) {
@@ -8642,9 +8646,9 @@ let rowSearch = $state('')
 
   /**
    * Labs: one tab bar for every open database. This database's tabs and the
-   * kept ones, grouped in the order the databases were opened. A group after
-   * the first starts with a divider; which database a tab belongs to is in its
-   * tooltip and in the status bar (openDatabases), not on the tab.
+   * kept ones, in the order the databases were opened, so no tab moves on a
+   * switch. They look like any other tab: which database one belongs to is in
+   * its tooltip and in the status bar (openDatabases).
    */
   const barTabs = $derived.by(() => {
     void sessionsTick
@@ -8660,8 +8664,7 @@ let rowSearch = $state('')
     for (const k of order) {
       const group = k === here
         ? own.map((t) => ({ ...t, connLabel: label }))
-        : (_sessions.get(k)?.tabs ?? []).filter((t) => t.kind !== 'welcome' && t.kind !== 'ai').map((t) => ({ ...t, connLabel: _sessions.get(k)?.label, foreign: true }))
-      if (group.length && out.length) group[0] = { ...group[0], groupStart: true }
+        : (_sessions.get(k)?.tabs ?? []).filter((t) => t.kind !== 'welcome' && ($appAiInTab || t.kind !== 'ai')).map((t) => ({ ...t, connLabel: _sessions.get(k)?.label, foreign: true }))
       out.push(...group)
     }
     return out
@@ -8805,10 +8808,21 @@ let rowSearch = $state('')
     _sessions.delete(key)
     noteSession(key)
     sessionsTick++
+    holdTransitions()
     await resumeSession(session.conn, session, focusTab)
     sidebarShowTables()
     return true
   }
+
+  /** Swap the screen without transitions until two frames after the change (app.css, data-swapping). */
+  function holdTransitions() {
+    const root = document.documentElement
+    root.setAttribute('data-swapping', '')
+    clearTimeout(_swapTimer)
+    _swapTimer = setTimeout(() => requestAnimationFrame(() => requestAnimationFrame(() => root.removeAttribute('data-swapping'))), 0)
+  }
+  /** @type {ReturnType<typeof setTimeout> | undefined} */
+  let _swapTimer
 
   /**
    * Connect, and when a provider's credentials were revoked or rotated in its
@@ -9976,7 +9990,7 @@ let rowSearch = $state('')
     {#if tabsInTitle}
       <TabBar
             tabs={barTabs}
-            {activeTabId}
+            activeTabId={pressedTab || activeTabId}
             onselect={(id) => (tabs.some((t) => t.id === id) ? activateTab(id) : activateForeignTab(id))}
             onclose={(id) => (tabs.some((t) => t.id === id) ? closeTab(id) : closeForeignTab(id))}
             oncloseothers={(id) => { if (tabs.some((t) => t.id === id)) closeOtherTabs(id) }}
@@ -10337,7 +10351,7 @@ let rowSearch = $state('')
         {#if tabBarVisible && !tabsInTitle}
           <TabBar
             tabs={barTabs}
-            {activeTabId}
+            activeTabId={pressedTab || activeTabId}
             onselect={(id) => (tabs.some((t) => t.id === id) ? activateTab(id) : activateForeignTab(id))}
             onclose={(id) => (tabs.some((t) => t.id === id) ? closeTab(id) : closeForeignTab(id))}
             oncloseothers={(id) => { if (tabs.some((t) => t.id === id)) closeOtherTabs(id) }}
@@ -10360,7 +10374,7 @@ let rowSearch = $state('')
                databases show their tabs here too. Split, each pane lists its own. -->
           <TabBar
             tabs={paneCount <= 1 && barTabs.some((t) => t.foreign) ? barTabs : group.tabIds.map((id) => tabsById.get(id)).filter(Boolean)}
-            activeTabId={group.activeTabId}
+            activeTabId={pressedTab || group.activeTabId}
             onselect={(id) => (tabs.some((t) => t.id === id) ? void focusTabInGroup(group.id, id) : void activateForeignTab(id))}
             onclose={(id) => (tabs.some((t) => t.id === id) ? void closeTabInGroup(group.id, id) : closeForeignTab(id))}
             oncloseothers={(id) => { if (tabs.some((t) => t.id === id)) closeOtherTabs(id) }}
