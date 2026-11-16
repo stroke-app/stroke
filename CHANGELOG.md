@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.16.3] - 2026-11-16
+
+### Changes
+- Labs: fix the crash on disconnect, switch without flicker, report crashes (#262)
+
+
 ## [2.16.2] - 2026-11-15
 
 ### Changes
