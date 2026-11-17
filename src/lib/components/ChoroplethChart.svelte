@@ -1,4 +1,5 @@
 <script>
+  import { ECHARTS_THEME } from '$lib/chart-utils.js'
   import { onDestroy } from 'svelte'
   import { isCurrentThemeDark } from '$lib/stores/settings.js'
   import { getWorldGeoJson } from '$lib/geo.js'
@@ -83,12 +84,13 @@
 
     // Container stays mounted throughout - safe to proceed
     const { init, registerMap } = await import('echarts')
+    await import('echarts/theme/v5')
     if (!container.isConnected) return
 
     registerMap('world', geoJson)
 
     if (chart) { chart.dispose(); chart = null }
-    const instance = init(container, null, {
+    const instance = init(container, ECHARTS_THEME, {
       renderer: 'canvas',
       devicePixelRatio: window.devicePixelRatio || 2,
     })

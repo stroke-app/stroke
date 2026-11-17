@@ -1,4 +1,5 @@
 <script>
+  import { ECHARTS_THEME } from '$lib/chart-utils.js'
   import SelectMenu from './SelectMenu.svelte'
   import Icon from './Icon.svelte'
   import SearchableMenu from './SearchableMenu.svelte'
@@ -273,8 +274,9 @@
     document.body.appendChild(host)
     try {
       const { init } = await import('echarts')
+      await import('echarts/theme/v5')
       await import('echarts-wordcloud')
-      const inst = init(host, null, { renderer: 'svg' })
+      const inst = init(host, ECHARTS_THEME, { renderer: 'svg' })
       inst.setOption(option, { notMerge: true })
       const svg = host.querySelector('svg')?.outerHTML ?? ''
       inst.dispose()

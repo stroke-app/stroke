@@ -1,4 +1,5 @@
 <script>
+  import { ECHARTS_THEME } from '$lib/chart-utils.js'
   import { onDestroy } from 'svelte'
 
   let {
@@ -55,13 +56,14 @@
       initializing = true
       try {
         const { init } = await import('echarts')
+        await import('echarts/theme/v5')
         // Register the wordcloud series plugin lazily (keeps echarts out of startup bundle).
         await import('echarts-wordcloud')
         if (disposed) return
         const opts = renderer === 'canvas'
           ? { renderer: /** @type {'canvas'} */ ('canvas'), devicePixelRatio: window.devicePixelRatio || 2 }
           : { renderer: /** @type {'svg'} */ ('svg') }
-        chart = init(container, null, opts)
+        chart = init(container, ECHARTS_THEME, opts)
       } finally {
         initializing = false
       }
