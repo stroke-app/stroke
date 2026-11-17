@@ -16,7 +16,7 @@ import crypto from 'node:crypto'
 
 export const STUDIO_ORIGIN = 'https://stroke.click'
 /** Bumped with the package; the page reads `features` to know what it may offer. */
-export const BRIDGE_VERSION = '0.2.0'
+export const BRIDGE_VERSION = '0.3.0'
 export const FEATURES = ['structure', 'where', 'edit', 'rowCounts']
 const MAX_BODY = 1 << 20
 
@@ -38,32 +38,7 @@ export async function startBridge({ engine, name, origins = [STUDIO_ORIGIN], por
     return b.length === want.length && crypto.timingSafeEqual(b, want)
   }
 
-  /** @type {Record<string, (body: any) => Promise<unknown>>} */
-  const routes = {
-    '/info': async () => ({ ...(await engine.info()), name, bridge: BRIDGE_VERSION, features: FEATURES }),
-    '/tables': () => engine.tables(),
-    '/columns': (b) => engine.columns(str(b.schema), str(b.table)),
-    '/structure': (b) => engine.structure(str(b.schema), str(b.table)),
-    '/rows': (b) => engine.rows({
-      schema: str(b.schema),
-      table: str(b.table),
-      limit: Number(b.limit) || 100,
-      offset: Number(b.offset) || 0,
-      sort: b.sort ?? null,
-      where: typeof b.where === 'string' ? b.where : '',
-    }),
-    '/update': (b) => engine.update({ schema: str(b.schema), table: str(b.table), key: obj(b.key), set: obj(b.set) }),
-    '/insert': (b) => engine.insert({ schema: str(b.schema), table: str(b.table), values: obj(b.values) }),
-    '/delete': (b) => {
-      if (!Array.isArray(b.keys) || !b.keys.length) throw new Error('Expected keys')
-      return engine.remove({ schema: str(b.schema), table: str(b.table), keys: b.keys.map(obj) })
-    },
-    '/query': async (b) => {
-      const t = performance.now()
-      const r = await engine.query(str(b.sql))
-      return { ...r, durationMs: Math.round(performance.now() - t) }
-    },
-  }
+  const routes = makeRoutes({ engine, name })
 
   /** @type {number} */
   let boundPort = 0
@@ -115,6 +90,73 @@ export async function startBridge({ engine, name, origins = [STUDIO_ORIGIN], por
       server.close(() => resolve())
     }),
   }
+}
+
+/**
+ * What the studio can call, by path. The local bridge and the share relay
+ * both answer from this. A shared studio that isn't allowed to write gets no
+ * edit routes, and its SQL console takes reading statements only (the engine
+ * it is given runs those read-only as well).
+ * @param {{ engine: import('./engines.js').Engine, name: string, shared?: boolean, write?: boolean }} o
+ * @returns {Record<string, (body: any) => Promise<unknown>>}
+ */
+export function makeRoutes({ engine, name, shared = false, write = true }) {
+  /** @type {Record<string, (body: any) => Promise<unknown>>} */
+  const routes = {
+    '/info': async () => ({
+      ...(await engine.info()),
+      name,
+      bridge: BRIDGE_VERSION,
+      features: write ? FEATURES : [...FEATURES.filter((f) => f !== 'edit'), 'readonly'],
+      ...(shared ? { shared: true, readonly: !write } : {}),
+    }),
+    '/tables': () => engine.tables(),
+    '/columns': (b) => engine.columns(str(b.schema), str(b.table)),
+    '/structure': (b) => engine.structure(str(b.schema), str(b.table)),
+    '/rows': (b) => engine.rows({
+      schema: str(b.schema),
+      table: str(b.table),
+      limit: Number(b.limit) || 100,
+      offset: Number(b.offset) || 0,
+      sort: b.sort ?? null,
+      where: typeof b.where === 'string' ? b.where : '',
+    }),
+    '/update': (b) => engine.update({ schema: str(b.schema), table: str(b.table), key: obj(b.key), set: obj(b.set) }),
+    '/insert': (b) => engine.insert({ schema: str(b.schema), table: str(b.table), values: obj(b.values) }),
+    '/delete': (b) => {
+      if (!Array.isArray(b.keys) || !b.keys.length) throw new Error('Expected keys')
+      return engine.remove({ schema: str(b.schema), table: str(b.table), keys: b.keys.map(obj) })
+    },
+    '/query': async (b) => {
+      const t = performance.now()
+      const r = await engine.query(str(b.sql))
+      return { ...r, durationMs: Math.round(performance.now() - t) }
+    },
+  }
+
+  if (!write) {
+    delete routes['/update']
+    delete routes['/insert']
+    delete routes['/delete']
+    const query = routes['/query']
+    routes['/query'] = async (b) => {
+      if (!isReadingSql(str(b.sql))) throw new Error('This shared studio is read-only: run SELECT, WITH, EXPLAIN or SHOW.')
+      return query(b)
+    }
+  }
+  return routes
+}
+
+/**
+ * A statement that only reads. The engine runs it read-only anyway; this
+ * turns away COPY, CALL, DO, ATTACH and friends before they reach it.
+ * @param {string} sql
+ */
+export function isReadingSql(sql) {
+  const text = sql.replace(/^\s*(?:(?:--[^\n]*\n)|(?:\/\*[\s\S]*?\*\/)|\s)*/, '')
+  const word = (text.match(/^[a-z]+/i)?.[0] ?? '').toLowerCase()
+  if (word === 'pragma') return !text.includes('=')
+  return ['select', 'with', 'explain', 'show', 'values', 'table', 'describe', 'desc'].includes(word)
 }
 
 /** @param {unknown} v @returns {Record<string, unknown>} */

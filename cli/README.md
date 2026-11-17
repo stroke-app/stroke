@@ -27,6 +27,8 @@ npx strokedb
 | `--name <name>` | Name for the connection (default: the folder name) |
 | `--port <port>` | Port for the local bridge (default: any free port) |
 | `--no-open` | Print the studio link instead of opening a browser |
+| `--share` | (Labs) Also print a link that opens this studio on any device. Read-only. Needs Node 22+ |
+| `--write` | With `--share`: let the link edit rows and run any SQL |
 
 ## How the web studio is kept private
 
@@ -42,3 +44,14 @@ Your queries go from your browser to your machine. They never pass through strok
 Safari blocks secure pages from calling `127.0.0.1`; use Chrome, Edge, Firefox or the desktop app.
 
 SQLite in the web studio needs Node 22.5 or newer.
+
+## Sharing (Labs)
+
+`npx strokedb --share` prints a second link that opens the studio on any device, for anyone you send it to, while the command runs.
+
+- It goes through a relay at stroke.click: this command holds a connection open to it, and the studio page sends its calls there. Nothing has to be reachable from the internet.
+- End-to-end encrypted. Every call is AES-256-GCM with a key that exists only in the link's `#fragment`; the relay passes ciphertext along and can't read it.
+- Read-only unless you add `--write`: browsing, and SQL that only reads (SELECT, WITH, EXPLAIN, SHOW). The shared side has its own read-only connection (Postgres `BEGIN READ ONLY`, MySQL `START TRANSACTION READ ONLY`, SQLite opened read-only), so a statement can't talk its way into a write.
+- Stop it with Ctrl+C; the link stops working until you share again (a new run makes a new link).
+
+The desktop app can share an open connection the same way: turn on Settings → Labs → Share as a web studio, then pick **Share as web studio** in the command palette.

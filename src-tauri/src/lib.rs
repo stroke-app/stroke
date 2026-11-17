@@ -809,6 +809,7 @@ pub fn run() {
             commands::instance_set_config,
             commands::instance_replication,
             commands::pg_execute_sql,
+            commands::share_execute_sql,
             commands::pg_execute_sql_multi,
             commands::pg_execute_sql_stream,
             commands::result_window,

@@ -1,6 +1,6 @@
 {
   "name": "strokedb",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Open your project's database in Stroke: the desktop app if it's installed, otherwise the web studio at stroke.click/studio",
   "license": "SEE LICENSE IN LICENSE",
   "homepage": "https://stroke.click/studio",
@@ -9,12 +9,24 @@
     "url": "https://github.com/stroke-app/stroke",
     "directory": "cli"
   },
-  "keywords": ["database", "studio", "postgres", "mysql", "sqlite", "gui", "stroke"],
+  "keywords": [
+    "database",
+    "studio",
+    "postgres",
+    "mysql",
+    "sqlite",
+    "gui",
+    "stroke"
+  ],
   "type": "module",
   "bin": {
     "strokedb": "bin/strokedb.js"
   },
-  "files": ["bin", "src", "README.md"],
+  "files": [
+    "bin",
+    "src",
+    "README.md"
+  ],
   "engines": {
     "node": ">=20.19"
   },

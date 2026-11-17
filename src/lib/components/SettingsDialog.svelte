@@ -798,6 +798,17 @@
       },
     )}
   {/if}
+  {#if show('Share as a web studio', 'Labs, share a connection with a link that opens in any browser, relay, remote')}
+    {@render switchRow(
+      'Share as a web studio',
+      'Share the open database with a link that works in any browser, on any device, while Stroke is open. End-to-end encrypted through stroke.click. Read-only unless you allow edits.',
+      settings.studioShare === true,
+      () => {
+        settings = updateSettings({ studioShare: settings.studioShare !== true });
+        window.dispatchEvent(new CustomEvent('stroke:studio-share-changed', { detail: settings.studioShare === true }));
+      },
+    )}
+  {/if}
   {#if show('Focus the tree on switch', 'Labs, collapse the sidebar tree to the new database tables when you switch')}
     {@render switchRow(
       'Focus the tree on switch',
