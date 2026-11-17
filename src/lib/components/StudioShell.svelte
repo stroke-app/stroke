@@ -8370,7 +8370,8 @@ let rowSearch = $state('')
   }
 
   /** Labs: close every open database at once (the dialog's Disconnect all). */
-  async function handleDisconnectAll() {
+  /** Close every kept database; the one on screen stays. */
+  async function closeKeptSessions() {
     try {
       const { invoke } = await import('@tauri-apps/api/core')
       await invoke('close_parked', { key: null, connection: null })
@@ -8378,8 +8379,20 @@ let rowSearch = $state('')
     _sessions.clear()
     sessionOrder = []
     sessionsTick++
+  }
+
+  async function handleDisconnectAll() {
+    await closeKeptSessions()
     await handleDisconnect()
   }
+
+  // Labs turned off in Settings: the other open databases close, so the tab
+  // bar and the status bar go back to the one connection on screen.
+  $effect(() => {
+    const on = () => { void closeKeptSessions() }
+    window.addEventListener('stroke:multi-connection-off', on)
+    return () => window.removeEventListener('stroke:multi-connection-off', on)
+  })
 
   /**
    * A saved connection was deleted (sidebar or connection modal). Deleting the
