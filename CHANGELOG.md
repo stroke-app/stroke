@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.17.3] - 2026-11-17
+
+### Changes
+- Redesign the license key entry: a field well and a keycap Activate button (#272)
+
+
 ## [2.17.2] - 2026-11-17
 
 ### Changes
