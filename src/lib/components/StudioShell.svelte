@@ -63,7 +63,6 @@
   import * as PaneTree from '$lib/pane-layout.js'
   import TabLoading from './TabLoading.svelte'
   import TableToolbar from './TableToolbar.svelte'
-  import ImportDataDialog from './ImportDataDialog.svelte'
   import DataTable from './DataTable.svelte'
   import RowDetailPanel from './RowDetailPanel.svelte'
   // TableJsonView / TableTextView are NOT imported here: both reach the CodeMirror
@@ -72,19 +71,14 @@
   // view mode. They load via {#await import()} at their (already guarded) call
   // sites below, exactly like MapPage / EntityRelationPage.
   import TableRecordView from './TableRecordView.svelte'
-  import CommandPalette from './CommandPalette.svelte'
   // AiChat / AiSidebar (large, pull in marked + shiki) are loaded lazily the first time
   // the AI panel is opened - see the {#await import()} blocks below.
-  import AiSettingsDialog from './AiSettingsDialog.svelte'
   import ConnectionModal from './ConnectionModal.svelte'
   import { terminalDockOpen as terminalDockStore } from '$lib/stores/redis-nav.js'
   import DbIcon from './DbIcon.svelte'
-  import ShareDialog from './ShareDialog.svelte'
-  import { requestShare, sharesPageRequest, chartTitle } from '$lib/share-flow.js'
+  import { requestShare, sharesPageRequest, chartTitle, shareRequest } from '$lib/share-flow.js'
   import MySharesDialog from './MySharesDialog.svelte'
   import Icon from './Icon.svelte'
-  import DockerLaunchModal from './DockerLaunchModal.svelte'
-  import CreateTableDialog from './CreateTableDialog.svelte'
   import CreateSchemaDialog from './CreateSchemaDialog.svelte'
   import GenerateSqlDialog from './GenerateSqlDialog.svelte'
   import { genSelectStar } from '$lib/sql-generate.js'
@@ -97,7 +91,6 @@
   import { buildBatchUpdateSql } from '$lib/sql-batch-update.js'
   import { buildSearchQuery, searchOptionsSupported, supportedSearchOptions } from '$lib/search-options.js'
   import Onboarding from './Onboarding.svelte'
-  import SettingsDialog from './SettingsDialog.svelte'
   import KeyboardShortcutsDialog from './KeyboardShortcutsDialog.svelte'
   import LeaderPanel from './LeaderPanel.svelte'
   import { requestChat } from '$lib/stores/ai-chat-bridge.js'
@@ -656,6 +649,48 @@
   let showDisconnectDialog = $state(false)
   let showAiModelSettings = $state(false)
   let showProGate = $state(false)
+  // ── Dialogs loaded on first use ─────────────────────────────────────────
+  // Settings, the command palette, the AI settings and a few one-off dialogs
+  // were in the startup bundle (about 210KB of the 1.3MB entry) although none
+  // of them shows at launch. Each now mounts the first time it opens and stays
+  // mounted after, so closing keeps its exit animation. They are also fetched
+  // once the window is idle (below), so the first open is still instant.
+  // Keep these specifiers identical to the {#await import()} blocks in the
+  // markup so Vite resolves both to the same chunk.
+  const lazyDialogs = {
+    settings: () => import('./SettingsDialog.svelte'),
+    aiSettings: () => import('./AiSettingsDialog.svelte'),
+    palette: () => import('./CommandPalette.svelte'),
+    createTable: () => import('./CreateTableDialog.svelte'),
+    importData: () => import('./ImportDataDialog.svelte'),
+    share: () => import('./ShareDialog.svelte'),
+    docker: () => import('./DockerLaunchModal.svelte'),
+  }
+  let dialogMounted = $state({ settings: false, aiSettings: false, palette: false, createTable: false, importData: false, share: false, docker: false })
+  // Mount on first open; never unmount (closing keeps its animation).
+  $effect(() => {
+    if (showSettingsModal) dialogMounted.settings = true
+    if (showAiModelSettings) dialogMounted.aiSettings = true
+    if (commandOpen) dialogMounted.palette = true
+    if (showCreateTableDialog) dialogMounted.createTable = true
+    if (importDataOpen) dialogMounted.importData = true
+    if ($shareRequest) dialogMounted.share = true
+    if (showDockerModal) dialogMounted.docker = true
+  })
+  onMount(() => {
+    // The palette and Settings first: they are the ones a shortcut opens.
+    const order = [lazyDialogs.palette, lazyDialogs.settings, lazyDialogs.aiSettings, lazyDialogs.share, lazyDialogs.createTable, lazyDialogs.importData, lazyDialogs.docker]
+    let i = 0
+    let cancel = () => {}
+    const pump = () => {
+      if (i >= order.length) return
+      order[i++]().catch(() => {})
+      cancel = whenIdle(pump, { timeout: 3000 })
+    }
+    cancel = whenIdle(pump, { timeout: 3000 })
+    return () => cancel()
+  })
+
   let commandOpen = $state(false)
   let commandPage = $state(/** @type {'root'|'docker'|'connections'|'tables'|'pages'} */ ('root'))
   // Reset to the root view whenever the palette closes so generic openers
@@ -9786,6 +9821,8 @@ let rowSearch = $state('')
   error={dbInfoError}
 />
 <DisconnectDialog bind:open={showDisconnectDialog} connectionName={connection ? (connection.name || connection.database || connection.host || connection.filePath || 'Connected') : ''} others={keptTrees.map((k) => _sessions.get(k.key)?.label ?? 'database')} ondisconnect={() => handleDisconnect()} ondisconnectall={() => void handleDisconnectAll()} />
+{#if dialogMounted.createTable}
+  {#await lazyDialogs.createTable() then { default: CreateTableDialog }}
 <CreateTableDialog
   bind:open={showCreateTableDialog}
   {activeSchema}
@@ -9795,6 +9832,8 @@ let rowSearch = $state('')
   {tables}
   onopensql={openObjectSql}
 />
+  {/await}
+{/if}
 <CreateSchemaDialog
   bind:open={showCreateSchemaDialog}
   existingSchemas={schemas}
@@ -9815,14 +9854,20 @@ let rowSearch = $state('')
   dialect={dbType}
   onopeninsql={(sql) => { if (aiMode) exitAiMode(); void openQueryInEditor(sql) }}
 />
+{#if dialogMounted.docker}
+  {#await lazyDialogs.docker() then { default: DockerLaunchModal }}
 <DockerLaunchModal
   bind:open={showDockerModal}
   initialDbType={dockerInitialDb}
   onconnect={handleDockerConnect}
 />
+  {/await}
+{/if}
 
 <McpPanel bind:open={showMcpPanel} connected={!!connection} />
 
+{#if dialogMounted.settings}
+  {#await lazyDialogs.settings() then { default: SettingsDialog }}
 <SettingsDialog
   bind:open={showSettingsModal}
   bind:section={settingsSection}
@@ -9832,7 +9877,11 @@ let rowSearch = $state('')
   onopenextensions={() => openExtensionsTab()}
   onopenlicense={() => openLicenseTab()}
 />
+  {/await}
+{/if}
 
+{#if dialogMounted.importData}
+  {#await lazyDialogs.importData() then { default: ImportDataDialog }}
 <ImportDataDialog
   bind:open={importDataOpen}
   schema={activeSchema}
@@ -9841,8 +9890,14 @@ let rowSearch = $state('')
   {primaryKey}
   onimported={() => reloadTableFromQuery(false)}
 />
+  {/await}
+{/if}
 
+{#if dialogMounted.aiSettings}
+  {#await lazyDialogs.aiSettings() then { default: AiSettingsDialog }}
 <AiSettingsDialog bind:open={showAiModelSettings} />
+  {/await}
+{/if}
 
 <KeyboardShortcutsDialog bind:open={showShortcutsModal} />
 <LeaderPanel bind:open={leaderOpen} actions={leaderActions} />
@@ -9860,7 +9915,11 @@ let rowSearch = $state('')
   lead={crashReport ? 'Stroke closed by itself last time. This report holds the error and where in Stroke it happened, nothing else; read it over before you send it.' : ''}
 />
 <!-- Share links: one dialog for every kind, opened through requestShare(). -->
+{#if dialogMounted.share}
+  {#await lazyDialogs.share() then { default: ShareDialog }}
 <ShareDialog />
+  {/await}
+{/if}
 <MySharesDialog bind:open={showMyShares} />
 
 <Dialog.Root bind:open={showProGate} closeOnEscape={true} closeOnOutsideClick={true}>
@@ -9912,6 +9971,8 @@ let rowSearch = $state('')
 />
 
 
+{#if dialogMounted.palette}
+  {#await lazyDialogs.palette() then { default: CommandPalette }}
 <CommandPalette
   bind:open={commandOpen}
   bind:page={commandPage}
@@ -9989,6 +10050,8 @@ let rowSearch = $state('')
   schemaContext={aiSchemaContext}
   onaskcontinue={handleAskContinue}
 />
+  {/await}
+{/if}
 
 
 <!-- Capture phase, deliberately - see onWindowKeydownCapture. -->
