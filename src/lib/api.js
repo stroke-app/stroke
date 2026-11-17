@@ -2238,7 +2238,7 @@ async function blobToBase64(blob) {
 // install can finish on its own (src-tauri/src/updates.rs).
 
 /**
- * @typedef {{ version: string, currentVersion: string, notes: string, date: number | null, staged: boolean, applyOnQuit: boolean, manual: boolean, manualCommand: string | null }} UpdateInfo
+ * @typedef {{ version: string, currentVersion: string, notes: string, date: number | null, staged: boolean, applyOnQuit: boolean, manual: boolean, manualCommand: string | null, needsPassword: boolean }} UpdateInfo
  * @typedef {{ event: 'started', data: { contentLength: number | null } } | { event: 'progress', data: { downloaded: number } } | { event: 'finished' }} UpdateDownloadEvent
  */
 
