@@ -61,7 +61,7 @@ kill -TERM 0"#;
 /// opencode 2 moved the server's API under `/api` with new routes, which the
 /// session below does not speak; on 2 and later each turn is an `opencode run`.
 pub(crate) async fn serve_api_moved(bin: &str) -> bool {
-    let out = Command::new(bin)
+    let out = agent_claude::quiet(&mut Command::new(bin))
         .arg("--version")
         .stdin(Stdio::null())
         .output()

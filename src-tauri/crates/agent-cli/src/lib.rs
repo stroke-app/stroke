@@ -127,7 +127,7 @@ impl AgentAdapter for CliAdapter {
         let listing = self.refresh_models();
         // `--version` is the cheapest liveness check that does not hit the
         // network or consume credits.
-        let version = Command::new(self.spec.bin)
+        let version = agent_claude::quiet(&mut Command::new(self.spec.bin))
             .arg("--version")
             .stdin(Stdio::null())
             .output()
@@ -259,6 +259,7 @@ pub(crate) fn spawn_turn(
     resuming: bool,
 ) -> Result<TurnHandle, AgentError> {
     let mut cmd = Command::new(spec.bin);
+    agent_claude::quiet(&mut cmd);
     cmd.args(&args)
         .envs(spec.env.iter().copied())
         .envs(ctx.env.iter().map(|(k, v)| (k, v)))
