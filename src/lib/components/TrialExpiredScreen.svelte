@@ -10,6 +10,7 @@
   import LicenseActivation from './LicenseActivation.svelte'
   import AccountSignInButtons from './AccountSignInButtons.svelte'
   import WindowControls from './WindowControls.svelte'
+  import GateUpdateCheck from './GateUpdateCheck.svelte'
   import { Button } from '$lib/components/ui/button/index.js'
   import { licenseStatus, isBlocked } from '$lib/stores/license.js'
   import { account, isSignedIn, signInState, refreshAccount, signOut } from '$lib/stores/account.js'
@@ -204,5 +205,10 @@
         </button>
       {/if}
     </div>
+  </div>
+  <!-- The app (and its update dialog) is not rendered behind this screen, so
+       updates are checked from here. -->
+  <div class="flex h-10 shrink-0 items-center justify-center text-ui-2xs text-muted-foreground/80">
+    <GateUpdateCheck />
   </div>
 </div>
