@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.18.6] - 2026-11-17
+
+### Changes
+- Lazy data grid, native Wayland with X11 fallback, whole-table exports, faster Nightly builds (#285)
+
+
 ## [2.18.5] - 2026-11-17
 
 ### Changes
