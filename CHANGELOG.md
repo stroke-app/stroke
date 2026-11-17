@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.17.5] - 2026-11-17
+
+### Changes
+- Keep the title bar's spacing fixed when zoomed on Linux (#274)
+
+
 ## [2.17.4] - 2026-11-17
 
 ### Changes
