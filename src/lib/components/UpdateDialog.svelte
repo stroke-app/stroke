@@ -40,6 +40,8 @@
   let manual = $state(false)
   /** The command that updates it, when there is one (`yay -Syu stroke-bin`). */
   let manualCommand = $state(/** @type {string | null} */ (null))
+  /** Installing asks for the system password (a Linux .deb, .rpm or Arch package). */
+  let needsPassword = $state(false)
   let copied = $state(false)
   /** The running build, for "You have v…". */
   let appVersion = $state('')
@@ -333,6 +335,7 @@
     applyOnQuit = info.applyOnQuit
     manual = !!info.manual
     manualCommand = info.manualCommand ?? null
+    needsPassword = !!info.needsPassword
   }
 
   async function copyCommand() {
@@ -569,7 +572,7 @@
           </p>
           <p class="mt-1 text-ui-xs text-pretty text-muted-foreground">
             {#if status === 'ready'}
-              {applyOnQuit ? 'It installs when you quit, so the next start is the new version. Restart now to use it straight away.' : 'Restart Stroke to finish installing it.'}
+              {applyOnQuit ? 'It installs when you quit, so the next start is the new version. Restart now to use it straight away.' : needsPassword ? 'Restart Stroke to install it. Your system asks for your password first.' : 'Restart Stroke to finish installing it.'}
             {:else if status === 'downloading'}
               {totalBytes > 0 ? `${fmt(downloadedBytes)} of ${fmt(totalBytes)}` : 'Starting'}. It keeps going if you close this.
             {:else if manual}
