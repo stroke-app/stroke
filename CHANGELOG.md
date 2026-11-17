@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.16.8] - 2026-11-17
+
+### Changes
+- Close the other open databases when several connections is turned off (#267)
+
+
 ## [2.16.7] - 2026-11-17
 
 ### Changes
