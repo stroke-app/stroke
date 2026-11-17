@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.17.0] - 2026-11-17
+
+### Changes
+- Add the v3 plan, launch week and what comes after to the TODO (#269)
+
+
 ## [2.16.9] - 2026-11-17
 
 ### Changes
