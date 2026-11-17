@@ -1,4 +1,5 @@
 <script>
+  import { ECHARTS_THEME } from '$lib/chart-utils.js'
   import { chartRows } from '$lib/ai-chart-data.js'
   /**
    * Renders AI-generated charts using ECharts + the shared buildOption() utility.
@@ -104,10 +105,11 @@
       initializing = true
       try {
         const { init } = await import('echarts')
+        await import('echarts/theme/v5')
         // Register the wordcloud series plugin lazily (keeps echarts out of startup bundle).
         await import('echarts-wordcloud')
         if (disposed) return
-        const instance = init(container, null, {
+        const instance = init(container, ECHARTS_THEME, {
           renderer: 'canvas',
           devicePixelRatio: window.devicePixelRatio || 2,
         })

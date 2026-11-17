@@ -13,6 +13,15 @@ import { resolveColor } from '$lib/geo-basemap.js'
 /** @typedef {unknown[][]} Rows */
 
 /** @param {ColInfo} col */
+/**
+ * The echarts theme every chart is created with. echarts 6 changed its
+ * defaults (palette, visualMap ramp, treemap and sankey colors); its bundled
+ * `v5` theme (echarts/theme/v5) keeps charts looking as they did on 5, so the
+ * upgrade (for the XSS fix) changes nothing on screen. Import that theme
+ * before `init(dom, ECHARTS_THEME)`.
+ */
+export const ECHARTS_THEME = 'v5'
+
 export function colType(col) {
   const dt = (col.dataType ?? col.data_type ?? '').toLowerCase().replace(/\(.+\)$/, '').trim()
   if (/^(int|integer|bigint|smallint|numeric|decimal|real|double|float|serial|money|number)/.test(dt)) return 'number'
