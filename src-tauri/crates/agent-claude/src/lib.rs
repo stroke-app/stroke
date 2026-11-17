@@ -22,6 +22,32 @@ use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::mpsc;
 
 /// Tokens of transcript we are willing to replay on a handoff.
+
+/// `CREATE_NO_WINDOW`. Stroke is a GUI process, so on Windows every console
+/// program it starts (`claude --version`, the chat itself) got a console of
+/// its own: a black cmd window popped up on top of the app each time, and the
+/// focus jumping to it could take WebView2 down with it. Unix has nothing
+/// like it, so off Windows these are no-ops.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// Start this console program with no console window (Windows).
+pub fn quiet(cmd: &mut Command) -> &mut Command {
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    cmd
+}
+
+/// The blocking-`Command` form of [`quiet`].
+pub fn quiet_std(cmd: &mut std::process::Command) -> &mut std::process::Command {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd
+}
+
 const REPLAY_BUDGET: usize = 60_000;
 
 /// Bound on buffered events. Deep enough to absorb a fast burst, shallow enough
@@ -191,7 +217,7 @@ impl AgentAdapter for ClaudeAdapter {
     }
 
     async fn probe(&self) -> Result<Availability, AgentError> {
-        let out = Command::new(&self.bin).arg("--version").output().await;
+        let out = quiet(Command::new(&self.bin).arg("--version")).output().await;
         match out {
             Ok(o) if o.status.success() => Ok(Availability::Ready {
                 version: Some(String::from_utf8_lossy(&o.stdout).trim().to_string()),
@@ -210,7 +236,7 @@ impl AgentAdapter for ClaudeAdapter {
         let mcp_config = self.write_mcp_config(&ctx).await?;
         let args = self.args(&ctx, mcp_config.as_ref());
 
-        let mut child = Command::new(&self.bin)
+        let mut child = quiet(&mut Command::new(&self.bin))
             .args(&args)
             .envs(ctx.env.iter().map(|(k, v)| (k, v)))
             .current_dir(&ctx.cwd)

@@ -84,7 +84,7 @@ fn leak(listed: Vec<Listed>) -> &'static [ModelSpec] {
 /// Run a CLI's list command and read its answer. Blocks, so it runs on a
 /// thread of its own.
 pub(crate) fn read(bin: &str, list: &ListModels) -> Option<Vec<Listed>> {
-    let child = std::process::Command::new(bin)
+    let child = agent_claude::quiet_std(&mut std::process::Command::new(bin))
         .args(list.args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -169,7 +169,7 @@ pub(crate) async fn codex_default(bin: &str) -> Option<String> {
         .and_then(|text| top_level(text, "model"))?;
     let out = tokio::time::timeout(
         Duration::from_secs(5),
-        tokio::process::Command::new(bin)
+        agent_claude::quiet(&mut tokio::process::Command::new(bin))
             .args(["debug", "models"])
             .stdin(Stdio::null())
             .stderr(Stdio::null())

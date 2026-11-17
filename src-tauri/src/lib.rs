@@ -189,6 +189,7 @@ fn guard_windows_webview(window: &tauri::WebviewWindow) {
         ICoreWebView2AcceleratorKeyPressedEventArgs2, COREWEBVIEW2_KEY_EVENT_KIND,
         COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN, COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN,
         COREWEBVIEW2_PROCESS_FAILED_KIND, COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED,
+        COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED,
     };
     use webview2_com::{AcceleratorKeyPressedEventHandler, ProcessFailedEventHandler};
     use windows_core::Interface;
@@ -252,6 +253,15 @@ fn guard_windows_webview(window: &tauri::WebviewWindow) {
                 let host = host.clone();
                 tauri::async_runtime::spawn(async move {
                     let _ = host.set_decorations(true);
+                });
+            } else if kind == COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED {
+                // Only the page's process went (the browser is still up): the
+                // window stayed white with nothing to click. Load the page
+                // again; it reconnects the way a launch does.
+                log::error!("webview2: render process exited, reloading the page");
+                let host = host.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = host.reload();
                 });
             }
             Ok(())
