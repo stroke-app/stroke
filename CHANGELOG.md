@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.18.1] - 2026-11-17
+
+### Changes
+- Load Settings, the command palette and one-off dialogs on first use (#280)
+
+
 ## [2.18.0] - 2026-11-17
 
 ### Changes
