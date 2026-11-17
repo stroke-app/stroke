@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.18.4] - 2026-11-17
+
+### Changes
+- Share a database as a web studio (Labs) (#283)
+
+
 ## [2.18.3] - 2026-11-17
 
 ### Changes
