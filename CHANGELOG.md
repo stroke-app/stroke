@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.16.7] - 2026-11-17
+
+### Changes
+- Switch databases on double-click in the tree without confirming (#266)
+
+
 ## [2.16.6] - 2026-11-16
 
 ### Changes
