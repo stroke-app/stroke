@@ -1818,3 +1818,16 @@ html:not(.dark) .key-well:focus-within { box-shadow: inset 0 1px 2px rgb(0 0 0 /
 [aria-haspopup]:active {
   scale: none !important;
 }
+
+/* Linux (WebKitGTK) can draw a scroll area's scrollbar on its own layer, above
+   everything, so the sidebar's bar showed through Settings and other dialogs.
+   While a dialog is open, the scrollbars behind it are hidden; the dialog's
+   own keep working. */
+html[data-os="linux"]:has([role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"])
+  :is(.app-scroll, .overflow-auto, .overflow-y-auto, .overflow-x-auto):not(:is([role="dialog"], [role="alertdialog"]) *) {
+  scrollbar-width: none;
+}
+html[data-os="linux"]:has([role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"])
+  :is(.app-scroll, .overflow-auto, .overflow-y-auto, .overflow-x-auto):not(:is([role="dialog"], [role="alertdialog"]) *)::-webkit-scrollbar {
+  display: none;
+}
