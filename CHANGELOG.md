@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.17.7] - 2026-11-17
+
+### Changes
+- Tree sidebar keyboard: visible focus when tabbing in, Tab lands on the first match, one clear button (#276)
+
+
 ## [2.17.6] - 2026-11-17
 
 ### Changes
