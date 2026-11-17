@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.18.9] - 2026-11-17
+
+### Changes
+- Go back to fat LTO for Nightly builds (#288)
+
+
 ## [2.18.8] - 2026-11-17
 
 ### Changes
