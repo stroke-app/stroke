@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.18.5] - 2026-11-17
+
+### Changes
+- Hide scrollbars behind an open dialog on Linux (#284)
+
+
 ## [2.18.4] - 2026-11-17
 
 ### Changes
