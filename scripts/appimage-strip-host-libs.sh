@@ -14,11 +14,9 @@
 # Tested on Arch, Fedora 41/45, Debian 12/13 and Ubuntu 22.04/24.04.
 # Issue: https://github.com/stroke-app/stroke/issues/112
 #
-# It also lets the AppImage run on native Wayland when asked. linuxdeploy's
-# GTK hook hard-sets GDK_BACKEND=x11, so the window always went through
-# XWayland and a GDK_BACKEND=wayland on the command line was ignored. X11 stays
-# the default (it is the fallback for the WebKit EGL_BAD_ALLOC crash some
-# Wayland setups hit); STROKE_WAYLAND=1 opts into the native backend.
+# It also stops linuxdeploy's GTK hook from hard-setting GDK_BACKEND=x11, so
+# Stroke can choose: native Wayland, with an automatic X11 fallback when a
+# Wayland launch never draws (display_backend.rs).
 #
 # The image is repacked with its own runtime and the same squashfs settings,
 # so nothing else about the AppImage changes. Needs squashfs-tools.
@@ -67,8 +65,11 @@ fi
 # X11 by default, native Wayland with STROKE_WAYLAND=1.
 hook="$root/apprun-hooks/linuxdeploy-plugin-gtk.sh"
 if [ -f "$hook" ] && grep -qE '^export GDK_BACKEND=x11' "$hook"; then
-  sed -i -E 's|^export GDK_BACKEND=x11.*$|if [ "${STROKE_WAYLAND:-}" = 1 ]; then export GDK_BACKEND=wayland; else export GDK_BACKEND=x11; fi|' "$hook"
-  echo "appimage: GDK_BACKEND=x11 unless STROKE_WAYLAND=1"
+  # Stroke picks the backend itself (src-tauri/src/display_backend.rs: Wayland,
+  # falling back to X11 if a Wayland launch never draws), so the hook only
+  # passes the two overrides through.
+  sed -i -E 's|^export GDK_BACKEND=x11.*$|if [ "${STROKE_WAYLAND:-}" = 1 ]; then export GDK_BACKEND=wayland; elif [ "${STROKE_X11:-}" = 1 ]; then export GDK_BACKEND=x11; fi|' "$hook"
+  echo "appimage: GDK_BACKEND left to Stroke (STROKE_X11=1 / STROKE_WAYLAND=1 override)"
   changed=1
 fi
 
