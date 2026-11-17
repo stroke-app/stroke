@@ -1,66 +1,34 @@
 # TODO
 
-What is open as of 2026-11-14 (master at 2.5.5). Security items live in
-`TODO_SECURITY.md`.
+What is open as of 2026-11-17 (nightly at 2.16.8, stable at 2.3.0). Security
+items live in `TODO_SECURITY.md`.
 
-## Before the next stable release
+## Website
 
-- [ ] Test the 2.5.5 Windows build: theme switching and zoom without flicker,
-      Ctrl+K rebound to Alt+K working in the SQL editor, the title bar with the
-      sidebar on the right.
-- [ ] Test offline Pro on macOS: sign in as Pro, turn Wi-Fi off, Pro stays on.
-- [ ] Ship it: promote `nightly` to `master` (see CONTRIBUTING.md).
+The site is `stroke-web` (TanStack Start on Cloudflare Workers).
 
-## Next
+- [ ] **Redesign the whole site.** Every page, not a refresh of the home page:
+      home, features, pricing, download, databases, compare, docs, changelog,
+      blog and the legal pages. Keep the app's look (dark first, the same type
+      scale and accent) so the site and the app read as one product.
+- [ ] **New pictures.** Fresh screenshots of the app as it is now: the tree
+      sidebar, several databases open at once, the data grid, the AI chat, ER
+      diagrams, the sign-in flows. Light and dark, the same window size.
+- [ ] **A demo on the site.** A short screen recording of real use (connect,
+      browse, query, ask the AI) near the top of the home page, with a poster
+      frame so the page doesn't wait on the video.
 
-- [ ] **AI access levels for built-in models.** The Read only / Read & write
-      control exists for local agents only (enforced by the MCP server). Built-in
-      models (Stroke Free, API keys) can run writes, asking only before
-      destructive ones. Enforce a level in `AiChat`'s `execute_sql` with the
-      same classifier as `src-tauri/src/mcp/access.rs`, then show the control.
-- [ ] **echarts 6** (PR #14): clears the echarts XSS advisory; the charts need
-      testing.
-- [ ] Decide on the old PRs: #105 (license wording), #91 (ship-safely gate),
-      #56 and #54 (older feature/tooltip work, likely superseded).
-- [ ] RHEL / Rocky / Alma 9 can't run Stroke (no WebKitGTK 4.1). Documented in
-      the README and release notes; nothing to do unless that changes.
+## Email
 
-## Performance pass (paused)
+Mail goes out through Plunk (`stroke-web/src/lib/mail`). There are templates
+for purchases and failed payments only; nothing sends to every user yet.
 
-The render and memory work is on `perf/render-and-memory` (last commit
-2026-08-31, not merged, 14 commits ahead). Its notes are in that branch's
-`TODO_TODAY.md`; several items there are obsolete since the editor moved
-from Monaco to CodeMirror. Rebase onto `nightly` and re-measure before
-picking it up.
-
-## Themes: follow-ups (2026-11-12)
-
-Glass (`glass-dark` / `glass-light`) and the Custom theme with opacity below
-100% are macOS-only today: `set_window_glass` in `src-tauri/src/commands.rs`
-is a no-op elsewhere, and every glass rule in `src/lib/themes/app-themes.css`
-is scoped to `html[data-os="macos"]`.
-
-- [ ] **Glass on Windows (Mica / Acrylic).** Needs testing on a real Windows
-      build (`npm run tauri:build:win`), not just a compile.
-  - Create the window with `.transparent(true)` on Windows too
-    (`src-tauri/src/lib.rs`, the window builder).
-  - In `set_window_glass`, add a Windows branch: `Effect::Mica`, with
-    `Effect::Acrylic` as a fallback before Windows 11.
-  - Let the WebView2 backdrop go transparent while glass is on.
-    `set_windows_webview_backdrop` in `lib.rs` currently forces alpha to opaque.
-  - Widen the CSS scope to `html:is([data-os="macos"], [data-os="windows"])`.
-  - Set `data-glass` on Windows too: `syncWindowGlass` in
-    `src/lib/stores/settings.js` only does it for macOS.
-  - Risk: the Windows window is hidden until first paint specifically to avoid
-    a startup flicker. Re-check that it still opens cleanly.
-- [ ] **Page-by-page pass in Glass and in Custom with opacity below 100%.**
-      The structural cases are already fixed:
-  - sticky headers, overlays and fixed panels (frosted rule in
-    `app-themes.css`)
-  - the data grid's erase fills and `withAlpha`
-  - the terminal
-  - the ERD and map colour probes
-
-  What's left are one-off components that paint their own solid colour and
-  stand out as patches over the glass. Go through each page, screenshot the
-  odd ones, and fix them per component.
+- [ ] **Major update and What's new.** One email to every user about the big
+      release: what changed since 2.3.0, with the new pictures and a link to
+      the changelog and the download. Send it when the release is on Stable.
+- [ ] **License update.** One email to license holders about the license
+      change. Decide the wording first; it has to match what the site's legal
+      pages and the app say.
+- [ ] Both need a broadcast path: a template per email, the recipient list
+      (users, or license holders only), an unsubscribe link, and a test send to
+      myself before the real one.
