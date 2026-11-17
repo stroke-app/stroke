@@ -3,8 +3,6 @@
   import { activateLicense } from '$lib/stores/license.js'
   import Icon from './Icon.svelte'
   import { cn } from '$lib/utils.js'
-  import { Input } from '$lib/components/ui/input/index.js'
-  import { Button } from '$lib/components/ui/button/index.js'
 
   let {
     /** Fired once the celebration is over - the caller moves on from here. */
@@ -127,12 +125,12 @@
 </script>
 
 {#snippet keyField(extraClass)}
-  <!-- The app's own field and button (ui/input, ui/button): h-9, the field
-       radius, the 1px field hairline and the one focus outline. This screen
-       used to hand-roll h-11 slabs with 2px borders that matched nothing else. -->
-  <div class={cn('relative', extraClass)}>
-    <Icon name="key-round" class="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-    <Input
+  <!-- The field is a well a step below the page; the button above it is a
+       key. Typed keys are mono so each group lines up; the placeholder is
+       plain words, since a row of Xs never fit the width and got cut off. -->
+  <label class={cn('key-well flex h-10 items-center gap-2 rounded-md px-3', extraClass)} data-invalid={error ? '' : undefined}>
+    <Icon name="key-round" class="size-4 shrink-0 text-muted-foreground" />
+    <input
       type="text"
       bind:value={key}
       onkeydown={handleKeydown}
@@ -141,24 +139,29 @@
       aria-label="License key"
       aria-invalid={error ? 'true' : undefined}
       aria-describedby={error ? 'license-key-error' : undefined}
-      placeholder="XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX"
+      placeholder="Paste your license key"
       spellcheck="false"
       autocomplete="off"
       readonly={loading}
       disabled={success}
-      class="bg-muted/20 pl-8 font-mono tracking-wide placeholder:text-muted-foreground/45"
+      class="no-field-frame h-full min-w-0 flex-1 bg-transparent text-ui-sm text-foreground outline-none placeholder:font-sans placeholder:tracking-normal placeholder:text-muted-foreground/70 {key ? 'font-mono tracking-wide' : ''}"
     />
-  </div>
+  </label>
 {/snippet}
 
 {#snippet submitBtn(fullWidth, label)}
-  <Button
-    size="lg"
-    variant={success ? 'outline' : 'default'}
+  <button
+    type="button"
     disabled={!key.trim() && !success}
     aria-busy={loading || undefined}
+    aria-keyshortcuts="Enter"
     onclick={() => void submit()}
-    class={cn(fullWidth && 'w-full', (loading || success) && 'pointer-events-none', success && 'text-success')}
+    class={cn(
+      'keycap-btn inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-md px-4 text-ui-sm font-medium',
+      fullWidth && 'w-full',
+      (loading || success) && 'pointer-events-none',
+      success && 'text-success',
+    )}
   >
     {#if loading && verifyingVisible}
       <Icon name="loader-2" class="size-3.5 shrink-0 animate-spin" />
@@ -168,11 +171,12 @@
       License activated
     {:else}
       {label}
+      <span aria-hidden="true" class="chip-gloss chip-muted h-5 px-1.5 text-ui-3xs font-semibold">↵</span>
     {/if}
-  </Button>
+  </button>
 {/snippet}
 
-<div class="flex flex-col gap-2 {naked || inline ? '' : compact ? 'p-5' : 'p-6'}">
+<div class="flex flex-col gap-3 {naked || inline ? '' : compact ? 'p-5' : 'p-6'}">
   {#if !compact && !naked && !inline}
     <div class="flex flex-col gap-0.5">
       <p class="text-ui-sm font-semibold text-foreground">Enter your license key</p>
@@ -194,11 +198,11 @@
        field already turns red (aria-invalid); a red panel on top of that was
        the same signal three times. The line is always in the tree and opens
        and closes on its grid row, so the button below glides rather than
-       jumping, and `-mt-2` cancels the column gap while it is closed. -->
+       jumping, and `-mt-3` cancels the column gap while it is closed. -->
   <div
     class={cn(
       'grid transition-[grid-template-rows,opacity,margin] duration-200 ease-out motion-reduce:transition-none',
-      error ? 'grid-rows-[1fr] opacity-100' : '-mt-2 grid-rows-[0fr] opacity-0',
+      error ? 'grid-rows-[1fr] opacity-100' : '-mt-3 grid-rows-[0fr] opacity-0',
     )}
   >
     <div class="min-h-0 overflow-hidden">
@@ -210,7 +214,7 @@
   </div>
 
   {#if !inline}
-    {@render submitBtn(true, 'Activate License')}
+    {@render submitBtn(true, 'Activate')}
   {/if}
 </div>
 
