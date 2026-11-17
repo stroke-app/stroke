@@ -2381,6 +2381,7 @@
             {onschemachange}
             {onswitchconnection}
             {onswitchdatabase}
+            {onswitchdatabasenow}
             onopenobjectsql={onopenobjectsql}
             onexittop={() => { filterEl?.focus(); filterEl?.select() }}
             {onnewtable}

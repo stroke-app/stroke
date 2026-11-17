@@ -97,6 +97,8 @@
     onclearfilter = () => {},
     /** @type {(entry: { key: string, label: string }) => void} */
     onswitchdatabase = () => {},
+    /** A double-click on a database: switch without the confirm. @type {(entry: { key: string, label: string }) => void} */
+    onswitchdatabasenow = () => {},
     /** @type {(sql: import('$lib/stores/sidebar-objects.svelte.js').ObjectSql) => void} */
     onopenobjectsql = () => {},
     /** ArrowUp off the first row: back to the filter box. */
@@ -1125,10 +1127,26 @@
     if (hit.r.t === 'error') { if (target.closest('[data-retry]')) retry(hit.r.owner); return }
     if (hit.r.t !== 'node') return
     const n = hit.r.node
+    // A database you are not on asks before it switches, so a single click
+    // waits a beat: a double-click inside that beat switches straight away,
+    // the way the classic sidebar does, and the confirm never shows.
+    if (n.kind === 'database' && opensBySwitching(n) && !q) {
+      if (dbClickTimer) { clearTimeout(dbClickTimer); dbClickTimer = null }
+      if (e.detail >= 2) {
+        setOpen(n.id, true)
+        onswitchdatabasenow(n.data.entry)
+        return
+      }
+      const chevron = !!target.closest('[data-chevron]')
+      dbClickTimer = setTimeout(() => { dbClickTimer = null; chevron ? toggleNode(n) : activate(n) }, 220)
+      return
+    }
     // The chevron always folds; the rest of the row opens leaves and folds folders.
     if (target.closest('[data-chevron]')) toggleNode(n)
     else activate(n)
   }
+  /** @type {ReturnType<typeof setTimeout> | null} */
+  let dbClickTimer = null
 
   /** Focus the tree from outside (ArrowDown in the filter box). */
   export function focusTree() {
