@@ -792,7 +792,9 @@
       settings.multiConnection === true,
       () => {
         settings = updateSettings({ multiConnection: settings.multiConnection !== true });
-        if (!settings.multiConnection) void import('@tauri-apps/api/core').then(({ invoke }) => invoke('close_parked', { key: null })).catch(() => {});
+        // The shell closes the kept databases and drops them from the tab bar
+        // and the status bar; only it knows which ones are open.
+        if (!settings.multiConnection) window.dispatchEvent(new CustomEvent('stroke:multi-connection-off'));
       },
     )}
   {/if}
