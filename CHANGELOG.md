@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.18.3] - 2026-11-17
+
+### Changes
+- No console windows from the AI agent CLIs on Windows; reload the page if WebView2's renderer dies (#282)
+
+
 ## [2.18.2] - 2026-11-17
 
 ### Changes
