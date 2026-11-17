@@ -3,7 +3,7 @@
   import { isBlocked, refreshLicenseStatus, runLicenseCheck } from '$lib/stores/license.js'
   import TrialExpiredScreen from './TrialExpiredScreen.svelte'
   import SignInScreen from './SignInScreen.svelte'
-  import { needsOnboarding, startAccountSync } from '$lib/stores/account.js'
+  import { needsOnboarding, startAccountSync, account } from '$lib/stores/account.js'
 
   let { children } = $props()
 
@@ -20,6 +20,17 @@
   })
 
   let onboardingDone = $state(false)
+
+  // Signing out goes back to the sign-in screen. `onboardingDone` stayed true
+  // from the sign-in earlier in the session, so the gate skipped it and fell
+  // through to the trial check: a signed-out user whose device trial had run
+  // out saw "Your trial has ended" instead of "Sign in".
+  let wasSignedIn = false
+  $effect(() => {
+    const signedIn = !!$account?.signed_in
+    if (wasSignedIn && !signedIn) onboardingDone = false
+    wasSignedIn = signedIn
+  })
 
   // Dev-only: Alt+Shift+O previews the first-run tour even on the sign-in
   // screen, where the app shell (and its own Alt+Shift+O) is not mounted.
