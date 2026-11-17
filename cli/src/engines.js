@@ -128,12 +128,31 @@ function checkOne(n, step) {
  * @param {string} uri
  * @returns {Promise<Engine>}
  */
-export async function openPostgres(uri) {
+export async function openPostgres(uri, { readOnly = false } = {}) {
   const { default: pg } = await import('pg')
   // Dates and timestamps as text, exactly as stored: no timezone shifts.
   for (const oid of [1082, 1114, 1184, 1083, 1266]) pg.types.setTypeParser(oid, (v) => v)
   const pool = new pg.Pool({ connectionString: uri, max: 4, connectionTimeoutMillis: 15_000 })
   await (await pool.connect()).release()
+  /**
+   * Every query this engine runs. Read-only (a shared studio): each statement
+   * runs alone, extended protocol (one statement, so no `COMMIT; DELETE`), in
+   * its own `BEGIN READ ONLY` that is always rolled back, so even a SET it
+   * makes is undone.
+   * @param {any} cfg @param {unknown[]} [values]
+   */
+  const pq = async (cfg, values) => {
+    if (!readOnly) return pool.query(cfg, values)
+    const c = await pool.connect()
+    try {
+      await c.query('BEGIN READ ONLY')
+      const q = typeof cfg === 'string' ? { text: cfg, values } : { ...cfg, values: cfg.values ?? values }
+      return await c.query({ ...q, queryMode: 'extended' })
+    } finally {
+      await c.query('ROLLBACK').catch(() => {})
+      c.release()
+    }
+  }
   const sql = dialect({
     q: dq,
     ph: (i) => `$${i}`,
@@ -143,7 +162,7 @@ export async function openPostgres(uri) {
 
   /** @param {string} text @param {unknown[]} [values] */
   const arr = async (text, values) => {
-    const r = await pool.query({ text, values, rowMode: 'array' })
+    const r = await pq({ text, values, rowMode: 'array' })
     const last = Array.isArray(r) ? r[r.length - 1] : r
     return {
       columns: (last.fields ?? []).map((/** @type {{ name: string }} */ f) => f.name),
@@ -154,6 +173,7 @@ export async function openPostgres(uri) {
   }
   /** @param {Step[]} steps */
   const tx = async (steps) => {
+    if (readOnly) throw new Error(READ_ONLY)
     const c = await pool.connect()
     let total = 0
     try {
@@ -175,7 +195,7 @@ export async function openPostgres(uri) {
 
   /** @param {string} schema @param {string} table */
   const columns = async (schema, table) => {
-    const r = await pool.query(
+    const r = await pq(
       `select a.attname as name, format_type(a.atttypid, a.atttypmod) as type, not a.attnotnull as nullable,
               coalesce(a.attnum = any(i.indkey), false) as "primaryKey",
               pg_get_expr(d.adbin, d.adrelid) as default
@@ -194,12 +214,12 @@ export async function openPostgres(uri) {
   return {
     engine: 'postgres',
     async info() {
-      const r = await pool.query('select current_database() as db, version() as v')
+      const r = await pq('select current_database() as db, version() as v')
       const u = new URL(uri.replace(/^[a-z0-9+.-]+:/i, 'http:'))
       return { engine: 'postgres', database: r.rows[0].db, host: u.hostname, version: String(r.rows[0].v).split(' on ')[0] }
     },
     async tables() {
-      const r = await pool.query(`
+      const r = await pq(`
         select n.nspname as schema, c.relname as name,
                case when c.relkind in ('v', 'm') then 'view' else 'table' end as kind,
                case when c.relkind in ('r', 'p') then coalesce(nullif(c.reltuples, -1)::bigint, st.n_live_tup) end as rows
@@ -213,14 +233,14 @@ export async function openPostgres(uri) {
     },
     columns,
     async structure(schema, table) {
-      const idx = await pool.query(
+      const idx = await pq(
         `select i.relname as name, ix.indisunique as unique, ix.indisprimary as primary,
                 array(select a.attname from unnest(ix.indkey) with ordinality k(n, o) join pg_attribute a on a.attrelid = t.oid and a.attnum = k.n order by k.o)::text[] as columns
          from pg_index ix join pg_class t on t.oid = ix.indrelid join pg_class i on i.oid = ix.indexrelid join pg_namespace n on n.oid = t.relnamespace
          where n.nspname = $1 and t.relname = $2 order by ix.indisprimary desc, i.relname`,
         [schema, table],
       )
-      const fks = await pool.query(
+      const fks = await pq(
         `select con.conname as name, rn.nspname as "refSchema", rt.relname as "refTable",
                 array(select a.attname from unnest(con.conkey) with ordinality k(n, o) join pg_attribute a on a.attrelid = con.conrelid and a.attnum = k.n order by k.o)::text[] as columns,
                 array(select a.attname from unnest(con.confkey) with ordinality k(n, o) join pg_attribute a on a.attrelid = con.confrelid and a.attnum = k.n order by k.o)::text[] as "refColumns"
@@ -235,14 +255,14 @@ export async function openPostgres(uri) {
       const q = sql.page(o)
       const page = await arr(q.sql)
       if (!o.where?.trim()) {
-        const est = await pool.query(
+        const est = await pq(
           `select c.reltuples::bigint as n from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = $1 and c.relname = $2`,
           [o.schema, o.table],
         )
         const guess = Number(est.rows[0]?.n ?? -1)
         if (guess > EXACT_COUNT_MAX) return { ...page, total: guess, estimated: true }
       }
-      const exact = await pool.query(q.count)
+      const exact = await pq(q.count)
       return { ...page, total: Number(exact.rows[0].n), estimated: false }
     },
     update: async (o) => tx([sql.update(o.schema, o.table, o.key, o.set)]),
@@ -257,10 +277,27 @@ export async function openPostgres(uri) {
  * @param {string} uri
  * @returns {Promise<Engine>}
  */
-export async function openMysql(uri) {
+export async function openMysql(uri, { readOnly = false } = {}) {
   const mysql = await import('mysql2/promise')
   const pool = mysql.createPool({ uri: uri.replace(/^(mariadb|mysql2):/i, 'mysql:'), connectionLimit: 4, dateStrings: true, supportBigNumbers: true, bigNumberStrings: true, connectTimeout: 15_000 })
   await (await pool.getConnection()).release()
+  /**
+   * Every query this engine runs. Read-only (a shared studio): one statement
+   * per call (mysql2 keeps multipleStatements off) inside its own
+   * `START TRANSACTION READ ONLY`, always rolled back.
+   * @param {any} cfg @param {unknown[]} [values]
+   */
+  const pq = async (cfg, values) => {
+    if (!readOnly) return pool.query(cfg, values)
+    const c = await pool.getConnection()
+    try {
+      await c.query('START TRANSACTION READ ONLY')
+      return await c.query(cfg, values)
+    } finally {
+      await c.query('ROLLBACK').catch(() => {})
+      c.release()
+    }
+  }
   const sql = dialect({
     q: bq,
     ph: () => '?',
@@ -270,7 +307,7 @@ export async function openMysql(uri) {
 
   /** @param {string} text @param {unknown[]} [values] */
   const arr = async (text, values) => {
-    const [rows, fields] = await pool.query({ sql: text, values, rowsAsArray: true })
+    const [rows, fields] = await pq({ sql: text, values, rowsAsArray: true })
     if (!Array.isArray(rows)) {
       const h = /** @type {{ affectedRows?: number }} */ (rows)
       return { columns: [], rows: [], rowCount: h.affectedRows ?? null, command: text.trim().split(/\s+/)[0].toUpperCase() }
@@ -284,6 +321,7 @@ export async function openMysql(uri) {
   }
   /** @param {Step[]} steps */
   const tx = async (steps) => {
+    if (readOnly) throw new Error(READ_ONLY)
     const c = await pool.getConnection()
     let total = 0
     try {
@@ -304,7 +342,7 @@ export async function openMysql(uri) {
   }
   /** @param {string} schema @param {string} table */
   const columns = async (schema, table) => {
-    const [r] = /** @type {any} */ (await pool.query(
+    const [r] = /** @type {any} */ (await pq(
       `select column_name as name, column_type as type, is_nullable = 'YES' as nullable, column_key = 'PRI' as primaryKey, column_default as \`default\`
        from information_schema.columns where table_schema = ? and table_name = ? order by ordinal_position`,
       [schema, table],
@@ -315,12 +353,12 @@ export async function openMysql(uri) {
   return {
     engine: 'mysql',
     async info() {
-      const [r] = /** @type {any} */ (await pool.query('select database() as db, version() as v'))
+      const [r] = /** @type {any} */ (await pq('select database() as db, version() as v'))
       const u = new URL(uri.replace(/^[a-z0-9+.-]+:/i, 'http:'))
       return { engine: 'mysql', database: r[0].db ?? '', host: u.hostname, version: r[0].v }
     },
     async tables() {
-      const [r] = /** @type {any} */ (await pool.query(
+      const [r] = /** @type {any} */ (await pq(
         `select table_schema as \`schema\`, table_name as name, if(table_type = 'VIEW', 'view', 'table') as kind, table_rows as \`rows\`
          from information_schema.tables
          where table_schema = coalesce(database(), table_schema)
@@ -331,12 +369,12 @@ export async function openMysql(uri) {
     },
     columns,
     async structure(schema, table) {
-      const [idx] = /** @type {any} */ (await pool.query(
+      const [idx] = /** @type {any} */ (await pq(
         `select index_name as name, non_unique = 0 as \`unique\`, index_name = 'PRIMARY' as \`primary\`, group_concat(column_name order by seq_in_index separator '\\n') as cols
          from information_schema.statistics where table_schema = ? and table_name = ? group by index_name, non_unique order by \`primary\` desc, name`,
         [schema, table],
       ))
-      const [fks] = /** @type {any} */ (await pool.query(
+      const [fks] = /** @type {any} */ (await pq(
         `select constraint_name as name, referenced_table_schema as refSchema, referenced_table_name as refTable,
                 group_concat(column_name order by ordinal_position separator '\\n') as cols,
                 group_concat(referenced_column_name order by ordinal_position separator '\\n') as refCols
@@ -355,14 +393,14 @@ export async function openMysql(uri) {
       const q = sql.page(o)
       const page = await arr(q.sql)
       if (!o.where?.trim()) {
-        const [est] = /** @type {any} */ (await pool.query(
+        const [est] = /** @type {any} */ (await pq(
           'select table_rows as n from information_schema.tables where table_schema = ? and table_name = ?',
           [o.schema, o.table],
         ))
         const guess = Number(est[0]?.n ?? -1)
         if (guess > EXACT_COUNT_MAX) return { ...page, total: guess, estimated: true }
       }
-      const [exact] = /** @type {any} */ (await pool.query(q.count))
+      const [exact] = /** @type {any} */ (await pq(q.count))
       return { ...page, total: Number(exact[0].n), estimated: false }
     },
     update: async (o) => tx([sql.update(o.schema, o.table, o.key, o.set)]),
@@ -377,7 +415,7 @@ export async function openMysql(uri) {
  * @param {string} file
  * @returns {Promise<Engine>}
  */
-export async function openSqlite(file) {
+export async function openSqlite(file, { readOnly = false } = {}) {
   /** @type {typeof import('node:sqlite')} */
   let sqlite
   try {
@@ -385,7 +423,9 @@ export async function openSqlite(file) {
   } catch {
     throw new Error(`SQLite needs Node 22.5 or newer (this is ${process.version}). Or open the file in the Stroke app.`)
   }
-  const db = new sqlite.DatabaseSync(file)
+  // Read-only (a shared studio): opened read-only at the file level, which no
+  // statement can undo (PRAGMA query_only can be switched back off; this can't).
+  const db = readOnly ? new sqlite.DatabaseSync(file, { readOnly: true }) : new sqlite.DatabaseSync(file)
   // One schema per file; the page still sends "main".
   const sql = dialect({ q: dq, ph: () => '?', from: (_s, t) => dq(t), emptyInsert: (from) => `INSERT INTO ${from} DEFAULT VALUES` })
   /** @param {unknown} v */
@@ -406,6 +446,7 @@ export async function openSqlite(file) {
   }
   /** @param {Step[]} steps */
   const tx = async (steps) => {
+    if (readOnly) throw new Error(READ_ONLY)
     let total = 0
     db.exec('BEGIN')
     try {
@@ -477,6 +518,7 @@ export async function openSqlite(file) {
       // node:sqlite prepares one statement at a time; run all but the last
       // with exec and return the last one's rows, like the other consoles do.
       const parts = splitStatements(text)
+      if (parts.length > 1 && readOnly) throw new Error('Run one statement at a time in a shared studio.')
       if (parts.length > 1) db.exec(parts.slice(0, -1).join(';\n'))
       return arr(parts[parts.length - 1] ?? text)
     },
@@ -521,9 +563,12 @@ export function splitStatements(text) {
 /**
  * @param {'postgres' | 'mysql' | 'sqlite'} engine
  * @param {string} uri
+ * @param {{ readOnly?: boolean }} [opts]
  */
-export function openEngine(engine, uri) {
-  if (engine === 'postgres') return openPostgres(uri)
-  if (engine === 'mysql') return openMysql(uri)
-  return openSqlite(uri)
+export function openEngine(engine, uri, opts = {}) {
+  if (engine === 'postgres') return openPostgres(uri, opts)
+  if (engine === 'mysql') return openMysql(uri, opts)
+  return openSqlite(uri, opts)
 }
+
+const READ_ONLY = 'This shared studio is read-only.'

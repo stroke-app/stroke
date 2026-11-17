@@ -110,6 +110,7 @@
   import DatabaseInfoDialog from './DatabaseInfoDialog.svelte'
   import { CatalogCache, catalogKey, connectionPrefix } from '$lib/catalog-cache.js'
   import { whenIdle } from '$lib/idle.js'
+  import { studioEngine as studioEngineFor } from '$lib/studio-share.js'
   import { refreshExternalPlugins, stopAllExternalPlugins } from '$lib/plugins/external/host.js'
   import {
     dbAdminKind,
@@ -689,6 +690,60 @@
     }
     cancel = whenIdle(pump, { timeout: 3000 })
     return () => cancel()
+  })
+
+  // ── Labs: share as a web studio ─────────────────────────────────────────
+  let showStudioShare = $state(false)
+  /** @type {{ link: string, write: boolean, stop: () => void } | null} */
+  let studioShare = $state(null)
+  let studioShareStatus = $state(/** @type {'connecting' | 'online' | 'offline'} */ ('offline'))
+  /** The connection the share answers for; a switch away pauses it (isLive). */
+  let studioShareConnId = ''
+  const studioShareUnsupported = $derived(
+    connection && !studioEngineOf(connection) ? 'The web studio speaks PostgreSQL, MySQL and SQLite. Share a connection to one of those.' : '',
+  )
+  /** @param {any} c */
+  function studioEngineOf(c) {
+    return studioEngineFor(c?.type ?? dbType)
+  }
+  /** @param {boolean} write */
+  async function startStudioShare(write) {
+    stopStudioShare()
+    const c = connection
+    const engine = studioEngineOf(c)
+    if (!c || !engine) return
+    studioShareConnId = activeConnectionId ?? ''
+    const { startShare } = await import('$lib/studio-share.js')
+    studioShare = await startShare({
+      engine,
+      name: c.name || c.database || 'Database',
+      database: c.database || c.filePath?.split(/[\\/]/).pop() || c.name || '',
+      host: c.host || (engine === 'sqlite' ? 'local file' : ''),
+      write,
+      isLive: () => !!connection && (activeConnectionId ?? '') === studioShareConnId,
+      onStatus: (st) => (studioShareStatus = st),
+      // A local stroke-web for testing the relay; unset in every release build.
+      origin: import.meta.env.VITE_STUDIO_ORIGIN || undefined,
+    })
+  }
+  function stopStudioShare() {
+    studioShare?.stop()
+    studioShare = null
+    studioShareStatus = 'offline'
+  }
+  // Disconnecting ends the share; so does turning the Labs switch off.
+  $effect(() => {
+    if (!connection && studioShare) untrack(() => stopStudioShare())
+  })
+  /** The Labs switch, live: the palette entry follows it. */
+  let studioShareEnabled = $state(loadSettings().studioShare === true)
+  $effect(() => {
+    const changed = (/** @type {Event} */ e) => {
+      studioShareEnabled = /** @type {CustomEvent} */ (e).detail === true
+      if (!studioShareEnabled) stopStudioShare()
+    }
+    window.addEventListener('stroke:studio-share-changed', changed)
+    return () => window.removeEventListener('stroke:studio-share-changed', changed)
   })
 
   let commandOpen = $state(false)
@@ -9915,6 +9970,19 @@ let rowSearch = $state('')
   lead={crashReport ? 'Stroke closed by itself last time. This report holds the error and where in Stroke it happened, nothing else; read it over before you send it.' : ''}
 />
 <!-- Share links: one dialog for every kind, opened through requestShare(). -->
+{#if showStudioShare || studioShare}
+  {#await import('./StudioShareDialog.svelte') then { default: StudioShareDialog }}
+    <StudioShareDialog
+      bind:open={showStudioShare}
+      databaseName={connection?.name || connection?.database || ''}
+      share={studioShare}
+      status={studioShareStatus}
+      unsupported={studioShareUnsupported}
+      onstart={(write) => startStudioShare(write)}
+      onstop={stopStudioShare}
+    />
+  {/await}
+{/if}
 {#if dialogMounted.share}
   {#await lazyDialogs.share() then { default: ShareDialog }}
 <ShareDialog />
@@ -10009,6 +10077,7 @@ let rowSearch = $state('')
   onopenterminal={() => { if (aiMode) exitAiMode(); if (!terminalDockOpen) toggleTerminalDock() }}
   onnewterminal={() => { commandOpen = false; if (aiMode) exitAiMode(); openNewTerminalTab() }}
   onopenwhatsnew={() => { commandOpen = false; void updateDialog?.showWhatsNew?.() }}
+  onsharestudio={studioShareEnabled ? () => { commandOpen = false; showStudioShare = true } : null}
   onopeninsights={() => { if (aiMode) exitAiMode(); openInsightsTab() }}
   onopenadvisor={() => { if (aiMode) exitAiMode(); openAdvisorTab() }}
   onopenobjects={() => { if (aiMode) exitAiMode(); openObjectsTab() }}

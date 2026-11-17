@@ -1603,6 +1603,24 @@ pub async fn pg_execute_sql(
     execute_sql(state, sql, query_id).await
 }
 
+/// A shared studio's SQL (Labs: Share in a connection's menu). Read-only
+/// shares go through the MCP server's own path: the access classifier first
+/// (one reading statement), then the engine's read-only transaction
+/// (Postgres, MySQL) or a transaction that is always rolled back (SQLite).
+/// Returns the MCP tool's JSON: { columns, rows, row_count, truncated }.
+#[tauri::command]
+pub async fn share_execute_sql(state: Db<'_>, sql: String, read_only: bool) -> Result<String, String> {
+    use crate::mcp::access;
+    let conn = require_conn(&state)?;
+    if read_only {
+        let dialect = access::Dialect::for_driver(conn.driver());
+        if access::script_level_in(dialect, &sql) > access::READ || access::statement_count(dialect, &sql) > 1 {
+            return Err("This shared studio is read-only: run one SELECT, WITH, EXPLAIN or SHOW at a time.".into());
+        }
+    }
+    crate::mcp::tools::call_tool(&conn, "execute_sql", &serde_json::json!({ "sql": sql, "max_rows": 1000 }), read_only).await
+}
+
 #[tauri::command]
 pub async fn pg_execute_sql_multi(
     state: Db<'_>,

@@ -3,7 +3,8 @@ import { parseArgs } from 'node:util'
 import { findConnection, engineOf, redact, URL_KEYS } from './find.js'
 import { installedScheme, appLink, openUrl } from './app.js'
 import { openEngine } from './engines.js'
-import { startBridge, studioUrl, STUDIO_ORIGIN } from './bridge.js'
+import { startBridge, studioUrl, makeRoutes, STUDIO_ORIGIN } from './bridge.js'
+import { newShare, shareUrl, startRelayHost } from './relay.js'
 
 const HELP = `strokedb - open your project's database in Stroke
 
@@ -21,6 +22,11 @@ Options
   --name <name>    Name for the connection (default: this folder's name)
   --port <port>    Port for the local bridge (default: any free port)
   --no-open        Print the studio link instead of opening a browser
+  --share          (Labs) Also print a link that opens this studio on any
+                   device, through stroke.click's relay. Read-only: browse
+                   and run SELECTs. End-to-end encrypted; the key is only in
+                   the link. Needs Node 22+.
+  --write          With --share: let the link edit rows and run any SQL
   -h, --help       Show this help
   -v, --version    Show the version
 
@@ -38,6 +44,8 @@ export async function main(argv) {
       name: { type: 'string' },
       port: { type: 'string' },
       'no-open': { type: 'boolean' },
+      share: { type: 'boolean' },
+      write: { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
       version: { type: 'boolean', short: 'v' },
     },
@@ -57,7 +65,12 @@ export async function main(argv) {
   const name = values.name ?? path.basename(cwd)
   console.log(`Database: ${redact(found.uri)}  (from ${found.source})`)
 
-  if (!values.web) {
+  if (values.write && !values.share) {
+    console.error('--write goes with --share.')
+    return 1
+  }
+  // Sharing keeps this process running, so it uses the web studio here too.
+  if (!values.web && !values.share) {
     const scheme = installedScheme()
     if (scheme) {
       const ok = await openUrl(appLink(scheme, found.uri, name))
@@ -97,11 +110,35 @@ export async function main(argv) {
   const opened = !values['no-open'] ? await openUrl(link) : false
   console.log(`\n${opened ? 'Opened' : 'Open'} the studio${opened ? '' : ' at'}:\n  ${link}\n\nThe link is the key to this session; don't share it. Press Ctrl+C to stop.`)
 
+  /** @type {{ close(): void } | null} */
+  let relay = null
+  /** @type {import('./engines.js').Engine | null} */
+  let sharedDb = null
+  if (values.share) {
+    try {
+      // Its own connection, read-only unless --write: the engine itself
+      // refuses writes, not just the routes.
+      sharedDb = values.write ? db : await openEngine(engine, found.uri, { readOnly: true })
+      const share = newShare()
+      relay = await startRelayHost({
+        routes: makeRoutes({ engine: sharedDb, name, shared: true, write: !!values.write }),
+        ...share,
+        base: new URL(studio).origin,
+        onStatus: (status, detail) => console.log(status === 'online' ? '  Sharing: online' : `  Sharing: ${detail ?? 'offline'}`),
+      })
+      console.log(`\nShare link (Labs, ${values.write ? 'can edit' : 'read-only'}):\n  ${shareUrl({ studio, ...share })}\n\nAnyone with this link can ${values.write ? 'read and change' : 'read'} this database while this runs. It's\nend-to-end encrypted: the key is only in the link, stroke.click sees ciphertext.`)
+    } catch (e) {
+      console.error(`Could not start sharing: ${e instanceof Error ? e.message : e}`)
+    }
+  }
+
   await new Promise((resolve) => {
     const stop = () => resolve(undefined)
     process.once('SIGINT', stop)
     process.once('SIGTERM', stop)
   })
+  relay?.close()
+  if (sharedDb && sharedDb !== db) await sharedDb.close().catch(() => {})
   await bridge.close()
   await db.close().catch(() => {})
   console.log('\nStopped.')

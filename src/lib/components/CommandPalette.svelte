@@ -69,6 +69,8 @@
     /** What's new in this version, any time. */
     onopenwhatsnew = () => {},
     onopeninsights = () => {},
+    /** Labs: share the open database as a web studio (shown when the Labs switch is on). */
+    onsharestudio = /** @type {(() => void) | null} */ (null),
     onopenadvisor = () => {},
     onopenobjects = () => {},
     onopenormschema = () => {},
@@ -260,6 +262,7 @@
     { icon: 'shield-check',    label: 'Security',                      action: onopensecurity,   show: connected && hasSecurity, value: 'open security roles users policies rls row level' },
     { icon: 'shield-check',    label: 'Advisor',                       action: onopenadvisor,    show: connected && hasAdvisor, value: 'open advisor lint audit checks security performance schema rls unused index foreign key bloat' },
     { icon: 'database',        label: 'Instance insights',             action: onopeninsights,   show: connected && hasInsights, value: 'open instance insights monitoring sessions locks replication config pg_settings' },
+    { icon: 'globe',           label: 'Share as web studio',           action: () => onsharestudio?.(), show: connected && !!onsharestudio, value: 'share as web studio link remote relay browser device labs collaborate' },
     { icon: 'layout-dashboard',label: 'Dashboard',                     action: onopendashboard,  show: connected && !isKeyValue, value: 'open dashboard saved metrics overview widgets' },
     { icon: 'bar-chart-2',     label: 'Charts',                        action: onopencharts,     show: connected && !isKeyValue, value: 'open charts visualize query results graphs plots' },
     { icon: 'git-branch',      label: 'Diagrams',                      action: onopendiagrams,   show: connected && !isKeyValue, value: 'open diagrams draw erd relationship map' },
