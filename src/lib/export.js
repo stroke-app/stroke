@@ -17,8 +17,9 @@ export const UTF8_BOM = '﻿'
 export function rowsToCsv(columns, rows) {
   const header = columns.map((c) => csvEscape(c.name)).join(',')
   const body = rows.map((row) => row.map(csvEscape).join(',')).join('\n')
-  // TODO: surface backend row-cap/truncation here once a `truncated` flag is
-  // threaded through to this layer (append a trailing note when capped).
+  // A note about a capped result belongs in the export toast, not in here: a
+  // trailing line in the file would be read as a data row by anything that
+  // parses it.
   return UTF8_BOM + header + '\n' + body
 }
 
@@ -46,8 +47,7 @@ export async function rowsToCsvAsync(columns, rows, opts = {}) {
     onProgress?.(end, total)
     await yieldToUi()
   }
-  // TODO: surface backend row-cap/truncation here once a `truncated` flag is
-  // threaded through to this layer (append a trailing note when capped).
+  // See rowsToCsv: what was left out is said in the toast, never in the file.
   return blocks.join('\n')
 }
 

@@ -59,11 +59,9 @@
   import SidebarQueries from './SidebarQueries.svelte'
   import TabBar from './TabBar.svelte'
   import PaneLayout from './PaneLayout.svelte'
-  import PaneSnapshot from './PaneSnapshot.svelte'
   import * as PaneTree from '$lib/pane-layout.js'
   import TabLoading from './TabLoading.svelte'
   import TableToolbar from './TableToolbar.svelte'
-  import DataTable from './DataTable.svelte'
   import RowDetailPanel from './RowDetailPanel.svelte'
   // TableJsonView / TableTextView are NOT imported here: both reach the CodeMirror
   // editor and its languages statically, which would drag them into the boot
@@ -658,6 +656,17 @@
   // once the window is idle (below), so the first open is still instant.
   // Keep these specifiers identical to the {#await import()} blocks in the
   // markup so Vite resolves both to the same chunk.
+  // The data grid (about 400KB) is the first thing a table tab needs but
+  // nothing before one opens, so it is not in the startup bundle: it loads
+  // the first time a table renders, or earlier, the moment a connection
+  // starts, so it is in memory by the time the rows arrive.
+  /** @type {Promise<typeof import('./DataTable.svelte')> | null} */
+  let dataTableModule = null
+  const loadDataTable = () => (dataTableModule ??= import('./DataTable.svelte'))
+  $effect(() => {
+    if (connection) void loadDataTable()
+  })
+
   const lazyDialogs = {
     settings: () => import('./SettingsDialog.svelte'),
     aiSettings: () => import('./AiSettingsDialog.svelte'),
@@ -680,7 +689,7 @@
   })
   onMount(() => {
     // The palette and Settings first: they are the ones a shortcut opens.
-    const order = [lazyDialogs.palette, lazyDialogs.settings, lazyDialogs.aiSettings, lazyDialogs.share, lazyDialogs.createTable, lazyDialogs.importData, lazyDialogs.docker]
+    const order = [loadDataTable, lazyDialogs.palette, lazyDialogs.settings, lazyDialogs.aiSettings, lazyDialogs.share, lazyDialogs.createTable, lazyDialogs.importData, lazyDialogs.docker]
     let i = 0
     let cancel = () => {}
     const pump = () => {
@@ -7333,7 +7342,11 @@ let rowSearch = $state('')
     // Windowed results keep only a few resident windows, so read the full
     // ordered set from the server for export instead of the sparse client array.
     let sourceRows = rows
-    if (windowed) {
+    // Paged mode holds only the page on screen. An export is of the table (with
+    // its filters and sort), so read the rest too; it used to save the one page
+    // and say "Exported 100 rows" of a table that has 5,000.
+    const wholeTable = windowed || (selected.size === 0 && total > rows.length)
+    if (wholeTable) {
       const fetchId = toast.info('Fetching all rows for export…', { duration: 60 * 60 * 1000 })
       try {
         sourceRows = await fetchAllRows()
@@ -7376,7 +7389,10 @@ let rowSearch = $state('')
         content = format === 'csv'
           ? await rowsToCsvAsync(exportColumns, exportCells)
           : await rowsToJsonAsync(exportColumns, exportCells)
-        // The other formats build in one go (Excel and Parquet as files).
+      } else {
+        // The other formats build in one go (Excel and Parquet as files). This
+        // was outside an else, so a big CSV was built twice: once in chunks,
+        // then thrown away and built again in one blocking pass.
         content = ''
       }
       const saved = content
@@ -10579,7 +10595,9 @@ let rowSearch = $state('')
         {#if isFocused}
           {@render sharedContent()}
         {:else}
-          <PaneSnapshot tab={tabsById.get(group.activeTabId ?? '') ?? null} toolbarSpacer={tableToolbarVisible} connectionId={persistConnectionId} {schemas} />
+          {#await import('./PaneSnapshot.svelte') then { default: PaneSnapshot }}
+            <PaneSnapshot tab={tabsById.get(group.activeTabId ?? '') ?? null} toolbarSpacer={tableToolbarVisible} connectionId={persistConnectionId} {schemas} />
+          {/await}
         {/if}
       {/snippet}
 
@@ -11435,6 +11453,7 @@ let rowSearch = $state('')
               <!-- The grid stays mounted (hidden) in other view modes so staged
                    edits, selection and scroll position survive mode switches. -->
               <div class={dataViewMode === 'table' ? 'flex min-h-0 min-w-0 flex-1' : 'hidden'}>
+              {#await loadDataTable() then { default: DataTable }}
               <DataTable
                 bind:this={dataTable}
                 {columns}
@@ -11539,6 +11558,7 @@ let rowSearch = $state('')
                 bind:stageDeleteSelected={stageDeleteSelectedRows}
                 readonly={tableReadonly}
               />
+              {/await}
               </div>
               {#if dataViewMode === 'json'}
                 {#await import('./TableJsonView.svelte')}<TabLoading />{:then { default: TableJsonView }}

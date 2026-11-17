@@ -15,6 +15,7 @@ mod nightly;
 mod agents;
 mod app_lock;
 mod cloudflare;
+mod display_backend;
 mod commands;
 mod connection_store;
 mod copilot;
@@ -429,6 +430,9 @@ pub fn run() {
     // connection. ring keeps TLS exactly as it was.
     let _ = rustls::crypto::ring::default_provider().install_default();
 
+    // Wayland or X11, before GTK starts and before any thread (display_backend.rs).
+    display_backend::choose();
+
     // Linux WebKitGTK rendering fix - set before any threads spawn.
     #[cfg(target_os = "linux")]
     // SAFETY: called before any threads are spawned.
@@ -490,6 +494,7 @@ pub fn run() {
         .manage(updates::UpdateState::default())
         .manage(launch::LaunchState::default())
         .setup(move |app| {
+            display_backend::watch(app.handle().clone());
             // Linux packages renamed the binary from `app` to `stroke` (2.5.6), and
             // a launch-at-login entry stores the binary's path. Re-enabling an
             // enabled entry rewrites it with the current path, so it doesn't

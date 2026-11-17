@@ -60,7 +60,7 @@ scoop install stroke
 
 Or grab an installer from [Releases](https://github.com/stroke-app/stroke/releases): `.dmg` for macOS (Apple Silicon or Intel), `-setup.exe` for Windows, `.deb` (Ubuntu 22.04+, Debian 12+), `.rpm` (Fedora 41+, RHEL 10) or `.AppImage` (Arch and any distro with glibc 2.35+) for Linux.
 
-The AppImage runs through XWayland by default. To try native Wayland, start it with `STROKE_WAYLAND=1`.
+On Wayland, Stroke runs natively. If a launch can't draw there (some GPU and driver setups), the next one falls back to X11 by itself. `STROKE_X11=1` forces X11; `STROKE_WAYLAND=1` forces Wayland and forgets the fallback.
 
 **Stroke Nightly** is built every night from the `nightly` branch and installs as a separate app beside Stroke, with its own settings, so you can try what's coming without risking your setup: [download the nightly](https://github.com/stroke-app/stroke/releases/tag/nightly). It updates itself every night something lands.
 

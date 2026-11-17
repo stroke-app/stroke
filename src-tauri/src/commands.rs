@@ -331,6 +331,8 @@ pub async fn open_new_window(app: tauri::AppHandle) -> Result<(), String> {
 /// capability file only grants core window permissions to `main`.
 #[tauri::command]
 pub fn reveal_window(window: tauri::WebviewWindow) {
+    // The page drew a finished screen, so this display backend works here.
+    crate::display_backend::drawn();
     if !window.is_visible().unwrap_or(false) {
         let _ = window.show();
         let _ = window.set_focus();
