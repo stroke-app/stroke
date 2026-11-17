@@ -154,17 +154,16 @@
             <LoaderCircle class="size-3.5 shrink-0 animate-spin" /> Loading
           </div>
         {:else if $isSignedIn}
-          <Button size="lg" class="w-full" onclick={() => void openStore()}>
-            Get Stroke Pro <Icon name="external-link" class="size-3.5 shrink-0" />
-          </Button>
-          <Button variant="secondary" class="w-full" disabled={checking} onclick={() => void checkAgain()}>
+          <button type="button" class="keycap-btn inline-flex h-10 w-full items-center justify-center gap-2 rounded-md px-4 text-ui-sm font-medium" onclick={() => void openStore()}>
+            Get Stroke Pro <Icon name="external-link" class="size-3.5 shrink-0 text-muted-foreground" />
+          </button>
+          <button type="button" class="inline-flex h-8 w-full items-center justify-center gap-1.5 rounded-md text-ui-xs text-muted-foreground transition-colors hover:text-foreground disabled:pointer-events-none" disabled={checking} aria-busy={checking} onclick={() => void checkAgain()}>
             {#if checking}<LoaderCircle class="size-3.5 shrink-0 animate-spin" /> Checking{:else}<RefreshCw class="size-3.5 shrink-0" /> I bought it, check again{/if}
-          </Button>
+          </button>
         {:else}
+          <!-- One way in: an account that has Pro. Buying is a quiet link
+               below, beside the key, not a second big button. -->
           <AccountSignInButtons size="lg" />
-          <Button variant="secondary" class="w-full" onclick={() => void openStore()}>
-            Get Stroke Pro <Icon name="external-link" class="size-3.5 shrink-0" />
-          </Button>
         {/if}
       </div>
 
@@ -174,9 +173,17 @@
             <ArrowLeft class="size-3.5 shrink-0" /> Back
           </button>
         {:else}
-          <button type="button" onclick={() => (mode = 'key')} class="mt-4 inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-ui-xs text-muted-foreground transition-[color,scale] duration-[120ms] hover:text-foreground active:scale-[0.97]">
-            <KeyRound class="size-3.5 shrink-0" /> Use a license key
-          </button>
+          <div class={cn('mt-4 flex items-center justify-center gap-1 text-ui-xs text-muted-foreground', waiting && 'pointer-events-none opacity-0')}>
+            {#if !$isSignedIn}
+              <button type="button" onclick={() => void openStore()} class="inline-flex h-7 items-center gap-1.5 rounded-md px-2 transition-[color,scale] duration-[120ms] hover:text-foreground active:scale-[0.97]">
+                Get Stroke Pro <Icon name="external-link" class="size-3 shrink-0" />
+              </button>
+              <span aria-hidden="true">·</span>
+            {/if}
+            <button type="button" onclick={() => (mode = 'key')} class="inline-flex h-7 items-center gap-1.5 rounded-md px-2 transition-[color,scale] duration-[120ms] hover:text-foreground active:scale-[0.97]">
+              <KeyRound class="size-3.5 shrink-0" /> Use a license key
+            </button>
+          </div>
         {/if}
       {/if}
 
