@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.16.9] - 2026-11-17
+
+### Changes
+- Replace the TODO with the website redesign and the update emails (#268)
+
+
 ## [2.16.8] - 2026-11-17
 
 ### Changes
