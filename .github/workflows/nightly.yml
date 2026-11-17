@@ -160,13 +160,6 @@ jobs:
         shell: bash
         run: npx tauri build --config nightly.conf.json ${{ matrix.args }}
         env:
-          # Nightly trades a little binary size and speed for build time. The
-          # release profile's fat LTO with one codegen unit re-optimizes the
-          # whole dependency graph on one thread every build (~9 of the ~11
-          # minutes, with every dependency already cached). Thin LTO keeps most
-          # of the gain and runs in parallel. Stable (release.yml) keeps fat LTO.
-          CARGO_PROFILE_RELEASE_LTO: thin
-          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           NO_STRIP: ${{ matrix.name == 'linux' && '1' || '' }}
