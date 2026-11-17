@@ -58,6 +58,11 @@ pub struct UpdateInfo {
     pub staged: bool,
     /// This install can apply a staged build by itself when Stroke quits.
     pub apply_on_quit: bool,
+    /// A package manager owns this install (AUR, a .deb or .rpm): the update
+    /// goes through it, not through the app.
+    pub manual: bool,
+    /// The command that updates it, where there is one (`yay -Syu ...`).
+    pub manual_command: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -102,10 +107,17 @@ fn info(update: &Update, staged: bool) -> UpdateInfo {
         date: update.date.map(|d| d.unix_timestamp()),
         staged,
         apply_on_quit: can_apply_on_quit(),
+        manual: package_managed(),
+        manual_command: manual_command(),
     }
 }
 
 fn staged_info(state: &UpdateState) -> Option<UpdateInfo> {
+    // Nothing is ever staged for a package-managed install; never offer a
+    // restart that can only fail.
+    if package_managed() {
+        return None;
+    }
     lock(&state.staged).as_ref().map(|s| info(&s.update, true))
 }
 
@@ -150,6 +162,9 @@ pub async fn update_download(
 ) -> Result<UpdateInfo, String> {
     if let Some(staged) = staged_info(&state) {
         return Ok(staged);
+    }
+    if package_managed() {
+        return Err(MANAGED_MESSAGE.into());
     }
     let update = lock(&state.pending)
         .clone()
@@ -209,6 +224,9 @@ pub fn update_status(state: State<'_, UpdateState>) -> Option<UpdateInfo> {
 /// thread, and `restart()` from another thread goes through the normal exit.
 #[tauri::command]
 pub async fn update_restart(app: AppHandle, state: State<'_, UpdateState>) -> Result<(), String> {
+    if package_managed() {
+        return Err(MANAGED_MESSAGE.into());
+    }
     let staged = lock(&state.staged)
         .take()
         .ok_or("No update is ready to install.")?;
@@ -286,6 +304,57 @@ pub fn apply_on_quit(app: &AppHandle) {
         }
         Err(e) => log::error!("[updater] install on quit failed: {e}"),
     }
+}
+
+// ── Installed by a package manager? ───────────────────────────────────────────
+
+const MANAGED_MESSAGE: &str =
+    "This copy of Stroke was installed by your package manager, so it updates there.";
+
+/// Linux installs that are not the AppImage: the AUR packages (which unpack
+/// the .deb, so the binary reads as a .deb install), a .deb or an .rpm. The
+/// release feed ships only the AppImage for Linux, so the plugin tried to
+/// install an AppImage as a .deb and failed with "invalid updater binary
+/// format". Files under /usr belong to the package manager anyway.
+#[cfg(target_os = "linux")]
+pub fn package_managed() -> bool {
+    use tauri::utils::config::BundleType;
+    !matches!(tauri::utils::platform::bundle_type(), Some(BundleType::AppImage))
+        || std::env::var_os("APPIMAGE").is_none()
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn package_managed() -> bool {
+    false
+}
+
+/// The update command for an Arch install from the AUR. A .deb or .rpm from
+/// the website has no repository to update from: the app links to the
+/// download page instead.
+#[cfg(target_os = "linux")]
+fn manual_command() -> Option<String> {
+    if !package_managed() {
+        return None;
+    }
+    let local = std::path::Path::new("/var/lib/pacman/local");
+    let installed = |name: &str| {
+        std::fs::read_dir(local).ok().is_some_and(|dir| {
+            dir.flatten().any(|e| {
+                e.file_name().to_string_lossy().strip_prefix(name).is_some_and(|rest| {
+                    rest.starts_with('-') && rest[1..].starts_with(|c: char| c.is_ascii_digit())
+                })
+            })
+        })
+    };
+    ["stroke-nightly-bin", "stroke-bin"]
+        .into_iter()
+        .find(|p| installed(p))
+        .map(|p| format!("yay -Syu {p}"))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn manual_command() -> Option<String> {
+    None
 }
 
 // ── Can this install update itself on quit? ────────────────────────────────────
