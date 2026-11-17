@@ -115,6 +115,11 @@
   // overflowed them (menus, workspace name and buttons all ballooned). It is
   // counter-zoomed by 1/scale; its few px sizes are written × scale above so
   // they land back on whole pixels. Menus it opens are portaled and still zoom.
+  // Tailwind's spacing (p-*, gap-*, h-*, size-*) is rem, and WebKitGTK does
+  // not apply `zoom` to rem lengths: on Linux the counter-zoom shrank the text
+  // back but left padding and gaps at the zoomed size, so the menu row spread
+  // out at every zoom step. Inside the bar the spacing unit is px x scale
+  // instead (style below), which every engine zooms back to the same 4px.
   // Read in the same frame: applySettings sets --app-scale before it updates
   // appZoom. Deferring it a frame made the bar jump after every zoom step.
   const chromeZoom = $derived.by(() => {
@@ -135,6 +140,7 @@
   class="studio-chrome relative flex shrink-0 items-center bg-panel {isMac ? 'h-[calc(52px*var(--app-scale))] pr-[calc(10px*var(--app-scale))]' : 'h-[calc(40px*var(--app-scale))] border-b border-border/40 pl-[calc(10px*var(--app-scale))] pr-0'} select-none"
   data-studio-chrome
   style:zoom={chromeZoom}
+  style:--spacing="calc(4px * var(--app-scale, 1))"
   data-studio-region="titlebar"
   bind:clientWidth={barW}
   data-tauri-drag-region
