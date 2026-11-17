@@ -1614,6 +1614,82 @@ pre code,
   box-shadow: 0 0 6px color-mix(in oklch, var(--key-dot) 70%, transparent);
 }
 .chip-gloss.chip-muted { --chip: var(--muted-foreground); }
+/* ── Keycap button ────────────────────────────────────────────────────────────
+   The Pro chip's dark key, at button size: the same lifted fill, hairline
+   ring, sheen on top and shade at the foot. A press sinks the cap 1px and
+   flattens its drop, the way a key goes down. Built from --foreground and
+   --background, so it reads as a key in every theme. */
+.keycap-btn {
+  color: var(--foreground);
+  background: linear-gradient(
+    to bottom,
+    color-mix(in oklch, var(--foreground) 14%, var(--background)),
+    color-mix(in oklch, var(--foreground) 6%, var(--background))
+  );
+  box-shadow:
+    inset 0 0 0 1px color-mix(in oklch, var(--foreground) 22%, transparent),
+    inset 0 1px 0 color-mix(in oklch, white 18%, transparent),
+    inset 0 -2px 0 rgb(0 0 0 / 0.22),
+    0 1px 2px rgb(0 0 0 / 0.3);
+  transition: transform 100ms cubic-bezier(0.165, 0.84, 0.44, 1), box-shadow 100ms cubic-bezier(0.165, 0.84, 0.44, 1), background 150ms ease-out;
+}
+@media (hover: hover) and (pointer: fine) {
+  .keycap-btn:not(:disabled):hover {
+    background: linear-gradient(
+      to bottom,
+      color-mix(in oklch, var(--foreground) 18%, var(--background)),
+      color-mix(in oklch, var(--foreground) 9%, var(--background))
+    );
+  }
+}
+.keycap-btn:not(:disabled):active {
+  transform: translateY(1px);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in oklch, var(--foreground) 22%, transparent),
+    inset 0 1px 0 color-mix(in oklch, white 10%, transparent),
+    inset 0 -1px 0 rgb(0 0 0 / 0.18);
+}
+.keycap-btn:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.keycap-btn:disabled { color: var(--muted-foreground); opacity: 0.6; }
+/* Light themes: a white key on a pale page, with a lighter shade at its foot. */
+html:not(.dark) .keycap-btn {
+  background: linear-gradient(to bottom, var(--background), color-mix(in oklch, var(--foreground) 5%, var(--background)));
+  box-shadow:
+    inset 0 0 0 1px color-mix(in oklch, var(--foreground) 16%, transparent),
+    inset 0 -2px 0 rgb(0 0 0 / 0.06),
+    0 1px 2px rgb(0 0 0 / 0.08);
+}
+@media (hover: hover) and (pointer: fine) {
+  html:not(.dark) .keycap-btn:not(:disabled):hover {
+    background: linear-gradient(to bottom, var(--background), color-mix(in oklch, var(--foreground) 8%, var(--background)));
+  }
+}
+html:not(.dark) .keycap-btn:not(:disabled):active {
+  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--foreground) 16%, transparent), inset 0 1px 1px rgb(0 0 0 / 0.06);
+}
+html:not(.dark) .key-well { box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.06), inset 0 0 0 1px color-mix(in oklch, var(--foreground) 12%, transparent); }
+html:not(.dark) .key-well:focus-within { box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.06), 0 0 0 2px var(--ring); }
+@media (prefers-reduced-motion: reduce) {
+  .keycap-btn { transition: background 150ms ease-out; }
+  .keycap-btn:not(:disabled):active { transform: none; }
+}
+/* A field drawn as a well: a step darker than its surface, no border, a
+   faint inner shade. Focus deepens it and adds the ring. */
+.key-well {
+  background: color-mix(in oklch, var(--foreground) 4%, var(--background));
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.25), inset 0 0 0 1px color-mix(in oklch, var(--foreground) 8%, transparent);
+  transition: box-shadow 150ms ease-out, background 150ms ease-out;
+}
+.key-well:focus-within {
+  background: color-mix(in oklch, var(--foreground) 2%, var(--background));
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.25), 0 0 0 2px var(--ring);
+}
+.key-well[data-invalid] {
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.25), inset 0 0 0 1px var(--destructive);
+}
 .chip-gloss.chip-primary { --chip: var(--primary); }
 .mark-grain::after {
   opacity: 0.32;

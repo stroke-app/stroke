@@ -75,7 +75,7 @@
       {:else}
         {#if $isReturningUser}
           <h1 class="text-ui-2xl font-medium tracking-tight text-foreground text-balance">Sign in to continue</h1>
-          <p class="mt-2 text-ui-sm text-muted-foreground text-pretty">Your connections and settings stay on this Mac.</p>
+          <p class="mt-2 text-ui-sm text-muted-foreground text-pretty">Your connections and settings stay on this computer.</p>
         {:else}
           <h1 class="text-ui-2xl font-medium tracking-tight text-foreground text-balance">Welcome to Stroke</h1>
           <p class="mt-2 text-ui-sm text-muted-foreground text-pretty">Sign in to start your free trial.</p>
