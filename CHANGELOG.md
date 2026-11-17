@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.18.0] - 2026-11-17
+
+### Changes
+- Upgrade echarts to 6.1 for the XSS fix, keeping charts as they look on 5 (#279)
+
+
 ## [2.17.9] - 2026-11-17
 
 ### Changes
