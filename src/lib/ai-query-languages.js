@@ -22,6 +22,7 @@ export const QUERY_LANGUAGES = {
 - Writes: insertOne, insertMany, updateOne/updateMany with operators ({$set: {...}}), replaceOne, deleteOne/deleteMany (with a filter).
 - Values: ObjectId("…"), ISODate("2026-01-01"), NumberLong(…), NumberDecimal("…"). Field names may be unquoted.
 - "db" is the database selected in the sidebar; "use <db>;" switches it. For odd names use db.getCollection("name").
+- Collections and indexes (schema access): db.createCollection("name"); db.users.createIndex({email: 1}, {unique: true}); db.users.dropIndex("email_1"). Inserting into a missing collection creates it.
 - Always add .limit() to find() unless the user asks for everything.`,
   },
   couchdb: {
@@ -84,7 +85,11 @@ export const QUERY_LANGUAGES = {
 - A SELECT without the partition key in WHERE scans the whole table: put the key in WHERE whenever possible.
 - No JOINs, no GROUP BY, no aggregate functions except size(), no LIMIT clause (results are paged).
 - Functions: begins_with(sk, 'ORDER#'), contains(tags, 'beta'), attribute_exists(x), attribute_type(x, 'S'), size(x).
-- Writes: INSERT INTO "t" VALUE {'pk': 'a', 'sk': 'b'}; UPDATE "t" SET x = 1 WHERE pk = 'a' AND sk = 'b'; DELETE FROM "t" WHERE pk = 'a' AND sk = 'b';`,
+- Writes: INSERT INTO "t" VALUE {'pk': 'a', 'sk': 'b'}; UPDATE "t" SET x = 1 WHERE pk = 'a' AND sk = 'b'; DELETE FROM "t" WHERE pk = 'a' AND sk = 'b';
+- PartiQL can't create or change tables. For that, run a DynamoDB API call as JSON in the same tool, one per call:
+  {"operation": "CreateTable", "input": {"TableName": "shop", "KeySchema": [{"AttributeName": "pk", "KeyType": "HASH"}, {"AttributeName": "sk", "KeyType": "RANGE"}], "AttributeDefinitions": [{"AttributeName": "pk", "AttributeType": "S"}, {"AttributeName": "sk", "AttributeType": "S"}], "BillingMode": "PAY_PER_REQUEST"}}
+  Also: DescribeTable, ListTables, UpdateTable, UpdateTimeToLive, DeleteTable, and the item calls PutItem, GetItem, UpdateItem, DeleteItem, Query, Scan, BatchGetItem, BatchWriteItem (up to 25 items), TransactWriteItems. Inputs use the AWS JSON format with typed values ({"S": "x"}, {"N": "1"}).
+- A new table takes a few seconds to become ACTIVE: DescribeTable until TableStatus is ACTIVE before writing to it.`,
   },
   redis: {
     name: 'Redis commands',

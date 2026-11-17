@@ -420,6 +420,7 @@
   role="group"
   aria-label="Tables in foreign-key order"
   data-zoom-surface
+  ondragstart={(e) => e.preventDefault()}
   onpointerdown={onPointerDown}
   onpointermove={onPointerMove}
   onpointerup={onPointerUp}

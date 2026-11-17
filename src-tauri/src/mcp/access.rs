@@ -38,6 +38,8 @@ pub enum Dialect {
     ReadOnlyDoc,
     /// Elasticsearch and OpenSearch: Dev Tools requests, by method and path.
     Elastic,
+    /// DynamoDB: PartiQL, or a JSON API call such as CreateTable.
+    Dynamo,
 }
 
 impl Dialect {
@@ -50,6 +52,7 @@ impl Dialect {
             "redis" => Self::Redis,
             "elasticsearch" | "opensearch" => Self::Elastic,
             "couchdb" | "firestore" => Self::ReadOnlyDoc,
+            "dynamodb" => Self::Dynamo,
             _ => Self::Sql,
         }
     }
@@ -68,6 +71,7 @@ pub fn script_level_in(dialect: Dialect, sql: &str) -> u8 {
     match dialect {
         Dialect::Mongo => mongo_level(sql),
         Dialect::Redis => redis_level(sql),
+        Dialect::Dynamo => dynamo_level(sql),
         Dialect::ReadOnlyDoc => READ,
         Dialect::Elastic => match crate::db::elastic::parse(sql) {
             Ok(crate::db::elastic::Statement::Raw { method, path, .. }) => crate::db::elastic::request_level(&method, &path),
@@ -114,6 +118,7 @@ pub fn statement_count(dialect: Dialect, sql: &str) -> usize {
             .max()
             .unwrap_or(0),
         Dialect::Oracle => crate::db::oracle::split_statements(sql).len().max(statement_count(Dialect::Sql, sql)),
+        Dialect::Dynamo if crate::db::dynamodb::parse_api_call(sql).is_none() => statement_count(Dialect::Sql, sql),
         _ => usize::from(!sql.trim().is_empty()),
     }
 }
@@ -314,12 +319,35 @@ fn pragma_level(stmt: &str) -> u8 {
     }
 }
 
+/// DynamoDB: an API call by its operation, PartiQL like any SQL.
+fn dynamo_level(stmt: &str) -> u8 {
+    use crate::db::dynamodb::{parse_api_call, API_DANGEROUS, API_READS, API_SCHEMA, API_WRITES};
+    match parse_api_call(stmt) {
+        None => script_level_in(Dialect::Sql, stmt),
+        Some(Err(_)) => DANGEROUS,
+        Some(Ok((op, _))) => {
+            let op = op.as_str();
+            if API_READS.contains(&op) {
+                READ
+            } else if API_WRITES.contains(&op) {
+                WRITE
+            } else if API_SCHEMA.contains(&op) {
+                MODIFY
+            } else {
+                debug_assert!(API_DANGEROUS.contains(&op));
+                DANGEROUS
+            }
+        }
+    }
+}
+
 /// Mongo shell: classified from what `db::mongo::parse` will actually run.
 fn mongo_level(stmt: &str) -> u8 {
     use crate::db::mongo::{parse, Stmt};
     let Ok(parsed) = parse(stmt) else { return DANGEROUS };
     match parsed {
         Stmt::Use(_) | Stmt::ShowDbs | Stmt::ShowCollections => READ,
+        Stmt::CreateCollection(_) => MODIFY,
         Stmt::Coll { calls, .. } => {
             let Some(head) = calls.first() else { return DANGEROUS };
             let args: String = head.args.chars().filter(|c| !c.is_whitespace()).collect();
@@ -331,6 +359,8 @@ fn mongo_level(stmt: &str) -> u8 {
                 | "distinct" | "getIndexes" => READ,
                 "insertOne" | "insertMany" | "updateOne" | "replaceOne" | "deleteOne" => WRITE,
                 "updateMany" | "deleteMany" => if all_rows { DANGEROUS } else { WRITE },
+                "createIndex" | "dropIndex" => MODIFY,
+                // "drop" and anything unknown.
                 _ => DANGEROUS,
             }
         }
@@ -647,6 +677,20 @@ mod tests {
         assert_eq!(script_level("DELETE FROM \"Music\" WHERE Artist = 'x'"), WRITE);
         assert_eq!(script_level("TRUNCATE ks.t"), DANGEROUS);
         assert_eq!(script_level_in(Dialect::ReadOnlyDoc, "anything"), READ);
+        let d = |s: &str| script_level_in(Dialect::Dynamo, s);
+        assert_eq!(d(r#"SELECT * FROM "t""#), READ);
+        assert!(d(r#"DELETE FROM "t" WHERE pk = 'a'"#) >= WRITE);
+        assert_eq!(d(r#"{"operation": "Scan", "input": {"TableName": "t"}}"#), READ);
+        assert_eq!(d(r#"PutItem {"TableName": "t", "Item": {"pk": {"S": "a"}}}"#), WRITE);
+        assert_eq!(d(r#"CreateTable {"TableName": "t"}"#), MODIFY);
+        assert_eq!(d(r#"{"operation": "DeleteTable", "input": {"TableName": "t"}}"#), DANGEROUS);
+        assert_eq!(d(r#"{"operation": "Nope"}"#), DANGEROUS);
+        assert_eq!(Dialect::for_driver("dynamodb"), Dialect::Dynamo);
+        let m = |s: &str| script_level_in(Dialect::Mongo, s);
+        assert_eq!(m(r#"db.createCollection("shop")"#), MODIFY);
+        assert_eq!(m("db.users.createIndex({email: 1}, {unique: true})"), MODIFY);
+        assert_eq!(m(r#"db.users.dropIndex("email_1")"#), MODIFY);
+        assert_eq!(m("db.users.drop()"), DANGEROUS);
         let es = |s| script_level_in(Dialect::Elastic, s);
         assert_eq!(es("GET products/_search"), READ);
         assert_eq!(es("POST products/_search\n{\"query\": {\"match_all\": {}}}"), READ);
@@ -669,7 +713,7 @@ mod tests {
         assert_eq!(Dialect::for_driver("elasticsearch"), Dialect::Elastic);
         assert_eq!(Dialect::for_driver("opensearch"), Dialect::Elastic);
         assert_eq!(Dialect::for_driver("cassandra"), Dialect::Sql);
-        assert_eq!(Dialect::for_driver("dynamodb"), Dialect::Sql);
+        assert_eq!(Dialect::for_driver("dynamodb"), Dialect::Dynamo);
         assert_eq!(Dialect::for_driver("oracle"), Dialect::Oracle);
     }
 

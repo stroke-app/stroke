@@ -1553,6 +1553,7 @@
   <canvas
     bind:this={canvas}
     class="block touch-none select-none"
+    ondragstart={(e) => e.preventDefault()}
     onpointerdown={onPointerDown}
     onpointermove={onPointerMove}
     onpointerup={onPointerUp}

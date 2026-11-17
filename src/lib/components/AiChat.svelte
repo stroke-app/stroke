@@ -1532,6 +1532,8 @@
 
     const onDown = (/** @type {MouseEvent} */ e) => {
       if (e.button !== 0) return;
+      // Stops WebKit's native drag ghost of the SVG's text.
+      e.preventDefault();
       dragging = true;
       ox = e.clientX - tx;
       oy = e.clientY - ty;
