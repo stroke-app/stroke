@@ -1796,8 +1796,8 @@
     {@render switchRow(
       'Animate panels',
       'The terminal dock and the AI panel slide open and closed. Off, they appear at once.',
-      settings.panelMotion !== false,
-      () => { settings = updateSettings({ panelMotion: settings.panelMotion === false }); },
+      settings.animatePanels === true,
+      () => { settings = updateSettings({ animatePanels: settings.animatePanels !== true }); },
     )}
   {/if}
   {#if isMacOs && show('Press ⌘Q twice to quit', 'Quit confirm command q hold double press')}

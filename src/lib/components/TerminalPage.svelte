@@ -956,7 +956,16 @@
   /** The GPU context was lost or never came up: stay on the DOM renderer. */
   let webglBroken = false
 
+  // Linux: the DOM renderer. Stroke turns WebKitGTK's GPU compositing off for
+  // crisp text (WEBKIT_DISABLE_DMABUF_RENDERER, lib.rs), so a WebGL canvas
+  // there is read back and composited in software on every frame: typing, the
+  // cursor blink and every popup over it (the suggestion list) lagged. The DOM
+  // renderer is cheap on that path. The cost is the box-drawing joints noted
+  // above; Windows and macOS keep WebGL.
+  const gpuRenderer = detectOs() !== 'linux'
+
   function enableGpu() {
+    if (!gpuRenderer) return
     if (!term || webgl || webglBroken || !termEl || termEl.clientWidth === 0) return
     try {
       const addon = new WebglAddon()
