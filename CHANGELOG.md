@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.17.6] - 2026-11-17
+
+### Changes
+- One Sign in button; calmer trial screen; sign-out goes back to sign-in; better callback page (#275)
+
+
 ## [2.17.5] - 2026-11-17
 
 ### Changes
