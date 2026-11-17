@@ -217,7 +217,7 @@
 
   // ── Interaction ─────────────────────────────────────────────────────────────
   /** @type {{ x: number, y: number }|null} */
-  let dragFrom = null
+  let dragFrom = $state(null)
   let dragged = false
 
   /** @param {PointerEvent} e */
