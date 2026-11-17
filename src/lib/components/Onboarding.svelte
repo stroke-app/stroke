@@ -100,8 +100,11 @@
 <svelte:window onkeydown={onWindowKeydown} />
 
 {#if open}
+  <!-- z-[45]: over the app, under the menus, dialogs and popovers (z-50 and
+       up). At z-[200] the title bar's menus (workspace, account, File...)
+       opened behind the tour and looked like they did nothing. -->
   <div
-    class="fixed inset-x-0 bottom-0 z-[200] flex flex-col bg-background"
+    class="fixed inset-x-0 bottom-0 z-[45] flex flex-col bg-background"
     style={isMac ? 'top: 0;' : 'top: var(--app-titlebar-h, 38px);'}
     transition:fade={{ duration: 160 }}
   >

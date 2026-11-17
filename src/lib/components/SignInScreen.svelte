@@ -13,6 +13,7 @@
   import { detectOs } from '$lib/platform.js'
   import { cn } from '$lib/utils.js'
   import ArrowLeft from '@lucide/svelte/icons/arrow-left'
+  import GateUpdateCheck from './GateUpdateCheck.svelte'
 
   /** Called once signed in (or a key was activated); the gate hands over to the app. */
   let { ondone = () => {} } = $props()
@@ -103,5 +104,9 @@
     <a href="https://stroke.click/terms" target="_blank" rel="noopener noreferrer" class="transition-colors hover:text-foreground">Terms</a>
     <span aria-hidden="true">·</span>
     <a href="https://stroke.click/privacy" target="_blank" rel="noopener noreferrer" class="transition-colors hover:text-foreground">Privacy</a>
+    <span aria-hidden="true">·</span>
+    <!-- This screen replaces the app, update dialog included: without this a
+         build that can't get past sign-in could never fetch its own fix. -->
+    <GateUpdateCheck />
   </div>
 </div>
