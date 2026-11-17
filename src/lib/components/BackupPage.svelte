@@ -27,6 +27,7 @@
   import TriangleAlert from '@lucide/svelte/icons/triangle-alert'
   import CircleAlert from '@lucide/svelte/icons/circle-alert'
   import FileText from '@lucide/svelte/icons/file-text'
+  import ScrollText from '@lucide/svelte/icons/scroll-text'
   import FolderOpen from '@lucide/svelte/icons/folder-open'
   import Copy from '@lucide/svelte/icons/copy'
   import Search from '@lucide/svelte/icons/search'
@@ -46,7 +47,32 @@
     schemas = /** @type {string[]} */ ([]),
     /** @type {TableRow[]} */
     tables = [],
+    /** After a restore that applied anything: reload the schema tree and tables. */
+    onrestored = /** @type {() => void | Promise<void>} */ (() => {}),
   } = $props()
+
+  // ── Live log ────────────────────────────────────────────────────────────────
+  /** @typedef {{ id: number, at: number, level: string, text: string }} LogLine */
+  /** Lines kept on the page; a long run drops the oldest. */
+  const LOG_CAP = 2000
+  /** @type {LogLine[]} */
+  let logLines = $state([])
+  let logSeq = 0
+  let showLog = $state(false)
+  /** @param {string} level @param {string} text */
+  function addLog(level, text) {
+    logLines.push({ id: logSeq++, at: Date.now(), level, text })
+    if (logLines.length > LOG_CAP) logLines.splice(0, logLines.length - LOG_CAP)
+  }
+  /** @type {HTMLElement|null} */
+  let logEl = $state(null)
+  // Follow new lines while the reader is at the bottom; stay put when they scrolled up.
+  let followLog = true
+  $effect(() => {
+    void logLines.length
+    if (logEl && followLog) logEl.scrollTop = logEl.scrollHeight
+  })
+  const logTime = (/** @type {number} */ t) => new Date(t).toLocaleTimeString([], { hour12: false })
 
   /** @type {'backup'|'restore'} */
   let activeTab = $state('backup')
@@ -288,6 +314,12 @@
       runTables.push({ key, schema: p.schema ?? null, name: p.name, est: null, status: 'pending', rows: 0, error: null })
     }
     const row = runTables[i]
+    if (p.status !== row.status) {
+      const label = p.schema && multiSchema ? `${p.schema}.${p.name}` : p.name
+      if (p.status === 'running') addLog('info', `${label}: exporting`)
+      else if (p.status === 'done') addLog('ok', `${label}: ${rowsText(p.rows ?? 0)}`)
+      else if (p.status === 'error') addLog('error', `${label}: ${p.error ?? 'failed'}`)
+    }
     row.status = p.status
     row.rows = p.rows ?? 0
     row.error = p.error ?? null
@@ -295,6 +327,7 @@
 
   /** @param {any} p */
   function onBackupLog(p) {
+    if (p?.message) addLog(p.level ?? 'info', p.message)
     if (p?.level === 'warn' && !/^Cancelled/.test(p.message)) exportNotes.push(p.message)
   }
 
@@ -325,6 +358,7 @@
     exportPath = path
     runTables = []
     runIndex = new Map()
+    logLines = []
     exportStartedAt = Date.now()
     startClock()
     stopListening()
@@ -462,11 +496,28 @@
     importStartedAt = Date.now()
     startClock()
     stopListening()
-    unlisteners = [await listenTo('restore-progress', (p) => (importProgress = p))]
+    logLines = []
+    let lastTenth = -1
+    unlisteners = await Promise.all([
+      listenTo('restore-progress', (p) => {
+        importProgress = p
+        // A line every 10% of the file, so the log moves on a clean run too.
+        const tenth = p?.bytesTotal ? Math.floor((p.bytesDone / p.bytesTotal) * 10) : -1
+        if (tenth > lastTenth && tenth < 10) {
+          lastTenth = tenth
+          addLog('info', `${tenth * 10}% of the file · ${statementsText(p.ok)} applied${p.failed ? ` · ${fmtInt(p.failed)} failed` : ''}`)
+        }
+      }),
+      listenTo('restore-log', (p) => p?.message && addLog(p.level ?? 'info', p.message)),
+    ])
     try {
       const result = await backupImport({ path: importPath })
       importResult = result
       importPhase = 'done'
+      if (result.statementsOk > 0) {
+        addLog('info', 'Refreshing the schema')
+        try { await onrestored() } catch { /* the sidebar's own refresh still works */ }
+      }
     } catch (e) {
       importError = errText(e)
       importPhase = 'error'
@@ -491,6 +542,45 @@
     importProgress = { bytesDone: 0, bytesTotal: 0, ok: 0, failed: 0 }
   }
 </script>
+
+{#snippet logToggle()}
+  <Button
+    variant={showLog ? 'secondary' : 'ghost'}
+    size="sm"
+    class="h-7 gap-1.5"
+    aria-pressed={showLog}
+    onclick={() => (showLog = !showLog)}
+  >
+    <ScrollText class="size-3.5 shrink-0" />Log
+  </Button>
+{/snippet}
+
+{#snippet logPanel()}
+  <!-- Focusable so the log can be scrolled from the keyboard. -->
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+  <div
+    bind:this={logEl}
+    onscroll={() => { if (logEl) followLog = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 24 }}
+    class="app-scroll min-h-0 flex-1 overflow-y-auto border-t border-border/60 bg-background/40 px-4 py-2 font-mono text-ui-xs leading-relaxed"
+    role="log"
+    aria-label="Live log"
+    tabindex="0"
+  >
+    {#each logLines as line (line.id)}
+      <div class="flex gap-3">
+        <span class="shrink-0 tabular-nums text-muted-foreground/70">{logTime(line.at)}</span>
+        <span
+          class={cn(
+            'min-w-0 break-words whitespace-pre-wrap',
+            line.level === 'error' ? 'text-destructive' : line.level === 'warn' ? 'text-warning' : line.level === 'ok' ? 'text-success' : 'text-foreground/85',
+          )}
+        >{line.text}</span>
+      </div>
+    {:else}
+      <p class="text-muted-foreground">Waiting for the first line…</p>
+    {/each}
+  </div>
+{/snippet}
 
 {#snippet progressBar(/** @type {number} */ fraction, /** @type {'running'|'done'|'warn'|'error'} */ tone)}
   <div
@@ -665,6 +755,7 @@
                 {:else}Export failed{/if}
               </p>
               <span class="flex-1"></span>
+              {@render logToggle()}
               <span class="font-mono text-ui-xs tabular-nums text-muted-foreground">{fmtElapsed(exportElapsed)}</span>
             </div>
             {@render progressBar(
@@ -732,7 +823,9 @@
             {/if}
           </div>
 
-          {#if runTables.length}
+          {#if showLog}
+            {@render logPanel()}
+          {:else if runTables.length}
             <ul class="app-scroll min-h-0 flex-1 overflow-y-auto py-1" aria-label="Tables">
               {#each runTables as t (t.key)}
                 <li class="flex h-8 items-center gap-2.5 px-4" title={t.error ?? undefined}>
@@ -854,6 +947,7 @@
                 {:else}Restore complete{/if}
               </p>
               <span class="flex-1"></span>
+              {@render logToggle()}
               <span class="font-mono text-ui-xs tabular-nums text-muted-foreground">{fmtElapsed(importElapsed)}</span>
             </div>
             {@render progressBar(
@@ -890,7 +984,9 @@
             {/if}
           </div>
 
-          {#if importResult?.errors.length}
+          {#if showLog}
+            {@render logPanel()}
+          {:else if importResult?.errors.length}
             <div class="flex min-h-0 flex-1 flex-col px-4 pb-4">
               <Alert.Root variant="destructive" class="flex min-h-0 flex-col">
                 <div class="flex items-center gap-2">

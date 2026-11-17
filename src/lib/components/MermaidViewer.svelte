@@ -281,20 +281,18 @@
         if (!dragging) return
         dragging = false
         node.style.cursor = 'grab'
-        // Back to painted in place, so the next zoom is drawn, not stretched.
-        svg.style.willChange = ''
         window.removeEventListener('mousemove', onMove)
         window.removeEventListener('mouseup', onUp)
       }
 
       const onDown = (/** @type {MouseEvent} */ e) => {
         if (e.button !== 0) return
+        // Without this WebKit starts a native drag of the SVG's text and
+        // draws a translucent copy under the cursor: the "double" diagram.
+        e.preventDefault()
         dragging = true
         ox = e.clientX - tx; oy = e.clientY - ty
         node.style.cursor = 'grabbing'
-        // Its own layer for the drag only: a pan then moves a painted layer
-        // instead of repainting every glyph per frame.
-        svg.style.willChange = 'transform'
         window.addEventListener('mousemove', onMove)
         window.addEventListener('mouseup', onUp)
       }
@@ -442,6 +440,6 @@
 </div>
 
 <style>
-  .mermaid-canvas { user-select: none; }
-  .mermaid-canvas :global(svg) { display: block; max-width: none; }
+  .mermaid-canvas { user-select: none; -webkit-user-select: none; -webkit-user-drag: none; }
+  .mermaid-canvas :global(svg) { display: block; max-width: none; -webkit-user-drag: none; }
 </style>

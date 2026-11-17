@@ -1186,7 +1186,7 @@ async fn import_sqlite(rep: &Reporter, pool: &sqlx::SqlitePool, sql: &str) -> Re
     let mut run = Runner::new(rep, sql.len());
     let mut sp = Splitter::new(sql, Escapes::Standard);
     while let Some(stmt) = sp.next() {
-        let Stmt::Sql(s) = stmt else { run.total += 1; run.errors.push("COPY blocks are Postgres-only".into()); continue };
+        let Stmt::Sql(s) = stmt else { run.total += 1; run.fail("COPY blocks are Postgres-only".into()); continue };
         run.total += 1;
         let low = head_lower(&s, 24);
         if low.starts_with("pragma foreign_keys") || is_tx_control(&s) { run.ok += 1; continue; }
@@ -1227,6 +1227,22 @@ struct Runner<'a> {
     batch_bytes: usize,
 }
 
+/// Failures streamed to the live log before it only counts them, so a script
+/// where every statement fails can't flood the page.
+const LOGGED_FAILURES: usize = 200;
+
+impl Runner<'_> {
+    /// Record a failed statement and stream it to the restore log.
+    fn fail(&mut self, message: String) {
+        if self.errors.len() < LOGGED_FAILURES {
+            self.meter.rep.log("error", message.clone());
+        } else if self.errors.len() == LOGGED_FAILURES {
+            self.meter.rep.log("warn", "More statements failed; the rest are counted, not listed");
+        }
+        self.errors.push(message);
+    }
+}
+
 impl<'a> Runner<'a> {
     fn new(rep: &'a Reporter, len: usize) -> Self {
         Self { meter: Meter::new(rep, len), total: 0, ok: 0, errors: Vec::new(), batch: Vec::new(), batch_bytes: 0 }
@@ -1261,7 +1277,7 @@ macro_rules! runner_exec {
                     Ok(_) => self.ok += 1,
                     Err(e) => {
                         (&mut *conn).execute("ROLLBACK TO SAVEPOINT stroke_sp; RELEASE SAVEPOINT stroke_sp").await.ok();
-                        self.errors.push(stmt_error(e, stmt));
+                        self.fail(stmt_error(e, stmt));
                     }
                 }
             }
@@ -1940,7 +1956,7 @@ async fn import_postgres(rep: &Reporter, pool: &sqlx::PgPool, sql: &str) -> Resu
                 run.flush_pg(&mut *conn).await;
                 match pg_copy_in(&mut conn, &copy_sql, data).await {
                     Ok(()) => run.ok += 1,
-                    Err(e) => run.errors.push(stmt_error(e, &copy_sql)),
+                    Err(e) => run.fail(stmt_error(e, &copy_sql)),
                 }
             }
         }
@@ -2349,7 +2365,7 @@ async fn import_mysql(rep: &Reporter, pool: &sqlx::MySqlPool, sql: &str) -> Resu
             // it; a failing statement is atomic on its own.
             match (&mut *conn).execute(s.as_str()).await {
                 Ok(_) => run.ok += 1,
-                Err(e) => run.errors.push(stmt_error(e, &s)),
+                Err(e) => run.fail(stmt_error(e, &s)),
             }
         }
         run.meter.tick(sp.position(), run.ok, run.errors.len(), false);
@@ -2572,7 +2588,7 @@ async fn import_d1(rep: &Reporter, cfg: Remote<'_>, sql: &str) -> Result<ImportR
         match cfg.query(&s).await {
             Ok(_) => run.ok += 1,
             Err(e) if is_fk_error(&e) => waiting.push((s, e)),
-            Err(e) => run.errors.push(stmt_error(e, &s)),
+            Err(e) => run.fail(stmt_error(e, &s)),
         }
         run.meter.tick(sp.position(), run.ok, run.errors.len(), false);
         if is_cancelled() { run.total += sp.count(); break; }
@@ -2590,13 +2606,13 @@ async fn import_d1(rep: &Reporter, cfg: Remote<'_>, sql: &str) -> Result<ImportR
             match cfg.query(&s).await {
                 Ok(_) => run.ok += 1,
                 Err(e) if is_fk_error(&e) => still.push((s, e)),
-                Err(e) => run.errors.push(stmt_error(e, &s)),
+                Err(e) => run.fail(stmt_error(e, &s)),
             }
         }
         waiting = still;
         if waiting.len() == before { break; }
     }
-    for (s, e) in waiting { run.errors.push(stmt_error(e, &s)); }
+    for (s, e) in waiting { run.fail(stmt_error(e, &s)); }
     run.meter.tick(sql.len(), run.ok, run.errors.len(), true);
     Ok(finish_import(rep, run.total, run.ok, run.errors, started))
 }
@@ -2705,7 +2721,7 @@ async fn import_duckdb(
         if head_lower(&s, 24).starts_with("pragma foreign_keys") { run.ok += 1; continue; }
         match super::duckdb::execute_sql(handle, &s).await {
             Ok(_) => run.ok += 1,
-            Err(e) => run.errors.push(stmt_error(e, &s)),
+            Err(e) => run.fail(stmt_error(e, &s)),
         }
         run.meter.tick(sp.position(), run.ok, run.errors.len(), false);
         if is_cancelled() { run.total += sp.count(); break; }
@@ -2789,7 +2805,7 @@ async fn import_mssql(
         run.total += 1;
         match super::mssql::execute_sql(handle, &s).await {
             Ok(_) => run.ok += 1,
-            Err(e) => run.errors.push(stmt_error(e, &s)),
+            Err(e) => run.fail(stmt_error(e, &s)),
         }
         run.meter.tick(sp.position(), run.ok, run.errors.len(), false);
         if is_cancelled() { run.total += sp.count(); break; }

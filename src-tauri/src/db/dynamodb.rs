@@ -420,13 +420,114 @@ fn number(n: &str) -> serde_json::Value {
 /// Rows past this many stop the NextToken loop; the message says so.
 const PARTIQL_ROW_CAP: usize = 5_000;
 
-/// Run one PartiQL statement (`SELECT`, `INSERT`, `UPDATE`, `DELETE`).
+/// DynamoDB API operations the console (and the AI) can call as JSON, for
+/// what PartiQL can't do: tables, TTL, batch writes. Grouped by what they need.
+pub const API_READS: &[&str] = &[
+    "DescribeTable", "ListTables", "GetItem", "Query", "Scan", "BatchGetItem", "DescribeTimeToLive",
+];
+pub const API_WRITES: &[&str] = &["PutItem", "UpdateItem", "DeleteItem", "BatchWriteItem", "TransactWriteItems"];
+pub const API_SCHEMA: &[&str] = &["CreateTable", "UpdateTable", "UpdateTimeToLive"];
+pub const API_DANGEROUS: &[&str] = &["DeleteTable"];
+
+/// An API call, written either as `{"operation": "CreateTable", "input": {...}}`
+/// or Dev Tools style as `CreateTable {...}`. None when it's PartiQL.
+pub fn parse_api_call(stmt: &str) -> Option<Result<(String, serde_json::Value), String>> {
+    let s = stmt.trim().trim_end_matches(';').trim();
+    let known = |op: &str| [API_READS, API_WRITES, API_SCHEMA, API_DANGEROUS].iter().any(|l| l.contains(&op));
+    if s.starts_with('{') {
+        let v: serde_json::Value = match serde_json::from_str(s) {
+            Ok(v) => v,
+            Err(e) => return Some(Err(format!("The API call isn't valid JSON: {e}"))),
+        };
+        let Some(op) = v.get("operation").and_then(|o| o.as_str()) else {
+            return Some(Err("An API call names its \"operation\", like {\"operation\": \"CreateTable\", \"input\": {...}}".into()));
+        };
+        if !known(op) {
+            return Some(Err(format!("{op} isn't available here")));
+        }
+        return Some(Ok((op.to_string(), v.get("input").cloned().unwrap_or_else(|| serde_json::json!({})))));
+    }
+    let word: String = s.chars().take_while(|c| c.is_ascii_alphabetic()).collect();
+    if word.is_empty() || !known(&word) {
+        return None;
+    }
+    let body = s[word.len()..].trim();
+    let input = if body.is_empty() {
+        serde_json::json!({})
+    } else {
+        match serde_json::from_str(body) {
+            Ok(v) => v,
+            Err(e) => return Some(Err(format!("The {word} input isn't valid JSON: {e}"))),
+        }
+    };
+    Some(Ok((word, input)))
+}
+
+/// Run an API call and show its answer: items as rows, anything else as one row.
+async fn api_call(
+    cfg: &DynamoConfig,
+    op: &str,
+    input: &serde_json::Value,
+    statement: &str,
+    t0: std::time::Instant,
+) -> Result<super::query::SqlResult, String> {
+    use super::query::{ColumnInfo, SqlResult};
+    let out = request(cfg, op, input).await?;
+    let items: Vec<serde_json::Map<String, serde_json::Value>> = if let Some(arr) = out.get("Items").and_then(|v| v.as_array()) {
+        arr.iter().filter_map(|i| i.as_object().cloned()).collect()
+    } else if let Some(item) = out.get("Item").and_then(|v| v.as_object()) {
+        vec![item.clone()]
+    } else {
+        Vec::new()
+    };
+    if items.is_empty() && !out.get("Items").is_some() {
+        let message = Some(format!("{op} done"));
+        let rows = if out.as_object().is_some_and(|o| !o.is_empty()) { vec![vec![out]] } else { Vec::new() };
+        return Ok(SqlResult {
+            columns: vec![ColumnInfo::new("result".to_string(), "json")],
+            row_count: Some(rows.len() as i64),
+            rows,
+            message,
+            query_ms: t0.elapsed().as_millis() as u64,
+            sql: statement.to_string(),
+        });
+    }
+    let mut cols: Vec<String> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for it in &items {
+        for k in it.keys() {
+            if seen.insert(k.clone()) {
+                cols.push(k.clone());
+            }
+        }
+    }
+    let rows: Vec<Vec<serde_json::Value>> = items
+        .iter()
+        .map(|it| cols.iter().map(|c| it.get(c).map(unmarshall).unwrap_or(serde_json::Value::Null)).collect())
+        .collect();
+    let message = out.get("LastEvaluatedKey").map(|_| "More items exist: pass LastEvaluatedKey as ExclusiveStartKey for the next page".to_string());
+    Ok(SqlResult {
+        columns: cols.iter().map(|c| ColumnInfo::new(c.clone(), "json")).collect(),
+        row_count: Some(rows.len() as i64),
+        rows,
+        message,
+        query_ms: t0.elapsed().as_millis() as u64,
+        sql: statement.to_string(),
+    })
+}
+
+/// Run one statement: PartiQL (`SELECT`, `INSERT`, `UPDATE`, `DELETE`), or an
+/// API call for what PartiQL can't do (see [`parse_api_call`]).
 pub async fn query(cfg: &DynamoConfig, statement: &str) -> Result<super::query::SqlResult, String> {
     use super::query::{ColumnInfo, SqlResult};
     let t0 = std::time::Instant::now();
     let stmt = statement.trim().trim_end_matches(';').trim();
     if stmt.is_empty() {
         return Err("Empty statement".into());
+    }
+    if let Some(call) = parse_api_call(stmt) {
+        let (op, input) = call?;
+        return api_call(cfg, &op, &input, statement, t0).await;
     }
     let mut items: Vec<serde_json::Map<String, serde_json::Value>> = Vec::new();
     let mut token: Option<String> = None;

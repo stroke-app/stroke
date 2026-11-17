@@ -378,6 +378,9 @@ export function sqlRunEffects(sql) {
 /** MongoDB shell calls that change data, indexes or the database. */
 const MONGO_WRITE_RE = /\.\s*(insert|insertOne|insertMany|update|updateOne|updateMany|replaceOne|remove|deleteOne|deleteMany|bulkWrite|drop|dropDatabase|dropIndex|dropIndexes|createIndex|createIndexes|createCollection|renameCollection|findOneAndUpdate|findOneAndReplace|findOneAndDelete|findAndModify)\s*\(/
 
+/** DynamoDB API calls that change items or tables (JSON or `Op {...}` form). */
+const DYNAMO_WRITE_RE = /(^|"operation"\s*:\s*")(PutItem|UpdateItem|DeleteItem|BatchWriteItem|TransactWriteItems|CreateTable|UpdateTable|DeleteTable|UpdateTimeToLive)\b/m
+
 /** Firestore and CouchDB shell-style writes. */
 const DOC_WRITE_RE = /\.\s*(add|set|update|delete|insert|put|remove|bulkDocs|destroy|create)\s*\(/
 
@@ -422,6 +425,8 @@ export function isWriteFor(sql, engine) {
     case 'elasticsearch':
     case 'opensearch':
       return isEsWrite(text)
+    case 'dynamodb':
+      return DYNAMO_WRITE_RE.test(text)
     default:
       return false
   }

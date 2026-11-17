@@ -3232,11 +3232,11 @@
           title={updateState === 'ready' ? 'The update is downloaded. Restart to install it.' : 'A new version of Stroke is available'}
           onclick={oncheckupdates}
         >
-          <Icon name={updateState === 'ready' ? 'refresh-cw' : 'arrow-up-circle'} class="size-3 shrink-0" />
+          <Icon name={updateState === 'ready' ? 'refresh-cw' : 'download'} class="size-3 shrink-0" />
           {updateState === 'ready' ? 'Restart' : 'Update'}
         </button>
       {:else}
-        <button type="button" class="ml-auto inline-flex size-7 items-center justify-center rounded-full text-muted-foreground outline-none transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none" title={checkingUpdate ? 'Checking for updates…' : 'Check for updates'} aria-label={checkingUpdate ? 'Checking for updates' : 'Check for updates'} aria-busy={checkingUpdate} disabled={checkingUpdate} onclick={oncheckupdates}><Icon name={checkingUpdate ? 'loader-2' : 'arrow-up-circle'} class={checkingUpdate ? 'size-3.5 shrink-0 animate-spin' : 'size-3.5 shrink-0'} /></button>
+        <button type="button" class="ml-auto inline-flex size-7 items-center justify-center rounded-full text-muted-foreground outline-none transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none" title={checkingUpdate ? 'Checking for updates…' : 'Check for updates'} aria-label={checkingUpdate ? 'Checking for updates' : 'Check for updates'} aria-busy={checkingUpdate} disabled={checkingUpdate} onclick={oncheckupdates}><Icon name={checkingUpdate ? 'loader-2' : 'download'} class={checkingUpdate ? 'size-3.5 shrink-0 animate-spin' : 'size-3.5 shrink-0'} /></button>
       {/if}
     </div>
   </aside>

@@ -820,7 +820,14 @@ pub async fn terminal_open(
         AnyConnectionConfig::Libsql(_) => crate::providers::turso_cli_token(&app).await,
         _ => None,
     };
-    open_session(&state, config, cols, rows, turso_token).await
+    let turso_config = match (&config, &turso_token) {
+        (AnyConnectionConfig::Libsql(_), Some(_)) => {
+            use tauri::Manager;
+            app.path().app_config_dir().ok().and_then(|dir| quiet_turso_config(&dir.join("turso-cli")))
+        }
+        _ => None,
+    };
+    open_session(&state, config, cols, rows, turso_token, turso_config).await
 }
 
 /// Install the connection's client with this OS's package manager, without a
@@ -905,12 +912,24 @@ pub async fn terminal_close(state: State<'_, TerminalState>, id: String) -> Resu
     Ok(())
 }
 
+/// Make the Turso CLI config folder Stroke points its shell at: autoupdate off.
+/// Returns None when it can't be written, and the CLI keeps its own.
+fn quiet_turso_config(dir: &Path) -> Option<PathBuf> {
+    std::fs::create_dir_all(dir).ok()?;
+    let file = dir.join("settings.json");
+    if !file.exists() {
+        std::fs::write(&file, r#"{"config":{"autoupdate":"off"}}"#).ok()?;
+    }
+    Some(dir.to_path_buf())
+}
+
 async fn open_session(
     state: &TerminalState,
     config: AnyConnectionConfig,
     cols: u16,
     rows: u16,
     turso_token: Option<String>,
+    turso_config: Option<PathBuf>,
 ) -> Result<TerminalSession, String> {
     reap_unattached(state);
     let t0 = Instant::now();
@@ -956,6 +975,12 @@ async fn open_session(
             let mut env = Vec::new();
             if let Some(token) = turso_token {
                 env.push(("TURSO_API_TOKEN", token));
+                // A config folder of Stroke's own with autoupdate off: the CLI
+                // otherwise updates itself through Homebrew when the shell exits.
+                // The token above signs it in, so the user's own login isn't needed.
+                if let (false, Some(dir)) = (via_wsl, &turso_config) {
+                    env.push(("TURSO_CONFIG_FOLDER", dir.to_string_lossy().into_owned()));
+                }
                 // WSL only forwards the Windows variables WSLENV names.
                 if via_wsl {
                     env.push(("WSLENV", "TURSO_API_TOKEN/u".to_string()));
@@ -1436,7 +1461,7 @@ mod tests {
                 name: "t".into(),
                 file_path: db.display().to_string(),
             });
-            let session = open_session(&state, config, 80, 24, None).await.unwrap();
+            let session = open_session(&state, config, 80, 24, None, None).await.unwrap();
 
             let wrong = session.url.replace("token=", "token=x");
             assert!(tokio_tungstenite::connect_async(&wrong).await.is_err(), "a wrong token must not attach");

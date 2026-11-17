@@ -1481,8 +1481,11 @@ const DESTRUCTIVE_RE = /^\s*(DELETE\b|DROP\b|TRUNCATE\b)/i
 /** @param {string} sql */
 export function isDestructiveSql(sql) {
   const t = sql.trim()
-  return DESTRUCTIVE_RE.test(t) || NOSQL_DESTRUCTIVE_RE.test(t)
+  return DESTRUCTIVE_RE.test(t) || NOSQL_DESTRUCTIVE_RE.test(t) || DYNAMO_DESTRUCTIVE_RE.test(t)
 }
+
+/** DynamoDB API calls that delete: a table, an item, or a batch of them. */
+const DYNAMO_DESTRUCTIVE_RE = /(^|"operation"\s*:\s*")(DeleteTable|DeleteItem|BatchWriteItem)\b/m
 
 /** MongoDB bulk deletes and drops, Redis flushes and deletes. */
 const NOSQL_DESTRUCTIVE_RE = /\.\s*(deleteMany|deleteOne|drop|dropDatabase|dropIndex|dropIndexes|remove|findOneAndDelete|delete|destroy)\s*\(|^(flushall|flushdb|del|unlink|hdel|srem|zrem|lrem|ltrim|xdel|xtrim|swapdb)\b/im
