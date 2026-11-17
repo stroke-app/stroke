@@ -323,7 +323,33 @@ pub fn package_managed() -> bool {
         || std::env::var_os("APPIMAGE").is_none()
 }
 
-#[cfg(not(target_os = "linux"))]
+/// A Scoop install. Scoop unpacks the NSIS setup into its own folder, so the
+/// binary still reads as an NSIS install; running the setup from here put a
+/// second, separate copy under %LOCALAPPDATA% and left Scoop's copy behind on
+/// the old version. `scoop update stroke` is the way to update it.
+#[cfg(target_os = "windows")]
+pub fn package_managed() -> bool {
+    scoop_install()
+}
+
+#[cfg(target_os = "windows")]
+fn scoop_install() -> bool {
+    let Ok(exe) = tauri::utils::platform::current_exe() else { return false };
+    let exe = exe.to_string_lossy().to_lowercase();
+    // The default roots (%USERPROFILE%\scoop, %ProgramData%\scoop), or a
+    // custom one set through SCOOP / SCOOP_GLOBAL.
+    exe.contains("\\scoop\\apps\\")
+        || ["SCOOP", "SCOOP_GLOBAL"].iter().any(|var| {
+            std::env::var(var).is_ok_and(|root| {
+                let root = root.trim_end_matches('\\').to_lowercase();
+                !root.is_empty() && exe.starts_with(&format!("{root}\\apps\\"))
+            })
+        })
+}
+
+/// macOS updates itself in place (/Applications, Homebrew included: the cask
+/// is marked `auto_updates`, so `brew upgrade` leaves it to the app).
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 pub fn package_managed() -> bool {
     false
 }
@@ -352,7 +378,12 @@ fn manual_command() -> Option<String> {
         .map(|p| format!("yay -Syu {p}"))
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "windows")]
+fn manual_command() -> Option<String> {
+    scoop_install().then(|| "scoop update stroke".to_string())
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 fn manual_command() -> Option<String> {
     None
 }
@@ -376,10 +407,10 @@ fn platform_can_apply() -> bool {
     if !matches!(tauri::utils::platform::bundle_type(), Some(BundleType::Nsis)) {
         return false;
     }
-    let Ok(exe) = tauri::utils::platform::current_exe() else { return false };
-    if exe.to_string_lossy().to_lowercase().contains("\\scoop\\") {
+    if scoop_install() {
         return false;
     }
+    let Ok(exe) = tauri::utils::platform::current_exe() else { return false };
     exe.parent()
         .is_some_and(|dir| dir.join("uninstall.exe").is_file())
 }
