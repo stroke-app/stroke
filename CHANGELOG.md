@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.18.2] - 2026-11-17
+
+### Changes
+- Update Arch and .deb installs from the app, through the system password prompt (#281)
+
+
 ## [2.18.1] - 2026-11-17
 
 ### Changes
