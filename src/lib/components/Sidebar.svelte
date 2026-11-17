@@ -2268,7 +2268,7 @@
                 if (first) { e.preventDefault(); kbdNav = true; focusRow(first) }
               }
             }}
-            class="peer no-field-frame h-8 w-full min-w-0 rounded-md bg-sidebar-accent/35 pl-[34px] pr-7 text-ui-sm text-foreground outline-none transition-colors duration-150 placeholder:text-muted-foreground hover:bg-sidebar-accent/50 focus-visible:bg-sidebar-accent/70 disabled:cursor-not-allowed disabled:opacity-40 [&::-webkit-search-cancel-button]:appearance-none"
+            class="peer no-field-frame h-8 w-full min-w-0 rounded-md bg-sidebar-accent/35 pl-[34px] pr-7 text-ui-sm text-foreground outline-none transition-colors duration-150 placeholder:text-muted-foreground hover:bg-sidebar-accent/50 focus-visible:bg-sidebar-accent/70 disabled:cursor-not-allowed disabled:opacity-40 [&::-webkit-search-cancel-button]:hidden"
             aria-label="Filter {activeTabLabel.toLowerCase()}"
             aria-describedby="sidebar-filter-hint"
             data-sidebar-filter

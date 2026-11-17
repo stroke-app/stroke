@@ -1148,13 +1148,30 @@
   /** @type {ReturnType<typeof setTimeout> | null} */
   let dbClickTimer = null
 
+  /** The focus came from a click, not from Tab: no ring until a key moves. */
+  let pointerFocus = false
+  /**
+   * Tab or Shift+Tab into the tree: show where focus is. Without this the
+   * ring only appeared after an arrow key, so tabbing back into the tree put
+   * focus on a row nobody could see. A row is always selected, so there is
+   * always something for the screen reader to announce.
+   */
+  function onTreeFocus() {
+    focused = true
+    if (pointerFocus || !rows.length) return
+    kbd = true
+    if (activeIndex < 0) active = rows[0].key
+    ensureVisible(Math.max(0, rowIndex(rows, active)))
+  }
+
   /** Focus the tree from outside (ArrowDown in the filter box). */
   export function focusTree() {
     if (!scroller || !rows.length) return false
-    if (activeIndex < 0) {
-      const firstMatch = q ? rows.findIndex((r) => r.t === 'node' && r.node.lname.includes(q)) : -1
-      active = rows[Math.max(0, firstMatch)].key
-    }
+    // From the filter box the answer to what was typed starts at the first
+    // match, not at whichever row was selected before the search.
+    const firstMatch = q ? rows.findIndex((r) => r.t === 'node' && r.node.lname.includes(q)) : -1
+    if (firstMatch >= 0) active = rows[firstMatch].key
+    else if (activeIndex < 0) active = rows[0].key
     kbd = true
     scroller.focus({ preventScroll: true })
     ensureVisible(Math.max(0, rowIndex(rows, active)))
@@ -1440,9 +1457,9 @@
             use:smoothScroll={{ enabled: !$appNativeScroll }}
             onscroll={onScroll}
             onkeydown={onKey}
-            onfocus={() => (focused = true)}
-            onblur={() => (focused = false)}
-            onpointerdown={(e) => { kbd = false; /** @type {any} */ (props).onpointerdown?.(e) }}
+            onfocus={onTreeFocus}
+            onblur={() => { focused = false; pointerFocus = false }}
+            onpointerdown={(e) => { kbd = false; pointerFocus = true; /** @type {any} */ (props).onpointerdown?.(e) }}
             onclick={onClick}
             onpointerover={onPointerOver}
             onpointerleave={() => { hoverKey = ''; if (warmTimer) { clearTimeout(warmTimer); warmTimer = null } }}
