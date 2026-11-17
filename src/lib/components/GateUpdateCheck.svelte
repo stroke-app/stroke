@@ -13,12 +13,14 @@
   import { cn } from '$lib/utils.js'
   import { updateCheck, updateDownload, updateRestart, updateStatus } from '$lib/api.js'
 
-  /** @type {'idle'|'checking'|'current'|'available'|'downloading'|'ready'|'error'} */
+  /** @type {'idle'|'checking'|'current'|'available'|'manual'|'downloading'|'ready'|'error'} */
   let state = $state('idle')
   let version = $state('')
   let next = $state('')
   let progress = $state(0)
   let error = $state('')
+  /** A package-managed install's update command (`yay -Syu ...`), if any. */
+  let command = $state(/** @type {string | null} */ (null))
 
   onMount(() => {
     import('@tauri-apps/api/app').then((m) => m.getVersion()).then((v) => (version = v)).catch(() => {})
@@ -38,7 +40,8 @@
     error = ''
     try {
       const info = await updateCheck()
-      if (info?.staged) { next = info.version; state = 'ready' }
+      if (info?.manual) { next = info.version; command = info.manualCommand ?? null; state = 'manual' }
+      else if (info?.staged) { next = info.version; state = 'ready' }
       else if (info) { next = info.version; state = 'available' }
       else {
         state = 'current'
@@ -82,6 +85,7 @@
     state === 'checking' ? 'Checking for updates'
     : state === 'current' ? `Stroke is up to date${version ? `, version ${short(version)}` : ''}`
     : state === 'available' ? `Stroke ${short(next)} is available`
+    : state === 'manual' ? `Stroke ${short(next)} is available. Update it with your package manager${command ? `: ${command}` : ''}`
     : state === 'downloading' ? `Downloading Stroke ${short(next)}`
     : state === 'ready' ? `Stroke ${short(next)} is ready to install`
     : state === 'error' ? `Couldn't update: ${error}`
@@ -110,6 +114,15 @@
   {:else if state === 'available'}
     <span class="text-foreground">Stroke {short(next)} is available</span>
     <button type="button" class={cn(link, 'font-medium text-foreground underline-offset-4 hover:underline')} onclick={install}>Update and restart</button>
+  {:else if state === 'manual'}
+    <!-- Installed by a package manager: say where the update comes from. -->
+    <span class="text-foreground">Stroke {short(next)} is available</span>
+    {#if command}
+      <span aria-hidden="true" class="px-1">·</span>
+      <code class="select-all font-mono text-foreground" title="Run this in a terminal">{command}</code>
+    {:else}
+      <a class={cn(link, 'font-medium text-foreground underline-offset-4 hover:underline')} href="https://stroke.click/download" target="_blank" rel="noopener noreferrer">Download page</a>
+    {/if}
   {:else if state === 'downloading'}
     <span class="inline-flex h-7 items-center gap-2">
       Downloading {short(next)}

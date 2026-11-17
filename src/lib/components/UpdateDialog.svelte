@@ -36,6 +36,11 @@
   let releaseNotes = $state('')
   /** The downloaded build installs by itself when Stroke quits (updates.rs). */
   let applyOnQuit = $state(false)
+  /** A package manager owns this install (AUR, .deb, .rpm): it updates there. */
+  let manual = $state(false)
+  /** The command that updates it, when there is one (`yay -Syu stroke-bin`). */
+  let manualCommand = $state(/** @type {string | null} */ (null))
+  let copied = $state(false)
   /** The running build, for "You have v…". */
   let appVersion = $state('')
   /** Settings → Download and install updates automatically, from this window too. */
@@ -75,7 +80,7 @@
     try {
       const info = await updateCheck()
       if (info?.staged) markReady(info, false)
-      else if (info && loadSettings().autoUpdate) {
+      else if (info && loadSettings().autoUpdate && !info.manual) {
         // Automatic updates: no window. It downloads in the background and
         // says so once, then again when it is ready.
         adopt(info)
@@ -326,6 +331,27 @@
     updateVersion = info.version
     releaseNotes = info.notes ?? ''
     applyOnQuit = info.applyOnQuit
+    manual = !!info.manual
+    manualCommand = info.manualCommand ?? null
+  }
+
+  async function copyCommand() {
+    if (!manualCommand) return
+    try {
+      await navigator.clipboard.writeText(manualCommand)
+      copied = true
+      setTimeout(() => (copied = false), 1600)
+    } catch { /* clipboard denied: the command is on screen to select */ }
+  }
+
+  async function openDownloads() {
+    const url = 'https://stroke.click/download?utm_source=stroke-app&utm_medium=update-dialog'
+    try {
+      const { openUrl } = await import('@tauri-apps/plugin-opener')
+      await openUrl(url)
+    } catch {
+      window.open(url, '_blank', 'noopener,noreferrer')
+    }
   }
 
   /**
@@ -390,7 +416,8 @@
     // no window: where it can, the build installs as Stroke quits; elsewhere the
     // sidebar's pill offers Restart. With them off, the pill offers Update.
     // Neither interrupts what is open.
-    if (loadSettings().autoUpdate) {
+    // A package-managed install never downloads here: it only says so.
+    if (loadSettings().autoUpdate && !info.manual) {
       await install(true)
       return
     }
@@ -545,8 +572,18 @@
               {applyOnQuit ? 'It installs when you quit, so the next start is the new version. Restart now to use it straight away.' : 'Restart Stroke to finish installing it.'}
             {:else if status === 'downloading'}
               {totalBytes > 0 ? `${fmt(downloadedBytes)} of ${fmt(totalBytes)}` : 'Starting'}. It keeps going if you close this.
+            {:else if manual}
+              {manualCommand ? 'Your package manager installed Stroke, so it updates there:' : 'Your package manager installed Stroke, so it updates there. Get the new package from the download page.'}
             {/if}
           </p>
+          {#if manual && manualCommand && status === 'available'}
+            <div class="mt-2 flex items-center gap-1 rounded-md bg-muted/40 py-1 ps-3 pe-1">
+              <code class="min-w-0 flex-1 truncate font-mono text-ui-xs text-foreground select-all">{manualCommand}</code>
+              <button type="button" class="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-ui-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" onclick={() => void copyCommand()}>
+                {#if copied}<CheckCircle2 class="size-3.5 shrink-0 text-success" />Copied{:else}Copy{/if}
+              </button>
+            </div>
+          {/if}
         {/if}
         <button
           type="button"
@@ -582,6 +619,7 @@
       {/if}
 
       <div class={cn('flex flex-wrap items-center gap-3 border-t border-border/40 px-6 py-4', status === 'error' && 'mt-5')}>
+        {#if manual}<span class="min-w-0 flex-1"></span>{:else}
         <label class="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-ui-xs text-muted-foreground">
           <input
             type="checkbox"
@@ -591,6 +629,7 @@
           />
           <span class="min-w-0">Download and install updates automatically</span>
         </label>
+        {/if}
         <div class="flex shrink-0 items-center gap-2">
           {#if status === 'error'}
             <Button variant="ghost" onclick={() => (dismissed = true)}>Not now</Button>
@@ -602,6 +641,13 @@
             </Button>
           {:else if status === 'downloading'}
             <Button variant="ghost" onclick={() => (dismissed = true)}>Hide</Button>
+          {:else if manual}
+            <Button variant="ghost" onclick={() => (dismissed = true)}>Later</Button>
+            {#if manualCommand}
+              <Button onclick={() => void copyCommand()}>{copied ? 'Copied' : 'Copy command'}</Button>
+            {:else}
+              <Button onclick={() => void openDownloads()}>Download page<ExternalLink class="size-3.5 shrink-0" /></Button>
+            {/if}
           {:else}
             <Button variant="ghost" onclick={() => (dismissed = true)}>Later</Button>
             <Button onclick={() => void install()}><Download class="size-3.5 shrink-0" />Install</Button>
