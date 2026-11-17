@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.18.7] - 2026-11-17
+
+### Changes
+- Terminal: DOM renderer on Linux; panel slide animation off by default (#286)
+
+
 ## [2.18.6] - 2026-11-17
 
 ### Changes
