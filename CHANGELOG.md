@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.18.8] - 2026-11-17
+
+### Changes
+- AI table commands for DynamoDB and MongoDB, live backup log, fixes (#287)
+
+
 ## [2.18.7] - 2026-11-17
 
 ### Changes
