@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.19.0] - 2026-11-18
+
+### Changes
+- Account-only licensing for Stroke 3 (#289)
+
+
 ## [2.18.9] - 2026-11-17
 
 ### Changes
