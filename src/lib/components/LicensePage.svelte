@@ -1,6 +1,5 @@
 <script>
-  import { licenseStatus, deactivateLicense } from '$lib/stores/license.js'
-  import LicenseActivation from './LicenseActivation.svelte'
+  import { licenseStatus } from '$lib/stores/license.js'
   import AccountAvatar from './AccountAvatar.svelte'
   import AccountSignInButtons from './AccountSignInButtons.svelte'
   import SyncSection from './SyncSection.svelte'
@@ -10,7 +9,6 @@
   import Laptop from '@lucide/svelte/icons/laptop'
   import RefreshCw from '@lucide/svelte/icons/refresh-cw'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
-  import KeyRound from '@lucide/svelte/icons/key-round'
   import ExternalLink from '@lucide/svelte/icons/external-link'
   import Bot from '@lucide/svelte/icons/bot'
   import LayoutDashboard from '@lucide/svelte/icons/layout-dashboard'
@@ -21,61 +19,20 @@
   import DatabaseBackup from '@lucide/svelte/icons/database-backup'
   import NotebookPen from '@lucide/svelte/icons/notebook-pen'
 
-  let {
-    /** Called after a successful activation (once the success state has shown). */
-    onactivated = () => {},
-  } = $props()
-
   const status = $derived($licenseStatus)
 
-  /**
-   * True when activation happened on this page. The instant a key activates,
-   * the license store flips to Valid - without this flag the page would swap
-   * the key-entry UI for the "License active" card mid-celebration, cutting
-   * off the success banner and confetti. Keeping the activation UI mounted
-   * lets the moment play out; onactivated then closes the tab.
-   */
-  let activatedHere = $state(false)
-  let sawNonValid = false
-  $effect(() => {
-    const s = $licenseStatus?.status
-    if (s && s !== 'Valid') {
-      sawNonValid = true
-    } else if (s === 'Valid' && sawNonValid && !activatedHere) {
-      activatedHere = true
-      // Page-owned center volley, alongside LicenseActivation's side bursts.
-      void firePageConfetti()
-    }
-  })
-
-  async function firePageConfetti() {
-    try {
-      const { default: confetti } = await import('canvas-confetti')
-      confetti({
-        origin: { x: 0.5, y: 0.4 },
-        spread: 100,
-        particleCount: 140,
-        startVelocity: 38,
-        decay: 0.92,
-        scalar: 1.05,
-        ticks: 220,
-      })
-    } catch {
-      /* celebration is best-effort */
-    }
-  }
-
   const statusLine = $derived.by(() => {
-    if (status?.status === 'Valid') return { tone: 'good', text: `Licensed to ${status.email}` }
+    if (!$account?.signed_in) return { tone: 'free', text: 'Not signed in' }
+    if (status?.status === 'Valid') return { tone: 'good', text: 'Stroke Pro' }
     if (status?.status === 'Trial') {
       const d = status.days_remaining
       return { tone: 'trial', text: `Trial, ${d} ${d === 1 ? 'day' : 'days'} remaining` }
     }
-    if (status?.status === 'TrialExpired') return { tone: 'warn', text: 'Trial expired, activate a license to keep Pro features' }
+    if (status?.status === 'TrialExpired') return { tone: 'warn', text: 'Trial ended. Get Stroke Pro to keep the Pro features' }
     return { tone: 'free', text: 'Free plan' }
   })
 
-  /** What a license unlocks - mirrors PRO_FEATURES in $lib/stores/license.js. */
+  /** What Pro unlocks - mirrors PRO_FEATURES in $lib/stores/license.js. */
   const features = [
     { icon: Bot, label: 'AI assistant' },
     { icon: LayoutDashboard, label: 'Dashboards' },
@@ -87,34 +44,12 @@
     { icon: NotebookPen, label: 'SQL notebooks' },
   ]
 
-  let deactivating = $state(false)
-  /** The key field is secondary to the account; it opens on request. */
-  let showKeyEntry = $state(false)
-
-  async function handleDeactivate() {
-    if (deactivating) return
-    deactivating = true
-    const result = await deactivateLicense()
-    deactivating = false
-    if (result.ok) toast.success('License removed from this device')
-    else toast.error('Could not deactivate', { description: result.error })
-  }
-
   async function openStore() {
     try {
       const { openUrl } = await import('@tauri-apps/plugin-opener')
       await openUrl('https://stroke.click')
     } catch {
       window.open('https://stroke.click', '_blank', 'noopener,noreferrer')
-    }
-  }
-
-  /** @param {number} secs */
-  function formatDate(secs) {
-    try {
-      return new Date(secs * 1000).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
-    } catch {
-      return ''
     }
   }
 
@@ -132,19 +67,13 @@
     signingOut = false
     if (!r.ok) toast.error('Could not sign out', { description: r.error })
   }
-  const LINK_ERRORS = /** @type {Record<string, string>} */ ({
-    key_owned_elsewhere: 'The license on this device was bought with another account, so this account is on the free trial. Sign in with the account that bought it to use it here.',
-    revoked: 'The license key on this device has been revoked.',
-    not_found: 'The license key on this device was not found on the server.',
-    invalid_key: 'The license key on this device could not be linked.',
-  })
-  /** @param {number} secs */
   /** macos → macOS, the way the OS names itself. @param {string | null | undefined} os */
   function osName(os) {
     const k = String(os ?? '').toLowerCase()
     return ({ macos: 'macOS', windows: 'Windows', linux: 'Linux', ios: 'iOS', android: 'Android' })[k] ?? (os ?? '')
   }
 
+  /** @param {number} secs */
   function ago(secs) {
     const d = Math.max(0, Date.now() / 1000 - secs)
     if (d < 120) return 'just now'
@@ -180,7 +109,6 @@
         </div>
         {#if graceNote}<p class="text-ui-xs leading-relaxed text-warning">{graceNote.text}</p>
         {:else if $account?.offline}<p class="text-ui-xs text-muted-foreground">Offline. Showing the last saved plan.</p>{/if}
-        {#if $account?.link_error}<p class="text-ui-xs leading-relaxed text-muted-foreground">{LINK_ERRORS[$account.link_error] ?? 'The license key on this device could not be linked.'}</p>{/if}
         <div class="flex items-center gap-1">
           <Button variant="secondary" size="sm" onclick={() => void openManageAccount()}>Manage account <ExternalLink class="size-3.5 shrink-0" /></Button>
           <Button variant="ghost" size="sm" class="text-muted-foreground" disabled={signingOut} onclick={() => void handleSignOut()}>{signingOut ? 'Signing out…' : 'Sign out'}</Button>
@@ -199,7 +127,7 @@
       {:else}
         <div class="flex flex-col gap-3">
           <p class="text-ui-sm leading-relaxed text-muted-foreground">
-            {$account?.has_license_key ? 'Your license key keeps working. Sign in to sync your connections; your license comes with you.' : 'Your license and trial come with your account, on every device you sign in on.'}
+            Stroke Pro and the trial come with your account, on every device you sign in on.
           </p>
           <AccountSignInButtons size="sm" />
         </div>
@@ -230,39 +158,16 @@
       <SyncSection {sectionLabel} />
     {/if}
 
-    <!-- License key on this device -->
-    <section class="flex flex-col gap-3">
-      <h2 class={sectionLabel}>License key</h2>
-      {#if status?.status === 'Valid' && !activatedHere}
-        <dl class="grid grid-cols-[6rem_1fr] gap-x-4 gap-y-2 text-ui-sm">
-          <dt class="text-muted-foreground">Licensed to</dt>
-          <dd class="min-w-0 truncate text-foreground">{status.email}</dd>
-          <dt class="text-muted-foreground">Plan</dt>
-          <dd class="capitalize text-foreground">{status.plan}</dd>
-          {#if status.issued_at}
-            <dt class="text-muted-foreground">Activated</dt>
-            <dd class="text-foreground">{formatDate(status.issued_at)}</dd>
-          {/if}
-        </dl>
-        <Button variant="ghost" size="sm" disabled={deactivating} onclick={() => void handleDeactivate()} class="-ml-2 self-start text-muted-foreground hover:text-destructive">
-          <KeyRound class="size-3.5 shrink-0" />
-          {deactivating ? 'Removing…' : 'Remove the key from this device'}
-        </Button>
-      {:else if !showKeyEntry && !activatedHere}
+    {#if signedIn && status?.status !== 'Valid'}
+      <!-- No Pro on this account: buy it, or switch to the account that has it. -->
+      <section class="flex flex-col gap-3">
+        <h2 class={sectionLabel}>Stroke Pro</h2>
         <div class="flex items-center justify-between gap-3">
-          <p class="text-ui-sm text-muted-foreground">{signedIn ? 'Not needed when your account has Pro.' : 'No key on this device.'}</p>
-          <div class="flex shrink-0 items-center gap-1">
-            <Button variant="ghost" size="sm" onclick={() => (showKeyEntry = true)}><KeyRound class="size-3.5 shrink-0" /> Enter a key</Button>
-            {#if status?.status !== 'Valid'}<Button variant="secondary" size="sm" onclick={() => void openStore()}>Get Stroke Pro <ExternalLink class="size-3.5 shrink-0" /></Button>{/if}
-          </div>
+          <p class="text-ui-sm text-muted-foreground text-pretty">Bought it with another email? Sign out and sign in with that one.</p>
+          <Button variant="secondary" size="sm" class="shrink-0" onclick={() => void openStore()}>Get Stroke Pro <ExternalLink class="size-3.5 shrink-0" /></Button>
         </div>
-      {:else}
-        <div class="flex flex-col gap-2">
-          <p class="text-ui-xs text-muted-foreground">The key was emailed to you after purchase.</p>
-          <LicenseActivation naked onactivated={() => onactivated()} />
-        </div>
-      {/if}
-    </section>
+      </section>
+    {/if}
 
     <!-- Included with Pro -->
     <section class="flex flex-col gap-3">

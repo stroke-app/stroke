@@ -1,12 +1,12 @@
 import { invoke } from '@tauri-apps/api/core'
 import { writable, derived, get } from 'svelte/store'
-import { refreshLicenseStatus, licenseStatus } from './license.js'
+import { refreshLicenseStatus } from './license.js'
 
 /**
  * Stroke account (sign in with GitHub/Google through stroke.click). The token
  * lives in the OS keychain on the Rust side (src-tauri/src/account.rs); this
  * store only holds what the UI shows. The license gates read `licenseStatus`,
- * which the Rust side already merges with the account's entitlement.
+ * which the Rust side takes from the account's signed entitlement alone.
  *
  * @typedef {{ id: string, email: string, name?: string|null, image?: string|null }} AccountUser
  * @typedef {{ plan: string, source: string,
@@ -16,13 +16,12 @@ import { refreshLicenseStatus, licenseStatus } from './license.js'
  * @typedef {{ device_id: string, name: string, os: string, last_seen_at: number, current: boolean }} AccountDevice
  * @typedef {{ signed_in: boolean, user: AccountUser|null, entitlement: Entitlement|null,
  *   entitlement_fresh: boolean, offline_grace_until: number, devices: AccountDevice[], fetched_at: number, offline: boolean,
- *   needs_onboarding: boolean, has_license_key: boolean, link_error: string|null,
+ *   needs_onboarding: boolean,
  *   error: string|null, manage_url: string }} AccountStatus
  * @typedef {{ phase: 'idle'|'waiting'|'error', provider: string|null, error: string|null, url: string|null }} SignInState
  */
 
 export const MANAGE_URL_FALLBACK = 'https://stroke.click/app'
-const PROMPT_KEY = 'stroke:account-link-prompt-shown'
 const CONNECTIONS_KEY = 'stroke:connections'
 /** Refresh on window focus at most this often. */
 const FOCUS_REFRESH_MS = 5 * 60 * 1000
@@ -49,31 +48,24 @@ function hasSavedConnections() {
 
 /**
  * Sign in first: everyone who is not signed in sees the sign-in screen before
- * the app. Two exceptions keep existing customers working exactly as before:
- * an activated license key on this device, and any doubt (status not loaded
- * yet, an error) - an unknown state never locks anyone out.
+ * the app. Stroke 3 has no license keys, so the account is the only way in.
  */
-export const needsOnboarding = derived(
-  account,
-  ($a) => !!$a && !$a.error && !$a.signed_in && !$a.has_license_key,
-)
+export const needsOnboarding = derived(account, ($a) => !!$a && !$a.signed_in)
 
 /** A returning user (saved connections on this device) gets "welcome back" copy. */
 export const isReturningUser = derived(account, () => hasSavedConnections())
 
 /**
- * Plan label for the account menu and settings.
+ * Plan label for the account menu and settings. It reads the same status the
+ * Pro gates read, so the label and what the app unlocks always agree.
  * @param {AccountStatus|null} acc
  * @param {import('./license.js').LicenseStatus} lic
- * @param {number} [now] unix seconds
  * @returns {{ label: string, tone: 'pro'|'trial'|'free' }}
  */
-export function planLabel(acc, lic, now = Math.floor(Date.now() / 1000)) {
+export function planLabel(acc, lic) {
+  if (!acc?.signed_in) return { label: 'Free', tone: 'free' }
   if (lic?.status === 'Valid') return { label: 'Pro', tone: 'pro' }
-  const ent = acc?.signed_in && acc.entitlement_fresh ? acc.entitlement : null
-  if (ent?.plan === 'pro' && ent.source !== 'trial') return { label: 'Pro', tone: 'pro' }
-  let days = lic?.status === 'Trial' ? lic.days_remaining : 0
-  if (!days && ent?.plan === 'pro' && ent.trial) days = Math.max(0, Math.ceil((ent.trial.ends_at - now) / 86400))
+  const days = lic?.status === 'Trial' ? lic.days_remaining : 0
   if (days > 0) return { label: `Trial · ${days} ${days === 1 ? 'day' : 'days'}`, tone: 'trial' }
   return { label: 'Free', tone: 'free' }
 }
@@ -203,12 +195,6 @@ export async function signOut() {
   }
 }
 
-/** The new-install screen was passed with a license key. */
-export async function skipOnboarding() {
-  try { await invoke('account_skip_onboarding') } catch { /* best effort */ }
-  account.update((a) => (a ? { ...a, needs_onboarding: false } : a))
-}
-
 export async function openManageAccount() {
   const url = get(account)?.manage_url || MANAGE_URL_FALLBACK
   try {
@@ -220,8 +206,8 @@ export async function openManageAccount() {
 }
 
 /**
- * Sign in from places with no room for a waiting panel (the account menu, the
- * key-holder prompt): progress and the outcome go to toasts.
+ * Sign in from places with no room for a waiting panel (the account menu):
+ * progress and the outcome go to toasts.
  */
 export async function signInWithToast() {
   const { toast } = await import('$lib/components/ui/sonner/toast.svelte.js')
@@ -239,28 +225,6 @@ export async function signInWithToast() {
     const s = get(signInState)
     if (s.phase === 'error') toast.error('Sign-in failed', { description: s.error ?? undefined })
   }
-}
-
-/**
- * One-time prompt for existing key holders who haven't signed in. Shown once,
- * ever; the key keeps working whatever they choose.
- */
-async function maybePromptKeyHolder() {
-  const acc = get(account)
-  if (!acc || acc.signed_in || !acc.has_license_key) return
-  if (get(licenseStatus)?.status !== 'Valid') return
-  try {
-    if (localStorage.getItem(PROMPT_KEY)) return
-    localStorage.setItem(PROMPT_KEY, '1')
-  } catch {
-    return
-  }
-  const { toast } = await import('$lib/components/ui/sonner/toast.svelte.js')
-  toast.info('Sign in to sync your connections', {
-    description: 'Your connections, workspaces and settings, on every device, end-to-end encrypted: no one else can read them, Stroke included. Your license comes with you.',
-    duration: 20000,
-    action: { label: 'Sign in', onClick: () => void signInWithToast() },
-  })
 }
 
 let started = false
@@ -310,10 +274,7 @@ export async function startAccountSync() {
   started = true
   await refreshAccount({ network: false })
   lastRefresh = Date.now()
-  void refreshAccount({ network: true }).then(() => {
-    void maybeWarnOfflineGrace()
-    setTimeout(() => void maybePromptKeyHolder(), 4000)
-  })
+  void refreshAccount({ network: true }).then(() => void maybeWarnOfflineGrace())
 
   try {
     // Back online: re-check straight away. Launching offline runs on the

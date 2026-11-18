@@ -14,9 +14,11 @@
 //!    until `valid_until`. Every read of the cache re-verifies the signature, so
 //!    editing the file grants nothing.
 //!
-//! Existing customers: an activated `license.json` keeps working with or without
-//! an account (see `combine`), and the device trial still applies to anyone who
-//! is not signed in.
+//! Stroke 3 has no license keys and no device trial: the signed-in account is
+//! the only source of Pro. A license bought with the account's email makes it
+//! Pro; every other account gets one trial (`X-Stroke-Trial: account-v3`, a
+//! fresh one for v3), then the free plan. A `license.json` left by 2.x stays on
+//! disk, untouched and unread, so going back to 2.x still works.
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
@@ -37,8 +39,6 @@ const DEFAULT_BASE: &str = "https://stroke.click";
 /// Vault entry holding the desktop session token.
 const TOKEN_KEY: &str = "__stroke_account_token__";
 const CACHE_FILE: &str = "account.json";
-/// Present while a new install still has to sign in (or enter a key).
-const ONBOARDING_FILE: &str = ".account-onboarding";
 const SIGN_IN_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Base URL of the website/API. `STROKE_API_BASE` overrides it for local dev.
@@ -239,12 +239,6 @@ struct CacheFile {
     /// The `/api/me` body, verbatim.
     me: String,
     fetched_at: u64,
-    /// SHA-256 of the license key already sent to `/api/license/link`.
-    #[serde(default)]
-    linked_key_hash: Option<String>,
-    /// Why linking failed in a way retrying won't fix (`key_owned_elsewhere`).
-    #[serde(default)]
-    link_error: Option<String>,
     /// The device that wrote this cache. A copy taken to another machine is
     /// ignored there, which has to sign in for itself.
     #[serde(default)]
@@ -315,24 +309,6 @@ pub fn entitlement_status(ent: &Entitlement, email: &str, now: u64) -> LicenseSt
     LicenseStatus::TrialExpired
 }
 
-/// Merge the account's verdict into the local (key / device-trial) one.
-///
-/// - No fresh account entitlement: the local status, unchanged.
-/// - Account grants Pro via a license: that wins.
-/// - A valid local `license.json` is never downgraded by the account: Pro.
-/// - Otherwise the account decides (its trial, or no Pro), replacing the
-///   per-device trial for signed-in users.
-pub fn combine(local: LicenseStatus, account: Option<LicenseStatus>) -> LicenseStatus {
-    match account {
-        None => local,
-        Some(acc @ LicenseStatus::Valid { .. }) => acc,
-        Some(acc) => match local {
-            LicenseStatus::Valid { .. } => local,
-            _ => acc,
-        },
-    }
-}
-
 /// The account's status from the cache only: no network, no keychain. Used by
 /// the license commands so existing Pro gates see account entitlements, also
 /// when stroke.click can't be reached (see `OFFLINE_GRACE_SECS`).
@@ -362,64 +338,27 @@ fn local_dev_pro() -> Option<LicenseStatus> {
     })
 }
 
-pub fn apply_account(dir: &Path, local: LicenseStatus) -> LicenseStatus {
+/// The license status, from the signed-in account alone.
+///
+/// - Signed out, or no usable entitlement: no Pro (the app asks to sign in).
+/// - Fresh entitlement, or paid Pro on the offline grace: what it says.
+/// - A trial entitlement past its window keeps counting offline until the
+///   trial's own signed end, so a trial doesn't stop on a flight.
+pub fn license_status(dir: &Path) -> LicenseStatus {
     if let Some(dev) = local_dev_pro() {
         return dev;
     }
-    if matches!(local, LicenseStatus::Error { .. }) {
-        return local;
+    if let Some(status) = account_license_status(dir) {
+        return status;
     }
-    // A key bought by another account doesn't make this account Pro: signed
-    // in as someone else, this device is on the trial (or that account's own
-    // plan). Signed out, the key works as it always has.
-    let local = if matches!(local, LicenseStatus::Valid { .. }) && key_owned_by_other_account(dir) {
-        crate::license::trial_status(dir)
-    } else {
-        local
-    };
-    combine(local, account_license_status(dir))
-}
-
-/// Signed in, and the server said the license key on this device belongs to a
-/// different account. Only for the key it said that about: a new key is asked
-/// about afresh.
-fn key_owned_by_other_account(dir: &Path) -> bool {
-    let Some(c) = read_cache(dir) else { return false };
-    if c.link_error.as_deref() != Some("key_owned_elsewhere") {
-        return false;
-    }
-    if c.device_id.as_deref().is_some_and(|d| d != crate::license::device_id()) {
-        return false;
-    }
-    let Some(lic) = crate::license::load_license(dir) else { return false };
-    c.linked_key_hash.as_deref() == Some(crate::license::key_hash(&lic.key).as_str())
-}
-
-// ── New-install detection ─────────────────────────────────────────────────────
-
-/// Record, once per run and before anything writes the trial files, whether
-/// this is a brand-new install (no license, no trial ever started). A new
-/// install gets a marker that keeps the sign-in screen up across relaunches
-/// until the user signs in or enters a key. Existing installs never get one.
-pub fn note_install_state(dir: &Path) {
-    static NOTED: OnceLock<()> = OnceLock::new();
-    NOTED.get_or_init(|| {
-        let fresh = crate::license::load_license(dir).is_none()
-            && crate::license::local_trial_start(dir).is_none()
-            && read_cache(dir).is_none();
-        if fresh {
-            let _ = std::fs::create_dir_all(dir);
-            let _ = std::fs::write(dir.join(ONBOARDING_FILE), b"1");
+    if let Some((me, _)) = cached_me(dir) {
+        let now = crate::license::trusted_now(dir);
+        let ent = &me.entitlement;
+        if ent.plan == "pro" && ent.source == "trial" && ent.trial.as_ref().is_some_and(|t| t.ends_at > now) {
+            return entitlement_status(ent, &me.user.email, now);
         }
-    });
-}
-
-fn onboarding_pending(dir: &Path) -> bool {
-    dir.join(ONBOARDING_FILE).exists()
-}
-
-fn clear_onboarding(dir: &Path) {
-    let _ = std::fs::remove_file(dir.join(ONBOARDING_FILE));
+    }
+    LicenseStatus::TrialExpired
 }
 
 // ── HTTP ──────────────────────────────────────────────────────────────────────
@@ -537,18 +476,11 @@ async fn me_text(req: reqwest::RequestBuilder) -> Result<String, ApiError> {
     resp.text().await.map_err(|e| ApiError::Network(e.to_string()))
 }
 
-pub async fn fetch_me(base: &str, token: &str) -> Result<String, ApiError> {
-    me_text(http().get(format!("{base}/api/me")).bearer_auth(token)).await
-}
+/// Asks for the v3 account trial: one fresh trial per account, separate from 2.x.
+const TRIAL_SCHEME: (&str, &str) = ("X-Stroke-Trial", "account-v3");
 
-pub async fn link_license(base: &str, token: &str, key: &str) -> Result<String, ApiError> {
-    me_text(
-        http()
-            .post(format!("{base}/api/license/link"))
-            .bearer_auth(token)
-            .json(&serde_json::json!({ "key": key })),
-    )
-    .await
+pub async fn fetch_me(base: &str, token: &str) -> Result<String, ApiError> {
+    me_text(http().get(format!("{base}/api/me")).bearer_auth(token).header(TRIAL_SCHEME.0, TRIAL_SCHEME.1)).await
 }
 
 pub async fn remote_sign_out(base: &str, token: &str) {
@@ -790,21 +722,16 @@ pub struct AccountStatus {
     pub fetched_at: u64,
     /// The last refresh couldn't reach the server; showing the cache.
     pub offline: bool,
-    /// New install that hasn't signed in or entered a key yet.
+    /// Not signed in: the app shows the sign-in screen first.
     pub needs_onboarding: bool,
-    /// A license.json is present on this device.
-    pub has_license_key: bool,
-    pub link_error: Option<String>,
     pub error: Option<String>,
     pub manage_url: String,
 }
 
 fn build_status(dir: &Path, signed_in: bool) -> AccountStatus {
-    let has_license_key = crate::license::load_license(dir).is_some();
     let mut s = AccountStatus {
         signed_in,
-        has_license_key,
-        needs_onboarding: !signed_in && !has_license_key && onboarding_pending(dir),
+        needs_onboarding: !signed_in,
         manage_url: format!("{}/app", base_url()),
         ..Default::default()
     };
@@ -817,23 +744,19 @@ fn build_status(dir: &Path, signed_in: bool) -> AccountStatus {
             s.entitlement = Some(me.entitlement);
             s.devices = me.devices;
             s.fetched_at = c.fetched_at;
-            s.link_error = c.link_error;
         }
     }
     s
 }
 
-/// Save a verified `/api/me` reply, keeping the link bookkeeping.
+/// Save a verified `/api/me` reply.
 fn save_me(dir: &Path, raw: String) -> Result<Me, String> {
     let me = parse_me(&raw)?;
-    let prev = read_cache(dir).unwrap_or_default();
     write_cache(
         dir,
         &CacheFile {
             me: raw,
             fetched_at: now_secs(),
-            linked_key_hash: prev.linked_key_hash,
-            link_error: prev.link_error,
             device_id: Some(crate::license::device_id()),
         },
     )?;
@@ -841,36 +764,6 @@ fn save_me(dir: &Path, raw: String) -> Result<Me, String> {
     // guard to it, so a clock that was set wrong heals the moment we're online.
     crate::license::reset_clock_mark(dir, me.entitlement.issued_at);
     Ok(me)
-}
-
-/// Link the held license key to the account, once per key.
-async fn link_held_key(dir: &Path, base: &str, token: &str) {
-    let Some(lic) = crate::license::load_license(dir) else { return };
-    let hash = crate::license::key_hash(&lic.key);
-    let Some(cache) = read_cache(dir) else { return };
-    if cache.linked_key_hash.as_deref() == Some(hash.as_str()) {
-        return;
-    }
-    let result = link_license(base, token, &lic.key).await;
-    let mut c = read_cache(dir).unwrap_or(cache);
-    match result {
-        Ok(raw) if parse_me(&raw).is_ok() => {
-            c.me = raw;
-            c.fetched_at = now_secs();
-            c.linked_key_hash = Some(hash);
-            c.link_error = None;
-        }
-        // Retrying won't change these: remember and stop asking.
-        Err(ApiError::Server(code, _))
-            if matches!(code.as_str(), "key_owned_elsewhere" | "not_found" | "invalid_key" | "revoked") =>
-        {
-            c.linked_key_hash = Some(hash);
-            c.link_error = Some(code);
-        }
-        // Offline, 5xx, a bad reply: try again on the next refresh.
-        _ => return,
-    }
-    let _ = write_cache(dir, &c);
 }
 
 fn data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -883,10 +776,7 @@ async fn refresh(app: &tauri::AppHandle, dir: &Path, token: &str) -> AccountStat
     let base = base_url();
     match fetch_me(&base, token).await {
         Ok(raw) => match save_me(dir, raw) {
-            Ok(_) => {
-                link_held_key(dir, &base, token).await;
-                build_status(dir, true)
-            }
+            Ok(_) => build_status(dir, true),
             Err(e) => AccountStatus { error: Some(e), ..build_status(dir, true) },
         },
         Err(ApiError::Unauthorized) => {
@@ -1020,7 +910,6 @@ async fn sign_in_loopback(
         .await
         .map_err(|e| e.user_message())?;
     store_token(app, tok.token.clone()).await?;
-    clear_onboarding(dir);
     Ok(refresh(app, dir, &tok.token).await)
 }
 
@@ -1051,7 +940,6 @@ pub async fn account_paste_code(app: tauri::AppHandle, text: String) -> Result<A
         .await
         .map_err(|e| e.user_message())?;
     store_token(&app, tok.token.clone()).await?;
-    clear_onboarding(&dir);
     let status = refresh(&app, &dir, &tok.token).await;
     clear_pending(p.gen);
     pasted_notify().notify_waiters();
@@ -1068,7 +956,6 @@ pub fn account_cancel_sign_in() {
 #[tauri::command]
 pub async fn account_status(app: tauri::AppHandle, refresh: Option<bool>) -> Result<AccountStatus, String> {
     let dir = data_dir(&app)?;
-    note_install_state(&dir);
     let token = load_token(&app).await;
     Ok(match token {
         Some(t) if refresh.unwrap_or(false) => self::refresh(&app, &dir, &t).await,
@@ -1090,13 +977,6 @@ pub async fn account_sign_out(app: tauri::AppHandle) -> Result<AccountStatus, St
     delete_token(&app).await;
     delete_cache(&dir);
     Ok(build_status(&dir, false))
-}
-
-/// The new-install sign-in screen was skipped with a license key.
-#[tauri::command]
-pub fn account_skip_onboarding(app: tauri::AppHandle) -> Result<(), String> {
-    clear_onboarding(&data_dir(&app)?);
-    Ok(())
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -1286,23 +1166,6 @@ mod tests {
     }
 
     #[test]
-    fn existing_keys_are_never_downgraded() {
-        let key = LicenseStatus::Valid { email: "k@x".into(), plan: "pro".into(), issued_at: 1, expires_at: None };
-        let device_trial = LicenseStatus::Trial { days_remaining: 5 };
-        // No account: unchanged.
-        assert!(matches!(combine(key.clone(), None), LicenseStatus::Valid { .. }));
-        assert!(matches!(combine(device_trial.clone(), None), LicenseStatus::Trial { days_remaining: 5 }));
-        // Account says free: the key still grants Pro.
-        assert!(matches!(combine(key.clone(), Some(LicenseStatus::TrialExpired)), LicenseStatus::Valid { .. }));
-        assert!(matches!(combine(key, Some(LicenseStatus::Trial { days_remaining: 2 })), LicenseStatus::Valid { .. }));
-        // Account Pro lifts an expired device trial.
-        let acc = LicenseStatus::Valid { email: "a".into(), plan: "pro".into(), issued_at: 1, expires_at: None };
-        assert!(matches!(combine(LicenseStatus::TrialExpired, Some(acc)), LicenseStatus::Valid { .. }));
-        // Signed in: the account's trial replaces the device trial.
-        assert!(matches!(combine(device_trial, Some(LicenseStatus::Trial { days_remaining: 9 })), LicenseStatus::Trial { days_remaining: 9 }));
-    }
-
-    #[test]
     fn sign_in_params_match_server_rules() {
         let (_, c) = pkce_pair();
         assert_eq!(c.len(), 43);
@@ -1338,7 +1201,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(page.status(), 200);
-        assert!(page.text().await.unwrap().contains("return to Stroke"));
+        assert!(page.text().await.unwrap().contains("Head back to Stroke"));
         assert_eq!(waiter.await.unwrap(), Ok("c0de".to_string()));
 
         // Cancel from the website.
@@ -1399,7 +1262,6 @@ mod tests {
         let base = mock_server(vec![
             ("POST /api/desktop/token", 200, r#"{"token":"tok","user":{"id":"u1","email":"a@b.co","name":"A","image":null}}"#.into()),
             ("GET /api/me", 200, me.clone()),
-            ("POST /api/license/link", 409, r#"{"error":"key_owned_elsewhere","message":"Owned by another account"}"#.into()),
         ])
         .await;
 
@@ -1412,10 +1274,6 @@ mod tests {
         assert!(parse_me_with_key(&raw, &sk.verifying_key()).is_ok());
 
         assert_eq!(fetch_me(&base, "wrong").await, Err(ApiError::Unauthorized));
-        assert_eq!(
-            link_license(&base, "tok", "k").await,
-            Err(ApiError::Server("key_owned_elsewhere".into(), "Owned by another account".into()))
-        );
 
         let bad = mock_server(vec![("POST /api/desktop/token", 400, r#"{"error":"expired_code","message":"x"}"#.into())]).await;
         let e = exchange_code(&bad, "c", "v", "d", "n", "1.0").await.unwrap_err();

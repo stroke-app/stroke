@@ -8,23 +8,20 @@ const { planLabel, initials, offlineGraceNote } = await import('./account.js')
 const acc = (over = {}) => /** @type {any} */ ({ signed_in: true, entitlement_fresh: true, entitlement: null, ...over })
 
 describe('planLabel', () => {
-  const now = 1_000_000
-  it('a valid key is Pro whatever the account says', () => {
-    expect(planLabel(null, { status: 'Valid', email: 'a', plan: 'pro', issued_at: 0, expires_at: null }, now).tone).toBe('pro')
+  const valid = /** @type {const} */ ({ status: 'Valid', email: 'a', plan: 'pro', issued_at: 0, expires_at: null })
+  it('follows the status the Pro gates read', () => {
+    expect(planLabel(acc(), valid)).toEqual({ label: 'Pro', tone: 'pro' })
+    expect(planLabel(acc(), { status: 'Trial', days_remaining: 1 }).label).toBe('Trial · 1 day')
+    expect(planLabel(acc(), { status: 'Trial', days_remaining: 3 }).label).toBe('Trial · 3 days')
+    expect(planLabel(acc(), { status: 'TrialExpired' }).tone).toBe('free')
   })
-  it('account license is Pro', () => {
-    const a = acc({ entitlement: { plan: 'pro', source: 'license', license: null, trial: null, issued_at: 0, valid_until: now + 1 } })
-    expect(planLabel(a, null, now)).toEqual({ label: 'Pro', tone: 'pro' })
-  })
-  it('trial shows days', () => {
-    expect(planLabel(null, { status: 'Trial', days_remaining: 1 }, now).label).toBe('Trial · 1 day')
-    const a = acc({ entitlement: { plan: 'pro', source: 'trial', license: null, trial: { started_at: 0, ends_at: now + 3 * 86400 }, issued_at: 0, valid_until: now + 1 } })
-    expect(planLabel(a, null, now).label).toBe('Trial · 3 days')
-  })
-  it('stale or signed-out entitlement is ignored', () => {
+  it('a paid entitlement does not say Pro unless the status does', () => {
     const ent = { plan: 'pro', source: 'license', license: null, trial: null, issued_at: 0, valid_until: 0 }
-    expect(planLabel(acc({ entitlement_fresh: false, entitlement: ent }), { status: 'TrialExpired' }, now).tone).toBe('free')
-    expect(planLabel(acc({ signed_in: false, entitlement: ent }), null, now).tone).toBe('free')
+    expect(planLabel(acc({ entitlement: ent }), { status: 'TrialExpired' }).tone).toBe('free')
+  })
+  it('signed out is never Pro', () => {
+    expect(planLabel(acc({ signed_in: false }), valid).tone).toBe('free')
+    expect(planLabel(null, valid).tone).toBe('free')
   })
 })
 

@@ -1856,168 +1856,17 @@ pub fn connections_store_write(app: tauri::AppHandle, json: String) -> Result<()
 
 // ── License ───────────────────────────────────────────────────────────────────
 
-// `async` so the first call (device-fingerprint subprocess + trial-file I/O)
-// runs off the main thread instead of blocking the UI during startup.
+// `async` so the first call (device fingerprint, cache read) runs off the main
+// thread instead of blocking the UI during startup. Pro comes from the
+// signed-in account only (see account::license_status).
 #[tauri::command(async)]
 pub fn check_license_status(app: tauri::AppHandle) -> crate::license::LicenseStatus {
     match app.path().app_data_dir() {
-        Ok(dir) => {
-            // Before check_status starts a trial, so a new install is told apart.
-            crate::account::note_install_state(&dir);
-            crate::account::apply_account(&dir, crate::license::check_status(&dir))
-        }
+        Ok(dir) => crate::account::license_status(&dir),
         Err(e) => crate::license::LicenseStatus::Error {
             message: e.to_string(),
         },
     }
-}
-
-#[tauri::command]
-pub async fn activate_license(
-    app: tauri::AppHandle,
-    key: String,
-) -> Result<serde_json::Value, String> {
-    // 1. Verify signature locally (works offline, catches forged keys)
-    let parsed = crate::license::verify_key(&key)?;
-    let device_id = crate::license::device_id();
-
-    // 2. Register with server. Blocks on seat_limit_exceeded / revoked.
-    //    On network failure api_activate returns Ok(None) - we allow offline activation.
-    match crate::license::api_activate(&key, &device_id, &app.package_info().version.to_string()).await {
-        Ok(None) => {} // offline - proceed with local-only activation
-        Ok(Some(_)) => {} // server accepted
-        Err(e) => {
-            // Convert server error codes to user-friendly messages
-            let msg = match e.as_str() {
-                "seat_limit_exceeded" => "This license is on all the devices it covers. Remove one at stroke.click/app, or ask for more devices there (\"Need more devices?\").",
-                "revoked" => "This license key has been revoked.",
-                "expired" => "This license key has expired.",
-                "not_found" => "License key not found.",
-                _ => return Err(e),
-            };
-            return Err(msg.to_string());
-        }
-    }
-
-    // 3. Save locally
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let lic = crate::license::LicenseFile {
-        version: 1,
-        key,
-        email: parsed.email.clone(),
-        plan: parsed.plan.clone(),
-        issued_at: parsed.issued_at,
-        expires_at: parsed.expires_at,
-        device_id,
-        activated_at: now,
-        last_check_at: now,
-    };
-    crate::license::save_license(&dir, &lic)?;
-    Ok(serde_json::json!({
-        "email": parsed.email,
-        "plan": parsed.plan,
-        "issued_at": parsed.issued_at,
-        "expires_at": parsed.expires_at,
-    }))
-}
-
-#[tauri::command]
-pub async fn deactivate_license(app: tauri::AppHandle) -> Result<(), String> {
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    // Best-effort server deactivation (release the seat)
-    if let Some(lic) = crate::license::load_license(&dir) {
-        crate::license::api_deactivate(&lic.key, &lic.device_id).await;
-    }
-    crate::license::delete_license(&dir)
-}
-
-/// Validates the license against the server on every launch.
-/// - valid: true  → update last_check_at, return Valid
-/// - revoked / expired → delete local license, return Trial/TrialExpired
-/// - device_not_activated → re-activate this device, keep the license
-/// - any other error or network failure → keep the license (local signature
-///   is the grace; the next launch checks again)
-/// - no license → local trial check only (no network call)
-#[tauri::command]
-pub async fn run_license_check(
-    app: tauri::AppHandle,
-) -> crate::license::LicenseStatus {
-    let dir = match app.path().app_data_dir() {
-        Ok(d) => d,
-        Err(e) => return crate::license::LicenseStatus::Error { message: e.to_string() },
-    };
-    crate::account::note_install_state(&dir);
-
-    if let Some(mut lic) = crate::license::load_license(&dir) {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-
-        use crate::license::CheckOutcome;
-        let version = app.package_info().version.to_string();
-        let mut ended = false;
-        match crate::license::api_check(&lic.key, &lic.device_id, &version).await {
-            Some(CheckOutcome::Valid) => {
-                lic.last_check_at = now;
-                let _ = crate::license::save_license(&dir, &lic);
-            }
-            Some(CheckOutcome::Ended) => ended = true,
-            Some(CheckOutcome::NotActivated) => {
-                // Activated offline, so the server never saw this device (or its
-                // seat was released). Register it now rather than dropping Pro.
-                match crate::license::api_activate(&lic.key, &lic.device_id, &version).await {
-                    Ok(Some(_)) => {
-                        lic.last_check_at = now;
-                        let _ = crate::license::save_license(&dir, &lic);
-                    }
-                    Err(e) if e == "revoked" || e == "expired" => ended = true,
-                    // Offline, seat limit, or anything else: keep the key and
-                    // try again on the next check.
-                    _ => {}
-                }
-            }
-            // `not_found`, unknown errors, a bad deploy, or offline: keep the key;
-            // the local signature is the grace.
-            Some(CheckOutcome::Unknown) | None => {}
-        }
-        if ended {
-            let _ = crate::license::delete_license(&dir);
-        }
-    }
-
-    // No valid paid license → reconcile the trial clock with the server so a
-    // reinstall/disk-wipe can't grant a fresh trial (server keeps the earliest
-    // start per device). Silent no-op when offline.
-    if crate::license::load_license(&dir).is_none() {
-        crate::license::reconcile_trial(&dir).await;
-    }
-
-    // A signed-in account's cached, signature-checked entitlement can grant Pro;
-    // it never takes Pro away from a valid key (see account::combine).
-    crate::account::apply_account(&dir, crate::license::check_status(&dir))
-}
-
-// ── License debug helpers (debug builds only) ─────────────────────────────────
-
-/// Backdate the trial file so the UI shows it as expired (or N days elapsed).
-/// Only compiled in debug mode - stripped from release builds entirely.
-#[cfg(debug_assertions)]
-#[tauri::command]
-pub fn debug_set_trial_days_ago(app: tauri::AppHandle, days_ago: u64) -> Result<(), String> {
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    crate::license::debug_set_trial_days_ago(&dir, days_ago)
-}
-
-#[cfg(debug_assertions)]
-#[tauri::command]
-pub fn debug_reset_trial(app: tauri::AppHandle) -> Result<(), String> {
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    crate::license::debug_reset_trial(&dir)
 }
 
 // ── Sample database ────────────────────────────────────────────────────────────

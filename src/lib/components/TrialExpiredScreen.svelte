@@ -1,13 +1,12 @@
 <script>
   // Hard trial gate. Rendered in place of the whole app once the trial has
-  // expired and no valid license is present - there is no dismiss path. The
-  // ways through: sign in to an account that has Stroke Pro (a purchase on
-  // stroke.click shows up there), or activate a license key.
+  // expired and the account has no Pro - there is no dismiss path. The
+  // way through is an account that has Stroke Pro: a purchase on stroke.click
+  // shows up there, under the email it was bought with.
   import { onMount } from 'svelte'
   import { revealApp } from '$lib/app-reveal.js'
   import Logo from './Logo.svelte'
   import Icon from './Icon.svelte'
-  import LicenseActivation from './LicenseActivation.svelte'
   import AccountSignInButtons from './AccountSignInButtons.svelte'
   import WindowControls from './WindowControls.svelte'
   import GateUpdateCheck from './GateUpdateCheck.svelte'
@@ -16,21 +15,15 @@
   import { account, isSignedIn, signInState, refreshAccount, signOut } from '$lib/stores/account.js'
   import { detectOs } from '$lib/platform.js'
   import { cn } from '$lib/utils.js'
-  import ArrowLeft from '@lucide/svelte/icons/arrow-left'
   import LoaderCircle from '@lucide/svelte/icons/loader-circle'
   import RefreshCw from '@lucide/svelte/icons/refresh-cw'
-  import KeyRound from '@lucide/svelte/icons/key-round'
   import ShieldCheck from '@lucide/svelte/icons/shield-check'
 
   /** Called once activation has finished celebrating; LicenseGate drops the gate on it. */
   let { onactivated = () => {} } = $props()
 
-  /** Account sign-in is the main path; the key field is the fallback. */
-  let mode = $state(/** @type {'account' | 'key'} */ ('account'))
-  /** Pro was found (key or account): the copy turns into a welcome. */
+  /** Pro was found on the account: the copy turns into a welcome. */
   let activated = $state(false)
-  /** How Pro arrived, for the welcome line. */
-  let activatedVia = $state(/** @type {'key' | 'account'} */ ('key'))
   /** The celebration is over: fade out, then let the gate hand over to the app. */
   let leaving = $state(false)
   function finish() {
@@ -38,14 +31,12 @@
     setTimeout(onactivated, 220)
   }
 
-  // Follow licenseStatus, which the backend merges with the account's
-  // entitlement: once it stops being TrialExpired (sign-in, a later refresh
-  // after buying, a focus refresh), hand over to the app. The key flow runs its
-  // own celebration and calls finish() itself, so it is left alone here.
+  // Follow licenseStatus, which comes from the account's entitlement: once it
+  // stops being TrialExpired (sign-in, a later refresh after buying, a focus
+  // refresh), hand over to the app.
   $effect(() => {
-    if (mode === 'key' || activated) return
+    if (activated) return
     if ($licenseStatus && !$isBlocked) {
-      activatedVia = 'account'
       activated = true
       setTimeout(finish, 1200)
     }
@@ -131,25 +122,20 @@
         {#if activated}
           <h1 class="text-ui-xl font-semibold tracking-tight text-foreground text-balance animate-in fade-in duration-200">Welcome to Stroke Pro</h1>
           <p class="text-ui-sm leading-relaxed text-muted-foreground text-pretty animate-in fade-in duration-200">
-            {activatedVia === 'account' ? 'Pro is on your account.' : 'Your license is active.'} Opening your workspace.
+            Pro is on your account. Opening your workspace.
           </p>
-        {:else if mode === 'key'}
-          <h1 class="text-ui-xl font-semibold tracking-tight text-foreground text-balance">Enter your license key</h1>
-          <p class="text-ui-sm leading-relaxed text-muted-foreground text-pretty">It's in the email you got after buying.</p>
         {:else}
           <h1 class="text-ui-xl font-semibold tracking-tight text-foreground text-balance">Your trial has ended</h1>
           <p class="text-ui-sm leading-relaxed text-muted-foreground text-pretty">
             {$isSignedIn
-              ? 'Get Stroke Pro to keep working. Already bought it? Check again and it unlocks right away.'
-              : 'Sign in with the account you bought Stroke Pro with, or get it on stroke.click.'}
+              ? 'Get Stroke Pro to keep working. Bought it with another email? Switch to that account.'
+              : 'Sign in with the email you bought Stroke Pro with, or get it on stroke.click.'}
           </p>
         {/if}
       </div>
 
       <div class="mt-6 flex w-full flex-col gap-2 text-left">
-        {#if mode === 'key' || (activated && activatedVia === 'key')}
-          <LicenseActivation naked onsuccess={() => { activatedVia = 'key'; activated = true }} onactivated={finish} />
-        {:else if activated}
+        {#if activated}
           <div class="flex items-center justify-center gap-2 text-ui-sm text-muted-foreground animate-in fade-in duration-200">
             <LoaderCircle class="size-3.5 shrink-0 animate-spin" /> Loading
           </div>
@@ -162,29 +148,17 @@
           </button>
         {:else}
           <!-- One way in: an account that has Pro. Buying is a quiet link
-               below, beside the key, not a second big button. -->
+               below, not a second big button. -->
           <AccountSignInButtons size="lg" />
         {/if}
       </div>
 
-      {#if !activated}
-        {#if mode === 'key'}
-          <button type="button" onclick={() => (mode = 'account')} class="mt-4 inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-ui-xs text-muted-foreground transition-[color,scale] duration-[120ms] hover:text-foreground active:scale-[0.97]">
-            <ArrowLeft class="size-3.5 shrink-0" /> Back
+      {#if !activated && !$isSignedIn}
+        <div class={cn('mt-4 flex items-center justify-center text-ui-xs text-muted-foreground', waiting && 'pointer-events-none opacity-0')}>
+          <button type="button" onclick={() => void openStore()} class="inline-flex h-7 items-center gap-1.5 rounded-md px-2 transition-[color,scale] duration-[120ms] hover:text-foreground active:scale-[0.97]">
+            Get Stroke Pro <Icon name="external-link" class="size-3 shrink-0" />
           </button>
-        {:else}
-          <div class={cn('mt-4 flex items-center justify-center gap-1 text-ui-xs text-muted-foreground', waiting && 'pointer-events-none opacity-0')}>
-            {#if !$isSignedIn}
-              <button type="button" onclick={() => void openStore()} class="inline-flex h-7 items-center gap-1.5 rounded-md px-2 transition-[color,scale] duration-[120ms] hover:text-foreground active:scale-[0.97]">
-                Get Stroke Pro <Icon name="external-link" class="size-3 shrink-0" />
-              </button>
-              <span aria-hidden="true">·</span>
-            {/if}
-            <button type="button" onclick={() => (mode = 'key')} class="inline-flex h-7 items-center gap-1.5 rounded-md px-2 transition-[color,scale] duration-[120ms] hover:text-foreground active:scale-[0.97]">
-              <KeyRound class="size-3.5 shrink-0" /> Use a license key
-            </button>
-          </div>
-        {/if}
+        </div>
       {/if}
 
       {#if $isSignedIn && email && !activated}

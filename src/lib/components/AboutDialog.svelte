@@ -1,20 +1,15 @@
 <script>
   import { onMount } from 'svelte'
   import * as Dialog from '$lib/components/ui/dialog/index.js'
-  import { licenseStatus, deactivateLicense } from '$lib/stores/license.js'
-  import LicenseActivation from './LicenseActivation.svelte'
+  import { licenseStatus } from '$lib/stores/license.js'
   import Logo from './Logo.svelte'
   import ShieldCheck from '@lucide/svelte/icons/shield-check'
   import Clock from '@lucide/svelte/icons/clock'
-  import KeyRound from '@lucide/svelte/icons/key-round'
-  import LogOut from '@lucide/svelte/icons/log-out'
   import ExternalLink from '@lucide/svelte/icons/external-link'
 
   let { open = $bindable(false), onopenreport = () => {} } = $props()
 
   let appVersion = $state('—')
-  let showActivate = $state(false)
-  let deactivating = $state(false)
 
   onMount(async () => {
     try {
@@ -25,21 +20,13 @@
     }
   })
 
-  async function handleDeactivate() {
-    deactivating = true
-    await deactivateLicense()
-    deactivating = false
-    showActivate = false
-  }
-
+  /** @param {boolean} next */
   function handleOpenChange(next) {
     open = next
-    if (!next) showActivate = false
   }
 
   const isValid = $derived($licenseStatus?.status === 'Valid')
   const isTrial = $derived($licenseStatus?.status === 'Trial')
-  const isExpired = $derived(!!$licenseStatus && !isValid && !isTrial)
 </script>
 
 <Dialog.Root {open} onOpenChange={handleOpenChange} closeOnEscape={true}>
@@ -54,20 +41,17 @@
       </div>
     </div>
 
-    <!-- License -->
+    <!-- Plan: it comes from the signed-in account. -->
     <div class="px-6 pt-5 pb-6">
 
       {#if !$licenseStatus}
         <!-- Loading -->
         <div class="flex items-center gap-2 text-ui-2xs text-muted-foreground">
           <span class="size-3 animate-spin rounded-full border border-border border-t-muted-foreground inline-block shrink-0"></span>
-          Checking license…
+          Checking your plan…
         </div>
 
       {:else if isValid}
-        <!-- Licensed -->
-        <!-- Key–value rows, spaced not boxed. Deactivate is a quiet action at
-             the end of the plan row, not a full-width bar. -->
         <dl class="grid grid-cols-[6rem_1fr] gap-x-4 gap-y-2.5 text-ui-xs">
           <dt class="text-muted-foreground">Plan</dt>
           <dd class="flex min-w-0 items-center gap-2 text-foreground">
@@ -76,78 +60,24 @@
             <span class="text-muted-foreground">·</span>
             <span>{$licenseStatus.expires_at ? `until ${new Date($licenseStatus.expires_at * 1000).toLocaleDateString()}` : 'Lifetime'}</span>
           </dd>
-          <dt class="text-muted-foreground">Licensed to</dt>
+          <dt class="text-muted-foreground">Account</dt>
           <dd class="min-w-0 truncate text-foreground" title={$licenseStatus.email}>{$licenseStatus.email}</dd>
         </dl>
-        <button
-          type="button"
-          onclick={handleDeactivate}
-          disabled={deactivating}
-          class="-ms-2 mt-4 inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-ui-xs text-muted-foreground transition-colors duration-150 hover:bg-destructive/[0.08] hover:text-destructive focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-40"
-        >
-          {#if deactivating}
-            <span class="size-3 shrink-0 animate-spin rounded-full border border-current/30 border-t-current"></span>
-            Deactivating…
-          {:else}
-            <LogOut class="size-3.5 shrink-0" />
-            Deactivate on this computer
-          {/if}
-        </button>
 
       {:else if isTrial}
-        <!-- Trial active -->
-        <div class="flex flex-col gap-3">
-          <div class="flex items-center justify-between">
-            <span class="flex items-center gap-2 text-ui-xs font-medium text-foreground">
-              <Clock class="size-3.5 shrink-0 text-warning" aria-hidden="true" />Free trial
-            </span>
-            <span class="text-ui-3xs text-muted-foreground">
-              {$licenseStatus.days_remaining}d left
-            </span>
-          </div>
-          {#if showActivate}
-            <LicenseActivation naked onactivated={() => { showActivate = false; open = false }} />
-            <button
-              type="button"
-              onclick={() => (showActivate = false)}
-              class="text-ui-2xs text-muted-foreground hover:text-foreground transition-colors text-center"
-            >Cancel</button>
-          {:else}
-            <button
-              type="button"
-              onclick={() => (showActivate = true)}
-              class= "field-surface flex h-8 w-full items-center justify-center gap-1.5 bg-muted/30 text-ui-2xs font-medium text-foreground/70 transition-colors hover:bg-muted/60 hover:text-foreground"
-            >
-              <KeyRound class="size-3 shrink-0" />
-              Enter license key
-            </button>
-          {/if}
+        <div class="flex items-center justify-between">
+          <span class="flex items-center gap-2 text-ui-xs font-medium text-foreground">
+            <Clock class="size-3.5 shrink-0 text-warning" aria-hidden="true" />Free trial
+          </span>
+          <span class="text-ui-3xs text-muted-foreground">
+            {$licenseStatus.days_remaining}d left
+          </span>
         </div>
 
       {:else}
-        <!-- Expired / no license -->
-        <div class="flex flex-col gap-3">
-          <div>
-            <p class="text-ui-xs font-medium text-foreground">No active license</p>
-            <p class="mt-0.5 text-ui-2xs text-muted-foreground">Free features only.</p>
-          </div>
-          {#if showActivate}
-            <LicenseActivation naked onactivated={() => { showActivate = false; open = false }} />
-            <button
-              type="button"
-              onclick={() => (showActivate = false)}
-              class="text-ui-2xs text-muted-foreground hover:text-foreground transition-colors text-center"
-            >Cancel</button>
-          {:else}
-            <button
-              type="button"
-              onclick={() => (showActivate = true)}
-              class= "field-surface flex h-8 w-full items-center justify-center gap-1.5 bg-muted/30 text-ui-2xs font-medium text-foreground/70 transition-colors hover:bg-muted/60 hover:text-foreground"
-            >
-              <KeyRound class="size-3 shrink-0" />
-              Enter license key
-            </button>
-          {/if}
+        <div>
+          <p class="text-ui-xs font-medium text-foreground">No Stroke Pro on this account</p>
+          <p class="mt-0.5 text-ui-2xs text-muted-foreground">Free features only.</p>
         </div>
       {/if}
     </div>

@@ -1,24 +1,20 @@
 <script>
   // The sign-in screen everyone sees before the app until they sign in (see
-  // account.js `needsOnboarding`); a device with an activated license key skips
-  // it. Sign-in goes through the browser; "I have a license key" is the
-  // fallback to the existing activation flow.
+  // account.js `needsOnboarding`). Stroke has no license keys: a purchase
+  // comes with the account it was bought with. Sign-in goes through the browser.
   import { onMount } from 'svelte'
   import { revealApp } from '$lib/app-reveal.js'
   import Logo from './Logo.svelte'
   import WindowControls from './WindowControls.svelte'
-  import LicenseActivation from './LicenseActivation.svelte'
   import AccountSignInButtons from './AccountSignInButtons.svelte'
-  import { skipOnboarding, signInState, isReturningUser } from '$lib/stores/account.js'
+  import { isReturningUser } from '$lib/stores/account.js'
   import { detectOs } from '$lib/platform.js'
   import { cn } from '$lib/utils.js'
-  import ArrowLeft from '@lucide/svelte/icons/arrow-left'
   import GateUpdateCheck from './GateUpdateCheck.svelte'
 
-  /** Called once signed in (or a key was activated); the gate hands over to the app. */
+  /** Called once signed in; the gate hands over to the app. */
   let { ondone = () => {} } = $props()
 
-  let showKey = $state(false)
   let leaving = $state(false)
   function finish() {
     leaving = true
@@ -60,42 +56,18 @@
     <div class="welcome-hero flex w-full max-w-[22rem] flex-col items-center text-center">
       <Logo class="mb-6 size-6 shrink-0 opacity-90" />
 
-      {#if showKey}
-        <h1 class="text-ui-2xl font-medium tracking-tight text-foreground text-balance">Enter your license key</h1>
-        <p class="mt-2 text-ui-sm text-muted-foreground text-pretty">It was sent to your email after purchase.</p>
-        <div class="mt-7 w-full">
-          <LicenseActivation naked onsuccess={() => void skipOnboarding()} onactivated={finish} />
-        </div>
-        <button
-          type="button"
-          class="mt-5 inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-ui-xs text-muted-foreground transition-colors hover:text-foreground"
-          onclick={() => (showKey = false)}
-        >
-          <ArrowLeft class="size-3.5 shrink-0" /> Back
-        </button>
+      {#if $isReturningUser}
+        <h1 class="text-ui-2xl font-medium tracking-tight text-foreground text-balance">Sign in to continue</h1>
+        <p class="mt-2 text-ui-sm text-muted-foreground text-pretty">Your connections and settings stay on this computer.</p>
       {:else}
-        {#if $isReturningUser}
-          <h1 class="text-ui-2xl font-medium tracking-tight text-foreground text-balance">Sign in to continue</h1>
-          <p class="mt-2 text-ui-sm text-muted-foreground text-pretty">Your connections and settings stay on this computer.</p>
-        {:else}
-          <h1 class="text-ui-2xl font-medium tracking-tight text-foreground text-balance">Welcome to Stroke</h1>
-          <p class="mt-2 text-ui-sm text-muted-foreground text-pretty">Sign in to start your free trial.</p>
-        {/if}
-
-        <div class="mt-7 w-full">
-          <AccountSignInButtons size="lg" onsignedin={finish} />
-        </div>
-
-        {#if $signInState.phase !== 'waiting'}
-          <button
-            type="button"
-            class="mt-4 h-7 rounded-md px-2 text-ui-xs text-muted-foreground transition-colors hover:text-foreground"
-            onclick={() => (showKey = true)}
-          >
-            I have a license key
-          </button>
-        {/if}
+        <h1 class="text-ui-2xl font-medium tracking-tight text-foreground text-balance">Welcome to Stroke</h1>
+        <p class="mt-2 text-ui-sm text-muted-foreground text-pretty">Sign in to start your free trial.</p>
       {/if}
+
+      <div class="mt-7 w-full">
+        <AccountSignInButtons size="lg" onsignedin={finish} />
+      </div>
+      <p class="mt-4 text-ui-xs text-muted-foreground text-pretty">Bought Stroke Pro? Sign in with the email you used, and Pro comes with you.</p>
     </div>
   </div>
 

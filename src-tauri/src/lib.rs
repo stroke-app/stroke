@@ -902,14 +902,10 @@ pub fn run() {
             db::terminal::terminal_install_client,
             db::terminal::terminal_close,
             commands::check_license_status,
-            commands::activate_license,
-            commands::deactivate_license,
-            commands::run_license_check,
             account::account_sign_in,
             account::account_cancel_sign_in,
             account::account_status,
             account::account_sign_out,
-            account::account_skip_onboarding,
             account::account_paste_code,
             sync::sync_state,
             sync::sync_setup,
@@ -939,10 +935,6 @@ pub fn run() {
             db::parked::close_parked,
             db::parked::parked_connections,
             commands::export_parquet,
-            #[cfg(debug_assertions)]
-            commands::debug_set_trial_days_ago,
-            #[cfg(debug_assertions)]
-            commands::debug_reset_trial,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")

@@ -1,7 +1,6 @@
 <script>
   // Status-bar account control: avatar + plan, and a menu with the email, plan,
-  // devices, "Manage account" and "Sign out". Signed out, it offers "Sign in"
-  // and keeps a way to the license page (where a key is entered or managed).
+  // devices, "Manage account" and "Sign out". Signed out, it offers "Sign in".
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js'
   import { account, signInState, planLabel, signOut, signInWithToast, openManageAccount, refreshAccount } from '$lib/stores/account.js'
   import { licenseStatus } from '$lib/stores/license.js'
@@ -12,7 +11,7 @@
   import LogOut from '@lucide/svelte/icons/log-out'
   import RefreshCw from '@lucide/svelte/icons/refresh-cw'
   import LogIn from '@lucide/svelte/icons/log-in'
-  import KeyRound from '@lucide/svelte/icons/key-round'
+  import CircleUserRound from '@lucide/svelte/icons/circle-user-round'
   import Laptop from '@lucide/svelte/icons/laptop'
   import UserRound from '@lucide/svelte/icons/user-round'
   import LoaderCircle from '@lucide/svelte/icons/loader-circle'
@@ -23,7 +22,7 @@
   import PasteCodeDialog from './PasteCodeDialog.svelte'
 
   let {
-    /** Opens the license page (key entry / management). */
+    /** Opens the account page (plan, devices, sync). */
     onopenlicense = () => {},
     /** Trigger classes from the host bar, so the control matches its neighbours. */
     triggerClass = '',
@@ -39,7 +38,7 @@
 
   async function handleSignOut() {
     const r = await signOut()
-    if (r.ok) toast.success('Signed out', { description: 'Your local data and any license key stay on this device.' })
+    if (r.ok) toast.success('Signed out', { description: 'Your local data stays on this device.' })
     else toast.error('Could not sign out', { description: r.error })
   }
 </script>
@@ -82,8 +81,8 @@
         <span data-slot="menu-label">Try again</span>
       </DropdownMenu.Item>
       <DropdownMenu.Item onSelect={onopenlicense}>
-        <KeyRound class="size-3.5 shrink-0" />
-        <span data-slot="menu-label">License</span>
+        <CircleUserRound class="size-3.5 shrink-0" />
+        <span data-slot="menu-label">Account and plan</span>
       </DropdownMenu.Item>
       <DropdownMenu.Separator />
       <DropdownMenu.Item onSelect={() => void handleSignOut()}>
@@ -124,8 +123,8 @@
         <span data-slot="menu-label">Manage account</span>
       </DropdownMenu.Item>
       <DropdownMenu.Item onSelect={onopenlicense}>
-        <KeyRound class="size-3.5 shrink-0" />
-        <span data-slot="menu-label">License</span>
+        <CircleUserRound class="size-3.5 shrink-0" />
+        <span data-slot="menu-label">Account and plan</span>
       </DropdownMenu.Item>
       <DropdownMenu.Separator />
       <DropdownMenu.Item onSelect={() => void handleSignOut()}>
@@ -135,7 +134,7 @@
     {:else}
       <div class="flex flex-col gap-0.5 px-1.5 py-1.5">
         <p class="text-ui-xs font-medium text-foreground">Stroke {plan.label}</p>
-        <p class="text-ui-2xs leading-relaxed text-muted-foreground">Sign in to keep your license with your account.</p>
+        <p class="text-ui-2xs leading-relaxed text-muted-foreground">Sign in to use your plan and sync.</p>
       </div>
       <DropdownMenu.Separator />
       <DropdownMenu.Item disabled={waiting} onSelect={() => void signInWithToast()}>
@@ -148,10 +147,6 @@
           <span data-slot="menu-label">Paste sign-in code…</span>
         </DropdownMenu.Item>
       {/if}
-      <DropdownMenu.Item onSelect={onopenlicense}>
-        <KeyRound class="size-3.5 shrink-0" />
-        <span data-slot="menu-label">{$licenseStatus?.status === 'Valid' ? 'License' : 'Enter license key'}</span>
-      </DropdownMenu.Item>
     {/if}
   </DropdownMenu.Content>
 </DropdownMenu.Root>
