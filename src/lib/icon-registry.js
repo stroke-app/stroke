@@ -93,6 +93,7 @@ import FlaskConical from '@lucide/svelte/icons/flask-conical'
 import Workflow from '@lucide/svelte/icons/workflow'
 import Share2 from '@lucide/svelte/icons/share-2'
 import GitCompare from '@lucide/svelte/icons/git-compare'
+import GitMerge from '@lucide/svelte/icons/git-merge'
 import Blocks from '@lucide/svelte/icons/blocks'
 import Plug from '@lucide/svelte/icons/plug'
 import NotebookPen from '@lucide/svelte/icons/notebook-pen'
@@ -163,7 +164,7 @@ import {
   HardDriveIcon, DashboardSquare02Icon, SquareUnlock01Icon, Moon02Icon, RadioIcon,
   ServerStack01Icon, Settings02Icon, Sun03Icon, ArrowTurnBackwardIcon, Unlink01Icon,
   WifiConnected01Icon, WifiDisconnected01Icon, TestTubeIcon, WorkflowSquare02Icon,
-  Share08Icon, GitCompareIcon, PuzzleIcon, PlugSocketIcon, NoteEditIcon, ChartBarLineIcon, GlobalIcon,
+  Share08Icon, GitCompareIcon, GitMergeIcon, PuzzleIcon, PlugSocketIcon, NoteEditIcon, ChartBarLineIcon, GlobalIcon,
   InformationCircleIcon, ArrowUpDownIcon, ArrowLeftRightIcon, Bookmark01Icon, BugIcon,
   UnavailableIcon, Target01Icon, EraserIcon, FileDownloadIcon, FileUploadIcon, File01Icon, FunctionSquareIcon,
   HashIcon, InfinityIcon, KeyboardIcon, Layers01Icon, LeftToRightListBulletIcon, Link01Icon,
@@ -260,6 +261,7 @@ export const ICON_MAP = {
   'workflow':       { lucide: Workflow,      huge: WorkflowSquare02Icon },
   'share-2':        { lucide: Share2,        huge: Share08Icon },
   'git-compare':    { lucide: GitCompare,    huge: GitCompareIcon },
+  'git-merge':      { lucide: GitMerge,      huge: GitMergeIcon },
   'blocks':         { lucide: Blocks,        huge: PuzzleIcon },
   // Database objects (views, routines, types): not 'blocks', which is Extensions.
   'shapes':         { lucide: Shapes,        huge: Shapes01Icon },

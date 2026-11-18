@@ -112,6 +112,8 @@
     onopennotebookfile = () => {},
     openschematimeline = () => {},
     opendatadiff = () => {},
+    openmigrations = () => {},
+    openlocalservers = () => {},
     /** Live AI schema/db context for the inline quick-ask. */
     schemaContext = null,
     /** Escalate a quick-ask question into the full AI sidebar/chat. @param {string} q */
@@ -275,6 +277,8 @@
     { icon: 'archive',         label: 'Backup & restore',              action: onopenbackup,     show: connected && !isKeyValue, value: 'backup restore export import dump data' },
     { icon: 'braces',          label: 'JSON viewer',                   action: onopenJsonViewer, show: connected, value: 'open json viewer explorer jsonpath tool' },
     { icon: 'git-branch',      label: 'Schema timeline',               action: openschematimeline, show: connected && !isKeyValue, value: 'schema timeline drift detection history changes diff' },
+    { icon: 'database',        label: 'Local servers',                 action: openlocalservers, show: true, value: 'local servers database postgres mysql mariadb redis mongodb docker native homebrew dbngin start stop version' },
+    { icon: 'git-merge',       label: 'Migrations',                    action: openmigrations,   show: connected && !isKeyValue, value: 'migrations prisma drizzle applied pending failed migrate schema history' },
     { icon: 'git-compare',     label: 'Data diff',                     action: opendatadiff,     show: connected && !isKeyValue, value: 'data diff compare tables rows changes' },
     { icon: 'file-text',       label: 'New notebook',                  action: onopennotebook,   show: connected && !isKeyValue, value: 'new sql notebook jupyter cells sql markdown' },
     { icon: 'file-text',       label: 'Open notebook…',                action: onopennotebookfile, show: connected && !isKeyValue, value: 'open notebook file sqlnb' },

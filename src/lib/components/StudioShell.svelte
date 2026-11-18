@@ -229,6 +229,8 @@
     findSchemaTimelineTab,
     createDataDiffTab,
     findDataDiffTab,
+    createMigrationsTab,
+    findMigrationsTab,
     createLicenseTab,
     createAiTab,
     findAiTab,
@@ -576,6 +578,7 @@
     }
   }
   let showDockerModal = $state(false)
+  let showLocalServers = $state(false)
   let dockerInitialDb = $state(/** @type {string | null} */ (null))
   /** Bottom query-log console visibility. */
   let queryLogOpen = $state(false)
@@ -1158,6 +1161,7 @@
   let searchEverOpened = $state(false)
   let schemaTimelineEverOpened = $state(false)
   let dataDiffEverOpened = $state(false)
+  let migrationsEverOpened = $state(false)
   let ormSchemaEverOpened = $state(false)
   /** @type {{ focusEditor: () => void, openQuery?: (content: string) => void } | null} */
   let sqlConsoleRef = $state(null)
@@ -1459,6 +1463,7 @@
     if (activeTab?.kind === 'search') searchEverOpened = true
     if (activeTab?.kind === 'schema-timeline') schemaTimelineEverOpened = true
     if (activeTab?.kind === 'data-diff') dataDiffEverOpened = true
+    if (activeTab?.kind === 'migrations') migrationsEverOpened = true
     if (activeTab?.kind === 'orm-schema') ormSchemaEverOpened = true
   })
 
@@ -1486,6 +1491,7 @@
     { kind: 'erd',             get: () => erdEverOpened,            set: (/** @type {boolean} */ v) => (erdEverOpened = v) },
     { kind: 'diagrams',        get: () => diagramsEverOpened,       set: (/** @type {boolean} */ v) => (diagramsEverOpened = v) },
     { kind: 'schema-timeline', get: () => schemaTimelineEverOpened, set: (/** @type {boolean} */ v) => (schemaTimelineEverOpened = v) },
+    { kind: 'migrations',      get: () => migrationsEverOpened,     set: (/** @type {boolean} */ v) => (migrationsEverOpened = v) },
     { kind: 'orm-schema',      get: () => ormSchemaEverOpened,      set: (/** @type {boolean} */ v) => (ormSchemaEverOpened = v) },
   ])
   /** kind → Date.now() when it last became hidden; absent while active or unmounted. */
@@ -3471,6 +3477,8 @@ let rowSearch = $state('')
     schema: () => openSchemaTab(),
     erd: () => openErdTab(),
     dataDiff: () => openDataDiffTab(),
+    migrations: () => openMigrationsTab(),
+    localServers: () => { commandOpen = false; showLocalServers = true },
     dashboard: () => openDashboardTab(),
     logs: () => openLogsTab(),
     extensions: () => openExtensionsTab(),
@@ -4816,6 +4824,10 @@ let rowSearch = $state('')
 
   function openDataDiffTab() {
     openSingletonTab({ find: findDataDiffTab, create: createDataDiffTab })
+  }
+
+  function openMigrationsTab() {
+    openSingletonTab({ find: findMigrationsTab, create: createMigrationsTab })
   }
 
   /**
@@ -9920,6 +9932,11 @@ let rowSearch = $state('')
   dialect={dbType}
   onopeninsql={(sql) => { if (aiMode) exitAiMode(); void openQueryInEditor(sql) }}
 />
+{#if showLocalServers}
+  {#await import('./LocalServersDialog.svelte') then { default: LocalServersDialog }}
+    <LocalServersDialog bind:open={showLocalServers} onopen={(c) => void handleDockerConnect(c)} />
+  {/await}
+{/if}
 {#if dialogMounted.docker}
   {#await lazyDialogs.docker() then { default: DockerLaunchModal }}
 <DockerLaunchModal
@@ -10127,6 +10144,8 @@ let rowSearch = $state('')
   onopennotebookfile={() => { commandOpen = false; void openNotebookFromFile() }}
   openschematimeline={() => { commandOpen = false; openSchemaTimelineTab() }}
   opendatadiff={() => { commandOpen = false; openDataDiffTab() }}
+  openmigrations={() => { commandOpen = false; openMigrationsTab() }}
+  openlocalservers={() => { commandOpen = false; showLocalServers = true }}
   schemaContext={aiSchemaContext}
   onaskcontinue={handleAskContinue}
 />
@@ -11088,6 +11107,26 @@ let rowSearch = $state('')
                 dbType={dbType}
                 connections={savedConnections}
                 onopensql={(sql) => { if (aiMode) exitAiMode(); void openQueryInEditor(sql) }}
+              />
+            {/await}
+          </svelte:boundary>
+        </div>
+      {/if}
+
+      <!-- Migrations tab: Prisma / Drizzle, mount once, keep alive -->
+      {#if migrationsEverOpened}
+        <div
+          class={activeTab?.kind === 'migrations' ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}
+          inert={activeTab?.kind !== 'migrations' || undefined}
+        >
+          <svelte:boundary failed={tabError}>
+            {#await import('./MigrationsPage.svelte')}<TabLoading />{:then { default: MigrationsPage }}
+              <MigrationsPage
+                connection={persistConnectionId ? { id: persistConnectionId, name: connection?.name } : null}
+                family={dbType}
+                schema={dbType === 'postgres' ? activeSchema : null}
+                active={activeTab?.kind === 'migrations'}
+                onopensql={(sql, title) => openSqlTabWith(sql, title)}
               />
             {/await}
           </svelte:boundary>

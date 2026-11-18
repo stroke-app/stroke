@@ -106,10 +106,14 @@ const TOOLS_ITEMS: &[&[Item]] = &[
     ],
     &[
         ("dataDiff", "Data Diff", None, true),
+        ("migrations", "Migrations", None, true),
         ("dashboard", "Dashboard", None, true),
         ("logs", "Activity Log", Some("CmdOrCtrl+Shift+L"), true),
     ],
-    &[("extensions", "Extensions", Some("CmdOrCtrl+Shift+X"), false)],
+    &[
+        ("localServers", "Local Servers…", None, false),
+        ("extensions", "Extensions", Some("CmdOrCtrl+Shift+X"), false),
+    ],
 ];
 
 const HELP_ITEMS: &[&[Item]] = &[
