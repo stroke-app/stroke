@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.19.8] - 2026-11-18
+
+### Changes
+- Preview a dump and pick its encoding before restoring (#297)
+
+
 ## [2.19.7] - 2026-11-18
 
 ### Changes
