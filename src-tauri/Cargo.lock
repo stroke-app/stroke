@@ -178,6 +178,7 @@ dependencies = [
  "chrono",
  "duckdb",
  "ed25519-dalek",
+ "encoding_rs",
  "flate2",
  "futures",
  "gdk",

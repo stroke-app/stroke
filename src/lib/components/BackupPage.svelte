@@ -439,6 +439,39 @@
   /** @type {FileInfo|null} */
   let importInfo = $state(null)
   let importConfirmed = $state(false)
+  /** The encoding to read the file with; 'auto' is what the file looks like. */
+  let importEncoding = $state('auto')
+
+  /** Encodings dumps come in, by WHATWG label. */
+  const ENCODINGS = [
+    { value: 'utf-8', label: 'UTF-8' },
+    { value: 'utf-16le', label: 'UTF-16 LE' },
+    { value: 'utf-16be', label: 'UTF-16 BE' },
+    { value: 'windows-1252', label: 'Latin-1 (Windows-1252)' },
+    { value: 'iso-8859-2', label: 'Central European (ISO-8859-2)' },
+    { value: 'windows-1251', label: 'Cyrillic (Windows-1251)' },
+    { value: 'shift_jis', label: 'Japanese (Shift_JIS)' },
+    { value: 'gbk', label: 'Chinese (GBK)' },
+    { value: 'euc-kr', label: 'Korean (EUC-KR)' },
+  ]
+  const encodingName = (/** @type {string} */ v) => ENCODINGS.find((e) => e.value === v)?.label ?? v.toUpperCase()
+  const encodingOptions = $derived([
+    { value: 'auto', label: importInfo?.encoding ? `Detected: ${encodingName(importInfo.encoding)}` : 'Detect' },
+    ...ENCODINGS,
+  ])
+
+  /** Read the file again with another encoding, so the preview shows what will run. */
+  async function changeEncoding(/** @type {string} */ v) {
+    importEncoding = v
+    if (!importPath || importInfo?.encrypted) return
+    const path = importPath
+    try {
+      const info = await backupInspectFile(path, v === 'auto' ? null : v)
+      if (importPath === path) importInfo = info
+    } catch (e) {
+      toast.error('Could not read the file', { description: errText(e) })
+    }
+  }
   let importStopping = $state(false)
   let importStartedAt = $state(0)
   let importProgress = $state({ bytesDone: 0, bytesTotal: 0, ok: 0, failed: 0 })
@@ -475,6 +508,7 @@
     importPath = path
     importInfo = null
     importConfirmed = false
+    importEncoding = 'auto'
     try {
       importInfo = await backupInspectFile(path)
     } catch (e) {
@@ -516,7 +550,7 @@
       listenTo('restore-log', (p) => p?.message && addLog(p.level ?? 'info', p.message)),
     ])
     try {
-      const result = await backupImport({ path: importPath })
+      const result = await backupImport({ path: importPath, encoding: importEncoding === 'auto' ? null : importEncoding })
       importResult = result
       importPhase = 'done'
       if (result.statementsOk > 0) {
@@ -912,6 +946,19 @@
             {/if}
           </section>
 
+          {#if importPath && importInfo && !importInfo.encrypted && importPhase === 'idle'}
+            <section class="flex flex-col gap-2">
+              <label for="restore-encoding" class={sectionLabel}>Encoding</label>
+              <FieldSelect
+                id="restore-encoding"
+                class="w-full"
+                value={importEncoding}
+                options={encodingOptions}
+                onchange={(v) => void changeEncoding(v)}
+              />
+            </section>
+          {/if}
+
           {#if importPath && importPhase === 'idle'}
             <section class="flex flex-col gap-2">
               <h2 class={sectionLabel}>Confirm</h2>
@@ -947,7 +994,19 @@
 
       <!-- Right: the run -->
       <section class="flex min-w-0 flex-1 flex-col" aria-label="Restore progress">
-        {#if importPhase === 'idle'}
+        {#if importPhase === 'idle' && importInfo?.preview}
+          <div class="flex h-9 shrink-0 items-center gap-2 border-b border-border/60 px-4">
+            <FileText class="size-3.5 shrink-0 text-muted-foreground" />
+            <p class="min-w-0 flex-1 truncate text-ui-xs text-muted-foreground">
+              {importInfo.previewTruncated ? 'First 100,000 characters' : 'The whole file'}
+            </p>
+          </div>
+          <div class="flex min-h-0 flex-1 flex-col">
+            {#await import('./CodeEditor.svelte') then { default: CodeEditor }}
+              <CodeEditor value={importInfo.preview} readOnly lang="sql" ariaLabel="Preview of the file" />
+            {/await}
+          </div>
+        {:else if importPhase === 'idle'}
           {@render emptyState(
             Upload,
             'Restore from a .sql file',

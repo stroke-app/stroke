@@ -103,7 +103,7 @@ pub struct ImportResult {
 }
 
 /// What `backup_inspect_file` learns from the first few KB of a dump.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BackupFileInfo {
     pub size: u64,
@@ -116,6 +116,71 @@ pub struct BackupFileInfo {
     /// An end-to-end encrypted scheduled backup: opened with the sync key on restore.
     #[serde(default)]
     pub encrypted: bool,
+    /// The encoding the file looks like it's in, as a WHATWG label ("utf-8",
+    /// "utf-16le", "windows-1252"). The restore decodes with it unless the
+    /// user picks another.
+    #[serde(default)]
+    pub encoding: String,
+    /// The first [`PREVIEW_CHARS`] characters, decoded, for the import preview.
+    #[serde(default)]
+    pub preview: String,
+    /// Whether the preview stops before the end of the file.
+    #[serde(default)]
+    pub preview_truncated: bool,
+}
+
+/// How much of a dump the restore screen shows before it runs.
+pub const PREVIEW_CHARS: usize = 100_000;
+
+/// The encoding of a dump: a byte-order mark wins, then valid UTF-8, then
+/// Windows-1252 (what most "not UTF-8" dumps from older tools are).
+fn sniff_encoding(head: &[u8], complete: bool) -> &'static encoding_rs::Encoding {
+    if let Some((enc, _)) = encoding_rs::Encoding::for_bom(head) {
+        return enc;
+    }
+    match std::str::from_utf8(head) {
+        Ok(_) => encoding_rs::UTF_8,
+        // A multi-byte character cut by the end of the sample is still UTF-8.
+        Err(e) if !complete && e.error_len().is_none() => encoding_rs::UTF_8,
+        Err(_) => encoding_rs::WINDOWS_1252,
+    }
+}
+
+/// Decode a whole dump. `label` is what the user picked; None or "auto" sniffs.
+fn decode_script(bytes: Vec<u8>, label: Option<&str>, rep: &Reporter) -> Result<String, String> {
+    let enc = match label.filter(|l| !l.is_empty() && *l != "auto") {
+        Some(l) => encoding_rs::Encoding::for_label(l.as_bytes())
+            .ok_or_else(|| format!("Unknown encoding: {l}"))?,
+        None => sniff_encoding(&bytes, true),
+    };
+    if enc == encoding_rs::UTF_8 {
+        // The fast path: no copy when the file is valid UTF-8.
+        let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF][..]).map(<[u8]>::to_vec).unwrap_or(bytes);
+        return match String::from_utf8(bytes) {
+            Ok(s) => Ok(s),
+            Err(e) => {
+                rep.log("warn", "The file is not valid UTF-8; invalid bytes were replaced. Pick another encoding if the text looks wrong.");
+                Ok(String::from_utf8_lossy(e.as_bytes()).into_owned())
+            }
+        };
+    }
+    rep.log("info", &format!("Reading the file as {}", enc.name()));
+    let (text, _, bad) = enc.decode(&bytes);
+    if bad {
+        rep.log("warn", &format!("Some bytes are not valid {}; they were replaced", enc.name()));
+    }
+    Ok(text.into_owned())
+}
+
+/// The preview text of a dump's first bytes, and whether there is more.
+fn preview_of(head: &[u8], complete: bool, enc: &'static encoding_rs::Encoding) -> (String, bool) {
+    let (text, _, _) = enc.decode(head);
+    let text = text.trim_start_matches('\u{feff}');
+    let cut = truncate_chars(text, PREVIEW_CHARS);
+    let more = !complete || cut.len() < text.len();
+    // A sample cut mid-character ends in a replacement char: drop it.
+    let cut = if !complete { cut.trim_end_matches('\u{fffd}') } else { cut };
+    (cut.to_string(), more)
 }
 
 fn default_true() -> bool { true }
@@ -590,12 +655,13 @@ pub async fn backup_import(
     state: Db<'_>,
     sql: Option<String>,
     path: Option<String>,
+    encoding: Option<String>,
 ) -> Result<ImportResult, String> {
     reset_cancel();
     let rep = Reporter::restore(&app);
     let script = match (sql, path) {
         (Some(s), _) => s,
-        (None, Some(p)) => read_script(&app, &rep, &p).await?,
+        (None, Some(p)) => read_script(&app, &rep, &p, encoding.as_deref()).await?,
         (None, None) => return Err("Nothing to restore: no file or SQL given".into()),
     };
     match require_conn(&state)? {
@@ -614,7 +680,7 @@ pub async fn backup_import(
     }
 }
 
-async fn read_script(app: &AppHandle, rep: &Reporter, path: &str) -> Result<String, String> {
+async fn read_script(app: &AppHandle, rep: &Reporter, path: &str, encoding: Option<&str>) -> Result<String, String> {
     let mut bytes = tokio::fs::read(path).await.map_err(|e| format!("Could not read {path}: {e}"))?;
     // A scheduled backup: encrypted with the account's sync key, then gzip.
     if crate::backup_crypto::is_encrypted(&bytes) {
@@ -633,39 +699,51 @@ async fn read_script(app: &AppHandle, rep: &Reporter, path: &str) -> Result<Stri
             .map_err(|e| format!("Could not unzip {path}: {e}"))?;
         bytes = out;
     }
-    match String::from_utf8(bytes) {
-        Ok(s) => Ok(s),
-        Err(e) => {
-            rep.log("warn", "The file is not valid UTF-8; invalid bytes were replaced");
-            Ok(String::from_utf8_lossy(e.as_bytes()).into_owned())
-        }
-    }
+    decode_script(bytes, encoding, rep)
 }
 
 /// Size and origin of a dump file, read from its first few KB, so the restore
 /// screen can name the engine and warn about a cancelled (incomplete) export.
 #[tauri::command]
-pub async fn backup_inspect_file(path: String) -> Result<BackupFileInfo, String> {
-    let meta = tokio::fs::metadata(&path).await.map_err(|e| format!("Could not open {path}: {e}"))?;
-    let mut head = vec![0u8; 4096];
-    let n = {
-        let mut f = File::open(&path).map_err(|e| format!("Could not open {path}: {e}"))?;
-        f.read(&mut head).map_err(|e| format!("Could not read {path}: {e}"))?
-    };
-    head.truncate(n);
+pub async fn backup_inspect_file(path: String, encoding: Option<String>) -> Result<BackupFileInfo, String> {
+    tokio::task::spawn_blocking(move || inspect_file(&path, encoding.as_deref()))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn inspect_file(path: &str, encoding: Option<&str>) -> Result<BackupFileInfo, String> {
+    let size = std::fs::metadata(path).map_err(|e| format!("Could not open {path}: {e}"))?.len();
+    let open = || File::open(path).map_err(|e| format!("Could not open {path}: {e}"));
+    // Up to four bytes a character, so this always covers PREVIEW_CHARS.
+    let limit = (PREVIEW_CHARS * 4) as u64;
+    let mut head = Vec::new();
+    open()?.take(limit).read_to_end(&mut head).map_err(|e| format!("Could not read {path}: {e}"))?;
     if crate::backup_crypto::is_encrypted(&head) {
-        return Ok(BackupFileInfo { size: meta.len(), engine: None, stroke: true, incomplete: false, encrypted: true });
+        return Ok(BackupFileInfo { size, stroke: true, encrypted: true, ..Default::default() });
     }
+    let mut complete = head.len() as u64 == size;
     if head.starts_with(&[0x1f, 0x8b]) {
         // Gzip: look at the start of what it holds.
-        let mut f = File::open(&path).map_err(|e| format!("Could not open {path}: {e}"))?;
-        let mut inner = vec![0u8; 4096];
-        let mut dec = flate2::read::GzDecoder::new(&mut f);
-        let k = dec.read(&mut inner).unwrap_or(0);
-        inner.truncate(k);
-        return Ok(inspect_head(meta.len(), &String::from_utf8_lossy(&inner)));
+        let mut inner = Vec::new();
+        let mut dec = flate2::read::GzDecoder::new(open()?).take(limit + 1);
+        let _ = dec.read_to_end(&mut inner);
+        complete = inner.len() as u64 <= limit;
+        inner.truncate(limit as usize);
+        head = inner;
     }
-    Ok(inspect_head(meta.len(), &String::from_utf8_lossy(&head)))
+    let picked = match encoding.filter(|l| !l.is_empty() && *l != "auto") {
+        Some(l) => Some(encoding_rs::Encoding::for_label(l.as_bytes()).ok_or_else(|| format!("Unknown encoding: {l}"))?),
+        None => None,
+    };
+    Ok(inspect_bytes(size, &head, complete, picked))
+}
+
+/// `encoding` is the detected one; the preview uses `picked` when given.
+fn inspect_bytes(size: u64, head: &[u8], complete: bool, picked: Option<&'static encoding_rs::Encoding>) -> BackupFileInfo {
+    let enc = sniff_encoding(head, complete);
+    let (preview, preview_truncated) = preview_of(head, complete, picked.unwrap_or(enc));
+    let info = inspect_head(size, &preview);
+    BackupFileInfo { encoding: enc.name().to_ascii_lowercase(), preview, preview_truncated, ..info }
 }
 
 fn inspect_head(size: u64, head: &str) -> BackupFileInfo {
@@ -673,6 +751,7 @@ fn inspect_head(size: u64, head: &str) -> BackupFileInfo {
     let stroke = head.contains("-- Stroke Backup");
     let engine = head
         .lines()
+        .take(40)
         .find_map(|l| l.strip_prefix("-- Engine").map(|r| r.trim_start_matches([' ', ':']).trim().to_string()))
         .filter(|s| !s.is_empty())
         .or_else(|| {
@@ -681,7 +760,7 @@ fn inspect_head(size: u64, head: &str) -> BackupFileInfo {
             else if head.starts_with("PRAGMA foreign_keys=OFF;\nBEGIN TRANSACTION;") { Some("SQLite".into()) }
             else { None }
         });
-    BackupFileInfo { size, engine, stroke, incomplete, encrypted: false }
+    BackupFileInfo { size, engine, stroke, incomplete, ..Default::default() }
 }
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
@@ -2917,6 +2996,46 @@ mod tests {
     fn strips_line_comments() {
         let s = split("SELECT 1; -- a trailing note\nSELECT 2;");
         assert_eq!(s, vec!["SELECT 1".to_string(), "SELECT 2".to_string()]);
+    }
+
+    #[test]
+    fn dump_encodings_are_sniffed_and_decoded() {
+        let rep = Reporter::silent();
+        // Valid UTF-8, with and without a BOM.
+        assert_eq!(sniff_encoding("SELECT 'é';".as_bytes(), true), encoding_rs::UTF_8);
+        let bom = [&[0xEF, 0xBB, 0xBF][..], b"SELECT 1;"].concat();
+        assert_eq!(decode_script(bom, None, &rep).unwrap(), "SELECT 1;");
+        // Latin-1 bytes are not UTF-8: read as Windows-1252.
+        let latin = b"INSERT INTO t VALUES ('caf\xe9');".to_vec();
+        assert_eq!(sniff_encoding(&latin, true), encoding_rs::WINDOWS_1252);
+        assert_eq!(decode_script(latin.clone(), None, &rep).unwrap(), "INSERT INTO t VALUES ('café');");
+        // A picked encoding wins over the sniff.
+        assert!(decode_script(latin, Some("utf-8"), &rep).unwrap().contains('\u{fffd}'));
+        // UTF-16 with a BOM.
+        let mut u16 = vec![0xFF, 0xFE];
+        for c in "SELECT 2;".encode_utf16() { u16.extend_from_slice(&c.to_le_bytes()); }
+        assert_eq!(decode_script(u16, None, &rep).unwrap(), "SELECT 2;");
+        // A sample cut inside a UTF-8 character is still UTF-8, and the cut is dropped.
+        let cut = &"ab é".as_bytes()[..4];
+        assert_eq!(sniff_encoding(cut, false), encoding_rs::UTF_8);
+        assert_eq!(preview_of(cut, false, encoding_rs::UTF_8), ("ab ".to_string(), true));
+        assert!(decode_script(b"x".to_vec(), Some("klingon"), &rep).is_err());
+    }
+
+    #[test]
+    fn inspect_previews_the_start_of_a_dump() {
+        let i = inspect_bytes(9, b"-- MySQL dump\nSELECT 1;", true, None);
+        assert_eq!(i.engine.as_deref(), Some("MySQL"));
+        assert_eq!(i.encoding, "utf-8");
+        assert_eq!(i.preview, "-- MySQL dump\nSELECT 1;");
+        assert!(!i.preview_truncated);
+        let long = "x".repeat(PREVIEW_CHARS + 5);
+        let i = inspect_bytes(long.len() as u64, long.as_bytes(), true, None);
+        assert_eq!(i.preview.len(), PREVIEW_CHARS);
+        assert!(i.preview_truncated);
+        // A picked encoding changes the preview, not what was detected.
+        let i = inspect_bytes(4, b"caf\xe9", true, Some(encoding_rs::UTF_8));
+        assert_eq!((i.encoding.as_str(), i.preview.as_str()), ("windows-1252", "caf\u{fffd}"));
     }
 
     #[test]
