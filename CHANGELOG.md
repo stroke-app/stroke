@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.20.2] - 2026-11-18
+
+### Changes
+- Add Xata and SingleStore providers (#303)
+
+
 ## [2.20.1] - 2026-11-18
 
 ### Changes
