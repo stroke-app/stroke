@@ -1,13 +1,15 @@
 <script>
-  // Scheduled backups for the open database (Pro): the jobs on this
-  // connection with their last runs, and a form to add or edit one. The
-  // schedule and history live on stroke.click; this device runs the jobs for
+  // Scheduled backups for the open database (Pro). One line of header, one
+  // row per schedule, and a compact dialog to add or edit one. The schedule
+  // and history live on stroke.click; this device runs the jobs for
   // connections saved on it (see $lib/stores/scheduled-backups.js).
   import { onMount } from 'svelte'
+  import { Cron } from 'croner'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
   import { Button } from '$lib/components/ui/button/index.js'
   import { Input } from '$lib/components/ui/input/index.js'
-  import FieldSelect from './FieldSelect.svelte'
+  import * as Dialog from '$lib/components/ui/dialog/index.js'
+  import SegmentedControl from './SegmentedControl.svelte'
   import { isSignedIn, openManageAccount } from '$lib/stores/account.js'
   import { hasPro } from '$lib/stores/license.js'
   import {
@@ -24,9 +26,8 @@
   import Trash2 from '@lucide/svelte/icons/trash-2'
   import Plus from '@lucide/svelte/icons/plus'
   import LoaderCircle from '@lucide/svelte/icons/loader-circle'
-  import Check from '@lucide/svelte/icons/check'
-  import X from '@lucide/svelte/icons/x'
   import ExternalLink from '@lucide/svelte/icons/external-link'
+  import Info from '@lucide/svelte/icons/info'
 
   /** @typedef {import('$lib/stores/scheduled-backups.js').BackupJob} BackupJob */
 
@@ -35,22 +36,30 @@
     connection = /** @type {{ id: string, name?: string, type?: string } | null} */ (null),
   } = $props()
 
-  const sectionLabel = 'text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground'
+  const label = 'text-ui-xs font-medium text-muted-foreground'
   const driver = $derived(String(connection?.type ?? ''))
   const supported = $derived(SCHEDULE_DRIVERS.has(driver))
   const overview = $derived($backupOverview)
   const jobs = $derived((overview?.jobs ?? []).filter((j) => j.connection_id === connection?.id))
   const otherJobs = $derived((overview?.jobs ?? []).filter((j) => j.connection_id !== connection?.id))
   const atLimit = $derived(!!overview && overview.jobs.length >= overview.max_jobs)
+  const usedPct = $derived(overview ? Math.min(100, (overview.used_bytes / overview.quota_bytes) * 100) : 0)
 
   onMount(() => {
     if ($isSignedIn) void refreshBackupJobs()
   })
 
   // ── Form ───────────────────────────────────────────────────────────────────
-  const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
-  let editing = $state(/** @type {string|null} */ (null))
+  const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+  const FREQ = [
+    { value: 'hourly', label: 'Hourly' },
+    { value: '6h', label: 'Every 6h' },
+    { value: 'daily', label: 'Daily' },
+    { value: 'weekly', label: 'Weekly' },
+    { value: 'custom', label: 'Cron' },
+  ]
   let formOpen = $state(false)
+  let editing = $state(/** @type {string|null} */ (null))
   let saving = $state(false)
   let formError = $state(/** @type {string|null} */ (null))
   let preset = $state('daily')
@@ -77,6 +86,16 @@
     if (preset === 'daily') return `${m} ${h} * * *`
     if (preset === 'weekly') return `${m} ${h} * * ${weekday}`
     return customCron.trim()
+  })
+
+  /** The next time the schedule fires, or an error for a bad cron. */
+  const nextRun = $derived.by(() => {
+    try {
+      const next = new Cron(cron, { timezone, paused: true }).nextRun()
+      return next ? { at: next, error: null } : { at: null, error: 'Never runs' }
+    } catch {
+      return { at: null, error: 'Not a valid cron' }
+    }
   })
 
   /** @param {BackupJob|null} job */
@@ -116,9 +135,10 @@
     e.preventDefault()
     if (!connection || saving) return
     formError = null
+    if (nextRun.error) { formError = nextRun.error; return }
     if (destination === 's3') {
       if (!s3Bucket.trim()) { formError = 'Name the bucket.'; return }
-      if (!s3HasKeys && (!s3AccessKey.trim() || !s3Secret.trim())) { formError = 'Add the access key ID and secret access key.'; return }
+      if (!s3HasKeys && (!s3AccessKey.trim() || !s3Secret.trim())) { formError = 'Add the access key and secret.'; return }
     }
     saving = true
     const id = editing ?? crypto.randomUUID()
@@ -142,7 +162,7 @@
         s3_prefix: destination === 's3' ? s3Prefix.trim() || null : null,
       })
       formOpen = false
-      toast.success(editing ? 'Schedule saved' : 'Backup scheduled', { description: `${describeCron(cron)}, while Stroke is open on this computer.` })
+      toast.success(editing ? 'Schedule saved' : 'Backup scheduled', { description: describeCron(cron) })
     } catch (err) {
       formError = String(err)
     } finally {
@@ -157,8 +177,16 @@
 
   let confirmDelete = $state(/** @type {string|null} */ (null))
 
-  /** @param {number} ms */
-  const when = (ms) => new Date(ms).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+  /** @param {number|Date} t */
+  const when = (t) => new Date(t).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })
+  /** @param {number} t */
+  function ago(t) {
+    const d = Math.max(0, Date.now() - t) / 1000
+    if (d < 90) return 'just now'
+    if (d < 3600) return `${Math.round(d / 60)}m ago`
+    if (d < 86400) return `${Math.round(d / 3600)}h ago`
+    return `${Math.round(d / 86400)}d ago`
+  }
 
   async function openWebsite() {
     try {
@@ -170,208 +198,132 @@
   }
 </script>
 
-{#snippet message(/** @type {string} */ title, /** @type {string} */ body)}
+{#snippet message(/** @type {string} */ title, /** @type {string} */ body, /** @type {import('svelte').Snippet | undefined} */ action = undefined)}
   <div class="flex flex-1 flex-col items-center justify-center gap-2 px-8 text-center">
     <CalendarClock class="size-5 shrink-0 text-muted-foreground" />
     <p class="text-ui-sm font-medium text-foreground">{title}</p>
-    <p class="max-w-sm text-ui-xs leading-relaxed text-muted-foreground">{body}</p>
+    <p class="max-w-xs text-ui-xs leading-relaxed text-muted-foreground">{body}</p>
+    {#if action}<div class="mt-2">{@render action()}</div>{/if}
   </div>
 {/snippet}
 
+{#snippet getPro()}
+  <Button variant="secondary" size="sm" onclick={() => void openManageAccount()}>Get Stroke Pro <ExternalLink class="size-3.5 shrink-0" /></Button>
+{/snippet}
+
+{#snippet addButton()}
+  <Button size="sm" disabled={atLimit} onclick={() => void openForm()}><Plus class="size-3.5 shrink-0" />Add schedule</Button>
+{/snippet}
+
 {#if !$isSignedIn}
-  {@render message('Sign in for scheduled backups', 'Scheduled backups come with Stroke Pro on your account.')}
+  {@render message('Sign in for scheduled backups', 'They come with Stroke Pro on your account.')}
 {:else if !$hasPro || overview?.pro === false}
-  <div class="flex flex-1 flex-col items-center justify-center gap-3 px-8 text-center">
-    <CalendarClock class="size-5 shrink-0 text-muted-foreground" />
-    <p class="text-ui-sm font-medium text-foreground">Scheduled backups are part of Stroke Pro</p>
-    <p class="max-w-sm text-ui-xs leading-relaxed text-muted-foreground">Back up up to 10 databases on a schedule, to Stroke Cloud or your own S3 bucket.</p>
-    <Button variant="secondary" size="sm" onclick={() => void openManageAccount()}>Get Stroke Pro <ExternalLink class="size-3.5 shrink-0" /></Button>
-  </div>
+  {@render message('Scheduled backups are a Pro feature', 'Up to 10 databases, to Stroke Cloud or your own S3.', getPro)}
 {:else if !connection}
-  {@render message('Save this connection first', 'Scheduled backups run on saved connections, so Stroke can open them again later.')}
+  {@render message('Save this connection first', 'Schedules run on saved connections.')}
 {:else if !supported}
-  {@render message('Not available for this database', 'Scheduled backups support PostgreSQL, MySQL, SQLite, Cloudflare D1, Turso/libSQL, DuckDB and SQL Server.')}
+  {@render message('Not available for this database', 'PostgreSQL, MySQL, SQLite, D1, Turso, DuckDB and SQL Server.')}
 {:else}
   <div class="app-scroll flex min-h-0 flex-1 flex-col overflow-y-auto">
-    <div class="mx-auto flex w-full max-w-2xl flex-col gap-8 px-6 py-8">
-      <header class="flex items-start justify-between gap-4">
-        <div class="min-w-0">
-          <h2 class="text-ui-lg font-semibold tracking-tight text-foreground">Scheduled backups</h2>
-          <p class="mt-1 text-ui-xs leading-relaxed text-muted-foreground text-pretty">
-            Stroke runs them while it's open on a computer with this connection. A run missed while it was closed happens the next time it opens.
-          </p>
-          {#if overview}
-            <p class="mt-2 text-ui-xs tabular-nums text-muted-foreground">
-              {overview.jobs.length} of {overview.max_jobs} schedules · {formatBytes(overview.used_bytes)} of {formatBytes(overview.quota_bytes)} on Stroke Cloud
-            </p>
-          {/if}
-        </div>
-        <Button variant="ghost" size="sm" class="shrink-0" onclick={() => void openWebsite()}>
-          stroke.click <ExternalLink class="size-3.5 shrink-0" />
+    <div class="mx-auto flex w-full max-w-3xl flex-col gap-6 px-6 py-6">
+      <!-- One line: title, usage, the one action. -->
+      <header class="flex items-center gap-3">
+        <h2 class="text-ui-lg font-semibold text-foreground">Scheduled backups</h2>
+        <span
+          class="text-muted-foreground"
+          title="Runs while Stroke is open on a computer with this connection. A run missed while it was closed happens when it opens."
+        >
+          <Info class="size-3.5 shrink-0" />
+        </span>
+        <span class="min-w-0 flex-1"></span>
+        {#if overview}
+          <span class="hidden items-center gap-2 text-ui-xs text-muted-foreground tabular-nums sm:flex" title="Stroke Cloud storage">
+            <span class="h-1 w-16 overflow-hidden rounded-full bg-muted">
+              <span class="block h-full rounded-full bg-primary" style:width="{usedPct}%"></span>
+            </span>
+            {formatBytes(overview.used_bytes)} / {formatBytes(overview.quota_bytes)}
+          </span>
+          <span class="text-ui-xs text-muted-foreground tabular-nums">{overview.jobs.length}/{overview.max_jobs}</span>
+        {/if}
+        <Button variant="ghost" size="icon-sm" aria-label="Open on stroke.click" title="History and downloads on stroke.click" onclick={() => void openWebsite()}>
+          <ExternalLink class="size-3.5 shrink-0" />
         </Button>
+        {@render addButton()}
       </header>
 
       {#if $backupLoadError && !overview}
         <p class="text-ui-xs text-destructive">{$backupLoadError}</p>
       {/if}
 
-      <section class="flex flex-col gap-2" aria-labelledby="sched-this">
-        <h3 id="sched-this" class={sectionLabel}>This database</h3>
-        {#if !overview}
-          <div class="h-12 animate-pulse rounded-md bg-muted/50"></div>
-        {:else if jobs.length === 0 && !formOpen}
-          <p class="text-ui-sm text-muted-foreground">No schedule yet.</p>
-        {/if}
-        {#each jobs as job (job.id)}
-          {@const last = job.runs[0]}
-          <div class="flex items-center gap-3 border-b border-border/40 py-2.5 last:border-b-0">
-            {#if job.destination === 'stroke'}<Cloud class="size-4 shrink-0 text-muted-foreground" />{:else}<HardDrive class="size-4 shrink-0 text-muted-foreground" />{/if}
-            <div class="min-w-0 flex-1">
-              <p class="flex items-center gap-2 text-ui-sm text-foreground">
-                <span class="truncate">{describeCron(job.cron)}</span>
-                {#if !job.enabled}<span class="shrink-0 rounded-md bg-muted px-1.5 py-0.5 text-ui-3xs font-medium text-muted-foreground">Paused</span>{/if}
-              </p>
-              <p class="truncate text-ui-xs text-muted-foreground">
-                {job.destination === 'stroke' ? `Stroke Cloud, keeps ${job.keep}` : `S3 bucket ${job.s3_bucket}`}
-                {#if $runningJobId === job.id} · Running now
-                {:else if last} · Last {last.status === 'failed' ? 'failed' : last.status === 'running' ? 'started' : 'ran'} {when(last.started_at)}
+      {#if !overview}
+        <div class="h-24 animate-pulse rounded-lg bg-muted/40"></div>
+      {:else if jobs.length === 0}
+        <div class="flex flex-col items-center gap-3 rounded-lg border border-dashed border-border/70 px-6 py-12 text-center">
+          <CalendarClock class="size-5 shrink-0 text-muted-foreground" />
+          <p class="text-ui-sm text-muted-foreground">No schedule for this database yet.</p>
+          {@render addButton()}
+        </div>
+      {:else}
+        <ul class="divide-y divide-border/50 overflow-hidden rounded-lg border border-border/60">
+          {#each jobs as job (job.id)}
+            {@const last = job.runs[0]}
+            {@const running = $runningJobId === job.id}
+            <li class="group flex items-center gap-3 px-3 py-2.5">
+              <span class="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted/60">
+                {#if job.destination === 'stroke'}<Cloud class="size-4 shrink-0 text-muted-foreground" />{:else}<HardDrive class="size-4 shrink-0 text-muted-foreground" />{/if}
+              </span>
+              <div class="min-w-0 flex-1">
+                <p class="flex items-center gap-2 text-ui-sm text-foreground">
+                  <span class="truncate">{describeCron(job.cron)}</span>
+                  {#if !job.enabled}<span class="rounded bg-muted px-1.5 text-ui-3xs text-muted-foreground">Paused</span>{/if}
+                </p>
+                <p class="truncate text-ui-xs text-muted-foreground" title={last?.error ?? undefined}>
+                  {job.destination === 'stroke' ? `Stroke Cloud · keeps ${job.keep}` : job.s3_bucket}
+                </p>
+              </div>
+              <div class="hidden w-28 shrink-0 text-right text-ui-xs sm:block">
+                {#if running}
+                  <span class="inline-flex items-center gap-1.5 text-foreground"><LoaderCircle class="size-3 shrink-0 animate-spin" />Running</span>
+                {:else if last}
+                  <span class={cn('inline-flex items-center gap-1.5', last.status === 'failed' ? 'text-destructive' : 'text-muted-foreground')} title={last.error ?? undefined}>
+                    <span class={cn('size-1.5 shrink-0 rounded-full', last.status === 'failed' ? 'bg-destructive' : last.status === 'success' ? 'bg-success' : 'bg-muted-foreground')}></span>
+                    {last.status === 'failed' ? 'Failed' : ago(last.started_at)}
+                  </span>
+                {:else}
+                  <span class="text-muted-foreground">Never run</span>
                 {/if}
-                {#if job.enabled && job.next_run_at} · Next {when(job.next_run_at)}{/if}
-              </p>
-              {#if last?.status === 'failed' && last.error}
-                <p class="mt-0.5 truncate text-ui-xs text-destructive" title={last.error}>{last.error}</p>
-              {/if}
-            </div>
-            <div class="flex shrink-0 items-center gap-0.5">
-              {#if $runningJobId === job.id}
-                <LoaderCircle class="mx-2 size-3.5 shrink-0 animate-spin text-muted-foreground" aria-label="Running" />
-              {:else}
-                <Button variant="ghost" size="sm" disabled={!!job.run_requested_at} onclick={() => act(() => patchBackupJob(job.id, { run_now: true }), "Couldn't start it")}>
-                  <Play class="size-3.5 shrink-0" />Run now
-                </Button>
-              {/if}
-              <Button variant="ghost" size="icon-sm" aria-label={job.enabled ? 'Pause' : 'Resume'} onclick={() => act(() => patchBackupJob(job.id, { enabled: !job.enabled }), "Couldn't change it")}>
-                {#if job.enabled}<Pause class="size-3.5 shrink-0" />{:else}<Play class="size-3.5 shrink-0" />{/if}
-              </Button>
-              <Button variant="ghost" size="icon-sm" aria-label="Edit schedule" onclick={() => void openForm(job)}><Pencil class="size-3.5 shrink-0" /></Button>
-              {#if confirmDelete === job.id}
-                <Button variant="ghost" size="sm" class="text-destructive hover:text-destructive" onclick={() => act(() => deleteBackupJob(job.id), "Couldn't delete it")}>Delete with backups</Button>
-                <Button variant="ghost" size="icon-sm" aria-label="Keep it" onclick={() => (confirmDelete = null)}><X class="size-3.5 shrink-0" /></Button>
-              {:else}
-                <Button variant="ghost" size="icon-sm" aria-label="Delete schedule" onclick={() => (confirmDelete = job.id)}><Trash2 class="size-3.5 shrink-0" /></Button>
-              {/if}
-            </div>
-          </div>
-        {/each}
-
-        {#if overview && !formOpen}
-          <div>
-            <Button variant="secondary" size="sm" disabled={atLimit} onclick={() => void openForm()}><Plus class="size-3.5 shrink-0" />Add schedule</Button>
-            {#if atLimit}<p class="mt-1.5 text-ui-xs text-muted-foreground">You have {overview.max_jobs} schedules, the most Pro allows. Delete one to add another.</p>{/if}
-          </div>
-        {/if}
-      </section>
-
-      {#if formOpen}
-        <form class="flex flex-col gap-5 rounded-lg border border-border/60 p-4" onsubmit={submit} aria-label={editing ? 'Edit schedule' : 'New schedule'}>
-          <div class="grid grid-cols-2 gap-3">
-            <div class="flex flex-col gap-1.5">
-              <label for="sched-preset" class={sectionLabel}>Repeat</label>
-              <FieldSelect id="sched-preset" class="w-full" bind:value={preset} options={[
-                { value: 'hourly', label: 'Every hour' },
-                { value: '6h', label: 'Every 6 hours' },
-                { value: 'daily', label: 'Every day' },
-                { value: 'weekly', label: 'Every week' },
-                { value: 'custom', label: 'Custom (cron)' },
-              ]} />
-            </div>
-            {#if preset === 'daily' || preset === 'weekly'}
-              <div class="flex flex-col gap-1.5">
-                <label for="sched-time" class={sectionLabel}>At</label>
-                <Input id="sched-time" type="time" bind:value={time} required />
+                {#if job.enabled && job.next_run_at}
+                  <span class="block text-muted-foreground/70 tabular-nums">Next {when(job.next_run_at)}</span>
+                {/if}
               </div>
-            {/if}
-            {#if preset === 'weekly'}
-              <div class="flex flex-col gap-1.5">
-                <label for="sched-day" class={sectionLabel}>On</label>
-                <FieldSelect id="sched-day" class="w-full" bind:value={weekday} options={DAYS.map((d, i) => ({ value: String(i), label: d }))} />
+              <div class="flex shrink-0 items-center">
+                {#if confirmDelete === job.id}
+                  <Button variant="ghost" size="sm" class="text-destructive hover:text-destructive" onclick={() => act(() => deleteBackupJob(job.id), "Couldn't delete it")}>Delete</Button>
+                  <Button variant="ghost" size="sm" onclick={() => (confirmDelete = null)}>Keep</Button>
+                {:else}
+                  <Button variant="ghost" size="icon-sm" aria-label="Run now" title="Run now" disabled={running || !!job.run_requested_at} onclick={() => act(() => patchBackupJob(job.id, { run_now: true }), "Couldn't start it")}>
+                    <Play class="size-3.5 shrink-0" />
+                  </Button>
+                  <Button variant="ghost" size="icon-sm" aria-label={job.enabled ? 'Pause' : 'Resume'} title={job.enabled ? 'Pause' : 'Resume'} onclick={() => act(() => patchBackupJob(job.id, { enabled: !job.enabled }), "Couldn't change it")}>
+                    {#if job.enabled}<Pause class="size-3.5 shrink-0" />{:else}<CalendarClock class="size-3.5 shrink-0" />{/if}
+                  </Button>
+                  <Button variant="ghost" size="icon-sm" aria-label="Edit" title="Edit" onclick={() => void openForm(job)}><Pencil class="size-3.5 shrink-0" /></Button>
+                  <Button variant="ghost" size="icon-sm" aria-label="Delete" title="Delete with its backups" onclick={() => (confirmDelete = job.id)}><Trash2 class="size-3.5 shrink-0" /></Button>
+                {/if}
               </div>
-            {/if}
-            {#if preset === 'custom'}
-              <div class="flex flex-col gap-1.5">
-                <label for="sched-cron" class={sectionLabel}>Cron</label>
-                <Input id="sched-cron" class="font-mono" bind:value={customCron} placeholder="0 3 * * *" required />
-              </div>
-            {/if}
-          </div>
-          <p class="-mt-3 text-ui-xs text-muted-foreground">{describeCron(cron)}, {timezone} time. At most once an hour.</p>
-
-          <fieldset class="flex flex-col gap-2">
-            <legend class={cn(sectionLabel, 'mb-2')}>Save to</legend>
-            {#each [{ v: 'stroke', icon: Cloud, title: 'Stroke Cloud', body: 'Stored for you, 5 GB per account. Download from stroke.click.' }, { v: 's3', icon: HardDrive, title: 'My S3 bucket', body: 'AWS S3, Cloudflare R2, MinIO, Backblaze B2 or any S3-compatible storage.' }] as opt (opt.v)}
-              <label class={cn('flex cursor-pointer items-start gap-3 rounded-md border px-3 py-2.5 transition-colors', destination === opt.v ? 'border-primary/60 bg-primary/5' : 'border-border/60 hover:border-border')}>
-                <input type="radio" name="sched-dest" value={opt.v} bind:group={destination} class="sr-only" />
-                <opt.icon class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-                <span class="min-w-0 flex-1">
-                  <span class="block text-ui-sm font-medium text-foreground">{opt.title}</span>
-                  <span class="block text-ui-xs text-muted-foreground">{opt.body}</span>
-                </span>
-                {#if destination === opt.v}<Check class="size-3.5 shrink-0 text-primary" />{/if}
-              </label>
-            {/each}
-          </fieldset>
-
-          {#if destination === 'stroke'}
-            <div class="flex w-40 flex-col gap-1.5">
-              <label for="sched-keep" class={sectionLabel}>Keep the last</label>
-              <FieldSelect id="sched-keep" class="w-full" bind:value={keep} options={[3, 7, 14, 30].map((n) => ({ value: String(n), label: `${n} backups` }))} />
-            </div>
-          {:else}
-            <div class="grid grid-cols-2 gap-3">
-              <div class="flex flex-col gap-1.5">
-                <label for="s3-bucket" class={sectionLabel}>Bucket</label>
-                <Input id="s3-bucket" bind:value={s3Bucket} placeholder="my-backups" required />
-              </div>
-              <div class="flex flex-col gap-1.5">
-                <label for="s3-region" class={sectionLabel}>Region</label>
-                <Input id="s3-region" bind:value={s3Region} placeholder="us-east-1 (auto for R2)" />
-              </div>
-              <div class="col-span-2 flex flex-col gap-1.5">
-                <label for="s3-endpoint" class={sectionLabel}>Endpoint <span class="normal-case tracking-normal font-normal">(leave empty for AWS)</span></label>
-                <Input id="s3-endpoint" bind:value={s3Endpoint} placeholder="https://<account>.r2.cloudflarestorage.com" />
-              </div>
-              <div class="col-span-2 flex flex-col gap-1.5">
-                <label for="s3-prefix" class={sectionLabel}>Folder <span class="normal-case tracking-normal font-normal">(optional)</span></label>
-                <Input id="s3-prefix" bind:value={s3Prefix} placeholder="stroke/prod" />
-              </div>
-              <div class="flex flex-col gap-1.5">
-                <label for="s3-key" class={sectionLabel}>Access key ID</label>
-                <Input id="s3-key" bind:value={s3AccessKey} placeholder={s3HasKeys ? 'Saved on this computer' : ''} />
-              </div>
-              <div class="flex flex-col gap-1.5">
-                <label for="s3-secret" class={sectionLabel}>Secret access key</label>
-                <Input id="s3-secret" type="password" bind:value={s3Secret} placeholder={s3HasKeys ? 'Saved on this computer' : ''} />
-              </div>
-              <p class="col-span-2 text-ui-xs text-muted-foreground">The keys stay in this computer's keychain. stroke.click only sees the bucket name.</p>
-            </div>
-          {/if}
-
-          {#if formError}<p class="text-ui-xs text-destructive" role="alert">{formError}</p>{/if}
-          <div class="flex items-center gap-2">
-            <Button type="submit" size="sm" disabled={saving}>{#if saving}<LoaderCircle class="size-3.5 shrink-0 animate-spin" />{/if}{editing ? 'Save schedule' : 'Schedule backup'}</Button>
-            <Button type="button" variant="ghost" size="sm" onclick={() => (formOpen = false)}>Cancel</Button>
-          </div>
-        </form>
+            </li>
+          {/each}
+        </ul>
       {/if}
 
       {#if otherJobs.length}
         <section class="flex flex-col gap-2" aria-labelledby="sched-other">
-          <h3 id="sched-other" class={sectionLabel}>Other databases</h3>
+          <h3 id="sched-other" class={label}>Other databases</h3>
           <ul class="flex flex-col">
             {#each otherJobs as job (job.id)}
-              <li class="flex h-9 items-center gap-3 border-b border-border/40 text-ui-sm last:border-b-0">
+              <li class="flex h-8 items-center gap-3 text-ui-xs">
                 <span class="min-w-0 flex-1 truncate text-foreground">{job.label}</span>
-                <span class="shrink-0 text-ui-xs text-muted-foreground">{describeCron(job.cron)}{job.enabled ? '' : ' · Paused'}</span>
+                <span class="shrink-0 text-muted-foreground">{describeCron(job.cron)}{job.enabled ? '' : ' · Paused'}</span>
               </li>
             {/each}
           </ul>
@@ -380,3 +332,83 @@
     </div>
   </div>
 {/if}
+
+<Dialog.Root bind:open={formOpen}>
+  <Dialog.Content class="sm:max-w-[30rem]">
+    <Dialog.Header>
+      <Dialog.Title>{editing ? 'Edit schedule' : 'New schedule'}</Dialog.Title>
+      <Dialog.Description class="truncate">{connection?.name || driver}</Dialog.Description>
+    </Dialog.Header>
+
+    <form class="flex flex-col gap-5" onsubmit={submit}>
+      <div class="flex flex-col gap-2">
+        <span class={label}>Repeat</span>
+        <SegmentedControl options={FREQ} bind:value={preset} ariaLabel="Repeat" class="w-full" />
+        {#if preset === 'daily' || preset === 'weekly'}
+          <div class="flex items-center gap-2">
+            {#if preset === 'weekly'}
+              <SegmentedControl options={DAYS.map((d, i) => ({ value: String(i), label: d }))} bind:value={weekday} ariaLabel="Day" class="min-w-0 flex-1" />
+            {/if}
+            <Input type="time" bind:value={time} required aria-label="Time" class="h-8 w-28" />
+          </div>
+        {:else if preset === 'custom'}
+          <Input bind:value={customCron} placeholder="0 3 * * *" aria-label="Cron" class="h-8 font-mono" required />
+        {/if}
+        <p class={cn('text-ui-xs tabular-nums', nextRun.error ? 'text-destructive' : 'text-muted-foreground')}>
+          {nextRun.error ?? `Next ${when(nextRun.at ?? 0)}`}
+        </p>
+      </div>
+
+      <div class="flex flex-col gap-2">
+        <span class={label}>Save to</span>
+        <div class="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Save to">
+          {#each [{ v: /** @type {const} */ ('stroke'), icon: Cloud, title: 'Stroke Cloud', sub: '5 GB included' }, { v: /** @type {const} */ ('s3'), icon: HardDrive, title: 'S3 bucket', sub: 'R2, MinIO, B2, AWS' }] as opt (opt.v)}
+            <button
+              type="button"
+              role="radio"
+              aria-checked={destination === opt.v}
+              onclick={() => (destination = opt.v)}
+              class={cn(
+                'flex items-center gap-2.5 rounded-md border px-3 py-2 text-left transition-colors',
+                destination === opt.v ? 'border-primary/60 bg-primary/5' : 'border-border/60 hover:border-border',
+              )}
+            >
+              <opt.icon class="size-4 shrink-0 text-muted-foreground" />
+              <span class="min-w-0">
+                <span class="block text-ui-sm text-foreground">{opt.title}</span>
+                <span class="block text-ui-2xs text-muted-foreground">{opt.sub}</span>
+              </span>
+            </button>
+          {/each}
+        </div>
+      </div>
+
+      {#if destination === 'stroke'}
+        <div class="flex items-center justify-between gap-3">
+          <span class={label}>Keep</span>
+          <SegmentedControl options={['3', '7', '14', '30'].map((n) => ({ value: n, label: n }))} bind:value={keep} ariaLabel="Backups to keep" />
+        </div>
+      {:else}
+        <div class="grid grid-cols-2 gap-2">
+          <Input bind:value={s3Bucket} placeholder="Bucket" aria-label="Bucket" class="h-8" required />
+          <Input bind:value={s3Region} placeholder="Region (us-east-1)" aria-label="Region" class="h-8" />
+          <Input bind:value={s3Endpoint} placeholder="Endpoint (empty for AWS)" aria-label="Endpoint" class="col-span-2 h-8" />
+          <Input bind:value={s3Prefix} placeholder="Folder (optional)" aria-label="Folder" class="col-span-2 h-8" />
+          <Input bind:value={s3AccessKey} placeholder={s3HasKeys ? 'Access key (saved)' : 'Access key ID'} aria-label="Access key ID" class="h-8" />
+          <Input type="password" bind:value={s3Secret} placeholder={s3HasKeys ? 'Secret (saved)' : 'Secret access key'} aria-label="Secret access key" class="h-8" />
+          <p class="col-span-2 text-ui-2xs text-muted-foreground">Keys stay in this computer's keychain.</p>
+        </div>
+      {/if}
+
+      {#if formError}<p class="text-ui-xs text-destructive" role="alert">{formError}</p>{/if}
+
+      <Dialog.Footer>
+        <Button type="button" variant="ghost" size="sm" onclick={() => (formOpen = false)}>Cancel</Button>
+        <Button type="submit" size="sm" disabled={saving}>
+          {#if saving}<LoaderCircle class="size-3.5 shrink-0 animate-spin" />{/if}
+          {editing ? 'Save' : 'Schedule'}
+        </Button>
+      </Dialog.Footer>
+    </form>
+  </Dialog.Content>
+</Dialog.Root>
