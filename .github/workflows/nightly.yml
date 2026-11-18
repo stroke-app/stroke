@@ -102,7 +102,8 @@ jobs:
           - platform: macos-latest
             name: macos-aarch64
             args: '--target aarch64-apple-darwin --bundles app,dmg'
-          - platform: macos-latest
+          # Intel runner: a separate pool from the busy arm64 one, and a native x64 build.
+          - platform: macos-15-intel
             name: macos-x64
             args: '--target x86_64-apple-darwin --bundles app,dmg'
 
