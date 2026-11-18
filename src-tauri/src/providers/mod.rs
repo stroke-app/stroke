@@ -30,6 +30,8 @@ mod railway;
 mod tidb;
 mod turso;
 mod upstash;
+mod xata;
+mod singlestore;
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use serde::{Deserialize, Serialize};
@@ -75,6 +77,8 @@ pub enum Provider {
     Nile,
     Upstash,
     PostHog,
+    Xata,
+    SingleStore,
 }
 
 /// How a provider signs the user in.
@@ -103,13 +107,16 @@ impl Provider {
             "nile" => Ok(Self::Nile),
             "upstash" => Ok(Self::Upstash),
             "posthog" => Ok(Self::PostHog),
+            "xata" => Ok(Self::Xata),
+            "singlestore" => Ok(Self::SingleStore),
             other => Err(format!("Unknown provider: {other}")),
         }
     }
 
-    const ALL: [Provider; 10] = [
+    const ALL: [Provider; 12] = [
         Self::Neon, Self::Supabase, Self::PlanetScale, Self::Prisma, Self::TiDB,
         Self::Turso, Self::Railway, Self::Nile, Self::Upstash, Self::PostHog,
+        Self::Xata, Self::SingleStore,
     ];
 
     /// The API host each listing and connect talks to, for `provider_warm`.
@@ -125,6 +132,8 @@ impl Provider {
             Self::Railway => "https://backboard.railway.com",
             Self::Nile => "https://global.thenile.dev",
             Self::Upstash => "https://api.upstash.com",
+            Self::Xata => "https://api.xata.tech",
+            Self::SingleStore => "https://api.singlestore.com",
             Self::PostHog => return None,
         })
     }
@@ -142,6 +151,8 @@ impl Provider {
             Self::Nile => "nile",
             Self::Upstash => "upstash",
             Self::PostHog => "posthog",
+            Self::Xata => "xata",
+            Self::SingleStore => "singlestore",
         }
     }
 
@@ -158,6 +169,8 @@ impl Provider {
             Self::Nile => "Nile",
             Self::Upstash => "Upstash",
             Self::PostHog => "PostHog",
+            Self::Xata => "Xata",
+            Self::SingleStore => "SingleStore",
         }
     }
 
@@ -181,13 +194,15 @@ impl Provider {
             Self::Nile => nile::OAUTH,
             Self::Upstash => upstash::OAUTH,
             Self::PostHog => posthog::OAUTH,
+            Self::Xata => xata::OAUTH,
+            Self::SingleStore => singlestore::OAUTH,
         }
     }
 
     /// Whether a provider uses a pasted API credential instead of the browser
     /// OAuth dance: Upstash, which offers no OAuth to third-party apps.
     fn is_token_based(&self) -> bool {
-        matches!(self, Self::Upstash | Self::PostHog)
+        matches!(self, Self::Upstash | Self::PostHog | Self::Xata | Self::SingleStore)
     }
 
     /// Localhost callback ports to try, in order. PlanetScale accepts only ONE
@@ -246,6 +261,8 @@ impl Provider {
             Self::Nile => nile::list_databases(token).await,
             Self::Upstash => upstash::list_databases(token).await,
             Self::PostHog => posthog::list_databases(token).await,
+            Self::Xata => xata::list_databases(token).await,
+            Self::SingleStore => singlestore::list_databases(token).await,
         }
     }
 
@@ -265,6 +282,8 @@ impl Provider {
             Self::Nile => nile::build_connection(token, db_ref).await,
             Self::Upstash => upstash::build_connection(token, db_ref).await,
             Self::PostHog => posthog::build_connection(token, db_ref).await,
+            Self::Xata => xata::build_connection(token, db_ref).await,
+            Self::SingleStore => singlestore::build_connection(token, db_ref).await,
         }
     }
 
@@ -279,7 +298,7 @@ impl Provider {
             Self::Turso => turso::create_options(token, scope).await,
             Self::Nile => nile::create_options(token, scope).await,
             Self::Upstash => Ok(upstash::create_options()),
-            Self::PlanetScale | Self::Railway | Self::PostHog => Err(self.create_unsupported()),
+            Self::PlanetScale | Self::Railway | Self::PostHog | Self::Xata | Self::SingleStore => Err(self.create_unsupported()),
         }
     }
 
@@ -292,7 +311,7 @@ impl Provider {
             Self::Turso => turso::create_database(token, req).await,
             Self::Nile => nile::create_database(token, req).await,
             Self::Upstash => upstash::create_database(token, req).await,
-            Self::PlanetScale | Self::Railway | Self::PostHog => Err(self.create_unsupported()),
+            Self::PlanetScale | Self::Railway | Self::PostHog | Self::Xata | Self::SingleStore => Err(self.create_unsupported()),
         }
     }
 
@@ -306,7 +325,7 @@ impl Provider {
             Self::Upstash => upstash::database_status(token, db_ref).await,
             // Turso databases are usable the moment the create call returns.
             Self::Turso => Ok(DatabaseStatus::ready("ready")),
-            Self::PlanetScale | Self::Railway | Self::PostHog => Err(self.create_unsupported()),
+            Self::PlanetScale | Self::Railway | Self::PostHog | Self::Xata | Self::SingleStore => Err(self.create_unsupported()),
         }
     }
 
@@ -323,6 +342,8 @@ impl Provider {
             // access, and a project created later isn't covered by the grant.
             Self::Railway => "Stroke's Railway sign-in can only see the projects you shared with it, so it can't create one. Create it in the Railway dashboard, then refresh.".into(),
             Self::PostHog => "PostHog projects are created in PostHog.".into(),
+            Self::Xata => "Create Xata projects and branches in the Xata console, then refresh.".into(),
+            Self::SingleStore => "Create SingleStore workspaces in the SingleStore portal, then refresh.".into(),
             _ => format!("{} databases can't be created from Stroke yet.", self.label()),
         }
     }

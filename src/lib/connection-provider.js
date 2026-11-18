@@ -18,6 +18,8 @@ const HOSTS = [
   [/(\.rlwy\.net|\.railway\.app|\.railway\.internal)$/i, 'railway'],
   [/\.thenile\.dev$/i, 'nile'],
   [/\.upstash\.io$/i, 'upstash'],
+  [/\.xata\.tech$/i, 'xata'],
+  [/\.svc\.singlestore\.com$/i, 'singlestore'],
 ]
 
 /** Older saved connections used these ids before the cards settled on theirs. */

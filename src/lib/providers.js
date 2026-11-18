@@ -40,6 +40,30 @@ export const PROVIDERS = [
     },
   },
   {
+    id: 'xata', name: 'Xata', mode: 'token', engine: 'postgres',
+    blurb: 'Postgres with copy-on-write branches, every branch listed',
+    token: {
+      help: 'Create an API key in the Xata console under your account or organization settings, API keys.',
+      helpUrl: 'https://console.xata.io',
+      fields: [
+        { key: 'apiKey', label: 'API key', type: 'password', autocomplete: 'off', placeholder: 'xau_…', mono: true },
+      ],
+      join: (/** @type {Record<string, string>} */ v) => v.apiKey.trim(),
+    },
+  },
+  {
+    id: 'singlestore', name: 'SingleStore', mode: 'token', engine: 'mysql',
+    blurb: 'Workspaces and free starter workspaces, asks for the database password once',
+    token: {
+      help: 'Create a Management API key in the SingleStore portal under Configuration, API keys.',
+      helpUrl: 'https://portal.singlestore.com',
+      fields: [
+        { key: 'apiKey', label: 'Management API key', type: 'password', autocomplete: 'off', placeholder: 'API key', mono: true },
+      ],
+      join: (/** @type {Record<string, string>} */ v) => v.apiKey.trim(),
+    },
+  },
+  {
     id: 'posthog', name: 'PostHog', mode: 'token', engine: 'posthog',
     blurb: 'Product analytics, queried with HogQL. Read-only',
     token: {
