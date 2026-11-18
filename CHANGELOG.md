@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.19.3] - 2026-11-18
+
+### Changes
+- Compact scheduled backups screen (#292)
+
+
 ## [2.19.2] - 2026-11-18
 
 ### Changes
