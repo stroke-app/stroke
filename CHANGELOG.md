@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.20.0] - 2026-11-18
+
+### Changes
+- Add a Migrations page and local database servers (#301)
+
+
 ## [2.19.9] - 2026-11-18
 
 ### Changes
