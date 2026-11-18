@@ -1,4 +1,4 @@
-/** @typedef {'table' | 'sql' | 'ddl' | 'welcome' | 'ai' | 'schema' | 'orm' | 'security' | 'logs' | 'extensions' | 'extension-detail' | 'backup' | 'json' | 'charts' | 'dashboard' | 'erd' | 'reltree' | 'diagrams' | 'search' | 'notebook' | 'schema-timeline' | 'data-diff' | 'insights' | 'objects' | 'redis' | 'dynamodb' | 'docs' | 'license' | 'orm-schema' | 'map' | 'advisor' | 'golf' | 'terminal' | 'shortcuts' | 'shares'} StudioTabKind */
+/** @typedef {'table' | 'sql' | 'ddl' | 'welcome' | 'ai' | 'schema' | 'orm' | 'security' | 'logs' | 'extensions' | 'extension-detail' | 'backup' | 'json' | 'charts' | 'dashboard' | 'erd' | 'reltree' | 'diagrams' | 'search' | 'notebook' | 'schema-timeline' | 'data-diff' | 'migrations' | 'insights' | 'objects' | 'redis' | 'dynamodb' | 'docs' | 'license' | 'orm-schema' | 'map' | 'advisor' | 'golf' | 'terminal' | 'shortcuts' | 'shares'} StudioTabKind */
 
 import { loadDefaultPageSize } from '$lib/table-query.js'
 
@@ -233,6 +233,7 @@ const SINGLETON_TAB_TITLES = {
   search: 'Find in database',
   'schema-timeline': 'Schema timeline',
   'data-diff': 'Data diff',
+  migrations: 'Migrations',
   golf: 'VACUUM',
   terminal: 'Terminal',
   shortcuts: 'Keyboard shortcuts',
@@ -281,6 +282,7 @@ export const createLicenseTab = () => createKindTab('license')
 export const createSearchTab = () => createKindTab('search')
 export const createSchemaTimelineTab = () => createKindTab('schema-timeline')
 export const createDataDiffTab = () => createKindTab('data-diff')
+export const createMigrationsTab = () => createKindTab('migrations')
 /** The connection's own CLI (psql, mysql, sqlite3...) in a real terminal. */
 export const createTerminalTab = () => createKindTab('terminal')
 /** Every shortcut, searchable and remappable. */
@@ -345,6 +347,8 @@ export const findSearchTab = (tabs) => findTabByKind(tabs, 'search')
 export const findSchemaTimelineTab = (tabs) => findTabByKind(tabs, 'schema-timeline')
 /** @type {(tabs: StudioTab[]) => StudioTab | null} */
 export const findDataDiffTab = (tabs) => findTabByKind(tabs, 'data-diff')
+/** @param {StudioTab[]} tabs */
+export const findMigrationsTab = (tabs) => findTabByKind(tabs, 'migrations')
 
 /** @param {string} extensionId @param {string} name */
 export function createExtensionDetailTab(extensionId, name) {

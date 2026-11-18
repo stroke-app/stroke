@@ -35,6 +35,7 @@ axum = { version = "0.7", features = ["json", "macros", "ws"] }
 tower-http = { version = "0.5", features = ["cors"] }
 sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "sqlite", "mysql", "json", "chrono", "uuid", "rust_decimal"] }
 flate2 = "1"
+tar = "0.4"
 encoding_rs = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-webpki-roots", "stream"] }
 futures = "0.3"

@@ -12,6 +12,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 mod account;
 mod backup_crypto;
 mod cloud_backup;
+mod local_servers;
 mod shares;
 mod nightly;
 mod agents;
@@ -939,6 +940,18 @@ pub fn run() {
             db::parked::parked_connections,
             commands::export_parquet,
             cloud_backup::backup_jobs_list,
+            db::migrations::migrations_project,
+            local_servers::local_servers_env,
+            local_servers::local_servers_list,
+            local_servers::local_server_create,
+            local_servers::local_server_start,
+            local_servers::local_server_stop,
+            local_servers::local_server_delete,
+            local_servers::local_server_update,
+            local_servers::local_server_logs,
+            local_servers::local_server_free_port,
+            local_servers::brew_services_list,
+            local_servers::brew_service_action,
             cloud_backup::backup_job_save,
             cloud_backup::backup_job_patch,
             cloud_backup::backup_job_delete,
