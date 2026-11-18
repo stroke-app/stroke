@@ -2,6 +2,7 @@
   import { onDestroy } from 'svelte'
   import FieldSelect from './FieldSelect.svelte'
   import ScheduledBackups from './ScheduledBackups.svelte'
+  import LockKeyhole from '@lucide/svelte/icons/lock-keyhole'
   import CalendarClock from '@lucide/svelte/icons/calendar-clock'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
   import { Button } from '$lib/components/ui/button/index.js'
@@ -888,6 +889,13 @@
               </p>
             {/if}
 
+            {#if importInfo?.encrypted}
+              <Alert.Root>
+                <LockKeyhole />
+                <Alert.Title>End-to-end encrypted</Alert.Title>
+                <Alert.Description>A scheduled backup. It opens on this computer with your sync key; unlock sync first if it's locked.</Alert.Description>
+              </Alert.Root>
+            {/if}
             {#if importInfo?.incomplete}
               <Alert.Root variant="destructive">
                 <CircleAlert />

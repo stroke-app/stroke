@@ -113,6 +113,9 @@ pub struct BackupFileInfo {
     pub stroke: bool,
     /// A cancelled Stroke export: restoring it would load a fraction of the data.
     pub incomplete: bool,
+    /// An end-to-end encrypted scheduled backup: opened with the sync key on restore.
+    #[serde(default)]
+    pub encrypted: bool,
 }
 
 fn default_true() -> bool { true }
@@ -592,7 +595,7 @@ pub async fn backup_import(
     let rep = Reporter::restore(&app);
     let script = match (sql, path) {
         (Some(s), _) => s,
-        (None, Some(p)) => read_script(&rep, &p).await?,
+        (None, Some(p)) => read_script(&app, &rep, &p).await?,
         (None, None) => return Err("Nothing to restore: no file or SQL given".into()),
     };
     match require_conn(&state)? {
@@ -611,8 +614,25 @@ pub async fn backup_import(
     }
 }
 
-async fn read_script(rep: &Reporter, path: &str) -> Result<String, String> {
-    let bytes = tokio::fs::read(path).await.map_err(|e| format!("Could not read {path}: {e}"))?;
+async fn read_script(app: &AppHandle, rep: &Reporter, path: &str) -> Result<String, String> {
+    let mut bytes = tokio::fs::read(path).await.map_err(|e| format!("Could not read {path}: {e}"))?;
+    // A scheduled backup: encrypted with the account's sync key, then gzip.
+    if crate::backup_crypto::is_encrypted(&bytes) {
+        let (key, _) = crate::sync::load_local(app)
+            .await
+            .ok_or("This backup is end-to-end encrypted. Unlock sync (Settings → Sync) with your sync passphrase to restore it.")?;
+        rep.log("info", "Decrypting the backup on this computer");
+        let mut plain = Vec::with_capacity(bytes.len());
+        crate::backup_crypto::decrypt_stream(&key, bytes.as_slice(), &mut plain, None)?;
+        bytes = plain;
+    }
+    if bytes.starts_with(&[0x1f, 0x8b]) {
+        let mut out = Vec::with_capacity(bytes.len() * 4);
+        flate2::read::GzDecoder::new(bytes.as_slice())
+            .read_to_end(&mut out)
+            .map_err(|e| format!("Could not unzip {path}: {e}"))?;
+        bytes = out;
+    }
     match String::from_utf8(bytes) {
         Ok(s) => Ok(s),
         Err(e) => {
@@ -633,6 +653,18 @@ pub async fn backup_inspect_file(path: String) -> Result<BackupFileInfo, String>
         f.read(&mut head).map_err(|e| format!("Could not read {path}: {e}"))?
     };
     head.truncate(n);
+    if crate::backup_crypto::is_encrypted(&head) {
+        return Ok(BackupFileInfo { size: meta.len(), engine: None, stroke: true, incomplete: false, encrypted: true });
+    }
+    if head.starts_with(&[0x1f, 0x8b]) {
+        // Gzip: look at the start of what it holds.
+        let mut f = File::open(&path).map_err(|e| format!("Could not open {path}: {e}"))?;
+        let mut inner = vec![0u8; 4096];
+        let mut dec = flate2::read::GzDecoder::new(&mut f);
+        let k = dec.read(&mut inner).unwrap_or(0);
+        inner.truncate(k);
+        return Ok(inspect_head(meta.len(), &String::from_utf8_lossy(&inner)));
+    }
     Ok(inspect_head(meta.len(), &String::from_utf8_lossy(&head)))
 }
 
@@ -649,7 +681,7 @@ fn inspect_head(size: u64, head: &str) -> BackupFileInfo {
             else if head.starts_with("PRAGMA foreign_keys=OFF;\nBEGIN TRANSACTION;") { Some("SQLite".into()) }
             else { None }
         });
-    BackupFileInfo { size, engine, stroke, incomplete }
+    BackupFileInfo { size, engine, stroke, incomplete, encrypted: false }
 }
 
 // ── Shared helpers ────────────────────────────────────────────────────────────

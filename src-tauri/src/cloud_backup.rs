@@ -167,6 +167,14 @@ pub async fn backup_job_run(
     let t = token(&app).await?;
     let base = base_url();
 
+    // Backups are encrypted on this computer with the account's sync key, so
+    // Stroke Cloud only ever holds ciphertext. Stroke Cloud requires it; an S3
+    // bucket gets it whenever sync is set up here.
+    let sync_key = crate::sync::load_local(&app).await.map(|(k, _)| k);
+    if job.destination == "stroke" && sync_key.is_none() {
+        return Err("Backups to Stroke Cloud are end-to-end encrypted with your sync key. Set up or unlock sync (Settings → Sync) on this computer first.".into());
+    }
+
     // S3 keys first: without them there is nothing to claim the tick for.
     let s3 = if job.destination == "s3" {
         match load_s3(&app, &job.id).await {
@@ -180,7 +188,7 @@ pub async fn backup_job_run(
     let claim = http()
         .post(format!("{base}/api/backups/runs"))
         .bearer_auth(&t)
-        .json(&serde_json::json!({ "job_id": job.id, "slot": slot }));
+        .json(&serde_json::json!({ "job_id": job.id, "slot": slot, "encrypted": sync_key.is_some() }));
     let run = match send_json(claim).await {
         Ok(v) => v,
         Err(ApiError::Server(code, msg)) if code == "claimed" => return Ok(RunOutcome::skipped(msg)),
@@ -192,12 +200,15 @@ pub async fn backup_job_run(
     }
 
     let dir = app.path().app_cache_dir().map_err(|e| e.to_string())?.join("scheduled-backups");
-    let result = dump_and_upload(&dir, &job, config, s3, &base, &t, &run_id).await;
+    let result = dump_and_upload(&dir, &job, config, s3, sync_key, &base, &t, &run_id).await;
 
     let body = match &result {
         Ok(done) => serde_json::json!({
             "status": "success", "tables": done.tables, "rows": done.rows,
             "bytes": done.bytes, "object_key": done.object_key,
+            "encrypted": done.sealed.is_some(),
+            "key_id": done.sealed.as_ref().map(|s| s.key_id.clone()),
+            "wrapped_key": done.sealed.as_ref().map(|s| s.wrapped_key.clone()),
         }),
         Err(e) => serde_json::json!({ "status": "failed", "error": e }),
     };
@@ -216,6 +227,7 @@ struct Done {
     rows: usize,
     bytes: u64,
     object_key: Option<String>,
+    sealed: Option<crate::backup_crypto::Sealed>,
 }
 
 async fn dump_and_upload(
@@ -223,6 +235,7 @@ async fn dump_and_upload(
     job: &JobSpec,
     config: AnyConnectionConfig,
     s3: Option<S3Secret>,
+    sync_key: Option<[u8; 32]>,
     base: &str,
     token: &str,
     run_id: &str,
@@ -230,6 +243,7 @@ async fn dump_and_upload(
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let sql_path = dir.join(format!("{run_id}.sql"));
     let gz_path = dir.join(format!("{run_id}.sql.gz"));
+    let enc_path = dir.join(format!("{run_id}.sql.gz.stroke"));
     let cleanup = |paths: &[&PathBuf]| {
         for p in paths {
             let _ = std::fs::remove_file(p);
@@ -249,20 +263,34 @@ async fn dump_and_upload(
         }
         let src = sql_path.clone();
         let dst = gz_path.clone();
-        let bytes = tokio::task::spawn_blocking(move || gzip(&src, &dst)).await.map_err(|e| e.to_string())??;
+        let mut bytes = tokio::task::spawn_blocking(move || gzip(&src, &dst)).await.map_err(|e| e.to_string())??;
         let _ = std::fs::remove_file(&sql_path);
 
+        // Encrypt on this computer; what leaves it is ciphertext.
+        let (file, sealed) = match sync_key {
+            Some(key) => {
+                let (src, dst) = (gz_path.clone(), enc_path.clone());
+                let sealed = tokio::task::spawn_blocking(move || crate::backup_crypto::encrypt_file(&key, &src, &dst))
+                    .await
+                    .map_err(|e| e.to_string())??;
+                let _ = std::fs::remove_file(&gz_path);
+                bytes = std::fs::metadata(&enc_path).map_err(|e| e.to_string())?.len();
+                (enc_path.clone(), Some(sealed))
+            }
+            None => (gz_path.clone(), None),
+        };
+
         let object_key = match s3 {
-            Some(s) => Some(upload_s3(&gz_path, job, &s, bytes).await?),
+            Some(s) => Some(upload_s3(&file, job, &s, bytes, sealed.is_some()).await?),
             None => {
-                upload_stroke(&gz_path, base, token, run_id).await?;
+                upload_stroke(&file, base, token, run_id).await?;
                 None
             }
         };
-        Ok(Done { tables: export.table_count, rows: export.row_count, bytes, object_key })
+        Ok(Done { tables: export.table_count, rows: export.row_count, bytes, object_key, sealed })
     }
     .await;
-    cleanup(&[&sql_path, &gz_path]);
+    cleanup(&[&sql_path, &gz_path, &enc_path]);
     result
 }
 
@@ -347,12 +375,13 @@ fn key_safe(s: &str) -> String {
 
 /// The user's bucket: one PUT, the payload streamed from disk and left
 /// unsigned (`UNSIGNED-PAYLOAD`, accepted by S3, R2, MinIO and the rest).
-async fn upload_s3(path: &Path, job: &JobSpec, s: &S3Secret, bytes: u64) -> Result<String, String> {
+async fn upload_s3(path: &Path, job: &JobSpec, s: &S3Secret, bytes: u64, encrypted: bool) -> Result<String, String> {
     let bucket = job.s3_bucket.as_deref().filter(|b| !b.is_empty()).ok_or("The schedule has no S3 bucket.")?;
     let region = if s.region.is_empty() { "us-east-1" } else { s.region.as_str() };
     let stamp = chrono::Utc::now().format("%Y-%m-%dT%H-%M-%SZ");
     let prefix = job.s3_prefix.as_deref().map(key_safe).filter(|p| !p.is_empty());
-    let name = format!("{}-{stamp}.sql.gz", key_safe(&job.label).replace('/', "-"));
+    let ext = if encrypted { "sql.gz.stroke" } else { "sql.gz" };
+    let name = format!("{}-{stamp}.{ext}", key_safe(&job.label).replace('/', "-"));
     let key = match prefix {
         Some(p) => format!("{p}/{name}"),
         None => name,
@@ -393,7 +422,7 @@ async fn upload_s3(path: &Path, job: &JobSpec, s: &S3Secret, bytes: u64) -> Resu
         .header("authorization", auth)
         .header("x-amz-content-sha256", "UNSIGNED-PAYLOAD")
         .header("x-amz-date", amz_date)
-        .header("content-type", "application/gzip")
+        .header("content-type", if encrypted { "application/octet-stream" } else { "application/gzip" })
         .header("content-length", bytes.to_string())
         .timeout(Duration::from_secs(3600))
         .body(body)
@@ -408,6 +437,41 @@ async fn upload_s3(path: &Path, job: &JobSpec, s: &S3Secret, bytes: u64) -> Resu
         return Err(format!("S3 refused the upload ({status}{}{}).", if code.is_empty() { "" } else { ", " }, [code, msg].iter().filter(|s| !s.is_empty()).copied().collect::<Vec<_>>().join(": ")));
     }
     Ok(key)
+}
+
+/// After a sync reset on this device: re-wrap every backup key the old sync
+/// key wrapped, so those backups open with the new one.
+pub(crate) async fn rewrap_backup_keys(token: &str, old: &[u8; 32], new: &[u8; 32]) -> Result<(), String> {
+    #[derive(Deserialize)]
+    struct Key {
+        id: String,
+        key_id: String,
+        wrapped_key: String,
+    }
+    #[derive(Deserialize)]
+    struct Keys {
+        keys: Vec<Key>,
+    }
+    let base = base_url();
+    let list: Keys = serde_json::from_value(
+        send_json(http().get(format!("{base}/api/backups/keys")).bearer_auth(token)).await.map_err(api_message)?,
+    )
+    .map_err(|e| e.to_string())?;
+    let old_id = crate::backup_crypto::key_id(old);
+    let new_id = crate::backup_crypto::key_id(new);
+    let mut updates = Vec::new();
+    for k in list.keys.into_iter().filter(|k| k.key_id == old_id) {
+        let wrapped = crate::backup_crypto::unb64(&k.wrapped_key)?;
+        let re = crate::backup_crypto::rewrap(old, new, &wrapped)?;
+        updates.push(serde_json::json!({ "id": k.id, "key_id": new_id, "wrapped_key": crate::backup_crypto::b64(&re) }));
+    }
+    if updates.is_empty() {
+        return Ok(());
+    }
+    send_json(http().post(format!("{base}/api/backups/keys")).bearer_auth(token).json(&serde_json::json!({ "keys": updates })))
+        .await
+        .map(|_| ())
+        .map_err(api_message)
 }
 
 /// Ids are UUIDs from the app, but escape anything else defensively.
