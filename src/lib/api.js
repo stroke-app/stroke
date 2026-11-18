@@ -1868,7 +1868,7 @@ export async function mcpSetReadonly(readonly) {
  * @typedef {{ includeSchema?: boolean, includeData?: boolean, includeSequences?: boolean, includeEnums?: boolean, includeFunctions?: boolean, includeTriggers?: boolean, includeViews?: boolean }} BackupOptions
  * @typedef {{ sql: string, tableCount: number, rowCount: number, cancelled: boolean, path: string | null, bytes: number, failedTables: number, elapsedMs: number }} BackupExportResult
  * @typedef {{ statementsOk: number, statementsErr: number, statementsSkipped: number, cancelled: boolean, errors: string[], elapsedMs: number }} BackupImportResult
- * @typedef {{ size: number, engine: string | null, stroke: boolean, incomplete: boolean, encrypted?: boolean }} BackupFileInfo
+ * @typedef {{ size: number, engine: string | null, stroke: boolean, incomplete: boolean, encrypted?: boolean, encoding: string, preview: string, previewTruncated: boolean }} BackupFileInfo
  */
 
 /**
@@ -1891,21 +1891,22 @@ export async function backupExport(schema = null, tables = null, options = null,
 /**
  * Restore a dump into the connected database: a file `path` (read in Rust) or
  * a `sql` string. Progress arrives as `restore-progress` events.
- * @param {{ sql?: string | null, path?: string | null }} source
+ * @param {{ sql?: string | null, path?: string | null, encoding?: string | null }} source `encoding` decodes the file (WHATWG label); null detects it.
  * @returns {Promise<BackupImportResult>}
  */
-export async function backupImport({ sql = null, path = null }) {
+export async function backupImport({ sql = null, path = null, encoding = null }) {
   assertWritable('restore a backup')
-  return inv('backup_import', { sql, path })
+  return inv('backup_import', { sql, path, encoding })
 }
 
 /**
  * Size and origin (engine, Stroke or not, cancelled export) of a dump file.
  * @param {string} path
+ * @param {string | null} [encoding] Decode the preview with this (WHATWG label); null detects it.
  * @returns {Promise<BackupFileInfo>}
  */
-export async function backupInspectFile(path) {
-  return inv('backup_inspect_file', { path })
+export async function backupInspectFile(path, encoding = null) {
+  return inv('backup_inspect_file', { path, encoding })
 }
 
 /**
