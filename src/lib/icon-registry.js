@@ -154,7 +154,7 @@ import {
   ArrowRight01Icon, ArrowLeft01Icon, Add01Icon, MinusSignIcon, Search01Icon,
   Delete02Icon, Logout01Icon, Table01Icon, GridTableIcon, RefreshIcon, Copy01Icon, Loading03Icon, Key01Icon,
   LinkSquare01Icon, Database01Icon, SourceCodeIcon, TerminalIcon, ChartLineData02Icon,
-  SparklesIcon, GitBranchIcon, Download04Icon, PlayIcon, EyeIcon, EyeOffIcon,
+  SparklesIcon, GitBranchIcon, Download04Icon, PlayIcon, ViewIcon, ViewOffSlashIcon,
   AiBrain01Icon, Alert02Icon, AlertCircleIcon, Shield01Icon, PencilEdit01Icon,
   BracketsIcon, SquareLock01Icon, DashboardSquare01Icon, HistoryIcon, Clock01Icon,
   FlashIcon, Settings01Icon, Maximize01Icon, FilterIcon, MoreHorizontalIcon,
@@ -194,7 +194,7 @@ export const ICON_MAP = {
   // A view is an eye everywhere in the app - TabBar picks 'eye' for view tabs,
   // so the sidebar has to agree. Plain table glyphs made views indistinguishable
   // from tables at size-3.
-  'table-view':     { lucide: Eye,           huge: EyeIcon },
+  'table-view':     { lucide: Eye,           huge: ViewIcon },
   'refresh-cw':     { lucide: RefreshCw,     huge: RefreshIcon },
   'copy':           { lucide: Copy,          huge: Copy01Icon },
   'copy-plus':      { lucide: CopyPlus,      huge: Copy01Icon },
@@ -210,8 +210,8 @@ export const ICON_MAP = {
   'git-branch':     { lucide: GitBranch,     huge: GitBranchIcon },
   'download':       { lucide: Download,      huge: Download04Icon },
   'play':           { lucide: Play,          huge: PlayIcon },
-  'eye':            { lucide: Eye,           huge: EyeIcon },
-  'eye-off':        { lucide: EyeOff,        huge: EyeOffIcon },
+  'eye':            { lucide: Eye,           huge: ViewIcon },
+  'eye-off':        { lucide: EyeOff,        huge: ViewOffSlashIcon },
   'bot':            { lucide: Bot,           huge: AiBrain01Icon },
   'alert-triangle': { lucide: AlertTriangle, huge: Alert02Icon },
   'alert-circle':   { lucide: AlertCircle,   huge: AlertCircleIcon },
