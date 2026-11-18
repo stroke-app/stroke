@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.19.7] - 2026-11-18
+
+### Changes
+- Switch SQL results between below and beside the editor (#296)
+
+
 ## [2.19.6] - 2026-11-18
 
 ### Changes
