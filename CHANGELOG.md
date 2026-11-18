@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.19.9] - 2026-11-18
+
+### Changes
+- Calmer update check and a lighter views icon (#300)
+
+
 ## [2.19.8] - 2026-11-18
 
 ### Changes
