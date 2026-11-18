@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { writable, get } from 'svelte/store'
 import { Cron } from 'croner'
 import { loadSavedConnections } from './connections.js'
-import { hasPro } from './license.js'
+import { hasPaidPro } from './license.js'
 import { isSignedIn } from './account.js'
 
 /**
@@ -150,7 +150,7 @@ let busy = false
 let lastRefresh = 0
 
 async function tick() {
-  if (busy || !get(isSignedIn) || !get(hasPro)) return
+  if (busy || !get(isSignedIn) || !get(hasPaidPro)) return
   busy = true
   try {
     if (Date.now() - lastRefresh > REFRESH_MS || !get(backupOverview)) {

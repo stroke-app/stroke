@@ -326,6 +326,7 @@ fn sync_message(e: ApiError) -> String {
             "no_sync_key" => KEY_CHANGED.into(),
             "too_many_records" | "invalid_request" | "invalid_json" => format!("The server rejected the sync request ({code})."),
             "key_exists" => "Sync is already set up for this account. Unlock it with your passphrase.".into(),
+            "pro_required" => "pro_required".into(),
             "invalid_kind" | "invalid_id" => format!("The server rejected a record: {msg}"),
             "404" | "not_found" => "Sync isn't available on the server yet.".into(),
             _ => e.user_message(),
@@ -418,6 +419,8 @@ pub struct SyncState {
     pub server_has_key: Option<bool>,
     /// The server's key changed (reset on another device): this device was locked.
     pub key_changed: bool,
+    /// The account has no paid Pro: sync isn't part of the trial.
+    pub pro_required: bool,
     pub offline: bool,
     pub error: Option<String>,
 }
@@ -441,6 +444,7 @@ pub async fn sync_state(app: tauri::AppHandle) -> Result<SyncState, String> {
             }
         }
         Err(ApiError::Network(_)) => s.offline = true,
+        Err(ApiError::Server(code, _)) if code == "pro_required" => s.pro_required = true,
         Err(e) => s.error = Some(sync_message(e)),
     }
     Ok(s)

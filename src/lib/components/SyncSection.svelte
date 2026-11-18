@@ -11,6 +11,9 @@
   import LockKeyhole from '@lucide/svelte/icons/lock-keyhole'
   import CircleAlert from '@lucide/svelte/icons/circle-alert'
   import RotateCcw from '@lucide/svelte/icons/rotate-ccw'
+  import ExternalLink from '@lucide/svelte/icons/external-link'
+  import { isTrialActive } from '$lib/stores/license.js'
+  import { openManageAccount } from '$lib/stores/account.js'
 
   let { sectionLabel = '' } = $props()
 
@@ -120,6 +123,13 @@
     <p class="text-ui-sm text-muted-foreground">Sign in to sync your workspaces, connections and settings across devices.</p>
   {:else if s.phase === 'checking'}
     <p class="text-ui-sm text-muted-foreground">Checking sync…</p>
+  {:else if s.phase === 'pro'}
+    <div class="flex items-center justify-between gap-3">
+      <p class="text-ui-sm leading-relaxed text-muted-foreground">
+        Sync needs Stroke Pro{$isTrialActive ? "; the free trial doesn't include it" : ''}. Workspaces, connections and settings on every device, end-to-end encrypted.
+      </p>
+      <Button variant="secondary" size="sm" class="shrink-0" onclick={() => void openManageAccount()}>Get Stroke Pro <ExternalLink class="size-3.5 shrink-0" /></Button>
+    </div>
   {:else if s.phase === 'setup'}
     <div class="flex items-center justify-between gap-3">
       <p class="text-ui-sm leading-relaxed text-muted-foreground">Keep workspaces, connections and settings in step on every device, end-to-end encrypted.</p>

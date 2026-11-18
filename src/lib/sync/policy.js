@@ -36,6 +36,7 @@ export function pickSyncedSettings(s) {
 export function syncLabel(s, now = Date.now()) {
   switch (s.phase) {
     case 'signed-out': return 'Sync off'
+    case 'pro': return 'Sync needs Pro'
     case 'checking': return 'Checking sync…'
     case 'setup': return 'Sync not set up'
     case 'locked': return 'Sync locked'

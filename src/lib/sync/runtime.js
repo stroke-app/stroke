@@ -6,6 +6,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { writable, get } from 'svelte/store'
 import { account } from '$lib/stores/account.js'
+import { hasPaidPro, licenseStatus } from '$lib/stores/license.js'
 import { workspaces, replaceWorkspaces, DEFAULT_WORKSPACE_ID } from '$lib/stores/workspaces.js'
 import { loadSavedConnections, upsertConnection, removeConnection, newConnectionId } from '$lib/stores/connections.js'
 import { loadSettings, updateSettings } from '$lib/stores/settings.js'
@@ -148,7 +149,7 @@ const engine = createSyncEngine({
 // ── Status ────────────────────────────────────────────────────────────────────
 
 /**
- * @typedef {'signed-out' | 'checking' | 'setup' | 'locked' | 'ready' | 'syncing' | 'offline' | 'error'} SyncPhase
+ * @typedef {'signed-out' | 'checking' | 'pro' | 'setup' | 'locked' | 'ready' | 'syncing' | 'offline' | 'error'} SyncPhase
  * @typedef {{ phase: SyncPhase, lastSyncedAt: number, items: number, error: string | null,
  *   keyChanged: boolean, undecryptable: number }} SyncStatus
  */
@@ -184,14 +185,20 @@ export async function refreshSyncState() {
     setStatus({ phase: 'signed-out', error: null })
     return get(syncStatus)
   }
-  if (get(syncStatus).phase === 'signed-out') setStatus({ phase: 'checking' })
+  // Sync is part of paid Pro, not the trial: no server call to find that out.
+  if (!get(hasPaidPro)) {
+    setStatus({ phase: 'pro', error: null })
+    return get(syncStatus)
+  }
+  if (get(syncStatus).phase === 'signed-out' || get(syncStatus).phase === 'pro') setStatus({ phase: 'checking' })
   try {
-    /** @type {{ signed_in: boolean, unlocked: boolean, server_has_key: boolean | null, key_changed: boolean, offline: boolean, error: string | null }} */
+    /** @type {{ signed_in: boolean, unlocked: boolean, server_has_key: boolean | null, key_changed: boolean, pro_required?: boolean, offline: boolean, error: string | null }} */
     const st = await invoke('sync_state')
     if (st.key_changed) resetSyncBookkeeping(localStorage)
     /** @type {SyncPhase} */
     let phase
     if (!st.signed_in) phase = 'signed-out'
+    else if (st.pro_required) phase = 'pro'
     else if (st.unlocked) phase = st.offline ? 'offline' : 'ready'
     else if (st.server_has_key === false) phase = 'setup'
     else if (st.server_has_key === true) phase = 'locked'
@@ -289,6 +296,10 @@ async function runOnce() {
       setStatus({ keyChanged: true })
       return
     }
+    if (msg === 'pro_required') {
+      setStatus({ phase: 'pro', error: null })
+      return
+    }
     if (msg === 'rate_limited') {
       backoffUntil = Date.now() + BACKOFF_MS
       setStatus({ phase: 'ready', error: 'The server asked Stroke to slow down. Sync resumes in a minute.' })
@@ -365,15 +376,37 @@ export function startSync() {
     })
   } catch { /* no window */ }
 
-  // Launch, sign-in and sign-out all arrive through the account store.
+  // Buying Pro (or losing it) changes what sync can do: ask again.
+  let wasPaid = /** @type {boolean | null} */ (null)
+  licenseStatus.subscribe(() => {
+    const paid = get(hasPaidPro)
+    if (paid === wasPaid) return
+    const first = wasPaid === null
+    wasPaid = paid
+    if (!first && get(account)?.signed_in) void refreshSyncState().then((st) => { if (st.phase === 'ready') void syncNow() })
+  })
+
+  // Launch, sign-in, sign-out and a switch to another account all arrive
+  // through the account store. Who is signed in matters, not only whether:
+  // signing in as someone else must not keep the last account's sync state.
   let wasSignedIn = /** @type {boolean | null} */ (null)
+  let wasUser = /** @type {string | null} */ (null)
   account.subscribe((a) => {
     if (!a) return
     const signedIn = !!a.signed_in
-    if (signedIn === wasSignedIn) return
+    const user = signedIn ? (a.user?.id ?? a.user?.email ?? '') : null
+    if (signedIn === wasSignedIn && user === wasUser) return
     const before = wasSignedIn
+    const switched = !!before && signedIn && wasUser !== null && user !== wasUser
     wasSignedIn = signedIn
+    wasUser = user
     if (signedIn) {
+      if (switched) {
+        clearSyncBookkeeping(localStorage)
+        try { localStorage.removeItem(LAST_KEY) } catch { /* ignore */ }
+      }
+      // Start from nothing known: the phase is the new account's, not the last one's.
+      setStatus({ phase: 'checking', error: null, keyChanged: false, lastSyncedAt: switched ? 0 : get(syncStatus).lastSyncedAt, items: switched ? 0 : get(syncStatus).items })
       lastFocus = Date.now()
       void syncNow()
     } else {
