@@ -2,6 +2,8 @@
   import { IS_MAC } from '$lib/shortcuts.js'
   import { rowsToCsv, rowsToJson, rowsToSql, rowsToTsv, rowsToMarkdown, rowsToJsonl, rowsToObjects, saveExportFile, buildExportFilename, exportRows, EXPORT_FORMATS } from '$lib/export.js'
   import Play from "@lucide/svelte/icons/play";
+  import PanelBottom from "@lucide/svelte/icons/panel-bottom";
+  import PanelRight from "@lucide/svelte/icons/panel-right";
   import WifiOff from "@lucide/svelte/icons/wifi-off";
   import Braces from "@lucide/svelte/icons/braces";
   import Wand2 from "@lucide/svelte/icons/wand-2";
@@ -1546,6 +1548,25 @@
           </DropdownMenu.Root>
         {/if}
 
+        <!-- Where the results sit: under the editor or to its right. -->
+        <div role="group" aria-label="Results position" class="flex items-center">
+          {#each [{ id: false, Icon: PanelBottom, label: 'Results below the editor' }, { id: true, Icon: PanelRight, label: 'Results beside the editor' }] as pos (pos.label)}
+            {@const on = $appSqlEditor.resultsBeside === pos.id}
+            <button
+              type="button"
+              aria-pressed={on}
+              aria-label={pos.label}
+              title={pos.label}
+              onclick={() => { if (!on) setSqlEditorOption('resultsBeside', pos.id); if (!outputVisible) toggleOutput() }}
+              class={cn(
+                'inline-flex size-6 items-center justify-center rounded-md transition-colors',
+                on && outputVisible ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground',
+              )}
+            >
+              <pos.Icon class="size-3.5" />
+            </button>
+          {/each}
+        </div>
         <button
           type="button"
           onclick={toggleOutput}
