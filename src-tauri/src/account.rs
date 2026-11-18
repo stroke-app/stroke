@@ -479,8 +479,16 @@ async fn me_text(req: reqwest::RequestBuilder) -> Result<String, ApiError> {
 /// Asks for the v3 account trial: one fresh trial per account, separate from 2.x.
 const TRIAL_SCHEME: (&str, &str) = ("X-Stroke-Trial", "account-v3");
 
+/// This app's version, sent with every `/api/me` so the account's device list
+/// shows what each computer runs now. Set on the first refresh.
+static APP_VERSION: OnceLock<String> = OnceLock::new();
+
 pub async fn fetch_me(base: &str, token: &str) -> Result<String, ApiError> {
-    me_text(http().get(format!("{base}/api/me")).bearer_auth(token).header(TRIAL_SCHEME.0, TRIAL_SCHEME.1)).await
+    let mut req = http().get(format!("{base}/api/me")).bearer_auth(token).header(TRIAL_SCHEME.0, TRIAL_SCHEME.1);
+    if let Some(v) = APP_VERSION.get() {
+        req = req.header("X-Stroke-Version", v.as_str());
+    }
+    me_text(req).await
 }
 
 pub async fn remote_sign_out(base: &str, token: &str) {
@@ -774,6 +782,7 @@ fn data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 /// failure keeps the cache (trusted until `valid_until`).
 async fn refresh(app: &tauri::AppHandle, dir: &Path, token: &str) -> AccountStatus {
     let base = base_url();
+    APP_VERSION.get_or_init(|| app.package_info().version.to_string());
     match fetch_me(&base, token).await {
         Ok(raw) => match save_me(dir, raw) {
             Ok(_) => build_status(dir, true),

@@ -39,7 +39,7 @@ use super::connection::{require_conn, ActiveConnection};
 /// Only one backup/restore runs at a time in the UI, so a single flag suffices.
 static BACKUP_CANCELLED: AtomicBool = AtomicBool::new(false);
 
-fn reset_cancel() { BACKUP_CANCELLED.store(false, Ordering::SeqCst); }
+pub(crate) fn reset_cancel() { BACKUP_CANCELLED.store(false, Ordering::SeqCst); }
 fn is_cancelled() -> bool { BACKUP_CANCELLED.load(Ordering::SeqCst) }
 
 /// Request cancellation of the running backup/restore. The loops stop at the
@@ -213,7 +213,7 @@ impl Reporter {
     fn restore(app: &AppHandle) -> Self {
         Self { app: Some(app.clone()), log_event: "restore-log", progress_event: "restore-progress" }
     }
-    #[cfg(test)]
+    /// No events: scheduled backups run in the background, away from the page's log.
     pub(crate) fn silent() -> Self {
         Self { app: None, log_event: "", progress_event: "" }
     }
@@ -460,7 +460,7 @@ pub async fn backup_export(
     run_export(&rep, conn, schema, tables, &opts, path).await
 }
 
-async fn run_export(
+pub(crate) async fn run_export(
     rep: &Reporter,
     conn: ActiveConnection,
     schema: Option<String>,

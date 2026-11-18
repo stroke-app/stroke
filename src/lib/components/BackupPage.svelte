@@ -1,6 +1,8 @@
 <script>
   import { onDestroy } from 'svelte'
   import FieldSelect from './FieldSelect.svelte'
+  import ScheduledBackups from './ScheduledBackups.svelte'
+  import CalendarClock from '@lucide/svelte/icons/calendar-clock'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
   import { Button } from '$lib/components/ui/button/index.js'
   import { Checkbox } from '$lib/components/ui/checkbox/index.js'
@@ -49,6 +51,8 @@
     tables = [],
     /** After a restore that applied anything: reload the schema tree and tables. */
     onrestored = /** @type {() => void | Promise<void>} */ (() => {}),
+    /** The saved connection behind this database, for scheduled backups. */
+    savedConnection = /** @type {{ id: string, name?: string, type?: string } | null} */ (null),
   } = $props()
 
   // ── Live log ────────────────────────────────────────────────────────────────
@@ -74,7 +78,7 @@
   })
   const logTime = (/** @type {number} */ t) => new Date(t).toLocaleTimeString([], { hour12: false })
 
-  /** @type {'backup'|'restore'} */
+  /** @type {'backup'|'restore'|'schedule'} */
   let activeTab = $state('backup')
 
   const supportsSchemaFilter = $derived(dbType === 'postgres' || dbType === 'mysql')
@@ -631,13 +635,18 @@
         <Tabs.Trigger value="restore" class="px-3 text-ui-xs" disabled={exportRunning}>
           <Upload class="size-3.5 shrink-0" />Restore
         </Tabs.Trigger>
+        <Tabs.Trigger value="schedule" class="px-3 text-ui-xs">
+          <CalendarClock class="size-3.5 shrink-0" />Scheduled
+        </Tabs.Trigger>
       </Tabs.List>
     </Tabs.Root>
     <span class="min-w-0 flex-1"></span>
     <span class="min-w-0 truncate text-ui-xs text-muted-foreground">{dbLabel}</span>
   </div>
 
-  {#if activeTab === 'backup'}
+  {#if activeTab === 'schedule'}
+    <ScheduledBackups connection={savedConnection} />
+  {:else if activeTab === 'backup'}
     <div class="flex min-h-0 flex-1 overflow-hidden">
       <!-- Left: what to export -->
       <aside class="flex w-80 shrink-0 flex-col border-r border-border/60" aria-label="Backup options">

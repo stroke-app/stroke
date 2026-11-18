@@ -21,6 +21,8 @@
     } finally {
       ready = true
     }
+    // Scheduled backups run in the background while the app is open (Pro).
+    void import('$lib/stores/scheduled-backups.js').then((m) => m.startBackupScheduler()).catch((e) => console.error('[backups] scheduler failed:', e))
     // E2E sync of workspaces/connections/settings follows the account store.
     void import('$lib/sync/runtime.js').then((m) => m.startSync()).catch((e) => console.error('[sync] start failed:', e))
   })

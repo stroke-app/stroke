@@ -178,6 +178,7 @@ dependencies = [
  "chrono",
  "duckdb",
  "ed25519-dalek",
+ "flate2",
  "futures",
  "gdk",
  "getrandom 0.2.17",
