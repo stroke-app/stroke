@@ -557,6 +557,17 @@ mod tests {
         Kdf { alg: "argon2id".into(), salt: b64(&seq::<16>(1)), m: 64, t: 1, p: 1 }
     }
 
+    /// A fixed vector the website's unlock (stroke-web src/lib/backups/crypto.ts)
+    /// is checked against: passphrase "correct horse battery", key 0x42 * 32.
+    #[test]
+    fn known_answer_for_the_web_unlock() {
+        let kdf = Kdf { alg: "argon2id".into(), salt: b64(&[7u8; 16]), m: 1024, t: 2, p: 1 };
+        let kek = derive_kek("correct horse battery", &kdf).unwrap();
+        let wrapped = wrap_key_with_nonce(&kek, &[9u8; 24], &[0x42u8; 32]);
+        assert_eq!(unwrap_key("correct horse battery", &wrapped, &kdf).unwrap(), [0x42u8; 32]);
+        println!("UNLOCK {} {}", kdf.salt, wrapped);
+    }
+
     #[test]
     fn record_round_trip() {
         let key = random::<32>();
