@@ -41,7 +41,7 @@
   ]
 
   const SYNC_POINTS = [
-    { icon: 'key-round', title: 'Your license, on every machine' },
+    { icon: 'key-round', title: 'Your plan, on every machine' },
     { icon: 'lock', title: 'End-to-end encrypted sync' },
     { icon: 'bookmark', title: 'Connections and saved queries everywhere' },
   ]
@@ -180,8 +180,8 @@
               </h1>
               <p class="mt-1.5 text-ui-sm leading-relaxed text-muted-foreground text-pretty">
                 {signedIn
-                  ? 'Your license and sync are ready on this device.'
-                  : 'Keep your license and sync connections and saved queries across devices.'}
+                  ? 'Your plan and sync are ready on this device.'
+                  : 'Keep your plan, and sync connections and saved queries across devices.'}
               </p>
 
               {#if signedIn}

@@ -155,7 +155,7 @@
         <Menubar.Separator class={sepCls} />
         {@render item("alert-triangle", "Report an issue…", "reportIssue")}
         {@render item("refresh-cw", "Check for updates", "checkUpdates")}
-        {@render item("info", "About and license", "about")}
+        {@render item("info", "About Stroke", "about")}
       </Menubar.Content>
     </Menubar.Portal>
   </Menubar.Menu>

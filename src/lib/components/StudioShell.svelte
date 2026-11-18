@@ -4750,12 +4750,6 @@ let rowSearch = $state('')
     clearTableEditor()
   }
 
-  /** Close the license tab after a successful activation. */
-  function closeLicenseTab() {
-    const existing = findLicenseTab(tabs)
-    if (existing) void closeTab(existing.id)
-  }
-
   function openJsonTab() {
     openSingletonTab({ find: findJsonTab, create: createJsonTab })
   }
@@ -10371,7 +10365,7 @@ let rowSearch = $state('')
           </button>
         </div>
         {#await import('./LicensePage.svelte')}<TabLoading />{:then { default: LicensePage }}
-          <LicensePage onactivated={() => (accountPageOpen = false)} />
+          <LicensePage />
         {/await}
       </div>
     {/if}
@@ -10931,7 +10925,7 @@ let rowSearch = $state('')
         <div class="flex min-h-0 flex-1 flex-col">
           <svelte:boundary failed={tabError}>
             {#await import('./LicensePage.svelte')}<TabLoading />{:then { default: LicensePage }}
-              <LicensePage onactivated={closeLicenseTab} />
+              <LicensePage />
             {/await}
           </svelte:boundary>
         </div>

@@ -36,51 +36,12 @@ export async function refreshLicenseStatus() {
   }
 }
 
-/**
- * Activate a license key. Updates the store on success.
- * @param {string} key
- * @returns {Promise<{ ok: true, info: object } | { ok: false, error: string }>}
- */
-export async function activateLicense(key) {
-  try {
-    const info = await invoke('activate_license', { key: key.trim() })
-    await refreshLicenseStatus()
-    return { ok: true, info }
-  } catch (e) {
-    return { ok: false, error: String(e) }
-  }
-}
-
-/** Remove the local license and revert to trial/expired state. */
-export async function deactivateLicense() {
-  try {
-    await invoke('deactivate_license')
-    await refreshLicenseStatus()
-    return { ok: true }
-  } catch (e) {
-    return { ok: false, error: String(e) }
-  }
-}
-
-/**
- * Run the daily phone-home check. Skips network call if checked <24h ago.
- * Deletes the local license and updates the store if the server reports revocation.
- */
-export async function runLicenseCheck() {
-  try {
-    const status = await invoke('run_license_check')
-    licenseStatus.set(/** @type {LicenseStatus} */ (status))
-  } catch {
-    // Non-critical - ignore errors, license state is already loaded
-  }
-}
-
 // ── Free-tier feature gating ─────────────────────────────────────────────────
 
 export const FREE_CONNECTION_LIMIT = 3
 
 /**
- * Reactive: true when the user has Pro access (Valid license or active Trial).
+ * Reactive: true when the account has Pro access (paid, or its trial is running).
  *
  * Fails OPEN: only a definitive `TrialExpired` verdict locks Pro features.
  * `null` (status still loading) and `Error` (data dir inaccessible, transient

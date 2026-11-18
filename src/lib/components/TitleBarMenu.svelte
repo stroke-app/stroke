@@ -16,7 +16,7 @@
   import ExternalLink from '@lucide/svelte/icons/external-link'
   import LogIn from '@lucide/svelte/icons/log-in'
   import Info from '@lucide/svelte/icons/info'
-  import KeyRound from '@lucide/svelte/icons/key-round'
+  import CircleUserRound from '@lucide/svelte/icons/circle-user-round'
   import UserRound from '@lucide/svelte/icons/user-round'
   import ClipboardPaste from '@lucide/svelte/icons/clipboard-paste'
   import LoaderCircle from '@lucide/svelte/icons/loader-circle'
@@ -91,8 +91,8 @@
       {/if}
     {/if}
     <DropdownMenu.Item onSelect={run('account')}>
-      <KeyRound class="size-3.5 shrink-0" />
-      <span data-slot="menu-label">{signedIn ? 'Account and license' : 'Enter license key'}</span>
+      <CircleUserRound class="size-3.5 shrink-0" />
+      <span data-slot="menu-label">Account and plan</span>
     </DropdownMenu.Item>
 
     <DropdownMenu.Separator />

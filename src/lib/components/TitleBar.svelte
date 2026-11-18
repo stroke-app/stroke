@@ -2,13 +2,10 @@
   import DbIcon from './DbIcon.svelte'
   import { onMount } from 'svelte'
   import MessageSquare from '@lucide/svelte/icons/message-square'
-  import X             from '@lucide/svelte/icons/x'
-  import KeyRound      from '@lucide/svelte/icons/key-round'
   import { cn } from '$lib/utils.js'
   import { getAppScale } from '$lib/app-zoom.js'
   import { detectOs } from '$lib/platform.js'
   import { isTrialActive, licenseStatus } from '$lib/stores/license.js'
-  import LicenseActivation from './LicenseActivation.svelte'
   import Logo from './Logo.svelte'
   import AppMenuBar from './AppMenuBar.svelte'
   import { appMenuBar, appZoom } from '$lib/stores/settings.js'
@@ -18,7 +15,6 @@
   import PanelLeft from '@lucide/svelte/icons/panel-left'
   import { tabDisplayTitle } from '$lib/studio-tabs.js'
   import { bindNativeMenu, syncNativeMenuState, watchFullscreen } from '$lib/native-menu.js'
-  import * as Dialog from '$lib/components/ui/dialog/index.js'
 
   const isMac = typeof navigator !== 'undefined' && detectOs() === 'macos'
   const mod = isMac ? '⌘' : 'Ctrl'
@@ -82,7 +78,6 @@
 
   const pageTitle = $derived(connected && activeTab ? tabDisplayTitle(activeTab) : '')
 
-  let showActivationDialog = $state(false)
 
   const trialDays = $derived(
     $licenseStatus?.status === 'Trial' ? $licenseStatus.days_remaining : 0
@@ -228,31 +223,3 @@
   </div>
 </div>
 
-<!-- License activation dialog (from trial pill) -->
-<Dialog.Root bind:open={showActivationDialog}>
-  <Dialog.Portal>
-    <Dialog.Overlay class="fixed inset-0 z-[70] bg-black/65" />
-    <Dialog.Content showCloseButton={false} class="fixed left-1/2 top-1/2 z-[71] w-full max-w-[420px] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-2xl border border-border/60 bg-background p-0 elevate-3-rim outline-none">
-      <div class="flex items-center justify-between border-b border-border/60 px-5 py-4">
-        <div class="flex items-center gap-2.5">
-          <div class="flex size-7 items-center justify-center rounded-lg bg-primary/10">
-            <KeyRound class="size-3.5 shrink-0 text-primary" />
-          </div>
-          <div>
-            <Dialog.Title class="text-ui-sm font-semibold leading-none text-foreground">Activate license</Dialog.Title>
-            <Dialog.Description class="mt-0.5 text-ui-xs text-muted-foreground">Enter your key to unlock all features.</Dialog.Description>
-          </div>
-        </div>
-        <Dialog.Close class="inline-flex size-7 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
-          <X class="size-4 shrink-0" />
-        </Dialog.Close>
-      </div>
-      <LicenseActivation compact onactivated={() => { showActivationDialog = false }} />
-      <div class="border-t border-border/60 px-5 py-3">
-        <p class="text-ui-xs text-muted-foreground">
-          No license? <a href="https://stroke.click" target="_blank" rel="noopener noreferrer" class="text-primary underline-offset-2 hover:underline">stroke.click →</a>
-        </p>
-      </div>
-    </Dialog.Content>
-  </Dialog.Portal>
-</Dialog.Root>

@@ -26,13 +26,6 @@
   const devices = $derived($account?.devices?.length ?? 0)
   let signingOut = $state(false)
 
-  const LINK_ERRORS = /** @type {Record<string, string>} */ ({
-    key_owned_elsewhere: 'The license on this device was bought with another account, so this account is on the free trial. Sign in with the account that bought it to use it here.',
-    revoked: 'The license key on this device has been revoked.',
-    not_found: 'The license key on this device was not found on the server.',
-    invalid_key: 'The license key on this device could not be linked.',
-  })
-
   async function handleSignOut() {
     if (signingOut) return
     signingOut = true
@@ -80,17 +73,12 @@
         </Button>
       </div>
     </div>
-    {#if $account?.link_error}
-      <p class="-mt-1 pb-2 text-ui-xs leading-relaxed text-muted-foreground">{LINK_ERRORS[$account.link_error] ?? 'The license key on this device could not be linked.'}</p>
-    {/if}
   {:else}
     <div class={cn(rowCls, className)}>
       <div class="min-w-0">
         <p class="text-ui-sm font-medium text-foreground">Stroke account</p>
         <p class="mt-0.5 text-ui-xs leading-relaxed text-muted-foreground">
-          {$account?.has_license_key
-            ? 'Your key keeps working. Sign in to sync connections across devices.'
-            : 'Your license and trial come with you to every device you sign in on.'}
+          Stroke Pro and the trial come with you to every device you sign in on.
         </p>
       </div>
       {#if idle}
@@ -123,9 +111,6 @@
     <p class="text-ui-xs text-muted-foreground">
       <span class="font-mono tabular-nums">{devices}</span> {devices === 1 ? 'device' : 'devices'} signed in{#if $account?.offline}. Offline, showing the last saved plan{/if}.
     </p>
-    {#if $account?.link_error}
-      <p class="text-ui-xs leading-relaxed text-muted-foreground">{LINK_ERRORS[$account.link_error] ?? 'The license key on this device could not be linked.'}</p>
-    {/if}
     <div class="flex items-center gap-2">
       <Button variant="outline" size="sm" onclick={() => void openManageAccount()}>
         Manage account <ExternalLink class="size-3.5 shrink-0" />
@@ -138,9 +123,7 @@
     <div class="flex flex-col gap-0.5">
       <p class="text-ui-sm font-medium text-foreground">Sign in to Stroke</p>
       <p class="text-ui-xs leading-relaxed text-muted-foreground">
-        {$account?.has_license_key
-          ? 'Your license key keeps working. Sign in to sync your connections; your license comes with you.'
-          : 'Your license and trial come with your account, on every device you sign in on.'}
+        Stroke Pro and the trial come with your account, on every device you sign in on.
       </p>
     </div>
     <AccountSignInButtons size="sm" />
