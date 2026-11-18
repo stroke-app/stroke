@@ -277,23 +277,14 @@ pub fn sign(
 
 // ── Requests ─────────────────────────────────────────────────────────────────
 
-/// Operations the app may send. Anything else is refused, so the command
-/// can't be used to reach other DynamoDB APIs (tables are not created or
-/// dropped from here).
-const ALLOWED_OPS: &[&str] = &[
-    "ListTables",
-    "DescribeTable",
-    "DescribeTimeToLive",
-    "Scan",
-    "Query",
-    "GetItem",
-    "PutItem",
-    "UpdateItem",
-    "DeleteItem",
-    "BatchWriteItem",
-    "TransactWriteItems",
-    "ExecuteStatement",
-];
+/// Operations the app may send: the API calls the console offers (see
+/// [`parse_api_call`]) and PartiQL. Anything else is refused, so the command
+/// can't reach other AWS APIs. Who may run which is decided before this, by
+/// the access level (`mcp::access`) and the read-only switch.
+fn op_allowed(op: &str) -> bool {
+    op == "ExecuteStatement"
+        || [API_READS, API_WRITES, API_SCHEMA, API_DANGEROUS].iter().any(|l| l.contains(&op))
+}
 
 fn client() -> &'static reqwest::Client {
     static C: OnceLock<reqwest::Client> = OnceLock::new();
@@ -336,7 +327,7 @@ fn error_message(status: reqwest::StatusCode, body: &str) -> String {
 
 /// One DynamoDB API call.
 pub async fn request(cfg: &DynamoConfig, op: &str, body: &serde_json::Value) -> Result<serde_json::Value, String> {
-    if !ALLOWED_OPS.contains(&op) {
+    if !op_allowed(op) {
         return Err(format!("DynamoDB operation \"{op}\" is not allowed"));
     }
     let region = resolve_region(cfg);
@@ -717,6 +708,18 @@ pub fn shape_from_describe(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn every_console_api_call_can_be_sent() {
+        // The console parses these; the request gate must not refuse them.
+        for op in [super::API_READS, super::API_WRITES, super::API_SCHEMA, super::API_DANGEROUS].concat() {
+            let call = super::parse_api_call(&format!("{op} {{}}")).expect("parsed").expect("valid");
+            assert!(super::op_allowed(&call.0), "{op} is parsed but refused");
+        }
+        assert!(super::op_allowed("ExecuteStatement"));
+        assert!(!super::op_allowed("DeleteBackup"));
+        assert!(!super::op_allowed("CreateGlobalTable"));
+    }
+
     use super::*;
 
     #[test]
@@ -808,7 +811,7 @@ mod tests {
             session_token: None,
             endpoint: Some("http://127.0.0.1:1".into()),
         };
-        assert!(request(&cfg, "DeleteTable", &serde_json::json!({})).await.unwrap_err().contains("not allowed"));
+        assert!(request(&cfg, "DeleteBackup", &serde_json::json!({})).await.unwrap_err().contains("not allowed"));
     }
 
     /// Against `dev/nosql` DynamoDB Local on port 8000:
