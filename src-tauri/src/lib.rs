@@ -689,6 +689,7 @@ pub fn run() {
             commands::ai_fetch_page,
             commands::read_file,
             commands::open_new_window,
+            commands::open_dashboard_window,
             launch::take_open_request,
             commands::reveal_window,
             commands::restart_app,

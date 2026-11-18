@@ -1,7 +1,7 @@
 // Live dashboard cards: a saved chart's query run again, turned into a chart
 // option, or into one big number when the result is a single value.
 
-import { buildOption } from '$lib/chart-utils.js'
+import { buildOption, colType, guessXCol, guessYCol } from '$lib/chart-utils.js'
 
 /**
  * One number to show large: a single row whose only numeric cell is the value
@@ -82,5 +82,46 @@ export function cardView(chart, r, isDark) {
     isDark,
     noTitle: true,
   })
-  return { kpi: null, option, rows: rows.length }
+  return { kpi: null, option: compact(option), rows: rows.length }
+}
+
+/** A card has no room for the zoom slider a long result gets in the editor. @param {any} option */
+function compact(option) {
+  if (!option || !option.dataZoom) return option
+  const { dataZoom: _, ...rest } = option
+  return { ...rest, grid: { ...(rest.grid ?? {}), bottom: Math.min(Number(rest.grid?.bottom) || 40, 40) } }
+}
+
+/** How a saved-query card can be drawn. */
+export const QUERY_VIEWS = /** @type {const} */ (['auto', 'bar', 'line', 'area', 'table'])
+
+/**
+ * A saved query's result as what its card draws: one value as a number, rows
+ * as a chart when there is something to plot, otherwise a table. `type`
+ * forces one ('auto' or none picks): a time column draws a line, anything
+ * else bars.
+ * @param {{ columns?: any[], rows?: unknown[][] }} r
+ * @param {string | undefined} type
+ * @param {boolean} isDark
+ * @returns {{ kpi: { value: number, label: string } | null, option: any, table: { columns: string[], rows: unknown[][] } | null, rows: number }}
+ */
+export function queryView(r, type, isDark) {
+  const columns = (r?.columns ?? []).map((c) => ({ name: c.name ?? String(c), dataType: c.dataType ?? c.data_type ?? c.type }))
+  const rows = r?.rows ?? []
+  const table = () => ({ kpi: null, option: null, table: { columns: columns.map((c) => c.name), rows: rows.slice(0, 200) }, rows: rows.length })
+  const pick = type && type !== 'auto' ? type : null
+  if (pick === 'table') return table()
+  const kpi = !pick ? kpiOf(columns, rows) : null
+  if (kpi) return { kpi, option: null, table: null, rows: rows.length }
+  const xCol = guessXCol(columns)
+  const yCol = guessYCol(columns, xCol)
+  const yIsNumber = rows.length > 0 && rows.slice(0, 20).every((row) => {
+    const v = row[columns.findIndex((c) => c.name === yCol)]
+    return v == null || typeof v === 'number' || (typeof v === 'string' && v.trim() !== '' && Number.isFinite(Number(v)))
+  })
+  if (!xCol || !yCol || xCol === yCol || !yIsNumber) return table()
+  const xIsTime = colType(columns.find((c) => c.name === xCol) ?? { name: '' }) === 'date'
+  const chartType = pick ?? (xIsTime ? 'line' : 'bar')
+  const option = buildOption({ type: chartType, columns, rows: rows.slice(0, 2000), xCol, yCol, isDark, noTitle: true })
+  return { kpi: null, option: compact(option), table: null, rows: rows.length }
 }

@@ -3,6 +3,11 @@
   import { onMount } from 'svelte'
   import { Toaster } from '$lib/components/ui/sonner/index.js'
   import StudioShell from './lib/components/StudioShell.svelte'
+  import DashboardWindow from './lib/components/DashboardWindow.svelte'
+
+  // A window opened for one dashboard (open_dashboard_window) shows only that.
+  const params = typeof location !== 'undefined' ? new URLSearchParams(location.search) : new URLSearchParams()
+  const dashboardView = params.get('view') === 'dashboard' ? { dash: params.get('dash') ?? '', conn: params.get('conn') ?? '' } : null
   import LicenseGate from './lib/components/LicenseGate.svelte'
   import AppLockGate from './lib/components/AppLockGate.svelte'
   import AppErrorBoundary from './lib/components/AppErrorBoundary.svelte'
@@ -96,7 +101,11 @@
        behind it runs - not the license check, not a reconnect. -->
   <AppLockGate>
     <LicenseGate>
-      <StudioShell />
+      {#if dashboardView}
+        <DashboardWindow dashboardId={dashboardView.dash} connectionId={dashboardView.conn} />
+      {:else}
+        <StudioShell />
+      {/if}
     </LicenseGate>
   </AppLockGate>
 </AppErrorBoundary>

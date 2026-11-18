@@ -6,14 +6,20 @@ import { debounce } from '$lib/utils.js'
  * @typedef {{
  *   id: string,
  *   chartId: string | null,
- *   span: 1 | 2 | 3,
+ *   span: number,
  *   size?: 's' | 'm' | 'l',
+ *   h?: number,
+ *   query?: { sql: string, name: string, type?: string },
  * }} DashItem
+ *
+ * A card shows a saved chart (`chartId`), or a saved query (`query`) drawn as
+ * a number, a chart or a table. `h` is its height in pixels once resized by
+ * hand; `size` is the older s/m/l preset it falls back to.
  *
  * @typedef {{
  *   id: string,
  *   name: string,
- *   columns: 2 | 3,
+ *   columns: number,
  *   items: DashItem[],
  *   createdAt: number,
  *   refreshSec?: number,
@@ -118,6 +124,29 @@ export function addChartToDashboard(dashId, chartId) {
   ))
 }
 
+/**
+ * A saved query as a card: it runs on the dashboard and is drawn by what it
+ * returns (one value as a number, rows as a chart or a table).
+ * @param {string} dashId @param {{ sql: string, name: string }} query
+ */
+export function addQueryToDashboard(dashId, query) {
+  const itemId = `item-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+  dashboards.update(ds => ds.map(d =>
+    d.id === dashId
+      ? { ...d, items: [...d.items, { id: itemId, chartId: null, span: 1, query: { sql: query.sql, name: query.name } }] }
+      : d
+  ))
+}
+
+/** @param {string} dashId @param {string} itemId @param {Partial<DashItem>} patch */
+export function updateItem(dashId, itemId, patch) {
+  dashboards.update(ds => ds.map(d =>
+    d.id === dashId
+      ? { ...d, items: d.items.map(i => i.id === itemId ? { ...i, ...patch } : i) }
+      : d
+  ))
+}
+
 /** @param {string} dashId @param {string} itemId */
 export function removeChartFromDashboard(dashId, itemId) {
   dashboards.update(ds => ds.map(d =>
@@ -127,7 +156,7 @@ export function removeChartFromDashboard(dashId, itemId) {
   ))
 }
 
-/** @param {string} dashId @param {string} itemId @param {1|2|3} span */
+/** @param {string} dashId @param {string} itemId @param {number} span */
 export function setItemSpan(dashId, itemId, span) {
   dashboards.update(ds => ds.map(d =>
     d.id === dashId

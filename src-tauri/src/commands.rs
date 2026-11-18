@@ -276,6 +276,52 @@ pub async fn read_file(path: String) -> Result<String, String> {
 /// building a WebView2 window there deadlocks on Windows (tauri-apps/wry#583):
 /// the window never appeared, and every other window froze with it, so the
 /// app could not even be closed.
+/// A dashboard on its own: a window with nothing but that dashboard's cards,
+/// for a second screen. One window per dashboard; asking again focuses it.
+/// It runs its queries on the connection the app has open, like any window.
+#[tauri::command]
+pub async fn open_dashboard_window(app: tauri::AppHandle, dashboard_id: String, connection_id: String, title: String) -> Result<(), String> {
+    let safe = |s: &str| s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    if dashboard_id.is_empty() || !safe(&dashboard_id) || !safe(&connection_id) {
+        return Err("That isn't a dashboard".into());
+    }
+    let label = format!("main-dashboard-{}", dashboard_id.chars().filter(|c| c.is_ascii_alphanumeric()).take(40).collect::<String>());
+    if let Some(w) = app.webview_windows().get(label.as_str()) {
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+        return Ok(());
+    }
+    let url = format!("/?view=dashboard&dash={dashboard_id}&conn={connection_id}");
+    let mut builder = tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::App(url.into()))
+        .title(if title.trim().is_empty() { "Dashboard".to_string() } else { title })
+        .inner_size(1440.0, 900.0)
+        .min_inner_size(640.0, 420.0)
+        .resizable(true)
+        .visible(false)
+        .background_color(tauri::window::Color(8, 8, 8, 255))
+        .devtools(cfg!(debug_assertions))
+        .zoom_hotkeys_enabled(false)
+        .on_navigation(crate::navigation_allowed);
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder
+            .title_bar_style(tauri::TitleBarStyle::Overlay)
+            .hidden_title(true)
+            .traffic_light_position(crate::mac_chrome::traffic_light_position());
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        builder = builder.decorations(false);
+    }
+    let window = builder.build().map_err(|e| e.to_string())?;
+    let surface = crate::surface_for_theme(window.theme().unwrap_or(tauri::Theme::Dark));
+    let _ = window.set_background_color(Some(surface));
+    crate::set_webview_backdrop(&window, surface);
+    crate::guard_webview(&window);
+    crate::arm_reveal_failsafe(&window);
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn open_new_window(app: tauri::AppHandle) -> Result<(), String> {
     // Labels must be unique and stable-ish; the counter restarts with the app,
