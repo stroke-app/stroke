@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.20.1] - 2026-11-18
+
+### Changes
+- Tell Supabase users to sign in again for project creation (#302)
+
+
 ## [2.20.0] - 2026-11-18
 
 ### Changes
