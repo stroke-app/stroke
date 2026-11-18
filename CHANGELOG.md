@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.19.4] - 2026-11-18
+
+### Changes
+- TODO: what's next (#293)
+
+
 ## [2.19.3] - 2026-11-18
 
 ### Changes
