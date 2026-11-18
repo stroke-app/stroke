@@ -235,12 +235,12 @@ async fn post(token: &str, path: &str, body: &Value) -> Result<Value, String> {
     if !(200..300).contains(&status) {
         let msg = body["message"].as_str().map(String::from).unwrap_or_else(|| text.chars().take(160).collect());
         if status == 403 {
-            // The scopes a Supabase OAuth token carries are the ones enabled on
-            // the OAuth app itself; signing in again only helps once the app
-            // grants Projects: Write.
+            // The scopes a Supabase OAuth token carries are the ones the OAuth
+            // app had when the user consented: a token from before the app was
+            // given Projects: Write keeps lacking it until they sign in again.
             if msg.contains("organization_projects_create") || msg.contains("scope") {
                 return Err(
-                    "Supabase's sign-in for Stroke can browse projects but not create them yet (it lacks the Projects: Write permission). Create the project on supabase.com for now; Stroke lists it here as soon as it exists."
+                    "This Supabase sign-in can't create projects: it was granted before Stroke asked for Projects: Write. Disconnect Supabase here and sign in again to allow it, or create the project on supabase.com; Stroke lists it here as soon as it exists."
                         .into(),
                 );
             }
