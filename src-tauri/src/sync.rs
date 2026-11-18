@@ -343,7 +343,7 @@ struct StoredKey {
     wrapped: String,
 }
 
-async fn load_local(app: &tauri::AppHandle) -> Option<([u8; 32], String)> {
+pub(crate) async fn load_local(app: &tauri::AppHandle) -> Option<([u8; 32], String)> {
     let raw = crate::secrets::read_all_async(app).await.get(SYNC_KEY_VAULT).cloned()?;
     let s: StoredKey = serde_json::from_str(&raw).ok()?;
     let key: [u8; 32] = unb64(&s.key).ok()?.try_into().ok()?;
@@ -480,10 +480,19 @@ pub async fn sync_unlock(app: tauri::AppHandle, passphrase: String) -> Result<()
 pub async fn sync_reset(app: tauri::AppHandle, passphrase: String) -> Result<(), String> {
     check_passphrase(&passphrase)?;
     let tok = token(&app).await?;
+    // The key this device still holds, if any: encrypted backups are re-wrapped
+    // under the new key, so a reset from here doesn't strand them.
+    let old = load_local(&app).await.map(|(k, _)| k);
     let key = random::<32>();
     let (wrapped, kdf) = blocking(move || wrap_key(&passphrase, &key)).await??;
     put_key(&account::base_url(), &tok, &wrapped, &kdf, true).await.map_err(sync_message)?;
-    store_local(&app, &key, &wrapped).await
+    store_local(&app, &key, &wrapped).await?;
+    if let Some(old) = old {
+        if let Err(e) = crate::cloud_backup::rewrap_backup_keys(&tok, &old, &key).await {
+            eprintln!("[sync] re-wrapping backup keys failed: {e}");
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -546,6 +555,17 @@ mod tests {
     /// Cheap parameters for tests that don't pin the real ones.
     fn fast_kdf() -> Kdf {
         Kdf { alg: "argon2id".into(), salt: b64(&seq::<16>(1)), m: 64, t: 1, p: 1 }
+    }
+
+    /// A fixed vector the website's unlock (stroke-web src/lib/backups/crypto.ts)
+    /// is checked against: passphrase "correct horse battery", key 0x42 * 32.
+    #[test]
+    fn known_answer_for_the_web_unlock() {
+        let kdf = Kdf { alg: "argon2id".into(), salt: b64(&[7u8; 16]), m: 1024, t: 2, p: 1 };
+        let kek = derive_kek("correct horse battery", &kdf).unwrap();
+        let wrapped = wrap_key_with_nonce(&kek, &[9u8; 24], &[0x42u8; 32]);
+        assert_eq!(unwrap_key("correct horse battery", &wrapped, &kdf).unwrap(), [0x42u8; 32]);
+        println!("UNLOCK {} {}", kdf.salt, wrapped);
     }
 
     #[test]

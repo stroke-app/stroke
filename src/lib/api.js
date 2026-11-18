@@ -1868,7 +1868,7 @@ export async function mcpSetReadonly(readonly) {
  * @typedef {{ includeSchema?: boolean, includeData?: boolean, includeSequences?: boolean, includeEnums?: boolean, includeFunctions?: boolean, includeTriggers?: boolean, includeViews?: boolean }} BackupOptions
  * @typedef {{ sql: string, tableCount: number, rowCount: number, cancelled: boolean, path: string | null, bytes: number, failedTables: number, elapsedMs: number }} BackupExportResult
  * @typedef {{ statementsOk: number, statementsErr: number, statementsSkipped: number, cancelled: boolean, errors: string[], elapsedMs: number }} BackupImportResult
- * @typedef {{ size: number, engine: string | null, stroke: boolean, incomplete: boolean }} BackupFileInfo
+ * @typedef {{ size: number, engine: string | null, stroke: boolean, incomplete: boolean, encrypted?: boolean }} BackupFileInfo
  */
 
 /**
@@ -1924,7 +1924,8 @@ export async function pickBackupSavePath(defaultName) {
  */
 export async function pickBackupFile() {
   const { open } = await import('@tauri-apps/plugin-dialog')
-  const path = await open({ multiple: false, filters: [{ name: 'SQL', extensions: ['sql', 'txt'] }] })
+  // .gz and .stroke: scheduled backups (gzip, and end-to-end encrypted).
+  const path = await open({ multiple: false, filters: [{ name: 'SQL backups', extensions: ['sql', 'txt', 'gz', 'stroke'] }] })
   return typeof path === 'string' ? path : null
 }
 

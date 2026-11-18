@@ -10,6 +10,7 @@
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 mod account;
+mod backup_crypto;
 mod cloud_backup;
 mod shares;
 mod nightly;

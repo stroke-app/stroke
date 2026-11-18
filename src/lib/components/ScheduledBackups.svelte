@@ -4,6 +4,8 @@
   // and history live on stroke.click; this device runs the jobs for
   // connections saved on it (see $lib/stores/scheduled-backups.js).
   import { onMount } from 'svelte'
+  import { invoke } from '@tauri-apps/api/core'
+  import LockKeyhole from '@lucide/svelte/icons/lock-keyhole'
   import { Cron } from 'croner'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
   import { Button } from '$lib/components/ui/button/index.js'
@@ -45,8 +47,20 @@
   const atLimit = $derived(!!overview && overview.jobs.length >= overview.max_jobs)
   const usedPct = $derived(overview ? Math.min(100, (overview.used_bytes / overview.quota_bytes) * 100) : 0)
 
+  /** The sync key is on this computer: backups can be encrypted before upload. */
+  let syncUnlocked = $state(/** @type {boolean|null} */ (null))
+  async function checkSync() {
+    try {
+      const st = /** @type {{ unlocked: boolean }} */ (await invoke('sync_state'))
+      syncUnlocked = !!st.unlocked
+    } catch {
+      syncUnlocked = false
+    }
+  }
+
   onMount(() => {
     if ($isSignedIn) void refreshBackupJobs()
+    void checkSync()
   })
 
   // ── Form ───────────────────────────────────────────────────────────────────
@@ -101,6 +115,7 @@
   /** @param {BackupJob|null} job */
   async function openForm(job = null) {
     formError = null
+    void checkSync()
     editing = job?.id ?? null
     destination = job?.destination ?? 'stroke'
     keep = String(job?.keep ?? 7)
@@ -136,6 +151,7 @@
     if (!connection || saving) return
     formError = null
     if (nextRun.error) { formError = nextRun.error; return }
+    if (destination === 'stroke' && !syncUnlocked) { formError = 'Set up or unlock sync (Settings → Sync) first: Stroke Cloud backups are encrypted with your sync key.'; return }
     if (destination === 's3') {
       if (!s3Bucket.trim()) { formError = 'Name the bucket.'; return }
       if (!s3HasKeys && (!s3AccessKey.trim() || !s3Secret.trim())) { formError = 'Add the access key and secret.'; return }
@@ -400,6 +416,17 @@
         </div>
       {/if}
 
+      <p class="flex items-start gap-1.5 text-ui-2xs leading-relaxed text-muted-foreground">
+        <LockKeyhole class="mt-px size-3 shrink-0" />
+        {#if destination === 'stroke' || syncUnlocked}
+          Encrypted on this computer with your sync key. Stroke can't read it, and without your sync passphrase nobody can, you included.
+        {:else}
+          Set up sync to encrypt these too; until then the bucket gets the plain .sql.gz.
+        {/if}
+      </p>
+      {#if destination === 'stroke' && syncUnlocked === false}
+        <p class="text-ui-xs text-warning" role="status">Stroke Cloud needs sync set up and unlocked on this computer (Settings → Sync).</p>
+      {/if}
       {#if formError}<p class="text-ui-xs text-destructive" role="alert">{formError}</p>{/if}
 
       <Dialog.Footer>
