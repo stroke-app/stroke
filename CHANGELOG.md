@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.19.6] - 2026-11-18
+
+### Changes
+- Let the DynamoDB console send the API calls it offers (#295)
+
+
 ## [2.19.5] - 2026-11-18
 
 ### Changes
