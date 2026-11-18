@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.19.2] - 2026-11-18
+
+### Changes
+- Fix sync failing with "Unknown record kind: library" (#291)
+
+
 ## [2.19.1] - 2026-11-18
 
 ### Changes
