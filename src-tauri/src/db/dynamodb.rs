@@ -236,7 +236,9 @@ fn sha_hex(data: &[u8]) -> String {
 }
 
 /// The `Authorization` header for one request. `headers` must already hold
-/// every header to sign (host and x-amz-date included), names lowercase.
+/// every header to sign (host and x-amz-date included), names lowercase. An
+/// `x-amz-content-sha256` header (S3's `UNSIGNED-PAYLOAD`, say) is used as the
+/// payload hash instead of hashing `body`.
 #[allow(clippy::too_many_arguments)]
 pub fn sign(
     method: &str,
@@ -256,7 +258,12 @@ pub fn sign(
     hs.sort();
     let canonical_headers: String = hs.iter().map(|(k, v)| format!("{k}:{v}\n")).collect();
     let signed: String = hs.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>().join(";");
-    let canonical = format!("{method}\n{path}\n{query}\n{canonical_headers}\n{signed}\n{}", sha_hex(body));
+    let payload_hash = hs
+        .iter()
+        .find(|(k, _)| k == "x-amz-content-sha256")
+        .map(|(_, v)| v.clone())
+        .unwrap_or_else(|| sha_hex(body));
+    let canonical = format!("{method}\n{path}\n{query}\n{canonical_headers}\n{signed}\n{payload_hash}");
     let date = &amz_date[..8];
     let scope = format!("{date}/{region}/{service}/aws4_request");
     let to_sign = format!("AWS4-HMAC-SHA256\n{amz_date}\n{scope}\n{}", sha_hex(canonical.as_bytes()));

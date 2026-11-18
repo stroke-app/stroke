@@ -10654,7 +10654,7 @@ let rowSearch = $state('')
         >
           <svelte:boundary failed={tabError}>
             {#await import('./BackupPage.svelte')}<TabLoading />{:then { default: BackupPage }}
-              <BackupPage dbType={dbType} activeSchema={activeSchema} {schemas} tables={tables.map((t) => ({ name: t.name, rowCount: t.rowCount }))} onrestored={async () => { await loadSchemas(); await loadTables({ force: true }); bumpObjects() }} />
+              <BackupPage dbType={dbType} activeSchema={activeSchema} {schemas} savedConnection={savedConnections.find((c) => c.id === activeConnectionId) ?? null} tables={tables.map((t) => ({ name: t.name, rowCount: t.rowCount }))} onrestored={async () => { await loadSchemas(); await loadTables({ force: true }); bumpObjects() }} />
             {/await}
           </svelte:boundary>
         </div>

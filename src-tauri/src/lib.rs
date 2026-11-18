@@ -10,6 +10,7 @@
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 mod account;
+mod cloud_backup;
 mod shares;
 mod nightly;
 mod agents;
@@ -935,6 +936,13 @@ pub fn run() {
             db::parked::close_parked,
             db::parked::parked_connections,
             commands::export_parquet,
+            cloud_backup::backup_jobs_list,
+            cloud_backup::backup_job_save,
+            cloud_backup::backup_job_patch,
+            cloud_backup::backup_job_delete,
+            cloud_backup::backup_s3_save,
+            cloud_backup::backup_s3_status,
+            cloud_backup::backup_job_run,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
