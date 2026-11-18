@@ -49,7 +49,7 @@ const DISCONNECTED_KEY = 'stroke:disconnected'
  *   ssh?: SshConfig
  *   readOnly?: boolean
  *   environment?: 'prod' | 'staging' | 'dev' | null
- *   provider?: 'neon' | 'supabase' | 'planetscale' | 'prisma' | 'tidb' | 'turso' | 'nile' | 'railway' | 'upstash' | 'posthog'
+ *   provider?: 'neon' | 'supabase' | 'planetscale' | 'prisma' | 'tidb' | 'turso' | 'nile' | 'railway' | 'upstash' | 'posthog' | 'xata' | 'singlestore'
  *   projectId?: string  - PostHog project
  *   apiKey?: string     - PostHog personal API key
  *   providerRef?: string  - the provider's own id for this database (its db_ref), so reopening it from the provider picker connects with this entry instead of minting new credentials
