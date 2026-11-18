@@ -697,9 +697,13 @@ pub(crate) async fn load_token(app: &tauri::AppHandle) -> Option<String> {
         .filter(|t| !t.is_empty())
 }
 
+/// A new sign-in also drops any sync key left on this device: it belonged to
+/// whoever was signed in before (possibly another account), and this one
+/// unlocks sync with its own passphrase.
 async fn store_token(app: &tauri::AppHandle, token: String) -> Result<(), String> {
     crate::secrets::update_async(app, move |m| {
         m.insert(TOKEN_KEY.to_string(), token);
+        m.remove(crate::sync::SYNC_KEY_VAULT);
     })
     .await
 }

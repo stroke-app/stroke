@@ -13,7 +13,7 @@
   import * as Dialog from '$lib/components/ui/dialog/index.js'
   import SegmentedControl from './SegmentedControl.svelte'
   import { isSignedIn, openManageAccount } from '$lib/stores/account.js'
-  import { hasPro } from '$lib/stores/license.js'
+  import { hasPaidPro, isTrialActive } from '$lib/stores/license.js'
   import {
     backupOverview, backupLoadError, runningJobId, refreshBackupJobs, saveBackupJob, patchBackupJob,
     deleteBackupJob, saveS3Keys, s3KeysRegion, describeCron, formatBytes, SCHEDULE_DRIVERS,
@@ -233,8 +233,8 @@
 
 {#if !$isSignedIn}
   {@render message('Sign in for scheduled backups', 'They come with Stroke Pro on your account.')}
-{:else if !$hasPro || overview?.pro === false}
-  {@render message('Scheduled backups are a Pro feature', 'Up to 10 databases, to Stroke Cloud or your own S3.', getPro)}
+{:else if !$hasPaidPro || overview?.pro === false}
+  {@render message('Scheduled backups need Stroke Pro', $isTrialActive ? "The free trial doesn't include them. Up to 10 databases, to Stroke Cloud or your own S3." : 'Up to 10 databases, to Stroke Cloud or your own S3.', getPro)}
 {:else if !connection}
   {@render message('Save this connection first', 'Schedules run on saved connections.')}
 {:else if !supported}

@@ -52,3 +52,12 @@ export const hasPro = derived(
   licenseStatus,
   ($s) => $s?.status !== 'TrialExpired',
 )
+
+/**
+ * Reactive: Pro that was paid for. The trial does not count: sync and
+ * scheduled backups need this (the server checks it too).
+ */
+export const hasPaidPro = derived(
+  licenseStatus,
+  ($s) => $s?.status === 'Valid',
+)
