@@ -47,6 +47,23 @@ release with a freeze and a test pass, not a plain promote. In order:
 - [ ] **Ship it.** Label the release PR `release:major` (CONTRIBUTING.md), then
       Actions, *Promote nightly to stable*.
 
+## Next up
+
+- [ ] **Layout control.** Three buttons in the title bar for the sidebar (⌘B),
+      the terminal panel (⌘J) and the docked AI panel (⌘⌥B), the open edge
+      filled. Built on the `layout-and-dashboard` branch; check it in the
+      running app on every OS before merging.
+- [ ] **Dashboard tab redesign.** A 12-column grid of chart cards, each with a
+      status dot, refresh, an auto-refresh interval, a title and its error on
+      the card. Resize and rearrange cards, add one from any saved query, and
+      save the layout.
+- [ ] **Admin metrics page** on stroke.click, for me only: sign-ups, active
+      trials, trial-to-Pro conversion, revenue, downloads, active devices,
+      app versions in use, countries, backups and sponsors, over time.
+- [ ] **Local database servers.** Postgres, MySQL and Redis side by side in
+      any version, with Start, Stop, the port and Open, per server on Docker
+      or as native binaries; Homebrew services listed too.
+
 ## Website
 
 The site is `stroke-web` (TanStack Start on Cloudflare Workers).
