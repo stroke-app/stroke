@@ -37,7 +37,10 @@ const WRAP_AAD: &[u8] = b"stroke-sync-key-v1";
 pub const KDF_M_KIB: u32 = 65_536;
 pub const KDF_T: u32 = 3;
 pub const KDF_P: u32 = 1;
-pub const KINDS: [&str; 3] = ["workspace", "connection", "settings"];
+/// Record kinds the app syncs. Keep in step with KINDS in src/lib/sync/engine.js
+/// and SYNC_KINDS in stroke-web's src/lib/sync/service.ts: a kind missing here
+/// fails the whole push ("Unknown record kind").
+pub const KINDS: [&str; 5] = ["workspace", "connection", "settings", "query", "library"];
 /// Server limit per push.
 const PUSH_BATCH: usize = 200;
 const MIN_PASSPHRASE: usize = 8;
@@ -654,7 +657,9 @@ mod tests {
         assert!(encrypt_plain(&key, &mk("settings", "settings")).is_ok());
         assert!(encrypt_plain(&key, &mk("a b", "workspace")).is_err());
         assert!(encrypt_plain(&key, &mk(&"x".repeat(129), "workspace")).is_err());
-        assert!(encrypt_plain(&key, &mk("x", "query")).is_err());
+        assert!(encrypt_plain(&key, &mk("x", "query")).is_ok());
+        assert!(encrypt_plain(&key, &mk("x", "library")).is_ok());
+        assert!(encrypt_plain(&key, &mk("x", "secrets")).is_err());
         let tomb = encrypt_plain(&key, &PlainRecord { deleted: true, plaintext: None, ..mk("x", "workspace") }).unwrap();
         assert!(tomb.ciphertext.is_none());
         // Wire shape: no seq/updated_at on push.
