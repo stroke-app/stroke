@@ -1,4 +1,5 @@
 <script>
+  import { formatApiCall } from '$lib/dynamo-json.js'
   import ArrowLeft from '@lucide/svelte/icons/arrow-left'
   import { onMount, onDestroy, untrack, tick } from 'svelte'
   import { panelMotionOff, slidePanel } from '$lib/panel-motion.js'
@@ -7917,7 +7918,7 @@ let rowSearch = $state('')
         const o = /** @type {{ table?: string | null, schema?: string | null, query?: string | null }} */ (e.payload ?? {})
         if (!connection) return
         if (aiMode) exitAiMode()
-        if (o.query) void openQueryInEditor(o.query)
+        if (o.query) void openQueryInEditor(isDynamo ? formatApiCall(o.query) : o.query)
         else if (o.table) void openTableTab(o.schema || activeSchema, o.table)
       }).then((u) => { off = u }),
     ).catch(() => {})

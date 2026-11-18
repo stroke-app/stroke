@@ -346,3 +346,24 @@ export function dynamoGrid(items, keys) {
   )
   return { columns: names.map((name, i) => ({ name, data_type: types[i] || 'null', nullable: !keys.includes(name) })), rows }
 }
+
+/**
+ * A DynamoDB API call as the console reads it (`{"operation": ..., "input":
+ * ...}` or `CreateTable {...}`), laid out over several lines. Agents hand
+ * these over as one long line; anything else comes back unchanged.
+ * @param {string} text
+ */
+export function formatApiCall(text) {
+  const s = text.trim().replace(/;$/, '').trim()
+  try {
+    if (s.startsWith('{')) {
+      const v = JSON.parse(s)
+      return v && typeof v === 'object' && typeof v.operation === 'string' ? JSON.stringify(v, null, 2) : text
+    }
+    const m = /^([A-Za-z]+)\s*(\{[\s\S]*\})$/.exec(s)
+    if (m) return `${m[1]} ${JSON.stringify(JSON.parse(m[2]), null, 2)}`
+  } catch {
+    // Not JSON after all: leave it as written.
+  }
+  return text
+}
