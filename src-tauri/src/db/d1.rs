@@ -177,3 +177,63 @@ pub async fn query(config: &D1Config, sql: &str, params: Vec<Value>) -> Result<S
     Ok(out)
 }
 
+// ── Time Travel ──────────────────────────────────────────────────────────────
+// D1 keeps 30 days of point-in-time history. A bookmark names one moment;
+// restoring to it rewinds the whole database (and returns a bookmark for the
+// state just before, so a restore can itself be undone).
+
+/** One call to a time_travel endpoint, with the same token refresh as `query`. */
+async fn time_travel(config: &D1Config, method: reqwest::Method, path_and_query: &str) -> Result<Value, String> {
+    let url = format!(
+        "https://api.cloudflare.com/client/v4/accounts/{}/d1/database/{}/time_travel/{path_and_query}",
+        config.account_id, config.database_id
+    );
+    let send = |token: String| {
+        let url = url.clone();
+        let method = method.clone();
+        async move {
+            client()
+                .request(method, &url)
+                .header("Authorization", format!("Bearer {token}"))
+                .send()
+                .await
+                .map_err(|e| crate::cloudflare::describe_request_error("D1 Time Travel request", &e))
+        }
+    };
+    let mut res = send(config.api_token.clone()).await?;
+    if res.status() == reqwest::StatusCode::UNAUTHORIZED {
+        if let Some(fresh) = crate::cloudflare::refreshed_token().await {
+            super::connection::update_d1_token(&fresh);
+            res = send(fresh).await?;
+        }
+    }
+    let status = res.status();
+    let body: Value = res.json().await.unwrap_or(Value::Null);
+    if !status.is_success() || body["success"] == Value::Bool(false) {
+        let msg = body["errors"][0]["message"].as_str().map(str::to_string).unwrap_or_else(|| format!("HTTP {status}"));
+        return Err(format!("D1 Time Travel: {msg}"));
+    }
+    Ok(body["result"].clone())
+}
+
+/// The bookmark for now, or for the moment nearest `timestamp` (RFC 3339).
+pub async fn bookmark(config: &D1Config, timestamp: Option<&str>) -> Result<String, String> {
+    let q = match timestamp.map(str::trim).filter(|t| !t.is_empty()) {
+        Some(t) => format!("bookmark?timestamp={}", urlencoding::encode(t)),
+        None => "bookmark".to_string(),
+    };
+    let r = time_travel(config, reqwest::Method::GET, &q).await?;
+    r["bookmark"].as_str().map(str::to_string).ok_or_else(|| "D1 Time Travel returned no bookmark".to_string())
+}
+
+/// Rewind the database to `bookmark`. Returns the bookmark of the state it
+/// replaced, to undo the restore with.
+pub async fn restore(config: &D1Config, bookmark: &str) -> Result<String, String> {
+    let b = bookmark.trim();
+    if b.is_empty() {
+        return Err("Give the bookmark to restore to.".into());
+    }
+    let r = time_travel(config, reqwest::Method::POST, &format!("restore?bookmark={}", urlencoding::encode(b))).await?;
+    Ok(r["previous_bookmark"].as_str().unwrap_or_default().to_string())
+}
+

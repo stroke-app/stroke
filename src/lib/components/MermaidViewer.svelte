@@ -93,16 +93,29 @@
       const evicted = _asyncKeys.shift()
       if (evicted) { const { [evicted]: _, ...rest } = _asyncDiagrams; _asyncDiagrams = rest }
     }
+    const id = `mermaid-${Math.random().toString(36).slice(2)}`
     try {
       const mermaid = await _ensureMermaidJs()
-      const id = `mermaid-${Math.random().toString(36).slice(2)}`
       const { svg } = await mermaid.render(id, c)
       _asyncDiagrams[asyncKey] = svg
     } catch (e) {
       const msg = String(e).replace(/</g, '&lt;').replace(/>/g, '&gt;')
       _asyncDiagrams[asyncKey] = `<div class="flex flex-col gap-1.5 p-3 rounded border border-destructive/30 bg-destructive/5 text-ui-xs"><p class="font-medium text-destructive">Render failed</p><pre class="font-mono text-ui-3xs text-muted-foreground whitespace-pre-wrap">${msg}</pre></div>`
+    } finally {
+      // mermaid.render measures in a scratch node it appends to <body> (#d<id>,
+      // and the svg #<id>) and does not always take it away when it fails: the
+      // leftover drew a half diagram over the page, the fullscreen view included.
+      document.getElementById(`d${id}`)?.remove()
+      document.getElementById(id)?.remove()
     }
+    // The picture on screen is still the "Rendering…" placeholder: later renders
+    // run from a timer, outside anything that tracks this state, so without
+    // this a diagram the AI just saved stayed on the placeholder (or the old
+    // picture) until something else changed.
+    if (_shownAsyncKey === asyncKey) svgContent = _asyncDiagrams[asyncKey]
   }
+  /** The async render the view is waiting on, if any. */
+  let _shownAsyncKey = ''
 
   /**
    * Finish an ER diagram the renderer leaves square: cards get rounded corners
@@ -147,8 +160,9 @@
     const themeId = normalizeThemeId(document.documentElement.dataset.theme)
     const normalized = normalizeMermaidCode(c)
     const cacheKey = `${themeId}:${normalized}`
-    if (mermaidCache.has(cacheKey)) return /** @type {string} */ (mermaidCache.get(cacheKey))
+    if (mermaidCache.has(cacheKey)) { _shownAsyncKey = ''; return /** @type {string} */ (mermaidCache.get(cacheKey)) }
     const asyncKey = `async:${cacheKey}`
+    _shownAsyncKey = asyncKey
     if (_asyncDiagrams[asyncKey] !== undefined) {
       return _asyncDiagrams[asyncKey] === ''
         ? `<div class="flex items-center gap-2 p-4 text-ui-xs text-muted-foreground"><span class="size-3 animate-spin rounded-full border-2 border-border border-t-muted-foreground inline-block shrink-0"></span>Rendering…</div>`
@@ -161,6 +175,7 @@
       const svg = polishErSvg(raw)
       if (mermaidCache.size >= MERMAID_CACHE_MAX) mermaidCache.delete(/** @type {string} */ (mermaidCache.keys().next().value))
       mermaidCache.set(cacheKey, svg)
+      _shownAsyncKey = ''
       return svg
     } catch { /* fall through to async */ }
     void _renderWithMermaidJs(normalized, asyncKey)
@@ -266,20 +281,18 @@
         if (!dragging) return
         dragging = false
         node.style.cursor = 'grab'
-        // Back to painted in place, so the next zoom is drawn, not stretched.
-        svg.style.willChange = ''
         window.removeEventListener('mousemove', onMove)
         window.removeEventListener('mouseup', onUp)
       }
 
       const onDown = (/** @type {MouseEvent} */ e) => {
         if (e.button !== 0) return
+        // Without this WebKit starts a native drag of the SVG's text and
+        // draws a translucent copy under the cursor: the "double" diagram.
+        e.preventDefault()
         dragging = true
         ox = e.clientX - tx; oy = e.clientY - ty
         node.style.cursor = 'grabbing'
-        // Its own layer for the drag only: a pan then moves a painted layer
-        // instead of repainting every glyph per frame.
-        svg.style.willChange = 'transform'
         window.addEventListener('mousemove', onMove)
         window.addEventListener('mouseup', onUp)
       }
@@ -427,6 +440,6 @@
 </div>
 
 <style>
-  .mermaid-canvas { user-select: none; }
-  .mermaid-canvas :global(svg) { display: block; max-width: none; }
+  .mermaid-canvas { user-select: none; -webkit-user-select: none; -webkit-user-drag: none; }
+  .mermaid-canvas :global(svg) { display: block; max-width: none; -webkit-user-drag: none; }
 </style>

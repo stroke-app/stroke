@@ -247,7 +247,38 @@ struct WhereClause {
     binds: Vec<String>,
 }
 
+/// The category Postgres would give a MySQL DATA_TYPE, for the search's type
+/// pruning (query::column_could_contain): N numeric, D date/time, S the rest.
+fn search_category(data_type: &str) -> char {
+    match data_type.to_ascii_lowercase().as_str() {
+        "tinyint" | "smallint" | "mediumint" | "int" | "integer" | "bigint" | "decimal" | "numeric" | "float" | "double" | "real" | "bit" | "year" => 'N',
+        "date" | "datetime" | "timestamp" | "time" => 'D',
+        _ => 'S',
+    }
+}
+
+/// The columns a plain search should read: those whose type can print the term.
+/// A word never appears in an INT or a DATETIME, and casting every one of them
+/// to text on every row was most of a search's time on a large table.
+fn searchable_columns(columns: &[(String, String)], term: &str) -> Vec<String> {
+    columns
+        .iter()
+        .filter(|(name, ty)| {
+            let col = super::query::SearchColumn { name: name.clone(), category: search_category(ty), type_name: ty.to_ascii_lowercase() };
+            super::query::column_could_contain(&col, term)
+        })
+        .map(|(n, _)| n.clone())
+        .collect()
+}
+
+#[cfg(test)]
 fn build_where(columns: &[String], search: Option<&str>, search_is_regex: bool, search_case_sensitive: bool, filters: &[RowFilter]) -> Result<WhereClause, String> {
+    build_where_searching(columns, None, search, search_is_regex, search_case_sensitive, filters)
+}
+
+/// build_where with the columns a plain search reads (see searchable_columns);
+/// None searches every column, as before.
+fn build_where_searching(columns: &[String], search_columns: Option<&[String]>, search: Option<&str>, search_is_regex: bool, search_case_sensitive: bool, filters: &[RowFilter]) -> Result<WhereClause, String> {
     // (conjunct - None for first condition, Some("AND"/"OR") for subsequent)
     let mut cond_parts: Vec<(Option<&'static str>, String)> = Vec::new();
     let mut binds: Vec<String> = Vec::new();
@@ -258,7 +289,11 @@ fn build_where(columns: &[String], search: Option<&str>, search_is_regex: bool, 
         // REGEXP operator; the pattern arrives pre-built from the frontend.
         let cast = if search_case_sensitive { "BINARY" } else { "CHAR" };
         let pattern = if search_is_regex { term.to_string() } else { format!("%{}%", escape_like(term)) };
-        let parts: Vec<String> = columns
+        let searched: &[String] = match (search_is_regex, search_columns) {
+            (false, Some(cols)) => cols,
+            _ => columns,
+        };
+        let parts: Vec<String> = searched
             .iter()
             .map(|c| {
                 let qc = bt(c);
@@ -268,7 +303,10 @@ fn build_where(columns: &[String], search: Option<&str>, search_is_regex: bool, 
             .collect();
         if !parts.is_empty() {
             cond_parts.push((None, format!("({})", parts.join(" OR "))));
-            for _ in columns { binds.push(pattern.clone()); }
+            for _ in searched { binds.push(pattern.clone()); }
+        } else if search_columns.is_some() && !search_is_regex && !columns.is_empty() {
+            // No column can hold the term: nothing matches, and nothing is scanned.
+            cond_parts.push((None, "FALSE".to_string()));
         }
     }
 
@@ -429,8 +467,12 @@ pub async fn get_table_rows(
     // BIGINT - decoding the wrong signedness is a hard type-mismatch in sqlx.
     // CAST(... AS SIGNED) normalizes both to i64, which comfortably holds any
     // real row count.
-    let build = |table_columns: &[String]| -> Result<(String, String, Vec<String>), String> {
-        let where_clause = build_where(table_columns, search.as_deref(), search_is_regex, search_case_sensitive, &filters)?;
+    let build = |table_columns: &[String], typed: Option<&[(String, String)]>| -> Result<(String, String, Vec<String>), String> {
+        let search_cols = match (typed, search.as_deref().map(str::trim).filter(|t| !t.is_empty())) {
+            (Some(t), Some(term)) if !search_is_regex => Some(searchable_columns(t, term)),
+            _ => None,
+        };
+        let where_clause = build_where_searching(table_columns, search_cols.as_deref(), search.as_deref(), search_is_regex, search_case_sensitive, &filters)?;
         let order_by = if let Some(col) = sort_col.as_deref() {
             // Validate the sort column against the fetched columns so an unknown
             // name never reaches the query (mirrors the Postgres ensure_column check).
@@ -475,11 +517,15 @@ pub async fn get_table_rows(
         // column list, so it has to land first.
         let meta_rows = meta_q.fetch_all(pool).await.map_err(|e| format!("Failed to load columns: {e}"))?;
         let names: Vec<String> = meta_rows.iter().filter_map(|r| my_text(r, 0)).collect();
-        let (count_sql, data_sql, binds) = build(&names)?;
+        let typed: Vec<(String, String)> = meta_rows
+            .iter()
+            .filter_map(|r| Some((my_text(r, 0)?, my_text(r, 1).unwrap_or_default())))
+            .collect();
+        let (count_sql, data_sql, binds) = build(&names, Some(&typed))?;
         let (page, meta) = tokio::join!(run_page(count_sql, data_sql, binds), pk_fk);
         (meta_rows, page, meta)
     } else {
-        let (count_sql, data_sql, binds) = build(&[])?;
+        let (count_sql, data_sql, binds) = build(&[], None)?;
         let (meta_rows, page, meta) = tokio::join!(meta_q.fetch_all(pool), run_page(count_sql, data_sql, binds), pk_fk);
         (meta_rows.map_err(|e| format!("Failed to load columns: {e}"))?, page, meta)
     };
@@ -631,6 +677,117 @@ pub async fn execute_sql(
         }
     }
 
+    // A script (`CREATE DATABASE x; USE x; CREATE TABLE …`) cannot go through
+    // the prepared protocol: MySQL answers 1064 and TiDB 8115 "Can not prepare
+    // multiple statements", so the whole call failed. Run its statements one
+    // by one on this one connection instead, which also keeps a `USE` in the
+    // script in effect for the statements after it.
+    let stmts = super::query::split_sql_statements(sql);
+    let switches_db = stmts.iter().any(|s| super::sql_util::statement_head(s) == "use");
+    let result = if stmts.len() > 1 {
+        run_script_on(&mut *conn, &stmts, started).await
+    } else {
+        run_one_on(&mut *conn, sql).await.map(|mut out| {
+            if switches_db {
+                // Each call takes a connection from the pool, so a lone USE is
+                // gone by the next call. Say so, rather than let the next CREATE
+                // TABLE land in the connection's own database without a word.
+                out.message = Some(USE_DOES_NOT_PERSIST.to_string());
+            }
+            out.query_ms = query_ms();
+            out
+        })
+    };
+    if switches_db {
+        restore_default_database(pool, &mut conn).await;
+    }
+    result
+}
+
+/// Put a connection that ran `USE` back on the pool's own database. Left as it
+/// was, the connection went back to the pool still pointed at the other
+/// database, and whichever later call happened to draw it ran there: a
+/// `CREATE TABLE orders … REFERENCES customers` failed with "Table
+/// 'ecommerce.customers' doesn't exist" while the call before it, on another
+/// connection, had made `customers` in the connection's database. When there
+/// is no default to go back to, the connection is closed instead of reused.
+async fn restore_default_database(pool: &MySqlPool, conn: &mut sqlx::pool::PoolConnection<sqlx::MySql>) {
+    let opts = pool.connect_options();
+    let restored = match opts.get_database().filter(|d| !d.is_empty()) {
+        Some(db) => sqlx::Executor::execute(&mut **conn, format!("USE {}", bt(db)).as_str()).await.is_ok(),
+        None => false,
+    };
+    if !restored {
+        conn.close_on_drop();
+    }
+}
+
+/// What a lone `USE db` reports: it switched one pooled connection, not the session.
+pub(crate) const USE_DOES_NOT_PERSIST: &str = "USE only applies to this call: every call runs on a pooled connection. \
+     Qualify names (`db`.`table`), put USE in the same call as the statements that need it, \
+     or switch database from Stroke's database picker.";
+
+/// The statements of a script, in order, on one connection. Stops at the
+/// first failure and says which statement it was and that the ones before it
+/// already ran (MySQL commits DDL implicitly, so there is nothing to roll back).
+/// The last statement that returned rows is the result; otherwise the summed
+/// affected-row count.
+async fn run_script_on(
+    conn: &mut sqlx::MySqlConnection,
+    stmts: &[String],
+    started: Instant,
+) -> Result<SqlResult, String> {
+    let n = stmts.len();
+    let mut affected: i64 = 0;
+    let mut last_rows: Option<SqlResult> = None;
+    for (i, stmt) in stmts.iter().enumerate() {
+        match run_one_on(conn, stmt).await {
+            Ok(r) if !r.columns.is_empty() => last_rows = Some(r),
+            Ok(r) => affected += r.row_count.unwrap_or(0),
+            Err(e) => {
+                let done = if i == 0 {
+                    "Nothing ran.".to_string()
+                } else if i == 1 {
+                    "Statement 1 already ran.".to_string()
+                } else {
+                    format!("Statements 1-{i} already ran.")
+                };
+                let e = e.trim_start_matches("Statement failed: ").trim_start_matches("Query failed: ");
+                return Err(format!("Statement {} of {n} failed: {e}\nFailed statement: {}\n{done}", i + 1, first_line(stmt)));
+            }
+        }
+    }
+    let query_ms = started.elapsed().as_millis() as u64;
+    let joined = stmts.join(";\n");
+    if let Some(mut r) = last_rows {
+        r.query_ms = query_ms;
+        r.sql = joined;
+        return Ok(r);
+    }
+    Ok(SqlResult {
+        columns: vec![],
+        rows: vec![],
+        row_count: Some(affected),
+        message: Some(format!("{n} statements ran, {affected} row(s) affected")),
+        query_ms,
+        sql: joined,
+    })
+}
+
+/// A statement's first line, cut to 120 characters, for an error message.
+fn first_line(sql: &str) -> String {
+    let line = sql.trim().lines().next().unwrap_or("");
+    match line.char_indices().nth(120) {
+        Some((at, _)) => format!("{}…", &line[..at]),
+        None => line.to_string(),
+    }
+}
+
+/// One statement on `conn`: prepared first, then the text protocol for the
+/// statements the server refuses to prepare.
+async fn run_one_on(conn: &mut sqlx::MySqlConnection, sql: &str) -> Result<SqlResult, String> {
+    let started = Instant::now();
+    let query_ms = || started.elapsed().as_millis() as u64;
     let head = super::sql_util::statement_head(sql);
     let is_select = matches!(head.as_str(), "select" | "show" | "explain" | "describe" | "desc" | "with" | "call");
 
@@ -676,11 +833,12 @@ pub async fn execute_sql(
 /// MySQL refuses to prepare some statements: CREATE / DROP PROCEDURE,
 /// FUNCTION, TRIGGER and EVENT, SHOW CREATE TRIGGER and a few more (error
 /// 1295). `sqlx::query` always prepares, so those are run again as a bare
-/// `&str`, which sqlx sends over the text protocol.
+/// `&str`, which sqlx sends over the text protocol. TiDB refuses a script
+/// with 8115 ("Can not prepare multiple statements").
 fn unsupported_in_prepared(e: &sqlx::Error) -> bool {
     e.as_database_error()
         .and_then(|d| d.try_downcast_ref::<sqlx::mysql::MySqlDatabaseError>())
-        .is_some_and(|m| m.number() == 1295)
+        .is_some_and(|m| matches!(m.number(), 1295 | 8115))
 }
 
 /// Rows of a result as JSON, converted as they stream in so the driver rows
@@ -1121,5 +1279,132 @@ mod mysql_live {
         assert_eq!((r.total, r.rows.len()), (0, 0));
         assert_eq!(r.primary_key, ["id"]);
         sqlx::query("DROP TABLE stroke_empty_probe").execute(&pool).await.unwrap();
+    }
+}
+
+/// The AI chat's `execute_sql` path (`open_mysql` pool with its after-connect
+/// session setup, then `execute_sql`), run with the statements a model sends
+/// for "create the ecommerce db and seed". Point it at MySQL or TiDB:
+/// `STROKE_AI_MYSQL=127.0.0.1:4000:root::test cargo test --lib ai_tool_live -- --ignored --nocapture`
+/// (host:port:user:password:database).
+#[cfg(test)]
+mod ai_tool_live {
+    use super::*;
+    use crate::db::connection::{open_mysql, MysqlConfig};
+
+    fn config() -> Option<MysqlConfig> {
+        let spec = std::env::var("STROKE_AI_MYSQL").ok()?;
+        let p: Vec<&str> = spec.splitn(5, ':').collect();
+        Some(MysqlConfig {
+            name: "ai".into(),
+            host: p[0].into(),
+            port: p[1].parse().unwrap(),
+            user: p[2].into(),
+            password: p[3].into(),
+            database: p[4].into(),
+            ssl: false,
+            ssl_mode: None,
+            ssl_root_cert: None,
+            ssh: None,
+            timezone: None,
+        })
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore]
+    async fn ai_tool_live_ecommerce_script() {
+        let Some(cfg) = config() else { return };
+        let pool = open_mysql(&cfg).await.expect("connect");
+        let tables = ["order_items", "orders", "products", "customers", "a1", "a2"];
+        for t in tables {
+            let _ = execute_sql(&pool, &format!("DROP TABLE IF EXISTS `{t}`"), None).await;
+        }
+        let _ = execute_sql(&pool, "DROP DATABASE IF EXISTS ecommerce", None).await;
+        let steps = [
+            "CREATE TABLE `customers` (\n  `id` INT AUTO_INCREMENT PRIMARY KEY,\n  `name` VARCHAR(100) NOT NULL,\n  `email` VARCHAR(255) NOT NULL UNIQUE,\n  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n)",
+            "CREATE DATABASE ecommerce",
+            "CREATE TABLE `products` (`id` INT AUTO_INCREMENT PRIMARY KEY, `name` VARCHAR(200) NOT NULL, `price` DECIMAL(10,2) NOT NULL, `stock` INT NOT NULL DEFAULT 0)",
+            "CREATE TABLE `orders` (`id` INT AUTO_INCREMENT PRIMARY KEY, `customer_id` INT NOT NULL, `status` VARCHAR(20) NOT NULL DEFAULT 'pending', `ordered_at` DATETIME DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (`customer_id`) REFERENCES `customers`(`id`))",
+            "CREATE TABLE `order_items` (`id` INT AUTO_INCREMENT PRIMARY KEY, `order_id` INT NOT NULL, `product_id` INT NOT NULL, `quantity` INT NOT NULL, `unit_price` DECIMAL(10,2) NOT NULL, FOREIGN KEY (`order_id`) REFERENCES `orders`(`id`), FOREIGN KEY (`product_id`) REFERENCES `products`(`id`))",
+            "INSERT INTO `customers` (`name`, `email`) VALUES ('Alice Smith', 'alice@example.com'), ('Bob Jones', 'bob@example.com')",
+            "INSERT INTO `products` (`name`, `price`, `stock`) VALUES ('Laptop', 999.99, 10), ('Mouse', 19.99, 200)",
+            "INSERT INTO `orders` (`customer_id`, `status`) VALUES (1, 'shipped'), (2, 'pending')",
+            "INSERT INTO `order_items` (`order_id`, `product_id`, `quantity`, `unit_price`) VALUES (1, 1, 1, 999.99), (1, 2, 2, 19.99), (2, 2, 1, 19.99)",
+            // A script in one call: refused by the prepared protocol before.
+            "CREATE TABLE a1 (id INT PRIMARY KEY); CREATE TABLE a2 (id INT PRIMARY KEY);",
+            "CREATE TABLE ecommerce.t1 (id INT PRIMARY KEY)",
+            // USE inside the script holds for the rest of it.
+            "USE ecommerce; CREATE TABLE t2 (id INT PRIMARY KEY); INSERT INTO t2 VALUES (1), (2)",
+        ];
+        let mut failed = Vec::new();
+        for sql in steps {
+            match execute_sql(&pool, sql, None).await {
+                Ok(r) => println!("OK   {:?} :: {}", r.message, sql.lines().next().unwrap()),
+                Err(e) => {
+                    println!("FAIL {e} :: {}", sql.lines().next().unwrap());
+                    failed.push((sql, e));
+                }
+            }
+        }
+        let t2 = execute_sql(&pool, "SELECT COUNT(*) FROM ecommerce.t2", None).await;
+        // A lone USE says it does not carry over to the next call.
+        let used = execute_sql(&pool, "USE ecommerce", None).await.unwrap();
+        // A failing script says which statement failed and what already ran.
+        let partial = execute_sql(&pool, "INSERT INTO a1 VALUES (1); INSERT INTO nope VALUES (1); INSERT INTO a1 VALUES (2)", None).await;
+        // ANSI_QUOTES is on: a double-quoted value is a column name.
+        let quoted = execute_sql(&pool, "INSERT INTO customers (name, email) VALUES (\"Carol\", \"c@x.io\")", None).await;
+        for t in tables {
+            let _ = execute_sql(&pool, &format!("DROP TABLE IF EXISTS `{t}`"), None).await;
+        }
+        let _ = execute_sql(&pool, "DROP DATABASE IF EXISTS ecommerce", None).await;
+        assert!(failed.is_empty(), "{failed:#?}");
+        assert_eq!(t2.unwrap().rows[0][0], json!(2));
+        assert_eq!(used.message.as_deref(), Some(USE_DOES_NOT_PERSIST));
+        let partial = partial.unwrap_err();
+        println!("{partial}");
+        assert!(partial.starts_with("Statement 2 of 3 failed") && partial.contains("Statement 1 already ran"), "{partial}");
+        let quoted = quoted.unwrap_err();
+        println!("{quoted}");
+        assert!(quoted.contains("Unknown column"), "{quoted}");
+    }
+}
+
+#[cfg(test)]
+mod search_pruning_tests {
+    use super::*;
+
+    fn typed() -> Vec<(String, String)> {
+        vec![
+            ("id".into(), "int".into()),
+            ("name".into(), "varchar".into()),
+            ("price".into(), "decimal".into()),
+            ("created_at".into(), "datetime".into()),
+            ("meta".into(), "json".into()),
+        ]
+    }
+
+    #[test]
+    fn a_word_reads_only_text_columns() {
+        assert_eq!(searchable_columns(&typed(), "Product"), vec!["name".to_string(), "meta".to_string()]);
+    }
+
+    #[test]
+    fn digits_read_numbers_and_dates_too() {
+        assert_eq!(searchable_columns(&typed(), "2026"), vec!["id", "name", "price", "created_at", "meta"]);
+    }
+
+    #[test]
+    fn nothing_searchable_is_false_not_unfiltered() {
+        let names: Vec<String> = vec!["id".into(), "created_at".into()];
+        let w = build_where_searching(&names, Some(&[]), Some("abc"), false, false, &[]).unwrap();
+        assert!(w.sql.contains("FALSE"), "{}", w.sql);
+        assert!(w.binds.is_empty());
+    }
+
+    #[test]
+    fn untyped_search_is_unchanged() {
+        let names: Vec<String> = vec!["id".into(), "name".into()];
+        let a = build_where(&names, Some("x"), false, false, &[]).unwrap();
+        assert_eq!(a.binds.len(), 2);
     }
 }

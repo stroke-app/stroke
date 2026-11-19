@@ -1,4 +1,6 @@
 <script>
+  import Share2 from '@lucide/svelte/icons/share-2'
+  import { requestShare } from '$lib/share-flow.js'
   import { onDestroy, tick, untrack } from 'svelte'
   import dagre from '@dagrejs/dagre'
   import { getSchemaColumnStructure, listIndexes, getTableDdl, saveExportAs } from '$lib/api.js'
@@ -8,6 +10,7 @@
   import Search from '@lucide/svelte/icons/search'
   import LayoutDashboard from '@lucide/svelte/icons/layout-dashboard'
   import KeyRound from '@lucide/svelte/icons/key-round'
+  import Link2 from '@lucide/svelte/icons/link-2'
   import Link from '@lucide/svelte/icons/link'
   import X from '@lucide/svelte/icons/x'
   import ChevronDown from '@lucide/svelte/icons/chevron-down'
@@ -93,7 +96,7 @@
   ]
 
   // ── Config ────────────────────────────────────────────────────────────────
-  const NODE_W = 300
+  const NODE_W = 256
   const ROW_H = 30
   const HDR_H = 48
   const PAD_B = 10
@@ -396,6 +399,40 @@
       setTimeout(() => (copiedCode = false), 1600)
     } catch { /* clipboard unavailable */ }
   }
+  /**
+   * Share what's on screen as an encrypted link: the Mermaid code in the
+   * Mermaid view, otherwise the schema canvas exactly as laid out here (card
+   * positions, columns, keys and the links between them), which the web
+   * viewer draws as a pannable diagram.
+   */
+  function shareDiagram() {
+    const title = focusTable ? `${focusTable} and related tables` : `${activeSchema} schema`
+    if (erdView === 'mermaid') {
+      requestShare({ kind: 'mermaid', title, source: activeSchema, code: mermaidDraft })
+      return
+    }
+    const ids = new Set(nodes.map((n) => n.id))
+    const tables = nodes.flatMap((n) => {
+      const t = tableMeta.get(n.id)
+      if (!t) return []
+      return [{
+        name: t.name,
+        x: Math.round(n.position?.x ?? 0),
+        y: Math.round(n.position?.y ?? 0),
+        columns: t.columns.map((c) => ({ name: c.name, type: c.dataType || '', pk: t.pkCols.has(c.name), fk: c.foreignKey ?? null })),
+      }]
+    })
+    const links = edges
+      .filter((e) => ids.has(e.source) && ids.has(e.target))
+      .map((e) => ({
+        from: e.source,
+        fromCol: typeof e.sourceHandle === 'string' && e.sourceHandle.startsWith('src-') ? e.sourceHandle.slice(4) : '',
+        to: e.target,
+        toCol: typeof e.targetHandle === 'string' && e.targetHandle.startsWith('tgt-') ? e.targetHandle.slice(4) : '',
+      }))
+    requestShare({ kind: 'erd', title, source: activeSchema, tables, links })
+  }
+
   /** Save the code as a diagram of this connection and go there to edit it. */
   function editInDiagrams() {
     saveDiagram(`Schema diagram · ${activeSchema}`, mermaidDraft, 'Schema diagrams')
@@ -2223,6 +2260,18 @@
         </PopoverContent>
       </Popover>
 
+      <!-- Share the diagram as an encrypted link: the canvas as laid out here,
+           or the Mermaid code in the Mermaid view. -->
+      <button
+        type="button"
+        class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,transform] duration-150 ease-out hover:bg-accent hover:text-foreground active:scale-[0.97] disabled:pointer-events-none disabled:opacity-40"
+        disabled={tableMeta.size === 0}
+        onclick={shareDiagram}
+        title="Share as a link"
+        aria-label="Share the diagram as a link"
+      >
+        <Share2 class="size-3.5 shrink-0" />
+      </button>
       <button
         type="button"
         class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,transform] duration-150 ease-out hover:bg-accent hover:text-foreground active:scale-[0.97] disabled:pointer-events-none disabled:opacity-40"
@@ -2501,8 +2550,9 @@
       {#if nodes.length > 0}
         <div class="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center">
           <div class="flex h-7 items-center gap-3 rounded-md border border-border/40 bg-panel/95 px-3 text-ui-2xs text-muted-foreground">
-            <span class="flex items-center gap-1"><span class="size-1.5 rounded-full" style="background:{ink.pk}"></span>PK</span>
-            <span class="flex items-center gap-1"><span class="size-1.5 rounded-full" style="background:{ink.fk}"></span>FK</span>
+            <!-- The same glyphs the cards draw before a key column. -->
+            <span class="flex items-center gap-1"><KeyRound class="size-3 shrink-0" style="color:{ink.pk}" aria-hidden="true" />Primary key</span>
+            <span class="flex items-center gap-1"><Link2 class="size-3 shrink-0" style="color:{ink.fk}" aria-hidden="true" />Foreign key</span>
             <span class="h-2.5 w-px bg-border/60"></span>
             <!-- Crow's foot: fork on the FK side, bar on the referenced side. -->
             <span class="flex items-center gap-1" title="One-to-many: the fork sits on the foreign key side">

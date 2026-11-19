@@ -57,6 +57,7 @@ const whereClause = (ctx) => (ctx.primaryKey.length ? `WHERE ${pkConditions(ctx)
 export function genSelectStar(ctx) {
   const tbl = qualifiedTable(ctx)
   if (ctx.dialect === 'mssql') return `SELECT TOP 100 *\nFROM ${tbl};`
+  if (ctx.dialect === 'oracle') return `SELECT *\nFROM ${tbl}\nFETCH FIRST 100 ROWS ONLY;`
   return `SELECT *\nFROM ${tbl}\nLIMIT 100;`
 }
 
@@ -64,7 +65,7 @@ export function genSelectStar(ctx) {
 export function genSelectFields(ctx) {
   const tbl = qualifiedTable(ctx)
   const cols = ctx.columns.map((c) => `  ${quoteIdent(c.name, ctx)}`).join(',\n')
-  const tail = ctx.dialect === 'mssql' ? ';' : '\nLIMIT 100;'
+  const tail = ctx.dialect === 'mssql' ? ';' : ctx.dialect === 'oracle' ? '\nFETCH FIRST 100 ROWS ONLY;' : '\nLIMIT 100;'
   const head = ctx.dialect === 'mssql' ? 'SELECT TOP 100' : 'SELECT'
   return `${head}\n${cols}\nFROM ${tbl}${tail}`
 }
@@ -113,7 +114,7 @@ export function genUpsert(ctx) {
     const sets = updatable.map((c) => `  ${q(c.name)} = VALUES(${q(c.name)})`).join(',\n')
     return `INSERT INTO ${tbl} (\n${cols}\n) VALUES (\n${vals}\n)\nON DUPLICATE KEY UPDATE\n${sets};`
   }
-  if (ctx.dialect === 'mssql' || ctx.dialect === 'clickhouse') return null
+  if (ctx.dialect === 'mssql' || ctx.dialect === 'clickhouse' || ctx.dialect === 'oracle') return null
 
   // Postgres / SQLite family (sqlite, d1, libsql, duckdb)
   const conflict = ctx.primaryKey.map(q).join(', ')

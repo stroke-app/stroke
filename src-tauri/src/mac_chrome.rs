@@ -106,10 +106,14 @@ const TOOLS_ITEMS: &[&[Item]] = &[
     ],
     &[
         ("dataDiff", "Data Diff", None, true),
+        ("migrations", "Migrations", None, true),
         ("dashboard", "Dashboard", None, true),
         ("logs", "Activity Log", Some("CmdOrCtrl+Shift+L"), true),
     ],
-    &[("extensions", "Extensions", Some("CmdOrCtrl+Shift+X"), false)],
+    &[
+        ("localServers", "Local Servers…", None, false),
+        ("extensions", "Extensions", Some("CmdOrCtrl+Shift+X"), false),
+    ],
 ];
 
 const HELP_ITEMS: &[&[Item]] = &[
@@ -179,7 +183,9 @@ fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Built<R>> {
     app_menu.append(&PredefinedMenuItem::hide_others(app, None)?)?;
     app_menu.append(&PredefinedMenuItem::show_all(app, None)?)?;
     app_menu.append(&PredefinedMenuItem::separator(app)?)?;
-    app_menu.append(&PredefinedMenuItem::quit(app, None)?)?;
+    // Not the predefined Quit: ⌘Q once shows "Hold ⌘Q or press twice to
+    // quit", so a stray ⌘ + Q (next to ⌘W) never closes everything.
+    app_menu.append(&MenuItem::with_id(app, crate::quit::QUIT_MENU_ID, format!("Quit {name}"), true, Some("CmdOrCtrl+Q"))?)?;
 
     let file = Submenu::new(app, "File", true)?;
     append_groups(app, &file, FILE_ITEMS, &mut gated, &mut by_action)?;
@@ -234,8 +240,10 @@ pub(crate) fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     app.set_menu(menu)?;
 
     app.on_menu_event(|app, event| {
-        // DEBUG-SELECTALL (temporary)
-        log::info!("DEBUG-SELECTALL native menu event id={} target={:?}", event.id().as_ref(), target_window(app));
+        if event.id().as_ref() == crate::quit::QUIT_MENU_ID {
+            crate::quit::menu_quit(app);
+            return;
+        }
         let Some(action) = event.id().as_ref().strip_prefix(ACTION_PREFIX) else {
             return;
         };

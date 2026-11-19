@@ -99,8 +99,7 @@ const TEMPLATES = {
   postgres: {
     view: (q) => `CREATE OR REPLACE VIEW ${q}\${1:new_view} AS
 SELECT \${2:*}
-FROM \${3:table_name}
-WHERE \${0:true};`,
+FROM \${3:table_name};`,
     matview: (q) => `CREATE MATERIALIZED VIEW ${q}\${1:new_view} AS
 SELECT \${2:*}
 FROM \${3:table_name}

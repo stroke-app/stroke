@@ -109,6 +109,12 @@ export function isWriteSql(sql) {
   const clean = stripSqlComments(String(sql ?? ''))
   if (!clean.trim()) return false
 
+  // A procedural block (Oracle's `BEGIN … END;`, `DECLARE … BEGIN … END;`)
+  // runs whatever it holds, procedure calls included, so it counts as a write.
+  // The statement splitter cuts it at its inner semicolons, so it is read
+  // whole here. A bare `BEGIN` / `BEGIN TRANSACTION` has no closing END.
+  if (/^\s*(?:declare|begin)\b/i.test(clean) && /\bend\s*;?\s*\/?\s*$/i.test(clean)) return true
+
   for (const raw of splitStatements(clean)) {
     // Leading parens wrap `(SELECT …) UNION …`, and a CTE can be parenthesised.
     const stmt = raw.trim().replace(/^[(\s]+/, '')
@@ -119,6 +125,11 @@ export function isWriteSql(sql) {
 
     // MongoDB shell statements: `db.users.insertOne(…)`, `db.x.deleteMany(…)`.
     if (head === 'db' && /\.\s*(insert(One|Many)|update(One|Many)|replaceOne|delete(One|Many)|bulkWrite|drop|findOneAnd\w+)\s*\(/.test(stmt)) return true
+
+    // Elasticsearch / OpenSearch console requests: `PUT idx/_doc/1 {…}`,
+    // `POST idx/_update/1 {…}`, `POST _bulk`. A POST that searches only reads.
+    if (head === 'put') return true
+    if (head === 'post' && /\/?_(update|doc|create|bulk|delete_by_query|update_by_query|reindex)\b/.test(stmt)) return true
 
     // A CTE hides the real verb behind the WITH list: `WITH x AS (…) DELETE …`.
     if (head === 'with' && /\b(insert\s+into|update\s+[\w"`.]|delete\s+from|merge\s+into)\b/i.test(stmt))
@@ -367,8 +378,28 @@ export function sqlRunEffects(sql) {
 /** MongoDB shell calls that change data, indexes or the database. */
 const MONGO_WRITE_RE = /\.\s*(insert|insertOne|insertMany|update|updateOne|updateMany|replaceOne|remove|deleteOne|deleteMany|bulkWrite|drop|dropDatabase|dropIndex|dropIndexes|createIndex|createIndexes|createCollection|renameCollection|findOneAndUpdate|findOneAndReplace|findOneAndDelete|findAndModify)\s*\(/
 
+/** DynamoDB API calls that change items or tables (JSON or `Op {...}` form). */
+const DYNAMO_WRITE_RE = /(^|"operation"\s*:\s*")(PutItem|UpdateItem|DeleteItem|BatchWriteItem|TransactWriteItems|CreateTable|UpdateTable|DeleteTable|UpdateTimeToLive)\b/m
+
 /** Firestore and CouchDB shell-style writes. */
 const DOC_WRITE_RE = /\.\s*(add|set|update|delete|insert|put|remove|bulkDocs|destroy|create)\s*\(/
+
+/** Elasticsearch endpoints that only read even when sent as a POST. */
+const ES_POST_READ_RE = /(^|\/)_(search|count|msearch|mget|explain|field_caps|validate|analyze|sql|plugins|pit|search_shards|termvectors)(\/|\?|$)/
+
+/**
+ * A Dev Tools request that changes something: PUT, DELETE, or a POST to an
+ * endpoint other than search/count/SQL. Shell-style `index.search()` reads.
+ * @param {string} text
+ */
+function isEsWrite(text) {
+  const m = /^\s*(GET|HEAD|POST|PUT|DELETE|PATCH)\s+(\S+)/i.exec(text)
+  if (!m) return false
+  const method = m[1].toUpperCase()
+  if (method === 'GET' || method === 'HEAD') return false
+  if (method === 'POST') return !ES_POST_READ_RE.test(m[2].replace(/^\//, ''))
+  return true
+}
 
 /**
  * `isWriteSql`, knowing which language it is reading. The AI runs every engine
@@ -391,6 +422,11 @@ export function isWriteFor(sql, engine) {
     case 'firestore':
     case 'couchdb':
       return DOC_WRITE_RE.test(text)
+    case 'elasticsearch':
+    case 'opensearch':
+      return isEsWrite(text)
+    case 'dynamodb':
+      return DYNAMO_WRITE_RE.test(text)
     default:
       return false
   }

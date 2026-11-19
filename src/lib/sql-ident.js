@@ -14,6 +14,8 @@
 
 /** Engines that fold unquoted names to lower case. */
 const FOLDS_LOWER = new Set(['postgres', 'cockroachdb', 'redshift'])
+/** Engines that fold unquoted names to upper case: `emp` means `EMP`. */
+const FOLDS_UPPER = new Set(['oracle'])
 
 /** @param {string} list */
 const words = (list) => new Set(list.trim().split(/\s+/))
@@ -106,6 +108,7 @@ function quoteChars(engine) {
 export function needsQuotes(name, engine) {
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) return true
   if (FOLDS_LOWER.has(String(engine ?? 'postgres')) && name !== name.toLowerCase()) return true
+  if (FOLDS_UPPER.has(String(engine)) && name !== name.toUpperCase()) return true
   return reservedFor(engine ?? 'postgres').has(name.toLowerCase())
 }
 

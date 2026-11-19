@@ -1,4 +1,5 @@
 import { applyCustomTheme, applyNoise, customTheme, customIsGlass } from '$lib/stores/custom-theme.js'
+import { applyImportedTheme } from '$lib/stores/imported-themes.js'
 import { writable, get } from 'svelte/store'
 import { setMode } from 'mode-watcher'
 import {
@@ -107,7 +108,7 @@ const markQualifyDefaultApplied = () => {
 /** @typedef {'claude' | 'geist' | 'serif' | 'apple' | 'inter' | 'mono' | 'fira' | 'plex' | 'space' | 'source'} FontId */
 /** @typedef {'regular' | 'light' | 'bold'} IconStyleId */
 /** @typedef {'lucide' | 'hugeicons' | 'phosphor'} IconSetId */
-/** @typedef {{ theme: ThemeId, zoom: number, font: FontId, iconStyle: IconStyleId, iconSet: IconSetId, tableStyle: TableStyleId, jsonTheme: JsonThemeId, editorTheme: import('$lib/themes/editor-themes.js').EditorThemeId, mcpAutoStart: boolean, launchAtLogin: boolean, autoUpdate: boolean, autoReconnectOnStartup: boolean, previewDmlBeforeApply: boolean, defaultDataView: string, paginationMode: string, maxQueryHistory: number, connectTimeoutMs: number, socketTimeoutMs: number, maxAllowedPacket: number, sessionTimezone: string, vimMode: boolean, cmdkAiEnabled: boolean, liveModeEnabled: boolean, sidebarStyle: SidebarStyleId, lazyWideColumns: boolean, nullSortOrder: string, agentChatFontSize: number, agentCodeFontSize: number, agentThinkingStyle: string, agentShowQueryCards: boolean, agentWebAccess: boolean, tableTextAlign: string, telemetry: boolean, jsonWordWrap: boolean, nativeScroll: boolean, rowSpacing: RowSpacingId, motion: MotionId, zebraRows: boolean, showRowNumbers: boolean, showMenuBar: boolean, numberGrouping: boolean, imagePreview: boolean, openUrlsOnClick: boolean, highlightActiveRow: boolean, fkAutoExpandJson: boolean, gridFontSize: number, autoSaveQueries: boolean, streamResults: boolean, sqlUndo: boolean, sidebarComments: boolean, sidebarRememberGroups: boolean, sqlFormat: import('$lib/sql-format-options.js').SqlFormatOptions, sqlEditor: import('$lib/sql-editor-options.js').SqlEditorOptions }} AppSettings */
+/** @typedef {{ theme: ThemeId, zoom: number, font: FontId, iconStyle: IconStyleId, iconSet: IconSetId, tableStyle: TableStyleId, jsonTheme: JsonThemeId, editorTheme: import('$lib/themes/editor-themes.js').EditorThemeId, mcpAutoStart: boolean, launchAtLogin: boolean, autoUpdate: boolean, autoReconnectOnStartup: boolean, previewDmlBeforeApply: boolean, defaultDataView: string, paginationMode: string, maxQueryHistory: number, connectTimeoutMs: number, socketTimeoutMs: number, maxAllowedPacket: number, sessionTimezone: string, vimMode: boolean, cmdkAiEnabled: boolean, liveModeEnabled: boolean, sidebarStyle: SidebarStyleId, aiInTab: boolean, lazyWideColumns: boolean, nullSortOrder: string, agentChatFontSize: number, agentCodeFontSize: number, agentThinkingStyle: string, agentShowQueryCards: boolean, agentWebAccess: boolean, tableTextAlign: string, telemetry: boolean, jsonWordWrap: boolean, nativeScroll: boolean, rowSpacing: RowSpacingId, motion: MotionId, animatePanels: boolean, quitGuard: boolean, multiConnection: boolean, studioShare: boolean, treeFocusOnSwitch: boolean, zebraRows: boolean, showRowNumbers: boolean, showMenuBar: boolean, numberGrouping: boolean, imagePreview: boolean, openUrlsOnClick: boolean, highlightActiveRow: boolean, fkAutoExpandJson: boolean, gridFontSize: number, autoSaveQueries: boolean, streamResults: boolean, sqlUndo: boolean, sidebarComments: boolean, sidebarRememberGroups: boolean, sqlFormat: import('$lib/sql-format-options.js').SqlFormatOptions, sqlEditor: import('$lib/sql-editor-options.js').SqlEditorOptions, shareDefaults: Record<string, any> | null }} AppSettings */
 
 /**
  * UI type scale in design pixels: `[step, font-size, line-height?]`, matching
@@ -131,8 +132,11 @@ const DEFAULT_ZOOM = 1
  * follow the sans.
  * `reading` (optional) sets `--reading-font` for long prose (the AI chat);
  * without it prose follows the sans.
- * @type {Record<FontId, { label: string, description: string, sans: string, mono: string, heading?: string, reading?: string }>}
+ * @type {Record<FontId, { label: string, description: string, sans: string, mono: string, heading?: string, reading?: string, keywords?: string[] }>}
  */
+const IS_MAC = typeof navigator !== 'undefined' && detectOs() === 'macos'
+const IS_WINDOWS = typeof navigator !== 'undefined' && detectOs() === 'windows'
+
 export const FONT_PRESETS = {
   // The claude.ai look with open faces: its own Anthropic Sans/Serif are not
   // licensed for reuse, so Inter carries the UI and Source Serif 4 the
@@ -156,11 +160,20 @@ export const FONT_PRESETS = {
     sans: 'ui-serif, "New York", "Iowan Old Style", Georgia, "Times New Roman", serif',
     mono: 'ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace',
   },
+  // The system face. On a Mac that's SF Pro, the font every native app uses,
+  // and it's named so; elsewhere the same stack resolves to the platform's own
+  // UI font (Segoe UI, Cantarell, ...).
   apple: {
-    label: 'Apple',
-    description: 'San Francisco + SF Mono',
-    sans: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", system-ui, sans-serif',
-    mono: 'ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Monaco, Consolas, monospace',
+    label: IS_MAC ? 'SF Pro' : IS_WINDOWS ? 'Segoe UI' : 'System',
+    description: IS_MAC ? 'macOS system font + SF Mono' : IS_WINDOWS ? 'Windows system font + JetBrains Mono' : "Your system's UI font + JetBrains Mono",
+    keywords: ['SF Pro', 'San Francisco', 'Apple', 'Segoe UI', 'Windows', 'System', 'macOS', 'native'],
+    sans: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif',
+    // A Mac has SF Mono. Windows and Linux get the JetBrains Mono that ships
+    // with the app: Cascadia Mono is missing from many Windows installs, and the
+    // Consolas it fell back to read dated and heavy beside Segoe UI.
+    mono: IS_MAC
+      ? 'ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Monaco, monospace'
+      : '"JetBrains Mono Variable", "Cascadia Mono", Consolas, monospace',
   },
   // Both faces below ship with the app (fontsource imports in app.css), so
   // these presets render identically on every platform - no system fallback.
@@ -219,7 +232,11 @@ export const FONT_PRESETS = {
  * @type {FontId}
  */
 // The system face on macOS, as T3 and native Mac apps use; Geist elsewhere.
-export const DEFAULT_FONT = typeof navigator !== 'undefined' && detectOs() === 'macos' ? 'apple' : 'geist'
+// The system face on macOS and Windows, as native apps use: SF Pro there, Segoe
+// UI here, each hinted for its platform's renderer. Geist, a web font, drew
+// thin and soft on Windows next to everything else on screen. Linux keeps
+// Geist, since its system UI font varies by desktop.
+export const DEFAULT_FONT = IS_MAC || IS_WINDOWS ? 'apple' : 'geist'
 /** @returns {FontId} */
 function normalizeFont(/** @type {unknown} */ id) {
   return FONT_PRESETS[/** @type {FontId} */ (id)] ? /** @type {FontId} */ (id) : DEFAULT_FONT
@@ -289,9 +306,10 @@ function normalizeIconSet(/** @type {unknown} */ id) {
  * @type {Record<TableStyleId, TableStyleDef>}
  */
 export const TABLE_STYLES = {
+  // The default: a solid grid, so every cell sits in its own column.
+  lines:    { label: 'Lines',    description: 'Solid grid lines (classic)',        rows: true,  cols: true,  dash: null,   dots: false },
   // Faint row rules, no column rules: data reads as a calm list (T3-style).
   calm:     { label: 'Calm',     description: 'Faint row rules, no column lines',  rows: true,  cols: false, dash: null,   dots: false, soft: true },
-  lines:    { label: 'Lines',    description: 'Solid grid lines (classic)',        rows: true,  cols: true,  dash: null,   dots: false },
   double:   { label: 'Double',   description: 'Twin rules - a ledger/print feel',  rows: true,  cols: true,  dash: null,   dots: false, double: true },
   hairline: { label: 'Hairline', description: 'The finest dash - barely there',    rows: true,  cols: true,  dash: [1, 5], dots: false },
   none:     { label: 'None',     description: 'No rules at all - text only',       rows: false, cols: false, dash: null,   dots: false },
@@ -311,7 +329,7 @@ export const TABLE_STYLES = {
   columns:  { label: 'Columns',  description: 'Vertical rails only, open rows',    rows: false, cols: true,  dash: null,   dots: false },
 }
 /** @type {TableStyleId} */
-export const DEFAULT_TABLE_STYLE = 'calm'
+export const DEFAULT_TABLE_STYLE = 'lines'
 
 /**
  * Row spacing for the data grid, as a row height in CSS pixels at 100% zoom.
@@ -556,11 +574,23 @@ export const DEFAULT_SETTINGS = {
   nativeScroll: defaultNativeScroll(),
   rowSpacing: DEFAULT_ROW_SPACING,
   motion: DEFAULT_MOTION,
+  // The terminal dock and the AI panel slide open and closed. Off by default:
+  // on Linux the slide dropped frames, and an instant panel reads as fast.
+  // (Was `panelMotion`, on by default; renamed so every install starts off.)
+  animatePanels: false,
+  quitGuard: true,
+  multiConnection: false,
+  studioShare: false,
+  // Labs: a database switch folds the tree to the new database's tables.
+  treeFocusOnSwitch: false,
   // SQL formatter preferences. Defaults live with the formatter (format-sql.js)
   // so there is one source for what a valid option set is.
   sqlFormat: { ...SQL_FORMAT_DEFAULTS },
   // SQL editor preferences (wrap, line numbers, suggestions...).
   sqlEditor: { ...SQL_EDITOR_DEFAULTS },
+  // Defaults for new share links (share-flow.js normalizes them). Null: the
+  // built-in ones. Kept here, not in a key of its own, so they sync.
+  shareDefaults: null,
   // Independent of the grid-style preset: two of those presets (Striped, Dots)
   // shade alternate rows as part of their look, and this turns the same shading
   // on for any of the others without changing the separators you picked.
@@ -600,6 +630,9 @@ export const DEFAULT_SETTINGS = {
   // Beta: 'tree' swaps the sidebar's Tables / Objects / Databases tabs for one
   // explorer tree (connection > database > schema > groups > objects > columns).
   sidebarStyle: 'classic',
+  // AI chat opens as a tab beside your tables, its chats listed in the
+  // sidebar, instead of taking over the whole window. Still in Labs, but on by default since 3.0.
+  aiInTab: true,
   // On by default. A column averaging half a megabyte a row is fetched as a
   // size, and its value is loaded per cell on demand - the difference between a
   // table opening in a second and in eleven. Off restores the old behaviour:
@@ -611,7 +644,7 @@ export const DEFAULT_SETTINGS = {
   agentThinkingStyle: DEFAULT_THINKING_STYLE,
   // On by default: seeing the SQL the agent ran, and what it returned, is how
   // you tell a right answer from a confident one.
-  agentShowQueryCards: true,
+  agentShowQueryCards: false,
   // Off by default. Everything else the agent does stays between the app and
   // your database; searching sends your question to a third party, so it is a
   // decision the user makes rather than one they discover afterwards.
@@ -714,8 +747,11 @@ export const appLiveMode = writable(false)
 /** Reactive: which sidebar style is showing - the tab strip, or the Tree (beta). */
 export const appSidebarStyle = writable(/** @type {SidebarStyleId} */ ('classic'))
 
+/** Reactive: AI chat opens as a tab, chats in the sidebar (beta), instead of AI mode. */
+export const appAiInTab = writable(false)
+
 /** Whether the agent transcript shows a card per executed query. */
-export const appAgentQueryCards = writable(true)
+export const appAgentQueryCards = writable(false)
 
 /** Whether the agent may search the web and read pages. */
 export const appAgentWebAccess = writable(false)
@@ -785,7 +821,7 @@ let _settingsCache = null
  * chosen theme wins and this is never used again.
  * @returns {ThemeId}
  */
-function systemPreferredTheme() {
+export function systemPreferredTheme() {
   try {
     if (
       typeof window !== 'undefined' &&
@@ -874,27 +910,36 @@ export function loadSettings() {
     // Set when the Claude move rewrites the font, so the new value is written
     // straight back. Left only in the cache, the next save from anything still
     // holding the old settings object put `mono` back after the marker was set.
-    let fontMigrated = false
+    let settingsMigrated = false
     if (!fontClaudeDefaultApplied()) {
       // Same rule for the next default: only the previous one (mono) moves.
-      if (font === 'mono') { font = DEFAULT_FONT; fontMigrated = true }
+      if (font === 'mono') { font = DEFAULT_FONT; settingsMigrated = true }
       markFontClaudeDefaultApplied()
     }
     if (!fontGeistDefaultApplied()) {
       // Back to Geist: both earlier defaults move, because an install that
       // skipped the Claude move (marker set, value still mono) is still on a
       // default nobody picked.
-      if (font === 'claude' || font === 'mono') { font = DEFAULT_FONT; fontMigrated = true }
+      if (font === 'claude' || font === 'mono') { font = DEFAULT_FONT; settingsMigrated = true }
       markFontGeistDefaultApplied()
     }
+    // Windows moves to its system face once, from the Geist default it had.
+    try {
+      if (IS_WINDOWS && localStorage.getItem('stroke:font-windows-system-v1') !== '1') {
+        if (font === 'geist') { font = DEFAULT_FONT; settingsMigrated = true }
+        localStorage.setItem('stroke:font-windows-system-v1', '1')
+      }
+    } catch {}
     const iconStyle = normalizeIconStyle(parsed.iconStyle)
     const iconSet = normalizeIconSet(parsed.iconSet)
-    // One-time move to the calm grid for anyone still on the old default.
+    // Lines is the default again. Calm was the default before, so an install
+    // on Calm moves back once; anyone who picks Calm afterwards keeps it.
     let tableStyle = normalizeTableStyle(parsed.tableStyle)
     try {
-      if (localStorage.getItem('stroke:table-style-calm-v1') !== '1') {
-        if (tableStyle === 'lines') tableStyle = 'calm'
+      if (localStorage.getItem('stroke:table-style-lines-v2') !== '1') {
+        if (tableStyle === 'calm') { tableStyle = 'lines'; settingsMigrated = true }
         localStorage.setItem('stroke:table-style-calm-v1', '1')
+        localStorage.setItem('stroke:table-style-lines-v2', '1')
       }
     } catch {}
     const jsonTheme = normalizeJsonTheme(parsed.jsonTheme)
@@ -927,8 +972,14 @@ export function loadSettings() {
     }
     const rowSpacing = normalizeRowSpacing(parsed.rowSpacing)
     const motion = normalizeMotion(parsed.motion)
+    const animatePanels = parsed.animatePanels === true
+    const quitGuard = parsed.quitGuard !== false
+    const multiConnection = parsed.multiConnection === true
+    const studioShare = parsed.studioShare === true
+    const treeFocusOnSwitch = parsed.treeFocusOnSwitch === true
     const sqlFormat = normalizeSqlFormat(parsed.sqlFormat)
     const sqlEditor = normalizeSqlEditor(parsed.sqlEditor)
+    const shareDefaults = parsed.shareDefaults && typeof parsed.shareDefaults === 'object' && !Array.isArray(parsed.shareDefaults) ? parsed.shareDefaults : null
     if (!qualifyDefaultApplied()) {
       sqlEditor.qualifySchema = false
       markQualifyDefaultApplied()
@@ -952,16 +1003,26 @@ export function loadSettings() {
     const sidebarRememberGroups = parsed.sidebarRememberGroups !== false
     const liveModeEnabled = parsed.liveModeEnabled === true
     const sidebarStyle = parsed.sidebarStyle === 'tree' ? 'tree' : 'classic'
+    // Absent means on. A stored `false` from before 3.0, when this was a Labs
+    // switch off by default, can't be told from a choice, so it turns on once.
+    let aiInTab = parsed.aiInTab !== false
+    try {
+      if (localStorage.getItem('stroke:ai-in-tab-default-v3') !== '1') {
+        if (!aiInTab) { aiInTab = true; settingsMigrated = true }
+        localStorage.setItem('stroke:ai-in-tab-default-v3', '1')
+      }
+    } catch {}
     const lazyWideColumns = parsed.lazyWideColumns !== false
     const nullSortOrder = NULL_SORT_IDS.includes(parsed.nullSortOrder) ? parsed.nullSortOrder : DEFAULT_NULL_SORT
     const agentChatFontSize = migrateAgentFont(parsed.agentChatFontSize, LEGACY_AGENT_CHAT_FONT, DEFAULT_AGENT_CHAT_FONT)
     const agentCodeFontSize = migrateAgentFont(parsed.agentCodeFontSize, LEGACY_AGENT_CODE_FONT, DEFAULT_AGENT_CODE_FONT)
     const agentThinkingStyle = THINKING_STYLE_IDS.includes(parsed.agentThinkingStyle) ? parsed.agentThinkingStyle : DEFAULT_THINKING_STYLE
-    const agentShowQueryCards = parsed.agentShowQueryCards !== false
+    const agentShowQueryCards = parsed.agentShowQueryCards === true
     const agentWebAccess = parsed.agentWebAccess === true
     const tableTextAlign = TABLE_ALIGN_IDS.includes(parsed.tableTextAlign) ? parsed.tableTextAlign : DEFAULT_TABLE_ALIGN
-    _settingsCache = { theme, zoom, font, iconStyle, iconSet, tableStyle, jsonTheme, editorTheme, mcpAutoStart, launchAtLogin, autoUpdate, autoReconnectOnStartup, previewDmlBeforeApply, defaultDataView, paginationMode, maxQueryHistory, connectTimeoutMs, socketTimeoutMs, maxAllowedPacket, sessionTimezone, vimMode, cmdkAiEnabled, liveModeEnabled, sidebarStyle, lazyWideColumns, nullSortOrder, agentChatFontSize, agentCodeFontSize, agentThinkingStyle, agentShowQueryCards, agentWebAccess, tableTextAlign, telemetry, jsonWordWrap, nativeScroll, rowSpacing, motion, zebraRows, showRowNumbers, showMenuBar, numberGrouping, imagePreview, openUrlsOnClick, highlightActiveRow, fkAutoExpandJson, gridFontSize, autoSaveQueries, streamResults, sqlUndo, sidebarComments, sidebarRememberGroups, sqlFormat, sqlEditor }
-    if (fontMigrated) {
+    _settingsCache = { theme, zoom, font, iconStyle, iconSet, tableStyle, jsonTheme, editorTheme, mcpAutoStart, launchAtLogin, autoUpdate, autoReconnectOnStartup, previewDmlBeforeApply, defaultDataView, paginationMode, maxQueryHistory, connectTimeoutMs, socketTimeoutMs, maxAllowedPacket, sessionTimezone, vimMode, cmdkAiEnabled, liveModeEnabled, sidebarStyle, aiInTab, lazyWideColumns, nullSortOrder, agentChatFontSize, agentCodeFontSize, agentThinkingStyle, agentShowQueryCards, agentWebAccess, tableTextAlign, telemetry, jsonWordWrap, nativeScroll, rowSpacing, motion, animatePanels, quitGuard, multiConnection, studioShare, treeFocusOnSwitch, zebraRows, showRowNumbers, showMenuBar, numberGrouping, imagePreview, openUrlsOnClick, highlightActiveRow, fkAutoExpandJson, gridFontSize, autoSaveQueries, streamResults, sqlUndo, sidebarComments, sidebarRememberGroups, sqlFormat, sqlEditor, shareDefaults }
+    // A migrated value is saved at once, or the next launch reads the old one.
+    if (settingsMigrated) {
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify(_settingsCache)) } catch {}
     }
     return { ..._settingsCache }
@@ -1142,6 +1203,7 @@ function applySettingsNow(settings, root, theme, zoom, dark) {
   // The custom theme's stylesheet (and the grain, which applies to any theme)
   // has to be in place before anything reads the tokens below.
   if (theme === 'custom') applyCustomTheme()
+  if (theme === 'imported') applyImportedTheme()
   else applyNoise(get(customTheme).noise)
   setAttr(root, 'data-theme', theme)
   if (root.classList.contains('dark') !== dark) root.classList.toggle('dark', dark)
@@ -1185,6 +1247,8 @@ function applySettingsNow(settings, root, theme, zoom, dark) {
   // font metrics via the documentElement style MutationObserver.
   const font = normalizeFont(settings.font)
   setStyleVar(root, '--font-sans', FONT_PRESETS[font].sans)
+  // For CSS that depends on the face (the Windows weight bump is Geist's, not Segoe's).
+  setAttr(root, 'data-font', font)
   setStyleVar(root, '--font-mono', FONT_PRESETS[font].mono)
   setStyleVar(root, '--heading-font', FONT_PRESETS[font].heading ?? FONT_PRESETS[font].sans)
   setStyleVar(root, '--reading-font', FONT_PRESETS[font].reading ?? FONT_PRESETS[font].sans)
@@ -1206,6 +1270,9 @@ function applySettingsNow(settings, root, theme, zoom, dark) {
   // query in app.css decides; the other two override it in either direction.
   const motion = normalizeMotion(settings.motion)
   setAttr(root, 'data-motion', motion === 'system' ? null : motion)
+  setAttr(root, 'data-panel-motion', settings.animatePanels === true ? null : 'off')
+  // macOS ⌘Q: a second press (or a held key) quits. The menu lives in Rust.
+  if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) void import('@tauri-apps/api/core').then(({ invoke }) => invoke('set_quit_guard', { on: settings.quitGuard !== false })).catch(() => {})
   setStore(appMotion, motion)
 
   const iconStyle = normalizeIconStyle(settings.iconStyle)
@@ -1249,7 +1316,8 @@ function applySettingsNow(settings, root, theme, zoom, dark) {
   setStore(appSidebarRememberGroups, settings.sidebarRememberGroups !== false)
   setStore(appLiveMode, settings.liveModeEnabled === true)
   setStore(appSidebarStyle, settings.sidebarStyle === 'tree' ? 'tree' : 'classic')
-  setStore(appAgentQueryCards, settings.agentShowQueryCards !== false)
+  setStore(appAiInTab, settings.aiInTab === true)
+  setStore(appAgentQueryCards, settings.agentShowQueryCards === true)
   setStore(appAgentWebAccess, settings.agentWebAccess === true)
   setStore(appTableAlign, TABLE_ALIGN_IDS.includes(settings.tableTextAlign) ? settings.tableTextAlign : DEFAULT_TABLE_ALIGN)
   setStore(appPaginationMode, PAGINATION_MODE_IDS.includes(settings.paginationMode) ? settings.paginationMode : DEFAULT_PAGINATION_MODE)
@@ -1396,6 +1464,13 @@ export function installZoomShortcuts() {
 }
 
 /** @param {Partial<AppSettings>} patch */
+/**
+ * Bumped on every settings write, from anywhere (Settings, the palette, a
+ * menu, sync). Views that keep their own copy of the settings reload on it,
+ * so a change made elsewhere shows up at once.
+ */
+export const settingsRevision = writable(0)
+
 export function updateSettings(patch) {
   const current = loadSettings()
   const next = { ...current, ...patch }
@@ -1407,6 +1482,7 @@ export function updateSettings(patch) {
 
   saveSettings(next)
   applySettings(next)
+  settingsRevision.update((n) => n + 1)
   return next
 }
 
@@ -1498,12 +1574,17 @@ export function previewTheme(id) {
   const root = document.documentElement
   const theme = normalizeThemeId(id)
   const dark = isDarkTheme(theme)
+  // Each step through the picker is a theme switch: with transitions on, every
+  // control faded on its own clock per step, which is the lag on Windows/Linux.
+  const resume = document.body ? pauseTransitions() : null
   if (theme === 'custom') applyCustomTheme(undefined, { persist: false })
+  if (theme === 'imported') applyImportedTheme()
   setAttr(root, 'data-theme', theme)
   if (root.classList.contains('dark') !== dark) root.classList.toggle('dark', dark)
   syncWindowGlass(theme)
   // index.html's inline boot colour would otherwise outlive the preview.
   root.style.backgroundColor = ''
+  resume?.()
   // Everything CSS-driven repaints from the attribute above, right away. The
   // JS-driven followers (mode-watcher, charts, editor, logo) are settled once
   // the highlight rests: holding an arrow key walks a row per key repeat, and

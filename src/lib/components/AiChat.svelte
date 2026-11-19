@@ -1,6 +1,11 @@
 <script>
+  import Share2 from '@lucide/svelte/icons/share-2'
+  import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js'
+  import { buildPayload, publishShare } from '$lib/share-flow.js'
+  import { detectSensitiveColumns } from '$lib/share-crypto.js'
   import CollapsibleCode from './CollapsibleCode.svelte'
-  import { tick, onMount, onDestroy } from "svelte";
+  import { tick, onMount, onDestroy, untrack } from "svelte";
+  import { get } from "svelte/store";
   import Sparkles from "@lucide/svelte/icons/sparkles";
   import ArrowUp from "@lucide/svelte/icons/arrow-up";
   import ArrowDown from "@lucide/svelte/icons/arrow-down";
@@ -43,7 +48,7 @@
   import { Input } from "$lib/components/ui/input/index.js";
   import { Label } from "$lib/components/ui/label/index.js";
   import { cn } from "$lib/utils.js";
-  import { executeSql, aiWebSearch, aiFetchPage, saveExportAs, agentStart, agentSend, agentInterrupt, agentStop } from "$lib/api.js";
+  import { sqlAccessLevel, executeSql, executeSqlOnConnection, aiWebSearch, aiFetchPage, saveExportAs, agentStart, agentSend, agentInterrupt, agentStop } from "$lib/api.js";
   import { queryLanguageFor, sampleQuery, describeFromSample } from "$lib/ai-query-languages.js";
   import {
     profileAgent,
@@ -57,6 +62,7 @@
     stepLabel,
     cleanToolError,
   } from "$lib/local-agents.js";
+  import { extractPlan, sqlStepLabel, groupRetries, retryLabel, planProgress, summarizeSteps, formatStepDuration } from "$lib/ai-steps.js";
   import AgentComposerChips from "$lib/components/AgentComposerChips.svelte";
   import { isReadOnly, guardWrite, readOnlyMode } from "$lib/stores/read-only.js";
   import { isWriteSql, isWriteFor, stripSqlComments } from "$lib/sql-write.js";
@@ -67,10 +73,13 @@
     rowsToCsvAsync,
     rowsToJsonAsync,
     saveExportFile,
+    exportRows,
+    EXPORT_FORMATS,
     buildExportFilename,
   } from "$lib/export.js";
   import DataTable from "$lib/components/DataTable.svelte";
   import AiMarkdown from "$lib/components/AiMarkdown.svelte";
+  import { markdownEnter, markdownIndent } from "$lib/md-input.js";
   import AiSqlBlock from "$lib/components/AiSqlBlock.svelte";
   import ShikiBlock from "$lib/components/ShikiBlock.svelte";
   import AiChartRenderer from "$lib/components/AiChartRenderer.svelte";
@@ -132,6 +141,8 @@
   import Link2 from "@lucide/svelte/icons/link-2";
   import LoaderCircle from "@lucide/svelte/icons/loader-circle";
   import CircleCheck from "@lucide/svelte/icons/circle-check";
+  import CircleX from "@lucide/svelte/icons/circle-x";
+  import Circle from "@lucide/svelte/icons/circle";
   import CircleAlert from "@lucide/svelte/icons/circle-alert";
   import GitBranch from "@lucide/svelte/icons/git-branch";
   import BarChart3 from "@lucide/svelte/icons/chart-column";
@@ -139,6 +150,7 @@
   import { loadLayout, setNavSidebarWidth, clampNavSidebarWidth, NAV_SIDEBAR_MIN, NAV_WIDTH_EVENT } from "$lib/stores/layout.js";
   import Brain from "@lucide/svelte/icons/brain";
   import AiModelPicker from "./AiModelPicker.svelte";
+  import { publishChatList, aiChatPending, aiChatList, takeChatRequest } from "$lib/stores/ai-chat-bridge.js";
   import {
     listConversations,
     createConversation,
@@ -159,18 +171,21 @@
    *   | { id: string, kind: 'result', sql: string, columns: {name:string,dataType?:string}[], rows: unknown[][], total: number, error: string|null, isSchema?: boolean, capped?: boolean }
    *   | { id: string, kind: 'chart', spec: { type: string, title: string, data: object[], x_col: string, y_col: string, z_col?: string, group_col?: string }, error: string|null }
    *   | { id: string, kind: 'confirm', sql: string, resolve: (ok: boolean) => void }
+   *   | { id: string, kind: 'share-confirm', summary: { what: string, title: string, rows: number, masked: string[], expires: string, once: boolean }, resolve: (ok: boolean) => void }
+   *   | { id: string, kind: 'share-link', url: string, title: string }
    *   | { id: string, kind: 'thinking' }
    *   | { id: string, kind: 'executing', sql: string, op: 'query' | 'schema' | 'describe' | 'run' | 'diagram' }
    *   | { id: string, kind: 'diagram', code: string, title: string }
    *   | { id: string, kind: 'web', mode: 'search'|'fetch', label: string, hits: {title:string,url:string,snippet:string}[], error: string|null, loading: boolean }
-   *   | { id: string, kind: 'work', startedAt: number, endedAt: number|null, steps: WorkStep[] }
+   *   | { id: string, kind: 'work', startedAt: number, endedAt: number|null, steps: WorkStep[], plan?: string[] }
    * } ChatItem
    */
 
   /**
    * One step of a local agent's turn, folded under "Worked for 4s": a tool
    * call, or a `note` (what the agent said between calls).
-   * @typedef {{ id: string, tool: string, op: 'query' | 'schema' | 'describe' | 'web' | 'note', detail: string, status: 'running' | 'done' | 'error', error?: string }} WorkStep
+   * The built-in model's steps also carry timing and the affected-row count.
+   * @typedef {{ id: string, tool: string, op: 'query' | 'schema' | 'describe' | 'web' | 'note', detail: string, status: 'running' | 'done' | 'error', error?: string, startedAt?: number, endedAt?: number, affected?: number | null, message?: string | null }} WorkStep
    */
 
   /**
@@ -234,6 +249,12 @@
       foreignKeys: [],
     },
     connectionId = "",
+    /** Which stored chats are this connection's, older keys included (lib/ai-chat-key.js). @type {((key: string) => boolean) | null} */
+    chatMatch = null,
+    /** The database the session is in, saved on each chat with its schema. */
+    database = "",
+    /** The live connection's config: execute_sql's `database` argument runs on a copy of it pointed at that database. @type {Record<string, any> | null} */
+    connectionConfig = null,
     isActive = false,
     /** 'tab' = embedded in tab, 'full' = fullscreen AI mode */
     mode = /** @type {'tab' | 'full'} */ ("tab"),
@@ -244,6 +265,26 @@
     onopenshortcuts = /** @type {(() => void) | null} */ (null),
     /** The window's own sidebar button drives the chat list (AI mode): no second toggle in here. */
     externalToggle = false,
+    /** AI in a tab (beta): the app's sidebar lists the chats, so this hides its own list. */
+    listInSidebar = false,
+    /**
+     * Background replies (AI in a tab). The tab can hold several of these: the
+     * one on screen (`primary`) and others still replying to a chat you left.
+     * Starting or opening a chat while this one replies calls `onhandoff`, and
+     * the parent mounts a fresh instance for it instead of this reply being
+     * cancelled.
+     */
+    primary = true,
+    /** Chats replying in the other instances, listed as working. @type {string[]} */
+    backgroundBusy = [],
+    /** @type {((req: import('$lib/stores/ai-chat-bridge.js').ChatRequest) => void) | null} */
+    onhandoff = null,
+    /** What this instance opens with. @type {import('$lib/stores/ai-chat-bridge.js').ChatRequest | null} */
+    initialRequest = null,
+    /** @type {((convId: string | null, busy: boolean) => void) | null} */
+    onbusychange = null,
+    /** Bumped when another instance saved a chat: reload the list. */
+    listVersion = 0,
     /** @param {string} sql */
     onwritesql = (sql) => {},
     /** Open the dedicated AI model settings dialog. */
@@ -252,10 +293,19 @@
     onopendiagramspage = /** @type {(() => void) | undefined} */ (undefined),
     /** The AI changed the schema (CREATE / ALTER / DROP...): reload the tables and database list. */
     onschemadirty = () => {},
+    /**
+     * A statement ran (the Run button on a reply, or the agent's execute_sql):
+     * the shell catches the sidebar and open tables up, as after the SQL editor.
+     * @param {string} sql
+     */
+    onsqlran = (sql) => {},
   } = $props();
 
   /** A statement that changes the schema, so the sidebar must reload. @param {string} sql */
-  const isDdl = (sql) => /^\s*(?:--[^\n]*\n\s*)*(create|alter|drop|rename|truncate|comment\s+on)\b/i.test(sql ?? "") || /;\s*(create|alter|drop|rename|truncate)\b/i.test(sql ?? "");
+  // A statement that changes the catalog, wherever it sits in the batch: at the
+  // start, after a `;`, or after a `--` or `/* */` comment (an agent often opens
+  // with `SET search_path ...;` or a comment line before its CREATE VIEW).
+  const isDdl = (sql) => /(?:^|;|\*\/|\n)\s*(?:--[^\n]*\n\s*)*(create|alter|drop|rename|truncate|comment\s+on)\b/i.test(sql ?? "");
 
   $effect(() => {
     if (isActive) {
@@ -376,8 +426,94 @@
   let activeConvId = $state(null);
 
   async function loadConvList() {
-    convList = await listConversations(connectionId || undefined);
+    convList = await listConversations(chatMatch ?? (connectionId || undefined));
   }
+
+  /** Access levels as the backend ranks them (src-tauri/src/mcp/access.rs). @type {Record<string, number>} */
+  const ACCESS_RANK = { read: 0, write: 1, modify: 2, dangerous: 3 };
+  const ACCESS_NAMES = ["Read only", "Read & write", "Modify schema", "Dangerous"];
+  /** Engines where execute_sql's `database` argument can open another database by name. */
+  const CROSS_DB_ENGINES = new Set(["postgres", "cockroachdb", "mysql", "mariadb", "mssql", "clickhouse"]);
+
+  // ── The sidebar's copy of the list (AI in a tab) ────────────────────────────
+  /** "shop · public": where a chat last worked. @param {any} c */
+  function chatWhere(c) {
+    return [c.database, c.schema].filter(Boolean).join(" · ");
+  }
+  $effect(() => {
+    if (!listInSidebar) return;
+    if (!primary) return;
+    const mine = loading ? [activeConvId ?? "draft"] : [];
+    publishChatList({
+      connectionId,
+      chats: convList.map((c) => ({ id: c.id, title: displayTitle(c), updatedAt: c.updatedAt, where: chatWhere(c) })),
+      activeId: activeConvId,
+      busyId: loading ? activeConvId ?? "draft" : null,
+      busyIds: [...mine, ...backgroundBusy],
+      owner: instanceId,
+      live: true,
+    });
+  });
+  onDestroy(() => {
+    // Only the instance that published the list takes it down: a background
+    // instance going away must not blank the list the new one put up.
+    if (listInSidebar && get(aiChatList).owner === instanceId) publishChatList({ live: false, busyId: null, busyIds: [] });
+  });
+
+  /** This instance's key in the shared list (several can be mounted). */
+  const instanceId = Math.random().toString(36).slice(2);
+
+  /** Tell the parent when this instance starts or stops replying. */
+  $effect(() => {
+    onbusychange?.(activeConvId, loading);
+  });
+
+  /** Another instance saved a chat: refresh the list (titles, times). */
+  $effect(() => {
+    if (listVersion > 0) untrack(() => void loadConvList());
+  });
+
+  /**
+   * Hand a new or other chat to a fresh instance rather than cancelling the
+   * reply in this one, or bring forward the instance already replying in it.
+   * @param {import('$lib/stores/ai-chat-bridge.js').ChatRequest} req
+   */
+  function handOff(req) {
+    if (!onhandoff || !listInSidebar) return false;
+    const elsewhere = req.type === "open" && backgroundBusy.includes(req.id);
+    if (!loading && !elsewhere) return false;
+    onhandoff(req);
+    return true;
+  }
+
+  onMount(() => {
+    const req = initialRequest;
+    if (req?.type === "open") void loadConvList().then(() => selectConversation(req.id));
+  });
+
+  /** Open or start the chat the sidebar asked for. */
+  $effect(() => {
+    if (!listInSidebar || !primary || !$aiChatPending) return;
+    const req = takeChatRequest();
+    if (!req) return;
+    void (async () => {
+      if (req.type === "new") return newConversation();
+      if (req.type === "delete") {
+        // Replying in another instance: the parent ends that one too.
+        if (backgroundBusy.includes(req.id)) onhandoff?.(req);
+        return removeConversation(req.id);
+      }
+      if (req.type === "rename") {
+        const title = req.title.trim();
+        if (!title) return;
+        await updateConversation(req.id, { title });
+        convList = convList.map((c) => (c.id === req.id ? { ...c, title } : c));
+        return;
+      }
+      if (!convList.some((c) => c.id === req.id)) await loadConvList();
+      await selectConversation(req.id);
+    })();
+  });
 
   // ── Open conversation tabs (browser-style, persisted per connection) ───────
   const AI_TABS_KEY = "stroke:ai-chat-tabs";
@@ -460,6 +596,7 @@
 
   async function selectConversation(/** @type {string} */ id) {
     if (id === activeConvId) return;
+    if (handOff({ type: "open", id })) return;
     abortCurrentRequest();
     // Save current before switching
     await persistCurrent();
@@ -487,6 +624,8 @@
     rawApiHistory = /** @type {import('$lib/ai.js').ApiMessage[]} */ (
       conv.apiHistory ?? []
     );
+    // Chats saved mid-reply by older builds still carry a running step group.
+    settleOpenWork();
     syncSeq(items);
     enterFrom = items.length;
     error = "";
@@ -494,6 +633,7 @@
   }
 
   async function newConversation() {
+    if (handOff({ type: "new" })) return;
     abortCurrentRequest();
     await persistCurrent();
     activeConvId = null;
@@ -525,6 +665,8 @@
       saveOpenTabs(connectionId, openTabIds);
     }
     if (activeConvId === id) {
+      // Deleting the chat that is replying ends that reply first.
+      abortCurrentRequest();
       activeConvId = null;
       clearAnchor();
       stopAgentSession();
@@ -574,15 +716,20 @@
       // save runs after every turn, so re-deriving it from the first message
       // clobbered the generated title moments after it landed, which is why every
       // conversation in the list stayed named after its opening word.
+      // Where it last worked: the chat follows the connection across databases.
+      const where = { schema: schemaContext.activeSchema, database };
       await updateConversation(activeConvId, {
         items: plainItems,
         apiHistory: plainHistory,
         agentNative: agentNative ? { ...agentNative } : null,
+        ...where,
       });
+      convList = convList.map((c) => (c.id === activeConvId ? { ...c, ...where, updatedAt: Date.now() } : c));
     } else {
       const conv = await createConversation({
         title,
         schema: schemaContext.activeSchema,
+        database,
         connectionId,
         items: plainItems,
         apiHistory: plainHistory,
@@ -820,18 +967,22 @@
     }
   }
 
+  /** The streamed reply without its <plan> block, which draws as a checklist. */
+  const streamingParts = $derived(
+    streamingContent.includes("<plan>") ? extractPlan(streamingContent) : { plan: null, text: streamingContent },
+  );
   /** Streaming display strips <think>...</think> blocks in real time */
   const displayStreamingContent = $derived(
     // Fast path: most models never emit <think>, so skip the regex scans over
     // the (growing) streamed string entirely unless a think tag is present.
-    streamingContent.includes("<think>")
-      ? streamingContent
+    streamingParts.text.includes("<think>")
+      ? streamingParts.text
           // Complete think blocks - hide entirely
           .replace(/<think>[\s\S]*?<\/think>/g, "")
           // Partial/open think block currently being written - hide from cursor onwards
           .replace(/<think>[\s\S]*$/, "")
           .trim()
-      : streamingContent.trim(),
+      : streamingParts.text.trim(),
   );
   /** ID of the `streaming` ChatItem in `items` (null when not streaming) */
   let streamingId = $state(/** @type {string | null} */ (null));
@@ -852,6 +1003,47 @@
   let userScrolledUp = $state(false);
 
   /**
+   * How each query result card sits in the transcript. While a turn runs its
+   * cards stay out of the way (the step list says what ran); afterwards the
+   * cards of one stretch draw as a single stacked block, and a long stretch
+   * shows its last three behind "Show N earlier queries".
+   * @type {Map<string, { hidden?: boolean, pos: "single" | "first" | "mid" | "last", more?: number, runKey: string }>}
+   */
+  const resultLayout = $derived.by(() => {
+    /** @type {Map<string, any>} */
+    const out = new Map();
+    let lastUser = -1;
+    for (let i = items.length - 1; i >= 0; i--) if (items[i].kind === "user") { lastUser = i; break; }
+    /** @type {string[]} */
+    let run = [];
+    const flush = () => {
+      if (!run.length) return;
+      const runKey = run[0];
+      const collapsed = run.length > 4 && !expandedResultRuns.has(runKey);
+      const shown = collapsed ? run.slice(-3) : run;
+      for (const id of run) if (!shown.includes(id)) out.set(id, { hidden: true, pos: "single", runKey });
+      shown.forEach((id, k) => {
+        const pos = shown.length === 1 ? "single" : k === 0 ? "first" : k === shown.length - 1 ? "last" : "mid";
+        out.set(id, { pos, runKey, more: collapsed && k === 0 ? run.length - 3 : undefined });
+      });
+      run = [];
+    };
+    items.forEach((it, i) => {
+      if (it.kind === "result") {
+        if (!$appAgentQueryCards && !it.error) return;
+        if (loading && i > lastUser) { out.set(it.id, { hidden: true, pos: "single", runKey: it.id }); return; }
+        run.push(it.id);
+      } else if (it.kind === "assistant" && !it.parts?.some((p) => p.type !== "text" || p.content.trim())) {
+        // Draws nothing: does not break a stretch of cards.
+      } else flush();
+    });
+    flush();
+    return out;
+  });
+  /** Long stretches of result cards the user opened up. */
+  let expandedResultRuns = $state(/** @type {Set<string>} */ (new Set()));
+
+  /**
    * Items that draw nothing: a query card the Agent setting hides, or an
    * assistant turn with no text (it only called tools, or only thought). Each
    * still left its wrapper behind, and content-visibility gives an empty
@@ -860,7 +1052,7 @@
    * @param {ChatItem} item
    */
   function drawsNothing(item) {
-    if (item.kind === "result") return !$appAgentQueryCards && !item.error;
+    if (item.kind === "result") return (!$appAgentQueryCards && !item.error) || !!resultLayout.get(item.id)?.hidden;
     if (item.kind === "assistant") return !item.parts?.some((p) => p.type !== "text" || p.content.trim());
     return false;
   }
@@ -986,6 +1178,7 @@
       ctrl?.abort();
       // A pending confirm would hold the tool loop forever: answer it as declined.
       for (const i of items.filter((i) => i.kind === "confirm")) i.resolve(false);
+      settleOpenWork();
       flushStreamingContent();
       const partial = streamingContent.trim();
       const sid = streamingId;
@@ -996,7 +1189,7 @@
             ? /** @type {ChatItem} */ ({
                 id: sid,
                 kind: "assistant",
-                parts: parseAssistantMessage(partial || "…"),
+                parts: parseAssistantMessage(extractPlan(partial).text || "…"),
                 ts: Date.now(),
               })
             : i,
@@ -1036,6 +1229,9 @@
     streamingId = null;
     streamingContent = "";
     _pendingStreamContent = "";
+    // A step group left "Working" was saved that way and spun forever when the
+    // chat was opened again: close it out as stopped.
+    settleOpenWork();
     // Remove in-flight ephemeral items so the UI doesn't show a frozen state
     items = items.filter(
       (i) =>
@@ -1339,6 +1535,8 @@
 
     const onDown = (/** @type {MouseEvent} */ e) => {
       if (e.button !== 0) return;
+      // Stops WebKit's native drag ghost of the SVG's text.
+      e.preventDefault();
       dragging = true;
       ox = e.clientX - tx;
       oy = e.clientY - ty;
@@ -1601,7 +1799,7 @@
     }
   }
 
-  const hasPendingConfirm = $derived(items.some((i) => i.kind === "confirm"));
+  const hasPendingConfirm = $derived(items.some((i) => i.kind === "confirm" || i.kind === "share-confirm"));
   const suggestions = $derived(generateSuggestions(schemaContext));
   /** The database the chat is about, for the landing headline. */
   const dbName = $derived(String(/** @type {any} */ (schemaContext).database ?? ""));
@@ -1835,11 +2033,35 @@
   }
 
   /** @param {KeyboardEvent} e */
+  /** Put a markdown edit (md-input.js) into the composer, undoable like typing. @param {{ text: string, start: number, end: number }} r */
+  function applyComposerEdit(r) {
+    inputText = r.text;
+    if (inputRef) {
+      inputRef.value = r.text;
+      inputRef.setSelectionRange(r.start, r.end);
+    }
+    resizeInput();
+    pushHistory(inputText);
+  }
+
   function handleKeydown(/** @type {KeyboardEvent} */ e) {
-    if (e.key === "Enter" && !e.shiftKey) {
+    const ta = /** @type {HTMLTextAreaElement} */ (e.currentTarget);
+    // Markdown typing: Enter continues a list (an empty item ends it) and is a
+    // newline inside an open ``` fence; anywhere else it sends.
+    if (e.key === "Enter" && !e.shiftKey && !e.altKey && !e.isComposing) {
       e.preventDefault();
-      void send();
+      const r = markdownEnter(ta.value, ta.selectionStart, ta.selectionEnd);
+      if (r) applyComposerEdit(r);
+      else void send();
       return;
+    }
+    if (e.key === "Tab" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      const r = markdownIndent(ta.value, ta.selectionStart, ta.selectionEnd, e.shiftKey);
+      if (r) {
+        e.preventDefault();
+        applyComposerEdit(r);
+        return;
+      }
     }
     // Ctrl/Cmd + Z → undo. The key is lower-cased: with Shift held it arrives
     // as "Z", so the redo chord below never matched.
@@ -2078,6 +2300,8 @@
     const disowned = () => turn !== turnSeq;
     executedCalls = new Set();
     failureTracker = new Map();
+    builtinWorkId = null;
+    pendingPlan = null;
 
     // A local agent CLI reads the schema through its own tools, so none of the
     // prompt building below applies to it.
@@ -2161,9 +2385,21 @@
       topics,
       // So "which model are you?" gets the real answer, not a guess.
       modelLabel: modelDisplayName(settings),
+      // The transcript draws <plan> as a ticking checklist (ai-steps.js).
+      planSteps: true,
     });
     const ci = $aiChatParams.customInstructions.trim();
-    turnSystemPrompt = ci ? `${ci}\n\n---\n\n${basePrompt}` : basePrompt;
+    // What execute_sql will run, so the model proposes SQL instead of
+    // sending statements the access level refuses.
+    const rank = isReadOnly() ? 0 : ACCESS_RANK[$agentPrefs.access] ?? 0;
+    const accessNote = `=== ACCESS ===\nThe user set this chat to "${ACCESS_NAMES[rank]}". ${[
+      "execute_sql runs reads only (SELECT, WITH, EXPLAIN, SHOW). For anything that changes data or schema, give the SQL in a ```sql block for the user to run, and say they can raise the access level under the composer.",
+      "execute_sql runs reads, INSERTs, and UPDATEs or DELETEs with a WHERE clause. Schema changes go in a ```sql block for the user.",
+      "execute_sql runs reads, writes with a WHERE clause, and CREATE, ALTER and indexes. Nothing that drops or truncates: give that SQL in a ```sql block.",
+      "execute_sql runs anything; destructive statements still ask the user first.",
+    ][rank]}`;
+    const withAccess = `${basePrompt}\n\n${accessNote}`;
+    turnSystemPrompt = ci ? `${ci}\n\n---\n\n${withAccess}` : withAccess;
 
     // Smart context management: sliding window + optional summarization.
     // managedLen marks where new messages start after the turn - used to append to rawApiHistory.
@@ -2207,6 +2443,7 @@
   /** Close out the current turn's UI: the streamed reply kept, indicators gone. */
   async function finishTurn() {
     try {
+      settleOpenWork();
       // Flush any rAF-buffered content before reading it
       flushStreamingContent();
       // Finalize any in-progress streaming item (abort or error mid-stream)
@@ -2220,7 +2457,7 @@
               ? /** @type {ChatItem} */ ({
                   id: sid,
                   kind: "assistant",
-                  parts: parseAssistantMessage(partial || "…"),
+                  parts: parseAssistantMessage(extractPlan(partial).text || "…"),
                   ts: Date.now(),
                 })
               : i,
@@ -2296,15 +2533,126 @@
    */
   let enterFrom = $state(0);
 
-  /** Folds the user opened. */
-  let openWork = $state(/** @type {Set<string>} */ (new Set()));
+  /**
+   * Whether a fold is open: what the user chose, else open while it runs or
+   * while a step is still failing, so the live timeline and any error are in
+   * view without a click.
+   * @param {Extract<ChatItem, { kind: 'work' }>} item @param {boolean} running
+   */
+  function isWorkOpen(item, running) {
+    const chosen = workOpenChoice.get(item.id);
+    if (chosen !== undefined) return chosen;
+    return running || groupRetries(item.steps).some((g) => g.status === "error");
+  }
+  /** Work groups whose every step the user asked to see while running. */
+  let allStepsShown = $state(/** @type {Set<string>} */ (new Set()));
+  /** Folds the user opened or closed by hand. */
+  let workOpenChoice = $state(/** @type {Map<string, boolean>} */ (new Map()));
+  /** @param {Extract<ChatItem, { kind: 'work' }>} item @param {boolean} running */
+  function toggleWorkItem(item, running) {
+    const next = new Map(workOpenChoice);
+    next.set(item.id, !isWorkOpen(item, running));
+    workOpenChoice = next;
+  }
 
+  /** Steps whose SQL and result the user expanded. */
+  let openSteps = $state(/** @type {Set<string>} */ (new Set()));
   /** @param {string} id */
-  function toggleWork(id) {
-    const next = new Set(openWork);
+  function toggleStep(id) {
+    const next = new Set(openSteps);
     if (next.has(id)) next.delete(id);
     else next.add(id);
-    openWork = next;
+    openSteps = next;
+  }
+
+  // ── The built-in model's step timeline ────────────────────────────────────
+  /** The running turn's fold; null until its first tool call. */
+  let builtinWorkId = /** @type {string | null} */ (null);
+  /** A plan written before the fold exists, attached when it is made. */
+  let pendingPlan = /** @type {string[] | null} */ (null);
+
+  /** @param {string} id @param {(w: any) => any} fn */
+  function patchWorkItem(id, fn) {
+    items = items.map((i) => (i.id === id && i.kind === "work" ? fn(i) : i));
+  }
+
+  /** @param {string[]} plan */
+  function acceptPlan(plan) {
+    if (builtinWorkId && items.some((i) => i.id === builtinWorkId)) {
+      patchWorkItem(builtinWorkId, (w) => (w.plan ? w : { ...w, plan }));
+    } else pendingPlan = plan;
+  }
+
+  /**
+   * The turn's fold, made on first use - in place of `replaceId` (the
+   * narration it absorbs) or at the end - and its clock resumed if the model
+   * paused to write.
+   * @param {string | null} [replaceId]
+   */
+  function ensureBuiltinWork(replaceId = null) {
+    if (builtinWorkId && items.some((i) => i.id === builtinWorkId)) {
+      patchWorkItem(builtinWorkId, (w) =>
+        w.endedAt === null ? w : { ...w, startedAt: w.startedAt + (Date.now() - w.endedAt), endedAt: null },
+      );
+      if (replaceId) items = items.filter((i) => i.id !== replaceId);
+      return builtinWorkId;
+    }
+    const id = uid();
+    const work = /** @type {ChatItem} */ ({
+      id,
+      kind: "work",
+      startedAt: Date.now(),
+      endedAt: null,
+      steps: [],
+      ...(pendingPlan ? { plan: pendingPlan } : {}),
+    });
+    pendingPlan = null;
+    const at = replaceId ? items.findIndex((i) => i.id === replaceId) : -1;
+    if (at >= 0) items.splice(at, 1, work);
+    else items.push(work);
+    builtinWorkId = id;
+    return id;
+  }
+
+  /** @param {WorkStep} step */
+  function addBuiltinStep(step) {
+    const wid = ensureBuiltinWork();
+    const thinkIdx = items.findIndex((i) => i.kind === "thinking");
+    if (thinkIdx >= 0) items.splice(thinkIdx, 1);
+    patchWorkItem(wid, (w) => ({ ...w, steps: [...w.steps, step] }));
+  }
+
+  /** @param {string} stepId @param {Partial<WorkStep>} patch */
+  function patchBuiltinStep(stepId, patch) {
+    if (!builtinWorkId) return;
+    patchWorkItem(builtinWorkId, (w) => ({
+      ...w,
+      steps: w.steps.map((/** @type {WorkStep} */ s) => (s.id === stepId ? { ...s, ...patch } : s)),
+    }));
+  }
+
+  /** Stop the fold's clock while the model writes its answer. */
+  function pauseBuiltinWork() {
+    if (builtinWorkId) patchWorkItem(builtinWorkId, (w) => (w.endedAt === null ? { ...w, endedAt: Date.now() } : w));
+  }
+
+  /**
+   * Close every fold still open when a turn ends or is stopped: the clock
+   * stops, and a step that never answered says so instead of spinning on.
+   */
+  function settleOpenWork() {
+    const now = Date.now();
+    items = items.map((i) =>
+      i.kind === "work" && (i.endedAt === null || i.steps.some((s) => s.status === "running"))
+        ? {
+            ...i,
+            endedAt: i.endedAt ?? now,
+            steps: i.steps.map((s) =>
+              s.status === "running" ? { ...s, status: /** @type {const} */ ("error"), error: "Stopped before it finished.", endedAt: now } : s,
+            ),
+          }
+        : i,
+    );
   }
 
   /** @param {number} ms */
@@ -2556,7 +2904,9 @@
             : s,
         ),
       }));
-      if (t.name === "execute_sql" && !res.is_error && isDdl(t.detail)) onschemadirty();
+      // An empty detail means the result beat the call's full input here: the
+      // SQL is unknown, so the sidebar re-reads rather than miss a CREATE VIEW.
+      if (t.name === "execute_sql" && !res.is_error && (!t.detail || isDdl(t.detail))) onschemadirty();
       const parsed = t.name === "execute_sql" && !res.is_error ? parseSqlResult(out) : null;
       // Rows still get their table; a failure is already shown in the fold.
       if (parsed && parsed.total > 0) {
@@ -2567,7 +2917,36 @@
     };
 
     await new Promise((resolve, reject) => {
+      // A tool that never answers (the database stalls, or the MCP server
+      // stops responding) used to leave the steps spinning forever with no
+      // word about why. Say which step it is waiting on after 30s; after 3
+      // minutes interrupt the agent and end the turn with the reason.
+      let lastEventAt = Date.now();
+      const runningSteps = () => [...tools.entries()].filter(([id, t]) =>
+        items.some((i) => i.id === t.workId && i.kind === "work" && /** @type {any} */ (i).steps.some((/** @type {WorkStep} */ s) => s.id === String(id) && s.status === "running")));
+      const watchdog = setInterval(() => {
+        const quiet = Date.now() - lastEventAt;
+        const waiting = runningSteps();
+        if (!waiting.length) return;
+        const what = waiting.length === 1 ? (waiting[0][1].detail || waiting[0][1].name.replace(/_/g, " ")) : `${waiting.length} steps`;
+        if (quiet >= 180_000) {
+          for (const [id, t] of waiting) {
+            patchWork(t.workId, (w) => ({
+              ...w,
+              steps: w.steps.map((/** @type {WorkStep} */ st) => (st.id === String(id) ? { ...st, status: "error", error: "No answer in 3 minutes." } : st)),
+            }));
+          }
+          void agentInterrupt(key).catch(() => {});
+          error = `No answer from ${what} in 3 minutes. The database may be busy or unreachable; check Logs, then try again.`;
+          closeText();
+          closeWork();
+          settle(null);
+        } else if (quiet >= 30_000) {
+          aiStatusHint = `Still waiting on ${what}… Stop ends it.`;
+        }
+      }, 5_000);
       const settle = (/** @type {Error | null} */ err) => {
+        clearInterval(watchdog);
         agentOnEvent = null;
         agentSettle = null;
         if (err) reject(err);
@@ -2575,6 +2954,8 @@
       };
       agentSettle = () => settle(null);
       agentOnEvent = (ev) => {
+        lastEventAt = Date.now();
+        if (aiStatusHint.startsWith("Still waiting on")) aiStatusHint = "";
         if (disowned()) return settle(null);
         if (ev.Text) {
           aiStatusHint = "";
@@ -2761,13 +3142,34 @@
     // Flush any buffered streaming content before finalizing
     flushStreamingContent();
 
+    // A <plan> opens a multi-step turn: it becomes the fold's checklist, and
+    // the reply keeps the rest. History keeps the plan, so the model sees it.
+    const { plan, text: shownText } = extractPlan(fullContent);
+    if (plan && toolCalls.length > 0) acceptPlan(plan);
+
     // Promote the streaming placeholder to a finalized assistant item
     if (itemId && streamingId) {
       streamingId = null;
       streamingContent = "";
       _pendingStreamContent = "";
-      items = items.flatMap((i) => (i.id === itemId ? replyItems(itemId, parseAssistantMessage(fullContent)) : [i]));
+      const parts = parseAssistantMessage(shownText);
+      if (toolCalls.length > 0 && parts.every((p) => p.type === "text")) {
+        // Text before a tool call is narration ("Creating the tables first"),
+        // not the answer: it moves into the fold, and only the reply that ends
+        // the turn stays in the transcript, as the local agents' turns do.
+        const wid = ensureBuiltinWork(itemId);
+        const note = shownText.trim();
+        if (note) {
+          patchWorkItem(wid, (w) => ({
+            ...w,
+            steps: [...w.steps, /** @type {WorkStep} */ ({ id: uid(), tool: "note", op: "note", detail: note, status: "done" })],
+          }));
+        }
+      } else {
+        items = items.flatMap((i) => (i.id === itemId ? replyItems(itemId, parts) : [i]));
+      }
     }
+    if (toolCalls.length === 0) pauseBuiltinWork();
 
     dropGenerating();
     if (toolCalls.length > 0) {
@@ -2794,7 +3196,7 @@
       apiHistory.push({ role: "assistant", content: fullContent });
       // Fallback: if no streaming item was created (non-streaming endpoint), add it now
       if (!itemId) {
-        items.push(...replyItems(uid(), parseAssistantMessage(fullContent)));
+        items.push(...replyItems(uid(), parseAssistantMessage(shownText)));
         await scrollBottom();
       }
     } else {
@@ -2871,6 +3273,8 @@
         if (sql && isReadOnly() && isWriteFor(sql, schemaContext.dbType)) {
           // Refuse in the tool channel: the model needs to hear *why*, or it
           // retries the same write until it hits the retry cap.
+          const now = Date.now();
+          addBuiltinStep({ id: String(call.id || uid()), tool: "execute_sql", op: "query", detail: sql, status: "error", error: "Not run: this connection is open in read-only mode.", startedAt: now, endedAt: now });
           apiHistory.push({
             role: "tool",
             tool_call_id: call.id,
@@ -2889,6 +3293,28 @@
           });
           return;
         }
+        // The chat's access level, held the way the MCP server holds a local
+        // agent's: the statement is classified on the engine it would run
+        // on, and anything above the level isn't run.
+        {
+          const allowed = ACCESS_RANK[$agentPrefs.access] ?? 0;
+          /** @type {number} */
+          let needs = 3;
+          try { needs = Number(await sqlAccessLevel(sql)); } catch { /* unknown: treat as the highest */ }
+          if (needs > allowed) {
+            const now = Date.now();
+            const level = ACCESS_NAMES[needs] ?? "Dangerous";
+            addBuiltinStep({ id: String(call.id || uid()), tool: "execute_sql", op: "query", detail: sql, status: "error", error: `Not run: needs "${level}" access, and the chat is set to "${ACCESS_NAMES[allowed]}".`, startedAt: now, endedAt: now });
+            apiHistory.push({
+              role: "tool",
+              tool_call_id: call.id,
+              content: JSON.stringify({
+                error: `Refused: this needs "${level}" access and the chat is set to "${ACCESS_NAMES[allowed]}". Do not retry it. Give the user the SQL in a \`\`\`sql block to review and run, or ask them to raise the access level under the composer.`,
+              }),
+            });
+            return;
+          }
+        }
         if (isDestructiveSql(sql)) {
           const confirmed = await waitForConfirm(sql);
           if (!confirmed) {
@@ -2903,34 +3329,50 @@
             return;
           }
         }
+        // Another database on the same server: the model passes `database`
+        // (a database it just created, or one the user named). It runs over a
+        // short-lived connection with the same login, never in the current one.
+        const otherDb = String(args.database ?? "").trim();
+        const crossDb = !!otherDb && otherDb !== (connectionConfig?.database ?? database);
+        if (crossDb && !CROSS_DB_ENGINES.has(String(connectionConfig?.type ?? ""))) {
+          apiHistory.push({
+            role: "tool",
+            tool_call_id: call.id,
+            content: JSON.stringify({ error: `This engine can't open another database by name. Run it in the connected database (${connectionConfig?.database || database || "this one"}) or ask the user to connect to ${otherDb}.` }),
+          });
+          return;
+        }
         const { sql: guardedSql, capped: frontendCapped } =
           guardSelectLimit(sql);
-        const execId = uid();
-        items.push(
-          /** @type {ChatItem} */ ({
-            id: execId,
-            kind: "executing",
-            sql,
-            op: "query",
-          }),
-        );
-        await scrollBottom();
+        // One row in the turn's step timeline, not a card of its own: running,
+        // then done with its time and row count, or failed with the error.
+        const stepId = String(call.id || uid());
+        addBuiltinStep({ id: stepId, tool: "execute_sql", op: "query", detail: crossDb ? `-- in ${otherDb}\n${sql}` : sql, status: "running", startedAt: Date.now() });
+        scrollBottomSoon();
         try {
-          const data = await executeSql(guardedSql);
+          const data = crossDb
+            ? await executeSqlOnConnection(/** @type {any} */ ({ ...connectionConfig, database: otherDb }), guardedSql)
+            : await executeSql(guardedSql);
           if (isDdl(sql)) onschemadirty();
+          // Another database's run leaves this one's sidebar as it was.
+          if (!crossDb) onsqlran(sql);
           const cols = data.columns ?? [];
           const rows = data.rows ?? [];
           const total = data.rowCount ?? rows.length;
           const backendCapped =
             typeof data.message === "string" &&
             data.message.startsWith("Showing first");
-          const execIdx = items.findIndex((i) => i.id === execId);
-          // Only show a result card when there are actual rows to display.
-          // Zero-row results are silently removed from the chat - the AI still
-          // receives the empty result via toolResult and can explain it.
-          if (total > 0) {
+          patchBuiltinStep(stepId, {
+            status: "done",
+            endedAt: Date.now(),
+            affected: cols.length ? rows.length : total,
+            message: typeof data.message === "string" ? data.message : null,
+          });
+          // Rows get their table after the timeline, as before. A write's
+          // "3 row(s) affected" lives on its step; the model still gets it below.
+          if (cols.length > 0 && total > 0) {
             const resultId = uid();
-            const resultItem = /** @type {ChatItem} */ ({
+            items.push(/** @type {ChatItem} */ ({
               id: resultId,
               kind: "result",
               sql,
@@ -2939,15 +3381,10 @@
               total,
               error: null,
               capped: frontendCapped,
-            });
-            if (execIdx >= 0) items.splice(execIdx, 1, resultItem);
-            else items.push(resultItem);
+            }));
             autoOpenResult(resultId);
-          } else {
-            // 0 rows - just remove the executing indicator, no result card
-            if (execIdx >= 0) items.splice(execIdx, 1);
           }
-          await scrollBottom();
+          scrollBottomSoon();
           // Return rows as objects (not arrays) so the AI can pass `rows`
           // directly to render_chart without needing to transform the data.
           const colNames = cols.map((c) => c.name);
@@ -2972,25 +3409,12 @@
             message: data.message ?? null,
           });
         } catch (sqlErr) {
-          const msg = String(sqlErr);
-          const hint = classifyDbError(msg);
-          // Show the failure in the transcript rather than deleting the
-          // indicator. Hiding it left the user watching the model narrate a
-          // cause for an error they were never shown - the query that actually
-          // failed, and why, is the one thing they need to see.
-          const execIdx = items.findIndex((i) => i.id === execId);
-          const failedItem = /** @type {ChatItem} */ ({
-            id: execId,
-            kind: "result",
-            sql,
-            columns: [],
-            rows: [],
-            total: 0,
-            error: msg,
-            capped: false,
-          });
-          if (execIdx >= 0) items.splice(execIdx, 1, failedItem);
-          else items.push(failedItem);
+          const msg = String(sqlErr).replace(/^Error:\s*/, "");
+          const hint = classifyDbError(msg, sql);
+          // The failure stays in the timeline with the database's own words,
+          // in red under the step: the user sees what the model is recovering
+          // from, and the retry folds under it.
+          patchBuiltinStep(stepId, { status: "error", endedAt: Date.now(), error: msg });
           const existing = failureTracker.get(callKey) ?? {
             count: 0,
             lastError: "",
@@ -2999,10 +3423,13 @@
             count: existing.count + 1,
             lastError: msg,
           });
+          // The full error text reaches the model, plus a hint when one
+          // applies, so it can fix the statement instead of guessing.
           toolResult = JSON.stringify({
             error: msg,
             ...(hint ? { hint } : {}),
             attempt: existing.count + 1,
+            instruction: "Fix the cause named in `error` and call execute_sql again with corrected SQL. Do not resend the same statement.",
           });
         }
       } else if (
@@ -3219,6 +3646,8 @@
             message: "Chart rendered successfully.",
           });
         }
+      } else if (call.function.name === "share_link") {
+        toolResult = JSON.stringify(await runShareLink(args));
       } else if (call.function.name === "render_diagram") {
         const diagramType = String(args.type ?? "flowchart");
         const title = String(args.title ?? "Diagram").trim() || "Diagram";
@@ -3440,6 +3869,10 @@
     await scrollBottom();
     try {
       const data = await executeSql(sql);
+      // A CREATE TABLE or an INSERT from a reply showed up nowhere until a
+      // manual refresh: only the agent's own execute_sql reported schema changes.
+      if (isDdl(sql)) onschemadirty();
+      onsqlran(sql);
       const cols = data.columns ?? [];
       const rows = data.rows ?? [];
       const sqlResId = uid();
@@ -3477,6 +3910,79 @@
     } finally {
       if (turn === turnSeq) loading = false;
     }
+  }
+
+  /**
+   * The agent's share_link tool. Nothing leaves the machine until the user
+   * confirms the card that says what will be shared (kind, rows, masked
+   * columns, expiry); then it is encrypted here and only ciphertext uploads.
+   * @param {Record<string, any>} args
+   */
+  async function runShareLink(args) {
+    const kind = String(args.kind ?? '')
+    const title = String(args.title ?? '').trim() || 'Shared from Stroke'
+    const EXP = /** @type {Record<string, number>} */ ({ '1h': 3600, '1d': 86400, '7d': 7 * 86400, '30d': 30 * 86400 })
+    const expiresIn = EXP[String(args.expires ?? '7d')] ?? 7 * 86400
+    const once = args.once === true
+    /** @type {import('$lib/share-flow.js').ShareSource | null} */
+    let source = null
+    if (kind === 'result' || kind === 'chart') {
+      const data = chartRows(args.data, args)
+      if (!data.length) return { error: 'No rows to share. Run execute_sql first and pass its rows as `data`.' }
+      const names = Object.keys(data[0] ?? {})
+      const columns = names.map((name) => ({ name }))
+      const rows = data.map((r) => names.map((n) => r[n]))
+      source = kind === 'chart'
+        ? { kind: 'chart', title, chart: { type: String(args.chart_type ?? 'bar'), x: String(args.x_col ?? names[0] ?? ''), y: args.y_col ? [String(args.y_col)] : names.slice(1, 2), group: args.group_col ? String(args.group_col) : null }, columns, rows }
+        : { kind: 'result', title, columns, rows, sql: args.sql ? String(args.sql) : undefined }
+    } else if (kind === 'query') {
+      if (!args.sql) return { error: 'No SQL to share.' }
+      source = { kind: 'query', title, sql: String(args.sql) }
+    } else if (kind === 'diagram') {
+      if (!args.code) return { error: 'No Mermaid code to share.' }
+      source = { kind: 'mermaid', title, code: String(args.code) }
+    } else {
+      return { error: `Unknown share kind "${kind}".` }
+    }
+    const tabular = source.kind === 'result' || source.kind === 'chart'
+    const sensitive = tabular && args.mask_personal_data !== false ? detectSensitiveColumns(source.columns, source.rows) : []
+    const mask = new Set(sensitive.map((h) => h.index))
+    const ok = await waitForShareConfirm({
+      what: source.kind === 'mermaid' ? 'diagram' : source.kind,
+      title,
+      rows: tabular ? source.rows.length : 0,
+      masked: sensitive.map((h) => h.name),
+      expires: String(args.expires ?? '7d'),
+      once,
+    })
+    if (!ok) return { cancelled: true, message: 'The user chose not to share it.' }
+    try {
+      const payload = buildPayload(source, { title, mask, rowCap: 100_000 })
+      const res = await publishShare(payload, { expiresIn, maxViews: once ? 1 : null })
+      items.push(/** @type {ChatItem} */ ({ id: uid(), kind: 'share-link', url: res.url, title }))
+      await scrollBottom()
+      return { url: res.url, expires: args.expires ?? '7d', masked: sensitive.map((h) => h.name), note: 'Give the user this url. It is end-to-end encrypted; the key is in the part after #.' }
+    } catch (e) {
+      return { error: String(/** @type {any} */ (e)?.message ?? e) }
+    }
+  }
+
+  /** @param {{ what: string, title: string, rows: number, masked: string[], expires: string, once: boolean }} summary @returns {Promise<boolean>} */
+  function waitForShareConfirm(summary) {
+    return new Promise((resolve) => {
+      const itemId = uid()
+      items.push(/** @type {ChatItem} */ ({
+        id: itemId,
+        kind: 'share-confirm',
+        summary,
+        resolve: (ok) => {
+          const idx = items.findIndex((i) => i.id === itemId)
+          if (idx >= 0) items.splice(idx, 1)
+          resolve(ok)
+        },
+      }))
+      void scrollBottom()
+    })
   }
 
   /** @param {string} sql @returns {Promise<boolean>} */
@@ -3646,28 +4152,20 @@
   });
 
   /**
-   * Export a chat query result to a file as CSV / JSON / Markdown, reusing the
-   * same formatters + native save flow as the table view.
+   * Save a chat query result in any format (export.js), with the native Save dialog.
    * @param {{ columns: any[], rows: any[][] }} item
-   * @param {'csv'|'json'|'md'} format
+   * @param {import('$lib/export.js').ExportFormat} format
    */
   async function exportResultAs(item, format) {
     if (!item?.rows?.length) return;
-    const content =
-      format === "csv"
-        ? rowsToCsv(item.columns, item.rows)
-        : format === "md"
-          ? rowsToMarkdown(item.columns, item.rows)
-          : rowsToJson(item.columns, item.rows);
-    const filename = buildExportFilename("query", format);
     try {
-      const saved = await saveExportFile(content, filename, format);
+      const saved = await exportRows(format, item.columns.map((c) => ({ name: c?.name ?? String(c) })), item.rows, "query");
       if (saved)
         toast.success(`Exported ${formatCompactCount(item.rows.length)} rows`, {
-          description: filename,
+          description: buildExportFilename("query", format),
         });
     } catch (e) {
-      toast.error("Export failed", { description: String(e) });
+      toast.error("Export failed", { description: String(/** @type {any} */ (e)?.message ?? e) });
     }
   }
 
@@ -3774,6 +4272,19 @@
     }
   });
   const isMacChrome = typeof document !== 'undefined' && document.documentElement.dataset.os === 'macos'
+  /** The block whose Copy was just pressed, for its "Copied" moment. */
+  let copiedBlock = $state('')
+  /**
+   * A Dev Tools request (METHOD path, then a JSON body) with its body laid out
+   * over lines, for reading. Copy and Run use the text as written.
+   * @param {string} text
+   */
+  function prettyBlock(text) {
+    const t = String(text ?? '').trim()
+    const m = /^(GET|POST|PUT|DELETE|HEAD)\s+\S+[^\n]*\n([\s\S]+)$/i.exec(t)
+    if (!m) return text
+    try { return `${t.split('\n')[0]}\n${JSON.stringify(JSON.parse(m[2]), null, 2)}` } catch { return text }
+  }
 </script>
 
 <!-- Single, unified agent loading indicator (icon + phase label + dots). Used for
@@ -3820,6 +4331,86 @@
       class="agent-think-label text-ui-xs text-muted-foreground transition-opacity duration-200 {thinkingVisible ? 'opacity-100' : 'opacity-0'}"
       >{loadingText}</span
     >
+  </div>
+{/snippet}
+
+<!-- The plan a multi-step turn opens with, ticked as its steps finish. Status
+     reads from the icon and a screen-reader word; color is never the only cue. -->
+{#snippet planChecklist(/** @type {string[]} */ plan, /** @type {string[]} */ statuses)}
+  <ol class="flex flex-col gap-1 py-1" aria-label="Plan">
+    {#each plan as line, i (i)}
+      {@const st = statuses[i] ?? "pending"}
+      <li class="flex min-w-0 items-start gap-2 text-ui-sm">
+        <span class="flex h-5 shrink-0 items-center">
+          {#if st === "done"}
+            <CircleCheck class="size-3.5 shrink-0 text-primary" />
+          {:else if st === "error"}
+            <CircleX class="size-3.5 shrink-0 text-destructive" />
+          {:else if st === "running"}
+            <span class="flex size-3.5 shrink-0 items-center justify-center" aria-hidden="true"><span class="size-3 animate-spin rounded-full border-[1.5px] border-muted-foreground/25 border-t-muted-foreground will-change-transform"></span></span>
+          {:else}
+            <Circle class="size-3.5 shrink-0 text-muted-foreground" />
+          {/if}
+        </span>
+        <span class={cn("min-w-0 break-words leading-5", st === "done" || st === "pending" ? "text-muted-foreground" : "text-foreground")}>{line}</span>
+        <span class="sr-only">({st === "error" ? "failed" : st})</span>
+      </li>
+    {/each}
+  </ol>
+{/snippet}
+
+<!-- One step of a turn: status icon, what it does, how long it took. A query
+     step opens to its SQL and result; a failure says why, in red, without a click. -->
+{#snippet stepRow(/** @type {WorkStep} */ step)}
+  {@const isQuery = step.op === "query"}
+  {@const meta = isQuery ? { label: sqlStepLabel(step.detail), detail: "" } : stepLabel(step)}
+  {@const dur = step.startedAt && step.endedAt ? formatStepDuration(step.endedAt - step.startedAt) : ""}
+  {@const expandable = isQuery && !!step.detail.trim()}
+  {@const open = openSteps.has(step.id)}
+  {#snippet rowInner()}
+    {#if step.status === "running"}
+      <span class="flex size-3.5 shrink-0 items-center justify-center" aria-hidden="true"><span class="size-3 animate-spin rounded-full border-[1.5px] border-muted-foreground/25 border-t-muted-foreground will-change-transform"></span></span>
+    {:else if step.status === "error"}
+      <CircleX class="size-3.5 shrink-0 text-destructive" />
+    {:else}
+      <CircleCheck class="size-3.5 shrink-0 text-muted-foreground" />
+    {/if}
+    <span class="min-w-0 truncate text-ui-xs text-foreground">{meta.label}</span>
+    <span class="sr-only">({step.status === "error" ? "failed" : step.status === "running" ? "running" : "done"})</span>
+    {#if meta.detail}
+      <span class="min-w-0 flex-1 truncate font-mono text-ui-2xs text-muted-foreground">{meta.detail}</span>
+    {:else}
+      <span class="flex-1"></span>
+    {/if}
+    {#if dur}
+      <span class="shrink-0 font-mono text-ui-2xs tabular-nums text-muted-foreground">{dur}</span>
+    {/if}
+    {#if expandable}
+      <ChevronRight class={cn("size-3.5 shrink-0 text-muted-foreground", open && "rotate-90")} />
+    {/if}
+  {/snippet}
+  <div class="flex min-w-0 flex-col gap-1">
+    {#if expandable}
+      <button
+        type="button"
+        class="-mx-1.5 flex h-7 min-w-0 items-center gap-2 rounded-md px-1.5 text-left transition-colors hover:bg-accent"
+        aria-expanded={open}
+        onclick={() => toggleStep(step.id)}
+      >{@render rowInner()}</button>
+    {:else}
+      <div class="flex h-7 min-w-0 items-center gap-2">{@render rowInner()}</div>
+    {/if}
+    {#if step.error}
+      <p class="pl-5.5 text-ui-2xs leading-relaxed break-words whitespace-pre-wrap text-destructive">{cleanToolError(step.error)}</p>
+    {/if}
+    {#if expandable && open}
+      <div class="flex flex-col gap-1 pl-5.5">
+        <CollapsibleCode text={step.detail.trim()} max={160} class="rounded-md bg-muted/30 px-2.5 py-1.5 font-mono text-ui-2xs whitespace-pre-wrap break-words text-muted-foreground" />
+        {#if step.status === "done" && (step.message || step.affected != null)}
+          <p class="font-mono text-ui-2xs text-muted-foreground">{step.message || `${step.affected} row(s)`}</p>
+        {/if}
+      </div>
+    {/if}
   </div>
 {/snippet}
 
@@ -3887,7 +4478,7 @@
 
 <div class="flex h-full min-h-0 overflow-hidden bg-background">
   <!-- ── Conversation sidebar ───────────────────────────────────────── -->
-  {#if sidebarVisible}
+  {#if sidebarVisible && !listInSidebar}
     <aside
       class="flex shrink-0 flex-col border-r border-border/50 bg-sidebar"
       style="width: calc({sidebarWidth}px * var(--app-scale, 1))"
@@ -3908,10 +4499,7 @@
           <PanelLeft class="size-3.5 shrink-0" />
         </button>
         {/if}
-        <span
-          class="flex-1 px-1 text-ui-xs font-medium text-muted-foreground"
-          >History</span
-        >
+        <span class="flex-1 px-1 text-ui-sm text-foreground/80">Chats</span>
         <button
           type="button"
           class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
@@ -4012,7 +4600,7 @@
                   // table sidebar lists tables. Hover actions replace the time
                   // in place instead of covering the title.
                   // Focus is a soft fill like hover, never a border or bar.
-                  "relative flex h-9 w-full min-w-0 items-center gap-2 rounded-md px-2.5 text-left transition-colors outline-none focus-visible:bg-sidebar-accent/80 focus-visible:text-foreground",
+                  "relative flex min-h-9 w-full min-w-0 items-center gap-2 rounded-md px-2.5 py-1.5 text-left transition-colors outline-none focus-visible:bg-sidebar-accent/80 focus-visible:text-foreground",
                   isSel
                     ? "bg-primary/10 text-foreground"
                     : isActive && !selecting
@@ -4052,8 +4640,17 @@
                     {#if isSel}<Check class="size-2.5 shrink-0" strokeWidth={3} />{/if}
                   </span>
                 {/if}
-                <span class="min-w-0 flex-1 truncate text-ui-xs font-medium leading-snug">{displayTitle(conv)}</span>
-                <span class={cn("shrink-0 text-ui-3xs tabular-nums text-muted-foreground", !selecting && "group-hover/conv:invisible")}>{relativeTime(conv.updatedAt)}</span>
+                <!-- The sidebar's Chats row: where it worked over the title. -->
+                <span class="flex min-w-0 flex-1 flex-col gap-0.5">
+                  {#if chatWhere(conv)}
+                    <span class="flex min-w-0 items-center gap-1.5 text-ui-2xs text-muted-foreground">
+                      <Database class="size-3 shrink-0" />
+                      <span class="min-w-0 truncate font-mono">{chatWhere(conv)}</span>
+                    </span>
+                  {/if}
+                  <span class="min-w-0 truncate text-ui-sm leading-snug">{displayTitle(conv)}</span>
+                </span>
+                <span class={cn("shrink-0 self-end pb-px font-mono text-ui-2xs tabular-nums text-muted-foreground/80", !selecting && "group-hover/conv:invisible")}>{relativeTime(conv.updatedAt)}</span>
               </button>
               {#if !selecting}
               <div
@@ -4088,16 +4685,14 @@
         {/each}
 
         {#if convList.length === 0 && !isDraftChat}
-          <div
-            class="flex flex-col items-center gap-1.5 px-4 py-10 text-center"
+          <button
+            type="button"
+            class="mx-1 flex h-8 items-center gap-2.5 rounded-md px-2 text-ui-sm text-muted-foreground transition-colors hover:bg-sidebar-accent/60 hover:text-foreground"
+            onclick={() => void newConversation()}
           >
-            <p class="text-ui-2xs text-muted-foreground">
-              No conversations yet
-            </p>
-            <p class="text-ui-3xs text-muted-foreground">
-              Chats save automatically
-            </p>
-          </div>
+            <Plus class="size-4 shrink-0" />
+            Ask about this database
+          </button>
         {/if}
       </div>
       {#if onexit}
@@ -4106,13 +4701,13 @@
              right - here, back to the data. -->
         <div class="flex h-12 shrink-0 items-center gap-1 px-3">
           {#if onopensettings}
-            <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:text-foreground" title="Settings" aria-label="Settings" onclick={onopensettings}><Icon name="settings" class="size-4 shrink-0" /></button>
+            <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title="Settings" aria-label="Settings" onclick={onopensettings}><Icon name="settings" class="size-4 shrink-0" /></button>
           {/if}
-          <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:text-foreground" title={$isCurrentThemeDark ? "Light theme" : "Dark theme"} aria-label="Toggle theme" onclick={() => toggleLightDark()}><Icon name={$isCurrentThemeDark ? "sun" : "moon"} class="size-4 shrink-0" /></button>
+          <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title={$isCurrentThemeDark ? "Light theme" : "Dark theme"} aria-label="Toggle theme" onclick={() => toggleLightDark()}><Icon name={$isCurrentThemeDark ? "sun" : "moon"} class="size-4 shrink-0" /></button>
           {#if onopenshortcuts}
-            <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:text-foreground" title="Keyboard shortcuts" aria-label="Keyboard shortcuts" onclick={onopenshortcuts}><Icon name="keyboard" class="size-4 shrink-0" /></button>
+            <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title="Keyboard shortcuts" aria-label="Keyboard shortcuts" onclick={onopenshortcuts}><Icon name="keyboard" class="size-4 shrink-0" /></button>
           {/if}
-          <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:text-foreground" title="Hide chats ({modKey}B)" aria-label="Hide chats" onclick={toggleAiSidebar}><PanelLeft class="size-4 shrink-0" /></button>
+          <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title="Hide chats ({modKey}B)" aria-label="Hide chats" onclick={toggleAiSidebar}><PanelLeft class="size-4 shrink-0" /></button>
           <button
             type="button"
             class="ml-auto inline-flex size-8 items-center justify-center rounded-full text-muted-foreground outline-none hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
@@ -4136,12 +4731,12 @@
   {/if}
 
 {#snippet composerCard()}
-        <!-- Soft-cornered surface rather than a hard-edged box: the field should
-             read as one calm object floating over the transcript, and only pick up
-             weight (border, lift) once it has focus. -->
+        <!-- A filled surface, no border, ring or shadow: the field is one calm
+             tone a step off the transcript, and focus only lifts that tone a
+             little. The caret already says where typing goes. -->
         <div
           class={cn(
-            "rounded-2xl border border-border/50 bg-sidebar transition-colors focus-within:border-foreground/20",
+            "rounded-2xl bg-muted/50 transition-[background-color] duration-150 ease-[var(--ease-out)] hover:bg-muted/60 focus-within:bg-muted/70",
             hasPendingConfirm && "opacity-50",
           )}
         >
@@ -4226,12 +4821,8 @@
                  guidance for someone about to type, not a permanent label. -->
             {#if loading && inputText.trim()}
               <span class="hidden shrink-0 text-ui-2xs text-muted-foreground sm:block">↵ to queue</span>
-            {:else if inputFocused && !inputText.trim() && !loading}
-              <span
-                class="hidden shrink-0 text-ui-2xs text-muted-foreground sm:block"
-              >
-                {hasPendingConfirm ? "Confirm or cancel above" : "↵ to send"}
-              </span>
+            {:else if hasPendingConfirm}
+              <span class="hidden shrink-0 text-ui-2xs text-muted-foreground sm:block">Confirm or cancel above</span>
             {/if}
 
             <AiModelPicker onopenSettings={onopenmodelsettings} />
@@ -4242,17 +4833,17 @@
             {#if loading}
               <div class="relative flex shrink-0 items-center justify-center">
                 <span
-                  class="pointer-events-none absolute -inset-[3px] animate-spin rounded-full border-[1.5px] border-transparent border-t-destructive/70"
+                  class="pointer-events-none absolute -inset-[3px] animate-spin rounded-full border-[1.5px] border-transparent border-t-muted-foreground/60"
                   aria-hidden="true"
                 ></span>
                 <button
                   type="button"
-                  class="flex size-7 items-center justify-center rounded-full bg-destructive/90 text-destructive-foreground transition-colors hover:bg-destructive active:scale-95"
+                  class="flex size-8 items-center justify-center rounded-full bg-foreground text-background transition-opacity hover:opacity-90 active:scale-95 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
                   onclick={stop}
                   aria-label="Stop"
                   title="Stop (Esc)"
                 >
-                  <Square class="size-2 shrink-0 fill-current" />
+                  <Square class="size-2.5 shrink-0 fill-current" strokeWidth={0} />
                 </button>
               </div>
             {:else}
@@ -4261,7 +4852,7 @@
                 type="button"
                 class={cn(
                   // T3's send: a round button, grey until there is something to send.
-                  "flex size-9 shrink-0 items-center justify-center rounded-full transition-[background-color,opacity,transform] duration-150 active:scale-95",
+                  "flex size-8 shrink-0 items-center justify-center rounded-full transition-[background-color,opacity,transform] duration-150 active:scale-95 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
                   canSend
                     ? "bg-foreground text-background hover:opacity-90"
                     : "bg-sidebar-accent text-muted-foreground cursor-not-allowed",
@@ -4286,11 +4877,7 @@
             </span>
           {/if}
           <span class="flex-1"></span>
-          {#if profileAgent($aiSettings)}
-            <AgentComposerChips agent={profileAgent($aiSettings) ?? ""} part="access" />
-          {:else if $readOnlyMode}
-            <span class="flex shrink-0 items-center gap-1.5"><Lock class="size-3.5 shrink-0" />Read only</span>
-          {/if}
+          <AgentComposerChips agent={profileAgent($aiSettings) ?? ""} part="access" />
         </div>
 {/snippet}
 
@@ -4305,7 +4892,7 @@
          In full mode they float over the transcript's top corners; docked, they
          sit at the ends of the conversation tab bar that is there anyway. -->
     {#snippet chatListButton()}
-      {#if !externalToggle}
+      {#if !externalToggle && !listInSidebar}
       <button
         type="button"
         class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
@@ -4541,10 +5128,16 @@
               <!-- ── User message ───────────────────────── -->
               {#if item.kind === "user"}
                 <div class="group/msg flex flex-col items-end px-3.5 pt-4">
+                  <!-- Markdown, like the replies: a fenced query or a list
+                       written in the composer reads as one, not as backticks. -->
                   <div
-                    class="ai-user-bubble max-w-[80%] rounded-2xl border border-border/50 bg-card px-4 py-2.5 whitespace-pre-wrap break-words text-foreground"
+                    class="ai-user-bubble max-w-[80%] min-w-0 rounded-2xl border border-border/50 bg-card px-4 py-2.5 break-words text-foreground"
                   >
-                    {item.text}
+                    {#if /[`*_#>\[\]|-]|^\s*\d+[.)]\s/m.test(item.text)}
+                      <AiMarkdown content={item.text} />
+                    {:else}
+                      <span class="whitespace-pre-wrap">{item.text}</span>
+                    {/if}
                   </div>
                   {@render msgActions(item.id, item.text, item.ts, "end", false)}
                 </div>
@@ -4564,6 +5157,7 @@
                      bought nothing. The user's own turns are the contrast. -->
                 {@const split = splitStreamingDiagram(displayStreamingContent)}
                 <div class="min-w-0 px-3.5">
+                  {#if streamingParts.plan}{@render planChecklist(streamingParts.plan, [])}{/if}
                   {#if split}
                     {#if split.before.trim()}<AiMarkdown content={split.before.trim()} streaming onrender={scrollBottomSoon} />{/if}
                     <div class="my-2">{@render generatingCard(split.kind === "chart" ? "chart" : "diagram")}</div>
@@ -4604,81 +5198,95 @@
                   </span>
                 </div>
 
-                <!-- ── A local agent's tool steps, folded ─── -->
+                <!-- ── A turn's steps: plan, timeline, summary ─── -->
               {:else if item.kind === "work"}
                 {@const running = item.endedAt === null && loading}
-                {@const isOpen = openWork.has(item.id)}
-                {@const failed = item.steps.filter((s) => s.status === "error").length}
-                {@const summary = workSummary(item.steps)}
+                {@const groups = groupRetries(item.steps)}
+                {@const failed = groups.filter((g) => g.status === "error").length}
+                {@const isOpen = isWorkOpen(item, running)}
+                {@const outcome = running ? { text: "", sql: "" } : summarizeSteps(item.steps)}
+                {@const summary = outcome.text || workSummary(item.steps)}
                 <div class="min-w-0 px-3.5">
+                  {#if item.plan?.length}
+                    {@render planChecklist(item.plan, planProgress(item.plan, item.steps, !running))}
+                  {/if}
                   <!-- One quiet row: state icon, time, what was done, chevron.
-                       The full-width rule under it read as a section break in
-                       the middle of a reply; the row stands on its own. -->
-                  <button
-                    type="button"
-                    class="group/work -ml-1.5 inline-flex h-7 max-w-full items-center gap-2 rounded-md px-1.5 text-ui-xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
-                    aria-expanded={isOpen}
-                    onclick={() => toggleWork(item.id)}
-                  >
-                    {#if running}
-                      <!-- A CSS ring on its own compositor layer: it keeps turning
-                           while the main thread is busy streaming the reply. -->
-                      <span class="size-3.5 shrink-0 animate-spin rounded-full border-[1.75px] border-current/25 border-t-current will-change-transform" aria-hidden="true"></span>
-                    {:else if failed}
-                      <CircleAlert class="size-3.5 shrink-0 text-destructive" />
-                    {:else}
-                      <CircleCheck class="size-3.5 shrink-0 text-muted-foreground/80 group-hover/work:text-foreground" />
+                       Once the turn ends it says what changed, and the SQL that
+                       did it is one click away. -->
+                  <div class="flex min-w-0 items-center gap-1">
+                    <button
+                      type="button"
+                      class="group/work -ml-1.5 inline-flex h-7 min-w-0 items-center gap-2 rounded-md px-1.5 text-ui-xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+                      aria-expanded={isOpen}
+                      onclick={() => toggleWorkItem(item, running)}
+                    >
+                      {#if running}
+                        <!-- A CSS ring on its own compositor layer: it keeps turning
+                             while the main thread is busy streaming the reply. -->
+                        <span class="size-3.5 shrink-0 animate-spin rounded-full border-[1.75px] border-current/25 border-t-current will-change-transform" aria-hidden="true"></span>
+                      {:else if failed}
+                        <CircleAlert class="size-3.5 shrink-0 text-destructive" />
+                      {:else}
+                        <CircleCheck class="size-3.5 shrink-0 text-muted-foreground group-hover/work:text-foreground" />
+                      {/if}
+                      <span class={cn("shrink-0 tabular-nums", running && "text-foreground")}>{running ? "Working" : "Worked"} for {formatElapsed((item.endedAt ?? (running ? nowMs : item.startedAt)) - item.startedAt)}</span>
+                      {#if summary}
+                        <span class="truncate">· {summary}</span>
+                      {/if}
+                      {#if failed}
+                        <span class="shrink-0 text-destructive">· {failed} failed</span>
+                      {/if}
+                      <ChevronRight class={cn("size-3.5 shrink-0", isOpen && "rotate-90")} />
+                    </button>
+                    {#if outcome.sql}
+                      <button
+                        type="button"
+                        class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                        title="Copy SQL"
+                        aria-label="Copy the SQL this turn ran"
+                        onclick={() => void copyWithFeedback(`${item.id}:sql`, outcome.sql)}
+                      >
+                        {#if copiedKey === `${item.id}:sql`}<Check class="size-3.5 shrink-0" />{:else}<Copy class="size-3.5 shrink-0" />{/if}
+                      </button>
                     {/if}
-                    <span class={cn("shrink-0 tabular-nums", running ? "text-foreground/85" : "")}>{running ? "Working" : "Worked"} <span class="text-muted-foreground">for</span> {formatElapsed((item.endedAt ?? (running ? nowMs : item.startedAt)) - item.startedAt)}</span>
-                    {#if summary}
-                      <span class="truncate text-muted-foreground/80">· {summary}</span>
-                    {/if}
-                    {#if failed}
-                      <span class="shrink-0 text-destructive">· {failed} failed</span>
-                    {/if}
-                    <ChevronRight class={cn("size-3.5 shrink-0 opacity-60 transition-transform duration-150 group-hover/work:opacity-100", isOpen && "rotate-90")} />
-                  </button>
-                  <!-- Height eases open and shut (grid rows 0fr to 1fr) instead of
-                       the steps snapping in and out. -->
-                  <div
-                    class="grid transition-[grid-template-rows,opacity] duration-200 ease-out {isOpen ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}"
-                    inert={!isOpen}
-                  >
-                    <div class="min-h-0 overflow-hidden">
-                    <ol class="mt-1 mb-2 ml-[0.4375rem] flex flex-col gap-1.5 border-l border-border/50 pl-3.5">
-                      {#each item.steps as step (step.id)}
-                        {@const meta = stepLabel(step)}
-                        {#if step.op === "note"}
-                          <li class="text-ui-2xs leading-relaxed whitespace-pre-wrap break-words text-muted-foreground">{step.detail}</li>
-                        {:else}
-                        <li class="flex min-w-0 flex-col gap-1">
-                          <div class="flex min-w-0 items-center gap-2">
-                            {#if step.status === "running"}
-                              <span class="size-3 shrink-0 animate-spin rounded-full border-[1.5px] border-muted-foreground/25 border-t-muted-foreground will-change-transform" aria-hidden="true"></span>
-                            {:else if step.op === "query"}
-                              <Database class={cn("size-3.5 shrink-0", step.status === "error" ? "text-destructive" : "text-muted-foreground")} />
-                            {:else if step.op === "web"}
-                              <Globe class={cn("size-3.5 shrink-0", step.status === "error" ? "text-destructive" : "text-muted-foreground")} />
-                            {:else}
-                              <Layers class={cn("size-3.5 shrink-0", step.status === "error" ? "text-destructive" : "text-muted-foreground")} />
-                            {/if}
-                            <span class="shrink-0 text-ui-2xs font-medium text-foreground/80">{meta.label}</span>
-                            {#if meta.detail}
-                              <span class="min-w-0 flex-1 truncate font-mono text-ui-3xs text-muted-foreground">{meta.detail}</span>
-                            {/if}
-                          </div>
-                          {#if step.op === "query" && step.detail.trim()}
-                            <CollapsibleCode text={step.detail.trim()} max={160} class="rounded-md bg-muted/30 px-2.5 py-1.5 font-mono text-ui-3xs whitespace-pre-wrap break-words text-muted-foreground" />
-                          {/if}
-                          {#if step.error}
-                            <p class="text-ui-3xs break-words text-destructive">{cleanToolError(step.error)}</p>
-                          {/if}
+                  </div>
+                  <!-- Opens and shuts at once: it is toggled often and follows
+                       the turn by itself, so a height animation would only lag. -->
+                  {#if isOpen}
+                    <!-- While it works, the latest few steps: forty-nine queries
+                         listed live pushed the reply off the screen. All of them
+                         are one click away, and the full list once it is done. -->
+                    {@const capped = running && groups.length > 6 && !allStepsShown.has(item.id)}
+                    {@const shownGroups = capped ? groups.slice(-5) : groups}
+                    <ol class="mt-1 mb-2 ml-[0.4375rem] flex flex-col gap-1 border-l border-border/50 pl-3.5">
+                      {#if capped}
+                        <li>
+                          <button
+                            type="button"
+                            class="-mx-1.5 flex h-6 items-center rounded-md px-1.5 text-ui-2xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                            onclick={() => (allStepsShown = new Set([...allStepsShown, item.id]))}
+                          >{groups.length - 5} earlier {groups.length - 5 === 1 ? "step" : "steps"}</button>
                         </li>
+                      {/if}
+                      {#each shownGroups as group (group.step.id)}
+                        {#if group.step.op === "note"}
+                          <li class="py-0.5 text-ui-xs leading-relaxed whitespace-pre-wrap break-words text-muted-foreground">{group.step.detail}</li>
+                        {:else}
+                          <li class="flex min-w-0 flex-col gap-1">
+                            {@render stepRow(group.step)}
+                            {#if group.retries.length}
+                              <div class="ml-[0.4375rem] flex flex-col gap-1 border-l border-border/50 pl-3">
+                                <span class={cn("text-ui-2xs", group.status === "error" ? "text-destructive" : "text-muted-foreground")}>{retryLabel(group)}</span>
+                                {#each group.retries as retry (retry.id)}
+                                  {@render stepRow(retry)}
+                                {/each}
+                              </div>
+                            {/if}
+                          </li>
                         {/if}
                       {/each}
                     </ol>
-                    </div>
-                  </div>
+                  {/if}
                 </div>
 
                 <!-- ── Assistant message ──────────────────── -->
@@ -4801,28 +5409,29 @@
                             <div class="flex shrink-0 items-center gap-0.5">
                               <button
                                 type="button"
-                                class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity duration-150 hover:bg-accent hover:text-foreground group-hover/sqlbar:opacity-100 focus-visible:opacity-100"
-                                title="Copy SQL"
-                                onclick={() => copyText(part.content)}
-                                ><Copy class="size-3 shrink-0" /></button
+                                class="inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-ui-2xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                                title="Copy"
+                                onclick={() => { copyText(part.content); copiedBlock = sqlKey; setTimeout(() => { if (copiedBlock === sqlKey) copiedBlock = '' }, 1400) }}
+                                >{#if copiedBlock === sqlKey}<Check class="size-3 shrink-0" />Copied{:else}<Copy class="size-3 shrink-0" />Copy{/if}</button
                               >
                               <button
                                 type="button"
-                                class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity duration-150 hover:bg-accent hover:text-foreground group-hover/sqlbar:opacity-100 focus-visible:opacity-100"
-                                title="Write to editor"
+                                class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                                title="Open in the editor"
+                                aria-label="Open in the editor"
                                 onclick={() => onwritesql(part.content)}
                                 ><PenLine class="size-3 shrink-0" /></button
                               >
                               <button
                                 type="button"
-                                class= "field-surface ml-0.5 inline-flex h-6 items-center gap-1 bg-muted/40 px-2 text-ui-2xs font-medium text-foreground/80 transition-colors hover:border-primary/40 hover:bg-primary hover:text-primary-foreground disabled:opacity-40"
+                                class="ml-1 inline-flex h-6 items-center gap-1 rounded-md bg-primary px-2 text-ui-2xs font-medium text-primary-foreground transition-[background-color,scale] hover:bg-primary/90 active:scale-[0.97] disabled:opacity-40"
                                 disabled={loading}
                                 onclick={() => void runSqlBlock(part.content)}
                                 ><Play class="size-3 shrink-0 fill-current" />Run</button
                               >
                             </div>
                           </div>
-                          <AiSqlBlock sql={part.content} open={sqlOpen} />
+                          <AiSqlBlock sql={prettyBlock(part.content)} open={sqlOpen} />
                         </div>
                       {:else if part.type === "error"}
                         <div
@@ -4899,11 +5508,30 @@
                      container per state (red for errors, primary for schema)
                      gave a transcript of coloured blocks competing with the
                      prose; state now reads from the leading icon alone. -->
+                {@const lay = resultLayout.get(item.id)}
+                {#if lay?.more}
+                  <button
+                    type="button"
+                    class="mx-3.5 flex h-7 items-center gap-1.5 rounded-t-lg border border-b-0 border-border/40 px-3 text-ui-2xs text-muted-foreground transition-colors hover:bg-muted/20 hover:text-foreground"
+                    onclick={() => (expandedResultRuns = new Set([...expandedResultRuns, lay.runKey]))}
+                  >
+                    <ChevronRight class="size-3 shrink-0" />
+                    Show {lay.more} earlier {lay.more === 1 ? "query" : "queries"}
+                  </button>
+                {/if}
+                <!-- Cards of one stretch stack into one block: shared borders,
+                     the list gap pulled back, corners only at the ends. -->
                 <div
-                  class="mx-3.5 overflow-hidden rounded-lg border border-border/40 text-ui-xs"
+                  class={cn(
+                    "mx-3.5 overflow-hidden border border-border/40 text-ui-xs",
+                    (!lay || (!lay.more && (lay.pos === "single" || lay.pos === "first"))) && "rounded-t-lg",
+                    (!lay || lay.pos === "single" || lay.pos === "last") && "rounded-b-lg",
+                    (lay?.pos === "mid" || lay?.pos === "last") && "-mt-2",
+                    (lay?.more || lay?.pos === "mid" || lay?.pos === "last") && "border-t-border/25",
+                  )}
                 >
                   <div
-                    class="group/res flex w-full items-center gap-1.5 px-3 py-1.5 transition-colors hover:bg-muted/20 {resOpen
+                    class="group/res flex h-7 w-full items-center gap-1.5 px-3 transition-colors hover:bg-muted/20 {resOpen
                       ? 'border-b border-border/30'
                       : ''}"
                   >
@@ -4969,7 +5597,7 @@
                     {/if}
                     {#if !item.error}
                       <span
-                        class="shrink-0 rounded bg-muted/40 px-1.5 py-0.5 text-ui-3xs tabular-nums text-muted-foreground"
+                        class="shrink-0 font-mono text-ui-3xs tabular-nums text-muted-foreground"
                         >{formatCompactCount(item.total)}
                         {item.total === 1 ? "row" : "rows"}</span
                       >
@@ -5014,30 +5642,33 @@
                           showSelection={false}
                         />
                       </div>
-                      {#if item.total > 15}
-                        <p
-                          class="border-t border-border/20 px-3 py-1.5 text-ui-3xs text-muted-foreground"
-                        >
-                          Showing 15 of {formatCompactCount(item.total)} rows{item.capped
-                            ? ` (limited to ${AI_ROW_LIMIT})`
-                            : ""}
-                        </p>
-                      {/if}
-                      <!-- Export the result as a downloadable file -->
-                      <div
-                        class="flex items-center gap-1 border-t border-border/20 px-3 py-1.5"
-                      >
-                        <Download
-                          class="mr-1 size-3 shrink-0 text-muted-foreground"
-                        />
-                        {#each [["csv", "CSV"], ["json", "JSON"], ["md", "Markdown"]] as [fmt, label]}
+                      <!-- One quiet footer: how much is shown, and the export. -->
+                      <div class="flex h-7 items-center gap-1 border-t border-border/20 px-3 text-ui-3xs text-muted-foreground">
+                        <span class="min-w-0 flex-1 truncate tabular-nums">
+                          {#if item.total > 15}
+                            15 of {formatCompactCount(item.total)} rows{item.capped ? ` (limited to ${AI_ROW_LIMIT})` : ""}
+                          {/if}
+                        </span>
+                        <Download class="size-3 shrink-0" />
+                        {#each [["csv", "CSV"], ["xlsx", "Excel"]] as [fmt, label]}
                           <button
                             type="button"
-                            class="rounded px-1.5 py-0.5 text-ui-3xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                            onclick={() => exportResultAs(item, fmt)}
+                            class="rounded px-1 py-0.5 transition-colors hover:bg-accent hover:text-foreground"
+                            onclick={() => exportResultAs(item, /** @type {any} */ (fmt))}
                             title={`Download as ${label}`}>{label}</button
                           >
                         {/each}
+                        <DropdownMenu.Root>
+                          <DropdownMenu.Trigger class="rounded px-1 py-0.5 transition-colors hover:bg-accent hover:text-foreground data-[state=open]:bg-accent" aria-label="More formats">More</DropdownMenu.Trigger>
+                          <DropdownMenu.Content align="end" class="min-w-52">
+                            {#each EXPORT_FORMATS as f (f.id)}
+                              <DropdownMenu.Item onSelect={() => exportResultAs(item, f.id)}>
+                                <span data-slot="menu-label">{f.label}</span>
+                                <span class="ml-auto text-ui-2xs text-muted-foreground">{f.hint}</span>
+                              </DropdownMenu.Item>
+                            {/each}
+                          </DropdownMenu.Content>
+                        </DropdownMenu.Root>
                       </div>
                     {/if}
                   {/if}
@@ -5126,6 +5757,40 @@
                       >
                     </div>
                   </div>
+                </div>
+
+              {:else if item.kind === "share-confirm"}
+                <!-- Share: what leaves the machine, before it does. -->
+                <div class="mx-3.5 overflow-hidden rounded-lg border border-border/70 bg-card/60">
+                  <div class="flex items-center gap-2 border-b border-border/50 px-3 py-2">
+                    <Share2 class="size-3.5 shrink-0 text-muted-foreground" />
+                    <span class="text-ui-xs font-medium text-foreground">Share {item.summary.what} as a link?</span>
+                  </div>
+                  <div class="flex flex-col gap-1 px-3 py-2.5 text-ui-xs text-muted-foreground">
+                    <p class="text-foreground">{item.summary.title}</p>
+                    <p>
+                      {#if item.summary.rows}{item.summary.rows.toLocaleString()} row{item.summary.rows === 1 ? '' : 's'} · {/if}expires in {item.summary.expires}{item.summary.once ? ' · opens once' : ''}
+                    </p>
+                    {#if item.summary.masked.length}
+                      <p>Masked: <span class="font-mono text-foreground/80">{item.summary.masked.join(', ')}</span></p>
+                    {/if}
+                    <p>Encrypted here first; stroke.click can't read it.</p>
+                  </div>
+                  <div class="flex justify-end gap-1.5 border-t border-border/50 px-3 py-2">
+                    <button type="button" class="field-surface inline-flex h-7 items-center px-3 text-ui-xs text-muted-foreground hover:bg-accent" onclick={() => item.resolve(false)}>Cancel</button>
+                    <button type="button" class="inline-flex h-7 items-center rounded-md bg-primary px-3 text-ui-xs font-medium text-primary-foreground hover:opacity-90" onclick={() => item.resolve(true)}>Share</button>
+                  </div>
+                </div>
+
+              {:else if item.kind === "share-link"}
+                <div class="mx-3.5 flex items-center gap-2 rounded-lg border border-border/70 bg-card/60 py-1.5 pr-1.5 pl-3">
+                  <Share2 class="size-3.5 shrink-0 text-muted-foreground" />
+                  <span class="min-w-0 flex-1 truncate text-ui-xs text-foreground" title={item.url}>{item.title}</span>
+                  <button
+                    type="button"
+                    class="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-ui-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                    onclick={() => void copyText(item.url)}
+                  ><Copy class="size-3.5 shrink-0" />Copy link</button>
                 </div>
 
                 <!-- ── Chart card ─────────────────────────── -->
@@ -5402,17 +6067,27 @@
          to hide behind a Details toggle. -->
     {#if error}
       {@const failure = describeAiError(error)}
-      <div class="shrink-0 border-t border-destructive/25 bg-destructive/[0.04] px-3 py-2.5">
+      <!-- A card in the composer's column, not a bar across the window: it
+           belongs to the turn that failed, and sits where the eye already is. -->
+      <div class={cn("shrink-0", mode === "full" ? "px-6 pt-2" : "px-3 pt-2")}>
+      <div role="alert" class={cn("rounded-lg border border-destructive/25 bg-destructive/[0.05] px-3.5 py-3", mode === "full" && "mx-auto w-full max-w-3xl")}>
         <div class="flex items-start gap-2.5">
-          <AlertTriangle class="mt-px size-3.5 shrink-0 text-destructive" />
+          <AlertTriangle class="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden="true" />
           <div class="min-w-0 flex-1">
-            <p class="text-ui-xs font-medium leading-relaxed text-foreground">
+            <p class="text-ui-sm font-medium text-foreground">
               {failure.title}
             </p>
             {#if failure.hint}
-              <p class="mt-0.5 text-ui-2xs leading-relaxed text-muted-foreground">
+              <p class="mt-0.5 text-pretty text-ui-xs leading-relaxed text-muted-foreground">
                 {failure.hint}
               </p>
+            {/if}
+            {#if failure.status === 401 || failure.status === 403}
+              <button
+                type="button"
+                onclick={onopenmodelsettings}
+                class="mt-2 inline-flex h-7 items-center rounded-md border border-border bg-background px-2.5 text-ui-xs font-medium text-foreground transition-colors hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+              >Open AI settings</button>
             {/if}
             {#if failure.detail}
               <button
@@ -5440,13 +6115,15 @@
           </div>
           <button
             type="button"
-            class="hit-area inline-flex size-5 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            class="hit-area inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
             onclick={() => (error = "")}
             title="Dismiss"
+            aria-label="Dismiss"
           >
-            <X class="size-3 shrink-0" />
+            <X class="size-3.5 shrink-0" />
           </button>
         </div>
+      </div>
       </div>
     {/if}
 
@@ -5759,7 +6436,7 @@
                   const { clearConversations } = await import(
                     "$lib/stores/conversations.js"
                   );
-                  await clearConversations(connectionId || undefined);
+                  await clearConversations(chatMatch ?? (connectionId || undefined));
                   convList = [];
                   await newConversation();
                 }}
@@ -6040,6 +6717,17 @@
       >
         Open
       </button>
+      <button
+        type="button"
+        class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-ui-sm hover:bg-accent hover:text-foreground"
+        onclick={() => {
+          const conv = convList.find((c) => c.id === menu.id);
+          if (conv) startRename(conv.id, displayTitle(conv));
+          closeContextMenu();
+        }}
+      >
+        <Pencil class="size-3 shrink-0" /> Rename
+      </button>
       <div class="my-1 h-px bg-border"></div>
       <button
         type="button"
@@ -6298,6 +6986,9 @@
     line-height: 1.6;
     letter-spacing: -0.011em;
   }
+  /* Markdown in a user turn: the bubble's padding is the margin. */
+  :global(.ai-user-bubble > * > :first-child) { margin-top: 0 !important; }
+  :global(.ai-user-bubble > * > :last-child) { margin-bottom: 0 !important; }
 
   :global(.prose-ai) {
     /* Follow the app's font setting through its reading face (the sans, or a

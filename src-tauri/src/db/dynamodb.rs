@@ -138,10 +138,10 @@ async fn export_credentials(profile: &str) -> Result<Creds, String> {
     if let Some(c) = cached(profile) {
         return Ok(c);
     }
-    let fut = tokio::process::Command::new("aws")
-        .args(["configure", "export-credentials", "--format", "process", "--profile", profile])
-        .kill_on_drop(true)
-        .output();
+    let mut cmd = tokio::process::Command::new("aws");
+    cmd.args(["configure", "export-credentials", "--format", "process", "--profile", profile]).kill_on_drop(true);
+    crate::proc::quiet(&mut cmd);
+    let fut = cmd.output();
     let out = tokio::time::timeout(Duration::from_secs(20), fut)
         .await
         .map_err(|_| format!("`aws configure export-credentials` timed out for profile \"{profile}\""))?
@@ -236,7 +236,9 @@ fn sha_hex(data: &[u8]) -> String {
 }
 
 /// The `Authorization` header for one request. `headers` must already hold
-/// every header to sign (host and x-amz-date included), names lowercase.
+/// every header to sign (host and x-amz-date included), names lowercase. An
+/// `x-amz-content-sha256` header (S3's `UNSIGNED-PAYLOAD`, say) is used as the
+/// payload hash instead of hashing `body`.
 #[allow(clippy::too_many_arguments)]
 pub fn sign(
     method: &str,
@@ -256,7 +258,12 @@ pub fn sign(
     hs.sort();
     let canonical_headers: String = hs.iter().map(|(k, v)| format!("{k}:{v}\n")).collect();
     let signed: String = hs.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>().join(";");
-    let canonical = format!("{method}\n{path}\n{query}\n{canonical_headers}\n{signed}\n{}", sha_hex(body));
+    let payload_hash = hs
+        .iter()
+        .find(|(k, _)| k == "x-amz-content-sha256")
+        .map(|(_, v)| v.clone())
+        .unwrap_or_else(|| sha_hex(body));
+    let canonical = format!("{method}\n{path}\n{query}\n{canonical_headers}\n{signed}\n{payload_hash}");
     let date = &amz_date[..8];
     let scope = format!("{date}/{region}/{service}/aws4_request");
     let to_sign = format!("AWS4-HMAC-SHA256\n{amz_date}\n{scope}\n{}", sha_hex(canonical.as_bytes()));
@@ -270,23 +277,14 @@ pub fn sign(
 
 // ── Requests ─────────────────────────────────────────────────────────────────
 
-/// Operations the app may send. Anything else is refused, so the command
-/// can't be used to reach other DynamoDB APIs (tables are not created or
-/// dropped from here).
-const ALLOWED_OPS: &[&str] = &[
-    "ListTables",
-    "DescribeTable",
-    "DescribeTimeToLive",
-    "Scan",
-    "Query",
-    "GetItem",
-    "PutItem",
-    "UpdateItem",
-    "DeleteItem",
-    "BatchWriteItem",
-    "TransactWriteItems",
-    "ExecuteStatement",
-];
+/// Operations the app may send: the API calls the console offers (see
+/// [`parse_api_call`]) and PartiQL. Anything else is refused, so the command
+/// can't reach other AWS APIs. Who may run which is decided before this, by
+/// the access level (`mcp::access`) and the read-only switch.
+fn op_allowed(op: &str) -> bool {
+    op == "ExecuteStatement"
+        || [API_READS, API_WRITES, API_SCHEMA, API_DANGEROUS].iter().any(|l| l.contains(&op))
+}
 
 fn client() -> &'static reqwest::Client {
     static C: OnceLock<reqwest::Client> = OnceLock::new();
@@ -329,7 +327,7 @@ fn error_message(status: reqwest::StatusCode, body: &str) -> String {
 
 /// One DynamoDB API call.
 pub async fn request(cfg: &DynamoConfig, op: &str, body: &serde_json::Value) -> Result<serde_json::Value, String> {
-    if !ALLOWED_OPS.contains(&op) {
+    if !op_allowed(op) {
         return Err(format!("DynamoDB operation \"{op}\" is not allowed"));
     }
     let region = resolve_region(cfg);
@@ -420,13 +418,114 @@ fn number(n: &str) -> serde_json::Value {
 /// Rows past this many stop the NextToken loop; the message says so.
 const PARTIQL_ROW_CAP: usize = 5_000;
 
-/// Run one PartiQL statement (`SELECT`, `INSERT`, `UPDATE`, `DELETE`).
+/// DynamoDB API operations the console (and the AI) can call as JSON, for
+/// what PartiQL can't do: tables, TTL, batch writes. Grouped by what they need.
+pub const API_READS: &[&str] = &[
+    "DescribeTable", "ListTables", "GetItem", "Query", "Scan", "BatchGetItem", "DescribeTimeToLive",
+];
+pub const API_WRITES: &[&str] = &["PutItem", "UpdateItem", "DeleteItem", "BatchWriteItem", "TransactWriteItems"];
+pub const API_SCHEMA: &[&str] = &["CreateTable", "UpdateTable", "UpdateTimeToLive"];
+pub const API_DANGEROUS: &[&str] = &["DeleteTable"];
+
+/// An API call, written either as `{"operation": "CreateTable", "input": {...}}`
+/// or Dev Tools style as `CreateTable {...}`. None when it's PartiQL.
+pub fn parse_api_call(stmt: &str) -> Option<Result<(String, serde_json::Value), String>> {
+    let s = stmt.trim().trim_end_matches(';').trim();
+    let known = |op: &str| [API_READS, API_WRITES, API_SCHEMA, API_DANGEROUS].iter().any(|l| l.contains(&op));
+    if s.starts_with('{') {
+        let v: serde_json::Value = match serde_json::from_str(s) {
+            Ok(v) => v,
+            Err(e) => return Some(Err(format!("The API call isn't valid JSON: {e}"))),
+        };
+        let Some(op) = v.get("operation").and_then(|o| o.as_str()) else {
+            return Some(Err("An API call names its \"operation\", like {\"operation\": \"CreateTable\", \"input\": {...}}".into()));
+        };
+        if !known(op) {
+            return Some(Err(format!("{op} isn't available here")));
+        }
+        return Some(Ok((op.to_string(), v.get("input").cloned().unwrap_or_else(|| serde_json::json!({})))));
+    }
+    let word: String = s.chars().take_while(|c| c.is_ascii_alphabetic()).collect();
+    if word.is_empty() || !known(&word) {
+        return None;
+    }
+    let body = s[word.len()..].trim();
+    let input = if body.is_empty() {
+        serde_json::json!({})
+    } else {
+        match serde_json::from_str(body) {
+            Ok(v) => v,
+            Err(e) => return Some(Err(format!("The {word} input isn't valid JSON: {e}"))),
+        }
+    };
+    Some(Ok((word, input)))
+}
+
+/// Run an API call and show its answer: items as rows, anything else as one row.
+async fn api_call(
+    cfg: &DynamoConfig,
+    op: &str,
+    input: &serde_json::Value,
+    statement: &str,
+    t0: std::time::Instant,
+) -> Result<super::query::SqlResult, String> {
+    use super::query::{ColumnInfo, SqlResult};
+    let out = request(cfg, op, input).await?;
+    let items: Vec<serde_json::Map<String, serde_json::Value>> = if let Some(arr) = out.get("Items").and_then(|v| v.as_array()) {
+        arr.iter().filter_map(|i| i.as_object().cloned()).collect()
+    } else if let Some(item) = out.get("Item").and_then(|v| v.as_object()) {
+        vec![item.clone()]
+    } else {
+        Vec::new()
+    };
+    if items.is_empty() && !out.get("Items").is_some() {
+        let message = Some(format!("{op} done"));
+        let rows = if out.as_object().is_some_and(|o| !o.is_empty()) { vec![vec![out]] } else { Vec::new() };
+        return Ok(SqlResult {
+            columns: vec![ColumnInfo::new("result".to_string(), "json")],
+            row_count: Some(rows.len() as i64),
+            rows,
+            message,
+            query_ms: t0.elapsed().as_millis() as u64,
+            sql: statement.to_string(),
+        });
+    }
+    let mut cols: Vec<String> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for it in &items {
+        for k in it.keys() {
+            if seen.insert(k.clone()) {
+                cols.push(k.clone());
+            }
+        }
+    }
+    let rows: Vec<Vec<serde_json::Value>> = items
+        .iter()
+        .map(|it| cols.iter().map(|c| it.get(c).map(unmarshall).unwrap_or(serde_json::Value::Null)).collect())
+        .collect();
+    let message = out.get("LastEvaluatedKey").map(|_| "More items exist: pass LastEvaluatedKey as ExclusiveStartKey for the next page".to_string());
+    Ok(SqlResult {
+        columns: cols.iter().map(|c| ColumnInfo::new(c.clone(), "json")).collect(),
+        row_count: Some(rows.len() as i64),
+        rows,
+        message,
+        query_ms: t0.elapsed().as_millis() as u64,
+        sql: statement.to_string(),
+    })
+}
+
+/// Run one statement: PartiQL (`SELECT`, `INSERT`, `UPDATE`, `DELETE`), or an
+/// API call for what PartiQL can't do (see [`parse_api_call`]).
 pub async fn query(cfg: &DynamoConfig, statement: &str) -> Result<super::query::SqlResult, String> {
     use super::query::{ColumnInfo, SqlResult};
     let t0 = std::time::Instant::now();
     let stmt = statement.trim().trim_end_matches(';').trim();
     if stmt.is_empty() {
         return Err("Empty statement".into());
+    }
+    if let Some(call) = parse_api_call(stmt) {
+        let (op, input) = call?;
+        return api_call(cfg, &op, &input, statement, t0).await;
     }
     let mut items: Vec<serde_json::Map<String, serde_json::Value>> = Vec::new();
     let mut token: Option<String> = None;
@@ -513,6 +612,7 @@ pub async fn list_tables(cfg: &DynamoConfig) -> Result<Vec<super::schema::TableI
             rls_enabled: None,
             created_at: None,
             create_order: None,
+            system: None,
         })
         .collect())
 }
@@ -608,6 +708,18 @@ pub fn shape_from_describe(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn every_console_api_call_can_be_sent() {
+        // The console parses these; the request gate must not refuse them.
+        for op in [super::API_READS, super::API_WRITES, super::API_SCHEMA, super::API_DANGEROUS].concat() {
+            let call = super::parse_api_call(&format!("{op} {{}}")).expect("parsed").expect("valid");
+            assert!(super::op_allowed(&call.0), "{op} is parsed but refused");
+        }
+        assert!(super::op_allowed("ExecuteStatement"));
+        assert!(!super::op_allowed("DeleteBackup"));
+        assert!(!super::op_allowed("CreateGlobalTable"));
+    }
+
     use super::*;
 
     #[test]
@@ -699,7 +811,7 @@ mod tests {
             session_token: None,
             endpoint: Some("http://127.0.0.1:1".into()),
         };
-        assert!(request(&cfg, "DeleteTable", &serde_json::json!({})).await.unwrap_err().contains("not allowed"));
+        assert!(request(&cfg, "DeleteBackup", &serde_json::json!({})).await.unwrap_err().contains("not allowed"));
     }
 
     /// Against `dev/nosql` DynamoDB Local on port 8000:

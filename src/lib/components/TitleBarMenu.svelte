@@ -3,10 +3,9 @@
   // Settings, Theme and shortcuts, then the help links. Account details used to
   // sit in the status bar; this is the one place for them now.
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js'
-  import { account, signInState, planLabel, signOut, signInWithToast, openManageAccount } from '$lib/stores/account.js'
+  import { account, signInState, planLabel, signInWithToast } from '$lib/stores/account.js'
   import { licenseStatus } from '$lib/stores/license.js'
   import { syncStatus, syncLabel } from '$lib/sync/runtime.js'
-  import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
   import AccountAvatar from './AccountAvatar.svelte'
   import PasteCodeDialog from './PasteCodeDialog.svelte'
   import { cn } from '$lib/utils.js'
@@ -16,8 +15,8 @@
   import Bug from '@lucide/svelte/icons/bug'
   import ExternalLink from '@lucide/svelte/icons/external-link'
   import LogIn from '@lucide/svelte/icons/log-in'
-  import LogOut from '@lucide/svelte/icons/log-out'
-  import KeyRound from '@lucide/svelte/icons/key-round'
+  import Info from '@lucide/svelte/icons/info'
+  import CircleUserRound from '@lucide/svelte/icons/circle-user-round'
   import UserRound from '@lucide/svelte/icons/user-round'
   import ClipboardPaste from '@lucide/svelte/icons/clipboard-paste'
   import LoaderCircle from '@lucide/svelte/icons/loader-circle'
@@ -34,17 +33,12 @@
   /** @param {string} name */
   const run = (name) => () => actions[name]?.()
 
-  async function handleSignOut() {
-    const r = await signOut()
-    if (r.ok) toast.success('Signed out', { description: 'Your local data and any license key stay on this device.' })
-    else toast.error('Could not sign out', { description: r.error })
-  }
 </script>
 
 <DropdownMenu.Root>
   <DropdownMenu.Trigger
     class={cn(
-      'relative inline-flex size-7 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:text-foreground data-[state=open]:text-foreground',
+      'group relative inline-flex size-7 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors duration-[120ms] hover:text-foreground data-[state=open]:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring',
       className,
     )}
     title="Account and settings"
@@ -53,9 +47,9 @@
     {#if waiting}
       <LoaderCircle class="size-3.5 shrink-0 animate-spin" />
     {:else if signedIn && user}
-      <AccountAvatar {user} class="size-[calc(22px*var(--app-scale))]" />
+      <AccountAvatar {user} class="size-[calc(22px*var(--app-scale))] transition-[scale,filter] duration-150 ease-out group-hover:brightness-110 group-hover:ring-2 group-hover:ring-foreground/15 group-active:scale-90 group-data-[state=open]:ring-2 group-data-[state=open]:ring-ring/50" />
     {:else}
-      <Settings class="size-[calc(17px*var(--app-scale))] shrink-0" />
+      <Settings class="size-[calc(17px*var(--app-scale))] shrink-0 transition-[scale] duration-150 ease-out group-active:scale-90" />
     {/if}
   </DropdownMenu.Trigger>
 
@@ -72,11 +66,6 @@
           </p>
         </div>
       </div>
-      <DropdownMenu.Item onSelect={() => void openManageAccount()}>
-        <UserRound class="size-3.5 shrink-0" />
-        <span data-slot="menu-label">Manage account</span>
-        <ExternalLink class="ml-auto size-3 shrink-0 text-muted-foreground" />
-      </DropdownMenu.Item>
     {:else if signedIn}
       <!-- Signed in, profile not loaded (offline, or it failed verification). -->
       <div class="flex items-center gap-2.5 px-2 py-1.5">
@@ -102,8 +91,8 @@
       {/if}
     {/if}
     <DropdownMenu.Item onSelect={run('account')}>
-      <KeyRound class="size-3.5 shrink-0" />
-      <span data-slot="menu-label">{signedIn ? 'Account and license' : 'Enter license key'}</span>
+      <CircleUserRound class="size-3.5 shrink-0" />
+      <span data-slot="menu-label">Account and plan</span>
     </DropdownMenu.Item>
 
     <DropdownMenu.Separator />
@@ -115,10 +104,12 @@
     <DropdownMenu.Item onSelect={run('theme')}>
       <Palette class="size-3.5 shrink-0" />
       <span data-slot="menu-label">Theme…</span>
+      <DropdownMenu.Shortcut command="theme.pick" />
     </DropdownMenu.Item>
-    <DropdownMenu.Item onSelect={run('keybindings')}>
+    <DropdownMenu.Item onSelect={run('shortcuts')}>
       <Keyboard class="size-3.5 shrink-0" />
       <span data-slot="menu-label">Keyboard shortcuts</span>
+      <DropdownMenu.Shortcut command="help.shortcuts" />
     </DropdownMenu.Item>
 
     <DropdownMenu.Separator />
@@ -130,14 +121,13 @@
       <ExternalLink class="size-3.5 shrink-0" />
       <span data-slot="menu-label">Changelog</span>
     </DropdownMenu.Item>
-
-    {#if signedIn}
-      <DropdownMenu.Separator />
-      <DropdownMenu.Item onSelect={() => void handleSignOut()}>
-        <LogOut class="size-3.5 shrink-0" />
-        <span data-slot="menu-label">Sign out</span>
-      </DropdownMenu.Item>
-    {/if}
+    <!-- Sign out lives with the account (Account and license, Settings ▸
+         Account): a menu that opens on every click of the avatar is no place
+         for a one-way action. -->
+    <DropdownMenu.Item onSelect={run('about')}>
+      <Info class="size-3.5 shrink-0" />
+      <span data-slot="menu-label">About Stroke</span>
+    </DropdownMenu.Item>
   </DropdownMenu.Content>
 </DropdownMenu.Root>
 

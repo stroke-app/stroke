@@ -6,8 +6,8 @@
    */
   const places = new Map()
 
-  /** NoSQL engines whose collections expand: MongoDB and CouchDB into indexes, Cassandra and DynamoDB into typed key columns, keys and indexes. Firestore and Redis stay flat. */
-  const SHAPED_NOSQL = new Set(['mongodb', 'couchdb', 'cassandra', 'dynamodb'])
+  /** NoSQL engines whose collections expand: MongoDB and CouchDB into indexes, Cassandra and DynamoDB into typed key columns, keys and indexes, Elasticsearch/OpenSearch into mapped fields. Firestore and Redis stay flat. */
+  const SHAPED_NOSQL = new Set(['mongodb', 'couchdb', 'cassandra', 'dynamodb', 'elasticsearch', 'opensearch'])
   const PER_TABLE_INDEXES = new Set(['mongodb', 'couchdb', 'dynamodb'])
 </script>
 
@@ -37,6 +37,7 @@
   import DbIcon from './DbIcon.svelte'
   import * as ContextMenu from '$lib/components/ui/context-menu/index.js'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
+  import { loadSettings } from '$lib/stores/settings.js'
   import { listTables, listDbObjects, getTableColumnStructure, getSchemaColumnStructure, listIndexes } from '$lib/api.js'
   import { listDatabases, canSwitchDatabase, currentDatabaseKey, isCurrentDatabase } from '$lib/databases.js'
   import { isSystemSchema } from '$lib/system-schemas.js'
@@ -48,7 +49,8 @@
   import { dbAdminKind } from '$lib/database-admin.js'
   import { appNativeScroll } from '$lib/stores/settings.js'
   import { workspaces, activeWorkspaceId, inWorkspace, colorOf } from '$lib/stores/workspaces.js'
-  import { loadTreeExpanded, saveTreeExpanded } from '$lib/stores/sidebar-tree.js'
+  import { loadTreeExpanded, saveTreeExpanded, treeConnectionScope } from '$lib/stores/sidebar-tree.js'
+  import ConfirmDialog from './ConfirmDialog.svelte'
   import { smoothScroll } from '$lib/smooth-scroll.js'
   import {
     childId, ancestorIds, makeNode, filterTree, flattenTree, rowIndex,
@@ -95,6 +97,8 @@
     onclearfilter = () => {},
     /** @type {(entry: { key: string, label: string }) => void} */
     onswitchdatabase = () => {},
+    /** A double-click on a database: switch without the confirm. @type {(entry: { key: string, label: string }) => void} */
+    onswitchdatabasenow = () => {},
     /** @type {(sql: import('$lib/stores/sidebar-objects.svelte.js').ObjectSql) => void} */
     onopenobjectsql = () => {},
     /** ArrowUp off the first row: back to the filter box. */
@@ -105,6 +109,14 @@
     onnewdatabase = () => {},
     /** A connection's pin changed; carries the saved list. @type {(list: SavedConnection[]) => void} */
     onconnectionmeta = () => {},
+    /** The display options' Row counts toggle. */
+    showRowCounts = true,
+    /** Delete a saved connection (after the confirm below). @type {(id: string) => void} */
+    onremoveconnection = () => {},
+    /** Labs: the other open databases and the table lists they had. @type {{ key: string, conn: any, schema: string, tables: any[] }[]} */
+    keptTrees = [],
+    /** Labs: open a table of another open database (switches to it). @type {(key: string, schema: string, name: string) => void} */
+    onopenkepttable = () => {},
   } = $props()
 
   const uid = $props.id()
@@ -220,6 +232,46 @@
     })
   })
 
+  // Labs (treeFocusOnSwitch): a switch to another database folds the tree to
+  // it, with its default schema open on the tables. The schema list arrives
+  // after the switch, so the fold waits for it rather than opening whatever
+  // schema the last database had.
+  let lastPlace = untrack(() => placeKey)
+  let focusPending = false
+  $effect(() => {
+    const place = placeKey
+    if (place === lastPlace) return
+    lastPlace = place
+    untrack(() => { focusPending = !!loadSettings().treeFocusOnSwitch })
+  })
+  $effect(() => {
+    void schemas.length
+    const schema = activeSchema
+    const root = activeRootId
+    if (!root || !schema) return
+    untrack(() => {
+      if (!focusPending || (schemas.length && !schemas.includes(schema))) return
+      focusPending = false
+      const s = schemaNodeId(schema)
+      const next = new Set([root])
+      // Other open databases stay as they were: folding them shut on every
+      // switch is what made only one database usable at a time.
+      for (const id of expanded) {
+        for (const k of keptChildren.keys()) {
+          if (id === k || id.startsWith(k + '\u001f') || k.startsWith(id + '\u001f')) { next.add(id); break }
+        }
+      }
+      if (schemaParentId !== root) next.add(schemaParentId)
+      for (const a of ancestorIds(s)) next.add(a)
+      next.add(s)
+      next.add(childId(s, 'g', 'tables'))
+      expanded = next
+      persistExpanded()
+      if (scroller) scroller.scrollTop = 0
+      scrollTop = 0
+    })
+  })
+
   let saveTimer = /** @type {ReturnType<typeof setTimeout> | null} */ (null)
   function persistExpanded() {
     if (saveTimer) clearTimeout(saveTimer)
@@ -254,6 +306,11 @@
 
   // ── Roots ───────────────────────────────────────────────────────────────
   const shownConnections = $derived.by(() => {
+    // Connected only: the open connection is the tree, and the Connections
+    // list under it switches. With nothing open, every connection shows.
+    if ($treeConnectionScope === 'connected' && connection) {
+      return [connections.find((c) => c.id === connection?.id) ?? connection]
+    }
     const list = inWorkspace(connections, $activeWorkspaceId, $workspaces)
     if (connection && !list.some((c) => c.id === connection?.id)) {
       const live = connections.find((c) => c.id === connection?.id) ?? connection
@@ -277,6 +334,17 @@
       })
       .sort((a, b) => Number(b.data.pinned) - Number(a.data.pinned)),
   )
+
+  // Removing deletes the connection's history and saved work, so it asks first.
+  /** @type {SavedConnection | null} */
+  let pendingRemove = $state(null)
+  let confirmRemoveOpen = $state(false)
+  /** @param {SavedConnection} c */
+  function askRemove(c) {
+    if (!c?.id) return
+    pendingRemove = c
+    confirmRemoveOpen = true
+  }
 
   /** @param {SavedConnection} c */
   function togglePinned(c) {
@@ -386,12 +454,57 @@
     return out
   })
 
+  /**
+   * Labs, several databases open: each other open database keeps its branch
+   * in the tree, listing the tables it had, so both can stay expanded and a
+   * table can be opened from either. A database on this server hangs where
+   * it always does (its database node); one on another connection hangs
+   * from that connection, under its database where the engine has several.
+   * Their rows open by switching (onopenkepttable); they have no columns
+   * here, because that would mean reading a database that is not in front.
+   */
+  const keptChildren = $derived.by(() => {
+    /** @type {Map<string, { status: 'ready', nodes: TreeNode[] }>} */
+    const out = new Map()
+    /** @type {Map<string, TreeNode[]>} */
+    const rootDbs = new Map()
+    for (const k of keptTrees) {
+      const cid = k.conn?.id
+      if (!cid) continue
+      const root = childId('', 'c', cid)
+      let parent = root
+      if (canSwitchDatabase(k.conn)) {
+        const dbKey = currentDatabaseKey(k.conn) ?? k.conn.database ?? ''
+        parent = childId(root, 'd', dbKey)
+        if (root !== activeRootId) {
+          const label = k.conn.database || k.conn.name || dbKey
+          const list = rootDbs.get(root) ?? []
+          list.push(makeNode(parent, 'database', label, { branch: true, data: { entry: { key: dbKey, label }, current: false, kept: k.key } }))
+          rootDbs.set(root, list)
+        }
+      } else if (root === activeRootId) continue
+      out.set(parent, {
+        status: 'ready',
+        nodes: (k.tables ?? []).map((t) => {
+          const name = String(t?.name ?? t?.table_name ?? t ?? '')
+          const kind = t?.kind === 'view' ? 'view' : t?.kind === 'materialized_view' || t?.kind === 'matview' ? 'matview' : 'table'
+          return makeNode(childId(parent, 'k', name), kind, name, {
+            count: kind === 'table' ? normalizeTableRowCount(t?.rowCount ?? t?.row_count) : null,
+            data: { schema: k.schema, name, kind, kept: k.key },
+          })
+        }).filter((n) => n.label),
+      })
+    }
+    for (const [root, nodes] of rootDbs) out.set(root, { status: 'ready', nodes })
+    return out
+  })
+
   /** @param {string} id */
-  const getChildren = (id) => live.get(id) ?? cache.get(id)
+  const getChildren = (id) => keptChildren.get(id) ?? live.get(id) ?? cache.get(id)
 
   /** A connection that is not live, or a database that is not current, opens by switching to it. @param {TreeNode} n */
   const opensBySwitching = (n) =>
-    (n.kind === 'connection' && !n.data?.live) || (n.kind === 'database' && !n.data?.current)
+    !keptChildren.has(n.id) && ((n.kind === 'connection' && !n.data?.live) || (n.kind === 'database' && !n.data?.current))
 
   // ── The rows ────────────────────────────────────────────────────────────
   const q = $derived(filter.trim().toLowerCase())
@@ -404,10 +517,11 @@
     const isOpen = (/** @type {string} */ id) => expanded.has(id)
     return flattenTree(roots, (id) => {
       // Roots that are not live never open: their children are another server's.
-      if (id.indexOf('\u001f') < 0 && id !== activeRootId) return { status: 'ready', nodes: [] }
+      if (id.indexOf('\u001f') < 0 && id !== activeRootId) return keptChildren.get(id) ?? { status: 'ready', nodes: [] }
       return getChildren(id)
     }, (id) => {
       if (!isOpen(id)) return false
+      if (keptChildren.has(id)) return true
       if (id.indexOf('\u001f') < 0) return id === activeRootId
       // A database other than the current one opens by switching.
       if (canSwitchDb && id.startsWith(activeRootId + '\u001fd:') && id.split('\u001f').length === 2) return id === schemaParentId
@@ -903,6 +1017,10 @@
 
   /** Enter, or a click on a row that is not a folder. @param {TreeNode} n */
   function activate(n) {
+    if (n.data?.kept && !n.branch) {
+      onopenkepttable(n.data.kept, n.data.schema, n.data.name)
+      return
+    }
     switch (n.kind) {
       case 'table':
       case 'view':
@@ -910,6 +1028,9 @@
         openTable(n.data.schema, n.data.name)
         return
       case 'column':
+        openTable(n.data.schema, n.data.table)
+        window.dispatchEvent(new CustomEvent('stroke:focus-column', { detail: { schema: n.data.schema, table: n.data.table, column: n.label } }))
+        return
       case 'key':
       case 'index':
         openTable(n.data.schema, n.data.table)
@@ -1006,18 +1127,51 @@
     if (hit.r.t === 'error') { if (target.closest('[data-retry]')) retry(hit.r.owner); return }
     if (hit.r.t !== 'node') return
     const n = hit.r.node
+    // A database you are not on asks before it switches, so a single click
+    // waits a beat: a double-click inside that beat switches straight away,
+    // the way the classic sidebar does, and the confirm never shows.
+    if (n.kind === 'database' && opensBySwitching(n) && !q) {
+      if (dbClickTimer) { clearTimeout(dbClickTimer); dbClickTimer = null }
+      if (e.detail >= 2) {
+        setOpen(n.id, true)
+        onswitchdatabasenow(n.data.entry)
+        return
+      }
+      const chevron = !!target.closest('[data-chevron]')
+      dbClickTimer = setTimeout(() => { dbClickTimer = null; chevron ? toggleNode(n) : activate(n) }, 220)
+      return
+    }
     // The chevron always folds; the rest of the row opens leaves and folds folders.
     if (target.closest('[data-chevron]')) toggleNode(n)
     else activate(n)
+  }
+  /** @type {ReturnType<typeof setTimeout> | null} */
+  let dbClickTimer = null
+
+  /** The focus came from a click, not from Tab: no ring until a key moves. */
+  let pointerFocus = false
+  /**
+   * Tab or Shift+Tab into the tree: show where focus is. Without this the
+   * ring only appeared after an arrow key, so tabbing back into the tree put
+   * focus on a row nobody could see. A row is always selected, so there is
+   * always something for the screen reader to announce.
+   */
+  function onTreeFocus() {
+    focused = true
+    if (pointerFocus || !rows.length) return
+    kbd = true
+    if (activeIndex < 0) active = rows[0].key
+    ensureVisible(Math.max(0, rowIndex(rows, active)))
   }
 
   /** Focus the tree from outside (ArrowDown in the filter box). */
   export function focusTree() {
     if (!scroller || !rows.length) return false
-    if (activeIndex < 0) {
-      const firstMatch = q ? rows.findIndex((r) => r.t === 'node' && r.node.lname.includes(q)) : -1
-      active = rows[Math.max(0, firstMatch)].key
-    }
+    // From the filter box the answer to what was typed starts at the first
+    // match, not at whichever row was selected before the search.
+    const firstMatch = q ? rows.findIndex((r) => r.t === 'node' && r.node.lname.includes(q)) : -1
+    if (firstMatch >= 0) active = rows[firstMatch].key
+    else if (activeIndex < 0) active = rows[0].key
     kbd = true
     scroller.focus({ preventScroll: true })
     ensureVisible(Math.max(0, rowIndex(rows, active)))
@@ -1148,6 +1302,7 @@
   /** @param {TreeNode} n */
   function countText(n) {
     if (n.count == null) return ''
+    if (n.kind === 'table' && !showRowCounts) return ''
     return n.kind === 'table' ? formatTableRowCount(n.count) : String(n.count)
   }
 
@@ -1178,7 +1333,12 @@
   const ROW_IDLE = 'text-foreground/80 hover:bg-sidebar-accent/50 hover:text-foreground'
   const ROW_ACTIVE = 'bg-sidebar-accent text-sidebar-accent-foreground'
   const ROW_RING = 'outline-2 -outline-offset-2 outline-ring'
-  const ROW = 'absolute inset-x-0 flex cursor-default select-none items-center gap-1.5 pr-2 text-left contain-layout contain-paint contain-style'
+  // Rows sit inset with rounded corners, the way a macOS source list (Finder,
+  // Mail, Xcode) draws its selection, rather than as full-width bars.
+  const ROW = 'absolute inset-x-1.5 flex cursor-default select-none items-center gap-1.5 rounded-md pr-2 text-left contain-layout contain-paint contain-style'
+  // Pinned ancestors sit on a full-width strip of the sidebar's colour, so the
+  // rows scrolling under them don't show at the inset edges.
+  const PIN_BACK = 'pointer-events-none absolute inset-x-0 bg-sidebar'
 </script>
 
 {#snippet newItem(/** @type {string} */ kind, /** @type {string} */ schema, /** @type {boolean} */ short)}
@@ -1297,9 +1457,9 @@
             use:smoothScroll={{ enabled: !$appNativeScroll }}
             onscroll={onScroll}
             onkeydown={onKey}
-            onfocus={() => (focused = true)}
-            onblur={() => (focused = false)}
-            onpointerdown={(e) => { kbd = false; /** @type {any} */ (props).onpointerdown?.(e) }}
+            onfocus={onTreeFocus}
+            onblur={() => { focused = false; pointerFocus = false }}
+            onpointerdown={(e) => { kbd = false; pointerFocus = true; /** @type {any} */ (props).onpointerdown?.(e) }}
             onclick={onClick}
             onpointerover={onPointerOver}
             onpointerleave={() => { hoverKey = ''; if (warmTimer) { clearTimeout(warmTimer); warmTimer = null } }}
@@ -1321,9 +1481,15 @@
                 {#each sticky as si, k (rows[si].key)}
                   {@const r = rows[si]}
                   <div
+                    class={cn(PIN_BACK, k === sticky.length - 1 && 'border-b border-border/50')}
+                    style:top="{stickyTop[k] ?? k * rowH}px"
+                    style:z-index={sticky.length - k}
+                    style:height="{rowH}px"
+                  ></div>
+                  <div
                     data-index={si}
                     data-sticky
-                    class={cn(ROW, 'pointer-events-auto bg-sidebar hover:bg-sidebar-accent', k === sticky.length - 1 && 'border-b border-border/50', r.key === active && 'bg-sidebar-accent text-sidebar-accent-foreground')}
+                    class={cn(ROW, 'pointer-events-auto bg-sidebar hover:bg-sidebar-accent', r.key === active && 'bg-sidebar-accent text-sidebar-accent-foreground')}
                     style:top="{stickyTop[k] ?? k * rowH}px"
                     style:z-index={sticky.length - k}
                     style:height="{rowH}px"
@@ -1371,7 +1537,7 @@
         {#if menuRow?.t === 'node'}
           {@const n = menuRow.node}
           {@const open = expanded.has(n.id)}
-          {#if n.kind === 'table' && n.data.schema === activeSchema && tableMenu}
+          {#if n.kind === 'table' && !n.data.kept && n.data.schema === activeSchema && tableMenu}
             <ContextMenu.Item onSelect={() => openTable(n.data.schema, n.data.name)}>
               <Icon name="external-link" />
               Open table
@@ -1433,6 +1599,12 @@
                 <Icon name={n.data.pinned ? 'pin-off' : 'pin'} />
                 {n.data.pinned ? 'Unpin connection' : 'Pin connection'}
               </ContextMenu.Item>
+              {#if connection}
+                <ContextMenu.Item onSelect={() => treeConnectionScope.set($treeConnectionScope === 'connected' ? 'all' : 'connected')}>
+                  <Icon name={$treeConnectionScope === 'connected' ? 'layout-list' : 'plug'} />
+                  {$treeConnectionScope === 'connected' ? 'Show all connections' : 'Show only the connected one'}
+                </ContextMenu.Item>
+              {/if}
             {/if}
             {#if opensBySwitching(n)}
               <ContextMenu.Item onSelect={() => toggleNode(n, true)}>
@@ -1484,9 +1656,32 @@
                 Refresh
               </ContextMenu.Item>
             {/if}
+            {#if n.kind === 'connection' && n.data.conn?.id}
+              <ContextMenu.Separator />
+              <ContextMenu.Item variant="destructive" onSelect={() => askRemove(n.data.conn)}>
+                <Icon name="trash-2" />
+                Remove connection…
+              </ContextMenu.Item>
+            {/if}
           {/if}
         {/if}
       </ContextMenu.Content>
     </ContextMenu.Root>
   {/if}
 </div>
+
+<ConfirmDialog
+  bind:open={confirmRemoveOpen}
+  icon="trash-2"
+  title="Delete connection?"
+  description={`"${pendingRemove?.name || pendingRemove?.database || pendingRemove?.host || pendingRemove?.filePath || 'this connection'}" will be removed from your saved connections.`}
+  note="Its query history, saved queries, charts and AI chats are deleted with it. This can't be undone."
+  confirmLabel="Delete"
+  confirmIcon="trash-2"
+  variant="destructive"
+  onconfirm={() => {
+    if (pendingRemove?.id) onremoveconnection(pendingRemove.id)
+    pendingRemove = null
+  }}
+  oncancel={() => (pendingRemove = null)}
+/>

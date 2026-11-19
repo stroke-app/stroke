@@ -1,4 +1,5 @@
 <script>
+  import { EXPORT_FORMATS as ALL_EXPORT_FORMATS } from '$lib/export.js';
   import { Button } from '$lib/components/ui/button/index.js'
   import Icon from "./Icon.svelte";
   import SlidersHorizontal from "@lucide/svelte/icons/sliders-horizontal";
@@ -102,6 +103,8 @@
     ondeleteselected = () => {},
     /** @type {(format: 'csv' | 'json' | 'sql' | 'tsv' | 'md' | 'jsonl') => void | Promise<void>} */
     onexport = () => {},
+    /** Share what's on screen (rows, or the chart in chart view) as a link. */
+    onshare = undefined,
     onimport = () => {},
     /** Diagram exports, offered alongside the row formats while the ERD view is open. */
     /** @type {(kind: 'png' | 'copy-png' | 'svg' | 'mermaid') => void | Promise<void>} */
@@ -475,7 +478,7 @@
   // fields, dropdown triggers and buttons to share one corner, and `rounded-md` (8px)
   // left every toolbar button 2px squarer than the field it sits next to.
   const iconBtn =
-    "inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-30";
+    "inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-[color,background-color,scale] duration-[120ms] ease-[var(--ease-out)] active:scale-[0.97] hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-30";
 
   // ── Filter row chrome ──────────────────────────────────────────────────────
   // One border, one surface, one hover for every control in a filter row. Column,
@@ -553,14 +556,8 @@
     { id: "svg", label: "SVG vector", icon: "code-2" },
   ];
 
-  const EXPORT_FORMATS = [
-    { id: "csv", label: "CSV" },
-    { id: "json", label: "JSON" },
-    { id: "sql", label: "SQL" },
-    { id: "tsv", label: "TSV" },
-    { id: "md", label: "Markdown" },
-    { id: "jsonl", label: "JSONL" },
-  ];
+  // Every format, shared with the SQL console and the AI chat (export.js).
+  const EXPORT_FORMATS = ALL_EXPORT_FORMATS;
 
   // ── Searchable-menu item lists ──────────────────────────────────────────
   // Sort: two rows per column (ascending / descending), searchable by name.
@@ -941,6 +938,8 @@
             localSearch.trim() && "border-ring!",
           )}
           placeholder="Search…"
+          data-slash-focus="20"
+          aria-keyshortcuts="/"
           value={localSearch}
           disabled={columns.length === 0}
           oninput={(e) => handleSearchInput(e.currentTarget.value)}
@@ -1440,77 +1439,83 @@
           <!-- Go to page: a number field over a small grid of nearby pages,
                instead of a viewport-tall list of single numbers you had to
                scroll through with arrow buttons. -->
-          <Popover bind:open={pageMenuOpen}>
-            <PopoverTrigger
-              class={cn(pageSelectTrigger, "inline-flex items-center")}
-              title="Go to page"
-              aria-label="Go to page {page}"
-              disabled={loading || total === 0 || (!counting && pageCount <= 1)}
+          <!-- One pager: previous, "page / pages" (click to jump), next. The
+               page select and a separate "of N" said the same thing twice. -->
+          <div class="flex shrink-0 items-center">
+            <button
+              type="button"
+              class={iconBtn}
+              disabled={!canPrev || loading}
+              onclick={onprev}
+              aria-label="Previous page"
             >
-              {page}
-              <Icon name="chevron-down" class="size-3.5 shrink-0 opacity-60" />
-            </PopoverTrigger>
-            <PopoverContent align="end" sideOffset={6} class="w-56 p-2">
-              <form
-                class="flex items-center gap-2"
-                onsubmit={(e) => {
-                  e.preventDefault();
-                  const n = Math.round(Number(pageJump));
-                  if (!Number.isFinite(n) || n < 1) return;
-                  const target = counting ? n : Math.min(n, pageCount);
-                  if (target !== page) onpagechange(target);
-                  pageMenuOpen = false;
-                }}
+              <Icon name="chevron-left" class="size-3.5 shrink-0" />
+            </button>
+            <Popover bind:open={pageMenuOpen}>
+              <PopoverTrigger
+                class="inline-flex h-7 min-w-[4.5ch] items-center justify-center rounded-md px-1.5 text-ui-xs tabular-nums text-foreground transition-colors hover:bg-accent disabled:text-muted-foreground disabled:hover:bg-transparent data-[state=open]:bg-accent"
+                title="Go to page"
+                aria-label="Page {page}{counting ? '' : ` of ${pageCount}`}, go to page"
+                disabled={loading || total === 0 || (!counting && pageCount <= 1)}
               >
-                <input
-                  bind:value={pageJump}
-                  inputmode="numeric"
-                  placeholder="Page"
-                  aria-label="Page number"
-                  class="field-surface h-7 min-w-0 flex-1 px-2 font-mono text-ui-sm tabular-nums shadow-none outline-none placeholder:font-sans placeholder:text-muted-foreground"
-                  use:autofocusSelect
-                />
-                <span class="shrink-0 text-ui-xs tabular-nums text-muted-foreground">{#if counting}counting…{:else}of {pageCount.toLocaleString()}{/if}</span>
-              </form>
-              <div class="mt-2 grid grid-cols-5 gap-1">
-                {#each pageGrid as p (p)}
-                  <button
-                    type="button"
-                    aria-current={p === page ? "page" : undefined}
-                    class={cn(
-                      "h-7 rounded-md font-mono text-ui-xs tabular-nums transition-colors",
-                      p === page ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
-                    )}
-                    onclick={() => { if (p !== page) onpagechange(p); pageMenuOpen = false; }}
-                  >{p.toLocaleString()}</button>
-                {/each}
-              </div>
-            </PopoverContent>
-          </Popover>
-
-          <span
-            class={cn("min-w-[6ch] shrink-0 text-ui-xs text-muted-foreground tabular-nums @max-[31.25rem]/tb:hidden", hideAt(10))}
-            title={counting ? "Counting rows…" : `${pageCount.toLocaleString("en-US")} pages`}
-          >of {#if counting}<Icon name="loader-2" class="inline size-3 shrink-0 animate-spin align-[-2px]" aria-label="Counting rows" />{:else}{formatCompactCount(pageCount)}{/if}</span>
-
-          <button
-            type="button"
-            class={iconBtn}
-            disabled={!canPrev || loading}
-            onclick={onprev}
-            aria-label="Previous page"
-          >
-            <Icon name="chevron-left" class="size-3.5 shrink-0" />
-          </button>
-          <button
-            type="button"
-            class={iconBtn}
-            disabled={!canNext || loading}
-            onclick={onnext}
-            aria-label="Next page"
-          >
-            <Icon name="chevron-right" class="size-3.5 shrink-0" />
-          </button>
+                {page.toLocaleString()}<span class="px-0.5 text-muted-foreground">/</span>{#if counting}<Icon name="loader-2" class="inline size-3 shrink-0 animate-spin text-muted-foreground" aria-label="Counting rows" />{:else}<span class="text-muted-foreground">{formatCompactCount(pageCount)}</span>{/if}
+              </PopoverTrigger>
+              <PopoverContent align="end" sideOffset={6} class="w-52 p-1.5">
+                <form
+                  class="flex items-center gap-1.5 px-0.5 pt-0.5"
+                  onsubmit={(e) => {
+                    e.preventDefault();
+                    const n = Math.round(Number(pageJump));
+                    if (!Number.isFinite(n) || n < 1) return;
+                    const target = counting ? n : Math.min(n, pageCount);
+                    if (target !== page) onpagechange(target);
+                    pageMenuOpen = false;
+                  }}
+                >
+                  <label class="flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-lg bg-muted/60 px-2.5 text-ui-xs text-muted-foreground focus-within:ring-1 focus-within:ring-ring/60">
+                    Page
+                    <input
+                      bind:value={pageJump}
+                      inputmode="numeric"
+                      aria-label="Page number"
+                      class="no-field-frame min-w-0 flex-1 border-0 bg-transparent p-0 text-ui-sm font-medium tabular-nums text-foreground outline-none"
+                      use:autofocusSelect
+                    />
+                    <span class="shrink-0 tabular-nums">{#if counting}…{:else}of {pageCount.toLocaleString()}{/if}</span>
+                  </label>
+                </form>
+                <div class="mt-1.5 grid grid-cols-5 gap-0.5">
+                  {#each pageGrid as p (p)}
+                    <button
+                      type="button"
+                      aria-current={p === page ? "page" : undefined}
+                      class={cn(
+                        "h-7 rounded-md text-ui-xs tabular-nums transition-colors",
+                        p === page ? "bg-primary/12 font-medium text-primary" : "text-muted-foreground hover:bg-accent hover:text-foreground",
+                      )}
+                      onclick={() => { if (p !== page) onpagechange(p); pageMenuOpen = false; }}
+                    >{p.toLocaleString()}</button>
+                  {/each}
+                </div>
+                {#if !counting && pageCount > pageGrid.length}
+                  <div class="mt-1 flex items-center justify-between gap-1 border-t border-border/50 px-0.5 pt-1.5">
+                    <button type="button" class="h-6 rounded-md px-2 text-ui-2xs text-muted-foreground hover:bg-accent hover:text-foreground" onclick={() => { onpagechange(1); pageMenuOpen = false; }}>First</button>
+                    <span class="text-ui-3xs text-muted-foreground">Enter to go</span>
+                    <button type="button" class="h-6 rounded-md px-2 text-ui-2xs text-muted-foreground hover:bg-accent hover:text-foreground" onclick={() => { onpagechange(pageCount); pageMenuOpen = false; }}>Last</button>
+                  </div>
+                {/if}
+              </PopoverContent>
+            </Popover>
+            <button
+              type="button"
+              class={iconBtn}
+              disabled={!canNext || loading}
+              onclick={onnext}
+              aria-label="Next page"
+            >
+              <Icon name="chevron-right" class="size-3.5 shrink-0" />
+            </button>
+          </div>
         {/if}
         </div>
       {/if}
@@ -1661,6 +1666,19 @@
     </DropdownMenu.Root>
 
     <!-- ⋯ More menu: structure / ∞ / export / delete -->
+    {#if onshare}
+      <!-- Share what's shown (the chart in Chart view) as an encrypted link. -->
+      <button
+        type="button"
+        class={cn(iconBtn, "shrink-0 @max-[30rem]/tb:hidden")}
+        title={dataViewMode === "chart" ? "Share this chart as a link" : "Share these rows as a link"}
+        aria-label={dataViewMode === "chart" ? "Share chart" : "Share rows"}
+        disabled={loading || total === 0 || tableViewMode === "structure"}
+        onclick={() => onshare(dataViewMode)}
+      >
+        <Icon name="share-2" class="size-3.5 shrink-0" />
+      </button>
+    {/if}
     <DropdownMenu.Root
       bind:open={moreMenuOpen}
       onOpenChange={(open) => {
@@ -1775,6 +1793,12 @@
               </DropdownMenu.Group>
             </DropdownMenu.SubContent>
           </DropdownMenu.Sub>
+          {#if onshare}
+            <DropdownMenu.Item disabled={total === 0} onSelect={() => onshare(dataViewMode)}>
+              <Icon name="share-2" class="size-3.5 shrink-0" />
+              <span data-slot="menu-label">{dataViewMode === 'chart' ? 'Share chart…' : 'Share rows…'}</span>
+            </DropdownMenu.Item>
+          {/if}
           <DropdownMenu.Item disabled={readonly} onSelect={() => onimport()}>
             <Icon name="file-up" class="size-3.5 shrink-0" />
             <span data-slot="menu-label">Import data…</span>
@@ -1824,7 +1848,7 @@
         <div class="ms-1.5 flex items-center gap-0.5">
           <button
             type="button"
-            class="inline-flex h-7 items-center gap-1 rounded-md px-2 text-ui-sm text-muted-foreground transition-[color,background-color,transform] hover:bg-accent hover:text-foreground active:scale-[0.97]"
+            class="inline-flex h-7 items-center gap-1 rounded-md px-2 text-ui-sm text-muted-foreground transition-[color,background-color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-accent hover:text-foreground active:scale-[0.97]"
             onclick={addFilterAndFocus}
             title="Add a filter condition ({KEY.filter} opens this bar)"
           >
@@ -1833,7 +1857,7 @@
           </button>
           <button
             type="button"
-            class="inline-flex h-7 items-center gap-1 rounded-md px-2 text-ui-sm text-muted-foreground transition-[color,background-color,transform] hover:bg-accent hover:text-foreground active:scale-[0.97]"
+            class="inline-flex h-7 items-center gap-1 rounded-md px-2 text-ui-sm text-muted-foreground transition-[color,background-color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-accent hover:text-foreground active:scale-[0.97]"
             onclick={addSqlFilterAndFocus}
             title="Filter with a SQL condition, like id > 200 AND name LIKE 'a%'"
           >
@@ -1844,7 +1868,7 @@
         {#if rowFilters.length > 0}
           <button
             type="button"
-            class="ms-auto inline-flex h-7 items-center gap-1 rounded-md px-2 text-ui-sm text-muted-foreground transition-[color,background-color,transform] hover:bg-accent hover:text-foreground active:scale-[0.97]"
+            class="ms-auto inline-flex h-7 items-center gap-1 rounded-md px-2 text-ui-sm text-muted-foreground transition-[color,background-color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-accent hover:text-foreground active:scale-[0.97]"
             onclick={clearFilters}
             title="Remove every filter condition ({KEY.reset} also clears search, sort and hidden columns)"
           >

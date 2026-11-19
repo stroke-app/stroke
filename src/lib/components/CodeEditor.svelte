@@ -18,6 +18,8 @@
    * @property {string} [placeholder]
    * @property {string} [ariaLabel]
    * @property {import('@codemirror/view').KeyBinding[]} [keys] Extra bindings, checked first.
+   * @property {import('@codemirror/view').KeyBinding[]} [priorityKeys] Bindings ahead of the
+   *   editor's own Enter handling too (a one-line field whose Enter applies it). Set once.
    * @property {string} [lang] Force a language by id ('sql', 'json', 'typescript', 'csv',
    *   'prisma', 'plaintext' ... - see cm-languages.js). Empty guesses JSON or markup from the text.
    * @property {string} [dialect] SQL dialect for `lang="sql"` (the app's Dialect ids).
@@ -60,6 +62,7 @@
     placeholder = '',
     ariaLabel = '',
     keys = [],
+    priorityKeys = [],
     gutter = true,
     lang = '',
     dialect = '',
@@ -220,14 +223,15 @@
       fontSize: 'var(--cm-font-size, var(--fs-sm))',
       fontVariantNumeric: 'tabular-nums',
     },
-    // Five digits reserved up front. The gutter sizes to the widest number, so
+    // Three digits reserved up front (a document or a value rarely passes 999
+    // lines; five left a wide empty strip). The gutter sizes to the widest number, so
     // typing line 100 (or 1,000) widened it and pushed every line of text
     // sideways mid-keystroke. `ch` is one digit in the mono face; the gutter
     // elements are border-box, hence the padding added in. Past 99,999 lines
     // it still grows, once.
     '.cm-lineNumbers .cm-gutterElement': {
-      padding: '0 4px 0 12px',
-      minWidth: 'calc(5ch + 16px)',
+      padding: '0 4px 0 8px',
+      minWidth: 'calc(3ch + 12px)',
       textAlign: 'right',
     },
     '.cm-activeLineGutter': { backgroundColor: 'transparent', color: 'var(--muted-foreground)' },
@@ -368,7 +372,10 @@
     '.cm-selectionMatch': { backgroundColor: 'color-mix(in oklch, var(--foreground) 8%, transparent)' },
     // Find/replace panel (createFindPanel): the app's field, icon-button and
     // focus language. 28px controls, 6px radius, the field hairline, one ring.
-    '.cm-panels': { backgroundColor: 'var(--background)', color: 'var(--foreground)' },
+    // CodeMirror's base theme lifts panels to z-index 300, over the app's
+    // popovers and dialogs (the vim --INSERT-- line sat on top of Workspaces).
+    // A sticky panel only has to clear the editor's own content.
+    '.cm-panels': { backgroundColor: 'var(--background)', color: 'var(--foreground)', zIndex: '2' },
     '.cm-panels-top': { borderBottom: '1px solid color-mix(in oklch, var(--border) 45%, transparent)' },
     '.cm-find': { display: 'flex', flexDirection: 'column', gap: '6px', padding: '8px 10px', fontFamily: 'var(--font-sans)' },
     '.cm-find-row': { display: 'flex', alignItems: 'center', gap: '2px', minWidth: '0' },
@@ -859,6 +866,8 @@
         ]),
         colorC.of(colorsFor(get(appEditorTheme))),
         theme,
+        // Ahead of sqlEditing's own highest-precedence Enter.
+        Prec.highest(keymap.of(priorityKeys)),
         sqlEditing(),
         placeholderC.of(placeholderExt(placeholder)),
         EditorView.contentAttributes.of({ 'aria-label': ariaLabel, spellcheck: 'false' }),

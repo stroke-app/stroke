@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { couchAdapter, cassandraAdapter, firestoreAdapter, mongoAdapter, uriHost, docGrid, fsPlainFields, fsTypedFields, fsTyped, fsFilter, fsDoc, docColumns, docCell, humanBytes, PAGE_SIZE } from './doc-adapters.js'
 
 /** A fake CouchDB that records calls and answers from a script. */
@@ -207,5 +207,68 @@ describe('docGrid', () => {
     expect(g.columns.map((c) => `${c.name}:${c.data_type}`)).toEqual(['_id:objectId', 'n:double', 'at:mixed', 'tags:array', 'extra:object'])
     expect(g.rows[0]).toEqual(['a1', 1, '2026-01-01T00:00:00Z', ['x'], null])
     expect(g.rows[1][4]).toEqual({ k: 1 })
+  })
+})
+
+describe('elasticAdapter', async () => {
+  const { elasticAdapter, esQuery, esSort, esDoc, ES_WINDOW } = await import('./doc-adapters.js')
+
+  it('reads the filter as a query string or Query DSL', () => {
+    expect(esQuery('')).toEqual({ match_all: {} })
+    expect(esQuery('level:error')).toEqual({ query_string: { query: 'level:error' } })
+    expect(esQuery('{"term": {"level": "error"}}')).toEqual({ term: { level: 'error' } })
+    expect(esQuery('{"query": {"match_all": {}}, "size": 5}')).toEqual({ match_all: {} })
+    expect(() => esQuery('{bad')).toThrow(/Query DSL/)
+  })
+
+  it('reads sort as field:dir or JSON', () => {
+    expect(esSort('')).toBeUndefined()
+    expect(esSort('@timestamp:desc, _id')).toEqual([{ '@timestamp': { order: 'desc' } }, '_id'])
+    expect(esSort('[{"ms": "asc"}]')).toEqual([{ ms: 'asc' }])
+  })
+
+  it('keeps version fields out of the columns', () => {
+    const d = esDoc({ _id: '1', _source: { a: 1 }, _seq_no: 4, _primary_term: 1 })
+    expect(Object.keys(d)).toEqual(['_id', 'a'])
+    expect(/** @type {any} */ (d).__es).toEqual({ seq: 4, term: 1 })
+  })
+
+  it('lists indices without system ones and pages with from/size', async () => {
+    /** @type {any[]} */
+    const calls = []
+    const req = vi.fn(async (/** @type {string} */ m, /** @type {string} */ p, /** @type {any} */ b) => {
+      calls.push([m, p, b])
+      if (p.startsWith('_cat/indices')) return [{ index: '.kibana' }, { index: 'logs' }]
+      if (p.endsWith('/_search')) return { hits: { total: { value: 3 }, hits: [{ _id: '1', _source: { x: 1 } }, { _id: '2', _source: { x: 2 } }] } }
+      return {}
+    })
+    const a = elasticAdapter(req, 'opensearch')
+    expect(a.engine).toBe('opensearch')
+    expect(await a.listCollections()).toEqual(['logs'])
+    const page = await a.load('logs', { cursor: null, filter: 'x:1', size: 2, sort: 'x:desc' })
+    expect(page.docs.map((d) => d._id)).toEqual(['1', '2'])
+    expect(page.cursor).toBe(2)
+    expect(calls.at(-1)[2]).toMatchObject({ from: 0, size: 2, query: { query_string: { query: 'x:1' } }, sort: [{ x: { order: 'desc' } }] })
+    const last = await a.load('logs', { cursor: ES_WINDOW, filter: '', size: 100 })
+    expect(last).toEqual({ docs: [], cursor: null })
+  })
+
+  it('saves with the loaded version and moves a renamed id', async () => {
+    /** @type {any[]} */
+    const calls = []
+    const req = vi.fn(async (/** @type {string} */ m, /** @type {string} */ p, /** @type {any} */ b) => {
+      calls.push([m, p, b])
+      return { _id: 'new', _seq_no: 9, _primary_term: 1 }
+    })
+    const a = elasticAdapter(req)
+    const prev = esDoc({ _id: 'a', _source: { n: 1 }, _seq_no: 3, _primary_term: 1 })
+    await a.save('logs', { ...prev, n: 2 }, prev)
+    expect(calls[0]).toEqual(['PUT', 'logs/_doc/a?refresh=wait_for&if_seq_no=3&if_primary_term=1', { n: 2 }])
+    calls.length = 0
+    await a.save('logs', { _id: 'b', n: 2 }, prev)
+    expect(calls.map((c) => `${c[0]} ${c[1]}`)).toEqual(['PUT logs/_create/b?refresh=wait_for', 'DELETE logs/_doc/a?refresh=wait_for'])
+    calls.length = 0
+    await a.save('logs', { _id: '', n: 1 }, null)
+    expect(calls[0].slice(0, 2)).toEqual(['POST', 'logs/_doc?refresh=wait_for'])
   })
 })

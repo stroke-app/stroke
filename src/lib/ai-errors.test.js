@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { describeAiError, humanizeDbError } from './ai.js'
+import { buildSystemPrompt, classifyDbError, describeAiError, humanizeDbError } from './ai.js'
 
 describe('humanizeDbError', () => {
   it('lifts the cause out of a D1 HTTP envelope', () => {
@@ -113,4 +113,43 @@ describe('describeAiError · quota', () => {
     })}`
     expect(describeAiError(extra).detail).toContain('retry_after_seconds')
   })
+})
+
+describe('classifyDbError with the failing SQL', () => {
+  it('names ANSI_QUOTES when a double-quoted value was read as a column', () => {
+    const hint = classifyDbError(
+      "Statement failed: error returned from database: 1054 (42S22): Unknown column 'carol white' in 'field list'",
+      'INSERT INTO customers (name) VALUES ("Carol White")',
+    )
+    expect(hint).toContain('ANSI_QUOTES')
+    expect(hint).toContain("'carol white'")
+  })
+
+  it('keeps the schema hint for a genuinely missing column', () => {
+    const hint = classifyDbError("Unknown column 'emial' in 'field list'", 'SELECT emial FROM customers')
+    expect(hint).not.toContain('ANSI_QUOTES')
+    expect(hint).toContain('describe_table')
+  })
+})
+
+describe('the plan instruction', () => {
+  const ctx = { dbType: 'mysql', schemas: ['shop'], activeSchema: 'shop', tables: [], topics: new Set() }
+
+  it('is only in the prompt of a chat that draws plans', () => {
+    expect(buildSystemPrompt({ ...ctx, planSteps: true })).toContain('<plan>')
+    expect(buildSystemPrompt(ctx)).not.toContain('<plan>')
+  })
+
+  it('tells a MySQL model about single quotes and pooled USE', () => {
+    const p = buildSystemPrompt({ ...ctx, topics: undefined })
+    expect(p).toContain('ANSI_QUOTES')
+    expect(p).toContain('USE does not carry over')
+  })
+})
+
+it("a request with no key is called a missing key, not a rejected one", async () => {
+  const { describeAiError } = await import('./ai.js')
+  const f = describeAiError('AI API 401: {"error":{"message":"No cookie auth credentials found","code":401}}')
+  expect(f.title).toBe('No API key was sent')
+  expect(f.hint).toMatch(/Add the API key/)
 })

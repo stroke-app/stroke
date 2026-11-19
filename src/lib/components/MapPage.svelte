@@ -1,4 +1,5 @@
 <script>
+  import SelectMenu from './SelectMenu.svelte'
   /**
    * Geo view - every spatial column in the database, drawn on a world map.
    *
@@ -32,7 +33,6 @@
     walkGeometry,
     hitTest,
   } from '$lib/geo-map.js'
-  import * as Select from '$lib/components/ui/select/index.js'
   import Globe from '@lucide/svelte/icons/globe'
   import Layers from '@lucide/svelte/icons/layers'
   import Filter from '@lucide/svelte/icons/filter'
@@ -923,65 +923,42 @@
   <!-- Toolbar -->
   <div class="flex h-9 shrink-0 items-center gap-2 border-b border-border/60 px-2">
     <Globe class="size-3.5 shrink-0 text-muted-foreground" />
-    <Select.Root
-      type="single"
+    <SelectMenu
+      ariaLabel="Spatial layer"
       value={layer ? layerLabel(layer) : ''}
+      placeholder="Select a layer"
+      searchPlaceholder="Search layers"
       onValueChange={(v) => {
         const next = layers.find((l) => layerLabel(l) === v)
         if (next) selectLayer(next)
       }}
-    >
-      <Select.Trigger size="sm" class="w-[290px] text-ui-xs" aria-label="Spatial layer">
-        <span class="truncate">{layer ? layerLabel(layer) : 'Select a layer'}</span>
-      </Select.Trigger>
-      <Select.Content class="z-[120] max-h-[22rem] min-w-[18rem] p-1" sideOffset={6}>
-        {#each layers as l (layerLabel(l))}
-          <Select.Item
-            value={layerLabel(l)}
-            label={layerLabel(l)}
-            class="py-1.5 pl-2 text-ui-xs"
-          >
-            <span class="truncate">{layerLabel(l)}</span>
-            <span class="ml-auto shrink-0 pl-3 text-ui-2xs text-muted-foreground">
-              {l.geomType} · {rowsLabel(l.rows)}
-            </span>
-          </Select.Item>
-        {/each}
-      </Select.Content>
-    </Select.Root>
+      items={layers.map((l) => ({ value: layerLabel(l), label: layerLabel(l), hint: `${l.geomType} · ${rowsLabel(l.rows)}` }))}
+      triggerClass="h-7 w-[290px]"
+      contentClass="w-[22rem]"
+    />
 
     {#if filterColumns.length}
       <div class="flex items-center gap-1 border-l border-border/50 pl-2">
         <Filter class="size-3.5 shrink-0 text-muted-foreground" />
-        <Select.Root type="single" value={filterColumn} onValueChange={(v) => (filterColumn = v ?? '')}>
-          <Select.Trigger size="sm" class="w-[130px] text-ui-xs" aria-label="Filter column">
-            <span class="truncate">{filterColumn || 'Column'}</span>
-          </Select.Trigger>
-          <Select.Content class="z-[120] max-h-[20rem] min-w-[10rem] p-1" sideOffset={6}>
-            <Select.Item value="" label="No filter" class="py-1.5 pl-2 text-ui-xs">
-              No filter
-            </Select.Item>
-            {#each filterColumns as c (c)}
-              <Select.Item value={c} label={c} class="py-1.5 pl-2 text-ui-xs">{c}</Select.Item>
-            {/each}
-          </Select.Content>
-        </Select.Root>
+        <SelectMenu
+          ariaLabel="Filter column"
+          value={filterColumn}
+          placeholder="Column"
+          onValueChange={(v) => (filterColumn = v ?? '')}
+          items={[{ value: '', label: 'No filter' }, ...filterColumns.map((c) => ({ value: c, label: c }))]}
+          triggerClass="h-7 w-[130px]"
+          contentClass="w-56"
+        />
 
         {#if filterColumn}
-          <Select.Root type="single" value={filterOp} onValueChange={(v) => v && (filterOp = v)}>
-            <Select.Trigger size="sm" class="w-[120px] text-ui-xs" aria-label="Filter operator">
-              <span class="truncate">
-                {FILTER_OPS.find((o) => o.value === filterOp)?.label ?? filterOp}
-              </span>
-            </Select.Trigger>
-            <Select.Content class="z-[120] max-h-[20rem] min-w-[10rem] p-1" sideOffset={6}>
-              {#each FILTER_OPS as o (o.value)}
-                <Select.Item value={o.value} label={o.label} class="py-1.5 pl-2 text-ui-xs">
-                  {o.label}
-                </Select.Item>
-              {/each}
-            </Select.Content>
-          </Select.Root>
+          <SelectMenu
+            ariaLabel="Filter operator"
+            value={filterOp}
+            onValueChange={(v) => v && (filterOp = v)}
+            items={FILTER_OPS.map((o) => ({ value: o.value, label: o.label }))}
+            triggerClass="h-7 w-[120px]"
+            contentClass="w-48"
+          />
 
           {#if opNeedsValue}
             <input
@@ -1003,30 +980,15 @@
     {/if}
 
     <div class="ml-auto flex items-center gap-1">
-      <Select.Root type="single" value={basemapId} onValueChange={(v) => v && (basemapId = v)}>
-        <!-- No fixed width: 112px truncated "Minimal" to "Min…" and would have cut
-             "Satellite" harder still. min-w keeps the control from jittering as the
-             label changes while letting it grow for the longest one. Styled as a
-             ghost like the Fit / Refresh buttons it sits beside - a bordered field
-             in a three-control toolbar cluster read as a different component. -->
-        <Select.Trigger
-          size="sm"
-          class="w-auto min-w-[8rem] border-0 bg-transparent text-ui-xs text-muted-foreground hover:bg-muted/50 hover:text-foreground data-[state=open]:bg-muted/50 data-[state=open]:text-foreground"
-          aria-label="Basemap"
-        >
-          <span class="truncate">{basemap.label}</span>
-        </Select.Trigger>
-        <Select.Content class="z-[120] min-w-[15rem] p-1" sideOffset={6}>
-          {#each BASEMAPS as b (b.id)}
-            <Select.Item value={b.id} label={b.label} class="py-1.5 pl-2 text-ui-xs">
-              <span class="truncate">{b.label}</span>
-              <span class="ml-auto shrink-0 pl-3 text-ui-2xs text-muted-foreground">
-                {b.offline ? 'offline' : 'online tiles'}
-              </span>
-            </Select.Item>
-          {/each}
-        </Select.Content>
-      </Select.Root>
+      <SelectMenu
+        ariaLabel="Basemap"
+        value={basemapId}
+        onValueChange={(v) => v && (basemapId = v)}
+        items={BASEMAPS.map((b) => ({ value: b.id, label: b.label, hint: b.offline ? 'offline' : 'online tiles' }))}
+        triggerClass="h-7 w-auto min-w-[8rem] border-0 bg-transparent text-muted-foreground hover:text-foreground"
+        contentClass="w-60"
+        align="end"
+      />
       <button
         type="button"
         class="flex h-7 items-center gap-1.5 rounded-md px-2 text-ui-xs text-muted-foreground hover:bg-muted/50 hover:text-foreground"

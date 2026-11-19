@@ -8,7 +8,8 @@
  * is no height bookkeeping and no way to form a read-write reactive cycle.
  *
  * API surface mirrors the parts of svelte-sonner the app uses:
- *   toast.success/error/info/warning/message(title, { description?, duration? })
+ *   toast.success/error/info/warning/message/loading(title, { description?, duration?, progress? })
+ *   toast.update(id, { type?, title?, description?, progress?, action?, duration? })
  *   toast.dismiss(id?)        - dismiss one, or all when id is omitted
  *   toast.getActiveToasts()   - current toasts (reactive read)
  */
@@ -17,10 +18,10 @@ let counter = 0
 const DEFAULT_DURATION = 4500
 
 /**
- * @typedef {'success' | 'error' | 'info' | 'warning' | 'message'} ToastType
+ * @typedef {'success' | 'error' | 'info' | 'warning' | 'message' | 'loading'} ToastType
  * @typedef {{ label: string, onClick: () => void }} ToastAction
- * @typedef {{ id: number, type: ToastType, title: string, description: string, action?: ToastAction, code?: boolean }} Toast
- * @typedef {{ description?: string, duration?: number, action?: ToastAction, code?: boolean }} ToastOptions
+ * @typedef {{ id: number, type: ToastType, title: string, description: string, action?: ToastAction, code?: boolean, progress?: number | null }} Toast
+ * @typedef {{ description?: string, duration?: number, action?: ToastAction, code?: boolean, progress?: number | null }} ToastOptions
  */
 
 class ToastStore {
@@ -47,11 +48,13 @@ class ToastStore {
    */
   #add(type, title, opts = {}) {
     const id = ++counter
-    const duration = opts.duration ?? DEFAULT_DURATION
+    // A loading toast stays until it is updated to its outcome.
+    const duration = opts.duration ?? (type === 'loading' ? Infinity : DEFAULT_DURATION)
     /** @type {Toast} */
     const entry = { id, type, title: String(title ?? ''), description: opts.description ?? '' }
     if (opts.action) entry.action = opts.action
     if (opts.code) entry.code = true
+    if (opts.progress != null) entry.progress = opts.progress
     // newest first; immutable reassignment keeps the read-side reactive
     this.toasts = [entry, ...this.toasts]
     this.#schedule(id, duration)
@@ -68,6 +71,29 @@ class ToastStore {
   warning = (title, opts) => this.#add('warning', title, opts)
   /** @param {unknown} title @param {ToastOptions} [opts] */
   message = (title, opts) => this.#add('message', title, opts)
+  /** Stays until updated: a spinner, and a bar when `progress` (0-1) is set. @param {unknown} title @param {ToastOptions} [opts] */
+  loading = (title, opts) => this.#add('loading', title, opts)
+
+  /**
+   * Change a toast in place (a pull's progress, then its outcome). Leaving
+   * `loading` starts the usual dismiss timer unless `duration` says otherwise.
+   * @param {number} id
+   * @param {Partial<Omit<Toast, 'id'>> & { duration?: number }} patch
+   */
+  update = (id, patch) => {
+    const i = this.toasts.findIndex((t) => t.id === id)
+    if (i < 0) return false
+    const prev = this.toasts[i]
+    const { duration, ...rest } = patch
+    const next = { ...prev, ...rest, title: rest.title != null ? String(rest.title) : prev.title }
+    this.toasts = this.toasts.map((t, k) => (k === i ? next : t))
+    if (prev.type === 'loading' && next.type !== 'loading') {
+      const old = this.#timers.get(id)
+      if (old) { clearTimeout(old.handle); this.#timers.delete(id) }
+      this.#schedule(id, duration ?? DEFAULT_DURATION)
+    }
+    return true
+  }
 
   /** @param {number} [id] */
   dismiss = (id) => {

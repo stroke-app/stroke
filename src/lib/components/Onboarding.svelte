@@ -26,9 +26,9 @@
 
   // Everything the connection dialog can open.
   const ENGINES = [
-    ['postgres', 'Postgres'], ['mysql', 'MySQL'], ['mariadb', 'MariaDB'], ['sqlite', 'SQLite'], ['mssql', 'SQL Server'],
+    ['postgres', 'Postgres'], ['mysql', 'MySQL'], ['mariadb', 'MariaDB'], ['sqlite', 'SQLite'], ['mssql', 'SQL Server'], ['oracle', 'Oracle'],
     ['cockroachdb', 'CockroachDB'], ['duckdb', 'DuckDB'], ['clickhouse', 'ClickHouse'],
-    ['mongodb', 'MongoDB'], ['redis', 'Redis'], ['valkey', 'Valkey'], ['dynamodb', 'DynamoDB'], ['couchdb', 'CouchDB'],
+    ['mongodb', 'MongoDB'], ['redis', 'Redis'], ['valkey', 'Valkey'], ['dynamodb', 'DynamoDB'], ['couchdb', 'CouchDB'], ['elasticsearch', 'Elasticsearch'], ['opensearch', 'OpenSearch'],
     ['cassandra', 'Cassandra'], ['firestore', 'Firestore'],
     ['d1', 'Cloudflare D1'], ['supabase', 'Supabase'], ['neon', 'Neon'], ['planetscale', 'PlanetScale'], ['turso', 'Turso'],
     ['prisma', 'Prisma Postgres'], ['tidb', 'TiDB Cloud'], ['upstash', 'Upstash'], ['railway', 'Railway'],
@@ -41,7 +41,7 @@
   ]
 
   const SYNC_POINTS = [
-    { icon: 'key-round', title: 'Your license, on every machine' },
+    { icon: 'key-round', title: 'Your plan, on every machine' },
     { icon: 'lock', title: 'End-to-end encrypted sync' },
     { icon: 'bookmark', title: 'Connections and saved queries everywhere' },
   ]
@@ -100,8 +100,11 @@
 <svelte:window onkeydown={onWindowKeydown} />
 
 {#if open}
+  <!-- z-[45]: over the app, under the menus, dialogs and popovers (z-50 and
+       up). At z-[200] the title bar's menus (workspace, account, File...)
+       opened behind the tour and looked like they did nothing. -->
   <div
-    class="fixed inset-x-0 bottom-0 z-[200] flex flex-col bg-background"
+    class="fixed inset-x-0 bottom-0 z-[45] flex flex-col bg-background"
     style={isMac ? 'top: 0;' : 'top: var(--app-titlebar-h, 38px);'}
     transition:fade={{ duration: 160 }}
   >
@@ -177,8 +180,8 @@
               </h1>
               <p class="mt-1.5 text-ui-sm leading-relaxed text-muted-foreground text-pretty">
                 {signedIn
-                  ? 'Your license and sync are ready on this device.'
-                  : 'Keep your license and sync connections and saved queries across devices.'}
+                  ? 'Your plan and sync are ready on this device.'
+                  : 'Keep your plan, and sync connections and saved queries across devices.'}
               </p>
 
               {#if signedIn}

@@ -46,6 +46,8 @@
      * so the dock keeps its size until there is something to fit.
      */
     fitHeight = $bindable(0),
+    /** A reverse lookup (rows that point here): any number of rows can come back. */
+    many = false,
   } = $props()
 
   let headerH = $state(0)
@@ -155,13 +157,13 @@
   const tableLabel = $derived(fkLabel.replace(/^(main|public|dbo)\./, ''))
 
   // The dock fits its rows. While a lookup is in flight the height it has is
-  // kept (or, on a first open, one row's worth - a forward lookup is one row):
-  // dropping to 0 sent the dock to its full height and back on every open,
-  // which is the jump up and down.
+  // kept. On a first open a forward lookup gets one row's worth (it is one
+  // row), and a reverse lookup the full dock: starting it at one row and
+  // growing it when the rows arrived pushed the panel up the screen.
   $effect(() => {
     const fit = (/** @type {number} */ n) => Math.ceil(headerH + metrics.headerH + n * metrics.rowH + 12)
     if (view?.loading) {
-      if (!untrack(() => fitHeight)) fitHeight = fit(1)
+      if (!many && !untrack(() => fitHeight)) fitHeight = fit(1)
       return
     }
     fitHeight = !view?.error && rowCount > 0 ? fit(rowCount) : 0

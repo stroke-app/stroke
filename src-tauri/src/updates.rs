@@ -58,6 +58,14 @@ pub struct UpdateInfo {
     pub staged: bool,
     /// This install can apply a staged build by itself when Stroke quits.
     pub apply_on_quit: bool,
+    /// A package manager owns this install (AUR, a .deb or .rpm): the update
+    /// goes through it, not through the app.
+    pub manual: bool,
+    /// The command that updates it, where there is one (`yay -Syu ...`).
+    pub manual_command: Option<String>,
+    /// Installing asks for the system password (a Linux .deb, .rpm or Arch
+    /// package goes through pkexec, which writes to /usr).
+    pub needs_password: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -86,6 +94,9 @@ pub struct UpdateState {
     /// Set when the exit under way is a restart. A Windows install then keeps
     /// the installer's own relaunch instead of suppressing it.
     restarting: AtomicBool,
+    /// The feed has no package for this kind of install yet (an older
+    /// release): the update is offered as a command, not installed.
+    manual_fallback: AtomicBool,
 }
 
 /// A poisoned lock only means another command panicked mid-update; the Option
@@ -94,7 +105,7 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-fn info(update: &Update, staged: bool) -> UpdateInfo {
+fn info(update: &Update, staged: bool, manual: bool) -> UpdateInfo {
     UpdateInfo {
         version: update.version.clone(),
         current_version: update.current_version.clone(),
@@ -102,11 +113,23 @@ fn info(update: &Update, staged: bool) -> UpdateInfo {
         date: update.date.map(|d| d.unix_timestamp()),
         staged,
         apply_on_quit: can_apply_on_quit(),
+        manual,
+        manual_command: if manual { manual_command() } else { None },
+        needs_password: !manual && installs_with_password(),
     }
 }
 
+fn is_manual(state: &UpdateState) -> bool {
+    package_managed() || state.manual_fallback.load(Ordering::Relaxed)
+}
+
 fn staged_info(state: &UpdateState) -> Option<UpdateInfo> {
-    lock(&state.staged).as_ref().map(|s| info(&s.update, true))
+    // Nothing is ever staged for an install that can't update itself; never
+    // offer a restart that can only fail.
+    if is_manual(state) {
+        return None;
+    }
+    lock(&state.staged).as_ref().map(|s| info(&s.update, true, false))
 }
 
 fn updates_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -128,16 +151,29 @@ pub async fn update_check(
     if let Some(staged) = staged_info(&state) {
         return Ok(Some(staged));
     }
-    let update = app
-        .updater_builder()
-        .timeout(CHECK_TIMEOUT)
-        .build()
-        .map_err(|e| e.to_string())?
-        .check()
-        .await
-        .map_err(|e| e.to_string())?;
-    let found = update.as_ref().map(|u| info(u, false));
-    *lock(&state.pending) = update;
+    let check = |target: Option<&'static str>| {
+        let mut builder = app.updater_builder().timeout(CHECK_TIMEOUT);
+        if let Some(t) = target {
+            builder = builder.target(t);
+        }
+        async move { builder.build().map_err(|e| e.to_string())?.check().await.map_err(|e| e.to_string()) }
+    };
+    // A Linux package (Arch, .deb, .rpm) takes its own entry in the feed. A
+    // feed without one (an older release) still says a version is out, from
+    // the AppImage's entry, and the update is offered as a command instead.
+    let target = update_target();
+    let (update, fallback) = match check(target).await {
+        Ok(update) => (update, false),
+        Err(e) if target.is_some() => {
+            log::warn!("[updater] no {} entry in the feed ({e}); offering the update as a command", target.unwrap_or(""));
+            (check(None).await?, true)
+        }
+        Err(e) => return Err(e),
+    };
+    state.manual_fallback.store(fallback, Ordering::Relaxed);
+    let manual = is_manual(&state);
+    let found = update.as_ref().map(|u| info(u, false, manual));
+    *lock(&state.pending) = if manual { None } else { update };
     Ok(found)
 }
 
@@ -150,6 +186,9 @@ pub async fn update_download(
 ) -> Result<UpdateInfo, String> {
     if let Some(staged) = staged_info(&state) {
         return Ok(staged);
+    }
+    if is_manual(&state) {
+        return Err(MANAGED_MESSAGE.into());
     }
     let update = lock(&state.pending)
         .clone()
@@ -191,7 +230,7 @@ pub async fn update_download(
     .map_err(|e| e.to_string())?
     .map_err(|e| format!("Could not save the update: {e}"))?;
 
-    let staged = info(&update, true);
+    let staged = info(&update, true, false);
     *lock(&state.staged) = Some(Staged { update, path });
     *lock(&state.pending) = None;
     Ok(staged)
@@ -209,6 +248,9 @@ pub fn update_status(state: State<'_, UpdateState>) -> Option<UpdateInfo> {
 /// thread, and `restart()` from another thread goes through the normal exit.
 #[tauri::command]
 pub async fn update_restart(app: AppHandle, state: State<'_, UpdateState>) -> Result<(), String> {
+    if is_manual(&state) {
+        return Err(MANAGED_MESSAGE.into());
+    }
     let staged = lock(&state.staged)
         .take()
         .ok_or("No update is ready to install.")?;
@@ -217,9 +259,15 @@ pub async fn update_restart(app: AppHandle, state: State<'_, UpdateState>) -> Re
         Err(e) => return Err(format!("The downloaded update is missing: {e}")),
     };
     // On Windows this hands over to the installer and exits; the installer
-    // relaunches the app when it is done (`/R`).
-    if let Err(e) = staged.update.install(&bytes) {
-        let msg = e.to_string();
+    // relaunches the app when it is done (`/R`). A Linux .deb or .rpm goes
+    // through the plugin too (pkexec dpkg / rpm); an Arch package through
+    // pacman, below.
+    let installed = if update_target() == Some(PACMAN_TARGET) {
+        install_pacman(&bytes)
+    } else {
+        staged.update.install(&bytes).map_err(|e| e.to_string())
+    };
+    if let Err(msg) = installed {
         *lock(&state.staged) = Some(staged);
         return Err(msg);
     }
@@ -288,6 +336,183 @@ pub fn apply_on_quit(app: &AppHandle) {
     }
 }
 
+// ── Installed by a package manager? ───────────────────────────────────────────
+
+const MANAGED_MESSAGE: &str =
+    "This copy of Stroke was installed by your package manager, so it updates there.";
+
+/// How this Linux copy of Stroke was installed, which decides how it updates.
+#[cfg(target_os = "linux")]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LinuxInstall {
+    /// A running AppImage: replaced in place, no password.
+    AppImage,
+    /// The AUR package (built from the .deb, so the binary reads as a .deb):
+    /// updated with `pacman -U` on the Arch package from the feed.
+    Pacman,
+    /// A .deb (dpkg) or .rpm: the plugin installs the matching package from
+    /// the feed through pkexec.
+    Deb,
+    Rpm,
+    /// Anything else (a .deb unpacked on a system without dpkg, an AppImage
+    /// that was extracted): offered as a download.
+    Other,
+}
+
+#[cfg(target_os = "linux")]
+fn linux_install() -> LinuxInstall {
+    use tauri::utils::config::BundleType;
+    let bundle = tauri::utils::platform::bundle_type();
+    if matches!(bundle, Some(BundleType::AppImage)) && std::env::var_os("APPIMAGE").is_some() {
+        return LinuxInstall::AppImage;
+    }
+    if aur_package().is_some() {
+        return LinuxInstall::Pacman;
+    }
+    let has = |bin: &str| ["/usr/bin", "/bin", "/usr/sbin"].iter().any(|d| std::path::Path::new(d).join(bin).exists());
+    match bundle {
+        Some(BundleType::Deb) if has("dpkg") => LinuxInstall::Deb,
+        Some(BundleType::Rpm) if has("rpm") => LinuxInstall::Rpm,
+        _ => LinuxInstall::Other,
+    }
+}
+
+/// The AUR package this copy came from, read from pacman's local database.
+#[cfg(target_os = "linux")]
+fn aur_package() -> Option<&'static str> {
+    let local = std::path::Path::new("/var/lib/pacman/local");
+    let installed = |name: &str| {
+        std::fs::read_dir(local).ok().is_some_and(|dir| {
+            dir.flatten().any(|e| {
+                e.file_name().to_string_lossy().strip_prefix(name).is_some_and(|rest| {
+                    rest.starts_with('-') && rest[1..].starts_with(|c: char| c.is_ascii_digit())
+                })
+            })
+        })
+    };
+    // Nightly and Stable install side by side: match the running build.
+    let nightly = tauri::utils::platform::current_exe()
+        .is_ok_and(|exe| exe.to_string_lossy().contains("nightly"));
+    let name = if nightly { "stroke-nightly-bin" } else { "stroke-bin" };
+    installed(name).then_some(name)
+}
+
+const PACMAN_TARGET: &str = "linux-x86_64-pacman";
+
+/// The feed entry this install updates from, when it isn't the default one.
+#[cfg(target_os = "linux")]
+fn update_target() -> Option<&'static str> {
+    if !cfg!(target_arch = "x86_64") {
+        return None;
+    }
+    match linux_install() {
+        LinuxInstall::Pacman => Some(PACMAN_TARGET),
+        LinuxInstall::Deb => Some("linux-x86_64-deb"),
+        LinuxInstall::Rpm => Some("linux-x86_64-rpm"),
+        LinuxInstall::AppImage | LinuxInstall::Other => None,
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn update_target() -> Option<&'static str> {
+    None
+}
+
+/// Only copies that can't install the feed's package at all. Arch, .deb and
+/// .rpm installs update from the app now, through the system password prompt.
+#[cfg(target_os = "linux")]
+pub fn package_managed() -> bool {
+    linux_install() == LinuxInstall::Other || (update_target().is_none() && linux_install() != LinuxInstall::AppImage)
+}
+
+#[cfg(target_os = "linux")]
+fn installs_with_password() -> bool {
+    matches!(linux_install(), LinuxInstall::Pacman | LinuxInstall::Deb | LinuxInstall::Rpm)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn installs_with_password() -> bool {
+    false
+}
+
+/// Install the Arch package from the feed with `pacman -U`, through pkexec
+/// (the system's password prompt). pacman then records the new version, so
+/// the AUR helper sees it as up to date instead of reinstalling the old one.
+#[cfg(target_os = "linux")]
+fn install_pacman(bytes: &[u8]) -> Result<(), String> {
+    let dir = std::env::temp_dir().join(format!("stroke-update-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Could not prepare the update: {e}"))?;
+    let pkg = dir.join("stroke-update.pkg.tar.zst");
+    std::fs::write(&pkg, bytes).map_err(|e| format!("Could not prepare the update: {e}"))?;
+    let status = std::process::Command::new("pkexec")
+        .args(["pacman", "-U", "--noconfirm"])
+        .arg(&pkg)
+        .status();
+    let _ = std::fs::remove_dir_all(&dir);
+    let fallback = aur_package().map(|p| format!(" You can also run: yay -Syu {p}")).unwrap_or_default();
+    match status {
+        Ok(s) if s.success() => Ok(()),
+        // pkexec: 126 = the prompt was dismissed, 127 = not authorized.
+        Ok(s) if matches!(s.code(), Some(126 | 127)) => Err(format!("The password prompt was closed, so nothing was installed.{fallback}")),
+        Ok(s) => Err(format!("pacman could not install the update (exit {}).{fallback}", s.code().unwrap_or(-1))),
+        Err(e) => Err(format!("Could not ask for the password (pkexec: {e}).{fallback}")),
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn install_pacman(_bytes: &[u8]) -> Result<(), String> {
+    Err("Not an Arch install.".into())
+}
+
+/// A Scoop install. Scoop unpacks the NSIS setup into its own folder, so the
+/// binary still reads as an NSIS install; running the setup from here put a
+/// second, separate copy under %LOCALAPPDATA% and left Scoop's copy behind on
+/// the old version. `scoop update stroke` is the way to update it.
+#[cfg(target_os = "windows")]
+pub fn package_managed() -> bool {
+    scoop_install()
+}
+
+#[cfg(target_os = "windows")]
+fn scoop_install() -> bool {
+    let Ok(exe) = tauri::utils::platform::current_exe() else { return false };
+    let exe = exe.to_string_lossy().to_lowercase();
+    // The default roots (%USERPROFILE%\scoop, %ProgramData%\scoop), or a
+    // custom one set through SCOOP / SCOOP_GLOBAL.
+    exe.contains("\\scoop\\apps\\")
+        || ["SCOOP", "SCOOP_GLOBAL"].iter().any(|var| {
+            std::env::var(var).is_ok_and(|root| {
+                let root = root.trim_end_matches('\\').to_lowercase();
+                !root.is_empty() && exe.starts_with(&format!("{root}\\apps\\"))
+            })
+        })
+}
+
+/// macOS updates itself in place (/Applications, Homebrew included: the cask
+/// is marked `auto_updates`, so `brew upgrade` leaves it to the app).
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+pub fn package_managed() -> bool {
+    false
+}
+
+/// What to run when the app can't install the update itself: the AUR
+/// helper for an Arch install (when the feed has no Arch package), nothing
+/// for anything else (the dialog links to the download page).
+#[cfg(target_os = "linux")]
+fn manual_command() -> Option<String> {
+    aur_package().map(|p| format!("yay -Syu {p}"))
+}
+
+#[cfg(target_os = "windows")]
+fn manual_command() -> Option<String> {
+    scoop_install().then(|| "scoop update stroke".to_string())
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+fn manual_command() -> Option<String> {
+    None
+}
+
 // ── Can this install update itself on quit? ────────────────────────────────────
 
 /// True when a staged build can be installed at quit with nobody watching: no
@@ -307,10 +532,10 @@ fn platform_can_apply() -> bool {
     if !matches!(tauri::utils::platform::bundle_type(), Some(BundleType::Nsis)) {
         return false;
     }
-    let Ok(exe) = tauri::utils::platform::current_exe() else { return false };
-    if exe.to_string_lossy().to_lowercase().contains("\\scoop\\") {
+    if scoop_install() {
         return false;
     }
+    let Ok(exe) = tauri::utils::platform::current_exe() else { return false };
     exe.parent()
         .is_some_and(|dir| dir.join("uninstall.exe").is_file())
 }

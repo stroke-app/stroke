@@ -1,10 +1,10 @@
 <script>
+  import SelectMenu from './SelectMenu.svelte'
   // A collection's indexes: keys as pills, flags, usage and size, a two-click
   // drop, and a form for a new one.
   import { cn } from '$lib/utils.js'
   import { Button } from '$lib/components/ui/button/index.js'
   import { Switch } from '$lib/components/ui/switch/index.js'
-  import * as Select from '$lib/components/ui/select/index.js'
   import { humanBytes } from '$lib/doc-adapters.js'
   import { guardWrite, READ_ONLY_HINT } from '$lib/stores/read-only.js'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
@@ -169,12 +169,7 @@
           {#each keyRows as row, i (i)}
             <div class="flex items-center gap-1.5">
               <input bind:value={row.field} list={listId} placeholder="field.path" aria-label="Key field {i + 1}" spellcheck="false" autocomplete="off" class={cn(field, 'flex-1')} />
-              <Select.Root type="single" value={row.dir} onValueChange={(v) => { if (v) row.dir = v }}>
-                <Select.Trigger size="sm" class="h-7 w-28 text-ui-xs shadow-none" aria-label="Direction">{DIRS.find((d) => d.v === row.dir)?.l}</Select.Trigger>
-                <Select.Content>
-                  {#each DIRS as d (d.v)}<Select.Item value={d.v} label={d.l} />{/each}
-                </Select.Content>
-              </Select.Root>
+              <SelectMenu ariaLabel="Direction" value={row.dir} onValueChange={(v) => { if (v) row.dir = v }} items={DIRS.map((d) => ({ value: d.v, label: d.l }))} triggerClass="h-7 w-28" />
               <button type="button" class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-30" disabled={keyRows.length === 1} onclick={() => (keyRows = keyRows.filter((_, j) => j !== i))} aria-label="Remove key"><X class="size-3.5 shrink-0" /></button>
             </div>
           {/each}

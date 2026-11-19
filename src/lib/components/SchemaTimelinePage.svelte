@@ -1,4 +1,9 @@
 <script>
+  import AlertTriangle from '@lucide/svelte/icons/triangle-alert'
+  import PenLine from '@lucide/svelte/icons/pen-line'
+  import SelectMenu from './SelectMenu.svelte'
+  import DbIcon from './DbIcon.svelte'
+  import { engineLabel } from '$lib/db-capabilities.js'
   import Camera from '@lucide/svelte/icons/camera'
   import Trash2 from '@lucide/svelte/icons/trash-2'
   import ArrowLeftRight from '@lucide/svelte/icons/arrow-left-right'
@@ -16,6 +21,7 @@
   import FileCode from '@lucide/svelte/icons/file-code'
   import Copy from '@lucide/svelte/icons/copy'
   import { buildMigration, formatMigrationScript } from '$lib/schema-migration.js'
+  import { diffLines, pairWordDiffs } from '$lib/line-diff.js'
   import { listSchemas, listSchemasOnConnection, executeSql, executeSqlOnConnection } from '$lib/api.js'
   import {
     captureSnapshot,
@@ -31,7 +37,7 @@
   /** @typedef {import('$lib/stores/schema-snapshots.js').SnapshotColumn} SnapshotColumn */
   /** @typedef {import('$lib/stores/connections.js').SavedConnection} SavedConnection */
   /** @typedef {{ type: 'same'|'add'|'remove', content: string, lineA?: number, lineB?: number }} DiffLine */
-  /** @typedef {DiffLine | { type: 'ellipsis', count: number }} CollapsedLine */
+  /** @typedef {DiffLine | { type: 'ellipsis', count: number, from: number }} CollapsedLine */
 
   /**
    * @type {{
@@ -41,7 +47,9 @@
    *   connections?: SavedConnection[],
    * }}
    */
-  let { connectionId, connectionLabel, dbType = 'postgres', connections = [] } = $props()
+  let { connectionId, connectionLabel, dbType = 'postgres', connections = [], onopensql = /** @type {((sql: string) => void) | null} */ (null) } = $props()
+  /** The "Read before running" list, folded to one line until opened. */
+  let warningsOpen = $state(false)
 
   /** @type {SchemaSnapshot[]} */
   let snapshots = $state([])
@@ -153,15 +161,40 @@
       ?? pseudoDdl(schema, name, (afterSnap.tables?.[schema] ?? []).find((t) => t.name === name)?.columns ?? [])
 
     if (!bDdl && !aDdl) return null
+    /** @type {DiffLine[]} */
     let lines
     if (!bDdl) {
       lines = aDdl.split('\n').map((content, i) => /** @type {DiffLine} */ ({ type: 'add',    content, lineB: i + 1 }))
     } else if (!aDdl) {
       lines = bDdl.split('\n').map((content, i) => /** @type {DiffLine} */ ({ type: 'remove', content, lineA: i + 1 }))
     } else {
-      lines = computeLineDiff(bDdl.split('\n'), aDdl.split('\n'))
+      lines = diffLines(bDdl.split('\n'), aDdl.split('\n'))
     }
-    return collapseContext(lines, 3)
+    let adds = 0, removes = 0
+    for (const l of lines) { if (l.type === 'add') adds++; else if (l.type === 'remove') removes++ }
+    // Word parts keyed by the line object itself, so the view finds them in O(1).
+    const pw = pairWordDiffs(lines)
+    /** @type {Map<DiffLine, import('$lib/line-diff.js').WordPart[]>} */
+    const words = new Map()
+    for (const [idx, parts] of pw) words.set(lines[idx], parts)
+    return { lines, words, adds, removes }
+  })
+
+  /** Unchanged runs the reader opened (keyed by their first line), per table. */
+  let expandedGaps = $state(/** @type {Set<number>} */ (new Set()))
+  $effect(() => { void selectedTable; expandedGaps = new Set() })
+  const shownDdlLines = $derived(selectedDdlDiff ? collapseContext(selectedDdlDiff.lines, 3, expandedGaps) : null)
+
+  /** Status of every changed table, built once per diff (the row list asked
+   *  three linear scans per row before). */
+  const tableStatus = $derived.by(() => {
+    /** @type {Map<string, 'added' | 'removed' | 'modified'>} */
+    const m = new Map()
+    if (!diff) return m
+    for (const t of diff.addedTables) m.set(`${t.schema}.${t.name}`, 'added')
+    for (const t of diff.removedTables) m.set(`${t.schema}.${t.name}`, 'removed')
+    for (const t of diff.modifiedTables) m.set(`${t.schema}.${t.name}`, 'modified')
+    return m
   })
 
   onMount(load)
@@ -392,50 +425,12 @@
     return groups
   }
 
-  function getTableStatus(/** @type {SnapshotDiff | null} */ d, key) {
-    if (!d) return /** @type {'modified'} */ ('modified')
-    const dot = key.indexOf('.')
-    const schema = key.slice(0, dot), name = key.slice(dot + 1)
-    if (d.addedTables.some((t) => t.schema === schema && t.name === name))   return /** @type {'added'} */   ('added')
-    if (d.removedTables.some((t) => t.schema === schema && t.name === name)) return /** @type {'removed'} */ ('removed')
-    return /** @type {'modified'} */ ('modified')
+  function getTableStatus(/** @type {SnapshotDiff | null} */ d, /** @type {string} */ key) {
+    void d
+    return tableStatus.get(key) ?? /** @type {'modified'} */ ('modified')
   }
 
-  function computeLineDiff(/** @type {string[]} */ a, /** @type {string[]} */ b) {
-    // Normalize lines for comparison: strip trailing commas so that a column
-    // gaining/losing a comma (due to being last vs. non-last) is not a diff.
-    const norm = (/** @type {string} */ s) => s.trimEnd().replace(/,$/, '')
-    const na = a.map(norm), nb = b.map(norm)
-    const m = a.length, n = b.length
-    // Pathological pairs (m×n in the millions) would allocate a huge LCS matrix
-    // and stall the UI - render those as remove-all/add-all instead.
-    if (m * n > 4_000_000) {
-      return [
-        ...a.map((content, i) => /** @type {DiffLine} */ ({ type: 'remove', content, lineA: i + 1 })),
-        ...b.map((content, i) => /** @type {DiffLine} */ ({ type: 'add', content, lineB: i + 1 })),
-      ]
-    }
-    // Typed-array rows (zero-initialized) - plain arrays box every slot.
-    const dp = Array.from({ length: m + 1 }, () => new Uint32Array(n + 1))
-    for (let i = 1; i <= m; i++)
-      for (let j = 1; j <= n; j++)
-        dp[i][j] = na[i-1] === nb[j-1] ? dp[i-1][j-1] + 1 : Math.max(dp[i-1][j], dp[i][j-1])
-    /** @type {DiffLine[]} */
-    const result = []
-    let i = m, j = n
-    while (i > 0 || j > 0) {
-      if (i > 0 && j > 0 && na[i-1] === nb[j-1]) {
-        result.unshift({ type: 'same', content: a[i-1], lineA: i, lineB: j }); i--; j--
-      } else if (j > 0 && (i === 0 || dp[i][j-1] >= dp[i-1][j])) {
-        result.unshift({ type: 'add',    content: b[j-1], lineB: j }); j--
-      } else {
-        result.unshift({ type: 'remove', content: a[i-1], lineA: i }); i--
-      }
-    }
-    return result
-  }
-
-  function collapseContext(/** @type {DiffLine[]} */ lines, ctx) {
+  function collapseContext(/** @type {DiffLine[]} */ lines, ctx, /** @type {Set<number>} */ open = new Set()) {
     const changeset = new Set()
     lines.forEach((l, i) => { if (l.type !== 'same') changeset.add(i) })
     if (changeset.size === 0) return lines
@@ -446,14 +441,21 @@
     /** @type {CollapsedLine[]} */
     const out = []
     let gap = 0
+    let gapFrom = 0
     for (let i = 0; i < lines.length; i++) {
       if (visible.has(i)) {
-        if (gap > 0) out.push({ type: 'ellipsis', count: gap })
+        if (gap > 0) {
+          if (open.has(gapFrom)) for (let k = gapFrom; k < i; k++) out.push(lines[k])
+          else out.push({ type: 'ellipsis', count: gap, from: gapFrom })
+        }
         gap = 0
         out.push(lines[i])
-      } else { gap++ }
+      } else { if (gap === 0) gapFrom = i; gap++ }
     }
-    if (gap > 0) out.push({ type: 'ellipsis', count: gap })
+    if (gap > 0) {
+      if (open.has(gapFrom)) for (let k = gapFrom; k < lines.length; k++) out.push(lines[k])
+      else out.push({ type: 'ellipsis', count: gap, from: gapFrom })
+    }
     return out
   }
 </script>
@@ -544,7 +546,26 @@
               <span class="min-w-0 flex-1 truncate text-ui-xs font-medium text-foreground" title={snap.connectionLabel}>
                 {displayName}
               </span>
+              <!-- Base / Compare: one small two-part control. The picked side
+                   stays lit; both show on hover. -->
+              <div class={cn('flex shrink-0 items-center rounded-md border border-border/60 bg-background/60 p-px', !isActive && 'hidden group-hover:flex')}>
+                <button
+                  type="button"
+                  onclick={() => { beforeId = snap.id }}
+                  class={cn('h-5 rounded-sm px-1.5 text-ui-3xs font-medium transition-colors', isBefore ? 'bg-foreground text-background' : 'text-muted-foreground hover:text-foreground')}
+                  title="Use as the baseline"
+                  aria-pressed={isBefore}
+                >Base</button>
+                <button
+                  type="button"
+                  onclick={() => { afterId = snap.id }}
+                  class={cn('h-5 rounded-sm px-1.5 text-ui-3xs font-medium transition-colors', isAfter ? 'bg-foreground text-background' : 'text-muted-foreground hover:text-foreground')}
+                  title="Compare against the baseline"
+                  aria-pressed={isAfter}
+                >Compare</button>
+              </div>
               <button
+                type="button"
                 onclick={() => remove(snap.id)}
                 class="flex size-5 shrink-0 items-center justify-center rounded text-transparent group-hover:text-muted-foreground hover:!text-destructive"
                 aria-label="Delete snapshot"
@@ -552,28 +573,10 @@
                 <X class="size-3 shrink-0" />
               </button>
             </div>
-            <div class="mt-1 flex items-center gap-1.5 text-ui-2xs text-muted-foreground">
-              <span class="truncate">{fmtDate(snap.capturedAt)}</span>
+            <div class="mt-0.5 flex items-center gap-1.5 text-ui-2xs text-muted-foreground">
+              <span class="shrink-0 tabular-nums">{fmtDate(snap.capturedAt)}</span>
               <span aria-hidden="true">·</span>
-              <span class="shrink-0 tabular-nums">{tableCount} tables</span>
-              <span class="flex-1"></span>
-              <!-- Base / Compare slots -->
-              <button
-                onclick={() => { beforeId = snap.id }}
-                class={cn(
-                  'h-5 shrink-0 rounded-full px-2 text-ui-3xs transition-colors',
-                  isBefore ? 'bg-foreground text-background' : 'text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-background/60 hover:text-foreground',
-                )}
-                title="Use as the baseline"
-              >Base</button>
-              <button
-                onclick={() => { afterId = snap.id }}
-                class={cn(
-                  'h-5 shrink-0 rounded-full px-2 text-ui-3xs transition-colors',
-                  isAfter ? 'bg-foreground text-background' : 'text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-background/60 hover:text-foreground',
-                )}
-                title="Compare against the baseline"
-              >Compare</button>
+              <span class="min-w-0 truncate tabular-nums">{tableCount} {tableCount === 1 ? 'table' : 'tables'}</span>
             </div>
           </div>
         {/each}
@@ -734,60 +737,37 @@
       <div class="overflow-y-auto">
         <!-- Title input -->
         <div class="border-t border-border/25 px-5 py-3">
+          <p class="mb-1.5 text-ui-2xs font-medium text-muted-foreground">Title</p>
           <input
             bind:value={captureTitle}
-            placeholder="Snapshot title (optional), e.g. Before migration v2"
-            class="w-full bg-transparent text-ui-xs text-foreground/75 outline-none placeholder:text-muted-foreground"
+            placeholder="Optional, e.g. Before migration v2"
+            class="no-field-frame h-9 w-full rounded-lg border-0 bg-muted/55 px-3 text-ui-sm text-foreground outline-none placeholder:text-muted-foreground focus:bg-muted/80"
           />
         </div>
 
-        <!-- Connection list -->
-        <div class="border-t border-border/25">
-          <div class="flex items-center px-5 py-2">
-            <span class="text-ui-3xs font-semibold uppercase tracking-widest text-muted-foreground">Connection</span>
-          </div>
-          <div>
-            {#if connectionId}
-              <button
-                onclick={() => selectCaptureConn(null)}
-                class={cn(
-                  'flex w-full items-center gap-3 px-5 py-2 text-left text-ui-xs transition-colors',
-                  captureConn === null ? 'bg-muted/[0.08]' : 'hover:bg-muted/[0.05]',
-                )}
-              >
-                <!-- Radio dot -->
-                <span class={cn(
-                  'flex size-3.5 shrink-0 items-center justify-center rounded-full border',
-                  captureConn === null ? 'border-primary/60 bg-primary/20' : 'border-border/50',
-                )}>
-                  {#if captureConn === null}<span class="size-1.5 rounded-full bg-primary/80"></span>{/if}
-                </span>
-                <span class="min-w-0 flex-1 truncate font-medium text-foreground/75" title={connectionLabel}>{shortName(connectionLabel)}</span>
-                <span class="shrink-0 rounded bg-success/10 px-1.5 py-0.5 text-ui-3xs font-medium text-success">active</span>
-              </button>
-            {/if}
-            {#each connections.filter((c) => c.id !== connectionId) as conn (conn.id)}
-              <button
-                onclick={() => selectCaptureConn(conn)}
-                class={cn(
-                  'flex w-full items-center gap-3 px-5 py-2 text-left text-ui-xs transition-colors',
-                  captureConn?.id === conn.id ? 'bg-muted/[0.08]' : 'hover:bg-muted/[0.05]',
-                )}
-              >
-                <span class={cn(
-                  'flex size-3.5 shrink-0 items-center justify-center rounded-full border',
-                  captureConn?.id === conn.id ? 'border-primary/60 bg-primary/20' : 'border-border/50',
-                )}>
-                  {#if captureConn?.id === conn.id}<span class="size-1.5 rounded-full bg-primary/80"></span>{/if}
-                </span>
-                <span class="min-w-0 flex-1 truncate text-foreground/65" title={conn.name}>{shortName(conn.name)}</span>
-                <span class="shrink-0 text-ui-3xs uppercase text-muted-foreground">{conn.type}</span>
-              </button>
-            {/each}
-            {#if !connectionId && connections.length === 0}
-              <p class="px-5 py-3 text-ui-xs text-muted-foreground">No connections configured</p>
-            {/if}
-          </div>
+        <!-- Connection: one searchable picker instead of a radio row per
+             saved connection (twenty-odd rows pushed the schema list off the
+             bottom of the window). -->
+        <div class="border-t border-border/25 px-5 py-3">
+          <p class="mb-1.5 text-ui-2xs font-medium text-muted-foreground">Connection</p>
+          {#if !connectionId && connections.length === 0}
+            <p class="text-ui-xs text-muted-foreground">No connections configured</p>
+          {:else}
+            <SelectMenu
+              ariaLabel="Connection"
+              triggerClass="h-9 w-full"
+              contentClass="w-[var(--bits-popover-anchor-width)]"
+              searchPlaceholder="Search connections"
+              value={captureConn?.id ?? '__active'}
+              onValueChange={(v) => selectCaptureConn(v === '__active' ? null : (connections.find((c) => c.id === v) ?? null))}
+              items={[
+                ...(connectionId ? [{ value: '__active', label: shortName(connectionLabel), hint: 'Active', engine: connections.find((c) => c.id === connectionId)?.type ?? '', keywords: [connectionLabel] }] : []),
+                ...connections.filter((c) => c.id !== connectionId).map((c) => ({ value: c.id, label: shortName(c.name), hint: engineLabel(c.type), engine: c.type, keywords: [c.name, c.type] })),
+              ]}
+            >
+              {#snippet lead(it)}<DbIcon id={it.engine} class="size-4 shrink-0" />{/snippet}
+            </SelectMenu>
+          {/if}
         </div>
 
         <!-- Database + Schema side by side -->
@@ -900,35 +880,50 @@
 {/if}
 
 <Dialog.Root bind:open={migrationOpen}>
-  <Dialog.Content class="flex max-h-[85vh] max-w-3xl flex-col gap-0 overflow-hidden p-0">
-    <Dialog.Header class="border-b border-border/60 px-5 py-4">
-      <Dialog.Title class="text-ui-sm">Migration SQL</Dialog.Title>
-      <Dialog.Description class="text-ui-2xs">
-        {migration?.statementCount ?? 0} statement{(migration?.statementCount ?? 0) === 1 ? '' : 's'}
-        taking the earlier snapshot to the later one. Review it before running — the
-        rollback below is commented out.
+  <Dialog.Content class="flex h-[min(44rem,85vh)] max-w-3xl flex-col gap-0 overflow-hidden p-0">
+    <Dialog.Header class="gap-1 px-6 pt-5 pb-4">
+      <Dialog.Title class="text-ui-lg font-semibold tracking-tight">Migration SQL</Dialog.Title>
+      <Dialog.Description class="text-ui-xs text-muted-foreground">
+        {migration?.statementCount ?? 0} statement{(migration?.statementCount ?? 0) === 1 ? '' : 's'} taking the earlier snapshot to the later one. Review before running; the rollback at the end is commented out.
       </Dialog.Description>
     </Dialog.Header>
 
-    <div class="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-      {#if migration && migration.warnings.length > 0}
-        <div class="mb-3 rounded-lg border border-warning/30 bg-warning/8 px-3 py-2.5">
-          <p class="text-ui-2xs font-semibold text-foreground">Read before running</p>
-          <ul class="mt-1.5 flex flex-col gap-1">
+    {#if migration && migration.warnings.length > 0}
+      <!-- One line until opened: eight near-identical warnings took half the
+           dialog before a single line of SQL. -->
+      <div class="mx-6 mb-3 overflow-hidden rounded-lg border border-warning/30 bg-warning/8">
+        <button type="button" class="flex w-full items-center gap-2 px-3 py-2 text-left" onclick={() => (warningsOpen = !warningsOpen)} aria-expanded={warningsOpen}>
+          <AlertTriangle class="size-3.5 shrink-0 text-warning" />
+          <span class="min-w-0 flex-1 text-ui-xs font-medium text-foreground">
+            {migration.warnings.length} {migration.warnings.length === 1 ? 'thing' : 'things'} to read before running
+          </span>
+          <ChevronRight class={cn('size-3.5 shrink-0 text-muted-foreground transition-transform duration-150', warningsOpen && 'rotate-90')} />
+        </button>
+        {#if warningsOpen}
+          <ul class="app-scroll flex max-h-40 flex-col gap-1 overflow-y-auto border-t border-warning/20 px-3 py-2">
             {#each migration.warnings as warning (warning)}
-              <li class="text-ui-3xs text-muted-foreground">• {warning}</li>
+              <li class="text-ui-2xs leading-relaxed text-muted-foreground">{warning}</li>
             {/each}
           </ul>
-        </div>
-      {/if}
-      <pre class="overflow-x-auto rounded-lg border border-border/60 bg-background p-3 font-mono text-ui-3xs leading-relaxed text-foreground"><code>{migrationScript}</code></pre>
+        {/if}
+      </div>
+    {/if}
+
+    <div class="mx-6 mb-4 flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-border/60">
+      {#await import('./CodeEditor.svelte') then { default: CodeEditor }}
+        <CodeEditor value={migrationScript} lang="sql" readOnly ariaLabel="Migration SQL" />
+      {/await}
     </div>
 
-    <Dialog.Footer class="border-t border-border/60 px-5 py-3">
-      <Button variant="outline" size="sm" onclick={() => (migrationOpen = false)}>Close</Button>
-      <Button size="sm" onclick={copyMigration}>
-        <Copy class="size-3.5 shrink-0" />
-        Copy
+    <Dialog.Footer class="mx-0 mb-0 flex-row items-center gap-2 border-t border-border/40 px-6 py-3 sm:justify-end">
+      <Button variant="ghost" size="sm" onclick={() => (migrationOpen = false)}>Close</Button>
+      {#if onopensql}
+        <Button variant="outline" size="sm" class="gap-1.5" onclick={() => { onopensql?.(migrationScript); migrationOpen = false }}>
+          <PenLine class="size-3.5 shrink-0" />Open in editor
+        </Button>
+      {/if}
+      <Button size="sm" class="gap-1.5" onclick={copyMigration}>
+        <Copy class="size-3.5 shrink-0" />Copy
       </Button>
     </Dialog.Footer>
   </Dialog.Content>
@@ -997,55 +992,57 @@
 
 {#snippet DdlDiff(tableKey)}
   {@const status = getTableStatus(diff, tableKey)}
-  {@const statusColor = status === 'added' ? 'text-success' : status === 'removed' ? 'text-destructive' : 'text-warning'}
-  {@const addCount = selectedDdlDiff?.filter((l) => l.type === 'add').length    ?? 0}
-  {@const removeCount = selectedDdlDiff?.filter((l) => l.type === 'remove').length ?? 0}
+  {@const addCount = selectedDdlDiff?.adds ?? 0}
+  {@const removeCount = selectedDdlDiff?.removes ?? 0}
 
-  <div class="flex h-8 shrink-0 items-center gap-2 border-b border-border/40 px-4">
-    <span class={cn('font-mono text-ui-xs font-semibold', statusColor)}>
-      {status === 'added' ? '+' : status === 'removed' ? '−' : '~'}
-    </span>
-    <span class="min-w-0 flex-1 truncate font-mono text-ui-xs font-medium text-foreground/75">{tableKey}</span>
-    <div class="ml-auto flex shrink-0 items-center gap-2 text-ui-2xs">
-      {#if removeCount > 0}<span class="font-medium text-destructive">−{removeCount}</span>{/if}
-      {#if addCount > 0}<span class="font-medium text-success">+{addCount}</span>{/if}
+  <!-- One quiet header: what kind of change, which table, how many lines. -->
+  <div class="flex h-9 shrink-0 items-center gap-2.5 border-b border-border/40 px-4">
+    <span
+      class={cn(
+        'inline-flex h-5 shrink-0 items-center rounded-md px-1.5 text-ui-3xs font-medium',
+        status === 'added' ? 'bg-success/12 text-success' : status === 'removed' ? 'bg-destructive/12 text-destructive' : 'bg-warning/12 text-warning',
+      )}
+    >{status === 'added' ? 'Added' : status === 'removed' ? 'Removed' : 'Changed'}</span>
+    <span class="min-w-0 flex-1 truncate font-mono text-ui-xs font-medium text-foreground">{tableKey}</span>
+    <div class="ml-auto flex shrink-0 items-center gap-2.5 font-mono text-ui-2xs tabular-nums">
+      {#if removeCount > 0}<span class="text-destructive">−{removeCount}</span>{/if}
+      {#if addCount > 0}<span class="text-success">+{addCount}</span>{/if}
     </div>
   </div>
 
-  <div class="min-h-0 flex-1 overflow-auto">
-    {#if !selectedDdlDiff}
+  <div class="min-h-0 flex-1 overflow-auto bg-panel">
+    {#if !shownDdlLines}
       <div class="flex items-center justify-center py-10 text-ui-xs text-muted-foreground">No DDL available</div>
     {:else}
-      <table class="w-full border-collapse font-mono text-ui-xs leading-5">
+      <!-- A unified diff: two line-number gutters, a sign column, the line.
+           Changed lines carry a 2px accent at the edge and a light tint; the
+           part of a line that actually changed is marked inside it. -->
+      <table class="w-full border-collapse font-mono text-ui-xs leading-[1.6]">
         <tbody>
-          {#each selectedDdlDiff as line, i (i)}
+          {#each shownDdlLines as line, i (i)}
             {#if line.type === 'ellipsis'}
-              <tr class="bg-muted/10">
-                <td class="w-10 select-none border-r border-border/15 px-2 text-right text-ui-3xs text-muted-foreground"></td>
-                <td class="w-10 select-none border-r border-border/15 px-2 text-right text-ui-3xs text-muted-foreground"></td>
-                <td class="w-5 select-none"></td>
-                <td class="px-4 py-0.5 text-ui-3xs text-muted-foreground">··· {line.count} unchanged line{line.count !== 1 ? 's' : ''}</td>
-              </tr>
-            {:else if line.type === 'add'}
-              <tr class="bg-success/[0.06] hover:bg-success/[0.1]">
-                <td class="w-10 select-none border-r border-success/10 px-2 text-right text-ui-3xs text-muted-foreground"></td>
-                <td class="w-10 select-none border-r border-success/10 px-2 text-right text-ui-3xs text-success">{line.lineB}</td>
-                <td class="w-5 select-none text-center text-success">+</td>
-                <td class="px-4 py-px text-success"><span class="whitespace-pre">{line.content}</span></td>
-              </tr>
-            {:else if line.type === 'remove'}
-              <tr class="bg-destructive/[0.06] hover:bg-destructive/[0.1]">
-                <td class="w-10 select-none border-r border-destructive/10 px-2 text-right text-ui-3xs text-destructive">{line.lineA}</td>
-                <td class="w-10 select-none border-r border-destructive/10 px-2 text-right text-ui-3xs text-muted-foreground"></td>
-                <td class="w-5 select-none text-center text-destructive">−</td>
-                <td class="px-4 py-px text-destructive"><span class="whitespace-pre">{line.content}</span></td>
+              <tr>
+                <td colspan="4" class="p-0">
+                  <button
+                    type="button"
+                    class="flex h-7 w-full items-center gap-2 border-y border-border/30 bg-muted/25 px-4 text-left text-ui-3xs text-muted-foreground transition-colors hover:bg-muted/45 hover:text-foreground"
+                    onclick={() => { const n = new Set(expandedGaps); n.add(line.from); expandedGaps = n }}
+                  >
+                    <ChevronDown class="size-3 shrink-0" aria-hidden="true" />
+                    Show {line.count} unchanged line{line.count !== 1 ? 's' : ''}
+                  </button>
+                </td>
               </tr>
             {:else}
-              <tr class="hover:bg-muted/8">
-                <td class="w-10 select-none border-r border-border/10 px-2 text-right text-ui-3xs text-muted-foreground">{line.lineA}</td>
-                <td class="w-10 select-none border-r border-border/10 px-2 text-right text-ui-3xs text-muted-foreground">{line.lineB}</td>
-                <td class="w-5 select-none"></td>
-                <td class="px-4 py-px text-muted-foreground"><span class="whitespace-pre">{line.content}</span></td>
+              {@const parts = selectedDdlDiff?.words.get(line)}
+              {@const tone = line.type === 'add' ? 'success' : line.type === 'remove' ? 'destructive' : ''}
+              <tr class={cn(tone === 'success' && 'bg-success/[0.07]', tone === 'destructive' && 'bg-destructive/[0.07]')}>
+                <td class={cn('w-11 select-none py-0 pr-2 pl-3 text-right text-ui-3xs tabular-nums text-muted-foreground/60', tone && 'shadow-[inset_2px_0_0_var(--accent-bar)]')} style={tone ? `--accent-bar: var(--${tone})` : ''}>{line.lineA ?? ''}</td>
+                <td class="w-10 select-none py-0 pr-2 text-right text-ui-3xs tabular-nums text-muted-foreground/60">{line.lineB ?? ''}</td>
+                <td class={cn('w-5 select-none text-center', tone === 'success' ? 'text-success' : tone === 'destructive' ? 'text-destructive' : 'text-transparent')}>{line.type === 'add' ? '+' : line.type === 'remove' ? '−' : ' '}</td>
+                <td class={cn('py-0 pr-4 pl-1', tone ? 'text-foreground' : 'text-muted-foreground')}>
+                  <span class="whitespace-pre">{#if parts}{#each parts as p, k (k)}{#if p.changed}<mark class={cn('rounded-sm px-px text-inherit', tone === 'success' ? 'bg-success/25' : 'bg-destructive/25')}>{p.text}</mark>{:else}{p.text}{/if}{/each}{:else}{line.content}{/if}</span>
+                </td>
               </tr>
             {/if}
           {/each}

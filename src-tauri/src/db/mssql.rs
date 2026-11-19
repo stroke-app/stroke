@@ -370,7 +370,7 @@ pub async fn list_tables(handle: &MssqlHandle, schema: &str) -> Result<Vec<Table
             let kind = r.try_get::<&str, _>(1).ok().flatten().unwrap_or("table").to_string();
             let row_count = r.try_get::<i64, _>(2).ok().flatten().unwrap_or(-1);
             let created_at = r.try_get::<&str, _>(3).ok().flatten().map(str::to_string);
-            Some(TableInfo { name, kind, row_count, rls_enabled: None, created_at, create_order: None })
+            Some(TableInfo { name, kind, row_count, rls_enabled: None, created_at, create_order: None, system: None })
         })
         .collect())
 }

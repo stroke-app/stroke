@@ -18,6 +18,8 @@ const HOSTS = [
   [/(\.rlwy\.net|\.railway\.app|\.railway\.internal)$/i, 'railway'],
   [/\.thenile\.dev$/i, 'nile'],
   [/\.upstash\.io$/i, 'upstash'],
+  [/\.xata\.tech$/i, 'xata'],
+  [/\.svc\.singlestore\.com$/i, 'singlestore'],
 ]
 
 /** Older saved connections used these ids before the cards settled on theirs. */
@@ -54,6 +56,7 @@ const ENGINE_SHORT = {
   mysql: 'MySQL',
   mariadb: 'MariaDB',
   mssql: 'SQL Server',
+  oracle: 'Oracle',
   sqlite: 'SQLite',
   'sqlite-memory': 'SQLite',
   libsql: 'libSQL',
@@ -64,6 +67,8 @@ const ENGINE_SHORT = {
   valkey: 'Valkey',
   dynamodb: 'DynamoDB',
   couchdb: 'CouchDB',
+  elasticsearch: 'Elasticsearch',
+  opensearch: 'OpenSearch',
   cassandra: 'Cassandra',
   firestore: 'Firestore',
   mongodb: 'MongoDB',

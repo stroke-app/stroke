@@ -91,10 +91,23 @@
     highlight = 0
   }
 
+  // Hovering a provider in the rail shows its models, no click needed. A short
+  // intent delay keeps a pointer sweeping across the rail on its way to the
+  // list from flicking through every provider it passes.
+  let hoverTimer = 0
+  /** @param {string} key */
+  function hoverGroup(key) {
+    clearTimeout(hoverTimer)
+    hoverTimer = window.setTimeout(() => showGroup(key), 70)
+  }
+  function leaveGroup() {
+    clearTimeout(hoverTimer)
+  }
+
   /** The brand mark for a provider; agents borrow their maker's. @param {string} provider */
   function brandOf(provider) {
     const agent = profileAgent({ provider })
-    if (agent === 'claude') return 'anthropic'
+    if (agent === 'claude') return 'claude'
     if (agent === 'codex') return 'openai'
     return provider
   }
@@ -182,7 +195,7 @@
   // Shown in the footer: what the agent may run. Read-only connection wins.
   const accessLabel = $derived(
     $readOnlyMode || !activeAgent ? ($readOnlyMode ? 'Read only' : '')
-      : ({ read: 'Read only', write: 'Read & write', modify: 'Modify schema', dangerous: 'Dangerous' })[$agentPrefs.access] ?? 'Read only'
+      : ({ read: 'Read only', write: 'Read & write', modify: 'Modify schema', dangerous: 'Full access' })[$agentPrefs.access] ?? 'Read only'
   )
   const modKey = IS_MAC ? '⌘' : 'Ctrl+'
 
@@ -253,7 +266,7 @@
 
 <Popover.Popover bind:open onOpenChange={(o) => { if (o) openPicker() }}>
   <Popover.PopoverTrigger
-    class="inline-flex h-9 min-w-0 shrink items-center gap-2 rounded-full px-3 text-ui-sm text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground select-none data-[state=open]:bg-accent data-[state=open]:text-foreground outline-none focus-visible:outline-2 focus-visible:outline-ring"
+    class="inline-flex h-8 min-w-0 shrink items-center gap-2 rounded-full px-3 text-ui-xs text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground select-none data-[state=open]:bg-accent data-[state=open]:text-foreground outline-none focus-visible:outline-2 focus-visible:outline-ring"
     title={activeProfile ? `${activeProfile.name}${hasEffort ? ` · ${effortLabel}` : ''} · switch model` : 'Switch model'}
   >
     {@render mark(activeProfile ? brandOf(activeProfile.provider) : '', 'size-3.5 shrink-0')}
@@ -273,8 +286,10 @@
         )}
         title="Favourites"
         aria-label="Favourites"
-        onmouseenter={() => showGroup('fav')}
+        aria-pressed={railKey === 'fav' && !query}
         onfocus={() => showGroup('fav')}
+        onpointerenter={() => hoverGroup('fav')}
+        onpointerleave={leaveGroup}
         onclick={() => { railKey = 'fav'; query = ''; highlight = 0 }}
       >
         <Star class={cn("size-4 shrink-0", railKey === 'fav' && !query && "fill-current")} />
@@ -290,8 +305,10 @@
           )}
           title={g.agent && g.agent.status !== 'ready' ? `${g.label} (${g.agent.status === 'missing' ? 'not installed' : 'sign in first'})` : g.label}
           aria-label={g.label}
-          onmouseenter={() => showGroup(g.key)}
+          aria-pressed={railKey === g.key && !query}
           onfocus={() => showGroup(g.key)}
+          onpointerenter={() => hoverGroup(g.key)}
+          onpointerleave={leaveGroup}
           onclick={() => { railKey = g.key; query = ''; highlight = 0 }}
         >
           {@render mark(g.brand, 'size-4 shrink-0')}
@@ -313,10 +330,15 @@
           class="no-focus-ring min-w-0 flex-1 bg-transparent text-ui-xs text-foreground outline-none placeholder:text-muted-foreground"
           placeholder="Search models…"
           aria-label="Search models"
+          role="combobox"
+          aria-expanded="true"
+          aria-controls="ai-model-list"
+          aria-autocomplete="list"
+          aria-activedescendant={visible.length ? `ai-model-opt-${highlight}` : undefined}
         />
       </label>
 
-      <div class="min-h-0 flex-1 overflow-y-auto p-1.5" role="listbox" aria-label="Models">
+      <div id="ai-model-list" class="min-h-0 flex-1 overflow-y-auto p-1.5" role="listbox" aria-label="Models">
         {#if blockedAgent}
           <div class="flex flex-col gap-2 px-2 py-3">
             <p class="text-ui-xs font-medium text-foreground">
@@ -344,9 +366,11 @@
         {:else}
           {#each visible as e, i (e.key)}
             <div
+              id="ai-model-opt-{i}"
               role="option"
               tabindex="-1"
-              aria-selected={e.active}
+              aria-selected={i === highlight}
+              aria-current={e.active ? 'true' : undefined}
               title={[e.provider, e.note || e.tag].filter(Boolean).join(' · ')}
               class={cn(
                 "group flex min-h-7 w-full min-w-0 cursor-pointer items-center gap-2 rounded-sm px-2 py-1",
@@ -426,8 +450,9 @@
         <span>Manage models…</span>
       </button>
       {#if accessLabel}
-        <span class="ml-auto flex items-center gap-1 px-1.5 text-ui-2xs text-muted-foreground" title="What the agent may run">
-          <Lock class="size-3 shrink-0" />{accessLabel}
+        <!-- What the agent may run. Full access is the one that warrants colour. -->
+        <span class={cn("ml-auto flex items-center gap-1 px-1.5 text-ui-2xs", $agentPrefs.access === 'dangerous' && activeAgent && !$readOnlyMode ? "text-warning" : "text-muted-foreground")} title="What the agent may run">
+          <Lock class="size-3 shrink-0" aria-hidden="true" />{accessLabel}
         </span>
       {/if}
     </div>

@@ -1,4 +1,8 @@
 <script>
+  import { ECHARTS_THEME } from '$lib/chart-utils.js'
+  import SelectMenu from './SelectMenu.svelte'
+  import Icon from './Icon.svelte'
+  import SearchableMenu from './SearchableMenu.svelte'
   import { Button } from '$lib/components/ui/button/index.js'
   import { untrack } from 'svelte'
   import EChartPanel from './EChartPanel.svelte'
@@ -270,8 +274,9 @@
     document.body.appendChild(host)
     try {
       const { init } = await import('echarts')
+      await import('echarts/theme/v5')
       await import('echarts-wordcloud')
-      const inst = init(host, null, { renderer: 'svg' })
+      const inst = init(host, ECHARTS_THEME, { renderer: 'svg' })
       inst.setOption(option, { notMerge: true })
       const svg = host.querySelector('svg')?.outerHTML ?? ''
       inst.dispose()
@@ -284,6 +289,11 @@
     } finally {
       host.remove()
     }
+  }
+
+  /** What a share link needs to redraw this chart: its type and axes. */
+  export function shareSpec() {
+    return { type: chartType, x: xCol, y: yCol ? [yCol] : [], group: groupCol || null }
   }
 
   /**
@@ -327,6 +337,21 @@
 
   const chartable = $derived(isChartable(effectiveColumns))
 
+  /** A column's type, short, for the axis pickers. @param {string} name */
+  function colTypeOf(name) {
+    const c = /** @type {any} */ (effectiveColumns.find((x) => x.name === name))
+    return String(c?.dataType ?? c?.data_type ?? c?.type ?? '').toLowerCase().replace(/\(.*\)$/, '').slice(0, 14)
+  }
+  /** An icon for the column's kind of value. @param {string} name */
+  function colIcon(name) {
+    const t = colTypeOf(name)
+    if (/int|num|dec|float|double|real|money|serial/.test(t) || numericCols.some((c) => c.name === name)) return 'hash'
+    if (/date|time/.test(t)) return 'clock'
+    if (/bool/.test(t)) return 'square-check'
+    if (/json/.test(t)) return 'braces'
+    return 'file-text'
+  }
+
   // The axis pickers are one token: a label chip welded to the value. The whole
   // token IS the Select trigger, so the border, hover and focus ring are drawn
   // once by the primitive instead of a wrapper and a nested control each
@@ -338,7 +363,7 @@
   // No radius here: Select.Item's own rounded-lg is derived from the panel's
   // radius minus its padding, and overriding it breaks that relationship.
   const axisItem = ''
-  const iconBtn = 'inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground'
+  const iconBtn = 'inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-[color,background-color,scale] duration-[120ms] ease-[var(--ease-out)] active:scale-[0.97] hover:bg-accent hover:text-foreground'
 </script>
 
 <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -445,18 +470,29 @@
         /** @type {(v: string) => void} */ onpick,
         /** @type {boolean} */ optional,
       )}
-        <Select.Root type="single" {value} onValueChange={(v) => onpick(v ?? '')}>
-          <Select.Trigger size="sm" class={axisToken} aria-label={label}>
-            <span class={axisLabel}>{label}</span>
-            <span class={axisValue}>{value || '—'}</span>
-          </Select.Trigger>
-          <Select.Content class={axisContent} sideOffset={6}>
-            {#if optional}<Select.Item value="" label="—" class={axisItem}>—</Select.Item>{/if}
-            {#each options as col (col)}
-              <Select.Item value={col} label={col} class={axisItem}>{col}</Select.Item>
-            {/each}
-          </Select.Content>
-        </Select.Root>
+        <!-- Searchable, like every other select: a field on top, then each
+             column with its type, so a wide result is quick to pick from. -->
+        <SearchableMenu
+          items={[...(optional ? [{ value: '', label: 'None', icon: 'minus', keywords: ['none'] }] : []), ...options.map((col) => ({ value: col, label: col, hint: colTypeOf(col), icon: colIcon(col), keywords: [col] }))]}
+          align="start"
+          contentClass="w-64 max-w-[min(20rem,80vw)]"
+          placeholder="Search columns"
+          onselect={(it) => { if (it) onpick(String(it.value ?? '')) }}
+        >
+          {#snippet trigger(props)}
+            <button {...props} type="button" class={cn('inline-flex items-center', axisToken)} aria-label={label}>
+              <span class={axisLabel}>{label}</span>
+              <span class={axisValue}>{value || 'None'}</span>
+              <Icon name="chevron-down" class="size-3.5 shrink-0" />
+            </button>
+          {/snippet}
+          {#snippet item(it)}
+            <Icon name={it.icon} class="size-3.5 shrink-0 text-muted-foreground" />
+            <span class={cn('min-w-0 flex-1 truncate', it.value === '' && 'text-muted-foreground')}>{it.label}</span>
+            {#if it.hint}<span class="shrink-0 font-mono text-ui-3xs text-muted-foreground">{it.hint}</span>{/if}
+            {#if String(it.value) === String(value)}<Icon name="check" class="size-3.5 shrink-0 text-primary" />{/if}
+          {/snippet}
+        </SearchableMenu>
       {/snippet}
 
       {#if requiredAxes.x}
@@ -524,18 +560,15 @@
                 <span class="text-ui-xs text-muted-foreground">Group</span>
                 <div class="flex items-center gap-1">
                   {#if !newGroupMode}
-                    <Select.Root type="single" value={saveGroup} onValueChange={(v) => v && (saveGroup = v)}>
-                      <Select.Trigger
-                        size="sm"
-                        aria-label="Chart group"
-                        class="h-8 min-w-0 flex-1 gap-1.5 rounded-md border-0 bg-sidebar-accent/50 px-2.5 text-ui-sm [&_svg]:size-3.5 [&_svg]:text-muted-foreground"
-                      >
-                        <span class="truncate">{saveGroup}</span>
-                      </Select.Trigger>
-                      <Select.Content class={axisContent} sideOffset={6}>
-                        {#each $chartGroups as g (g)}<Select.Item value={g} label={g} class={axisItem}>{g}</Select.Item>{/each}
-                      </Select.Content>
-                    </Select.Root>
+                    <SelectMenu
+                      ariaLabel="Chart group"
+                      value={saveGroup}
+                      onValueChange={(v) => { if (v) saveGroup = v }}
+                      items={$chartGroups.map((g) => ({ value: g, label: g, icon: 'folder' }))}
+                      searchPlaceholder="Search groups…"
+                      empty="No group by that name. Use + to add it."
+                      triggerClass="h-8 min-w-0 flex-1"
+                    />
                     <button type="button" class="inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" title="New group" onclick={() => { newGroupMode = true }}>
                       <Plus class="size-3.5 shrink-0" />
                     </button>

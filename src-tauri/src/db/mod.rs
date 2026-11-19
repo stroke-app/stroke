@@ -1,11 +1,14 @@
 pub mod admin;
 pub mod backup;
+pub mod migrations;
 pub mod clickhouse;
+pub mod parked;
 pub mod posthog;
 pub mod connection;
 pub mod d1;
 pub mod duckdb;
 pub mod mssql;
+pub mod oracle;
 pub mod explain;
 pub mod advisor;
 pub mod insights;
@@ -16,6 +19,7 @@ pub mod objects;
 pub mod redis;
 pub mod dynamodb;
 pub mod couchdb;
+pub mod elastic;
 pub mod cassandra;
 pub mod firestore;
 pub mod mongo;
@@ -37,8 +41,8 @@ pub mod terminal;
 pub mod tx;
 
 pub use connection::{
-    connect, connect_clickhouse, connect_d1, connect_duckdb, connect_libsql, connect_mssql, connect_mysql, connect_redis, connect_sqlite, disconnect,
-    test_clickhouse_connection, test_connection, test_d1_connection, test_duckdb_connection, test_libsql_connection, test_mssql_connection, test_mysql_connection, test_redis_connection, test_sqlite_connection,
+    connect, connect_clickhouse, connect_d1, connect_duckdb, connect_libsql, connect_mssql, connect_mysql, connect_oracle, connect_redis, connect_sqlite, disconnect,
+    test_clickhouse_connection, test_connection, test_d1_connection, test_duckdb_connection, test_libsql_connection, test_mssql_connection, test_mysql_connection, test_oracle_connection, test_redis_connection, test_sqlite_connection,
     ActiveConnection, AnyConnectionConfig, ConnectionConfig, D1Config, DbState, LibSqlConfig, SqliteConfig,
 };
 pub use explain::{explain_pg, explain_mysql, explain_sqlite, explain_from_text_lines, explain_from_sqlite_plan, ExplainResult};
@@ -51,7 +55,7 @@ pub use geo::{geo_features, geo_overview, GeoBbox, GeoFeatures, GeoOverview};
 pub use ssh_tunnel::TunnelState;
 pub use query::{
     delete_table_row, delete_table_rows, execute_ddl, execute_sql, execute_sql_multi, execute_sql_on_conn, execute_sql_script, StatementOutcome,
-    fetch_cell_value, CellValueResult, get_column_stats, get_table_rows, count_table_rows, insert_table_row, update_table_cell, ping_connection,
+    fetch_cell_value, CellValueResult, get_column_stats, get_table_rows, count_table_rows, search_index_status, create_search_index, SearchIndexStatus, insert_table_row, update_table_cell, ping_connection,
     ColumnStats, InsertRowResult, KeysetCursor, apply_table_changes, ApplyChangesResult, RowUpdate, RowChunk, RowFilter, RowSink, SortSpec, SqlResult, TableRows,
 };
 pub use schema::{

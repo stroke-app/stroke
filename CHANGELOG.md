@@ -4,6 +4,1013 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.0.0] - 2026-11-19
+
+### New Features
+
+#### Stroke 3
+- **One account, three computers** - Sign in with GitHub or Google. Your license comes with your account and covers up to 3 computers; manage them at stroke.click/app. Paid Pro keeps working offline for 30 days.
+- **Sync** - Workspaces, connections, settings, saved queries, charts and dashboards sync between your computers, end-to-end encrypted.
+- **21 databases** - New since 2.3: Oracle, Elasticsearch, OpenSearch, Xata and SingleStore, alongside MongoDB, CouchDB, Cassandra, DynamoDB, Firestore and Redis.
+- **Several databases at once (Labs)** - Keep more than one connection open, each with its tabs, and switch instantly.
+
+#### AI
+- **AI chat in a tab** - AI opens beside your tables instead of taking over the window, and its chats live in the sidebar. On by default in this version; switch it off in Settings → Labs.
+- **Access levels for every model** - Read only, Read & write, Modify schema or Dangerous, now enforced for the built-in models and API keys too, not only local agents.
+- **Plans and step timeline** - A multi-step request shows its plan, each tool call is one row with its result, and a finished turn says what changed.
+
+#### Your databases
+- **Local database servers** - Run Postgres, MySQL or Redis on this computer in any version, in their own window, start them with Stroke, and see the servers already running here.
+- **Migrations** - Drizzle, Prisma, Wrangler (D1) and plain SQL folders: what has run, what is pending, and the SQL of each.
+- **Scheduled backups** - To Stroke Cloud or your own S3, end-to-end encrypted, with a preview of a dump and its encoding before you restore.
+- **Docker in one step** - ⌘K → Docker starts any of 18 databases, already connected.
+- **Dashboards** - Live chart cards that refresh themselves, open in their own window, full screen.
+- **Paste any connection string** - .env lines, ORM URLs and key/value strings land on the right form.
+
+#### Everywhere
+- **Leader key** - Press ⌘; (Ctrl+; on Windows and Linux), then one key.
+- **Share as a web studio (Labs)** - Share a database through a link that opens in any browser.
+- **SQL notebooks** - Variables, import and export, autosave.
+- **Results beside the editor** - Put SQL results below or beside the editor.
+- **Quieter updates** - Updates download in the background and install as Stroke quits. Homebrew, Scoop, AUR, .deb and .rpm installs update through their package manager.
+
+### Changes
+- A faster start: Settings, the command palette and one-off dialogs load on first use, and the data grid loads lazily.
+- Windows and Linux get a 40px title bar with native window buttons, and native Wayland on Linux.
+- echarts 6.1, which fixes an XSS advisory; charts look as they did.
+- The Explorer tree stays in Labs (Settings → Labs).
+
+
+## [2.20.4] - 2026-11-19
+
+### Changes
+- Hold the built-in AI chat to its access level; redesign Migrations (#306)
+
+
+## [2.20.3] - 2026-11-19
+
+### Changes
+- Move local servers to their own window; fix dashboard window and D1 migrations (#305)
+
+
+## [2.20.2] - 2026-11-18
+
+### Changes
+- Add Xata and SingleStore providers (#303)
+
+
+## [2.20.1] - 2026-11-18
+
+### Changes
+- Tell Supabase users to sign in again for project creation (#302)
+
+
+## [2.20.0] - 2026-11-18
+
+### Changes
+- Add a Migrations page and local database servers (#301)
+
+
+## [2.19.9] - 2026-11-18
+
+### Changes
+- Calmer update check and a lighter views icon (#300)
+
+
+## [2.19.8] - 2026-11-18
+
+### Changes
+- Preview a dump and pick its encoding before restoring (#297)
+
+
+## [2.19.7] - 2026-11-18
+
+### Changes
+- Switch SQL results between below and beside the editor (#296)
+
+
+## [2.19.6] - 2026-11-18
+
+### Changes
+- Let the DynamoDB console send the API calls it offers (#295)
+
+
+## [2.19.5] - 2026-11-18
+
+### Changes
+- End-to-end encrypt scheduled backups (#294)
+
+
+## [2.19.4] - 2026-11-18
+
+### Changes
+- TODO: what's next (#293)
+
+
+## [2.19.3] - 2026-11-18
+
+### Changes
+- Compact scheduled backups screen (#292)
+
+
+## [2.19.2] - 2026-11-18
+
+### Changes
+- Fix sync failing with "Unknown record kind: library" (#291)
+
+
+## [2.19.1] - 2026-11-18
+
+### Changes
+- Scheduled backups to Stroke Cloud or your own S3 (#290)
+
+
+## [2.19.0] - 2026-11-18
+
+### Changes
+- Account-only licensing for Stroke 3 (#289)
+
+
+## [2.18.9] - 2026-11-17
+
+### Changes
+- Go back to fat LTO for Nightly builds (#288)
+
+
+## [2.18.8] - 2026-11-17
+
+### Changes
+- AI table commands for DynamoDB and MongoDB, live backup log, fixes (#287)
+
+
+## [2.18.7] - 2026-11-17
+
+### Changes
+- Terminal: DOM renderer on Linux; panel slide animation off by default (#286)
+
+
+## [2.18.6] - 2026-11-17
+
+### Changes
+- Lazy data grid, native Wayland with X11 fallback, whole-table exports, faster Nightly builds (#285)
+
+
+## [2.18.5] - 2026-11-17
+
+### Changes
+- Hide scrollbars behind an open dialog on Linux (#284)
+
+
+## [2.18.4] - 2026-11-17
+
+### Changes
+- Share a database as a web studio (Labs) (#283)
+
+
+## [2.18.3] - 2026-11-17
+
+### Changes
+- No console windows from the AI agent CLIs on Windows; reload the page if WebView2's renderer dies (#282)
+
+
+## [2.18.2] - 2026-11-17
+
+### Changes
+- Update Arch and .deb installs from the app, through the system password prompt (#281)
+
+
+## [2.18.1] - 2026-11-17
+
+### Changes
+- Load Settings, the command palette and one-off dialogs on first use (#280)
+
+
+## [2.18.0] - 2026-11-17
+
+### Changes
+- Upgrade echarts to 6.1 for the XSS fix, keeping charts as they look on 5 (#279)
+
+
+## [2.17.9] - 2026-11-17
+
+### Changes
+- Don't self-update Scoop installs on Windows; show scoop update stroke instead (#278)
+
+
+## [2.17.8] - 2026-11-17
+
+### Changes
+- Don't self-update AUR, .deb and .rpm installs; show the package manager command instead (#277)
+
+
+## [2.17.7] - 2026-11-17
+
+### Changes
+- Tree sidebar keyboard: visible focus when tabbing in, Tab lands on the first match, one clear button (#276)
+
+
+## [2.17.6] - 2026-11-17
+
+### Changes
+- One Sign in button; calmer trial screen; sign-out goes back to sign-in; better callback page (#275)
+
+
+## [2.17.5] - 2026-11-17
+
+### Changes
+- Keep the title bar's spacing fixed when zoomed on Linux (#274)
+
+
+## [2.17.4] - 2026-11-17
+
+### Changes
+- Check for updates from the sign-in and trial screens; open title bar menus over the welcome tour (#273)
+
+
+## [2.17.3] - 2026-11-17
+
+### Changes
+- Redesign the license key entry: a field well and a keycap Activate button (#272)
+
+
+## [2.17.2] - 2026-11-17
+
+### Changes
+- Show the grabbing cursor while dragging the geometry mini map (#271)
+
+
+## [2.17.1] - 2026-11-17
+
+### Changes
+- Let the AppImage run on native Wayland with STROKE_WAYLAND=1 (#270)
+
+
+## [2.17.0] - 2026-11-17
+
+### Changes
+- Add the v3 plan, launch week and what comes after to the TODO (#269)
+
+
+## [2.16.9] - 2026-11-17
+
+### Changes
+- Replace the TODO with the website redesign and the update emails (#268)
+
+
+## [2.16.8] - 2026-11-17
+
+### Changes
+- Close the other open databases when several connections is turned off (#267)
+
+
+## [2.16.7] - 2026-11-17
+
+### Changes
+- Switch databases on double-click in the tree without confirming (#266)
+
+
+## [2.16.6] - 2026-11-16
+
+### Changes
+- Polish connect page, provider sign-in, tree with several databases (#265)
+
+
+## [2.16.5] - 2026-11-16
+
+### Changes
+- Plan badge: a small dark keycap (#264)
+
+
+## [2.16.4] - 2026-11-16
+
+### Changes
+- Labs: flat tab bar, one name per database, quiet swap; smaller plan tag (#263)
+
+
+## [2.16.3] - 2026-11-16
+
+### Changes
+- Labs: fix the crash on disconnect, switch without flicker, report crashes (#262)
+
+
+## [2.16.2] - 2026-11-15
+
+### Changes
+- Labs: several databases open together, one tab bar, switching in place (#260)
+
+
+## [2.16.1] - 2026-11-15
+
+### Changes
+- NoSQL: a tab per collection, like table tabs (#259)
+
+
+## [2.16.0] - 2026-11-15
+
+### Changes
+- SQL notebook: import/export, variables, autosave, a usable cell UI (#258)
+
+
+## [2.15.9] - 2026-11-15
+
+### Changes
+- Security page: the app's type, identifiers in mono (#257)
+
+
+## [2.15.8] - 2026-11-15
+
+### Changes
+- Advisor: a verdict, sharper checks, and fixes you can open (#256)
+
+
+## [2.15.7] - 2026-11-15
+
+### Changes
+- Model picker: hovering a provider shows its models (#255)
+
+
+## [2.15.6] - 2026-11-15
+
+### Changes
+- Labs: focus the tree on a database switch (#254)
+
+
+## [2.15.5] - 2026-11-15
+
+### Changes
+- MCP current_database names the database queries actually run on (#253)
+
+
+## [2.15.4] - 2026-11-15
+
+### Changes
+- Theme picker shows its shortcut (⌘⌥T) where you find it (#252)
+
+
+## [2.15.3] - 2026-11-15
+
+### Changes
+- Restore into D1/libSQL settles foreign keys; libSQL/Turso gets backup and restore (#251)
+
+
+## [2.15.2] - 2026-11-15
+
+### Changes
+- AI chat: your messages render markdown; the composer types it (#250)
+
+
+## [2.15.1] - 2026-11-15
+
+### Changes
+- Diagrams: saved diagrams show at once; no stray half-render; the list folds away (#249)
+
+
+## [2.15.0] - 2026-11-15
+
+### Changes
+- New connection: engine logos stacked on the button (#248)
+
+
+## [2.14.9] - 2026-11-15
+
+### Changes
+- Vim chip as a glossy key; editor panels stay under popovers; Explain cards fit their text (#246)
+
+
+## [2.14.8] - 2026-11-15
+
+### Changes
+- Sidebar catches AI-made views and tables without a manual refresh (#245)
+
+
+## [2.14.7] - 2026-11-15
+
+### Changes
+- AI chat Run refreshes the sidebar; refresh buttons show they ran (#244)
+
+
+## [2.14.6] - 2026-11-15
+
+### Changes
+- Connect screen: the footer lines up with the page above it (#243)
+
+
+## [2.14.5] - 2026-11-15
+
+### Changes
+- npx strokedb: open a project's database in the app or the web studio (#241)
+
+
+## [2.14.4] - 2026-11-15
+
+### Changes
+- Labs: several connections at once; Parquet and Excel export; searchable dropdowns (#240)
+
+
+## [2.14.3] - 2026-11-15
+
+### Changes
+- Dashboard: live cards, numbers, refresh; list picker; Bro theme (#239)
+
+
+## [2.14.2] - 2026-11-15
+
+### Changes
+- Panels and terminal: no jumps, no blank or stale terminal (#238)
+
+
+## [2.14.1] - 2026-11-15
+
+### Changes
+- Hold ⌘Q or press it twice to quit on macOS (#237)
+
+
+## [2.14.0] - 2026-11-15
+
+### Changes
+- Explain: findings, step details, tree view; never keep ANALYZE writes (#236)
+
+
+## [2.13.9] - 2026-11-15
+
+### Changes
+- Focus the open tab's search on /, not the sidebar filter (#235)
+
+
+## [2.13.8] - 2026-11-15
+
+### Changes
+- Show only the tick on the current item in menus (#234)
+
+
+## [2.13.7] - 2026-11-15
+
+### Changes
+- Focus the grid column when I click it in the sidebar tree (#233)
+
+
+## [2.13.6] - 2026-11-15
+
+### Changes
+- Add a theme: community gallery, theme files and pasted JSON (#232)
+
+
+## [2.13.5] - 2026-11-15
+
+### Changes
+- Share: titles from what is shared, chart preview; simpler New view (#231)
+
+
+## [2.13.4] - 2026-11-15
+
+### Changes
+- Live mode on MongoDB, the other document stores and Redis (#230)
+
+
+## [2.13.3] - 2026-11-15
+
+### Changes
+- Dashboard: searchable switcher, one menu, rename in place (#229)
+
+
+## [2.13.2] - 2026-11-15
+
+### Changes
+- Terminal dock and AI panel slide with a transform, not a resize (#228)
+
+
+## [2.13.1] - 2026-11-15
+
+### Changes
+- D1 prompt: Time Travel bookmarks and restore, slash commands (#227)
+
+
+## [2.13.0] - 2026-11-15
+
+### Changes
+- Schema snapshots: searchable connection, tidy cards, readable migration (#226)
+
+
+## [2.12.9] - 2026-11-15
+
+### Changes
+- Terminal: steady font while resizing, Oracle via SQLcl thin, panel animation setting (#225)
+
+
+## [2.12.8] - 2026-11-15
+
+### Changes
+- Chart pickers and FieldSelect are searchable (#224)
+
+
+## [2.12.7] - 2026-11-15
+
+### Changes
+- Chat code blocks: visible Copy, solid Run, readable request bodies (#223)
+
+
+## [2.12.6] - 2026-11-15
+
+### Changes
+- Saved charts: search, group filter, one menu per chart, share (#222)
+
+
+## [2.12.5] - 2026-11-15
+
+### Changes
+- Sync saved queries, charts, dashboards and query folders (#221)
+
+
+## [2.12.4] - 2026-11-15
+
+### Changes
+- NoSQL pages: Mod+R and agent changes reload them; no flicker on refresh (#220)
+
+
+## [2.12.3] - 2026-11-15
+
+### Changes
+- Document stores: docked apply bar, no SQL review, Mod+S works (#219)
+
+
+## [2.12.2] - 2026-11-15
+
+### Changes
+- NoSQL Browse: the view is a dropdown (#218)
+
+
+## [2.12.1] - 2026-11-15
+
+### Changes
+- Table pager: one control, cleaner go-to-page (#217)
+
+
+## [2.12.0] - 2026-11-15
+
+### Changes
+- Grid Vim: visual selection, yank, paste, screen and page motions (#216)
+
+
+## [2.11.9] - 2026-11-15
+
+### Changes
+- Docker databases start in the background with a progress toast (#215)
+
+
+## [2.11.8] - 2026-11-15
+
+### Changes
+- DynamoDB: name AWS connections by region; compact credentials switch (#214)
+
+
+## [2.11.7] - 2026-11-15
+
+### Changes
+- Agents can write to Elasticsearch and OpenSearch at the right level (#213)
+
+
+## [2.11.6] - 2026-11-15
+
+### Changes
+- Sidebar follows agent changes; cleaner dock, chips and title-bar buttons (#212)
+
+
+## [2.11.5] - 2026-11-15
+
+### Changes
+- One search field with /; tighter Shared links; Settings follows changes from anywhere (#211)
+
+
+## [2.11.4] - 2026-11-15
+
+### Changes
+- Live mode on every engine; all terminal suggestions; glossy plan chips (#210)
+
+
+## [2.11.3] - 2026-11-15
+
+### Changes
+- Expanded rows build off screen; tighter sidebar footer with room below (#209)
+
+
+## [2.11.2] - 2026-11-15
+
+### Changes
+- Agents can share: share_link MCP tool opens the share dialog (#208)
+
+
+## [2.11.1] - 2026-11-15
+
+### Changes
+- Native panel slides, zoom-proof switches, share dialog settings rows (#207)
+
+
+## [2.11.0] - 2026-11-15
+
+### Changes
+- Keep a trackpad coast vertical when Shift goes down mid-scroll (#206)
+
+
+## [2.10.9] - 2026-11-15
+
+### Changes
+- Update notes per version; quiet auto-updates; Update track in Settings (#205)
+
+
+## [2.10.8] - 2026-11-15
+
+### Changes
+- Smoke tests gate Nightly; cancel stale counts; search index; more (#204)
+
+
+## [2.10.7] - 2026-11-15
+
+### Changes
+- Inset tree rows; neutral AI stop button (#203)
+
+
+## [2.10.6] - 2026-11-15
+
+### Changes
+- Tidy the account menu (#202)
+
+
+## [2.10.5] - 2026-11-15
+
+### Changes
+- Polish connection, search, table and keybinding screens; tree options (#201)
+
+
+## [2.10.4] - 2026-11-15
+
+### Changes
+- Fix share crash, faster big-table search, Shared links tab, terminal and AI fixes (#200)
+
+
+## [2.10.3] - 2026-11-15
+
+### Changes
+- Share links, AI share tool, and Try Nightly from stable (#199)
+
+
+## [2.10.2] - 2026-11-15
+
+### Changes
+- Diagram and schema diff redesign, faster terminal start, / hints, fonts (#198)
+
+
+## [2.10.1] - 2026-11-15
+
+### Changes
+- Smoother grid scrolling (120Hz budget) (#197)
+
+
+## [2.10.0] - 2026-11-15
+
+### Changes
+- Elasticsearch and OpenSearch (#196)
+
+
+## [2.9.9] - 2026-11-15
+
+### Changes
+- Windows polish: terminal, connection screen, Segoe UI (#195)
+
+
+## [2.9.8] - 2026-11-15
+
+### Changes
+- Auto-fit column widths (#194)
+
+
+## [2.9.7] - 2026-11-15
+
+### Changes
+- Related-rows panel keeps one height (#193)
+
+
+## [2.9.6] - 2026-11-15
+
+### Changes
+- Sidebar: no "No tables" while counts load; quieter select box (#192)
+
+
+## [2.9.5] - 2026-11-15
+
+### Changes
+- AUR stroke-nightly-bin on every nightly; Lines table style by default (#191)
+
+
+## [2.9.4] - 2026-11-15
+
+### Changes
+- / focuses the search field in view (#190)
+
+
+## [2.9.3] - 2026-11-15
+
+### Changes
+- Borderless AI composer, theme contrast fixes, SF Pro on Mac (#189)
+
+
+## [2.9.2] - 2026-11-15
+
+### Changes
+- Press feedback only on compact buttons (#188)
+
+
+## [2.9.1] - 2026-11-15
+
+### Changes
+- Calmer trial-ended screen (#187)
+
+
+## [2.9.0] - 2026-11-15
+
+### Changes
+- Offer the update on the crash screen (#186)
+
+
+## [2.8.9] - 2026-11-15
+
+### Changes
+- AUR: keep placeholders out of the PKGBUILD header comment (#185)
+
+
+## [2.8.8] - 2026-11-15
+
+### Changes
+- Fix the welcome screen crash (missing Icon import) (#184)
+
+
+## [2.8.7] - 2026-11-14
+
+### Changes
+- Publish stroke-bin to the AUR on stable releases (#183)
+
+
+## [2.8.6] - 2026-11-14
+
+### Changes
+- Sync the last changes before Stroke closes (#182)
+
+
+## [2.8.5] - 2026-11-14
+
+### Changes
+- Labs settings page; rename chats from their menus (#181)
+
+
+## [2.8.4] - 2026-11-14
+
+### Changes
+- Sidebar: explain tables hidden by Hide empty / Hide system (#180)
+
+
+## [2.8.3] - 2026-11-14
+
+### Changes
+- Notification corner setting, compact SQLite switch (#179)
+
+
+## [2.8.2] - 2026-11-14
+
+### Changes
+- Aligned connection fields, smaller swatches, keyboard-first staged-changes bar (#178)
+
+
+## [2.8.1] - 2026-11-14
+
+### Changes
+- License per account, one Update button, compact What's new, press feedback (#177)
+
+
+## [2.8.0] - 2026-11-14
+
+### Changes
+- Schema snapshots on every engine, flat provider panel, Supabase create error (#176)
+
+
+## [2.7.9] - 2026-11-14
+
+### Changes
+- Fixes: AI background replies, compact AI transcript, tabs, TimescaleDB, theme surfaces (#175)
+
+
+## [2.7.8] - 2026-11-14
+
+### Features
+- Copy URL on the connection form: the connection as a connection string (postgresql://, mysql://, sqlserver://, oracle://, redis://, libsql:// and the rest), ready for a .env file, an ORM or another client. Passwords with special characters are encoded so they paste back intact
+
+
+## [2.7.7] - 2026-11-14
+
+### Improvements
+- Updates download and install in the background by default, everywhere: no window appears mid-work. Where Stroke can install as it quits it does; elsewhere the sidebar's pill offers Restart. The next launch shows what changed
+- A new update window in the style of macOS's Sparkle: the app's mark, the version on offer and yours, the release notes right there, one button, and the automatic-updates setting beside it
+- What's new and the update window group every change into New, Improved and Fixed across all the versions you skipped, with counts, a filter, and the version each change arrived in
+- Nightly's update feed carries the real changelog since the last stable release, so the update window shows what is coming before you install it
+
+
+## [2.7.6] - 2026-11-14
+
+### Features
+- The status bar shows your connection: the database's round trip ("48 ms", amber when slow, red when very slow), "Offline" when the computer has no network, and "No response" when the database stops answering. Click it to check now
+
+
+## [2.7.5] - 2026-11-14
+
+### Bug Fixes
+- Provider panels (Neon, Supabase, Prisma, PlanetScale, Turso, Nile, Upstash, Railway, PostHog) retry a request once when it never got an answer, so a slow or briefly dropped connection no longer shows as "couldn't reach the provider". Creates are never repeated after a timeout
+
+
+## [2.7.4] - 2026-11-14
+
+### Improvements
+- Buttons respond to a press (a small scale on every variant, ghost buttons too), the sidebar and AI footer icons get a hover background and a press, and the welcome search bar lifts on hover
+- The sidebar's table search has room between the magnifier and the text, and reads as a field at rest
+- Updates work like T3 Code: checking spins the update button instead of opening a dialog, "up to date" and failures are toasts (with Retry), and a found update turns the button into an Update pill that becomes Restart once downloaded
+
+
+## [2.7.3] - 2026-11-14
+
+### Bug Fixes
+- Fields side by side line up: label rows have one fixed height whether they hold just a label or a label with buttons (Cloudflare D1's Account and D1 database, the provider database picker)
+- Cloudflare D1 no longer opens the only database on the account by itself; you pick it
+
+
+## [2.7.2] - 2026-11-14
+
+### Features
+- What's new after this update leads with AI chat in a tab (with a button to turn it on), one-click Docker databases, the leader key, and Oracle plus paste-any-connection-string
+- "What's new" in the command palette opens the release notes any time, not only right after an update
+
+
+## [2.7.1] - 2026-11-14
+
+### Features
+- Leader key: press ⌘; (Ctrl+; on Windows and Linux), then one key. A panel lists what can follow, so nothing has to be remembered: 1–9 go to a tab, S new SQL query, A AI chat, T terminal, E schema diagram, C connections, K command palette, B sidebar, L logs, W close tab, R reopen closed tab, "," settings, "/" all shortcuts. The leader is rebindable in Keyboard shortcuts
+
+
+## [2.7.0] - 2026-11-14
+
+### Features
+- Open more than one terminal: "New terminal tab" (Ctrl+Shift+`, the + in the terminal's bar, or the command palette) starts another session in its own tab, numbered Terminal 2, Terminal 3…; closing a tab ends only its own session
+
+
+## [2.6.9] - 2026-11-14
+
+### Improvements
+- Relation tree: cards are quiet raised surfaces with a row-count bar (log scale, so sizes compare at a glance) and "used by N" instead of the colour strips and ↑↓ counters; lines are thinner and rounded; a faint dot grid pans and zooms with the drawing
+
+
+## [2.6.8] - 2026-11-14
+
+### Bug Fixes
+- Opening the schema diagram, relation tree or diagrams no longer closes the sidebar; it stays as you left it (⌘B hides it)
+
+
+## [2.6.7] - 2026-11-14
+
+### Improvements
+- AI mode's chat list matches the sidebar's Chats: each chat shows the database and schema it worked in over its title, and an empty list offers to start one
+
+
+## [2.6.6] - 2026-11-14
+
+### Bug Fixes
+- A request sent without an API key says "No API key was sent" and offers AI settings, instead of "The provider rejected the API key" with OpenRouter's "No cookie auth credentials found"
+- The AI error shows as a card in the composer's column instead of a red bar across the window
+
+### Improvements
+- Model picker: Claude Code shows Claude's own mark, Ollama its own; moving the pointer across the provider icons no longer swaps the list under you; the search box is a proper combobox for screen readers; "Full access" is named as such and shown in amber
+- AI models and Add model: one header and footer like the other dialogs; the provider step is a list with each provider's logo and one line on what it is, and picking one moves straight on
+- The composer has a clear edge and a focus ring, the model chip and send button line up at one height, and the "↵ to send" hint is gone
+
+
+## [2.6.5] - 2026-11-14
+
+### Bug Fixes
+- Oracle, MongoDB, CouchDB, Cassandra/Scylla and DynamoDB Local containers now show up under Docker in the connection dialog, with their credentials filled in
+
+
+## [2.6.4] - 2026-11-14
+
+### Bug Fixes
+- AI chat with a local agent no longer spins forever when a tool never answers: after 30 seconds it says which step it is waiting on, and after 3 minutes it stops the agent and ends the turn with the reason
+- When a license is on all the devices it covers, the message says where to free one or ask for more devices (stroke.click/app)
+- Settings: one line under each section heading instead of two
+- The sign-in prompt for license-key holders says what signing in gives you: connections, workspaces and settings on every device, end-to-end encrypted
+- Shift + mouse wheel scrolls sideways everywhere: the related-rows panel, query results, settings and every other wide area, not only the data grid
+- Shift + wheel over the related-rows panel no longer scrolls the grid behind it
+
+### Improvements
+- Create database, Report an issue and About share one calm dialog frame: a title with one line under it, the content, and a ruled footer with a single filled action. Decorative icon tiles, boxed rows and the full-width Deactivate bar are gone; Report an issue picks its kind from a segmented control
+
+### Features
+- Settings has an Account & Sync tab: your account, plan and license, and end-to-end encrypted sync (set up, unlock, status, Sync now) in one place
+
+
+## [2.6.3] - 2026-11-14
+
+### Changes
+- fix(connect): buttons on the traffic lights' line; full-width connection screen (#156)
+
+
+## [2.6.2] - 2026-11-14
+
+### Bug Fixes
+- AI chats belong to the connection, not the database: switching databases keeps your chats, and SQLite files, MongoDB, D1, DynamoDB and Firestore connections no longer share one chat list
+- Connection screen: the show-connections and close buttons sit in a title row on the traffic lights' line on macOS (and in a 40px row on Windows and Linux), instead of floating at an offset
+- Connection screen uses the window's width, left-aligned with the connections list, instead of a narrow centred column
+- A pasted redis:// or libsql:// URL fills the Redis or LibSQL form correctly instead of being read as a Postgres URL
+- Provider panel: an account with one database no longer connects to it unasked; you pick it
+- A database just created on Prisma Postgres (or any provider) is connected once it takes connections, instead of failing with "Failed to connect to upstream database" the first time
+- Region and organization in "New database" are searchable, like the database list
+- The generated password shows in one field with its copy button inside it
+
+### Features
+- AI chat in a tab (beta, Settings → AI chat in a tab): AI opens as a tab beside your tables instead of taking over the window, and its chats are listed in the sidebar with the database and schema each one worked in, and "Working" while one replies
+- The AI can run statements in another database on the same server (a database it just created, or one you name) instead of asking you to switch connections
+- ⌘K → Docker starts any of 18 databases in one step, each with its brand icon: PostgreSQL 17 and 16, pgvector, PostGIS, TimescaleDB, MySQL, MariaDB, SQL Server, Oracle Free, CockroachDB, MongoDB, Redis, Valkey, CouchDB, DynamoDB Local, Cassandra, ClickHouse and a libSQL server. It picks a free port, waits until the database takes connections, and opens it
+- ⌘K → Docker lists the database containers already running, to open in one step
+- Real brand marks for MongoDB, Cassandra, CouchDB, Oracle, DynamoDB and Firestore
+- Paste any connection string to connect: whole .env lines (DATABASE_URL="…"), SQLAlchemy/ORM URLs (postgresql+psycopg2://), libpq key/value (host=… dbname=…), ADO.NET SQL Server strings (Server=…;Database=…;), valkey://, couchdb://, cassandra://, mysqlx://, Turso https:// and ClickHouse http:// endpoints, and TiDB Cloud, Upstash, Nile and Railway hosts
+
+
+## [2.6.1] - 2026-11-14
+
+### Bug Fixes
+- Oracle connections on macOS no longer fail with "Oracle Instant Client is not installed" when Instant Client is installed
+- Oracle: the status bar shows the container you are in (FREEPDB1) instead of "No database", and warns when a blank service name put you in the root container (CDB$ROOT), which holds only Oracle's own schemas
+- Oracle: "Hide system tables" hides the tables Oracle maintains itself (AQ$_, LOGMNR, MVIEW$ and the rest)
+- Oracle: paging, sorting and filtering a table no longer re-read the catalog each time (3.5 s to a few ms once the table is open)
+- The SQL filter bar applies on Enter again; a typed-out word before the cursor made Enter insert a space instead
+- The Oracle terminal no longer starts GNU Parallel's `sql` command in place of SQLcl, and it finds SQL*Plus inside the Instant Client folder and SQLcl installed from the Homebrew cask
+
+### Features
+- Keyboard shortcuts (⌘/ or Ctrl+/) opens as a tab next to your tables and queries instead of covering the window; with no connection open it still opens as a full page
+
+
+## [2.6.0] - 2026-11-14
+
+### New Features
+
+#### Connections
+- **Oracle Database** - Connect to Oracle 12c and later by host, port and service name or SID, or with an Easy Connect / TNS connect string (an `oracle://` or `jdbc:oracle:thin:` string pastes straight into the form). Browse schemas and tables with row counts, open tables with search, filters, sort and pagination, edit, insert and delete rows on tables with a primary key, and run SQL and PL/SQL scripts (`/` lines and all) in the editor, with Stop that interrupts the running statement. Read-only mode and the agent access levels cover Oracle too. Uses Oracle Instant Client, a free download from Oracle: when it is missing, the connection form says where to get it and lets you point at its folder.
+
+
+## [2.5.9] - 2026-11-14
+
+### New Features
+
+#### AI Chat
+- **Plan checklist** - a multi-step request opens with a short numbered plan that ticks off as the steps finish
+- **Step timeline** - each tool call is one row with a status icon, a plain label ("Create table customers", "Insert 3 rows into orders"), its duration, and the SQL and result a click away. A retry folds under the step it fixes ("Retried · succeeded")
+- **Turn summary** - a finished turn says what changed ("Created database ecommerce · Created 3 tables · Inserted 12 rows into 3 tables"), with a button to copy every statement it ran
+
+### Bug Fixes
+- AI chat on MySQL and TiDB: a statement batch sent in one tool call (`CREATE DATABASE shop; USE shop; CREATE TABLE …`) no longer fails as a whole. MySQL refused it with a syntax error and TiDB with "Can not prepare multiple statements"; the statements now run one by one on one connection, and a failure says which statement broke and which ones already ran
+- MySQL and TiDB: a `USE` no longer leaks into the connection pool. The connection that ran it went back to the pool pointed at the other database, so later statements landed there at random and failed with "Table 'ecommerce.customers' doesn't exist". A lone `USE` now also says it only applies to that call
+- AI chat: a failed SQL step shows the database's own error in red under the step, and the model gets the full error, a hint, and an instruction to fix and retry. A double-quoted string on MySQL (read as a column under ANSI_QUOTES) now gets a hint that says so
+
+
+## [2.5.8] - 2026-11-14
+
+### New Features
+
+#### Connections
+- **Create a database from the provider panel** - After signing in to Neon, Supabase, Prisma Postgres, TiDB Cloud, Turso, Nile, Upstash or Cloudflare D1, "Create database" (or "New database" above the list) asks for a name and region, waits while the provider sets it up, then connects to it. Supabase gets a generated password, shown once with a copy button. PlanetScale and Railway keep a link to their dashboard, with the reason.
+
+
+## [2.5.7] - 2026-11-14
+
+### New Features
+- Windows: the terminal installs psql and mysql with one click (PostgreSQL or MariaDB through winget, the server included)
+
+### Bug Fixes
+- Windows and Linux: Ctrl+D, Ctrl+X and the terminal's other Ctrl keys stay in the terminal instead of also running app shortcuts (Ctrl+D opened Switch database)
+- The built-in prompt handles Ctrl+D (delete under the cursor) and Ctrl+X (cut the line)
+
+
+## [2.5.6] - 2026-11-14
+
+### New Features
+- Ctrl+Alt+T (Cmd+Alt+T) opens the theme picker
+- The terminal says when a client isn't installed in a bar above the prompt, with Install or How to install
+
+### Bug Fixes
+- Windows and Linux: a 40px title bar with Windows-style minimize, maximize and close buttons
+- Zooming in no longer pushes the connection page's footer over the status bar
+- A failed connection is no longer saved or synced; it is saved once it connects
+- TiDB Cloud and other providers: Connect waits for a database to be picked instead of dialling 127.0.0.1
+- Switching or previewing themes repaints at once, without the lag on Windows and Linux
+- The command palette's footer no longer casts a heavy shadow over the list
+
+### Changes
+- What's new leads with one feature, lists the rest, and folds the full release notes
+
+
 ## [2.5.5] - 2026-11-14
 
 ### New Features

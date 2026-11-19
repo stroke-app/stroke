@@ -1,3 +1,5 @@
+import { writable } from 'svelte/store'
+
 /**
  * What the Tree sidebar (beta) remembers: the open nodes, per connection.
  *
@@ -43,3 +45,24 @@ export function saveTreeExpanded(connectionId, ids) {
     localStorage.setItem(KEY, JSON.stringify(all))
   } catch { /* storage full or blocked: the tree just starts closed next time */ }
 }
+
+// ── Which connections the tree lists ─────────────────────────────────────────
+
+
+const SCOPE_KEY = 'stroke:sidebar-tree-connections'
+
+/** @typedef {'all' | 'connected'} TreeConnectionScope */
+
+/** @returns {TreeConnectionScope} */
+function readScope() {
+  try { return localStorage.getItem(SCOPE_KEY) === 'connected' ? 'connected' : 'all' } catch { return 'all' }
+}
+
+/**
+ * Every saved connection as a root of the tree ('all'), or only the open one
+ * with the rest in the Connections list under it ('connected').
+ */
+export const treeConnectionScope = writable(/** @type {TreeConnectionScope} */ (readScope()))
+treeConnectionScope.subscribe((v) => {
+  try { localStorage.setItem(SCOPE_KEY, v) } catch { /* storage blocked */ }
+})

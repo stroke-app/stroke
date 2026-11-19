@@ -13,6 +13,7 @@
    */
   import { onDestroy, onMount, untrack } from 'svelte'
   import { Terminal } from '@xterm/xterm'
+  import { WebglAddon } from '@xterm/addon-webgl'
   import { FitAddon } from '@xterm/addon-fit'
   import { WebLinksAddon } from '@xterm/addon-web-links'
   import { SearchAddon } from '@xterm/addon-search'
@@ -24,6 +25,8 @@
   import Command from '@lucide/svelte/icons/command'
   import X from '@lucide/svelte/icons/x'
   import RotateCw from '@lucide/svelte/icons/rotate-cw'
+  import Plus from '@lucide/svelte/icons/plus'
+  import PanelTop from '@lucide/svelte/icons/panel-top'
   import Eraser from '@lucide/svelte/icons/eraser'
   import Copy from '@lucide/svelte/icons/copy'
   import Check from '@lucide/svelte/icons/check'
@@ -37,20 +40,22 @@
   import SquareFunction from '@lucide/svelte/icons/square-function'
   import ArrowRightLeft from '@lucide/svelte/icons/arrow-right-left'
   import Kbd from './Kbd.svelte'
+  import { comboTitle } from '$lib/shortcuts.js'
   import { Button } from '$lib/components/ui/button/index.js'
   import { appSqlEditor } from '$lib/stores/settings.js'
   import { sqlEditorFontSize } from '$lib/sql-editor-options.js'
   import { IS_MAC } from '$lib/shortcuts.js'
   import { detectOs } from '$lib/platform.js'
   import Icon from './Icon.svelte'
-  import { terminalClient, terminalInstallClient, terminalOpen, terminalClose, executeSqlMulti, dynamoRequest } from '$lib/api.js'
+  import { terminalClient, terminalInstallClient, terminalOpen, terminalClose, executeSqlMulti, dynamoRequest, d1Bookmark, d1Restore } from '$lib/api.js'
   import { createSqlRepl } from '$lib/sql-repl.js'
   import { terminalTheme, terminalIsTranslucent, terminalFont } from '$lib/terminal-theme.js'
   import { createHighlighter } from '$lib/terminal-highlight.js'
   import { suggest, keystrokesFor } from '$lib/terminal-complete.js'
   import { lineEditorFor, clearLineKeys, consoleKeystrokes, consoleInput, consoleClearCommand } from '$lib/terminal-keys.js'
   import { wantsTerminator } from '$lib/sql-terminator.js'
-  import ArrowDownToLine from '@lucide/svelte/icons/arrow-down-to-line'
+  import ArrowDown from '@lucide/svelte/icons/arrow-down'
+  import SquareTerminal from '@lucide/svelte/icons/square-terminal'
 
   let {
     active = false,
@@ -66,6 +71,10 @@
     prewarm = false,
     /** @type {(() => void) | undefined} */
     onclose = undefined,
+    /** Open another terminal tab beside this one. @type {(() => void) | undefined} */
+    onnew = undefined,
+    /** Docked only: move this terminal into a tab of its own. @type {(() => void) | undefined} */
+    onpopout = undefined,
   } = $props()
 
   /** @typedef {'idle' | 'checking' | 'unsupported' | 'missing' | 'failed' | 'starting' | 'running' | 'exited'} Phase */
@@ -74,12 +83,39 @@
   /** The CLI that is missing while the built-in prompt stands in for it. */
   let missingClient = $state(/** @type {{ name: string, hint?: string } | null} */ (null))
   let installing = $state(false)
+  /** The "not installed" bar over the built-in prompt; closing it keeps it closed for this tab. */
+  let noticeDismissed = $state(false)
+  let installHintOpen = $state(false)
+  let installNoticeH = $state(0)
+  const showInstallNotice = $derived(!!missingClient && phase === 'running' && !noticeDismissed)
+  /**
+   * The button's words for an install. On Windows psql and mysql only come with
+   * their servers (winget's PostgreSQL / MariaDB), so the button says what it
+   * actually installs.
+   * @param {{ name: string, hint?: string | null } | null | undefined} c
+   */
+  function installLabel(c) {
+    const hint = c?.hint ?? ''
+    if (/PostgreSQL\.PostgreSQL/.test(hint)) return { text: 'Install PostgreSQL (includes psql)', title: `${hint}: installs the PostgreSQL server and its background service, with psql` }
+    if (/MariaDB\.Server/.test(hint)) return { text: 'Install MariaDB (includes mysql)', title: `${hint}: installs the MariaDB server and its background service, with the mysql client` }
+    return { text: `Install ${c?.name ?? 'it'}`, title: hint }
+  }
+
+  /** One click installs it (Homebrew, winget, the distro's manager); otherwise the hint is advice to read. */
+  const missingInstallable = $derived(/^(brew|winget|sudo|apt|pacman|dnf) /.test(missingClient?.hint ?? ''))
+  // The bar takes room at the top: re-fit so the prompt's rows match the space.
+  $effect(() => {
+    void showInstallNotice
+    void installNoticeH
+    const raf = requestAnimationFrame(() => fit())
+    return () => cancelAnimationFrame(raf)
+  })
   let installError = $state('')
   let client = $state(/** @type {import('$lib/api.js').TerminalClient | null} */ (null))
   /** Engines with no interactive CLI get the app's own SQL prompt instead. */
   const BUILTIN_REPL = new Set(['d1', 'dynamodb'])
   /** Engines whose CLI is not SQL: no SQL prompt to fall back to. */
-  const NON_SQL = new Set(['redis', 'valkey', 'keydb', 'dragonfly', 'mongodb', 'couchdb', 'cassandra', 'firestore'])
+  const NON_SQL = new Set(['redis', 'valkey', 'keydb', 'dragonfly', 'mongodb', 'couchdb', 'elasticsearch', 'opensearch', 'cassandra', 'firestore'])
 
   /** A result set from executeSqlMulti as the prompt's table shape. @param {string} sql */
   async function sqlRows(sql) {
@@ -99,6 +135,10 @@
     if (type === 'mssql') return {
       listTables: () => sqlRows("SELECT s.name + '.' + t.name AS [table] FROM sys.tables t JOIN sys.schemas s ON s.schema_id = t.schema_id ORDER BY 1"),
       describe: (/** @type {string} */ t) => sqlRows(`SELECT column_name, data_type, is_nullable, column_default FROM information_schema.columns WHERE table_name = ${lit(t)} ORDER BY ordinal_position`),
+    }
+    if (type === 'oracle') return {
+      listTables: () => sqlRows('SELECT table_name AS "TABLE" FROM user_tables ORDER BY 1'),
+      describe: (/** @type {string} */ t) => sqlRows(`SELECT column_name, data_type, nullable, data_default FROM user_tab_columns WHERE table_name = ${lit(t)} ORDER BY column_id`),
     }
     if (type === 'sqlite' || type === 'd1' || type === 'libsql') return {}
     // Postgres and its wire-compatible engines.
@@ -126,12 +166,37 @@
       name: dbType === 'dynamodb' ? (connection.name || connection.region || 'dynamodb') : (connection.database || connection.name || dbType),
       historyKey: `stroke:sql-repl:${connectionKey}`,
       ...catalogFor(dbType),
+      commands: dbType === 'd1' ? D1_COMMANDS : {},
     })
     phase = 'running'
     fit()
     if (note) term.write(`\x1b[2m${note}\x1b[0m\r\n`)
     repl.start()
     if (active) term.focus()
+  }
+
+  /**
+   * Cloudflare D1's Time Travel, as its console has it: a bookmark for now or
+   * for a moment in the last 30 days, and restoring the whole database to one.
+   * @type {Record<string, import('$lib/sql-repl.js').ExtraCommand>}
+   */
+  const D1_COMMANDS = {
+    '.bookmark': {
+      usage: '.bookmark [timestamp]',
+      help: "a bookmark for now, or nearest an RFC 3339 time (2026-11-15T10:00:00Z), to restore to later",
+      run: async (arg) => `\x1b[1m${await d1Bookmark(arg || undefined)}\x1b[0m\n\x1b[2mRestore with .restore <bookmark>\x1b[0m`,
+    },
+    '.restore': {
+      usage: '.restore <bookmark>',
+      help: 'rewind the whole database to a bookmark',
+      run: async (arg, ask) => {
+        if (!arg) return '\x1b[2mUsage: .restore <bookmark>. Get one with .bookmark\x1b[0m'
+        const answer = await ask(`\x1b[33mThis rewinds the whole database to ${arg}. Type yes to restore:\x1b[0m `)
+        if (answer.toLowerCase() !== 'yes') return '\x1b[2mNot restored.\x1b[0m'
+        const previous = await d1Restore(arg)
+        return `Restored.${previous ? `\n\x1b[2mTo undo: .restore ${previous}\x1b[0m` : ''}`
+      },
+    },
   }
 
   /** Install the missing CLI, then restart on it. */
@@ -344,7 +409,8 @@
       // install alongside. Engines with no built-in prompt keep the page.
       if (!NON_SQL.has(dbType)) {
         missingClient = { name: info.name, hint: info.hint }
-        startBuiltinPrompt(`${info.name} is not installed, so this is the built-in prompt. Install ${info.name} (corner button) for its own commands.`)
+        // The bar above the prompt says why and offers the install.
+        startBuiltinPrompt()
         return
       }
       phase = 'missing'
@@ -712,7 +778,7 @@
     // gap (4 + 8 + 12 + 8 px) sit to its left.
     const left = s.left - h.left + Math.max(0, buf.cursorX - token.length) * cellW - 32
     const lineTop = s.top - h.top + buf.cursorY * cellH
-    const listHeight = suggestItems.length * 24 + 10
+    const listHeight = Math.min(suggestItems.length, SUGGEST_ROWS) * 24 + (suggestItems.length > SUGGEST_ROWS ? 34 : 10)
     const above = lineTop + cellH + listHeight > h.height && lineTop > h.height / 2
     suggestPos = {
       left: Math.max(4, Math.min(left, h.width - 300)),
@@ -723,6 +789,17 @@
   }
 
   /** @param {number} [i] */
+  /** Rows the suggestion list shows before it scrolls. */
+  const SUGGEST_ROWS = 10
+  /** @type {HTMLElement | null} */
+  let suggestListEl = $state(null)
+  /** Keep the highlighted suggestion in view as the arrows move past the edge. */
+  function revealSuggestion() {
+    requestAnimationFrame(() => {
+      suggestListEl?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' })
+    })
+  }
+
   function acceptSuggestion(i = suggestIndex) {
     const item = suggestItems[i]
     if (!item) return
@@ -741,8 +818,10 @@
   function suggestKey(e) {
     const n = suggestItems.length
     switch (e.key) {
-      case 'ArrowDown': suggestIndex = (suggestIndex + 1) % n; return true
-      case 'ArrowUp': suggestIndex = (suggestIndex - 1 + n) % n; return true
+      case 'ArrowDown': suggestIndex = (suggestIndex + 1) % n; revealSuggestion(); return true
+      case 'ArrowUp': suggestIndex = (suggestIndex - 1 + n) % n; revealSuggestion(); return true
+      case 'PageDown': suggestIndex = Math.min(n - 1, suggestIndex + SUGGEST_ROWS); revealSuggestion(); return true
+      case 'PageUp': suggestIndex = Math.max(0, suggestIndex - SUGGEST_ROWS); revealSuggestion(); return true
       case 'Tab': acceptSuggestion(); return true
       case 'Escape': hideSuggest(); return true
       case 'Enter':
@@ -863,6 +942,53 @@
     try { fitAddon.fit() } catch { /* not laid out yet */ }
   }
 
+  // ── Renderer ───────────────────────────────────────────────────────────────
+  // WebGL while the size holds still, the DOM renderer while it changes.
+  // Only xterm's GPU renderer draws box-drawing characters itself; the DOM one
+  // uses the font's glyphs, which in most fonts stop short of the cell, so
+  // psql's table borders came out as dashed lines with gaps at every joint.
+  // But the WebGL canvas is stretched and blanked by the browser on a resize
+  // before xterm repaints it, which flickered while the dock was dragged. So
+  // a resize drops to the DOM renderer, and WebGL comes back once it settles.
+  /** @type {WebglAddon | null} */
+  let webgl = null
+  let webglTimer = 0
+  /** The GPU context was lost or never came up: stay on the DOM renderer. */
+  let webglBroken = false
+
+  // Linux: the DOM renderer. Stroke turns WebKitGTK's GPU compositing off for
+  // crisp text (WEBKIT_DISABLE_DMABUF_RENDERER, lib.rs), so a WebGL canvas
+  // there is read back and composited in software on every frame: typing, the
+  // cursor blink and every popup over it (the suggestion list) lagged. The DOM
+  // renderer is cheap on that path. The cost is the box-drawing joints noted
+  // above; Windows and macOS keep WebGL.
+  const gpuRenderer = detectOs() !== 'linux'
+
+  function enableGpu() {
+    if (!gpuRenderer) return
+    if (!term || webgl || webglBroken || !termEl || termEl.clientWidth === 0) return
+    try {
+      const addon = new WebglAddon()
+      addon.onContextLoss(() => { webglBroken = true; disableGpu() })
+      term.loadAddon(addon)
+      webgl = addon
+    } catch {
+      webglBroken = true
+    }
+  }
+
+  function disableGpu() {
+    if (!webgl) return
+    try { webgl.dispose() } catch { /* already gone with the context */ }
+    webgl = null
+  }
+
+  /** @param {number} [ms] */
+  function enableGpuSoon(ms = 150) {
+    clearTimeout(webglTimer)
+    webglTimer = window.setTimeout(enableGpu, ms)
+  }
+
   /**
    * Make xterm measure its cells again. It caches the character size from the
    * first measure; if the editor web font was still loading then, it measured
@@ -975,9 +1101,13 @@
    * prefix and cancel), and F and H, whose app versions act on the table tabs.
    */
   const APP_CTRL_KEYS = new Set([
-    'b', 'i', 'k', 'm', 'n', 'p', 's', 't', 'w', ',', '/', '?', '=', '-', '+',
+    // j and ` hide the terminal itself (Ctrl+J, Ctrl+`): kept by the terminal,
+    // the panel couldn't be closed from the keyboard once it had focus.
+    'b', 'i', 'j', 'k', 'm', 'n', 'p', 's', 't', 'w', '`', ',', '/', '?', '=', '-', '+',
     '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'enter', 'tab', 'pageup', 'pagedown',
   ])
+  /** Ctrl+Shift app shortcuts (new terminal, command palette, AI mode, ...). */
+  const APP_CTRL_SHIFT_KEYS = new Set(['`', '~', 'p', 'e', 'n', 't', 'w', 'tab'])
 
   /** Ctrl+A selected the typed line; the next key replaces it. */
   let inputSelected = false
@@ -1044,6 +1174,9 @@
     }
     // The app's shortcuts: hand the key back so it bubbles to them, unsent.
     if (e.type === 'keydown' && !IS_MAC && e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && APP_CTRL_KEYS.has(e.key.toLowerCase())) {
+      return false
+    }
+    if (e.type === 'keydown' && !IS_MAC && e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && APP_CTRL_SHIFT_KEYS.has(e.key.toLowerCase())) {
       return false
     }
     return handleClipboardKey(e)
@@ -1115,6 +1248,11 @@
     // Ctrl+Shift+letter reaches a terminal as plain Ctrl+letter, so no client
     // loses anything by these going to the app (go to page, SQL editor...).
     if (e.shiftKey && /^[a-z]$/.test(key)) return false
+    // Every other Ctrl key is the terminal's (D, X, R, U, Z, G...). Stop it
+    // here: returning true lets xterm send it, but the keydown still bubbled
+    // to the app, where Ctrl is the shortcut modifier on Windows and Linux,
+    // so Ctrl+D also opened "Switch database".
+    e.stopPropagation()
     return true
   }
 
@@ -1146,6 +1284,10 @@
       // table borders join from row to row. Any taller and the DOM renderer
       // leaves a gap in every vertical line.
       lineHeight: 1,
+      // Bold one step up rather than a full 700: a client's bold prompts and
+      // headings read as emphasis, not as a different, heavier face.
+      fontWeight: 'normal',
+      fontWeightBold: '600',
       // A blinking block: what Terminal.app, iTerm and every shell default to.
       cursorBlink: true,
       cursorStyle: 'block',
@@ -1169,11 +1311,8 @@
       findTotal = resultCount
     })
     term.open(termEl)
-    // DOM renderer everywhere. The WebGL canvas was stretched and blanked by the
-    // browser on every size change before xterm repainted it: while the dock was
-    // dragged that read as flicker, overlapping lines and blank bands. The DOM
-    // renderer reflows with the layout in the same frame, and a database shell
-    // never prints fast enough to need the GPU path.
+    // Renderer: see enableGpu. The resize observer below starts WebGL once the
+    // terminal has a size.
     term.attachCustomKeyEventHandler(handleKey)
     // psql's prompt marks (OSC 133, set in db/terminal.rs): A starts a prompt,
     // `A;k=s` a continuation one, B is where typing starts. Not on Windows:
@@ -1228,16 +1367,28 @@
       cancelAnimationFrame(fitFrame)
       clearTimeout(fitTimer)
       if (document.documentElement.hasAttribute('data-resizing')) {
+        // A drag keeps the WebGL renderer: switching to the DOM one while the
+        // edge moved drew the same font heavier and wider, so the text changed
+        // weight under the pointer and changed back when it was let go.
         const since = performance.now() - lastFitAt
         if (since > 50) { lastFitAt = performance.now(); fitFrame = requestAnimationFrame(fit) }
         fitTimer = setTimeout(() => { lastFitAt = performance.now(); fitFrame = requestAnimationFrame(fit) }, 50)
         return
       }
-      fitFrame = requestAnimationFrame(fit)
+      fitFrame = requestAnimationFrame(() => { fit(); if (!webgl) enableGpuSoon(0) })
     })
     resizeObserver.observe(termEl)
     // Theme, font preset and zoom all land as attributes on <html>.
-    themeObserver = new MutationObserver(() => applyAppearance())
+    // Applied right in the observer's callback, before the frame paints: it
+    // used to wait for the next animation frame, and xterm then waited one
+    // more to redraw, so for a frame or two the terminal kept the old theme's
+    // colours (a black block in a light app, a white one in a dark app).
+    // Several attributes set together still arrive as one callback.
+    themeObserver = new MutationObserver(() => {
+      applyAppearance()
+      // xterm repaints on its own next frame; ask for every row in that same frame.
+      if (term) term.refresh(0, term.rows - 1)
+    })
     themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class', 'style'] })
     // The editor font is a web font: measure the cells again once it is in.
     void remeasure()
@@ -1264,7 +1415,14 @@
   $effect(() => {
     if (!active) return
     untrack(() => requestAnimationFrame(() => {
-      fit()
+      // Colours and font again, not only the size: a terminal started in the
+      // background (prewarm) read them before it was laid out, fell back to
+      // black, and stayed black on a light theme until the theme changed.
+      applyAppearance()
+      // A hidden WebGL canvas can come back blank (the browser drops its
+      // drawing buffer while it is display:none), and xterm only repaints
+      // rows that change: draw every row again so it never shows empty.
+      if (term) { fit(); term.refresh(0, term.rows - 1) }
       if (phase === 'running' || phase === 'exited') term?.focus()
     }))
   })
@@ -1279,7 +1437,9 @@
     generation++
     cancelAnimationFrame(fitFrame)
     cancelAnimationFrame(suggestFrame)
+    clearTimeout(webglTimer)
     resizeObserver?.disconnect()
+    disableGpu()
     themeObserver?.disconnect()
     void endSession()
     term?.dispose()
@@ -1307,35 +1467,31 @@
 </script>
 
 <div class="group/term relative flex min-h-0 flex-1 flex-col overflow-hidden bg-panel">
-  {#if docked}
-    <!-- Docked under a page (⌘J): no bar at all. The output starts at the top
-         left like a real terminal; the four actions float in the corner. -->
-    <div class="absolute top-1 right-2 z-20 flex items-center gap-0.5 rounded-full bg-panel/95 p-0.5 shadow-sm opacity-0 transition-opacity duration-150 group-hover/term:opacity-100 focus-within:opacity-100">
-      <button type="button" class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40" title="Clear" aria-label="Clear scrollback" disabled={phase !== 'running' && phase !== 'exited'} onclick={() => { term?.clear(); term?.focus() }}><Eraser class="size-3.5 shrink-0" /></button>
-      <button type="button" class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40" title="Restart {client?.name || 'the client'}" aria-label="Restart" disabled={!connection || phase === 'checking' || phase === 'starting'} onclick={() => void start()}><RotateCw class="size-3.5 shrink-0" /></button>
-      {#if onclose}
-        <button type="button" class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" title="Hide (⌘J)" aria-label="Hide the terminal" onclick={onclose}><X class="size-3.5 shrink-0" /></button>
-      {/if}
-    </div>
-  {:else}
   <!-- One slim strip, like a terminal window's title bar: which client
        against what, a status dot, and the few actions. It was a 36px header
        with a "Running" label and a 32px command bar under the screen, so a
-       third of a short pane was chrome before any output. -->
-  <div class="studio-chrome flex h-7 shrink-0 items-center gap-2 border-b border-border/50 bg-panel ps-2.5 pe-1">
-    <span
-      class={['size-1.5 shrink-0 rounded-full', statusDot]}
-      title={statusLabel || undefined}
-      aria-label={statusLabel || undefined}
-      role={statusLabel ? 'status' : undefined}
-    ></span>
-    <span class="shrink-0 font-mono text-ui-2xs font-medium text-foreground">{client?.name || 'Terminal'}</span>
+       third of a short pane was chrome before any output. The docked
+       terminal (⌘J) has the same strip: its actions used to float over the
+       output, on top of the install notice's button. -->
+  <div class="studio-chrome flex h-8 shrink-0 items-center gap-2 border-b border-border/40 bg-panel ps-2 pe-1">
+    <!-- Client: a glyph with the status dot on its corner, the name, the version. -->
+    <span class="relative flex size-5 shrink-0 items-center justify-center rounded-md bg-muted/70 text-muted-foreground">
+      <SquareTerminal class="size-3 shrink-0" />
+      <span
+        class={['absolute -right-0.5 -bottom-0.5 size-2 rounded-full ring-2 ring-panel', statusDot]}
+        title={statusLabel || undefined}
+        aria-label={statusLabel || undefined}
+        role={statusLabel ? 'status' : undefined}
+      ></span>
+    </span>
+    <span class="shrink-0 text-ui-xs font-medium text-foreground">{client?.name || 'Terminal'}</span>
     {#if shortVersion}
-      <span class="shrink-0 font-mono text-ui-3xs text-muted-foreground tabular-nums" title={client?.version ?? ''}>{shortVersion}</span>
+      <span class="shrink-0 rounded bg-muted/60 px-1 font-mono text-ui-3xs leading-4 text-muted-foreground tabular-nums" title={client?.version ?? ''}>{shortVersion}</span>
     {/if}
     {#if target}
+      <span class="h-3.5 w-px shrink-0 bg-border/70" aria-hidden="true"></span>
       <span class="min-w-0 truncate font-mono text-ui-2xs" title={target}>
-        <span class="text-muted-foreground/70">{targetParts.lead}</span><span class="text-muted-foreground">{targetParts.db}</span>
+        <span class="text-muted-foreground/60">{targetParts.lead}</span><span class="text-muted-foreground">{targetParts.db}</span>
       </span>
     {/if}
     <div class="flex-1"></div>
@@ -1353,7 +1509,7 @@
       {#if quickCommands.length}
         <button
           type="button"
-          class={['inline-flex size-6 items-center justify-center rounded-md transition-colors hover:bg-accent hover:text-foreground', showQuickBar ? 'text-foreground' : 'text-muted-foreground']}
+          class={['inline-flex size-7 items-center justify-center rounded-md transition-colors hover:bg-accent hover:text-foreground', showQuickBar ? 'text-foreground' : 'text-muted-foreground']}
           title={showQuickBar ? 'Hide common commands' : 'Show common commands'}
           aria-label="Common commands"
           aria-pressed={showQuickBar}
@@ -1364,7 +1520,7 @@
       {/if}
       <button
         type="button"
-        class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+        class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
         title="Clear scrollback"
         aria-label="Clear scrollback"
         disabled={phase !== 'running' && phase !== 'exited'}
@@ -1374,7 +1530,7 @@
       </button>
       <button
         type="button"
-        class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+        class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
         title="Restart {client?.name || 'the client'}"
         aria-label="Restart {client?.name || 'the client'}"
         disabled={!connection || phase === 'checking' || phase === 'starting'}
@@ -1382,11 +1538,34 @@
       >
         <RotateCw class="size-3.5 shrink-0" />
       </button>
-      {#if onclose}
+      {#if onnew}
         <button
           type="button"
-          class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          title="Hide (⌘`)"
+          class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          title="New terminal (Ctrl+Shift+`)"
+          aria-label="New terminal"
+          onclick={onnew}
+        >
+          <Plus class="size-3.5 shrink-0" />
+        </button>
+      {/if}
+      {#if onpopout}
+        <button
+          type="button"
+          class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          title="Move to a tab"
+          aria-label="Move the terminal to a tab"
+          onclick={onpopout}
+        >
+          <PanelTop class="size-3.5 shrink-0" />
+        </button>
+      {/if}
+      {#if onclose}
+        <span class="mx-0.5 h-4 w-px shrink-0 bg-border/70" aria-hidden="true"></span>
+        <button
+          type="button"
+          class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          title="Hide ({comboTitle(docked ? 'Mod+J' : 'Mod+`')})"
           aria-label="Hide {client?.name || 'terminal'}"
           onclick={onclose}
         >
@@ -1395,7 +1574,6 @@
       {/if}
     </div>
   </div>
-  {/if}
 
   <div bind:this={bodyEl} class="relative min-h-0 flex-1">
     <!-- The padding lives on this wrapper: FitAddon sizes the grid from the
@@ -1436,7 +1614,46 @@
         <button type="button" class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" title="Close (Esc)" aria-label="Close find" onclick={closeFind}><X class="size-3.5 shrink-0" /></button>
       </div>
     {/if}
-    <div class="absolute inset-0 pt-2 pr-1 pb-1 pl-3">
+    {#if showInstallNotice && missingClient}
+      <!-- Says what is going on and offers the one next step, above the prompt
+           instead of floating over its output. -->
+      <div class="absolute inset-x-0 top-0 z-10 flex min-h-9 flex-col justify-center border-b border-border/50 bg-muted/30 px-3 py-1.5" role="status" bind:clientHeight={installNoticeH}>
+        <div class="flex items-center gap-3">
+          <Icon name="info" class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+          <p class="min-w-0 flex-1 truncate text-ui-xs text-muted-foreground">
+            <span class="font-mono text-foreground">{missingClient.name}</span> isn't installed, so this is Stroke's built-in prompt.
+          </p>
+          {#if missingInstallable}
+            {@const label = installLabel(missingClient)}
+            <Button size="sm" class="h-7 shrink-0 gap-1.5" disabled={installing} title={label.title} onclick={() => void installClient()}>
+              {#if installing}
+                <Icon name="loader-2" class="size-3.5 shrink-0 animate-spin" />Installing…
+              {:else}
+                <Icon name="download" class="size-3.5 shrink-0" />{label.text}
+              {/if}
+            </Button>
+          {:else if missingClient.hint}
+            <Button variant="ghost" size="sm" class="h-7 shrink-0" aria-expanded={installHintOpen} onclick={() => (installHintOpen = !installHintOpen)}>
+              How to install
+            </Button>
+          {/if}
+          <button
+            type="button"
+            class="-me-1 inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            aria-label="Dismiss"
+            title="Dismiss"
+            onclick={() => (noticeDismissed = true)}
+          ><X class="size-3.5 shrink-0" /></button>
+        </div>
+        {#if installHintOpen && !missingInstallable && missingClient.hint}
+          <p class="mt-1 ps-6.5 pe-8 text-ui-xs leading-relaxed text-pretty text-muted-foreground select-text">{missingClient.hint}</p>
+        {/if}
+        {#if installError}
+          <p class="mt-1 ps-6.5 pe-8 font-mono text-ui-2xs whitespace-pre-wrap text-destructive select-text">{installError}</p>
+        {/if}
+      </div>
+    {/if}
+    <div class="absolute inset-x-0 bottom-0 pt-2 pr-1 pb-1 pl-3" style:top={showInstallNotice ? `${installNoticeH}px` : '0'}>
       <div
         bind:this={termEl}
         class="size-full"
@@ -1446,8 +1663,13 @@
 
     {#if suggestItems.length}
       <div
-        class="absolute z-20 w-max max-w-[min(26rem,calc(100%-1rem))] min-w-44 overflow-hidden rounded-lg border border-border/60 bg-popover p-1 elevate-2-rim"
+        class="absolute z-20 flex w-max max-w-[min(26rem,calc(100%-1rem))] min-w-44 flex-col overflow-hidden rounded-lg border border-border/60 bg-popover elevate-2-rim"
         style="left: {suggestPos.left}px; {suggestPos.above ? `bottom: ${suggestPos.bottom}px` : `top: ${suggestPos.top}px`}; font-family: var(--editor-font-family, var(--font-mono));"
+      >
+      <div
+        bind:this={suggestListEl}
+        class="app-scroll overflow-y-auto overscroll-contain p-1"
+        style="max-height: {SUGGEST_ROWS * 24 + 8}px"
         role="listbox"
         aria-label="Suggestions"
       >
@@ -1470,39 +1692,27 @@
           </div>
         {/each}
       </div>
+      {#if suggestItems.length > SUGGEST_ROWS}
+        <div class="flex h-6 shrink-0 items-center justify-between gap-3 border-t border-border/50 px-2.5 font-sans text-ui-3xs text-muted-foreground">
+          <span class="tabular-nums">{suggestIndex + 1} of {suggestItems.length}</span>
+          <span>↑↓ PgUp PgDn</span>
+        </div>
+      {/if}
+      </div>
     {/if}
 
     {#if scrolledUp && (phase === 'running' || phase === 'exited')}
       <button
         type="button"
-        class="absolute right-4 bottom-3 z-10 flex h-7 items-center gap-1.5 rounded-full border border-border/60 bg-popover px-3 text-ui-2xs text-muted-foreground elevate-2-rim transition-colors hover:text-foreground"
+        class="absolute right-3 bottom-2.5 z-10 flex h-6 items-center gap-1 rounded-md bg-muted px-2 text-ui-2xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        title="Scroll to the end"
         onclick={scrollToLatest}
       >
-        <ArrowDownToLine class="size-3.5 shrink-0" />
-        Jump to latest
+        <ArrowDown class="size-3 shrink-0" />
+        Latest
       </button>
     {/if}
 
-    {#if missingClient && phase === 'running'}
-      <div class="absolute right-3 bottom-3 z-10 flex max-w-sm flex-col items-end gap-1.5">
-        {#if installError}
-          <p class="rounded-md border border-destructive/30 bg-popover px-2.5 py-1.5 text-left font-mono text-ui-2xs whitespace-pre-wrap text-destructive elevate-2-rim">{installError}</p>
-        {/if}
-        <button
-          type="button"
-          disabled={installing}
-          class="inline-flex h-7 items-center gap-1.5 rounded-md border border-border/60 bg-popover px-2.5 text-ui-xs text-foreground elevate-2-rim transition-colors hover:bg-accent disabled:opacity-60"
-          title={missingClient.hint ?? ''}
-          onclick={() => void installClient()}
-        >
-          {#if installing}
-            <Icon name="loader-2" class="size-3.5 shrink-0 animate-spin" /> Installing {missingClient.name}…
-          {:else}
-            <Icon name="download" class="size-3.5 shrink-0" /> Install {missingClient.name}
-          {/if}
-        </button>
-      </div>
-    {/if}
 
     {#if phase === 'unsupported' || phase === 'missing' || phase === 'failed'}
       <div class="absolute inset-0 flex items-center justify-center bg-panel p-6">
@@ -1536,8 +1746,8 @@
                 {/if}
               </div>
             {/if}
-            <Button size="sm" disabled={installing} onclick={() => void installClient()}>
-              {installing ? `Installing ${client?.name ?? ''}…` : `Install ${client?.name ?? 'it'}`}
+            <Button size="sm" disabled={installing} title={installLabel(client).title} onclick={() => void installClient()}>
+              {installing ? `Installing ${client?.name ?? ''}…` : installLabel(client).text}
             </Button>
             {#if installError}<p class="w-full whitespace-pre-wrap text-left font-mono text-ui-2xs text-destructive">{installError}</p>{/if}
             <Button variant="outline" size="sm" onclick={() => void start()}>

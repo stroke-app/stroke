@@ -1,7 +1,7 @@
 {
   "name": "stroke",
   "private": true,
-  "version": "2.5.5",
+  "version": "3.0.0",
   "description": "Fast, minimal desktop database client for PostgreSQL, MySQL, SQLite, D1, and more",
   "license": "SEE LICENSE IN LICENSE",
   "homepage": "https://stroke.click",
@@ -17,7 +17,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "vitest run",
+    "test": "vitest run && vitest run -c vitest.dom.config.js",
     "test:watch": "vitest",
     "check": "svelte-check --threshold error",
     "check:all": "svelte-check",
@@ -34,7 +34,8 @@
     "fixtures:reset": "bash scripts/fixtures.sh reset",
     "fixtures:down": "bash scripts/fixtures.sh down",
     "lint:design": "node scripts/lint-design.mjs",
-    "perf": "node scripts/perf-report.mjs"
+    "perf": "node scripts/perf-report.mjs",
+    "test:dom": "vitest run -c vitest.dom.config.js"
   },
   "devDependencies": {
     "@emnapi/core": "^1.10.0",
@@ -45,6 +46,7 @@
     "@tauri-apps/api": "^2.12.4",
     "@tauri-apps/cli": "^2.11.2",
     "cross-env": "^10.1.0",
+    "jsdom": "^25.0.1",
     "mode-watcher": "^1.1.0",
     "svelte": "5.55.9",
     "svelte-check": "^4.7.6",
@@ -96,7 +98,8 @@
     "canvas-confetti": "^1.9.4",
     "chart.js": "^4.5.1",
     "clsx": "^2.1.1",
-    "echarts": "^5.6.0",
+    "croner": "^9.1.0",
+    "echarts": "^6.1.0",
     "echarts-wordcloud": "^2.1.0",
     "elkjs": "^0.11.1",
     "idb": "^8.0.3",
@@ -114,6 +117,9 @@
   },
   "overrides": {
     "dompurify": "^3.4.13",
-    "katex": "^0.18.2"
+    "katex": "^0.18.2",
+    "echarts-wordcloud": {
+      "echarts": "$echarts"
+    }
   }
 }

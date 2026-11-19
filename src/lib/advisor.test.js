@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, test } from 'vitest'
 import {
   countByCategory,
   countBySeverity,
@@ -7,6 +7,9 @@ import {
   groupByCheck,
   reportSummary,
   severityRank,
+  healthScore,
+  combinedFix,
+  ignoreKey,
 } from './advisor.js'
 
 /** @param {Partial<any>} f */
@@ -146,5 +149,29 @@ describe('reportSummary', () => {
       unsupported: false,
     })
     expect(s).toBe('1 error · 2 warnings')
+  })
+})
+
+describe('healthScore', () => {
+  const f = (checkId, severity) => ({ checkId, severity, entity: checkId })
+  test('a clean report is 100 and healthy', () => {
+    expect(healthScore([])).toEqual({ score: 100, label: 'Healthy', tone: 'good' })
+  })
+  test('one check is capped, so a widespread pattern is one problem', () => {
+    const many = Array.from({ length: 40 }, () => f('rls_disabled', 'warning'))
+    expect(healthScore(many).score).toBe(75)
+  })
+  test('errors weigh more than warnings and info barely moves it', () => {
+    expect(healthScore([f('a', 'error')]).score).toBe(88)
+    expect(healthScore([f('a', 'warning')]).score).toBe(96)
+    expect(healthScore([f('a', 'info')]).score).toBe(99)
+    expect(healthScore([f('a', 'error'), f('b', 'error'), f('c', 'error'), f('d', 'error')]).tone).toBe('poor')
+  })
+})
+
+describe('combinedFix and ignoreKey', () => {
+  test('joins fixes under their entity and skips findings without one', () => {
+    expect(combinedFix([{ entity: 'a', remediation: 'X;' }, { entity: 'b', remediation: null }, { entity: 'c', remediation: 'Y;' }])).toBe('-- a\nX;\n\n-- c\nY;')
+    expect(ignoreKey({ checkId: 'k', entity: 'public.t' })).toBe('k|public.t')
   })
 })

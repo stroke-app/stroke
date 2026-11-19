@@ -4,6 +4,7 @@
   import EChartPanel from './EChartPanel.svelte'
   import SearchableMenu from './SearchableMenu.svelte'
   import { Button } from '$lib/components/ui/button/index.js'
+  import SelectMenu from './SelectMenu.svelte'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
   import { readOnlyMode, READ_ONLY_HINT } from '$lib/stores/read-only.js'
   import { appThemeId } from '$lib/stores/settings.js'
@@ -1002,115 +1003,93 @@
                       </button>
 
                       {#if open}
-                        <div id={panelId} class="pb-3 pl-10 pr-3 pt-1">
-                          <div class="flex max-w-3xl flex-wrap items-end gap-2">
-                            <div class="min-w-[13rem] flex-1">
-                              <div class="mb-1 flex items-baseline justify-between gap-2">
-                                <label
-                                  id={labelId}
-                                  for={row.vartype === 'bool' ? undefined : fieldId}
-                                  class="text-ui-2xs font-medium text-muted-foreground"
-                                >New value</label>
-                                <span class="truncate font-mono text-ui-3xs text-muted-foreground">
-                                  current: {shownValue(row)}{row.unit ? ` ${row.unit}` : ''}
-                                </span>
+                        <div id={panelId} class="pb-3 pl-10 pr-3 pt-0.5">
+                          <!-- One line: the value (unit inside the field), Apply, Reset.
+                               The current value is already on the right of the row. -->
+                          <div class="flex max-w-2xl items-center gap-1.5">
+                            <span id={labelId} class="sr-only">New value for {row.name}</span>
+                            {#if row.vartype === 'bool'}
+                              <div role="radiogroup" aria-labelledby={labelId} class="flex h-8 items-center rounded-md bg-muted/60 p-0.5">
+                                {#each ['on', 'off'] as v (v)}
+                                  <button
+                                    type="button"
+                                    role="radio"
+                                    disabled={!editable}
+                                    aria-checked={draft === v}
+                                    onclick={() => (draft = v)}
+                                    class={cn('h-7 rounded-sm px-3.5 font-mono text-ui-xs transition-colors disabled:opacity-40', draft === v ? 'bg-background text-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground')}
+                                  >{v}</button>
+                                {/each}
                               </div>
-                              {#if row.vartype === 'bool'}
-                              <div role="group" aria-labelledby={labelId} class="inline-flex h-8 items-center gap-1">
-                                  {#each ['on', 'off'] as v (v)}
-                                    <button
-                                      type="button"
-                                      disabled={!editable}
-                                      aria-pressed={draft === v}
-                                      onclick={() => (draft = v)}
-                                      class={cn('h-full rounded-md px-4 font-mono text-ui-xs transition-colors disabled:opacity-40', draft === v ? 'bg-foreground text-background' : 'bg-background/60 text-muted-foreground hover:text-foreground')}
-                                    >{v}</button>
-                                  {/each}
-                                </div>
-                              {:else if row.vartype === 'enum' && row.enumVals?.length}
-                                <select
-                                  id={fieldId}
-                                  bind:value={draft}
-                                  disabled={!editable}
-                                  class="h-8 w-full rounded-lg border-0 bg-background/70 px-2.5 font-mono text-ui-xs text-foreground shadow-none outline-none focus:ring-0 disabled:opacity-40"
-                                >
-                                  {#each row.enumVals as v (v)}<option value={v}>{v}</option>{/each}
-                                </select>
-                              {:else}
-                                <!-- Deliberately `type="text"`, never `type="number"`.
-                                     Svelte coerces `bind:value` on a number input to a
-                                     JS number, and `instance_set_config` takes an
-                                     Option<String> - so every integer and real setting
-                                     failed at the IPC boundary with "invalid type:
-                                     floating point `0.2`, expected a string", which is
-                                     most of the 364. `inputmode` still brings up the
-                                     numeric keypad, and the spinner was wrong here
-                                     anyway: half of pg's "integer" settings are written
-                                     with a unit (`8MB`, `1min`), which a number input
-                                     will not accept at all. -->
+                            {:else if row.vartype === 'enum' && row.enumVals?.length}
+                              <SelectMenu
+                                ariaLabel="New value for {row.name}"
+                                value={draft}
+                                disabled={!editable}
+                                onValueChange={(v) => (draft = String(v))}
+                                items={row.enumVals.map((v) => ({ value: v, label: v, hint: v === row.bootVal ? 'default' : undefined }))}
+                                triggerClass="h-8 w-64 font-mono"
+                              />
+                            {:else}
+                              <!-- Deliberately `type="text"`: Svelte turns a number input's
+                                   value into a JS number and the command takes a string, and
+                                   half of pg's integer settings carry a unit (`8MB`, `1min`). -->
+                              <label class={cn('field-surface flex h-8 w-64 items-center gap-1.5 px-2.5', !editable && 'opacity-50')}>
                                 <input
                                   id={fieldId}
                                   bind:value={draft}
                                   disabled={!editable}
                                   type="text"
+                                  aria-labelledby={labelId}
                                   inputmode={row.vartype === 'integer' ? 'numeric' : row.vartype === 'real' ? 'decimal' : 'text'}
                                   placeholder={row.bootVal || 'value'}
                                   onkeydown={(e) => {
                                     if (e.key === 'Enter' && editable && draft !== row.value) { e.preventDefault(); void applySetting(row) }
                                     else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); openSetting = '' }
                                   }}
-                                  class="h-8 w-full rounded-lg border-0 bg-background/70 px-3 font-mono text-ui-xs tabular-nums text-foreground shadow-none outline-none transition-colors placeholder:text-muted-foreground focus:bg-background focus:ring-0 disabled:opacity-40"
+                                  class="no-field-frame min-w-0 flex-1 bg-transparent font-mono text-ui-xs tabular-nums text-foreground outline-none placeholder:text-muted-foreground"
                                 />
-                              {/if}
-                            </div>
-
-                            <div class="flex items-center gap-1.5">
-                              <Button
-                                class="rounded-md"
-                                disabled={!editable || savingSetting === row.name || draft === row.value}
-                                title={$readOnlyMode ? READ_ONLY_HINT : undefined}
-                                onclick={() => void applySetting(row)}
-                              >
-                                {savingSetting === row.name ? 'Applying…' : 'Apply'}
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                class="rounded-md text-muted-foreground hover:text-foreground"
-                                disabled={!editable || savingSetting === row.name || !canReset}
-                                title={!modified && row.pendingRestart
-                                  ? 'Drop the queued change - the server keeps running the value it has now'
-                                  : modified
-                                    ? `Reset to the server default${row.bootVal ? ` (${row.bootVal})` : ''}`
-                                    : 'Already at the server default'}
-                                onclick={() => void applySetting(row, true)}
-                              >
-                                <RotateCcw /> {resetLabel}
-                              </Button>
-                            </div>
+                                {#if row.unit}<span class="shrink-0 font-mono text-ui-2xs text-muted-foreground">{row.unit}</span>{/if}
+                              </label>
+                            {/if}
+                            <Button
+                              size="sm"
+                              disabled={!editable || savingSetting === row.name || draft === row.value}
+                              title={$readOnlyMode ? READ_ONLY_HINT : undefined}
+                              onclick={() => void applySetting(row)}
+                            >
+                              {savingSetting === row.name ? 'Applying…' : 'Apply'}
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              class="gap-1.5 text-muted-foreground hover:text-foreground"
+                              disabled={!editable || savingSetting === row.name || !canReset}
+                              title={!modified && row.pendingRestart
+                                ? 'Drop the queued change - the server keeps running the value it has now'
+                                : modified
+                                  ? `Reset to the server default${row.bootVal ? ` (${row.bootVal})` : ''}`
+                                  : 'Already at the server default'}
+                              onclick={() => void applySetting(row, true)}
+                            >
+                              <RotateCcw class="size-3.5 shrink-0" />{resetLabel}
+                            </Button>
                           </div>
 
-                          <!-- Everything the server knows about this setting, as a
-                               readable grid rather than one run-on mono line. -->
-                          <!-- Same column as the field above it: on a wide window
-                               these six pairs were strung across 1,900px, so the
-                               value sat half a screen from its own label. -->
-                          <dl class="mt-3 grid max-w-3xl grid-cols-1 gap-x-6 gap-y-1.5 sm:grid-cols-2">
-                            {#each [['Category', row.category], ['Type', row.vartype], ['Unit', row.unit], ['Default', row.bootVal], ['Range', (row.minVal || row.maxVal) ? `${row.minVal || '−∞'} … ${row.maxVal || '∞'}` : ''], ['Source', row.source]] as [k, v] (k)}
-                              {#if v}
-                                <div class="flex min-w-0 items-baseline gap-2">
-                                  <dt class="w-[4.5rem] shrink-0 text-ui-2xs text-muted-foreground">{k}</dt>
-                                  <dd class="min-w-0 flex-1 truncate font-mono text-ui-2xs text-foreground/85" title={String(v)}>{v}</dd>
-                                </div>
-                              {/if}
+                          <!-- The facts as one quiet line, not a grid of label columns. -->
+                          <p class="mt-2.5 flex max-w-2xl flex-wrap items-center gap-x-1.5 gap-y-0.5 text-ui-2xs text-muted-foreground">
+                            {#each [['', row.category], ['', row.vartype], ['default', row.bootVal ? `${row.bootVal}${row.unit ? ` ${row.unit}` : ''}` : ''], ['range', (row.minVal || row.maxVal) ? `${row.minVal || '−∞'} to ${row.maxVal || '∞'}` : ''], ['from', row.source]].filter(([, v]) => v) as [k, v], idx (idx)}
+                              {#if idx}<span aria-hidden="true" class="text-muted-foreground/50">·</span>{/if}
+                              <span>{#if k}{k} {/if}<span class="font-mono text-foreground/80">{v}</span></span>
                             {/each}
-                          </dl>
+                          </p>
 
                           <!-- Notes read as notes: one line of text at the size of
                                the metadata above it. They were full-width tinted
                                bands, which gave a sentence of context the weight of
                                an alert and stacked a fourth surface into the row. -->
                           {#if configWritesBlocked}
-                            <p class="mt-3 flex max-w-3xl items-start gap-1.5 text-ui-2xs text-muted-foreground">
+                            <p class="mt-1.5 flex max-w-3xl items-start gap-1.5 text-ui-2xs text-muted-foreground">
                               <Lock class="mt-px size-3 shrink-0" />
                               <span>
                                 This server refuses <span class="font-mono">ALTER SYSTEM</span>, which is how managed
@@ -1119,18 +1098,18 @@
                               </span>
                             </p>
                           {:else if row.editable === false}
-                            <p class="mt-3 max-w-3xl text-ui-2xs text-muted-foreground">
+                            <p class="mt-1.5 max-w-3xl text-ui-2xs text-muted-foreground">
                               Compiled into the server - it can only change by rebuilding or re-initialising the cluster.
                             </p>
                           {:else if $readOnlyMode}
-                            <p class="mt-3 max-w-3xl text-ui-2xs text-muted-foreground">{READ_ONLY_HINT}</p>
+                            <p class="mt-1.5 max-w-3xl text-ui-2xs text-muted-foreground">{READ_ONLY_HINT}</p>
                           {:else if row.requiresRestart}
-                            <p class="mt-3 flex max-w-3xl items-start gap-1.5 text-ui-2xs text-warning">
+                            <p class="mt-1.5 flex max-w-3xl items-start gap-1.5 text-ui-2xs text-warning">
                               <PowerOff class="mt-px size-3 shrink-0" />
                               <span>Applying writes the value now, but the server has to restart before it takes effect.</span>
                             </p>
                           {:else if isPg}
-                            <p class="mt-3 max-w-3xl text-ui-2xs text-muted-foreground">
+                            <p class="mt-1.5 max-w-3xl text-ui-2xs text-muted-foreground">
                               Written with <span class="font-mono">ALTER SYSTEM</span> and reloaded - persists across restarts. Needs a superuser role.{row.context && CONTEXT_HELP[row.context] ? ` ${CONTEXT_HELP[row.context]}.` : ''}
                             </p>
                           {/if}

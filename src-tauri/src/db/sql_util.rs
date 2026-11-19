@@ -118,6 +118,8 @@ pub enum RawFilterDialect {
     Mysql,
     Sqlite,
     Duckdb,
+    /// Oracle: `:name` / `:1` are its bind placeholders.
+    Oracle,
     /// Engines whose filters are inlined literals with no bind placeholders
     /// (SQL Server, ClickHouse, HogQL).
     Literal,
@@ -195,7 +197,7 @@ fn scan_raw_where(expr: &str, dialect: RawFilterDialect, backslash_escapes: bool
             '$' | '@' if dialect == Sqlite => {
                 return Err(format!("'{c}' starts a query parameter here; write the value itself"))
             }
-            ':' if dialect == Sqlite && next.is_some_and(|n| n.is_ascii_alphanumeric() || n == '_') => {
+            ':' if matches!(dialect, Sqlite | Oracle) && next.is_some_and(|n| n.is_ascii_alphanumeric() || n == '_') => {
                 return Err("':name' is a query parameter here; write the value itself".into())
             }
             _ => {}

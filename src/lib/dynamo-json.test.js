@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   unmarshall, unmarshallItem, marshall, marshallItem, cellText, columnsFor, keyShapes,
-  keyId, queryBody, scanBody, saveRequest, newItemTemplate, plainNumber, dynamoGrid,
+  keyId, queryBody, scanBody, saveRequest, newItemTemplate, plainNumber, dynamoGrid, formatApiCall,
 } from './dynamo-json.js'
 
 const item = {
@@ -133,5 +133,18 @@ describe('dynamoGrid', () => {
     expect(cols).toMatchObject({ pk: 'string', age: 'mixed', tags: 'string set', prefs: 'map', hist: 'list', blob: 'binary' })
     expect(g.rows[0][g.columns.findIndex((c) => c.name === 'tags')]).toEqual(['beta', 'admin'])
     expect(g.rows[1][g.columns.findIndex((c) => c.name === 'tags')]).toBe(null)
+  })
+})
+
+describe('formatApiCall', () => {
+  it('lays an API call out over several lines', () => {
+    const one = '{"operation": "CreateTable", "input": {"TableName": "shop"}}'
+    expect(formatApiCall(one)).toBe('{\n  "operation": "CreateTable",\n  "input": {\n    "TableName": "shop"\n  }\n}')
+    expect(formatApiCall('DescribeTable {"TableName":"shop"};')).toBe('DescribeTable {\n  "TableName": "shop"\n}')
+  })
+  it('leaves PartiQL and broken JSON alone', () => {
+    expect(formatApiCall('SELECT * FROM "shop"')).toBe('SELECT * FROM "shop"')
+    expect(formatApiCall('{"operation": ')).toBe('{"operation": ')
+    expect(formatApiCall('{"a": 1}')).toBe('{"a": 1}')
   })
 })

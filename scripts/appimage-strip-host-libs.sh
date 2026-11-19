@@ -14,6 +14,10 @@
 # Tested on Arch, Fedora 41/45, Debian 12/13 and Ubuntu 22.04/24.04.
 # Issue: https://github.com/stroke-app/stroke/issues/112
 #
+# It also stops linuxdeploy's GTK hook from hard-setting GDK_BACKEND=x11, so
+# Stroke can choose: native Wayland, with an automatic X11 fallback when a
+# Wayland launch never draws (display_backend.rs).
+#
 # The image is repacked with its own runtime and the same squashfs settings,
 # so nothing else about the AppImage changes. Needs squashfs-tools.
 
@@ -44,18 +48,34 @@ find_excluded() {
   find "$root" \( -type f -o -type l \) \( "${args[@]}" \) "$@"
 }
 
+changed=0
 removed="$(find_excluded -print | sed "s|^$root/||" | sort)"
-if [ -z "$removed" ]; then
-  echo "appimage: no host-only libraries bundled, nothing to do"
-  exit 0
+if [ -n "$removed" ]; then
+  find_excluded -delete
+  echo "appimage: removed"
+  printf '  %s\n' $removed
+  changed=1
 fi
-find_excluded -delete
-echo "appimage: removed"
-printf '  %s\n' $removed
 
 if [ -n "$(find_excluded -print)" ]; then
   echo "appimage: host-only libraries still present" >&2
   exit 1
+fi
+
+# X11 by default, native Wayland with STROKE_WAYLAND=1.
+hook="$root/apprun-hooks/linuxdeploy-plugin-gtk.sh"
+if [ -f "$hook" ] && grep -qE '^export GDK_BACKEND=x11' "$hook"; then
+  # Stroke picks the backend itself (src-tauri/src/display_backend.rs: Wayland,
+  # falling back to X11 if a Wayland launch never draws), so the hook only
+  # passes the two overrides through.
+  sed -i -E 's|^export GDK_BACKEND=x11.*$|if [ "${STROKE_WAYLAND:-}" = 1 ]; then export GDK_BACKEND=wayland; elif [ "${STROKE_X11:-}" = 1 ]; then export GDK_BACKEND=x11; fi|' "$hook"
+  echo "appimage: GDK_BACKEND left to Stroke (STROKE_X11=1 / STROKE_WAYLAND=1 override)"
+  changed=1
+fi
+
+if [ "$changed" = 0 ]; then
+  echo "appimage: nothing to change"
+  exit 0
 fi
 
 # Same compression and block size linuxdeploy's appimagetool uses.

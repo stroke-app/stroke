@@ -11,6 +11,8 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['src/**/*.test.js'],
+    // Component smoke tests need a DOM and the compiler: vitest.dom.config.js.
+    exclude: ['src/**/*.dom.test.js', '**/node_modules/**'],
   },
   resolve: {
     alias: {

@@ -1,14 +1,17 @@
 <script>
   import Kbd from './Kbd.svelte'
   import Icon from './Icon.svelte'
+  import { cn } from '$lib/utils.js'
   import * as Command from '$lib/components/ui/command/index.js'
   import { formatTableRowCount } from '$lib/table-list.js'
   import { get } from 'svelte/store'
   import { chatCompletionStream, buildSystemPrompt, AI_TOOLS, isDestructiveSql, classifyDbError } from '$lib/ai.js'
   import { aiSettings, isAiConfigured } from '$lib/stores/ai-settings.js'
+  import { profileAgent } from '$lib/local-agents.js'
   import { pinEnabled, lockNow } from '$lib/stores/app-lock.js'
   import { appCmdkAi, appThemeId, appSidebarStyle, previewTheme, endThemePreview, updateSettings } from '$lib/stores/settings.js'
-  import { executeSql } from '$lib/api.js'
+  import { executeSql, dockerTemplates, scanDockerDatabases } from '$lib/api.js'
+  import DbIcon from './DbIcon.svelte'
   import { themesByGroup, getThemeDefinition } from '$lib/themes/registry.js'
   import ThemeSwatchStrip from './ThemeSwatchStrip.svelte'
 
@@ -62,7 +65,12 @@
     onopenredis = () => {},
     onopenlogs = () => {},
     onopenterminal = () => {},
+    onnewterminal = () => {},
+    /** What's new in this version, any time. */
+    onopenwhatsnew = () => {},
     onopeninsights = () => {},
+    /** Labs: share the open database as a web studio (shown when the Labs switch is on). */
+    onsharestudio = /** @type {(() => void) | null} */ (null),
     onopenadvisor = () => {},
     onopenobjects = () => {},
     onopenormschema = () => {},
@@ -75,6 +83,8 @@
     onopenmap = () => {},
     onopenJsonViewer = () => {},
     onopenshortcuts = () => {},
+    /** My shares: share links made on this account. */
+    onopenmyshares = () => {},
     /** Settings ▸ Keybindings, where shortcuts are remapped. */
     onopenkeybindings = () => {},
     onopenabout = () => {},
@@ -86,6 +96,8 @@
     onreadonlytoggle = () => {},
     /** @param {'postgres'|'mysql'} dbType */
     ondockerlaunch = (dbType) => {},
+    /** Open a database already running in Docker. @type {(conn: Record<string, any>) => void} */
+    onopendocker = () => {},
     /** @param {import('$lib/stores/connections.js').SavedConnection} conn */
     onswitchdatabase = (conn) => {},
     /** @type {import('$lib/stores/query-history.js').QueryHistoryEntry[]} */
@@ -100,6 +112,8 @@
     onopennotebookfile = () => {},
     openschematimeline = () => {},
     opendatadiff = () => {},
+    openmigrations = () => {},
+    openlocalservers = () => {},
     /** Live AI schema/db context for the inline quick-ask. */
     schemaContext = null,
     /** Escalate a quick-ask question into the full AI sidebar/chat. @param {string} q */
@@ -120,6 +134,23 @@
 
   /** Value of the highlighted command row (bound to the palette). */
   let highlighted = $state('')
+
+  // ── Docker page: the launch catalog and what is already running ──────────
+  /** @type {import('$lib/api.js').DockerTemplate[]} */
+  let dockerTpls = $state([])
+  /** @type {import('$lib/api.js').DockerDatabase[]} */
+  let dockerRunning = $state([])
+  $effect(() => {
+    if (page !== 'docker') return
+    if (!dockerTpls.length) dockerTemplates().then((t) => (dockerTpls = t)).catch(() => {})
+    scanDockerDatabases().then((d) => (dockerRunning = d.filter((x) => !x.reason))).catch(() => {})
+  })
+  const dockerGroups = $derived.by(() => {
+    /** @type {Map<string, import('$lib/api.js').DockerTemplate[]>} */
+    const m = new Map()
+    for (const t of dockerTpls) m.set(t.group, [...(m.get(t.group) ?? []), t])
+    return [...m]
+  })
   /** The theme in effect when the page opened; null when no preview is live. */
   let themeOrigin = $state(/** @type {ThemeId | null} */ (null))
   /** Off until the page has highlighted the current theme, so the first row is never flashed. */
@@ -219,18 +250,21 @@
   const pageItems = $derived([
     { icon: 'key-round',       label: 'Redis keyspace',                action: onopenredis,      show: connected && isRedis, value: 'redis keyspace keys browse key value store console cli' },
     { icon: 'database',        label: 'DynamoDB tables',               action: onopendynamo,     show: connected && isDynamo, value: 'dynamodb tables items scan query partiql aws' },
-    { icon: 'database',        label: 'Browse documents',              action: onopendocs,       show: connected && isDoc, value: 'browse collections documents mongodb mongo couchdb cassandra firestore tables rows' },
+    { icon: 'database',        label: 'Browse documents',              action: onopendocs,       show: connected && isDoc, value: 'browse collections documents mongodb mongo couchdb elasticsearch opensearch indices cassandra firestore tables rows' },
     { icon: 'table-2',         label: 'Table data',       keys: '⌘⇧D', action: onopentable,      show: connected && !isKeyValue, value: 'open table data browser rows' },
     { icon: 'search',          label: 'Find in database', keys: '⌘⇧G', action: onglobalsearch,   show: connected && !isKeyValue, value: 'find search rows data across all tables global database' },
     { icon: 'terminal',        label: 'SQL editor',       keys: '⌘⇧S', action: onopensql,        show: connected && (!isKeyValue || isDynamo || isDoc), value: 'open sql editor query console' },
     { icon: 'plus',            label: 'New SQL editor',                action: onnewsql,         show: connected && (!isKeyValue || isDynamo || isDoc), value: 'new sql editor tab additional multiple query console open another' },
     { icon: 'square-terminal', label: 'Terminal',         keys: '⌘J',  action: onopenterminal,   show: connected, value: 'terminal shell cli command line psql mysql mariadb sqlite3 sqlcmd redis-cli console repl meta commands' },
+    { icon: 'sparkles',        label: "What's new",       keys: '',    action: onopenwhatsnew,   show: true,      value: 'whats new changelog release notes updates features version' },
+    { icon: 'square-terminal', label: 'New terminal tab', keys: '⌃⇧`', action: onnewterminal,    show: connected, value: 'new terminal tab another second shell psql mysql session' },
     { icon: 'code-2',          label: 'ORM runner',       keys: '⌘⇧O', action: onopenorm,        show: connected && !isKeyValue, value: 'open orm runner drizzle prisma query builder' },
     { icon: 'network',         label: 'Schema diagram',                action: onopenerd,        show: connected && !isKeyValue, value: 'open schema diagram data model er diagram erd entity relationship foreign key pk fk graph hierarchy roadmap mermaid tree dictionary ddl schema map' },
     { icon: 'layout-template', label: 'Schema explorer',               action: onopenSchema,     show: connected && hasSchemaExplorer, value: 'open schema explorer indexes enums views materialized' },
     { icon: 'shield-check',    label: 'Security',                      action: onopensecurity,   show: connected && hasSecurity, value: 'open security roles users policies rls row level' },
     { icon: 'shield-check',    label: 'Advisor',                       action: onopenadvisor,    show: connected && hasAdvisor, value: 'open advisor lint audit checks security performance schema rls unused index foreign key bloat' },
     { icon: 'database',        label: 'Instance insights',             action: onopeninsights,   show: connected && hasInsights, value: 'open instance insights monitoring sessions locks replication config pg_settings' },
+    { icon: 'globe',           label: 'Share as web studio',           action: () => onsharestudio?.(), show: connected && !!onsharestudio, value: 'share as web studio link remote relay browser device labs collaborate' },
     { icon: 'layout-dashboard',label: 'Dashboard',                     action: onopendashboard,  show: connected && !isKeyValue, value: 'open dashboard saved metrics overview widgets' },
     { icon: 'bar-chart-2',     label: 'Charts',                        action: onopencharts,     show: connected && !isKeyValue, value: 'open charts visualize query results graphs plots' },
     { icon: 'git-branch',      label: 'Diagrams',                      action: onopendiagrams,   show: connected && !isKeyValue, value: 'open diagrams draw erd relationship map' },
@@ -243,6 +277,8 @@
     { icon: 'archive',         label: 'Backup & restore',              action: onopenbackup,     show: connected && !isKeyValue, value: 'backup restore export import dump data' },
     { icon: 'braces',          label: 'JSON viewer',                   action: onopenJsonViewer, show: connected, value: 'open json viewer explorer jsonpath tool' },
     { icon: 'git-branch',      label: 'Schema timeline',               action: openschematimeline, show: connected && !isKeyValue, value: 'schema timeline drift detection history changes diff' },
+    { icon: 'database',        label: 'Local servers',                 action: openlocalservers, show: true, value: 'local servers database postgres mysql mariadb redis mongodb docker native homebrew dbngin start stop version' },
+    { icon: 'git-merge',       label: 'Migrations',                    action: openmigrations,   show: connected && !isKeyValue, value: 'migrations prisma drizzle applied pending failed migrate schema history' },
     { icon: 'git-compare',     label: 'Data diff',                     action: opendatadiff,     show: connected && !isKeyValue, value: 'data diff compare tables rows changes' },
     { icon: 'file-text',       label: 'New notebook',                  action: onopennotebook,   show: connected && !isKeyValue, value: 'new sql notebook jupyter cells sql markdown' },
     { icon: 'file-text',       label: 'Open notebook…',                action: onopennotebookfile, show: connected && !isKeyValue, value: 'open notebook file sqlnb' },
@@ -291,7 +327,12 @@
     if (!get(appCmdkAi)) return  // experimental ⌘K AI is off
     const q = (question ?? '').trim()
     if (!q) return
-    if (!isAiConfigured(get(aiSettings))) { onopensettings(); open = false; return }
+    const settings = get(aiSettings)
+    if (!isAiConfigured(settings)) { onopensettings(); open = false; return }
+    // A local agent (Claude Code, Codex...) runs as a session in the AI chat,
+    // with Stroke's tools over MCP; it has no HTTP endpoint to stream from
+    // here, and calling one anyway failed with reqwest's bare "builder error".
+    if (profileAgent(settings)) { open = false; onaskcontinue(q); return }
     askApi = []; askTurns = []; askError = ''; askStick = true
     page = 'ask'; paletteSearch = ''
     await askTurn(q)
@@ -317,9 +358,15 @@
     askController?.abort()
     const ac = new AbortController(); askController = ac
     try {
+      if (!String(settings.baseUrl ?? '').trim()) throw new Error('This AI profile has no endpoint URL. Set one in Settings → Agent.')
       await runAskLoop(0, ac, settings)
     } catch (e) {
-      if (!ac.signal.aborted) askError = /** @type {any} */ (e)?.message ?? String(e)
+      if (!ac.signal.aborted) {
+        const msg = String(/** @type {any} */ (e)?.message ?? e)
+        askError = /^builder error/i.test(msg) ? 'The AI endpoint URL or key is malformed. Check it in Settings → Agent.' : msg
+      }
+      // Nothing is streaming any more: drop the empty "Thinking…" answer.
+      askTurns = askTurns.filter((t) => !(t.role === 'assistant' && t.streaming && !t.text)).map((t) => (t.streaming ? { ...t, streaming: false } : t))
     } finally {
       if (askController === ac) { askStreaming = false; askController = null }
     }
@@ -413,8 +460,24 @@
     askStreaming = false
   }
 
-  const askBtn = 'inline-flex items-center gap-1.5 rounded-md border border-border/60 px-2 py-1 text-ui-2xs font-medium text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground'
+  const lastAnswer = $derived([...askTurns].reverse().find((t) => t.role === 'assistant' && t.text)?.text ?? '')
+  let answerCopied = $state(false)
+  async function copyAnswer() {
+    if (!lastAnswer) return
+    await navigator.clipboard?.writeText(lastAnswer).catch(() => {})
+    answerCopied = true
+    setTimeout(() => (answerCopied = false), 1400)
+  }
+  function continueInChat() {
+    const q = lastAskQuestion
+    open = false
+    onaskcontinue(q)
+  }
+  const askModel = $derived(String($aiSettings.model ?? '').split('/').pop() || 'AI')
+
+  const askBtn = 'inline-flex items-center gap-1.5 rounded-md bg-muted/50 px-2 py-1 text-ui-2xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground'
   const askBtnPrimary = 'inline-flex items-center gap-1.5 rounded-md bg-primary px-2 py-1 text-ui-2xs font-medium text-primary-foreground transition-opacity hover:opacity-90'
+  const askBar = 'inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-ui-2xs font-medium transition-colors hover:bg-muted/60 hover:text-foreground'
 
   // Keep the ask thread pinned to the newest message as it streams / grows.
   // Coalesced to one adjustment per frame and gated on "near the bottom" so it
@@ -477,6 +540,14 @@
 
   /** @param {KeyboardEvent} e */
   function handleKeydown(e) {
+    const mod = e.metaKey || e.ctrlKey
+    // Ask page actions, as the footer shows them.
+    if (page === 'ask' && mod && e.key === 'Enter') {
+      e.preventDefault(); e.stopPropagation(); continueInChat(); return
+    }
+    if (page === 'ask' && mod && e.shiftKey && (e.key === 'c' || e.key === 'C')) {
+      e.preventDefault(); e.stopPropagation(); void copyAnswer(); return
+    }
     // On the ask page, Enter continues the conversation with a follow-up.
     if (page === 'ask' && e.key === 'Enter' && !e.isComposing) {
       const q = paletteSearch.trim()
@@ -749,7 +820,7 @@
       <Command.List
         class={page === 'ask'
           ? 'h-[min(640px,74vh)] max-h-[min(640px,74vh)]'
-          : 'show-scrollbar max-h-[min(420px,56vh)] pb-5 [mask-image:linear-gradient(to_bottom,black_calc(100%-32px),transparent)]'}
+          : 'show-scrollbar max-h-[min(420px,56vh)] pb-2 [mask-image:linear-gradient(to_bottom,black_calc(100%-16px),transparent)]'}
       >
         {#if page !== 'ask'}
           <Command.Empty class="py-8 text-center text-ui-xs text-muted-foreground">No results.</Command.Empty>
@@ -766,37 +837,35 @@
 
         <!-- ── ASK AI (inline quick-ask) ─────────────────────────────── -->
         {#if page === 'ask'}
-          <div bind:this={askContentEl} class="select-text px-3 py-2.5">
-            {#each askTurns as turn (turn.id)}
+          <div bind:this={askContentEl} class="select-text px-5 pt-4 pb-6">
+            {#each askTurns as turn, ti (turn.id)}
               {#if turn.role === 'user'}
-                <div class="mb-1.5 flex items-start gap-2">
-                  <Icon name="sparkles" class="mt-0.5 size-3.5 shrink-0 text-primary" />
-                  <div class="min-w-0 flex-1 text-ui-sm font-medium text-foreground">{turn.text}</div>
-                </div>
+                <!-- The question, as the heading of its exchange. -->
+                <h3 class={['text-ui-sm font-semibold leading-snug text-foreground', ti > 0 && 'mt-6 border-t border-border/40 pt-5']}>{turn.text}</h3>
               {:else if turn.role === 'tool'}
-                <div class="mb-1.5 ml-[22px] flex flex-col gap-1">
-                  <div class="flex items-center gap-1.5 text-ui-2xs {turn.status === 'error' ? 'text-destructive' : 'text-muted-foreground'}">
-                    {#if turn.status === 'running'}<Icon name="sparkles" class="size-3 shrink-0 animate-pulse" />
+                <div class="mt-2.5 flex flex-col gap-1.5">
+                  <div class={['inline-flex items-center gap-1.5 text-ui-2xs', turn.status === 'error' ? 'text-destructive' : 'text-muted-foreground']}>
+                    {#if turn.status === 'running'}<Icon name="loader-2" class="size-3 shrink-0 animate-spin" />
                     {:else if turn.status === 'error'}<Icon name="x" class="size-3 shrink-0" />
                     {:else}<Icon name="check" class="size-3 shrink-0 text-success" />{/if}
                     <span class="truncate">{turn.label}</span>
                   </div>
                   {#if turn.result && turn.result.columns.length}
-                    <div class="overflow-hidden rounded-lg border border-border/50 bg-card/40">
+                    <div class="overflow-hidden rounded-lg bg-muted/40">
                       <div class="overflow-x-auto">
                         <table class="w-full border-collapse">
                           <thead>
-                            <tr class="bg-muted/25">
+                            <tr>
                               {#each turn.result.columns.slice(0, 5) as c}
-                                <th class="whitespace-nowrap border-b border-border/40 px-2.5 py-1 text-left text-ui-3xs font-medium uppercase tracking-[0.06em] text-muted-foreground">{c}</th>
+                                <th class="whitespace-nowrap px-3 pt-2 pb-1.5 text-left text-ui-3xs font-medium text-muted-foreground">{c}</th>
                               {/each}
                             </tr>
                           </thead>
                           <tbody>
-                            {#each turn.result.rows as row, ri}
-                              <tr class="transition-colors hover:bg-muted/15">
+                            {#each turn.result.rows as row}
+                              <tr class="border-t border-border/30">
                                 {#each row.slice(0, 5) as cell}
-                                  <td class="max-w-[220px] truncate {ri < turn.result.rows.length - 1 ? 'border-b border-border/15' : ''} px-2.5 py-1 font-mono text-ui-2xs {cell === null ? 'italic text-muted-foreground' : 'text-foreground/80'}">{cell === null ? 'NULL' : String(cell)}</td>
+                                  <td class={['max-w-[220px] truncate px-3 py-1.5 font-mono text-ui-2xs', cell === null ? 'text-muted-foreground' : 'text-foreground/85']}>{cell === null ? 'NULL' : String(cell)}</td>
                                 {/each}
                               </tr>
                             {/each}
@@ -804,26 +873,33 @@
                         </table>
                       </div>
                       {#if turn.result.total > turn.result.rows.length}
-                        <div class="border-t border-border/30 bg-muted/10 px-2.5 py-1 text-ui-3xs tabular-nums text-muted-foreground">showing {turn.result.rows.length} of {turn.result.total} rows</div>
+                        <div class="border-t border-border/30 px-3 py-1.5 text-ui-3xs tabular-nums text-muted-foreground">{turn.result.rows.length} of {turn.result.total.toLocaleString()} rows</div>
                       {/if}
                     </div>
                   {/if}
                 </div>
               {:else}
-                <div class="mb-2 ml-[22px]">
+                <div class="mt-2.5">
                   {#if turn.streaming && !turn.text}
-                    <div class="flex items-center gap-2 py-1 text-ui-xs text-muted-foreground"><Icon name="sparkles" class="size-3.5 shrink-0 animate-pulse" /> Thinking…</div>
+                    <div class="flex items-center gap-1.5 text-ui-xs text-muted-foreground">
+                      <span class="flex gap-0.5" aria-hidden="true">
+                        <span class="size-1 animate-pulse rounded-full bg-current"></span>
+                        <span class="size-1 animate-pulse rounded-full bg-current [animation-delay:150ms]"></span>
+                        <span class="size-1 animate-pulse rounded-full bg-current [animation-delay:300ms]"></span>
+                      </span>
+                      Thinking
+                    </div>
                   {:else}
-                    {#await import('./AiMarkdown.svelte') then { default: AiMarkdown }}<AiMarkdown content={turn.text} streaming={turn.streaming} debounceMs={120} class="text-ui-xs" />{/await}
+                    {#await import('./AiMarkdown.svelte') then { default: AiMarkdown }}<AiMarkdown content={turn.text} streaming={turn.streaming} debounceMs={120} class="text-ui-sm leading-relaxed" />{/await}
                   {/if}
                   {#if !turn.streaming && turn.sqls?.length}
-                    <div class="mt-1.5 flex flex-wrap gap-1.5">
+                    <div class="mt-2 flex flex-wrap gap-1.5">
                       {#each turn.sqls as s, i}
                         <button type="button" class={i === 0 ? askBtnPrimary : askBtn} onclick={() => void runAskSql(s)}>
-                          <Icon name="terminal" class="size-3 shrink-0" /> Run{turn.sqls.length > 1 ? ` #${i + 1}` : ''}
+                          <Icon name="play" class="size-3 shrink-0" /> Run{turn.sqls.length > 1 ? ` #${i + 1}` : ''}
                         </button>
                         <button type="button" class={askBtn} onclick={() => { const sql = s; open = false; onqueryselect(sql) }}>
-                          Insert
+                          <Icon name="code-2" class="size-3 shrink-0" /> Open in editor
                         </button>
                       {/each}
                     </div>
@@ -832,17 +908,12 @@
               {/if}
             {/each}
             {#if askError}
-              <div class="ml-[22px] rounded-md border border-destructive/30 bg-destructive/5 px-2.5 py-2 text-ui-xs text-destructive">{askError}</div>
+              <div class="mt-3 flex items-start gap-2 rounded-lg bg-destructive/8 px-3 py-2.5 text-ui-xs text-destructive">
+                <Icon name="alert-circle" class="mt-px size-3.5 shrink-0" />
+                <span class="min-w-0 flex-1">{askError}</span>
+                <button type="button" class="shrink-0 font-medium underline-offset-2 hover:underline" onclick={() => { open = false; onopensettings() }}>Settings</button>
+              </div>
             {/if}
-            <div class="ml-[22px] mt-2 flex flex-wrap items-center gap-1.5">
-              {#if askStreaming}
-                <button type="button" class={askBtn} onclick={stopAsk}><Icon name="square" class="size-3 shrink-0" /> Stop</button>
-              {:else if askTurns.length}
-                <button type="button" class={askBtn} onclick={() => navigator.clipboard?.writeText([...askTurns].reverse().find((t) => t.role === 'assistant')?.text ?? '')}><Icon name="copy" class="size-3 shrink-0" /> Copy</button>
-                <button type="button" class={askBtn} onclick={() => { const q = lastAskQuestion; open = false; onaskcontinue(q) }}><Icon name="bot" class="size-3 shrink-0" /> Continue in chat</button>
-              {/if}
-            </div>
-            <div class="ml-[22px] mt-1.5 text-ui-3xs text-muted-foreground">Type below and press ↵ to follow up</div>
           </div>
         {/if}
 
@@ -872,7 +943,7 @@
                     <Icon name="database" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                     <span data-slot="command-label" class="truncate font-mono">{schema}</span>
                     {#if schema === activeSchema}
-                      <span data-slot="command-trailing" class="shrink-0 text-ui-xs text-muted-foreground">current</span>
+                      <span data-slot="command-trailing" class="ml-auto shrink-0"><Icon name="check" class="size-3.5 shrink-0 text-foreground" /><span class="sr-only">(current)</span></span>
                     {/if}
                   </Command.Item>
                 {/each}
@@ -969,7 +1040,7 @@
               </Command.Item>
               <Command.Item value="toggle tree sidebar beta explorer classic hierarchy folders" onSelect={() => run(() => updateSettings({ sidebarStyle: $appSidebarStyle === 'tree' ? 'classic' : 'tree' }))}>
                 <Icon name="list-tree" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
-                <span data-slot="command-label" class="truncate">Toggle tree sidebar (beta)</span>
+                <span data-slot="command-label" class="truncate">Toggle tree sidebar (Labs)</span>
                 <span data-slot="command-trailing" class="shrink-0 text-ui-xs text-muted-foreground">{$appSidebarStyle === 'tree' ? 'on' : 'off'}</span>
               </Command.Item>
               {#if $pinEnabled}
@@ -987,9 +1058,13 @@
                 <span data-slot="command-label" class="truncate">Shortcut reference</span>
                 <Command.Shortcut command="help.shortcutsKey" />
               </Command.Item>
+              <Command.Item value="my shares share links shared revoke views encrypted link" onSelect={() => run(onopenmyshares)}>
+                <Icon name="share-2" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                <span data-slot="command-label" class="truncate">My shares</span>
+              </Command.Item>
               <Command.Item value="about license version info app" onSelect={() => run(onopenabout)}>
                 <Icon name="info" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
-                <span data-slot="command-label" class="truncate">About and license</span>
+                <span data-slot="command-label" class="truncate">About Stroke</span>
               </Command.Item>
               <Command.Item value="report issue bug crash problem feedback github" onSelect={() => run(onopenreport)}>
                 <Icon name="bug" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
@@ -1045,8 +1120,8 @@
 
           <!-- ── Drill-in: Docker ───────────────────────────────────── -->
           <Command.Group heading="Launch">
-            <Command.Item value="docker containers postgresql mysql launch run" onSelect={() => navigate('docker')}>
-              <Icon name="package" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+            <Command.Item value="docker containers launch run postgresql mysql mariadb mongodb redis valkey sql server oracle cockroachdb clickhouse cassandra couchdb elasticsearch opensearch dynamodb libsql pgvector postgis timescale" onSelect={() => navigate('docker')}>
+              <DbIcon id="docker" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
               <span data-slot="command-label" class="truncate">Docker</span>
               <Icon name="chevron-right" class="size-3.5 shrink-0 text-muted-foreground" />
             </Command.Item>
@@ -1059,6 +1134,8 @@
               <span data-slot="command-label" class="truncate">Theme…</span>
               <span data-slot="command-trailing" class="flex shrink-0 items-center gap-2">
                 <span class="text-ui-xs text-muted-foreground">{getThemeDefinition($appThemeId)?.name}</span>
+                <!-- The picker has its own chord (Mod+Alt+T): say so where it is found. -->
+                <Command.Shortcut command="theme.pick" />
                 <Icon name="chevron-right" class="size-3.5 shrink-0 text-muted-foreground" />
               </span>
             </Command.Item>
@@ -1123,24 +1200,37 @@
 
         <!-- ── DOCKER PAGE ────────────────────────────────────────────── -->
         {:else if page === 'docker'}
-          <Command.Group heading="Docker containers">
-            <Command.Item
-              value="launch postgresql postgres container pull run 5433"
-              onSelect={() => run(() => ondockerlaunch('postgres'))}
-            >
-              <Icon name="package" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
-              <span data-slot="command-label" class="truncate">PostgreSQL container</span>
-              <span data-slot="command-trailing" class="shrink-0 font-mono text-ui-2xs text-muted-foreground">:5433</span>
-            </Command.Item>
-            <Command.Item
-              value="launch mysql container pull run 3307"
-              onSelect={() => run(() => ondockerlaunch('mysql'))}
-            >
-              <Icon name="package" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
-              <span data-slot="command-label" class="truncate">MySQL container</span>
-              <span data-slot="command-trailing" class="shrink-0 font-mono text-ui-2xs text-muted-foreground">:3307</span>
-            </Command.Item>
-          </Command.Group>
+          {#if dockerRunning.length}
+            <Command.Group heading="Running">
+              {#each dockerRunning as d (d.containerId)}
+                <Command.Item
+                  value="running open {d.name} {d.engine} {d.image} {d.port}"
+                  onSelect={() => run(() => onopendocker({ id: `docker-${d.name}`, type: d.engine, name: d.name, host: d.host, port: d.port, user: d.user, password: d.password, database: d.database }))}
+                >
+                  <DbIcon id={d.engine} class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">{d.name}</span>
+                  <span data-slot="command-trailing" class="shrink-0 font-mono text-ui-2xs text-muted-foreground">{d.target}</span>
+                </Command.Item>
+              {/each}
+            </Command.Group>
+          {/if}
+          {#each dockerGroups as [group, items] (group)}
+            <Command.Group heading={group}>
+              {#each items as t (t.id)}
+                <Command.Item
+                  value="launch {t.label} {t.engine} {t.image} {t.note} docker"
+                  onSelect={() => run(() => ondockerlaunch(t.id))}
+                >
+                  <DbIcon id={t.icon} class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">{t.label}{#if t.note}<span class="ml-2 text-ui-2xs text-muted-foreground">{t.note}</span>{/if}</span>
+                  <span data-slot="command-trailing" class="shrink-0 font-mono text-ui-2xs text-muted-foreground">{t.image}</span>
+                </Command.Item>
+              {/each}
+            </Command.Group>
+          {/each}
+          {#if !dockerTpls.length}
+            <div class="px-3 py-6 text-center text-ui-xs text-muted-foreground">Loading images…</div>
+          {/if}
 
         <!-- ── CONNECTIONS PAGE ───────────────────────────────────────── -->
         {:else if page === 'connections'}
@@ -1202,15 +1292,35 @@
         {/if}
 
       </Command.List>
+
+      {#if page === 'ask'}
+        <!-- Action bar, like Raycast's: what's answering on the left, the
+             actions and their keys on the right. -->
+        <div class="flex h-10 shrink-0 items-center gap-2 border-t border-border/50 bg-muted/20 ps-4 pe-2 text-ui-2xs text-muted-foreground">
+          <Icon name="sparkles" class="size-3.5 shrink-0 text-primary" />
+          <span class="min-w-0 truncate">{askModel}</span>
+          {#if askStreaming}<span class="shrink-0 text-muted-foreground/70">· answering</span>{/if}
+          <span class="flex-1"></span>
+          {#if askStreaming}
+            <button type="button" class={askBar} onclick={stopAsk}><Icon name="square" class="size-3 shrink-0" />Stop</button>
+          {:else}
+            {#if lastAnswer}
+              <button type="button" class={askBar} onclick={() => void copyAnswer()}>{answerCopied ? 'Copied' : 'Copy answer'} <Kbd combo="Mod+Shift+C" /></button>
+            {/if}
+            <span class="h-4 w-px shrink-0 bg-border/60" aria-hidden="true"></span>
+            <button type="button" class={cn(askBar, 'text-foreground')} onclick={continueInChat}>Continue in chat <Kbd combo="Mod+Enter" /></button>
+          {/if}
+        </div>
+      {/if}
       <!-- The keys, said once at the bottom, as the palette's own legend. -->
       {#if page === 'theme'}
-        <div class="flex h-10 shrink-0 items-center gap-4 border-t border-border/50 bg-muted/25 px-3.5 text-ui-2xs text-muted-foreground shadow-[inset_0_1px_0_rgb(255_255_255/0.03),0_-10px_20px_-12px_rgb(0_0_0/0.45)]">
+        <div class="flex h-10 shrink-0 items-center gap-4 border-t border-border/50 bg-muted/25 px-3.5 text-ui-2xs text-muted-foreground">
           <span class="flex items-center gap-1.5"><Kbd keys={['↑']} /><Kbd keys={['↓']} /> Preview</span>
           <span class="ml-auto flex items-center gap-1.5">Select theme <Kbd keys={['↵']} /></span>
           <span class="flex items-center gap-1.5">Cancel <Kbd keys={['esc']} /></span>
         </div>
       {:else if page !== 'ask'}
-        <div class="flex h-10 shrink-0 items-center gap-4 border-t border-border/50 bg-muted/25 px-3.5 text-ui-2xs text-muted-foreground shadow-[inset_0_1px_0_rgb(255_255_255/0.03),0_-10px_20px_-12px_rgb(0_0_0/0.45)]">
+        <div class="flex h-10 shrink-0 items-center gap-4 border-t border-border/50 bg-muted/25 px-3.5 text-ui-2xs text-muted-foreground">
           <span class="flex items-center gap-1.5"><Kbd keys={['↑']} /><Kbd keys={['↓']} /> Navigate</span>
           <span class="flex items-center gap-1.5"><Kbd keys={['↵']} /> Select</span>
           <span class="flex items-center gap-1.5"><Kbd keys={['esc']} /> Close</span>

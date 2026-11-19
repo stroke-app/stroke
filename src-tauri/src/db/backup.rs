@@ -20,6 +20,7 @@ Speed notes (why the code is shaped the way it is):
 - Progress is a per-table event, throttled while a table is being copied.
 */
 
+use crate::db::connection::Db;
 use std::fs::File;
 use std::io::{self, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
@@ -29,16 +30,16 @@ use std::time::{Duration, Instant};
 use futures::{StreamExt, TryStreamExt};
 use serde::{Deserialize, Serialize};
 use sqlx::{Column, Executor, Row, TypeInfo};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter};
 
-use super::connection::{require_conn, ActiveConnection, DbState};
+use super::connection::{require_conn, ActiveConnection};
 
 /// Cooperative cancel flag for the in-flight backup/restore. The frontend sets
 /// it via `backup_cancel`; the export/import loops poll it and stop early.
 /// Only one backup/restore runs at a time in the UI, so a single flag suffices.
 static BACKUP_CANCELLED: AtomicBool = AtomicBool::new(false);
 
-fn reset_cancel() { BACKUP_CANCELLED.store(false, Ordering::SeqCst); }
+pub(crate) fn reset_cancel() { BACKUP_CANCELLED.store(false, Ordering::SeqCst); }
 fn is_cancelled() -> bool { BACKUP_CANCELLED.load(Ordering::SeqCst) }
 
 /// Request cancellation of the running backup/restore. The loops stop at the
@@ -102,7 +103,7 @@ pub struct ImportResult {
 }
 
 /// What `backup_inspect_file` learns from the first few KB of a dump.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BackupFileInfo {
     pub size: u64,
@@ -112,6 +113,74 @@ pub struct BackupFileInfo {
     pub stroke: bool,
     /// A cancelled Stroke export: restoring it would load a fraction of the data.
     pub incomplete: bool,
+    /// An end-to-end encrypted scheduled backup: opened with the sync key on restore.
+    #[serde(default)]
+    pub encrypted: bool,
+    /// The encoding the file looks like it's in, as a WHATWG label ("utf-8",
+    /// "utf-16le", "windows-1252"). The restore decodes with it unless the
+    /// user picks another.
+    #[serde(default)]
+    pub encoding: String,
+    /// The first [`PREVIEW_CHARS`] characters, decoded, for the import preview.
+    #[serde(default)]
+    pub preview: String,
+    /// Whether the preview stops before the end of the file.
+    #[serde(default)]
+    pub preview_truncated: bool,
+}
+
+/// How much of a dump the restore screen shows before it runs.
+pub const PREVIEW_CHARS: usize = 100_000;
+
+/// The encoding of a dump: a byte-order mark wins, then valid UTF-8, then
+/// Windows-1252 (what most "not UTF-8" dumps from older tools are).
+fn sniff_encoding(head: &[u8], complete: bool) -> &'static encoding_rs::Encoding {
+    if let Some((enc, _)) = encoding_rs::Encoding::for_bom(head) {
+        return enc;
+    }
+    match std::str::from_utf8(head) {
+        Ok(_) => encoding_rs::UTF_8,
+        // A multi-byte character cut by the end of the sample is still UTF-8.
+        Err(e) if !complete && e.error_len().is_none() => encoding_rs::UTF_8,
+        Err(_) => encoding_rs::WINDOWS_1252,
+    }
+}
+
+/// Decode a whole dump. `label` is what the user picked; None or "auto" sniffs.
+fn decode_script(bytes: Vec<u8>, label: Option<&str>, rep: &Reporter) -> Result<String, String> {
+    let enc = match label.filter(|l| !l.is_empty() && *l != "auto") {
+        Some(l) => encoding_rs::Encoding::for_label(l.as_bytes())
+            .ok_or_else(|| format!("Unknown encoding: {l}"))?,
+        None => sniff_encoding(&bytes, true),
+    };
+    if enc == encoding_rs::UTF_8 {
+        // The fast path: no copy when the file is valid UTF-8.
+        let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF][..]).map(<[u8]>::to_vec).unwrap_or(bytes);
+        return match String::from_utf8(bytes) {
+            Ok(s) => Ok(s),
+            Err(e) => {
+                rep.log("warn", "The file is not valid UTF-8; invalid bytes were replaced. Pick another encoding if the text looks wrong.");
+                Ok(String::from_utf8_lossy(e.as_bytes()).into_owned())
+            }
+        };
+    }
+    rep.log("info", &format!("Reading the file as {}", enc.name()));
+    let (text, _, bad) = enc.decode(&bytes);
+    if bad {
+        rep.log("warn", &format!("Some bytes are not valid {}; they were replaced", enc.name()));
+    }
+    Ok(text.into_owned())
+}
+
+/// The preview text of a dump's first bytes, and whether there is more.
+fn preview_of(head: &[u8], complete: bool, enc: &'static encoding_rs::Encoding) -> (String, bool) {
+    let (text, _, _) = enc.decode(head);
+    let text = text.trim_start_matches('\u{feff}');
+    let cut = truncate_chars(text, PREVIEW_CHARS);
+    let more = !complete || cut.len() < text.len();
+    // A sample cut mid-character ends in a replacement char: drop it.
+    let cut = if !complete { cut.trim_end_matches('\u{fffd}') } else { cut };
+    (cut.to_string(), more)
 }
 
 fn default_true() -> bool { true }
@@ -212,7 +281,7 @@ impl Reporter {
     fn restore(app: &AppHandle) -> Self {
         Self { app: Some(app.clone()), log_event: "restore-log", progress_event: "restore-progress" }
     }
-    #[cfg(test)]
+    /// No events: scheduled backups run in the background, away from the page's log.
     pub(crate) fn silent() -> Self {
         Self { app: None, log_event: "", progress_event: "" }
     }
@@ -446,7 +515,7 @@ fn partial_path(path: &Path) -> PathBuf {
 #[tauri::command]
 pub async fn backup_export(
     app: AppHandle,
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: Option<String>,
     tables: Option<Vec<String>>,
     options: Option<ExportOptions>,
@@ -459,7 +528,7 @@ pub async fn backup_export(
     run_export(&rep, conn, schema, tables, &opts, path).await
 }
 
-async fn run_export(
+pub(crate) async fn run_export(
     rep: &Reporter,
     conn: ActiveConnection,
     schema: Option<String>,
@@ -566,14 +635,15 @@ async fn export_into(
         ActiveConnection::Sqlite(pool) => export_sqlite(rep, &pool, tables.as_deref(), opts, out).await,
         ActiveConnection::Postgres(pool) => export_postgres(rep, &pool, schema.as_deref(), tables.as_deref(), opts, out).await,
         ActiveConnection::Mysql(pool) => export_mysql(rep, &pool, schema.as_deref(), tables.as_deref(), opts, out).await,
-        ActiveConnection::D1(cfg) => export_d1(rep, &cfg, tables.as_deref(), opts, out).await,
-        ActiveConnection::LibSql(_) => Err("Backup export is not supported for LibSQL/Turso connections".to_string()),
+        ActiveConnection::D1(cfg) => export_d1(rep, Remote::D1(&cfg), tables.as_deref(), opts, out).await,
+        ActiveConnection::LibSql(cfg) => export_d1(rep, Remote::LibSql(&cfg), tables.as_deref(), opts, out).await,
         ActiveConnection::Clickhouse(_) => Err("Backup export is not supported for ClickHouse connections".to_string()),
         ActiveConnection::Posthog(_) => Err("Backup is not supported for PostHog".to_string()),
         ActiveConnection::Redis(_) => Err("Backup is not supported on Redis".to_string()),
         ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => Err("Backup is not supported on DynamoDB".to_string()),
         ActiveConnection::Duckdb(h) => export_duckdb(rep, &h, out).await,
         ActiveConnection::Mssql(h) => export_mssql(rep, &h, out).await,
+        ActiveConnection::Oracle(_) => Err("Backup export is not supported for Oracle yet".to_string()),
     }
 }
 
@@ -582,55 +652,98 @@ async fn export_into(
 #[tauri::command]
 pub async fn backup_import(
     app: AppHandle,
-    state: State<'_, DbState>,
+    state: Db<'_>,
     sql: Option<String>,
     path: Option<String>,
+    encoding: Option<String>,
 ) -> Result<ImportResult, String> {
     reset_cancel();
     let rep = Reporter::restore(&app);
     let script = match (sql, path) {
         (Some(s), _) => s,
-        (None, Some(p)) => read_script(&rep, &p).await?,
+        (None, Some(p)) => read_script(&app, &rep, &p, encoding.as_deref()).await?,
         (None, None) => return Err("Nothing to restore: no file or SQL given".into()),
     };
     match require_conn(&state)? {
         ActiveConnection::Sqlite(pool) => import_sqlite(&rep, &pool, &script).await,
         ActiveConnection::Postgres(pool) => import_postgres(&rep, &pool, &script).await,
         ActiveConnection::Mysql(pool) => import_mysql(&rep, &pool, &script).await,
-        ActiveConnection::D1(cfg) => import_d1(&rep, &cfg, &script).await,
-        ActiveConnection::LibSql(_) => Err("Backup import is not supported for LibSQL/Turso connections".to_string()),
+        ActiveConnection::D1(cfg) => import_d1(&rep, Remote::D1(&cfg), &script).await,
+        ActiveConnection::LibSql(cfg) => import_d1(&rep, Remote::LibSql(&cfg), &script).await,
         ActiveConnection::Clickhouse(_) => Err("Backup import is not supported for ClickHouse connections".to_string()),
         ActiveConnection::Posthog(_) => Err("Backup is not supported for PostHog".to_string()),
         ActiveConnection::Redis(_) => Err("Backup is not supported on Redis".to_string()),
         ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => Err("Backup is not supported on DynamoDB".to_string()),
         ActiveConnection::Duckdb(h) => import_duckdb(&rep, &h, &script).await,
         ActiveConnection::Mssql(h) => import_mssql(&rep, &h, &script).await,
+        ActiveConnection::Oracle(_) => Err("Backup import is not supported for Oracle yet".to_string()),
     }
 }
 
-async fn read_script(rep: &Reporter, path: &str) -> Result<String, String> {
-    let bytes = tokio::fs::read(path).await.map_err(|e| format!("Could not read {path}: {e}"))?;
-    match String::from_utf8(bytes) {
-        Ok(s) => Ok(s),
-        Err(e) => {
-            rep.log("warn", "The file is not valid UTF-8; invalid bytes were replaced");
-            Ok(String::from_utf8_lossy(e.as_bytes()).into_owned())
-        }
+async fn read_script(app: &AppHandle, rep: &Reporter, path: &str, encoding: Option<&str>) -> Result<String, String> {
+    let mut bytes = tokio::fs::read(path).await.map_err(|e| format!("Could not read {path}: {e}"))?;
+    // A scheduled backup: encrypted with the account's sync key, then gzip.
+    if crate::backup_crypto::is_encrypted(&bytes) {
+        let (key, _) = crate::sync::load_local(app)
+            .await
+            .ok_or("This backup is end-to-end encrypted. Unlock sync (Settings → Sync) with your sync passphrase to restore it.")?;
+        rep.log("info", "Decrypting the backup on this computer");
+        let mut plain = Vec::with_capacity(bytes.len());
+        crate::backup_crypto::decrypt_stream(&key, bytes.as_slice(), &mut plain, None)?;
+        bytes = plain;
     }
+    if bytes.starts_with(&[0x1f, 0x8b]) {
+        let mut out = Vec::with_capacity(bytes.len() * 4);
+        flate2::read::GzDecoder::new(bytes.as_slice())
+            .read_to_end(&mut out)
+            .map_err(|e| format!("Could not unzip {path}: {e}"))?;
+        bytes = out;
+    }
+    decode_script(bytes, encoding, rep)
 }
 
 /// Size and origin of a dump file, read from its first few KB, so the restore
 /// screen can name the engine and warn about a cancelled (incomplete) export.
 #[tauri::command]
-pub async fn backup_inspect_file(path: String) -> Result<BackupFileInfo, String> {
-    let meta = tokio::fs::metadata(&path).await.map_err(|e| format!("Could not open {path}: {e}"))?;
-    let mut head = vec![0u8; 4096];
-    let n = {
-        let mut f = File::open(&path).map_err(|e| format!("Could not open {path}: {e}"))?;
-        f.read(&mut head).map_err(|e| format!("Could not read {path}: {e}"))?
+pub async fn backup_inspect_file(path: String, encoding: Option<String>) -> Result<BackupFileInfo, String> {
+    tokio::task::spawn_blocking(move || inspect_file(&path, encoding.as_deref()))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+fn inspect_file(path: &str, encoding: Option<&str>) -> Result<BackupFileInfo, String> {
+    let size = std::fs::metadata(path).map_err(|e| format!("Could not open {path}: {e}"))?.len();
+    let open = || File::open(path).map_err(|e| format!("Could not open {path}: {e}"));
+    // Up to four bytes a character, so this always covers PREVIEW_CHARS.
+    let limit = (PREVIEW_CHARS * 4) as u64;
+    let mut head = Vec::new();
+    open()?.take(limit).read_to_end(&mut head).map_err(|e| format!("Could not read {path}: {e}"))?;
+    if crate::backup_crypto::is_encrypted(&head) {
+        return Ok(BackupFileInfo { size, stroke: true, encrypted: true, ..Default::default() });
+    }
+    let mut complete = head.len() as u64 == size;
+    if head.starts_with(&[0x1f, 0x8b]) {
+        // Gzip: look at the start of what it holds.
+        let mut inner = Vec::new();
+        let mut dec = flate2::read::GzDecoder::new(open()?).take(limit + 1);
+        let _ = dec.read_to_end(&mut inner);
+        complete = inner.len() as u64 <= limit;
+        inner.truncate(limit as usize);
+        head = inner;
+    }
+    let picked = match encoding.filter(|l| !l.is_empty() && *l != "auto") {
+        Some(l) => Some(encoding_rs::Encoding::for_label(l.as_bytes()).ok_or_else(|| format!("Unknown encoding: {l}"))?),
+        None => None,
     };
-    head.truncate(n);
-    Ok(inspect_head(meta.len(), &String::from_utf8_lossy(&head)))
+    Ok(inspect_bytes(size, &head, complete, picked))
+}
+
+/// `encoding` is the detected one; the preview uses `picked` when given.
+fn inspect_bytes(size: u64, head: &[u8], complete: bool, picked: Option<&'static encoding_rs::Encoding>) -> BackupFileInfo {
+    let enc = sniff_encoding(head, complete);
+    let (preview, preview_truncated) = preview_of(head, complete, picked.unwrap_or(enc));
+    let info = inspect_head(size, &preview);
+    BackupFileInfo { encoding: enc.name().to_ascii_lowercase(), preview, preview_truncated, ..info }
 }
 
 fn inspect_head(size: u64, head: &str) -> BackupFileInfo {
@@ -638,6 +751,7 @@ fn inspect_head(size: u64, head: &str) -> BackupFileInfo {
     let stroke = head.contains("-- Stroke Backup");
     let engine = head
         .lines()
+        .take(40)
         .find_map(|l| l.strip_prefix("-- Engine").map(|r| r.trim_start_matches([' ', ':']).trim().to_string()))
         .filter(|s| !s.is_empty())
         .or_else(|| {
@@ -646,7 +760,7 @@ fn inspect_head(size: u64, head: &str) -> BackupFileInfo {
             else if head.starts_with("PRAGMA foreign_keys=OFF;\nBEGIN TRANSACTION;") { Some("SQLite".into()) }
             else { None }
         });
-    BackupFileInfo { size, engine, stroke, incomplete }
+    BackupFileInfo { size, engine, stroke, incomplete, ..Default::default() }
 }
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
@@ -1183,7 +1297,7 @@ async fn import_sqlite(rep: &Reporter, pool: &sqlx::SqlitePool, sql: &str) -> Re
     let mut run = Runner::new(rep, sql.len());
     let mut sp = Splitter::new(sql, Escapes::Standard);
     while let Some(stmt) = sp.next() {
-        let Stmt::Sql(s) = stmt else { run.total += 1; run.errors.push("COPY blocks are Postgres-only".into()); continue };
+        let Stmt::Sql(s) = stmt else { run.total += 1; run.fail("COPY blocks are Postgres-only".into()); continue };
         run.total += 1;
         let low = head_lower(&s, 24);
         if low.starts_with("pragma foreign_keys") || is_tx_control(&s) { run.ok += 1; continue; }
@@ -1224,6 +1338,22 @@ struct Runner<'a> {
     batch_bytes: usize,
 }
 
+/// Failures streamed to the live log before it only counts them, so a script
+/// where every statement fails can't flood the page.
+const LOGGED_FAILURES: usize = 200;
+
+impl Runner<'_> {
+    /// Record a failed statement and stream it to the restore log.
+    fn fail(&mut self, message: String) {
+        if self.errors.len() < LOGGED_FAILURES {
+            self.meter.rep.log("error", message.clone());
+        } else if self.errors.len() == LOGGED_FAILURES {
+            self.meter.rep.log("warn", "More statements failed; the rest are counted, not listed");
+        }
+        self.errors.push(message);
+    }
+}
+
 impl<'a> Runner<'a> {
     fn new(rep: &'a Reporter, len: usize) -> Self {
         Self { meter: Meter::new(rep, len), total: 0, ok: 0, errors: Vec::new(), batch: Vec::new(), batch_bytes: 0 }
@@ -1258,7 +1388,7 @@ macro_rules! runner_exec {
                     Ok(_) => self.ok += 1,
                     Err(e) => {
                         (&mut *conn).execute("ROLLBACK TO SAVEPOINT stroke_sp; RELEASE SAVEPOINT stroke_sp").await.ok();
-                        self.errors.push(stmt_error(e, stmt));
+                        self.fail(stmt_error(e, stmt));
                     }
                 }
             }
@@ -1937,7 +2067,7 @@ async fn import_postgres(rep: &Reporter, pool: &sqlx::PgPool, sql: &str) -> Resu
                 run.flush_pg(&mut *conn).await;
                 match pg_copy_in(&mut conn, &copy_sql, data).await {
                     Ok(()) => run.ok += 1,
-                    Err(e) => run.errors.push(stmt_error(e, &copy_sql)),
+                    Err(e) => run.fail(stmt_error(e, &copy_sql)),
                 }
             }
         }
@@ -2346,7 +2476,7 @@ async fn import_mysql(rep: &Reporter, pool: &sqlx::MySqlPool, sql: &str) -> Resu
             // it; a failing statement is atomic on its own.
             match (&mut *conn).execute(s.as_str()).await {
                 Ok(_) => run.ok += 1,
-                Err(e) => run.errors.push(stmt_error(e, &s)),
+                Err(e) => run.fail(stmt_error(e, &s)),
             }
         }
         run.meter.tick(sp.position(), run.ok, run.errors.len(), false);
@@ -2372,21 +2502,64 @@ fn is_d1_internal_table(name: &str) -> bool {
     name.starts_with("_cf_") || name.starts_with("sqlite_")
 }
 
+/// SQLite served over HTTP: Cloudflare D1 and libSQL/Turso. Both take one
+/// statement per request, keep no client transaction between requests and
+/// always enforce foreign keys, so they share the export and the restore.
+#[derive(Clone, Copy)]
+enum Remote<'a> {
+    D1(&'a super::connection::D1Config),
+    LibSql(&'a super::connection::LibSqlConfig),
+}
+
+impl Remote<'_> {
+    async fn query(&self, sql: &str) -> Result<super::query::SqlResult, String> {
+        match self {
+            Remote::D1(c) => super::d1::query(c, sql, vec![]).await,
+            Remote::LibSql(c) => super::libsql::query(c, sql, vec![]).await,
+        }
+    }
+    fn label(&self) -> &'static str {
+        match self {
+            Remote::D1(_) => "Cloudflare D1 (SQLite)",
+            Remote::LibSql(_) => "libSQL / Turso (SQLite)",
+        }
+    }
+}
+
+/// Tables in an order that loads parents before the rows that point at them:
+/// a table follows every table its foreign keys reference. Cycles (and
+/// self-references) keep their given order; the restore's retry pass settles
+/// those. `deps[i]` lists the tables `tables[i]` references.
+fn fk_order(tables: &[String], deps: &[Vec<String>]) -> Vec<String> {
+    let mut placed: Vec<String> = Vec::with_capacity(tables.len());
+    let mut left: Vec<usize> = (0..tables.len()).collect();
+    while !left.is_empty() {
+        let ready: Vec<usize> = left
+            .iter()
+            .copied()
+            .filter(|&i| deps[i].iter().all(|d| d == &tables[i] || placed.contains(d) || !tables.contains(d)))
+            .collect();
+        // A cycle: take the next one as it came, so the order stays stable.
+        let take = if ready.is_empty() { vec![left[0]] } else { ready };
+        for i in &take { placed.push(tables[*i].clone()); }
+        left.retain(|i| !take.contains(i));
+    }
+    placed
+}
+
 async fn export_d1(
     rep: &Reporter,
-    cfg: &super::connection::D1Config,
+    cfg: Remote<'_>,
     filter: Option<&[String]>,
     opts: &ExportOptions,
     out: &mut Out,
 ) -> Result<Stats, String> {
-    rep.log("info", "Starting Cloudflare D1 export…");
-    out.push_str(&backup_header("Cloudflare D1 (SQLite)", None));
+    rep.log("info", format!("Starting {} export…", cfg.label()));
+    out.push_str(&backup_header(cfg.label(), None));
     out.push_str("PRAGMA foreign_keys=OFF;\nBEGIN TRANSACTION;\n\n");
 
-    let ddl_result = super::d1::query(
-        cfg,
+    let ddl_result = cfg.query(
         "SELECT type, name, tbl_name, sql FROM sqlite_master WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' ORDER BY CASE type WHEN 'table' THEN 0 WHEN 'index' THEN 1 WHEN 'view' THEN 2 ELSE 3 END, name",
-        vec![],
     ).await?;
 
     let type_idx = ddl_result.columns.iter().position(|c| c.name == "type").unwrap_or(0);
@@ -2418,6 +2591,21 @@ async fn export_d1(
         }
     }
 
+    // Rows go out parents first: these engines enforce foreign keys on every
+    // statement, so a dump in name order (movie_cast before movies) could not
+    // be loaded back.
+    if opts.include_data && tables.len() > 1 {
+        let mut deps = Vec::with_capacity(tables.len());
+        for t in &tables {
+            let sql = format!("SELECT DISTINCT \"table\" FROM pragma_foreign_key_list({})", ql(t));
+            let refs = cfg.query(&sql).await.map(|r| {
+                r.rows.iter().filter_map(|row| row.first().and_then(|v| v.as_str()).map(str::to_string)).collect()
+            }).unwrap_or_default();
+            deps.push(refs);
+        }
+        tables = fk_order(&tables, &deps);
+    }
+
     rep.plan(tables.iter().map(|t| PlanEntry { schema: None, name: t.clone(), est_rows: None }).collect());
 
     let mut stats = Stats { tables: tables.len(), ..Stats::default() };
@@ -2425,7 +2613,7 @@ async fn export_d1(
         if is_cancelled() { break; }
         if !opts.include_data { rep.table(None, table, "done", 0, None); continue; }
         rep.table(None, table, "running", 0, None);
-        let data_result = match super::d1::query(cfg, &format!("SELECT * FROM {}", qi(table)), vec![]).await {
+        let data_result = match cfg.query(&format!("SELECT * FROM {}", qi(table))).await {
             Ok(r) => r,
             Err(e) => {
                 // A single unreadable/prohibited table shouldn't abort the whole backup.
@@ -2489,23 +2677,53 @@ fn json_to_sql_val(v: &serde_json::Value) -> String {
 
 // ── D1 import ────────────────────────────────────────────────────────────────
 
-async fn import_d1(rep: &Reporter, cfg: &super::connection::D1Config, sql: &str) -> Result<ImportResult, String> {
+/// A foreign key failed: the parent row may simply not be loaded yet.
+fn is_fk_error(e: &str) -> bool {
+    let l = e.to_ascii_lowercase();
+    l.contains("foreign key constraint") || l.contains("constraint_foreignkey")
+}
+
+async fn import_d1(rep: &Reporter, cfg: Remote<'_>, sql: &str) -> Result<ImportResult, String> {
     let started = Instant::now();
     rep.log("info", "Starting restore…");
     let mut run = Runner::new(rep, sql.len());
     let mut sp = Splitter::new(sql, Escapes::Standard);
+    // Rows a foreign key turned away, tried again once the rest are in.
+    let mut waiting: Vec<(String, String)> = Vec::new();
     while let Some(stmt) = sp.next() {
         let Stmt::Sql(s) = stmt else { continue };
         run.total += 1;
-        // D1 has no client transactions and manages FK enforcement itself.
+        // No client transactions over HTTP, and no turning foreign keys off:
+        // D1 and libSQL enforce them on every statement.
         if head_lower(&s, 24).starts_with("pragma foreign_keys") || is_tx_control(&s) { run.ok += 1; continue; }
-        match super::d1::query(cfg, &s, vec![]).await {
+        match cfg.query(&s).await {
             Ok(_) => run.ok += 1,
-            Err(e) => run.errors.push(stmt_error(e, &s)),
+            Err(e) if is_fk_error(&e) => waiting.push((s, e)),
+            Err(e) => run.fail(stmt_error(e, &s)),
         }
         run.meter.tick(sp.position(), run.ok, run.errors.len(), false);
         if is_cancelled() { run.total += sp.count(); break; }
     }
+    // A dump in name order (or one with references in a cycle) loads children
+    // before parents. Retry what a foreign key refused while a pass still lands
+    // something; only rows whose parent is really missing end as errors.
+    let mut pass = 0;
+    while !waiting.is_empty() && !is_cancelled() {
+        pass += 1;
+        rep.log("info", format!("Retrying {} statement(s) that waited on a parent row (pass {pass})…", waiting.len()));
+        let before = waiting.len();
+        let mut still = Vec::new();
+        for (s, _) in waiting {
+            match cfg.query(&s).await {
+                Ok(_) => run.ok += 1,
+                Err(e) if is_fk_error(&e) => still.push((s, e)),
+                Err(e) => run.fail(stmt_error(e, &s)),
+            }
+        }
+        waiting = still;
+        if waiting.len() == before { break; }
+    }
+    for (s, e) in waiting { run.fail(stmt_error(e, &s)); }
     run.meter.tick(sql.len(), run.ok, run.errors.len(), true);
     Ok(finish_import(rep, run.total, run.ok, run.errors, started))
 }
@@ -2614,7 +2832,7 @@ async fn import_duckdb(
         if head_lower(&s, 24).starts_with("pragma foreign_keys") { run.ok += 1; continue; }
         match super::duckdb::execute_sql(handle, &s).await {
             Ok(_) => run.ok += 1,
-            Err(e) => run.errors.push(stmt_error(e, &s)),
+            Err(e) => run.fail(stmt_error(e, &s)),
         }
         run.meter.tick(sp.position(), run.ok, run.errors.len(), false);
         if is_cancelled() { run.total += sp.count(); break; }
@@ -2698,7 +2916,7 @@ async fn import_mssql(
         run.total += 1;
         match super::mssql::execute_sql(handle, &s).await {
             Ok(_) => run.ok += 1,
-            Err(e) => run.errors.push(stmt_error(e, &s)),
+            Err(e) => run.fail(stmt_error(e, &s)),
         }
         run.meter.tick(sp.position(), run.ok, run.errors.len(), false);
         if is_cancelled() { run.total += sp.count(); break; }
@@ -2778,6 +2996,46 @@ mod tests {
     fn strips_line_comments() {
         let s = split("SELECT 1; -- a trailing note\nSELECT 2;");
         assert_eq!(s, vec!["SELECT 1".to_string(), "SELECT 2".to_string()]);
+    }
+
+    #[test]
+    fn dump_encodings_are_sniffed_and_decoded() {
+        let rep = Reporter::silent();
+        // Valid UTF-8, with and without a BOM.
+        assert_eq!(sniff_encoding("SELECT 'é';".as_bytes(), true), encoding_rs::UTF_8);
+        let bom = [&[0xEF, 0xBB, 0xBF][..], b"SELECT 1;"].concat();
+        assert_eq!(decode_script(bom, None, &rep).unwrap(), "SELECT 1;");
+        // Latin-1 bytes are not UTF-8: read as Windows-1252.
+        let latin = b"INSERT INTO t VALUES ('caf\xe9');".to_vec();
+        assert_eq!(sniff_encoding(&latin, true), encoding_rs::WINDOWS_1252);
+        assert_eq!(decode_script(latin.clone(), None, &rep).unwrap(), "INSERT INTO t VALUES ('café');");
+        // A picked encoding wins over the sniff.
+        assert!(decode_script(latin, Some("utf-8"), &rep).unwrap().contains('\u{fffd}'));
+        // UTF-16 with a BOM.
+        let mut u16 = vec![0xFF, 0xFE];
+        for c in "SELECT 2;".encode_utf16() { u16.extend_from_slice(&c.to_le_bytes()); }
+        assert_eq!(decode_script(u16, None, &rep).unwrap(), "SELECT 2;");
+        // A sample cut inside a UTF-8 character is still UTF-8, and the cut is dropped.
+        let cut = &"ab é".as_bytes()[..4];
+        assert_eq!(sniff_encoding(cut, false), encoding_rs::UTF_8);
+        assert_eq!(preview_of(cut, false, encoding_rs::UTF_8), ("ab ".to_string(), true));
+        assert!(decode_script(b"x".to_vec(), Some("klingon"), &rep).is_err());
+    }
+
+    #[test]
+    fn inspect_previews_the_start_of_a_dump() {
+        let i = inspect_bytes(9, b"-- MySQL dump\nSELECT 1;", true, None);
+        assert_eq!(i.engine.as_deref(), Some("MySQL"));
+        assert_eq!(i.encoding, "utf-8");
+        assert_eq!(i.preview, "-- MySQL dump\nSELECT 1;");
+        assert!(!i.preview_truncated);
+        let long = "x".repeat(PREVIEW_CHARS + 5);
+        let i = inspect_bytes(long.len() as u64, long.as_bytes(), true, None);
+        assert_eq!(i.preview.len(), PREVIEW_CHARS);
+        assert!(i.preview_truncated);
+        // A picked encoding changes the preview, not what was detected.
+        let i = inspect_bytes(4, b"caf\xe9", true, Some(encoding_rs::UTF_8));
+        assert_eq!((i.encoding.as_str(), i.preview.as_str()), ("windows-1252", "caf\u{fffd}"));
     }
 
     #[test]
@@ -2950,6 +3208,24 @@ mod tests {
         let p = std::env::temp_dir().join(format!("stroke-backup-test-{}-{name}", std::process::id()));
         let _ = std::fs::remove_file(&p);
         p
+    }
+
+    #[test]
+    fn fk_order_loads_parents_first() {
+        let t = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let tables = t(&["genres", "movie_cast", "movie_genres", "movies", "people"]);
+        let deps = vec![t(&[]), t(&["movies", "people"]), t(&["movies", "genres"]), t(&["people"]), t(&[])];
+        let order = fk_order(&tables, &deps);
+        let pos = |n: &str| order.iter().position(|x| x == n).unwrap();
+        assert!(pos("people") < pos("movies"));
+        assert!(pos("movies") < pos("movie_cast"));
+        assert!(pos("genres") < pos("movie_genres"));
+        assert_eq!(order.len(), 5);
+        // A cycle and a self-reference still place every table once.
+        let cyc = fk_order(&t(&["a", "b", "c"]), &[t(&["b"]), t(&["a"]), t(&["c"])]);
+        assert_eq!(cyc.len(), 3);
+        assert!(is_fk_error("FOREIGN KEY constraint failed: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_FOREIGNKEY)"));
+        assert!(!is_fk_error("UNIQUE constraint failed"));
     }
 
     #[tokio::test]

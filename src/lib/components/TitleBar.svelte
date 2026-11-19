@@ -2,13 +2,10 @@
   import DbIcon from './DbIcon.svelte'
   import { onMount } from 'svelte'
   import MessageSquare from '@lucide/svelte/icons/message-square'
-  import X             from '@lucide/svelte/icons/x'
-  import KeyRound      from '@lucide/svelte/icons/key-round'
   import { cn } from '$lib/utils.js'
   import { getAppScale } from '$lib/app-zoom.js'
   import { detectOs } from '$lib/platform.js'
   import { isTrialActive, licenseStatus } from '$lib/stores/license.js'
-  import LicenseActivation from './LicenseActivation.svelte'
   import Logo from './Logo.svelte'
   import AppMenuBar from './AppMenuBar.svelte'
   import { appMenuBar, appZoom } from '$lib/stores/settings.js'
@@ -18,7 +15,6 @@
   import PanelLeft from '@lucide/svelte/icons/panel-left'
   import { tabDisplayTitle } from '$lib/studio-tabs.js'
   import { bindNativeMenu, syncNativeMenuState, watchFullscreen } from '$lib/native-menu.js'
-  import * as Dialog from '$lib/components/ui/dialog/index.js'
 
   const isMac = typeof navigator !== 'undefined' && detectOs() === 'macos'
   const mod = isMac ? '⌘' : 'Ctrl'
@@ -82,7 +78,6 @@
 
   const pageTitle = $derived(connected && activeTab ? tabDisplayTitle(activeTab) : '')
 
-  let showActivationDialog = $state(false)
 
   const trialDays = $derived(
     $licenseStatus?.status === 'Trial' ? $licenseStatus.days_remaining : 0
@@ -115,6 +110,11 @@
   // overflowed them (menus, workspace name and buttons all ballooned). It is
   // counter-zoomed by 1/scale; its few px sizes are written × scale above so
   // they land back on whole pixels. Menus it opens are portaled and still zoom.
+  // Tailwind's spacing (p-*, gap-*, h-*, size-*) is rem, and WebKitGTK does
+  // not apply `zoom` to rem lengths: on Linux the counter-zoom shrank the text
+  // back but left padding and gaps at the zoomed size, so the menu row spread
+  // out at every zoom step. Inside the bar the spacing unit is px x scale
+  // instead (style below), which every engine zooms back to the same 4px.
   // Read in the same frame: applySettings sets --app-scale before it updates
   // appZoom. Deferring it a frame made the bar jump after every zoom step.
   const chromeZoom = $derived.by(() => {
@@ -122,7 +122,7 @@
     return 1 / getAppScale()
   })
 
-  const iconBtn = 'inline-flex size-[calc(28px*var(--app-scale))] items-center justify-center rounded-md text-muted-foreground hover:text-foreground'
+  const iconBtn = 'inline-flex size-[calc(28px*var(--app-scale))] items-center justify-center rounded-md text-muted-foreground transition-[color,scale] duration-[120ms] ease-[var(--ease-out)] hover:text-foreground active:scale-[0.97]'
 </script>
 
 <!--
@@ -132,9 +132,10 @@
   style) floating over this bar, so it only reserves space for them here.
 -->
 <div
-  class="studio-chrome relative flex h-[calc(52px*var(--app-scale))] shrink-0 items-center bg-panel {isMac ? 'pr-[calc(10px*var(--app-scale))]' : 'border-b border-border/40 px-[calc(10px*var(--app-scale))]'} select-none"
+  class="studio-chrome relative flex shrink-0 items-center bg-panel {isMac ? 'h-[calc(52px*var(--app-scale))] pr-[calc(10px*var(--app-scale))]' : 'h-[calc(40px*var(--app-scale))] border-b border-border/40 pl-[calc(10px*var(--app-scale))] pr-0'} select-none"
   data-studio-chrome
   style:zoom={chromeZoom}
+  style:--spacing="calc(4px * var(--app-scale, 1))"
   data-studio-region="titlebar"
   bind:clientWidth={barW}
   data-tauri-drag-region
@@ -207,45 +208,18 @@
   <div class={isMac && tabStrip ? 'w-2 shrink-0' : 'min-w-0 flex-1'} data-tauri-drag-region></div>
 
   <!-- Right: trial pill + Chat -->
-  <div class="flex shrink-0 items-center gap-[calc(4px*var(--app-scale))]" bind:clientWidth={rightW}>
+  <div class="flex shrink-0 items-center gap-[calc(4px*var(--app-scale))] self-stretch" bind:clientWidth={rightW}>
 
     <!-- Workspace, then the app menu (account, settings, theme, help). -->
     <WorkspaceSwitcher {connections} compact />
     <TitleBarMenu actions={menuActions} class="size-[calc(28px*var(--app-scale))]" />
 
     {#if isTauri && !isMac}
-      <div class="ml-1 border-l border-border/40 pl-1.5">
+      <!-- Windows-style caption buttons: full height, flush with the window's edge. -->
+      <div class="ml-2 flex self-stretch">
         <WindowControls />
       </div>
     {/if}
   </div>
 </div>
 
-<!-- License activation dialog (from trial pill) -->
-<Dialog.Root bind:open={showActivationDialog}>
-  <Dialog.Portal>
-    <Dialog.Overlay class="fixed inset-0 z-[70] bg-black/65" />
-    <Dialog.Content showCloseButton={false} class="fixed left-1/2 top-1/2 z-[71] w-full max-w-[420px] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-2xl border border-border/60 bg-background p-0 elevate-3-rim outline-none">
-      <div class="flex items-center justify-between border-b border-border/60 px-5 py-4">
-        <div class="flex items-center gap-2.5">
-          <div class="flex size-7 items-center justify-center rounded-lg bg-primary/10">
-            <KeyRound class="size-3.5 shrink-0 text-primary" />
-          </div>
-          <div>
-            <Dialog.Title class="text-ui-sm font-semibold leading-none text-foreground">Activate license</Dialog.Title>
-            <Dialog.Description class="mt-0.5 text-ui-xs text-muted-foreground">Enter your key to unlock all features.</Dialog.Description>
-          </div>
-        </div>
-        <Dialog.Close class="inline-flex size-7 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
-          <X class="size-4 shrink-0" />
-        </Dialog.Close>
-      </div>
-      <LicenseActivation compact onactivated={() => { showActivationDialog = false }} />
-      <div class="border-t border-border/60 px-5 py-3">
-        <p class="text-ui-xs text-muted-foreground">
-          No license? <a href="https://stroke.click" target="_blank" rel="noopener noreferrer" class="text-primary underline-offset-2 hover:underline">stroke.click →</a>
-        </p>
-      </div>
-    </Dialog.Content>
-  </Dialog.Portal>
-</Dialog.Root>

@@ -285,7 +285,7 @@
 
   // Query languages that aren't SQL: the SQL lint and formatter would mark
   // valid statements as errors (db.users.find(...)) or rewrite them.
-  const NOT_SQL = new Set(['redis', 'valkey', 'mongodb', 'couchdb', 'firestore'])
+  const NOT_SQL = new Set(['redis', 'valkey', 'mongodb', 'couchdb', 'elasticsearch', 'opensearch', 'firestore'])
   const isSql = $derived(!NOT_SQL.has(dialect))
 
   /** @param {import('@codemirror/state').EditorState} state */
@@ -991,7 +991,7 @@
     { key: 'Mod-Shift-s', run: () => call(onmodshifts)() },
     { key: 'Mod-l', run: selectStatement, preventDefault: true },
     { key: 'Mod-r', run: runStatement, preventDefault: true },
-    { key: 'Mod-j', run: () => call(onmodj)() },
+    { key: 'Mod-Shift-j', run: () => call(onmodj)() },
     { key: 'Mod-Shift-b', run: () => call(onmodshiftb)() },
     // Wrap on/off: VS Code's key, the one the cell dock uses too.
     { key: 'Alt-z', run: () => { setSqlEditorOption('wrap', !$appSqlEditor.wrap); return true }, preventDefault: true },
@@ -1251,6 +1251,9 @@
       userSelect: 'none',
       pointerEvents: 'none',
     },
+    // CodeMirror's base theme lifts panels to z-index 300, over the app's
+    // popovers and dialogs: the vim --INSERT-- line drew over Workspaces.
+    '.cm-panels': { zIndex: '2' },
     // Vim's mode / command line, where monaco-vim's status strip was.
     '.cm-vim-panel': {
       padding: '2px 12px',

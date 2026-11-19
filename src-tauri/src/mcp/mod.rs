@@ -246,6 +246,63 @@ pub fn emit_activity(a: McpActivity) {
     }
 }
 
+/// What `share_link` hands the window: the share dialog opens prefilled with
+/// it, and the person there decides. Nothing leaves without their click.
+#[derive(serde::Serialize, Clone)]
+pub struct McpShare {
+    pub id: u64,
+    pub kind: String,
+    pub title: String,
+    pub columns: Vec<String>,
+    pub rows: Vec<Vec<serde_json::Value>>,
+    pub sql: Option<String>,
+    pub code: Option<String>,
+    pub chart: Option<serde_json::Value>,
+}
+
+static SHARE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static SHARE_WAIT: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<u64, oneshot::Sender<Option<String>>>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// Open the share dialog for `s` and wait for the person's answer: the link
+/// they created, or None if they closed it (or nobody answered in 10 minutes).
+pub async fn request_share(mut s: McpShare) -> Result<Option<String>, String> {
+    use tauri::Emitter;
+    let app = APP.get().ok_or("Stroke's window isn't available.")?;
+    let id = SHARE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    s.id = id;
+    let (tx, rx) = oneshot::channel();
+    SHARE_WAIT.lock().map_err(|e| e.to_string())?.insert(id, tx);
+    if let Err(e) = app.emit("mcp-share", s) {
+        if let Ok(mut w) = SHARE_WAIT.lock() { w.remove(&id); }
+        return Err(e.to_string());
+    }
+    match tokio::time::timeout(std::time::Duration::from_secs(600), rx).await {
+        Ok(Ok(url)) => Ok(url),
+        _ => {
+            if let Ok(mut w) = SHARE_WAIT.lock() { w.remove(&id); }
+            Ok(None)
+        }
+    }
+}
+
+/// The share dialog's answer to a `share_link` call.
+#[tauri::command]
+pub fn mcp_share_result(id: u64, url: Option<String>) {
+    let tx = SHARE_WAIT.lock().ok().and_then(|mut w| w.remove(&id));
+    if let Some(tx) = tx {
+        let _ = tx.send(url);
+    }
+}
+
+/// Ask the window to reload its sidebar (refresh_sidebar).
+pub fn emit_refresh() {
+    if let Some(app) = APP.get() {
+        use tauri::Emitter;
+        let _ = app.emit("mcp-refresh", ());
+    }
+}
+
 /// What `open_in_stroke` asks the window to show.
 #[derive(serde::Serialize, Clone)]
 pub struct McpOpen {

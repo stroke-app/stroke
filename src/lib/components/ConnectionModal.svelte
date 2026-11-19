@@ -24,12 +24,16 @@
     connectDuckdb,
     testMssqlConnection,
     connectMssql,
+    testOracleConnection,
+    connectOracle,
     testRedis,
     connectRedis,
     testDynamo,
     connectDynamo,
     testCouch,
     connectCouch,
+    testElastic,
+    connectElastic,
     testCassandra,
     connectCassandra,
     testFirestore,
@@ -77,7 +81,7 @@
   import { focusTrap } from '$lib/actions/focus-trap.js';
   import { toast } from "$lib/components/ui/sonner/toast.svelte.js";
   import * as ContextMenu from "$lib/components/ui/context-menu/index.js";
-  import { parseConnectionUri, detectConnectionUri } from "$lib/connection-uri.js";
+  import { parseConnectionUri, detectConnectionUri, connectionUrl } from "$lib/connection-uri.js";
   import { PROVIDERS, providerBuildConnection, providerWarm, providerToSaved, AUTH_FAILURE } from "$lib/providers.js";
   import { providerOf, engineLabel } from "$lib/connection-provider.js";
   import ConfirmDialog from "./ConfirmDialog.svelte";
@@ -94,6 +98,14 @@
      * once consumed so the next plain open starts on the picker again.
      */
     initialEngine = $bindable(""),
+    /**
+     * A connection string handed over from outside (a stroke:// link or the
+     * command line): read as if pasted, so the form opens filled in. Nothing
+     * connects until Connect is pressed. Cleared once consumed.
+     */
+    initialUri = $bindable(""),
+    /** Name for that connection, e.g. the project folder it came from. */
+    initialName = $bindable(""),
     onconnected = (conn, id) => {},
     maxConnections = Infinity,
     /** Name of the live session, '' when nothing is connected. Drives Disconnect. */
@@ -102,6 +114,9 @@
     /** A saved connection was deleted here; the shell ends its session if open. */
     onremoved = (/** @type {string} */ id) => {},
   } = $props();
+
+  /** The logos on the New connection button. */
+  const NEW_CONN_STACK = ["postgres", "mysql", "mongodb", "sqlite"];
 
   const CATEGORIES = [
     {
@@ -124,6 +139,7 @@
           desc: "Distributed Postgres-compatible SQL",
         },
         { id: "mssql", label: "SQL Server", desc: "Microsoft SQL Server" },
+        { id: "oracle", label: "Oracle", desc: "Oracle Database (uses Oracle Instant Client)" },
       ],
     },
     {
@@ -176,6 +192,8 @@
         { id: "dynamodb", label: "DynamoDB", desc: "AWS key-value and document tables" },
         { id: "mongodb", label: "MongoDB", desc: "Document database, also Atlas (mongodb+srv)" },
         { id: "couchdb", label: "CouchDB", desc: "JSON documents over HTTP, Mango queries" },
+        { id: "elasticsearch", label: "Elasticsearch", desc: "Search and analytics, also Elastic Cloud" },
+        { id: "opensearch", label: "OpenSearch", desc: "Search and analytics, also Amazon OpenSearch Service" },
         { id: "cassandra", label: "Cassandra", desc: "Wide-column store, also ScyllaDB (CQL)" },
         { id: "firestore", label: "Firestore", desc: "Google Cloud document database" },
       ],
@@ -251,6 +269,7 @@
     "mariadb",
     "cockroachdb",
     "mssql",
+    "oracle",
     "clickhouse",
     "duckdb",
     "sqlite-memory",
@@ -272,6 +291,8 @@
     "dynamodb",
     "mongodb",
     "couchdb",
+    "elasticsearch",
+    "opensearch",
     "cassandra",
     "firestore",
   ];
@@ -412,6 +433,13 @@
   // custom endpoint (DynamoDB Local) are optional.
   // CouchDB: the server URL; user and password reuse the shared fields.
   let couchUrl = $state("http://localhost:5984");
+  // Elasticsearch / OpenSearch: the server URL (shared with CouchDB's field),
+  // a login or an API key, and whether to accept a self-signed certificate.
+  let esAuth = $state(/** @type {'basic' | 'apikey'} */ ("basic"));
+  let esApiKey = $state("");
+  let esInsecure = $state(false);
+  /** What the last test said the server is, e.g. "OpenSearch 2.17.0". */
+  let esServer = $state("");
   // Workspace and colour label of the connection being edited or created.
   let connColor = $state(/** @type {string | null} */ (null));
   let connWorkspace = $state(DEFAULT_WORKSPACE_ID);
@@ -427,6 +455,23 @@
   let fsAuth = $state(/** @type {'serviceAccount'|'gcloud'|'emulator'} */ ("serviceAccount"));
   let fsKeyFile = $state("");
   let fsEmulator = $state("localhost:8080");
+  // Oracle: a service name (in the shared `database` field), a SID, or a whole
+  // connect string; and where Instant Client lives when the app can't find it.
+  /** Copy URL just copied: the button says so for a moment. */
+  let urlCopied = $state(false);
+  let oraMode = $state(/** @type {'service'|'sid'|'connect'} */ ("service"));
+  let oraSid = $state("");
+  let oraConnect = $state("");
+  let oraClientDir = $state("");
+  async function pickOracleClientDir() {
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const path = await open({ title: "Select the Instant Client folder", directory: true });
+      if (typeof path === "string" && path) oraClientDir = path;
+    } catch {
+      /* browser/non-Tauri env - the field is still typeable */
+    }
+  }
   async function pickFirestoreKey() {
     try {
       const { open } = await import("@tauri-apps/plugin-dialog");
@@ -642,7 +687,7 @@
     // A string for another engine switches the engine too - refusing it and
     // making the user go and change the dropdown first would be pedantry.
     if (hit && hit.type !== dbType && !DISABLED_TABS.has(hit.type)) switchDriver(hit.type);
-    const ok = applyConnectionUriFrom(raw, hit?.uriType ?? uriTypeFor(dbType));
+    const ok = applyConnectionUriFrom(hit?.uri ?? raw, hit?.uriType ?? uriTypeFor(dbType));
     if (ok) {
       importUri = "";
       // Left open would mean an empty bar sitting over the fields it just
@@ -707,7 +752,7 @@
     if (!raw) return;
     const hit = detectConnectionUri(raw);
     if (!hit) {
-      quickHint = "That does not look like a connection string. Try postgres://…, mysql://…, or a path to a .db file.";
+      quickHint = "That does not look like a connection string. Paste a URL (postgres://, mysql://, sqlserver://, oracle://, mongodb://, redis://, libsql://, …), a .env line, host=… dbname=…, or a path to a .db file.";
       return;
     }
     if (DISABLED_TABS.has(hit.type)) {
@@ -725,7 +770,9 @@
       const known = ALL_DRIVERS.find((d) => d.id === hit.provider);
       quickHint = `Recognised a ${known?.label ?? PROVIDER_LABELS[hit.provider] ?? hit.provider} endpoint.`;
     }
-    const ok = applyConnectionUriFrom(raw, hit.uriType);
+    // `hit.uri`: the string with its .env wrapper or driver suffix taken off,
+    // or a key/value string turned into a URL.
+    const ok = applyConnectionUriFrom(hit.uri ?? raw, hit.uriType);
     if (!ok && !quickHint) quickHint = "Could not read that string.";
     quickUri = "";
     // Used. Coming back to the picker should not hand it over again.
@@ -798,11 +845,18 @@
    * is a dropdown on the form now - searchable, in reading order with the rest
    * of the connection - so the step is gone and so is the grid.
    */
+  /** The engine dropdown on the form. */
+  let enginePickerOpen = $state(false);
+
+  /** New connection: the form, with the engine list already open to pick from. */
   function newConnectionForm() {
     error = "";
     testOk = false;
     quickHint = "";
     pickEngine("postgres");
+    // After the form step has rendered its trigger, or the popover has
+    // nothing to anchor to.
+    tick().then(() => requestAnimationFrame(() => (enginePickerOpen = true)));
   }
 
   /** Every driver, for the form's engine dropdown. */
@@ -968,6 +1022,19 @@
         encrypt,
         trustCert,
       };
+    if (dbType === "oracle")
+      return {
+        type: "oracle",
+        name: nm,
+        host,
+        port,
+        serviceName: oraMode === "service" ? database.trim() : "",
+        sid: oraMode === "sid" ? oraSid.trim() : "",
+        connectString: oraMode === "connect" ? oraConnect.trim() : "",
+        user,
+        password,
+        clientLibDir: oraClientDir.trim(),
+      };
     if (dbType === "mongodb")
       return { type: "mongodb", name: nm, uri: mongoUri.trim(), database: mongoDb.trim() };
     if (dbType === "firestore")
@@ -984,6 +1051,14 @@
       return { type: "cassandra", name: nm, hosts: cqlHosts.trim(), user: user.trim(), password, keyspace: cqlKeyspace.trim() };
     if (dbType === "couchdb")
       return { type: "couchdb", name: nm, url: couchUrl.trim(), user: user.trim(), password };
+    if (dbType === "elasticsearch" || dbType === "opensearch")
+      return {
+        type: dbType,
+        name: nm,
+        url: couchUrl.trim(),
+        ...(esAuth === "apikey" ? { apiKey: esApiKey.trim(), user: "", password: "" } : { user: user.trim(), password, apiKey: "" }),
+        insecure: esInsecure,
+      };
     if (dbType === "dynamodb")
       return {
         type: "dynamodb",
@@ -1092,9 +1167,23 @@
       fsEmulator = conn.emulatorHost ?? "localhost:8080";
       cqlHosts = conn.hosts ?? "127.0.0.1:9042";
       cqlKeyspace = conn.keyspace ?? "";
+      if (conn.type === "oracle") {
+        database = conn.serviceName ?? "";
+        oraSid = conn.sid ?? "";
+        oraConnect = conn.connectString ?? "";
+        oraClientDir = conn.clientLibDir ?? "";
+        oraMode = oraConnect ? "connect" : oraSid ? "sid" : "service";
+      }
       connColor = conn.color ?? null;
       connWorkspace = conn.workspaceId ?? DEFAULT_WORKSPACE_ID;
-      couchUrl = conn.type === "couchdb" ? (conn.url ?? "http://localhost:5984") : "http://localhost:5984";
+      couchUrl =
+        conn.type === "couchdb" ? (conn.url ?? "http://localhost:5984")
+        : conn.type === "elasticsearch" || conn.type === "opensearch" ? (conn.url ?? "http://localhost:9200")
+        : "http://localhost:5984";
+      esAuth = conn.apiKey ? "apikey" : "basic";
+      esApiKey = conn.apiKey ?? "";
+      esInsecure = !!conn.insecure;
+      esServer = "";
       awsAuth = conn.accessKeyId ? "keys" : "profile";
       awsProfile = conn.profile ?? "";
       awsKeyId = conn.accessKeyId ?? "";
@@ -1144,6 +1233,10 @@
       connWorkspace = getStore(activeWorkspaceId);
       cqlHosts = "127.0.0.1:9042";
       cqlKeyspace = "";
+      oraMode = "service";
+      oraSid = "";
+      oraConnect = "";
+      oraClientDir = "";
       mongoUri = "mongodb://localhost:27017";
       mongoDb = "";
       fsProject = "";
@@ -1286,6 +1379,7 @@
     cockroachdb: 26257,
     clickhouse: 8123,
     mssql: 1433,
+    oracle: 1521,
     redis: 6379,
     valkey: 6379,
   };
@@ -1309,10 +1403,13 @@
     mariadb:     { database: "", user: "root" },
     clickhouse:  { database: "default", user: "default" },
     mssql:       { database: "master", user: "sa" },
+    oracle:      { database: "", user: "" },
     redis:       { database: "0", user: "" },
     valkey:      { database: "0", user: "" },
     dynamodb:    { database: "", user: "" },
     couchdb:     { database: "", user: "admin" },
+    elasticsearch: { database: "", user: "elastic" },
+    opensearch:  { database: "", user: "admin" },
     cassandra:   { database: "", user: "" },
     firestore:   { database: "", user: "" },
     mongodb:     { database: "", user: "" },
@@ -1338,6 +1435,11 @@
     if (user === "" || user === prev.user) user = next.user ?? "";
     if (id === "sqlite-memory" || id === "duckdb-memory") filePath = ":memory:";
     if (id === "duckdb") filePath = "";
+    // The HTTP engines share one URL field; move it to the new engine's port
+    // while it still holds the previous one's local default.
+    const HTTP_DEFAULT = /** @type {Record<string, string>} */ ({ couchdb: "http://localhost:5984", elasticsearch: "http://localhost:9200", opensearch: "http://localhost:9200" });
+    if (HTTP_DEFAULT[id] && (!couchUrl.trim() || Object.values(HTTP_DEFAULT).includes(couchUrl.trim()))) couchUrl = HTTP_DEFAULT[id];
+    esServer = "";
     error = "";
     testOk = false;
     connectionUri = "";
@@ -1357,12 +1459,14 @@
     if (t === "sqlite" || t === "sqlite-memory" || t === "duckdb" || t === "duckdb-memory") return "sqlite";
     if (t === "mysql" || t === "mariadb") return "mysql";
     if (t === "mssql") return "mssql";
+    if (t === "oracle") return "oracle";
     if (t === "clickhouse") return "clickhouse";
     // Redis and LibSQL have their own shapes: a `redis://` string read by the
     // Postgres parser loses the database index and mistakes a bare password for
     // a username, and a Turso URL carries its token in the query string.
     if (t === "redis" || t === "valkey") return "redis";
     if (t === "libsql") return "libsql";
+    if (t === "couchdb" || t === "elasticsearch" || t === "opensearch") return "couchdb";
     return "postgres";
   }
 
@@ -1400,6 +1504,39 @@
       secure = parsed.tls;
       flashFields(["host", "port", "database", "user", "password", "secure"]);
       uriHint = "Fields updated from URL";
+      return true;
+    }
+    // CouchDB: the server URL, the login in its own fields.
+    if ("couch" in parsed) {
+      couchUrl = parsed.url;
+      if (parsed.user) user = parsed.user;
+      if (parsed.password) password = parsed.password;
+      flashFields(["user", "password"]);
+      uriHint = "Fields updated from URL";
+      return true;
+    }
+    // Cassandra / ScyllaDB: contact points, login, keyspace.
+    if ("cql" in parsed) {
+      cqlHosts = parsed.hosts;
+      cqlKeyspace = parsed.keyspace;
+      if (parsed.user) user = parsed.user;
+      if (parsed.password) password = parsed.password;
+      flashFields(["user", "password"]);
+      uriHint = "Fields updated from URL";
+      return true;
+    }
+    // Oracle: host + service or SID, or a descriptor kept whole.
+    if ("oracle" in parsed) {
+      host = parsed.host || host;
+      port = parsed.port;
+      database = parsed.serviceName;
+      oraSid = parsed.sid;
+      oraConnect = parsed.connectString;
+      oraMode = parsed.connectString ? "connect" : parsed.sid ? "sid" : "service";
+      if (parsed.user) user = parsed.user;
+      if (parsed.password) password = parsed.password;
+      flashFields(["host", "port", "database", "user", "password"]);
+      uriHint = "Fields updated from connection string";
       return true;
     }
     // LibSQL / Turso: the URL, with any `authToken` moved to its own field.
@@ -1464,6 +1601,14 @@
         libsqlUrl.replace(/^\w+:\/\//, "").split(".")[0] || activeDriver.label
       );
     if (dbType === "d1") return "Cloudflare D1";
+    // DynamoDB has no host field of its own: the form's leftover 127.0.0.1
+    // named an AWS connection after localhost. Name it after where it goes.
+    if (dbType === "dynamodb") {
+      const ep = awsEndpoint.trim();
+      if (ep) return `DynamoDB@${ep.replace(/^\w+:\/\//, "")}`;
+      const where = awsRegion.trim() || (awsAuth === "profile" ? (awsProfile.trim() || "default") : "AWS");
+      return `DynamoDB · ${where}`;
+    }
     if (host.trim())
       return `${database.trim() || activeDriver.label}@${host.trim()}`;
     return activeDriver.label;
@@ -1476,6 +1621,7 @@
     cockroachdb: "postgresql://user:pass@host:26257/defaultdb",
     clickhouse: "clickhouse://user:pass@host:8123/db",
     mssql: "sqlserver://user:pass@host:1433;database=db",
+    oracle: "oracle://user:pass@host:1521/FREEPDB1",
     redis: "rediss://:password@host:6379/0",
     libsql: "libsql://db-org.turso.io?authToken=…",
     sqlite: "/path/to/app.db",
@@ -1493,7 +1639,7 @@
     const suffix = id.replace(/^cn-/, "");
     for (const cid of [
       id,
-      ...["ch", "mssql", "redis"].map((p) => `cn-${p}-${suffix}`),
+      ...["ch", "mssql", "ora", "redis"].map((p) => `cn-${p}-${suffix}`),
     ]) {
       const el = /** @type {HTMLInputElement | null} */ (
         document.getElementById(cid)
@@ -1530,6 +1676,13 @@
         },
       };
     }
+    if (/oracle instant client|dpi-1047/.test(e))
+      return {
+        title: "Oracle Instant Client is not installed here",
+        hint: "Stroke talks to Oracle through Oracle's own client library. Download Instant Client Basic for this platform, unzip it, and point Instant Client folder at it.",
+        actionLabel: "Set Instant Client folder",
+        action: () => focusField("cn-ora-client"),
+      };
     // A REST 401 comes first: `auth.*error` used to swallow "401 Unauthorized:
     // …\"errors\":[…]" and report a wrong *password* for a token that had simply
     // expired, which sends people to a field that isn't the problem.
@@ -1642,7 +1795,7 @@
     if (conn.type === "posthog") return conn.projectId ? `project ${conn.projectId}` : "—";
     // Redis has no database name worth showing; where it lives is the useful bit.
     if (engineFamily(conn.type) === "redis") return conn.host ? `${conn.host}${conn.port ? `:${conn.port}` : ""}` : "—";
-    if (conn.type === "couchdb") return conn.url || "—";
+    if (conn.type === "couchdb" || conn.type === "elasticsearch" || conn.type === "opensearch") return conn.url || "—";
     if (conn.type === "mongodb") return conn.uri ? uriHost(conn.uri) : "—";
     if (conn.type === "firestore") return [conn.projectId, conn.auth === "emulator" ? "emulator" : null].filter(Boolean).join(" · ") || "—";
     if (conn.type === "cassandra") return [conn.hosts, conn.keyspace].filter(Boolean).join(" · ") || "—";
@@ -1677,6 +1830,13 @@
       engineQuery = "";
       quickUri = "";
       quickHint = "";
+      if (initialUri) {
+        quickUri = initialUri;
+        useQuickUri();
+        if (initialName && step !== "pick") name = initialName;
+        initialUri = "";
+        initialName = "";
+      }
       void refreshLocal();
       // The paste bar takes focus: the modal opens, you paste, you press Enter.
       // Focus alone does not read the clipboard - only a click into the bar does.
@@ -1735,9 +1895,11 @@
     if (conn.type === "posthog") return connectPosthog(conn);
     if (conn.type === "duckdb") return connectDuckdb(conn);
     if (conn.type === "mssql") return connectMssql(conn);
+    if (conn.type === "oracle") return connectOracle(conn);
     if (engineFamily(conn.type) === "redis") return connectRedis(conn);
     if (conn.type === "dynamodb") return connectDynamo(conn);
     if (conn.type === "couchdb") return connectCouch(conn);
+    if (conn.type === "elasticsearch" || conn.type === "opensearch") return connectElastic(conn);
     if (conn.type === "cassandra") return connectCassandra(conn);
     if (conn.type === "firestore") return connectFirestore(conn);
     if (conn.type === "mongodb") return connectMongo(conn);
@@ -2012,6 +2174,34 @@
     });
   }
 
+  /**
+   * The engine-specific connection fields for a container. The SQL engines and
+   * Redis take host/port/user; the document engines take a URI or endpoint.
+   * @param {import('$lib/api.js').DockerDatabase} d
+   */
+  function dockerConnFields(d) {
+    const hp = `${d.host}:${d.port}`;
+    const auth = d.user ? `${encodeURIComponent(d.user)}:${encodeURIComponent(d.password)}@` : "";
+    switch (d.engine) {
+      case "oracle":
+        return { host: d.host, port: d.port, serviceName: d.database, sid: "", connectString: "", user: d.user, password: d.password };
+      case "mongodb":
+        return { uri: `mongodb://${auth}${hp}/${d.user ? "?authSource=admin" : ""}`, database: d.database };
+      case "couchdb":
+        return { url: `http://${hp}`, user: d.user, password: d.password };
+      case "elasticsearch":
+      case "opensearch":
+        return { url: `http://${hp}`, user: d.user, password: d.password, apiKey: "", insecure: false };
+      case "cassandra":
+        return { hosts: hp, user: d.user, password: d.password, keyspace: "" };
+      case "dynamodb":
+        // DynamoDB Local accepts any keys; it still wants some.
+        return { region: "us-east-1", endpoint: `http://${hp}`, accessKeyId: "local", secretAccessKey: "local", sessionToken: "" };
+      default:
+        return { host: d.host, port: d.port, user: d.user, password: d.password, database: d.database };
+    }
+  }
+
   /** @param {import('$lib/api.js').DockerDatabase} d */
   function dockerTarget(d) {
     const label = `Docker · ${d.image}`;
@@ -2024,7 +2214,9 @@
           ? { encrypt: true, trustCert: true }
           : d.engine === "clickhouse"
             ? { secure: false }
-            : { ssl: false };
+            : ["oracle", "mongodb", "couchdb", "elasticsearch", "opensearch", "cassandra", "dynamodb"].includes(d.engine)
+              ? {}
+              : { ssl: false };
     return /** @type {LocalTarget} */ ({
       id: `docker:${d.name}`,
       container: d.name,
@@ -2042,13 +2234,9 @@
             id: `docker:${d.name}`,
             type: d.engine,
             name: d.name,
-            host: d.host,
-            port: d.port,
-            user: d.user,
-            password: d.password,
-            database: d.database,
             origin: "docker",
             toolLabel: label,
+            ...dockerConnFields(d),
             ...extras,
           },
     });
@@ -2203,9 +2391,16 @@
       else if (p.type === "clickhouse") await testClickhouseConnection(p);
       else if (p.type === "duckdb") await testDuckdbConnection(p);
       else if (p.type === "mssql") await testMssqlConnection(p);
+      else if (p.type === "oracle") await testOracleConnection(p);
       else if (engineFamily(p.type) === "redis") await testRedis(p);
       else if (p.type === "dynamodb") await testDynamo(p);
       else if (p.type === "couchdb") await testCouch(p);
+      else if (p.type === "elasticsearch" || p.type === "opensearch") {
+        const info = await testElastic(p);
+        esServer = `${info.flavor === "opensearch" ? "OpenSearch" : "Elasticsearch"} ${info.version}`.trim();
+        // A server that answers as the other engine: switch the label to match.
+        if (info.flavor !== p.type && dbType === p.type) dbType = info.flavor;
+      }
       else if (p.type === "cassandra") await testCassandra(p);
       else if (p.type === "firestore") await testFirestore(p);
       else if (p.type === "mongodb") await testMongo(p);
@@ -2248,6 +2443,7 @@
    * close guard stops treating the form as dirty.
    */
   function handleSave() {
+    if (isProviderTab) return; // nothing in the form to save; pick a database
     if (!editingId && saved.length >= maxConnections) {
       failWith(
         `Free plan allows ${maxConnections} saved connections. Upgrade to Stroke Pro for unlimited.`,
@@ -2289,6 +2485,12 @@
    * @param {{ save?: boolean }} [opts]
    */
   async function handleConnect(opts = {}) {
+    // A provider (TiDB Cloud, Neon, D1...) connects by picking a database in its
+    // panel; the form behind it is empty, so dialling it hit 127.0.0.1.
+    if (isProviderTab) {
+      failWith("Pick a database above to connect.");
+      return;
+    }
     const save = opts.save !== false;
     if (save && !editingId && saved.length >= maxConnections) {
       failWith(
@@ -2313,25 +2515,16 @@
     try {
       const existing = editingId ? saved.find((s) => s.id === editingId) : null;
       const id = existing?.id ?? newConnectionId();
-      // Persist BEFORE dialling. Everything the user typed is worth keeping the
-      // moment they commit to it, and a connect can fail for reasons that have
-      // nothing to do with what they entered - no network, VPN down, server
-      // asleep. Saving only on success meant a dropped connection threw the
-      // whole form away and they had to retype it, which is what made
-      // connections look like they were disappearing after being saved.
-      // lastConnectedAt stays at its previous value so a failed attempt does not
-      // jump the row to the top of the recents list or turn it into "Resume".
-      if (save) {
-        saved = upsertConnection(
-          buildSavedConn(payload, id, existing?.lastConnectedAt),
-        ).sort(byLastConnected);
-        editingId = id;
-      }
+      // Saved only once the connection works. Saving before dialling kept
+      // failed attempts (a wrong host, a provider default of 127.0.0.1) in the
+      // list and synced them to every device. A failed attempt keeps the form
+      // open with everything typed, and Save files it without connecting.
       await openConnection(payload);
       if (myOp !== opId) return; // cancelled by the user
       const saved_conn = buildSavedConn(payload, id, Date.now());
       if (save) {
         saved = upsertConnection(saved_conn).sort(byLastConnected);
+        editingId = id;
         setLastConnectionId(id);
       }
       open = false;
@@ -2417,6 +2610,10 @@
       sshKeepalive,
       sslMode,
       sslCaPath,
+      oraMode,
+      oraSid,
+      oraConnect,
+      oraClientDir,
     ]);
   }
   const isDirty = $derived(snapshot() !== baseline);
@@ -2431,11 +2628,13 @@
       return filePath || ":memory:";
     if (dbType === "libsql") return uriHost(libsqlUrl.replace(/^libsql:/, "https:")) || libsqlUrl || "—";
     if (dbType === "d1") return databaseId ? `${databaseId.slice(0, 8)}…` : "—";
-    if (dbType === "couchdb") return couchUrl || "—";
+    if (dbType === "couchdb" || dbType === "elasticsearch" || dbType === "opensearch") return couchUrl || "—";
     if (dbType === "cassandra") return cqlHosts || "—";
     if (dbType === "firestore") return fsProject || "—";
     if (dbType === "mongodb") return uriHost(mongoUri) || "—";
     if (dbType === "dynamodb") return awsEndpoint || awsRegion || (awsAuth === "profile" ? awsProfile || "default profile" : "AWS");
+    if (dbType === "oracle" && oraMode === "connect") return oraConnect || "—";
+    if (dbType === "oracle" && oraMode === "sid") return `${host || "—"}:${port || "—"}:${oraSid || ""}`;
     return `${host || "—"}:${port || "—"}/${database || ""}`;
   });
 
@@ -3049,7 +3248,7 @@
 {#snippet readOnlyRow()}
   <label
     for="cn-readonly"
-    class="flex h-14 cursor-pointer select-none items-center gap-3 rounded-lg border border-border/60 px-3.5 transition-colors hover:bg-muted/25"
+    class="flex h-12 cursor-pointer select-none items-center gap-3 border-t border-border/50"
   >
     <Icon name="eye" class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
     <span class="flex min-w-0 flex-1 flex-col">
@@ -3131,18 +3330,15 @@
               focusFirstSavedRow();
             }}
           >
-            <!-- Title row: name, count, then New and Hide as quiet icon buttons. -->
+            <!-- Title row: Hide, the name, then the match count. Hide sits where
+                 Show appears once the rail is gone (same inset, same row height
+                 as the form panel's title row), so the toggle never moves: at
+                 the rail's far end, and in a 48px row against the panel's 40px,
+                 it jumped across and down on every collapse. -->
             <div
-              class={cn("flex h-12 shrink-0 items-center gap-2 ps-4 pe-2", isMacChrome && "h-[52px] ps-[92px]")}
+              class={cn("flex h-(--app-titlebar-h) shrink-0 items-center gap-1.5 ps-3 pe-2", isMacChrome && "ps-[92px]")}
               data-tauri-drag-region
             >
-              <h2 class="text-ui-sm font-medium text-foreground" data-tauri-drag-region>Connections</h2>
-              <!-- The workspace row below already shows the count; here it only
-                   appears while filtering, as matches. -->
-              {#if savedQuery}
-                <span class="text-ui-2xs tabular-nums text-muted-foreground">{savedMatches.length} of {savedInWs.length}</span>
-              {/if}
-              <span class="flex-1"></span>
               <button
                 type="button"
                 onclick={() => {
@@ -3155,6 +3351,12 @@
               >
                 <Icon name="panel-left-close" class="size-4 shrink-0" />
               </button>
+              <h2 class="text-ui-sm font-medium text-foreground" data-tauri-drag-region>Connections</h2>
+              <!-- The workspace row below already shows the count; here it only
+                   appears while filtering, as matches. -->
+              {#if savedQuery}
+                <span class="text-ui-2xs tabular-nums text-muted-foreground">{savedMatches.length} of {savedInWs.length}</span>
+              {/if}
             </div>
 
             <!-- The workspace scopes everything below it, so it heads the rail. -->
@@ -3414,11 +3616,11 @@
                   </div>
                 </ScrollArea>
               {:else}
-                <div class="flex h-full items-center justify-center pb-8">
-                  <p class="text-ui-2xs text-muted-foreground">
-                    No saved connections
-                  </p>
-                </div>
+                <!-- At the top, where the first saved one will appear, not
+                     floating halfway down an empty rail. -->
+                <p class="px-3 pt-1 text-ui-xs text-muted-foreground">
+                  Saved connections show up here.
+                </p>
               {/if}
             </div>
             <!-- Drag the rail wider when connection names are long. -->
@@ -3440,25 +3642,41 @@
 
         <!-- ── Form panel ──────────────────────────────────────────── -->
         <div class="relative flex min-h-0 min-w-0 flex-col">
-          {#if !railOpen}
-            <!-- List hidden: no strip, just the button to bring it back, beside
-                 the traffic lights on macOS. -->
+          <!-- Title row: the panel's own chrome, the same height as the rail's
+               header and the app's title bar (52pt on macOS, where the traffic
+               lights sit in it; 40px elsewhere), so its buttons share the
+               lights' centre line instead of floating at an offset. It is also
+               the window's drag area here. -->
+          <div
+            class={cn("flex h-(--app-titlebar-h) shrink-0 items-center gap-1 px-3", isMacChrome && !railOpen && "ps-[92px]")}
+            data-tauri-drag-region
+          >
+            {#if !railOpen}
+              <button
+                type="button"
+                onclick={() => {
+                  railOpen = true;
+                  saveRail();
+                }}
+                title={`Show connections (${comboTitle('Mod+B')})`}
+                aria-label="Show connections"
+                class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-[color,background-color,scale] duration-150 ease-out hover:bg-accent hover:text-foreground active:scale-[0.94]"
+              >
+                <Icon name="panel-left-open" class="size-4 shrink-0" />
+              </button>
+            {/if}
+            <span class="flex-1" data-tauri-drag-region></span>
+            <!-- Close routes through the unsaved-changes guard. -->
             <button
               type="button"
-              onclick={() => {
-                railOpen = true;
-                saveRail();
-              }}
-              title={`Show connections (${comboTitle('Mod+B')})`}
-              aria-label="Show connections"
-              class={cn(
-                "absolute z-30 inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-[color,background-color,scale] duration-150 ease-out hover:bg-accent hover:text-foreground active:scale-[0.94]",
-                isMacChrome ? "left-[88px] top-3" : "left-3 top-3",
-              )}
+              onclick={requestClose}
+              aria-label="Close"
+              title="Close (Esc)"
+              class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-[color,background-color,scale] duration-150 ease-out hover:bg-accent hover:text-foreground active:scale-[0.94]"
             >
-              <Icon name="panel-left-open" class="size-4 shrink-0" />
+              <Icon name="x" class="size-3.5 shrink-0" />
             </button>
-          {/if}
+          </div>
           <!-- Connecting: the panel gives way to what is being dialled, the same
                look as the launch reconnect. The saved list on the left stays
                visible; the footer's Stop and this Cancel both end the attempt. -->
@@ -3484,13 +3702,15 @@
              nobody has picked yet. -->
           <!-- The header lines up with whatever is under it: the tile column on
                step 1, the full-width form on step 2. -->
+          <!-- The same top inset on both steps, so going from the list to the
+               form doesn't nudge the page up (it was pt-4, then pt-2). -->
           <div
-            class={cn("w-full shrink-0 px-8 pt-5", step !== "pick" && "mx-auto max-w-3xl pt-10", isMacChrome && !railOpen && "pt-[60px]", !isMacChrome && !railOpen && "ps-14", step === "pick" && "mx-auto max-w-3xl pt-12", step === "pick" && isMacChrome && !railOpen && "pt-[72px]")}
+            class="mx-auto w-full max-w-6xl shrink-0 px-10 pt-3"
           >
             {#if step === "pick"}
               <!-- pe-6 keeps the rescan button clear of the dialog's own close
                  button, which floats at right-8 top-5 over this same corner. -->
-              <div class="flex items-center gap-3 pe-10">
+              <div class="flex items-center gap-3">
                 <h2
                   class="text-ui-xl font-semibold tracking-tight text-foreground"
                 >
@@ -3518,17 +3738,41 @@
                     aria-hidden="true"
                   />
                 </button>
+                <!-- Any engine by hand: the form with its engine picker. The
+                     stacked logos say what "any" means. Flat, no shadow. -->
+                <!-- Outlined, plus to the left and a chevron to the right: it
+                     opens the engine list. -->
+                <button
+                  type="button"
+                  onclick={newConnectionForm}
+                  title="Pick an engine and enter its details ({IS_MAC ? '⌘' : 'Ctrl+'}N)"
+                  class="group/new ms-auto inline-flex h-9 shrink-0 items-center gap-2.5 rounded-lg border border-border/80 bg-background/40 ps-2 pe-2.5 text-ui-sm font-medium text-foreground outline-none transition-[background-color,border-color,scale] duration-150 hover:border-border hover:bg-muted/50 active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                >
+                  <!-- A few of the engines, stacked like cards; hovering fans
+                       them out. They say what "any engine" means at a glance. -->
+                  <span class="flex items-center" aria-hidden="true">
+                    {#each NEW_CONN_STACK as id, i (id)}
+                      <span
+                        class={cn(
+                          "grid size-5.5 place-items-center rounded-md bg-card ring-1 ring-border/70 shadow-xs transition-[margin,transform] duration-200 ease-out motion-reduce:transition-none",
+                          i > 0 && "-ms-2 group-hover/new:ms-0.5",
+                        )}
+                        style="z-index:{NEW_CONN_STACK.length - i}"
+                      >
+                        <DbIcon id={id} class={cn("size-3.5 shrink-0", engineTint(id))} />
+                      </span>
+                    {/each}
+                  </span>
+                  New connection
+                  <Icon name="chevron-down" class="size-3.5 shrink-0 text-muted-foreground" />
+                </button>
               </div>
               <p class="mt-1.5 text-ui-sm text-muted-foreground">Paste a connection string, or pick where your database lives.</p>
             {:else}
-              <!-- pe-14, not pe-6: the URL button now sits at the right edge of
-                   this row and the dialog's own close ✕ floats over the same
-                   corner (right-4, size-8). -->
-              <!-- pe-10 = the 32px close button + the row's own 8px gap, so
-                   "Paste a URL" and ✕ sit 8px apart like every other pair in
-                   this row. The close button shares the 32px edge (right-8)
-                   and the h-8 height of these controls. -->
-              <div class="flex items-center gap-2 pe-10">
+              <!-- No end padding: the close button lives in the titlebar row
+                   above now, so the URL buttons end on the form's right edge,
+                   flush with the fields below. -->
+              <div class="flex items-center gap-2">
                 <button
                   type="button"
                   onclick={backToPick}
@@ -3545,6 +3789,7 @@
                      mind meant going back a page. It is one field of the
                      connection, so it sits in the form like one. -->
                 <SearchableMenu
+                  bind:open={enginePickerOpen}
                   items={engineItems}
                   placeholder="Search databases…"
                   contentClass="w-[26rem]"
@@ -3612,6 +3857,29 @@
                     <Icon name="link-2" class="size-3.5 shrink-0" aria-hidden="true" />
                     Paste a URL
                   </button>
+                  <!-- The reverse: this form as a connection string, for a .env
+                       file, an ORM or another client. -->
+                  {@const copyUrl = connectionUrl(formPayload())}
+                  {#if copyUrl}
+                    <button
+                      type="button"
+                      title="Copy this connection as a URL (it includes the password)"
+                      onclick={async () => {
+                        try {
+                          await navigator.clipboard.writeText(copyUrl);
+                          urlCopied = true;
+                          setTimeout(() => (urlCopied = false), 1500);
+                          toast.success("Connection URL copied", { description: "It includes the password." });
+                        } catch {
+                          toast.error("Couldn't copy the URL");
+                        }
+                      }}
+                      class="field-surface inline-flex h-8 shrink-0 items-center gap-1.5 px-2.5 text-ui-2xs text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-accent/40 hover:text-foreground active:scale-[0.97]"
+                    >
+                      <Icon name={urlCopied ? "check" : "copy"} class="size-3.5 shrink-0" aria-hidden="true" />
+                      {urlCopied ? "Copied" : "Copy URL"}
+                    </button>
+                  {/if}
                 {/if}
               </div>
             {/if}
@@ -3629,12 +3897,13 @@
                    auto-fill grid with 200px of air between them, and "New
                    connection" put its chevron 1800px from its own label. One
                    42rem column, one leading edge. -->
-              <!-- Left-aligned, not centred: the rail is on the left and the
-                   header sits above this, so a column centred in the panel
-                   starts somewhere neither of them does. One leading edge. -->
+              <!-- Centred in the panel, like the header and footer (all three
+                   mx-auto at the same width, so they keep one leading edge).
+                   Pinned left, a wide window left a third of the panel empty
+                   on the right. -->
               <!-- Full width: the grids below are four columns, so a wide window
                    buys wider tiles and fewer truncated names, not empty margin. -->
-              <div class="@container mx-auto flex w-full max-w-3xl flex-col gap-7 px-8 py-6">
+              <div class="@container mx-auto flex w-full max-w-6xl flex-col gap-7 px-10 py-6">
                   <!-- ── Paste a connection string ─────────────────────────
                        The fastest path there is, and the one a developer already
                        has in a clipboard from their provider dashboard or a
@@ -3915,30 +4184,6 @@
                   {@render localGroup("Docker", dockerTargets, false, "docker")}
                 {/if}
 
-                  <!-- Everything else: the form, on its own engine dropdown.
-                       This used to be a second page of seventeen driver tiles. -->
-                  <div>
-                    <h3 class="text-ui-sm font-medium text-foreground/80">
-                      Something else
-                    </h3>
-                    <!-- A tile in the provider grid's own columns and in the provider
-                         cards' own style (border, fill, hover, press), so it reads as
-                         one more card in the same set rather than a different kind of
-                         control. It was a primary Button, whose label rendered
-                         unreadable on this surface. -->
-                    <div class="mt-2.5 grid grid-cols-2 gap-2 @2xl:grid-cols-4">
-                      <button
-                        type="button"
-                        onclick={newConnectionForm}
-                        title="Pick an engine and enter its details"
-                        class="group flex h-10 @2xl:col-span-2 min-w-0 items-center gap-2.5 rounded-md bg-muted/30 px-3 text-left text-foreground outline-none transition-colors hover:bg-accent focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
-                      >
-                        <Icon name="plus" class="size-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground" aria-hidden="true" />
-                        <span class="min-w-0 flex-1 truncate text-ui-sm">New connection</span>
-                        <Kbd combo="Mod+N" size="sm" class="shrink-0 text-muted-foreground" />
-                      </button>
-                    </div>
-                  </div>
 
               </div>
             </ScrollArea>
@@ -3953,7 +4198,7 @@
                    same layout roomier - and the panel already runs the header,
                    the footer and the URL bar edge to edge, so a capped form in
                    the middle of them was the odd one out. -->
-              <div class="mx-auto flex w-full max-w-3xl items-start gap-10 px-8 py-6">
+              <div class="mx-auto flex w-full max-w-6xl items-start gap-10 px-10 py-6">
                 <!-- Enter connects, from any field - filling a form and having to go
                  find the button is the one interaction nobody expects here. The
                  paste bar's own Enter handler runs first and marks the event
@@ -4067,17 +4312,17 @@
                             <!-- Local file vs remote SQLite (Turso / libSQL). Remote reuses the
                    dedicated libsql driver + backend by switching dbType. -->
                             <div
-                              class="flex gap-0.5 rounded-md border border-border/25 bg-muted/30 p-0.5 text-ui-2xs"
+                              class="flex w-fit gap-0.5 rounded-md bg-muted/50 p-0.5 text-ui-xs" role="radiogroup" aria-label="Where the database is"
                             >
                               <button
                                 type="button"
-                                class="flex-1 rounded bg-background px-2 py-1 font-medium text-foreground"
+                                class="h-6 rounded-sm bg-background px-2.5 font-medium text-foreground shadow-sm" role="radio" aria-checked="true"
                                 >Local file</button
                               >
                               <button
                                 type="button"
                                 onclick={() => (dbType = "libsql")}
-                                class="flex-1 rounded px-2 py-1 text-muted-foreground transition-colors hover:text-foreground"
+                                class="h-6 rounded-sm px-2.5 text-muted-foreground transition-[color,scale] duration-[120ms] ease-[var(--ease-out)] hover:text-foreground active:scale-[0.97]" role="radio" aria-checked="false"
                                 >Remote (Turso / libSQL)</button
                               >
                             </div>
@@ -4094,15 +4339,15 @@
                                 <button
                                   type="button"
                                   onclick={pickSqliteFile}
-                                  class="field-surface inline-flex h-8 shrink-0 items-center gap-1 px-2.5 text-ui-2xs text-muted-foreground transition-[color,background-color,border-color,transform] duration-150 ease-out hover:bg-muted/40 hover:text-foreground active:scale-[0.97]"
+                                  class="field-surface inline-flex h-9 shrink-0 items-center gap-1.5 px-3 text-ui-xs text-muted-foreground transition-[color,background-color,border-color,transform] duration-150 ease-out hover:bg-muted/40 hover:text-foreground active:scale-[0.97]"
                                 >
-                                  <Icon name="folder-open" class="size-3 shrink-0" />
+                                  <Icon name="folder-open" class="size-3.5 shrink-0" />
                                   Browse
                                 </button>
                                 <button
                                   type="button"
                                   onclick={() => void newDatabaseFile("sqlite")}
-                                  class="field-surface inline-flex h-8 shrink-0 items-center gap-1 px-2.5 text-ui-2xs text-muted-foreground transition-[color,background-color,border-color,transform] duration-150 ease-out hover:bg-muted/40 hover:text-foreground active:scale-[0.97]"
+                                  class="field-surface inline-flex h-9 shrink-0 items-center gap-1.5 px-3 text-ui-xs text-muted-foreground transition-[color,background-color,border-color,transform] duration-150 ease-out hover:bg-muted/40 hover:text-foreground active:scale-[0.97]"
                                 >
                                   <Icon name="plus" class="size-3 shrink-0" />
                                   New
@@ -4135,17 +4380,17 @@
                             <!-- ── LibSQL / Turso ─────────────────────────── -->
                           {:else if dbType === "libsql"}
                             <div
-                              class="flex gap-0.5 rounded-md border border-border/25 bg-muted/30 p-0.5 text-ui-2xs"
+                              class="flex w-fit gap-0.5 rounded-md bg-muted/50 p-0.5 text-ui-xs" role="radiogroup" aria-label="Where the database is"
                             >
                               <button
                                 type="button"
                                 onclick={() => (dbType = "sqlite")}
-                                class="flex-1 rounded px-2 py-1 text-muted-foreground transition-colors hover:text-foreground"
+                                class="h-6 rounded-sm px-2.5 text-muted-foreground transition-[color,scale] duration-[120ms] ease-[var(--ease-out)] hover:text-foreground active:scale-[0.97]" role="radio" aria-checked="false"
                                 >Local file</button
                               >
                               <button
                                 type="button"
-                                class="flex-1 rounded bg-background px-2 py-1 font-medium text-foreground"
+                                class="h-6 rounded-sm bg-background px-2.5 font-medium text-foreground shadow-sm" role="radio" aria-checked="true"
                                 >Remote (Turso / libSQL)</button
                               >
                             </div>
@@ -4266,15 +4511,15 @@
                                 <button
                                   type="button"
                                   onclick={pickDuckdbFile}
-                                  class="field-surface inline-flex h-8 shrink-0 items-center gap-1 px-2.5 text-ui-2xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
+                                  class="field-surface inline-flex h-9 shrink-0 items-center gap-1.5 px-3 text-ui-xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
                                 >
-                                  <Icon name="folder-open" class="size-3 shrink-0" />
+                                  <Icon name="folder-open" class="size-3.5 shrink-0" />
                                   Browse
                                 </button>
                                 <button
                                   type="button"
                                   onclick={() => void newDatabaseFile("duckdb")}
-                                  class="field-surface inline-flex h-8 shrink-0 items-center gap-1 px-2.5 text-ui-2xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
+                                  class="field-surface inline-flex h-9 shrink-0 items-center gap-1.5 px-3 text-ui-xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
                                 >
                                   <Icon name="plus" class="size-3 shrink-0" />
                                   New
@@ -4382,6 +4627,129 @@
                                   )}
                                 />
                               </div>
+                            </div>
+
+                            <!-- ── Oracle ─────────────────────────────────── -->
+                          {:else if dbType === "oracle"}
+                            <div>
+                              <span class={lbl} id="cn-ora-mode-label">Connect with</span>
+                              <div class="flex h-8 items-center gap-0.5 rounded-[var(--radius-field)] bg-muted/40 p-0.5" role="group" aria-labelledby="cn-ora-mode-label">
+                                {#each [{ v: "service", l: "Service name" }, { v: "sid", l: "SID" }, { v: "connect", l: "Connect string" }] as m (m.v)}
+                                  <button
+                                    type="button"
+                                    aria-pressed={oraMode === m.v}
+                                    class={cn(
+                                      "inline-flex h-7 flex-1 items-center justify-center rounded-md text-ui-xs font-medium transition-colors",
+                                      oraMode === m.v ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+                                    )}
+                                    onclick={() => (oraMode = /** @type {'service'|'sid'|'connect'} */ (m.v))}
+                                  >{m.l}</button>
+                                {/each}
+                              </div>
+                            </div>
+
+                            {#if oraMode === "connect"}
+                              <div>
+                                <label for="cn-ora-connect" class={lbl}>Connect string</label>
+                                <Input
+                                  id="cn-ora-connect"
+                                  bind:value={oraConnect}
+                                  placeholder="host:1521/FREEPDB1"
+                                  spellcheck="false"
+                                  autocomplete="off"
+                                  class={cn(inp, "font-mono")}
+                                />
+                                <p class="mt-1 text-ui-3xs leading-relaxed text-muted-foreground">
+                                  Easy Connect (<span class="font-mono">tcps://host:2484/service</span>), a full
+                                  <span class="font-mono">(DESCRIPTION=…)</span> descriptor, or a tnsnames.ora alias
+                                  (with <span class="font-mono">TNS_ADMIN</span> set).
+                                </p>
+                              </div>
+                            {:else}
+                              <div class="grid grid-cols-[1fr_110px] gap-2">
+                                <div>
+                                  <label for="cn-ora-host" class={lbl}>Host</label>
+                                  <Input
+                                    id="cn-ora-host"
+                                    bind:value={host}
+                                    class={cn(inp, flashedFields.has("host") && flashCls)}
+                                  />
+                                </div>
+                                <div>
+                                  <label for="cn-ora-port" class={lbl}>Port</label>
+                                  <Input
+                                    id="cn-ora-port"
+                                    bind:value={port}
+                                    type="text"
+                                    inputmode="numeric"
+                                    class={cn(inpNum, flashedFields.has("port") && flashCls)}
+                                  />
+                                </div>
+                              </div>
+                              {#if oraMode === "sid"}
+                                <div>
+                                  <label for="cn-ora-sid" class={lbl}>SID</label>
+                                  <Input id="cn-ora-sid" bind:value={oraSid} placeholder="ORCL" spellcheck="false" class={inp} />
+                                </div>
+                              {:else}
+                                <div>
+                                  <label for="cn-ora-db" class={lbl}>Service name</label>
+                                  <Input
+                                    id="cn-ora-db"
+                                    bind:value={database}
+                                    placeholder="FREEPDB1"
+                                    spellcheck="false"
+                                    class={cn(inp, flashedFields.has("database") && flashCls)}
+                                  />
+                                  {#if !database.trim()}
+                                    <p class="mt-1 text-ui-xs text-muted-foreground">
+                                      Blank uses the listener's default, often the root container (CDB$ROOT), which holds only Oracle's own schemas. Your tables are usually in a pluggable database such as FREEPDB1.
+                                    </p>
+                                  {/if}
+                                </div>
+                              {/if}
+                            {/if}
+
+                            <div class="grid grid-cols-2 gap-2">
+                              <div>
+                                <label for="cn-ora-user" class={lbl}>Username</label>
+                                <Input
+                                  id="cn-ora-user"
+                                  bind:value={user}
+                                  autocomplete="username"
+                                  class={cn(inp, flashedFields.has("user") && flashCls)}
+                                />
+                              </div>
+                              <div>
+                                <label for="cn-ora-pass" class={lbl}>Password</label>
+                                <PasswordInput
+                                  id="cn-ora-pass"
+                                  bind:value={password}
+                                  autocomplete="current-password"
+                                  class={cn(inp, flashedFields.has("password") && flashCls)}
+                                />
+                              </div>
+                            </div>
+
+                            <div>
+                              <label for="cn-ora-client" class={lbl}
+                                >Instant Client folder <span class="normal-case font-normal opacity-50">(optional)</span></label
+                              >
+                              <div class="flex gap-2">
+                                <Input
+                                  id="cn-ora-client"
+                                  bind:value={oraClientDir}
+                                  placeholder="Found automatically"
+                                  spellcheck="false"
+                                  autocomplete="off"
+                                  class={cn(inp, "min-w-0 flex-1 font-mono")}
+                                />
+                                <Button type="button" variant="outline" onclick={pickOracleClientDir}>Browse…</Button>
+                              </div>
+                              <p class="mt-1 text-ui-3xs leading-relaxed text-muted-foreground">
+                                Stroke uses Oracle Instant Client, a free download from Oracle. Leave this empty when it is
+                                installed system-wide or in a usual place (ORACLE_HOME, /opt/oracle, your home or Downloads folder).
+                              </p>
                             </div>
 
                             <!-- ── Redis ──────────────────────────────────── -->
@@ -4576,17 +4944,71 @@
                               Leave the user blank for a server without a login (admin party).
                             </p>
 
+                            <!-- ── Elasticsearch / OpenSearch ─────────────── -->
+                          {:else if dbType === "elasticsearch" || dbType === "opensearch"}
+                            <div>
+                              <label for="cn-es-url" class={lbl}>Server URL</label>
+                              <Input id="cn-es-url" bind:value={couchUrl} placeholder={dbType === "opensearch" ? "https://localhost:9200" : "http://localhost:9200"} spellcheck="false" autocomplete="off" class={cn(inp, "font-mono")} />
+                              {#if esServer}
+                                <p class="mt-1 text-ui-3xs text-muted-foreground">Server: {esServer}</p>
+                              {/if}
+                            </div>
+                            <div>
+                              <span class={lbl} id="cn-es-auth-label">Sign in with</span>
+                              <div class="flex h-8 items-center gap-0.5 rounded-[var(--radius-field)] bg-muted/40 p-0.5" role="group" aria-labelledby="cn-es-auth-label">
+                                {#each [{ v: "basic", l: "User and password" }, { v: "apikey", l: "API key" }] as m (m.v)}
+                                  <button
+                                    type="button"
+                                    aria-pressed={esAuth === m.v}
+                                    class={cn(
+                                      "inline-flex h-7 flex-1 items-center justify-center rounded-md text-ui-xs font-medium transition-colors",
+                                      esAuth === m.v ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+                                    )}
+                                    onclick={() => (esAuth = /** @type {'basic'|'apikey'} */ (m.v))}
+                                  >{m.l}</button>
+                                {/each}
+                              </div>
+                            </div>
+                            {#if esAuth === "basic"}
+                              <div class="grid grid-cols-2 gap-2">
+                                <div>
+                                  <label for="cn-es-user" class={lbl}>User</label>
+                                  <Input id="cn-es-user" bind:value={user} autocomplete="username" spellcheck="false" class={inp} />
+                                </div>
+                                <div>
+                                  <label for="cn-es-pass" class={lbl}>Password</label>
+                                  <PasswordInput id="cn-es-pass" bind:value={password} autocomplete="current-password" class={inp} />
+                                </div>
+                              </div>
+                              <p class="-mt-1 text-ui-3xs text-muted-foreground">
+                                Leave the user blank for a server with security turned off.
+                              </p>
+                            {:else}
+                              <div>
+                                <label for="cn-es-key" class={lbl}>API key</label>
+                                <PasswordInput id="cn-es-key" bind:value={esApiKey} autocomplete="off" class={cn(inp, "font-mono")} />
+                                <p class="mt-1 text-ui-3xs text-muted-foreground">The encoded key Kibana shows once when the key is created.</p>
+                              </div>
+                            {/if}
+                            <label for="cn-es-insecure" class="flex cursor-pointer select-none items-start gap-2">
+                              <Checkbox id="cn-es-insecure" checked={esInsecure} onCheckedChange={(v) => (esInsecure = v === true)} class="mt-px" />
+                              <span class="flex flex-col">
+                                <span class="text-ui-xs text-foreground/75">Accept self-signed certificate</span>
+                                <span class="text-ui-3xs leading-snug text-muted-foreground">For a local server with its demo TLS certificate, like OpenSearch's.</span>
+                              </span>
+                            </label>
+
                             <!-- ── DynamoDB ───────────────────────────────── -->
                           {:else if dbType === "dynamodb"}
                             <div>
                               <span class={lbl} id="cn-aws-auth-label">Credentials</span>
-                              <div class="flex h-8 items-center gap-0.5 rounded-[var(--radius-field)] bg-muted/40 p-0.5" role="group" aria-labelledby="cn-aws-auth-label">
+                              <div class="flex h-8 w-fit items-center gap-0.5 rounded-lg bg-muted/50 p-0.5" role="group" aria-labelledby="cn-aws-auth-label">
                                 {#each [{ v: "profile", l: "AWS profile" }, { v: "keys", l: "Access keys" }] as m (m.v)}
                                   <button
                                     type="button"
                                     aria-pressed={awsAuth === m.v}
                                     class={cn(
-                                      "inline-flex h-7 flex-1 items-center justify-center rounded-md text-ui-xs font-medium transition-colors",
+                                      "inline-flex h-7 items-center justify-center rounded-md px-3 text-ui-xs font-medium transition-colors",
                                       awsAuth === m.v ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
                                     )}
                                     onclick={() => (awsAuth = /** @type {'profile'|'keys'} */ (m.v))}
@@ -4666,7 +5088,7 @@
                               <span class={lbl}>Options</span>
                               {@render advancedFields()}
                             </div>
-                            <div class="flex min-w-0 items-end gap-4">
+                            <div class="flex min-w-0 items-start gap-4">
                             <div class="min-w-0 flex-1">
                               <label for="cn-name" class={lbl}>
                                 Name
@@ -4687,7 +5109,7 @@
                                   <FieldSelect
                                     bind:value={connWorkspace}
                                     aria-label="Workspace"
-                                    class="h-9 w-full"
+                                    class="w-full data-[size=default]:h-9"
                                     options={$workspaces.map((w) => ({ value: w.id, label: w.name }))}
                                   />
                                 </div>
@@ -4876,8 +5298,14 @@
           {/if}
 
           <!-- ── Footer: inline error alert, status chip, then actions ── -->
-          <div class="shrink-0 border-t border-border/15 px-8 py-4">
-            <div class={cn("mx-auto", step === "pick" ? "max-w-none" : "max-w-[44rem]")}>
+          <div class="shrink-0 border-t border-border/15 py-4">
+            <!-- min-h-8: the form's buttons are 32px; without it the bar was 18px
+                 taller on the form than on the list and the content above moved.
+                 Same column as the header and the page above (w-full max-w-6xl
+                 px-10, padding inside the width): with the padding outside, the
+                 bar ran 80px past the tiles, plain to see once the rail is
+                 collapsed and the window is wide. -->
+            <div class="mx-auto flex min-h-8 w-full max-w-6xl flex-col justify-center px-10">
               <!-- The alert itself is a toast (see failWith). What stays here is the
                  one-line record of it, so the driver's own words are still
                  readable after the toast has gone - without a panel that shoves
@@ -5032,7 +5460,7 @@
                     {#if !editingId || isDirty || justSaved}
                       <Button
                         variant="outline"
-                        disabled={isBusy || justSaved}
+                        disabled={isBusy || justSaved || isProviderTab}
                         onclick={handleSave}
                       >
                         {#if justSaved}<Icon
@@ -5047,8 +5475,8 @@
                         connecting === (editingId ?? "__new__") &&
                           "disabled:opacity-90",
                       )}
-                      disabled={isBusy}
-                      title="Connect (↵)"
+                      disabled={isBusy || isProviderTab}
+                      title={isProviderTab ? "Pick a database above to connect" : "Connect (↵)"}
                       onclick={() => void handleConnect()}
                     >
                       {#if connecting === (editingId ?? "__new__")}
@@ -5069,17 +5497,6 @@
         </div>
       </div>
 
-      <!-- Close button, routes through the unsaved-changes guard -->
-      <button
-        type="button"
-        onclick={requestClose}
-        aria-label="Close"
-        title="Close (Esc)"
-        class="absolute right-3 top-3 z-30 inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-[color,background-color,scale] duration-150 ease-out hover:bg-accent hover:text-foreground active:scale-[0.94]"
-      >
-        <Icon name="x" class="size-3.5 shrink-0" />
-        <span class="sr-only">Close</span>
-      </button>
 
       <!-- Duplicate-target confirmation. Same shape as the discard prompt: this
            is the other question the dialog can ask, and two different-looking

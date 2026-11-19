@@ -1,7 +1,14 @@
 <script>
+  import { tick, untrack } from "svelte";
+  import { toastPosition, TOAST_POSITIONS } from '$lib/stores/toast-position.js'
   import ThemeBuilder from './ThemeBuilder.svelte';
+  import AddThemeDialog from './AddThemeDialog.svelte';
+  import { detectOs } from '$lib/platform.js';
+  import { importedThemes, activeImportedId, removeImportedTheme, applyImportedTheme } from '$lib/stores/imported-themes.js';
   import { comboTitle } from '$lib/shortcuts.js'
   import Kbd from './Kbd.svelte'
+  import { trackInstalled, trackInstall, trackOpen } from '$lib/api.js'
+  import { updateState, updateActions } from '$lib/stores/update-state.js'
   import KeybindingsSettings from './KeybindingsSettings.svelte'
   import { bindingFor } from '$lib/stores/keybindings.js'
   import { startTelemetry, stopTelemetry } from "$lib/telemetry.js";
@@ -14,6 +21,7 @@
   import ThemeSwatchStrip from "$lib/components/ThemeSwatchStrip.svelte";
   import SearchableMenu from "$lib/components/SearchableMenu.svelte";
   import SelectMenu from "$lib/components/SelectMenu.svelte";
+  import SearchField from "./SearchField.svelte";
   import EditorThemePicker from "$lib/components/EditorThemePicker.svelte";
   import { getThemeDefinition, themesByGroup } from "$lib/themes/registry.js";
   import { sidebarSideStore, setSidebarSide } from "$lib/stores/layout.js";
@@ -21,16 +29,20 @@
   import { t, locale, LOCALES, setLocale } from "$lib/i18n.js";
   import { licenseStatus } from "$lib/stores/license.js";
   import AccountCard from "./AccountCard.svelte";
+  import SyncSection from "./SyncSection.svelte";
+  import { isSignedIn, signInWithToast } from "$lib/stores/account.js";
   import {
     appThemeId,
     loadSettings,
     updateSettings,
+    systemPreferredTheme,
     increaseZoom,
     decreaseZoom,
     resetZoom,
     canIncreaseZoom,
     canDecreaseZoom,
     FONT_PRESETS,
+    DEFAULT_FONT,
     ICON_STYLES,
     ICON_SETS,
     TABLE_STYLES,
@@ -48,6 +60,7 @@
     DEFAULT_SESSION_TIMEZONE,
     AGENT_FONT_SIZES,
     THINKING_STYLES,
+    settingsRevision,
   } from "$lib/stores/settings.js";
   import { PAGE_SIZE_OPTIONS, loadDefaultPageSize, saveDefaultPageSize } from '$lib/table-query.js';
   import {
@@ -71,6 +84,8 @@
     getAutostartStatus,
   } from "$lib/api.js";
   import PinSetupDialog from "./PinSetupDialog.svelte";
+  import { treeConnectionScope } from "$lib/stores/sidebar-tree.js";
+  import { SHARE_EXPIRIES, loadShareDefaults, saveShareDefaults, openSharesPage } from "$lib/share-flow.js";
   import { toast } from "$lib/components/ui/sonner/toast.svelte.js";
   import {
     lockStatus,
@@ -91,6 +106,20 @@
   } = $props();
 
   let settings = $state(loadSettings());
+  let shareDefaults = $state(loadShareDefaults());
+  /** The search results' container, and whether the query matched nothing. */
+  let resultsEl = $state(/** @type {HTMLElement | null} */ (null));
+  let noResults = $state(false);
+  $effect(() => {
+    void q;
+    const el = resultsEl;
+    if (!el) { noResults = false; return; }
+    // Rows render as elements; a query that hides every row leaves only
+    // comments and empty text behind.
+    tick().then(() => { noResults = el.isConnected && el.childElementCount === 0; });
+  });
+  /** @param {Partial<import('$lib/share-flow.js').ShareDefaults>} patch */
+  function setShareDefault(patch) { shareDefaults = saveShareDefaults(patch); }
 
   // ── Category navigation + search ─────────────────────────────────────────
   const CATEGORIES = [
@@ -98,12 +127,16 @@
     { id: 'database',     label: 'Database',     icon: 'database' },
     { id: 'appearance',   label: 'Appearance',   icon: 'sparkles' },
     { id: 'agent',        label: 'Agent',        icon: 'bot' },
+    { id: 'account',      label: 'Account & Sync', icon: 'cloud' },
     { id: 'integrations', label: 'Integrations', icon: 'blocks' },
     { id: 'keybindings',  label: 'Keybindings',  icon: 'keyboard' },
+    { id: 'labs',         label: 'Labs',         icon: 'flask-conical' },
     { id: 'about',        label: 'About',        icon: 'info' },
   ];
   let category = $state('general');
   let query = $state('');
+  /** The search field has focus: its `/` hint steps aside. */
+  let settingsSearchFocused = $state(false);
   const q = $derived(query.trim().toLowerCase());
   const searching = $derived(q.length > 0);
   /** Row visibility under the current search query. */
@@ -113,6 +146,12 @@
   // A caller asking for a page (the command palette's "Keyboard shortcuts")
   // sets `section` and opens the dialog programmatically, which may not go
   // through onOpenChange.
+  // Closing forgets the search, however the dialog closed (Escape, the close
+  // button, or a caller setting `open`): reopening shows the full page, not
+  // the last query's results.
+  $effect(() => {
+    if (!open) query = '';
+  });
   $effect(() => {
     if (open && section) { category = section; query = ''; section = ''; }
   });
@@ -167,12 +206,38 @@
   }
 
   /** @param {boolean} next */
+  // Reload the copy whenever the settings change elsewhere (⌘K, a menu, sync)
+  // and whenever the dialog opens. onOpenChange alone missed both: bits-ui
+  // does not call it when `open` is set from code, as the palette does.
+  $effect(() => {
+    void $settingsRevision;
+    if (open) untrack(() => refreshSettings());
+  });
+
   function handleOpenChange(next) {
     if (next) { refreshSettings(); category = section || 'general'; section = ''; query = ''; void refreshLockStatus(); }
   }
 
   /** @param {import('$lib/themes/registry.js').ThemeId} themeId */
   let themeBuilderOpen = $state(false);
+  let addThemeOpen = $state(false);
+  const isMacOs = detectOs() === 'macos';
+
+  /** Use one of the imported themes. @param {string} id */
+  function useImported(id) {
+    activeImportedId.set(id);
+    if ($appThemeId === 'imported') applyImportedTheme();
+    else settings = updateSettings({ theme: 'imported' });
+  }
+
+  /** @param {string} id */
+  function dropImported(id) {
+    removeImportedTheme(id);
+    if ($appThemeId === 'imported') {
+      if ($importedThemes.length) applyImportedTheme();
+      else settings = updateSettings({ theme: systemPreferredTheme() });
+    }
+  }
 
   function setTheme(themeId) {
     if (themeId === $appThemeId) return;
@@ -188,7 +253,8 @@
     if (font === settings.font) return;
     settings = updateSettings({ font });
   }
-  const fontEntries = Object.entries(FONT_PRESETS);
+  // The default face leads the list (SF Pro on a Mac, Geist elsewhere).
+  const fontEntries = Object.entries(FONT_PRESETS).sort(([a], [b]) => Number(b === DEFAULT_FONT) - Number(a === DEFAULT_FONT));
   const iconStyleEntries = Object.entries(ICON_STYLES);
   const iconSetEntries = Object.entries(ICON_SETS);
   const tableStyleEntries = Object.entries(TABLE_STYLES);
@@ -391,6 +457,9 @@
     settings = updateSettings({ cmdkAiEnabled: !settings.cmdkAiEnabled });
   }
 
+  function toggleAiInTab() {
+    settings = updateSettings({ aiInTab: !settings.aiInTab });
+  }
   function toggleTreeSidebar() {
     settings = updateSettings({ sidebarStyle: settings.sidebarStyle === 'tree' ? 'classic' : 'tree' });
   }
@@ -538,10 +607,73 @@
 
   const planBadge = $derived.by(() => {
     const s = $licenseStatus;
-    if (s?.status === "Valid") return { label: "Pro", class: "border-success/25 bg-success/10 text-success" };
-    if (s?.status === "Trial") return { label: `Trial · ${s.days_remaining}d`, class: "border-warning/25 bg-warning/10 text-warning" };
-    return { label: "Free", class: "border-border/70 bg-muted/40 text-muted-foreground" };
+    if (s?.status === "Valid") return { label: "Pro", class: "chip-gloss" };
+    if (s?.status === "Trial") return { label: `Trial · ${s.days_remaining}d`, class: "chip-gloss chip-warning" };
+    return { label: "Free", class: "chip-gloss chip-muted" };
   });
+
+  // ── Updates: version and track ─────────────────────────────────────
+  // Stable and Nightly are separate apps (own name and data), so the track is
+  // which app runs: switching installs the other one if needed, opens it and
+  // quits this one.
+  let appVersion = $state('')
+  const onNightly = $derived(/-nightly\./.test(appVersion))
+  $effect(() => {
+    void import('@tauri-apps/api/app')
+      .then((m) => m.getVersion())
+      .then((v) => { appVersion = v })
+      .catch(() => {})
+  })
+
+  /** A check asked for from here came back with nothing: say so on the button. */
+  let upToDate = $state(false)
+  let askedCheck = $state(false)
+  $effect(() => {
+    const u = $updateState
+    if (!askedCheck || u.checking) return
+    upToDate = u.status === 'idle'
+    askedCheck = false
+  })
+  function checkUpdates() {
+    upToDate = false
+    askedCheck = true
+    updateActions.check()
+  }
+
+  /** @type {import('$lib/api.js').UpdateTrack | null} */
+  let switchTo = $state(null)
+  let switchInstalled = $state(/** @type {string | null} */ (null))
+  let switchBusy = $state(false)
+  let switchError = $state('')
+  const switchName = $derived(switchTo === 'nightly' ? 'Stroke Nightly' : 'Stroke')
+
+  /** @param {import('$lib/api.js').UpdateTrack} track */
+  async function askSwitch(track) {
+    if (track === (onNightly ? 'nightly' : 'stable')) return
+    switchError = ''
+    switchInstalled = null
+    switchTo = track
+    try { switchInstalled = await trackInstalled(track) } catch { /* browser dev */ }
+  }
+
+  async function confirmSwitch() {
+    if (!switchTo) return
+    const track = switchTo
+    switchBusy = true
+    switchError = ''
+    try {
+      const path = switchInstalled ?? (await trackInstall(track))
+      await trackOpen(track, path)
+      switchTo = null
+      // The ordinary quit: unsaved edits still get asked about.
+      const { emit } = await import('@tauri-apps/api/event')
+      await emit('app-quit-requested')
+    } catch (e) {
+      switchError = String(/** @type {any} */ (e)?.message ?? e)
+    } finally {
+      switchBusy = false
+    }
+  }
 </script>
 
 <Dialog.Root bind:open onOpenChange={handleOpenChange}>
@@ -552,14 +684,7 @@
     <div class="grid min-h-0 flex-1 grid-cols-[13rem_minmax(0,1fr)] overflow-hidden">
       <!-- ── Left: search + category nav ─────────────────────────── -->
       <aside class="flex min-h-0 flex-col gap-3 border-r border-border/40 bg-muted/[0.015] p-3">
-        <div class="relative">
-          <Icon name="search" class="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-          <input
-            bind:value={query}
-            placeholder="Search settings…"
-            class= "field-surface h-8 w-full bg-transparent pl-8 pr-2.5 text-ui-xs text-foreground outline-none placeholder:text-muted-foreground"
-          />
-        </div>
+        <SearchField bind:value={query} placeholder="Search" label="Search settings" rank={30} />
         <nav class="flex flex-col gap-0.5">
           {#each CATEGORIES as c (c.id)}
             <button
@@ -585,16 +710,27 @@
           {#key searching ? '__search__' : category}
             <div class="settings-pane">
               <h2 class="mb-6 text-ui-lg font-semibold tracking-tight text-foreground">
-                {searching ? $t('common.search') : $t('settings.nav.' + activeCategory.id)}
+                {searching ? `Results for "${query.trim()}"` : $t('settings.nav.' + activeCategory.id)}
               </h2>
 
               {#if searching}
-                {@render generalContent()}
-                {@render databaseContent()}
-                {@render appearanceContent()}
-                {@render agentContent()}
-                {@render integrationsContent()}
-                {@render aboutContent()}
+                <div bind:this={resultsEl}>
+                  {@render generalContent()}
+                  {@render databaseContent()}
+                  {@render appearanceContent()}
+                  {@render agentContent()}
+                  {@render accountContent()}
+                  {@render integrationsContent()}
+                  {@render labsContent()}
+                  {@render aboutContent()}
+                </div>
+                {#if noResults}
+                  <div class="flex flex-col items-center gap-2 py-16 text-center">
+                    <Icon name="search" class="size-5 shrink-0 text-muted-foreground" />
+                    <p class="text-ui-sm font-medium text-foreground">No settings match</p>
+                    <p class="text-ui-xs text-muted-foreground">Try another word, like "font", "theme" or "share".</p>
+                  </div>
+                {/if}
               {:else if category === 'general'}
                 {@render generalContent()}
               {:else if category === 'database'}
@@ -605,8 +741,12 @@
                 {@render agentContent()}
               {:else if category === 'keybindings'}
                 <KeybindingsSettings />
+              {:else if category === 'account'}
+                {@render accountContent()}
               {:else if category === 'integrations'}
                 {@render integrationsContent()}
+              {:else if category === 'labs'}
+                {@render labsContent()}
               {:else}
                 {@render aboutContent()}
               {/if}
@@ -621,10 +761,78 @@
 <PinSetupDialog bind:open={pinDialogOpen} mode={pinDialogMode} />
 
 <!-- ── Content snippets ──────────────────────────────────────────── -->
+<!-- Labs: features still being shaped. Each was a "(beta)" or "(experimental)"
+     switch scattered through General; they live together here, so what is
+     settled and what is still moving read as two different things. -->
+{#snippet labsContent()}
+  {#if !searching}
+    <p class="mb-4 text-ui-xs leading-relaxed text-pretty text-muted-foreground">
+      Features still being shaped. They work, they may change, and the ones that settle move to their own page.
+    </p>
+  {/if}
+  {#if show('AI chat in a tab', 'Labs, open AI chat as a tab beside your tables, with its chats in the sidebar')}
+    {@render switchRow('AI chat in a tab', 'AI chat opens as a tab beside your tables and queries, with its chats in the sidebar, instead of taking over the whole window.', settings.aiInTab, toggleAiInTab)}
+  {/if}
+  {#if show('Tree sidebar', 'Labs, browse connections, schemas, tables and columns as one explorer tree')}
+    {@render switchRow('Tree sidebar', 'One explorer tree in the sidebar: connection, database, schema, tables, views and routines, columns. Replaces the Tables, Objects and Databases tabs; Queries, Recent and Find & replace stay.', settings.sidebarStyle === 'tree', toggleTreeSidebar)}
+    {#if settings.sidebarStyle === 'tree'}
+      <div class={rowCls}>
+        <div class="min-w-0">
+          <p class="text-ui-sm font-medium text-foreground">Connections in the tree</p>
+          <p class="mt-0.5 text-ui-xs leading-relaxed text-muted-foreground">Every saved connection as a root, or only the connected one with the rest in a Connections list below it.</p>
+        </div>
+        {@render segmented('Connections in the tree', [{ value: 'all', label: 'All' }, { value: 'connected', label: 'Connected only' }], $treeConnectionScope, (v) => treeConnectionScope.set(v))}
+      </div>
+    {/if}
+  {/if}
+  {#if show('Several connections at once', 'Labs, multiple connections open together, switch without closing tabs')}
+    {@render switchRow(
+      'Several connections at once',
+      'Switching keeps the connection you leave open, with its tabs, and switching back is instant. Up to six stay open; connections through an SSH tunnel still reconnect.',
+      settings.multiConnection === true,
+      () => {
+        settings = updateSettings({ multiConnection: settings.multiConnection !== true });
+        // The shell closes the kept databases and drops them from the tab bar
+        // and the status bar; only it knows which ones are open.
+        if (!settings.multiConnection) window.dispatchEvent(new CustomEvent('stroke:multi-connection-off'));
+      },
+    )}
+  {/if}
+  {#if show('Share as a web studio', 'Labs, share a connection with a link that opens in any browser, relay, remote')}
+    {@render switchRow(
+      'Share as a web studio',
+      'Share the open database with a link that works in any browser, on any device, while Stroke is open. End-to-end encrypted through stroke.click. Read-only unless you allow edits.',
+      settings.studioShare === true,
+      () => {
+        settings = updateSettings({ studioShare: settings.studioShare !== true });
+        window.dispatchEvent(new CustomEvent('stroke:studio-share-changed', { detail: settings.studioShare === true }));
+      },
+    )}
+  {/if}
+  {#if show('Focus the tree on switch', 'Labs, collapse the sidebar tree to the new database tables when you switch')}
+    {@render switchRow(
+      'Focus the tree on switch',
+      'Switching to another database folds the tree to that database: its default schema (public, main) open on its tables, everything else closed.',
+      settings.treeFocusOnSwitch === true,
+      () => { settings = updateSettings({ treeFocusOnSwitch: settings.treeFocusOnSwitch !== true }) },
+    )}
+  {/if}
+  {#if show('Live mode', 'Labs, auto-refresh the active table when its data changes')}
+    {@render switchRow('Live mode', 'Shows the Live toggle in the status bar, which refreshes the open table when its data changes.', settings.liveModeEnabled, toggleLiveMode)}
+  {/if}
+  {#if show('Cmd+K AI', 'Labs, ask AI directly from the command palette')}
+    {@render switchRow(`${comboTitle('Mod+K')} AI`, `Shows "Ask AI" in the ${comboTitle('Mod+K')} command palette.`, settings.cmdkAiEnabled, toggleCmdkAi)}
+  {/if}
+  {#if show('Vim mode', 'Labs, modal keyboard navigation across the app, the data grid, and the SQL editor')}
+    {@render switchRow('Vim mode', 'Modal keyboard navigation (hjkl, gg/G, i/Esc) across the grid, the SQL editor and tabs.', settings.vimMode, toggleVimMode)}
+  {/if}
+{/snippet}
+
 {#snippet secLabel(/** @type {string} */ text)}
   {#if !searching}
+    <!-- No rule of its own: the first row's top border is the line under it.
+         Both drew one, which is the double line under every heading. -->
     <p class="mt-8 mb-1 text-ui-2xs font-semibold uppercase tracking-[0.06em] text-muted-foreground first:mt-0">{text}</p>
-    <div class="mb-1 border-b border-border/40"></div>
   {/if}
 {/snippet}
 
@@ -652,7 +860,7 @@
     <div class="min-w-0">
       <p class="flex items-center gap-2 text-ui-sm font-medium text-foreground">
         {label}
-        {#if badge}<span class="rounded-full border px-1.5 py-px text-ui-3xs font-medium leading-4 {badge.class}">{badge.label}</span>{/if}
+        {#if badge}<span class="h-5 px-1.5 text-ui-3xs font-semibold {badge.class}">{badge.label}</span>{/if}
       </p>
       <p class="mt-0.5 text-ui-xs leading-relaxed text-muted-foreground">{desc}</p>
     </div>
@@ -1027,18 +1235,6 @@
   {#if show('Wrap JSON', 'Soft-wrap long values in every JSON viewer instead of scrolling sideways')}
     {@render switchRow('Wrap JSON', 'Soft-wrap long values (embeddings, document chunks) in every JSON view instead of running off the right edge. Off keeps the structure easier to scan.', settings.jsonWordWrap, toggleJsonWordWrap)}
   {/if}
-  {#if show('Vim mode', 'Experimental modal keyboard navigation across the app, the data grid, and the SQL editor')}
-    {@render switchRow('Vim mode', 'Experimental: modal keyboard navigation (hjkl, gg/G, i/Esc) across the grid, the SQL editor, and tabs', settings.vimMode, toggleVimMode)}
-  {/if}
-  {#if show('Cmd+K AI', 'Experimental, ask AI directly from the command palette')}
-    {@render switchRow(`${comboTitle('Mod+K')} AI (experimental)`, `Experimental, show "Ask AI" in the ${comboTitle('Mod+K')} command palette. Off by default.`, settings.cmdkAiEnabled, toggleCmdkAi)}
-  {/if}
-  {#if show('Live mode', 'Experimental, auto-refresh the active table when its data changes')}
-    {@render switchRow('Live mode (experimental)', 'Experimental, show the Live auto-refresh toggle in the status bar. Off by default.', settings.liveModeEnabled, toggleLiveMode)}
-  {/if}
-  {#if show('Tree sidebar', 'Beta, browse connections, schemas, tables and columns as one explorer tree')}
-    {@render switchRow('Tree sidebar (beta)', 'Beta, one explorer tree in the sidebar: connection, database, schema, tables, views and routines, columns. Replaces the Tables, Objects and Databases tabs; Queries, Recent and Find & replace stay. Off by default.', settings.sidebarStyle === 'tree', toggleTreeSidebar)}
-  {/if}
   {#if show('Load large values on demand', 'Fetch a column that averages megabytes as a size, and load a cell when you open it')}
     {@render switchRow('Load large values on demand', 'A column averaging half a megabyte a row arrives as its size, and the value loads when you open the cell. Off fetches every value with the page, which is what it did before, and what makes such a table take ten seconds to open. PostgreSQL.', settings.lazyWideColumns, toggleLazyWideColumns)}
   {/if}
@@ -1097,6 +1293,58 @@
   {/if}
 
   {@render secLabel('Updates')}
+  {#if show('Version', 'Current version, check for updates')}
+    <div class={rowCls}>
+      <div class="min-w-0">
+        <p class="flex items-baseline gap-2 text-ui-sm font-medium text-foreground">
+          Version
+          {#if appVersion}<span class="min-w-0 truncate font-mono text-ui-xs font-normal tabular-nums text-muted-foreground" title={appVersion}>{appVersion}</span>{/if}
+        </p>
+        <p class="mt-0.5 text-ui-xs leading-relaxed text-muted-foreground">
+          {#if $updateState.status === 'ready'}
+            {$updateState.version} is downloaded. {$updateState.applyOnQuit ? 'It installs when you quit.' : 'Restart to install it.'}
+          {:else if $updateState.status === 'downloading'}
+            Downloading {$updateState.version} in the background.
+          {:else if $updateState.status === 'available'}
+            {$updateState.version} is available.
+          {:else}
+            Current version of the application.
+          {/if}
+        </p>
+      </div>
+      {#if $updateState.status === 'ready'}
+        <Button type="button" size="sm" class="shrink-0 gap-1.5" onclick={() => updateActions.restart()}><Icon name="refresh-cw" class="size-3.5 shrink-0" />Restart to update</Button>
+      {:else if $updateState.status === 'downloading'}
+        <Button type="button" variant="outline" size="sm" class="shrink-0 gap-1.5 tabular-nums" onclick={() => updateActions.show()}><Icon name="loader-2" class="size-3.5 shrink-0 animate-spin" />{$updateState.progress}%</Button>
+      {:else if $updateState.status === 'available'}
+        <Button type="button" size="sm" class="shrink-0" onclick={() => updateActions.show()}>Update</Button>
+      {:else if $updateState.checking}
+        <Button type="button" variant="outline" size="sm" class="shrink-0 gap-1.5" disabled><Icon name="loader-2" class="size-3.5 shrink-0 animate-spin" />Checking</Button>
+      {:else}
+        <Button type="button" variant="outline" size="sm" class="shrink-0" onclick={checkUpdates}>{upToDate ? 'Up to date' : 'Check for updates'}</Button>
+      {/if}
+    </div>
+  {/if}
+  {#if show('Update track', 'Stable or Nightly')}
+    <div class={rowCls}>
+      <div class="min-w-0">
+        <p class="text-ui-sm font-medium text-foreground">Update track</p>
+        <p class="mt-0.5 text-ui-xs leading-relaxed text-muted-foreground">
+          Nightly is built every night from the newest code. Each track is its own app with its own settings, so switching leaves the other as it is.
+        </p>
+      </div>
+      <div class="shrink-0">
+        <SelectMenu
+          triggerClass="h-8 w-32"
+          contentClass="w-[var(--bits-popover-anchor-width)] min-w-[8rem]"
+          ariaLabel="Update track"
+          value={onNightly ? 'nightly' : 'stable'}
+          onValueChange={(v) => void askSwitch(v)}
+          items={[{ value: 'stable', label: 'Stable', keywords: ['stable'] }, { value: 'nightly', label: 'Nightly', keywords: ['nightly', 'beta'] }]}
+        />
+      </div>
+    </div>
+  {/if}
   {#if show('Download updates in the background', 'Install new versions automatically when you quit')}
     {@render switchRow(
       'Download updates in the background',
@@ -1173,6 +1421,37 @@
     </div>
   {/if}
 
+  {#if show('Add a theme', 'Import theme community themes vs code json file paste gallery')}
+    <div class={rowCls}>
+      <div class="min-w-0">
+        <p class="text-ui-sm font-medium text-foreground">Add a theme</p>
+        <p class="mt-0.5 text-ui-xs leading-relaxed text-muted-foreground">From stroke.click/themes, a Stroke or VS Code theme file, or pasted JSON.</p>
+      </div>
+      <Button type="button" variant="outline" size="sm" onclick={() => (addThemeOpen = true)}>
+        <Icon name="plus" class="size-3.5 shrink-0" />
+        Add a theme
+      </Button>
+    </div>
+    {#if $importedThemes.length}
+      <ul class="-mt-1 flex flex-col pb-2">
+        {#each $importedThemes as it (it.id)}
+          {@const on = $appThemeId === 'imported' && $activeImportedId === it.id}
+          <li class="group flex h-9 items-center gap-2.5 rounded-md px-2 hover:bg-muted/40">
+            <ThemeSwatch bg={it.colors.background} accent={it.colors.primary} />
+            <button type="button" class="flex min-w-0 flex-1 items-center gap-2 text-left" onclick={() => useImported(it.id)}>
+              <span class="truncate text-ui-xs font-medium text-foreground">{it.name}</span>
+              <span class="truncate text-ui-2xs text-muted-foreground">{it.appearance === 'light' ? 'Light' : 'Dark'}{it.author ? ` · ${it.author}` : ''}</span>
+            </button>
+            {#if on}<Icon name="check" class="size-3.5 shrink-0 text-primary" />{/if}
+            <button type="button" aria-label={`Remove ${it.name}`} class="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 hover:bg-muted hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100" onclick={() => dropImported(it.id)}>
+              <Icon name="trash-2" class="size-3.5 shrink-0" />
+            </button>
+          </li>
+        {/each}
+      </ul>
+    {/if}
+  {/if}
+
   {#if show($t('settings.font'), $t('settings.font.desc'))}
     <div class={rowCls}>
       <div class="min-w-0">
@@ -1183,7 +1462,7 @@
         ariaLabel="Font family"
         value={settings.font}
         onValueChange={(v) => { if (v) setFont(/** @type {import('$lib/stores/settings.js').FontId} */ (v)); }}
-        items={fontEntries.map(([id, preset]) => ({ value: id, label: preset.label, sans: preset.sans, keywords: [preset.label, preset.description, id === 'mono' ? 'monospace' : 'sans'] }))}
+        items={fontEntries.map(([id, preset]) => ({ value: id, label: preset.label, sans: preset.sans, keywords: [preset.label, preset.description, id === 'mono' ? 'monospace' : 'sans', ...(preset.keywords ?? [])] }))}
         searchPlaceholder="Search fonts…"
       >
         {#snippet lead(it)}
@@ -1327,6 +1606,40 @@
         onValueChange={setRowSpacing}
         items={rowSpacingEntries.map(([id, s]) => ({ value: id, label: s.label, keywords: [s.label] }))}
       />
+    </div>
+  {/if}
+  {#if show('Notifications', 'Corner of the window where notifications appear: top left, top right, bottom left, bottom right')}
+    <div class={rowCls}>
+      <div class="min-w-0">
+        <p class="text-ui-sm font-medium text-foreground">Notifications</p>
+        <p class="mt-0.5 text-ui-xs leading-relaxed text-muted-foreground">
+          The corner of the window they appear in.
+        </p>
+      </div>
+      <!-- A small window with four corners to pick: the choice is spatial, so
+           it is shown as a place rather than named in a list. -->
+      <div class="grid h-12 w-[4.5rem] shrink-0 grid-cols-2 grid-rows-2 gap-1 rounded-md border border-border/60 bg-muted/30 p-1" role="radiogroup" aria-label="Notification position">
+        {#each TOAST_POSITIONS as pos (pos)}
+          <button
+            type="button"
+            role="radio"
+            aria-checked={$toastPosition === pos}
+            aria-label={pos.replace('-', ' ')}
+            title={pos.replace('-', ' ').replace(/^./, (c) => c.toUpperCase())}
+            class={cn(
+              'flex rounded-sm transition-[background-color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-accent active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring',
+              pos.startsWith('top') ? 'items-start' : 'items-end',
+              pos.endsWith('left') ? 'justify-start' : 'justify-end',
+            )}
+            onclick={() => {
+              toastPosition.set(pos)
+              toast.success('Notifications appear here now')
+            }}
+          >
+            <span class={cn('m-0.5 h-1.5 w-4 rounded-sm', $toastPosition === pos ? 'bg-primary' : 'bg-muted-foreground/30')}></span>
+          </button>
+        {/each}
+      </div>
     </div>
   {/if}
   {#if show('Grid text size', 'Font size of the data grid, independent of the app zoom')}
@@ -1479,6 +1792,22 @@
       />
     </div>
   {/if}
+  {#if show('Animate panels', 'Slide the terminal and the AI panel open and closed')}
+    {@render switchRow(
+      'Animate panels',
+      'The terminal dock and the AI panel slide open and closed. Off, they appear at once.',
+      settings.animatePanels === true,
+      () => { settings = updateSettings({ animatePanels: settings.animatePanels !== true }); },
+    )}
+  {/if}
+  {#if isMacOs && show('Press ⌘Q twice to quit', 'Quit confirm command q hold double press')}
+    {@render switchRow(
+      'Press ⌘Q twice to quit',
+      'The first ⌘Q shows a reminder; press it again or hold it to quit. Off, ⌘Q quits at once.',
+      settings.quitGuard !== false,
+      () => { settings = updateSettings({ quitGuard: settings.quitGuard === false }); },
+    )}
+  {/if}
   {#if show('Alternating row colors', 'Shade every other grid row')}
     {@render switchRow(
       'Alternating row colors',
@@ -1560,14 +1889,60 @@
   {#if show($t('settings.aiModels'), $t('settings.aiModels.desc'))}
     {@render actionRow($t('settings.aiModels'), $t('settings.aiModels.desc'), $t('settings.btn.configure'), openModelConfiguration)}
   {/if}
+{/snippet}
 
+<!-- Account & Sync: who you are, your plan and devices, and end-to-end
+     encrypted sync, in one place instead of under Integrations and the
+     License page. -->
+{#snippet accountContent()}
   {@render secLabel($t('settings.sec.account'))}
-  <!-- Account first; the license key row below stays as the secondary path. -->
   {#if show('Account', 'Sign in with GitHub or Google, plan, devices, sign out')}
     <AccountCard variant="row" />
   {/if}
   {#if show($t('settings.license'), $t('settings.license.desc'))}
     {@render actionRow($t('settings.license'), $t('settings.license.desc'), $t('settings.btn.manage'), () => { open = false; onopenlicense(); }, planBadge)}
+  {/if}
+  {#if show('Sync', 'End-to-end encrypted sync of connections, workspaces and settings across your devices')}
+    {#if $isSignedIn}
+      <div class="mt-6">
+        <SyncSection sectionLabel="mb-1 text-ui-2xs font-semibold uppercase tracking-[0.06em] text-muted-foreground" />
+      </div>
+    {:else}
+      {@render secLabel('Sync')}
+      <div class={rowCls}>
+        <div class="min-w-0">
+          <p class="text-ui-sm font-medium text-foreground">Sync your connections</p>
+          <p class="mt-0.5 text-ui-xs leading-relaxed text-muted-foreground">Sign in to keep connections, workspaces and settings on all your devices. They are encrypted on this device with a passphrase only you know, so no one else can read them, Stroke included.</p>
+        </div>
+        <Button type="button" size="sm" class="shrink-0" onclick={() => void signInWithToast()}>Sign in</Button>
+      </div>
+    {/if}
+  {/if}
+
+  {@render secLabel('Sharing')}
+  {#if show('Shared links', 'Share links: every link you made, its views and expiry, revoke, my shares')}
+    {@render actionRow('Shared links', 'Every link you\'ve shared, how often it was opened, when it expires. Revoke any of them at once.', 'Open', () => { open = false; openSharesPage(); })}
+  {/if}
+  {#if show('Default expiry', 'Share links: how long a new link lasts')}
+    <div class={rowCls}>
+      <div class="min-w-0">
+        <p class="text-ui-sm font-medium text-foreground">Default expiry</p>
+        <p class="mt-0.5 text-ui-xs leading-relaxed text-muted-foreground">How long a new share link lasts. You can change it for each link.</p>
+      </div>
+      {@render segmented('Default expiry', SHARE_EXPIRIES.filter((e) => e.seconds !== null).map((e) => ({ value: e.seconds, label: e.label })), shareDefaults.expiry, (v) => setShareDefault({ expiry: v }))}
+    </div>
+  {/if}
+  {#if show('Default views', 'Share links: anyone, one view then gone, burn after reading, limited views')}
+    <div class={rowCls}>
+      <div class="min-w-0">
+        <p class="text-ui-sm font-medium text-foreground">Default views</p>
+        <p class="mt-0.5 text-ui-xs leading-relaxed text-muted-foreground">Whether a new link opens any number of times, once, or a set number of times.</p>
+      </div>
+      {@render segmented('Default views', [{ value: 'link', label: 'Unlimited' }, { value: 'once', label: 'Once' }, { value: 'limit', label: `${shareDefaults.viewLimit} views` }], shareDefaults.access, (v) => setShareDefault({ access: v }))}
+    </div>
+  {/if}
+  {#if show('Mask personal data', 'Share links: hide emails, phone numbers, names, tokens, PII')}
+    {@render switchRow('Mask personal data', 'Columns that look like emails, phone numbers, names or secrets start masked in the share dialog.', shareDefaults.maskPii, () => setShareDefault({ maskPii: !shareDefaults.maskPii }))}
   {/if}
 {/snippet}
 
@@ -1589,8 +1964,7 @@
   {/if}
 
   {#if !searching}
-    <p class="mt-8 mb-1 text-ui-2xs font-semibold uppercase tracking-[0.06em] text-muted-foreground">{$t('settings.sec.keyboard')}</p>
-    <div class="mb-3 border-b border-border/40"></div>
+    <p class="mt-8 mb-3 text-ui-2xs font-semibold uppercase tracking-[0.06em] text-muted-foreground">{$t('settings.sec.keyboard')}</p>
     <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
       {#if bindingFor('theme.next')}{@render shortcut(bindingFor('theme.next'), $t('settings.kbd.cycleTheme'))}{/if}
       {#if bindingFor('theme.prev')}{@render shortcut(bindingFor('theme.prev'), $t('settings.kbd.prevTheme'))}{/if}
@@ -1637,3 +2011,51 @@
 </style>
 
 <ThemeBuilder bind:open={themeBuilderOpen} />
+<AddThemeDialog bind:open={addThemeOpen} />
+
+<!-- Switching track: what opens, what quits, and what stays. -->
+<Dialog.Root open={switchTo !== null} onOpenChange={(o) => { if (!o && !switchBusy) switchTo = null }}>
+  <Dialog.Content class="max-w-[30rem] gap-0 p-0" showCloseButton={false}>
+    <Dialog.Header class="gap-1 px-6 pt-6">
+      <Dialog.Title class="text-ui-xl font-semibold tracking-tight">Switch to {switchTo === 'nightly' ? 'Nightly' : 'Stable'}?</Dialog.Title>
+      <Dialog.Description class="text-ui-sm text-muted-foreground">
+        {switchName} opens and this app quits.
+      </Dialog.Description>
+    </Dialog.Header>
+    <div class="px-6 pt-5">
+      <table class="w-full text-ui-sm">
+        <thead>
+          <tr class="border-b border-border/60 text-start text-ui-xs text-muted-foreground">
+            <th class="pb-2 pe-6 text-start font-normal">App</th>
+            <th class="pb-2 text-start font-normal">Version</th>
+            <th class="pb-2 text-end font-normal"></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="border-b border-border/40">
+            <td class="py-3 pe-6 whitespace-nowrap text-foreground">{switchName}</td>
+            <td class="py-3 text-muted-foreground">{switchInstalled ? 'Installed' : switchTo === 'nightly' ? 'Latest Nightly' : 'Latest release'}</td>
+            <td class="py-3 text-end text-ui-xs {switchInstalled ? 'text-muted-foreground' : 'text-warning'}">{switchInstalled ? 'opens' : 'downloads, then opens'}</td>
+          </tr>
+          <tr>
+            <td class="py-3 pe-6 whitespace-nowrap text-foreground">This app</td>
+            <td class="py-3 pe-4 font-mono text-ui-xs tabular-nums text-muted-foreground">{appVersion.replace(/-nightly\.\d+$/, '')}{#if /-nightly\./.test(appVersion)}<span class="ms-1.5 font-sans text-ui-2xs">Nightly</span>{/if}</td>
+            <td class="py-3 text-end text-ui-xs text-muted-foreground">quits, stays installed</td>
+          </tr>
+        </tbody>
+      </table>
+      {#if switchError}<p class="mt-3 text-ui-xs text-destructive">{switchError}</p>{/if}
+    </div>
+    <div class="mt-4 flex items-center gap-4 border-t border-border/40 px-6 py-4">
+      <p class="min-w-0 flex-1 text-ui-xs leading-relaxed text-muted-foreground">
+        Connections and settings stay with each app. Signed in, synced ones follow you.
+      </p>
+      <div class="flex shrink-0 items-center gap-2">
+        <Button type="button" variant="outline" disabled={switchBusy} onclick={() => (switchTo = null)}>Cancel</Button>
+        <Button type="button" class="gap-1.5" disabled={switchBusy} onclick={() => void confirmSwitch()}>
+          {#if switchBusy}<Icon name="loader-2" class="size-3.5 shrink-0 animate-spin" />{switchInstalled ? 'Opening' : 'Downloading'}{:else}Switch to {switchTo === 'nightly' ? 'Nightly' : 'Stable'}{/if}
+        </Button>
+      </div>
+    </div>
+  </Dialog.Content>
+</Dialog.Root>

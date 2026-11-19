@@ -57,6 +57,8 @@ import History from '@lucide/svelte/icons/history'
 import ArrowRight from '@lucide/svelte/icons/arrow-right'
 import Clock from '@lucide/svelte/icons/clock'
 import Zap from '@lucide/svelte/icons/zap'
+import Flame from '@lucide/svelte/icons/flame'
+import ShieldAlert from '@lucide/svelte/icons/shield-alert'
 import Settings from '@lucide/svelte/icons/settings'
 import Maximize2 from '@lucide/svelte/icons/maximize-2'
 import Filter from '@lucide/svelte/icons/filter'
@@ -91,6 +93,7 @@ import FlaskConical from '@lucide/svelte/icons/flask-conical'
 import Workflow from '@lucide/svelte/icons/workflow'
 import Share2 from '@lucide/svelte/icons/share-2'
 import GitCompare from '@lucide/svelte/icons/git-compare'
+import GitMerge from '@lucide/svelte/icons/git-merge'
 import Blocks from '@lucide/svelte/icons/blocks'
 import Plug from '@lucide/svelte/icons/plug'
 import NotebookPen from '@lucide/svelte/icons/notebook-pen'
@@ -152,7 +155,7 @@ import {
   ArrowRight01Icon, ArrowLeft01Icon, Add01Icon, MinusSignIcon, Search01Icon,
   Delete02Icon, Logout01Icon, Table01Icon, GridTableIcon, RefreshIcon, Copy01Icon, Loading03Icon, Key01Icon,
   LinkSquare01Icon, Database01Icon, SourceCodeIcon, TerminalIcon, ChartLineData02Icon,
-  SparklesIcon, GitBranchIcon, Download04Icon, PlayIcon, EyeIcon, EyeOffIcon,
+  SparklesIcon, GitBranchIcon, Download04Icon, PlayIcon, ViewIcon, ViewOffSlashIcon,
   AiBrain01Icon, Alert02Icon, AlertCircleIcon, Shield01Icon, PencilEdit01Icon,
   BracketsIcon, SquareLock01Icon, DashboardSquare01Icon, HistoryIcon, Clock01Icon,
   FlashIcon, Settings01Icon, Maximize01Icon, FilterIcon, MoreHorizontalIcon,
@@ -161,7 +164,7 @@ import {
   HardDriveIcon, DashboardSquare02Icon, SquareUnlock01Icon, Moon02Icon, RadioIcon,
   ServerStack01Icon, Settings02Icon, Sun03Icon, ArrowTurnBackwardIcon, Unlink01Icon,
   WifiConnected01Icon, WifiDisconnected01Icon, TestTubeIcon, WorkflowSquare02Icon,
-  Share08Icon, GitCompareIcon, PuzzleIcon, PlugSocketIcon, NoteEditIcon, ChartBarLineIcon, GlobalIcon,
+  Share08Icon, GitCompareIcon, GitMergeIcon, PuzzleIcon, PlugSocketIcon, NoteEditIcon, ChartBarLineIcon, GlobalIcon,
   InformationCircleIcon, ArrowUpDownIcon, ArrowLeftRightIcon, Bookmark01Icon, BugIcon,
   UnavailableIcon, Target01Icon, EraserIcon, FileDownloadIcon, FileUploadIcon, File01Icon, FunctionSquareIcon,
   HashIcon, InfinityIcon, KeyboardIcon, Layers01Icon, LeftToRightListBulletIcon, Link01Icon,
@@ -192,7 +195,7 @@ export const ICON_MAP = {
   // A view is an eye everywhere in the app - TabBar picks 'eye' for view tabs,
   // so the sidebar has to agree. Plain table glyphs made views indistinguishable
   // from tables at size-3.
-  'table-view':     { lucide: Eye,           huge: EyeIcon },
+  'table-view':     { lucide: Eye,           huge: ViewIcon },
   'refresh-cw':     { lucide: RefreshCw,     huge: RefreshIcon },
   'copy':           { lucide: Copy,          huge: Copy01Icon },
   'copy-plus':      { lucide: CopyPlus,      huge: Copy01Icon },
@@ -208,8 +211,8 @@ export const ICON_MAP = {
   'git-branch':     { lucide: GitBranch,     huge: GitBranchIcon },
   'download':       { lucide: Download,      huge: Download04Icon },
   'play':           { lucide: Play,          huge: PlayIcon },
-  'eye':            { lucide: Eye,           huge: EyeIcon },
-  'eye-off':        { lucide: EyeOff,        huge: EyeOffIcon },
+  'eye':            { lucide: Eye,           huge: ViewIcon },
+  'eye-off':        { lucide: EyeOff,        huge: ViewOffSlashIcon },
   'bot':            { lucide: Bot,           huge: AiBrain01Icon },
   'alert-triangle': { lucide: AlertTriangle, huge: Alert02Icon },
   'alert-circle':   { lucide: AlertCircle,   huge: AlertCircleIcon },
@@ -222,6 +225,8 @@ export const ICON_MAP = {
   'arrow-right':    { lucide: ArrowRight,    huge: ArrowRight01Icon },
   'clock':          { lucide: Clock,         huge: Clock01Icon },
   'zap':            { lucide: Zap,           huge: FlashIcon },
+  'flame':          { lucide: Flame },
+  'shield-alert':   { lucide: ShieldAlert },
   'settings':       { lucide: Settings,      huge: Settings01Icon },
   'maximize-2':     { lucide: Maximize2,     huge: Maximize01Icon },
   'filter':         { lucide: Filter,        huge: FilterIcon },
@@ -256,6 +261,7 @@ export const ICON_MAP = {
   'workflow':       { lucide: Workflow,      huge: WorkflowSquare02Icon },
   'share-2':        { lucide: Share2,        huge: Share08Icon },
   'git-compare':    { lucide: GitCompare,    huge: GitCompareIcon },
+  'git-merge':      { lucide: GitMerge,      huge: GitMergeIcon },
   'blocks':         { lucide: Blocks,        huge: PuzzleIcon },
   // Database objects (views, routines, types): not 'blocks', which is Extensions.
   'shapes':         { lucide: Shapes,        huge: Shapes01Icon },
@@ -293,7 +299,8 @@ export const ICON_MAP = {
   'panel-left-close':{ lucide: PanelLeftClose, huge: SidebarLeftIcon },
   'panel-left-open': { lucide: PanelLeftOpen,  huge: SidebarLeft01Icon },
   'link-2':         { lucide: Link2,          huge: Link01Icon },
-  'list-filter':    { lucide: ListFilter,     huge: FilterIcon },
+  // Lucide only: Hugeicons' nearest glyph is a funnel, not the three lines.
+  'list-filter':    { lucide: ListFilter },
   'network':        { lucide: Network,        huge: WorkflowSquare01Icon },
   'list-tree':      { lucide: ListTree },
   'package':        { lucide: Package,        huge: PackageIcon },

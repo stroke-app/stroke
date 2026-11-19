@@ -11,6 +11,7 @@
  * token.
  */
 
+use super::SendRetry;
 use super::{http, OAuthConfig, ProviderConnection, ProviderDatabase};
 use serde_json::{json, Value};
 
@@ -34,7 +35,7 @@ async fn gql(token: &str, query: &str, variables: Value) -> Result<Value, String
         .post(API)
         .bearer_auth(token)
         .json(&json!({ "query": query, "variables": variables }))
-        .send()
+        .send_retrying()
         .await
         .map_err(|e| format!("Railway request failed: {e}"))?;
     let status = resp.status().as_u16();

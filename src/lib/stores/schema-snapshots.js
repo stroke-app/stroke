@@ -1,5 +1,6 @@
 import { getStudioDb, STORES } from '$lib/stores/studio-db.js'
-import { executeSql, executeSqlOnConnection } from '$lib/api.js'
+import { executeSql, executeSqlOnConnection, listSchemas, listTables, getSchemaColumnStructure, listSchemasOnConnection, listTablesOnConnection } from '$lib/api.js'
+import { isSystemSchema } from '$lib/system-schemas.js'
 
 /**
  * @typedef {object} SnapshotColumn
@@ -110,6 +111,12 @@ export async function captureSnapshot(connectionId, connectionLabel, dbType = 'p
         ORDER BY c.table_name, c.ordinal_position
       `)
       _buildTablesFromInfoSchema(colsResult, tables)
+    } else if (!SQLITE_FAMILY.has(dbType)) {
+      // Every other engine (Oracle, SQL Server, ClickHouse, DuckDB, MongoDB,
+      // Redis, DynamoDB...): the same schema reader the sidebar and the ER
+      // diagram use, so a snapshot works wherever browsing does. This used to
+      // fall through to the SQLite branch and ask Oracle for sqlite_master.
+      await _captureWithSchemaReader(tables, savedConnection, schemasFilter)
     } else {
       // SQLite / D1 / LibSQL
       const tablesResult = await runSql(
@@ -177,6 +184,50 @@ export async function captureSnapshot(connectionId, connectionLabel, dbType = 'p
   const db = await getStudioDb()
   await db.put(STORES.schemaSnapshots, snapshot)
   return snapshot
+}
+
+const SQLITE_FAMILY = new Set(['sqlite', 'd1', 'libsql', 'turso'])
+
+/**
+ * Tables and columns through the app's own schema reader. The active
+ * connection gets columns; another saved connection gets table names only
+ * (the reader works on the open session).
+ * @param {{ [schema: string]: SnapshotTable[] }} tables
+ * @param {any} savedConnection
+ * @param {Set<string> | null} schemasFilter
+ */
+async function _captureWithSchemaReader(tables, savedConnection, schemasFilter) {
+  const wanted = (/** @type {string} */ s) => !isSystemSchema(s) && (!schemasFilter || schemasFilter.size === 0 || schemasFilter.has(s))
+  if (savedConnection) {
+    const schemas = (await listSchemasOnConnection(savedConnection)).filter(wanted)
+    for (const schema of schemas) {
+      const names = await listTablesOnConnection(savedConnection, schema).catch(() => [])
+      tables[schema] = names.map((name) => ({ name: String(name), kind: 'table', columns: [] }))
+    }
+    return
+  }
+  const schemas = /** @type {string[]} */ (await listSchemas()).filter(wanted)
+  for (const schema of schemas) {
+    const list = /** @type {{ name: string, kind?: string }[]} */ (await listTables(schema).catch(() => []))
+    /** @type {Map<string, SnapshotColumn[]>} */
+    const byTable = new Map()
+    try {
+      for (const t of await getSchemaColumnStructure(schema)) {
+        byTable.set(t.table, (t.columns ?? []).map((/** @type {any} */ c, /** @type {number} */ i) => ({
+          name: String(c.name),
+          dataType: String(c.dataType ?? ''),
+          nullable: !!c.isNullable,
+          defaultValue: c.columnDefault != null ? String(c.columnDefault) : null,
+          ordinalPosition: Number(c.ordinalPosition ?? i + 1),
+        })))
+      }
+    } catch { /* names alone still make a useful snapshot */ }
+    tables[schema] = list.map((t) => ({
+      name: t.name,
+      kind: String(t.kind ?? 'table').includes('view') ? 'view' : 'table',
+      columns: byTable.get(t.name) ?? [],
+    }))
+  }
 }
 
 /**

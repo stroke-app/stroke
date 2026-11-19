@@ -1,7 +1,7 @@
-use super::connection::{require_conn, ActiveConnection, AnyConnectionConfig, DbState};
+use crate::db::connection::Db;
+use super::connection::{require_conn, ActiveConnection, AnyConnectionConfig};
 use serde::Serialize;
 use sqlx::{MySqlPool, PgPool, Row};
-use tauri::State;
 
 use super::mysql::{my_int, my_text, my_text_named};
 
@@ -21,6 +21,11 @@ pub struct TableInfo {
     /// of the SQLite catalog row, the DuckDB object id. Larger is newer. For
     /// sorting only; the numbers mean nothing on their own.
     pub create_order: Option<i64>,
+    /// The engine's own object rather than the user's (Oracle's
+    /// ORACLE_MAINTAINED). None where the engine doesn't say; the sidebar then
+    /// goes by name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -214,7 +219,7 @@ pub struct TableRowCount {
 /// `list_tables` already returns exact counts inline (SQLite/D1/libSQL/…)
 /// never report -1, so they return an empty list here.
 pub async fn table_row_counts(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     tables: Vec<String>,
 ) -> Result<Vec<TableRowCount>, String> {
@@ -265,6 +270,21 @@ pub async fn table_row_counts(
                 .await;
             Ok(counts)
         }
+        ActiveConnection::Oracle(h) => {
+            // One session: the counts run one after another.
+            let mut counts = Vec::with_capacity(tables.len());
+            for name in tables {
+                let row_count = match super::oracle::exact_row_count(&h, &schema, &name).await {
+                    Ok(n) => n,
+                    Err(e) => {
+                        eprintln!("[row count] {schema}.{name}: {e}");
+                        -1
+                    }
+                };
+                counts.push(TableRowCount { name, row_count });
+            }
+            Ok(counts)
+        }
         _ => Ok(Vec::new()),
     }
 }
@@ -310,6 +330,7 @@ async fn list_tables_pg(pool: &PgPool, schema: &str) -> Result<Vec<TableInfo>, S
                 rls_enabled: r.try_get::<bool, _>(3).ok(),
                 created_at: None,
                 create_order: r.try_get::<i64, _>(4).ok(),
+                system: None,
             })
         })
         .collect();
@@ -369,7 +390,7 @@ async fn list_tables_sqlite(pool: &sqlx::SqlitePool) -> Result<Vec<TableInfo>, S
             let ty = r.try_get::<Option<String>, _>(1).ok().flatten().unwrap_or_default();
             let kind = if ty == "view" { "view".to_string() } else { "table".to_string() };
             let create_order = r.try_get::<i64, _>(2).ok();
-            Some(TableInfo { name, kind, row_count: -1, rls_enabled: None, created_at: None, create_order })
+            Some(TableInfo { name, kind, row_count: -1, rls_enabled: None, created_at: None, create_order, system: None })
         })
         .collect();
 
@@ -523,7 +544,7 @@ async fn list_tables_d1(cfg: &super::connection::D1Config) -> Result<Vec<TableIn
             let ty = r.get(type_idx).and_then(|v| v.as_str()).unwrap_or("table");
             let kind = if ty == "view" { "view".to_string() } else { "table".to_string() };
             let create_order = seq_idx.and_then(|i| r.get(i)).and_then(|v| v.as_i64());
-            Some(TableInfo { name, kind, row_count: -1, rls_enabled: None, created_at: None, create_order })
+            Some(TableInfo { name, kind, row_count: -1, rls_enabled: None, created_at: None, create_order, system: None })
         })
         .collect();
 
@@ -648,7 +669,7 @@ async fn list_tables_libsql(cfg: &super::connection::LibSqlConfig) -> Result<Vec
         let ty = r.get(type_idx).and_then(|v| v.as_str()).unwrap_or("table");
         let kind = if ty == "view" { "view".to_string() } else { "table".to_string() };
         let create_order = seq_idx.and_then(|i| r.get(i)).and_then(|v| v.as_i64());
-        Some(TableInfo { name, kind, row_count: -1, rls_enabled: None, created_at: None, create_order })
+        Some(TableInfo { name, kind, row_count: -1, rls_enabled: None, created_at: None, create_order, system: None })
     }).collect();
 
     // Batch counts into one round-trip per chunk (each libsql query is a remote
@@ -782,7 +803,7 @@ async fn list_tables_mysql(pool: &MySqlPool, schema: &str) -> Result<Vec<TableIn
             let row_count = if est >= 100_000 { est } else { -1 };
             // NULL for views; a real timestamp for tables.
             let created_at = my_text(r, 3);
-            Some(TableInfo { name, kind, row_count, rls_enabled: None, created_at, create_order: None })
+            Some(TableInfo { name, kind, row_count, rls_enabled: None, created_at, create_order: None, system: None })
         })
         .collect();
 
@@ -1117,7 +1138,7 @@ async fn list_sequences_pg(pool: &PgPool, schema: &str) -> Result<Vec<SequenceIn
 
 // ── Public dispatch ───────────────────────────────────────────────────────────
 
-pub async fn list_schemas(state: State<'_, DbState>) -> Result<Vec<String>, String> {
+pub async fn list_schemas(state: Db<'_>) -> Result<Vec<String>, String> {
     match require_conn(&state)? {
         ActiveConnection::Postgres(pool) => list_schemas_pg(&pool).await,
         ActiveConnection::Mysql(pool) => list_schemas_mysql(&pool).await,
@@ -1127,11 +1148,12 @@ pub async fn list_schemas(state: State<'_, DbState>) -> Result<Vec<String>, Stri
         ActiveConnection::Dynamodb(_) => Ok(vec![super::docdb::FLAT_SCHEMA.to_string()]),
         ActiveConnection::Doc(d) => super::docdb::list_schemas(&d).await,
         ActiveConnection::Mssql(h) => super::mssql::list_schemas(&h).await,
+        ActiveConnection::Oracle(h) => super::oracle::list_schemas(&h).await,
         ActiveConnection::Sqlite(_) | ActiveConnection::D1(_) | ActiveConnection::LibSql(_) | ActiveConnection::Duckdb(_) => Ok(vec!["main".to_string()]),
     }
 }
 
-pub async fn list_tables(state: State<'_, DbState>, schema: String) -> Result<Vec<TableInfo>, String> {
+pub async fn list_tables(state: Db<'_>, schema: String) -> Result<Vec<TableInfo>, String> {
     match require_conn(&state)? {
         ActiveConnection::Postgres(pool) => {
             validate_ident(&schema)?;
@@ -1159,6 +1181,7 @@ pub async fn list_tables(state: State<'_, DbState>, schema: String) -> Result<Ve
         ActiveConnection::Doc(d) => super::docdb::list_tables_in(&d, &schema).await,
         ActiveConnection::Duckdb(h) => super::duckdb::list_tables(&h).await,
         ActiveConnection::Mssql(h) => super::mssql::list_tables(&h, &schema).await,
+        ActiveConnection::Oracle(h) => super::oracle::list_tables(&h, &schema).await,
     }
 }
 
@@ -1174,7 +1197,7 @@ pub async fn list_tables(state: State<'_, DbState>, schema: String) -> Result<Ve
 /// clustering keys, DynamoDB partition and sort keys): the tree shows them under
 /// Keys, not Indexes.
 pub async fn list_indexes_for(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     table: Option<String>,
 ) -> Result<Vec<IndexInfo>, String> {
@@ -1198,6 +1221,7 @@ pub async fn list_indexes_for(
         ActiveConnection::Doc(d) => super::docdb::indexes_in(&d, &schema, table.as_deref()).await,
         ActiveConnection::Duckdb(h) => super::duckdb::list_indexes(&h).await,
         ActiveConnection::Mssql(h) => super::mssql::list_indexes(&h, &schema).await,
+        ActiveConnection::Oracle(h) => super::oracle::list_indexes(&h, &schema).await,
     }
 }
 
@@ -1271,7 +1295,7 @@ async fn list_functions_mysql(pool: &sqlx::MySqlPool, schema: &str) -> Result<Ve
         .collect()
 }
 
-pub async fn list_functions(state: State<'_, DbState>, schema: String) -> Result<Vec<FunctionInfo>, String> {
+pub async fn list_functions(state: Db<'_>, schema: String) -> Result<Vec<FunctionInfo>, String> {
     match require_conn(&state)? {
         ActiveConnection::Postgres(pool) => {
             validate_ident(&schema)?;
@@ -1285,7 +1309,7 @@ pub async fn list_functions(state: State<'_, DbState>, schema: String) -> Result
     }
 }
 
-pub async fn list_enums(state: State<'_, DbState>, schema: String) -> Result<Vec<EnumInfo>, String> {
+pub async fn list_enums(state: Db<'_>, schema: String) -> Result<Vec<EnumInfo>, String> {
     match require_conn(&state)? {
         ActiveConnection::Postgres(pool) => {
             validate_ident(&schema)?;
@@ -1295,7 +1319,7 @@ pub async fn list_enums(state: State<'_, DbState>, schema: String) -> Result<Vec
     }
 }
 
-pub async fn list_triggers(state: State<'_, DbState>, schema: String) -> Result<Vec<TriggerInfo>, String> {
+pub async fn list_triggers(state: Db<'_>, schema: String) -> Result<Vec<TriggerInfo>, String> {
     match require_conn(&state)? {
         ActiveConnection::Postgres(pool) => {
             validate_ident(&schema)?;
@@ -1310,7 +1334,7 @@ pub async fn list_triggers(state: State<'_, DbState>, schema: String) -> Result<
     }
 }
 
-pub async fn list_sequences(state: State<'_, DbState>, schema: String) -> Result<Vec<SequenceInfo>, String> {
+pub async fn list_sequences(state: Db<'_>, schema: String) -> Result<Vec<SequenceInfo>, String> {
     match require_conn(&state)? {
         ActiveConnection::Postgres(pool) => {
             validate_ident(&schema)?;
@@ -1325,19 +1349,19 @@ pub async fn list_sequences(state: State<'_, DbState>, schema: String) -> Result
 
 // Both spell the statement per engine in `admin`; this used to know Postgres
 // and SQLite only and told every other engine it was unsupported.
-pub async fn truncate_table(state: State<'_, DbState>, schema: String, table: String) -> Result<(), String> {
+pub async fn truncate_table(state: Db<'_>, schema: String, table: String) -> Result<(), String> {
     let conn = require_conn(&state)?;
     super::admin::truncate_table(&conn, &schema, &table).await
 }
 
-pub async fn drop_table(state: State<'_, DbState>, schema: String, table: String, cascade: bool, kind: Option<String>) -> Result<(), String> {
+pub async fn drop_table(state: Db<'_>, schema: String, table: String, cascade: bool, kind: Option<String>) -> Result<(), String> {
     let kind = super::admin::ObjectKind::parse(kind.as_deref())?;
     let conn = require_conn(&state)?;
     super::admin::drop_object(&conn, &schema, &table, kind, cascade).await
 }
 
 pub async fn get_table_column_structure(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     table: String,
 ) -> Result<Vec<ColumnStructureRow>, String> {
@@ -1347,6 +1371,8 @@ pub async fn get_table_column_structure(
     match require_conn(&state)? {
         ActiveConnection::Dynamodb(cfg) => return Ok(super::dynamodb::describe_shape(&cfg, &table).await?.0),
         ActiveConnection::Doc(d) => return super::docdb::columns_in(&d, &schema, &table).await,
+        // Oracle binds the names as values, and they may hold `$` or `#`.
+        ActiveConnection::Oracle(h) => return super::oracle::get_column_structure(&h, &schema, &table).await,
         _ => {}
     }
     validate_ident(&schema)?;
@@ -1375,7 +1401,7 @@ pub async fn get_table_column_structure(
             super::redis::get_column_structure(&cfg, &table).await
         }
         // Answered above.
-        ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => Ok(vec![]),
+        ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) | ActiveConnection::Oracle(_) => Ok(vec![]),
         ActiveConnection::Duckdb(h) => {
             super::duckdb::get_column_structure(&h, &table).await
         }
@@ -1694,12 +1720,13 @@ async fn get_column_structure_pg(
 /// MongoDB, CouchDB, Firestore, DynamoDB and Redis have no schema-wide column
 /// catalog: they answer empty at once, and the caller reads per table.
 pub async fn get_schema_column_structure(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
 ) -> Result<Vec<TableColumnStructure>, String> {
     match require_conn(&state)? {
         ActiveConnection::Doc(d) => return super::docdb::schema_columns_in(&d, &schema).await,
         ActiveConnection::Dynamodb(_) | ActiveConnection::Redis(_) => return Ok(vec![]),
+        ActiveConnection::Oracle(h) => return super::oracle::schema_column_structure(&h, &schema).await,
         _ => {}
     }
     validate_ident(&schema)?;
@@ -2475,10 +2502,13 @@ async fn get_incoming_fks_mssql(handle: &super::connection::MssqlHandle, schema:
 }
 
 pub async fn get_incoming_foreign_keys(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     table: String,
 ) -> Result<Vec<IncomingForeignKey>, String> {
+    if let ActiveConnection::Oracle(h) = require_conn(&state)? {
+        return super::oracle::incoming_foreign_keys(&h, &schema, &table).await;
+    }
     validate_ident(&schema)?;
     validate_ident(&table)?;
     match require_conn(&state)? {
@@ -2647,10 +2677,13 @@ async fn get_ddl_libsql(
 }
 
 pub async fn get_table_ddl(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     table: String,
 ) -> Result<String, String> {
+    if let ActiveConnection::Oracle(h) = require_conn(&state)? {
+        return super::oracle::get_ddl(&h, &schema, &table).await;
+    }
     validate_ident(&schema)?;
     validate_ident(&table)?;
     match require_conn(&state)? {
@@ -2665,6 +2698,7 @@ pub async fn get_table_ddl(
         ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => Ok(String::new()),
         ActiveConnection::Duckdb(h) => super::duckdb::get_ddl(&h, &table).await,
         ActiveConnection::Mssql(h) => super::mssql::get_ddl(&h, &schema, &table).await,
+        ActiveConnection::Oracle(_) => unreachable!("answered above"),
     }
 }
 
@@ -2687,6 +2721,10 @@ pub async fn list_schemas_on_conn(config: AnyConnectionConfig) -> Result<Vec<Str
             result
         }
         AnyConnectionConfig::Clickhouse(c) => super::clickhouse::list_schemas(&c).await,
+        AnyConnectionConfig::Oracle(c) => {
+            let h = super::connection::open_oracle(&c).await?;
+            super::oracle::list_schemas(&h).await
+        }
         _ => Ok(vec!["main".to_string()]),
     }
 }
@@ -2725,6 +2763,7 @@ pub async fn list_tables_on_conn(
         AnyConnectionConfig::Redis(c) => super::redis::list_tables(&c).await.map(to_names),
         AnyConnectionConfig::Dynamodb(c) => super::dynamodb::list_tables(&c).await.map(to_names),
         AnyConnectionConfig::Couchdb(c) => super::couchdb::list_databases(&c).await,
+        AnyConnectionConfig::Elasticsearch(c) => Ok(super::elastic::list_indices(&c).await?.into_iter().map(|i| i.name).collect()),
         AnyConnectionConfig::Mongodb(_) => Ok(Vec::new()),
         AnyConnectionConfig::Duckdb(c) => {
             let h = super::connection::open_duckdb(&c).await?;
@@ -2733,6 +2772,10 @@ pub async fn list_tables_on_conn(
         AnyConnectionConfig::Mssql(c) => {
             let h = super::connection::open_mssql(&c).await?;
             super::mssql::list_tables(&h, &schema).await.map(to_names)
+        }
+        AnyConnectionConfig::Oracle(c) => {
+            let h = super::connection::open_oracle(&c).await?;
+            super::oracle::list_tables(&h, &schema).await.map(to_names)
         }
     }
 }
@@ -2744,6 +2787,10 @@ pub async fn get_table_ddl_on_conn(
     table: String,
 ) -> Result<String, String> {
     use super::connection::{open_mysql, open_pg, open_sqlite};
+    if let AnyConnectionConfig::Oracle(c) = &config {
+        let h = super::connection::open_oracle(c).await?;
+        return super::oracle::get_ddl(&h, &schema, &table).await;
+    }
     validate_ident(&schema)?;
     validate_ident(&table)?;
     match config {
@@ -2770,7 +2817,10 @@ pub async fn get_table_ddl_on_conn(
         AnyConnectionConfig::Clickhouse(c) => super::clickhouse::get_ddl(&c, &schema, &table).await,
         AnyConnectionConfig::Posthog(c) => super::posthog::get_ddl(&c, &table).await,
         AnyConnectionConfig::Redis(c) => super::redis::get_ddl(&c, &table).await,
-        AnyConnectionConfig::Dynamodb(_) | AnyConnectionConfig::Couchdb(_) | AnyConnectionConfig::Mongodb(_) => Ok(String::new()),
+        AnyConnectionConfig::Dynamodb(_)
+        | AnyConnectionConfig::Couchdb(_)
+        | AnyConnectionConfig::Elasticsearch(_)
+        | AnyConnectionConfig::Mongodb(_) => Ok(String::new()),
         AnyConnectionConfig::Duckdb(c) => {
             let h = super::connection::open_duckdb(&c).await?;
             super::duckdb::get_ddl(&h, &table).await
@@ -2779,6 +2829,7 @@ pub async fn get_table_ddl_on_conn(
             let h = super::connection::open_mssql(&c).await?;
             super::mssql::get_ddl(&h, &schema, &table).await
         }
+        AnyConnectionConfig::Oracle(_) => unreachable!("answered above"),
     }
 }
 

@@ -1,4 +1,4 @@
-import { SQLDialect, PostgreSQL, MySQL, SQLite, MSSQL, StandardSQL } from '@codemirror/lang-sql'
+import { SQLDialect, PostgreSQL, MySQL, SQLite, MSSQL, PLSQL, StandardSQL } from '@codemirror/lang-sql'
 import { PG_KEYWORDS } from '$lib/sql-complete-data.js'
 
 /**
@@ -26,6 +26,7 @@ const SQL_DIALECTS = /** @type {Record<string, SQLDialect>} */ ({
   mysql: MY, mariadb: MY,
   sqlite: LITE, d1: LITE, libsql: LITE,
   mssql: narrowed(MSSQL),
+  oracle: narrowed(PLSQL),
 })
 
 /** The highlighting dialect for an app Dialect id. @param {string} id */

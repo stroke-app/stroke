@@ -108,12 +108,28 @@ fn strip_sql(sql: &str) -> &str {
     s
 }
 
-pub async fn explain_pg(pool: &sqlx::PgPool, sql: &str) -> Result<ExplainResult, String> {
+/// Postgres plan as JSON. With `analyze` the statement really runs (that is
+/// what gives actual rows and times), so it runs inside a transaction that is
+/// always rolled back: explaining a DELETE never deletes anything. Without it
+/// only the planner's estimates come back and nothing runs.
+pub async fn explain_pg(pool: &sqlx::PgPool, sql: &str, analyze: bool) -> Result<ExplainResult, String> {
     let stripped = strip_sql(sql);
-    let q = format!("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) {stripped}");
+    let q = if analyze {
+        format!("EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT JSON) {stripped}")
+    } else {
+        format!("EXPLAIN (VERBOSE, FORMAT JSON) {stripped}")
+    };
 
     // PG returns [{Plan: {...}, "Planning Time": x, "Execution Time": y}]
-    let arr = match sqlx::query_as::<_, (serde_json::Value,)>(&q).fetch_one(pool).await {
+    let fetched = async {
+        let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+        let out = sqlx::query_as::<_, (serde_json::Value,)>(&q).fetch_one(&mut *tx).await;
+        // Roll back whatever ANALYZE did, success or not.
+        let _ = tx.rollback().await;
+        out.map_err(|e| e.to_string())
+    }
+    .await;
+    let arr = match fetched {
         Ok(row) => row.0,
         // CockroachDB speaks the PG wire protocol but rejects PG's EXPLAIN option
         // syntax (`at or near "analyze"`). Fall back to its indented text plan; if

@@ -1,8 +1,8 @@
 <script>
+  import SelectMenu from "./SelectMenu.svelte";
   import { onDestroy } from "svelte";
   import { listen } from "@tauri-apps/api/event";
   import * as Dialog from "$lib/components/ui/dialog/index.js";
-  import * as Select from "$lib/components/ui/select/index.js";
   import { Button } from "$lib/components/ui/button/index.js";
   import { Input } from "$lib/components/ui/input/index.js";
   import { Checkbox } from "$lib/components/ui/checkbox/index.js";
@@ -365,16 +365,7 @@
           <div class="mt-4 flex flex-wrap items-end gap-3">
             <label class="flex flex-col gap-1">
               <span class="text-ui-3xs uppercase tracking-[0.06em] text-muted-foreground">Delimiter</span>
-              <Select.Root type="single" bind:value={delimiter}>
-                <Select.Trigger class="h-8 w-32 text-ui-xs">
-                  {DELIMITERS.find((d) => d.value === delimiter)?.label ?? "Detect"}
-                </Select.Trigger>
-                <Select.Content>
-                  {#each DELIMITERS as d (d.label)}
-                    <Select.Item value={d.value} label={d.label}>{d.label}</Select.Item>
-                  {/each}
-                </Select.Content>
-              </Select.Root>
+              <SelectMenu ariaLabel="Delimiter" value={delimiter} onValueChange={(v) => (delimiter = v)} items={DELIMITERS.map((d) => ({ value: d.value, label: d.label }))} triggerClass="h-8 w-32" />
             </label>
             <label class="flex flex-col gap-1">
               <span class="text-ui-3xs uppercase tracking-[0.06em] text-muted-foreground">Null is</span>
@@ -407,17 +398,7 @@
                   <span class="shrink-0 text-ui-3xs text-destructive">required</span>
                 {/if}
               </div>
-              <Select.Root type="single" bind:value={mapping[col.name]}>
-                <Select.Trigger class="h-7 w-48 shrink-0 font-mono text-ui-2xs">
-                  {mapping[col.name] || "Skip"}
-                </Select.Trigger>
-                <Select.Content>
-                  <Select.Item value="" label="Skip">Skip</Select.Item>
-                  {#each parsed.fields as field (field)}
-                    <Select.Item value={field} label={field}>{field}</Select.Item>
-                  {/each}
-                </Select.Content>
-              </Select.Root>
+              <SelectMenu ariaLabel={`Field for ${col.name}`} value={mapping[col.name] ?? ""} placeholder="Skip" onValueChange={(v) => (mapping[col.name] = v)} items={[{ value: "", label: "Skip" }, ...parsed.fields.map((f) => ({ value: f, label: f }))]} triggerClass="h-7 w-48 shrink-0 font-mono" contentClass="w-60" />
             </div>
           {/each}
         </div>
@@ -433,16 +414,7 @@
         <div class="mt-5 flex flex-wrap items-end gap-3">
           <label class="flex flex-col gap-1">
             <span class="text-ui-3xs uppercase tracking-[0.06em] text-muted-foreground">If the row exists</span>
-            <Select.Root type="single" bind:value={conflict}>
-              <Select.Trigger class="h-8 w-52 text-ui-xs">
-                {CONFLICT_OPTIONS.find((o) => o.value === conflict)?.label}
-              </Select.Trigger>
-              <Select.Content>
-                {#each CONFLICT_OPTIONS as o (o.value)}
-                  <Select.Item value={o.value} label={o.label}>{o.label}</Select.Item>
-                {/each}
-              </Select.Content>
-            </Select.Root>
+            <SelectMenu ariaLabel="If the row exists" value={conflict} onValueChange={(v) => (conflict = v)} items={CONFLICT_OPTIONS.map((o) => ({ value: o.value, label: o.label }))} triggerClass="h-8 w-52" />
           </label>
           {#if conflict === "update"}
             <p class="pb-2 text-ui-3xs text-muted-foreground">

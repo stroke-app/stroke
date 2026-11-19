@@ -42,6 +42,15 @@ describe('needsQuotes', () => {
   })
 })
 
+describe('needsQuotes on Oracle', () => {
+  it('quotes a name that unquoted would fold to upper case', () => {
+    expect(needsQuotes('EMP', 'oracle')).toBe(false)
+    expect(needsQuotes('emp', 'oracle')).toBe(true)
+    expect(needsQuotes('Emp', 'oracle')).toBe(true)
+    expect(quoteName('emp', 'oracle', 'auto')).toBe('"emp"')
+  })
+})
+
 describe('quoteName', () => {
   it("quotes each engine's way and doubles the closing quote", () => {
     expect(quoteName('a"b', 'postgres')).toBe('"a""b"')

@@ -118,6 +118,29 @@ pub fn tool_list() -> Value {
             }
         },
         {
+            "name": "share_link",
+            "description": "Make an end-to-end encrypted share link for query results, a chart, a SQL query or a Mermaid diagram. Stroke opens its share dialog prefilled with what you pass; the user checks it (columns, masking, expiry, password) and creates the link, and you get the link back. Personal data is masked by default. For results or a chart, pass the read-only SQL that produces the rows; Stroke runs it read-only itself.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "kind": { "type": "string", "enum": ["result", "chart", "query", "diagram"], "description": "What to share" },
+                    "title": { "type": "string", "description": "Short title for the link" },
+                    "sql": { "type": "string", "description": "result/chart: the read-only query that produces the rows. query: the SQL to share as text" },
+                    "chart_type": { "type": "string", "enum": ["bar", "line", "area", "pie", "scatter"], "description": "chart: the chart type (default bar)" },
+                    "x_col": { "type": "string", "description": "chart: the column on the x axis (default: the first)" },
+                    "y_col": { "type": "string", "description": "chart: the value column (default: the second)" },
+                    "group_col": { "type": "string", "description": "chart: an optional series column" },
+                    "code": { "type": "string", "description": "diagram: the Mermaid source" }
+                },
+                "required": ["kind"]
+            }
+        },
+        {
+            "name": "refresh_sidebar",
+            "description": "Reload Stroke's sidebar (schemas, tables, views, functions and their row counts). Statements run with execute_sql already refresh it; call this after changes made any other way, so the user sees them.",
+            "inputSchema": { "type": "object", "properties": {} }
+        },
+        {
             "name": "open_in_stroke",
             "description": "Show something to the user in Stroke's window: open a table, or open a query in a new SQL editor tab for them to review and run. Nothing is executed. Use it to hand the user a write statement you are not allowed to run, or to show the table you are talking about.",
             "inputSchema": {
@@ -147,6 +170,8 @@ fn sample_sql(conn: &ActiveConnection, schema: &str, table: &str, n: usize) -> R
         ActiveConnection::Postgres(_) => format!("SELECT * FROM {}.{} LIMIT {n}", dq(schema), dq(table)),
         ActiveConnection::Mysql(_) => format!("SELECT * FROM `{schema}`.`{table}` LIMIT {n}"),
         ActiveConnection::Mssql(_) => format!("SELECT TOP {n} * FROM [{schema}].[{table}]"),
+        ActiveConnection::Oracle(_) if schema.is_empty() => format!("SELECT * FROM {} FETCH FIRST {n} ROWS ONLY", dq(table)),
+        ActiveConnection::Oracle(_) => format!("SELECT * FROM {}.{} FETCH FIRST {n} ROWS ONLY", dq(schema), dq(table)),
         ActiveConnection::Clickhouse(_) => format!("SELECT * FROM {}.{} LIMIT {n}", dq(schema), dq(table)),
         ActiveConnection::Sqlite(_) | ActiveConnection::D1(_) | ActiveConnection::LibSql(_) | ActiveConnection::Duckdb(_) => {
             format!("SELECT * FROM {} LIMIT {n}", dq(table))
@@ -158,10 +183,16 @@ fn sample_sql(conn: &ActiveConnection, schema: &str, table: &str, n: usize) -> R
 // ── Tool dispatchers ──────────────────────────────────────────────────────────
 
 /// Handle tools that don't require an active DB connection.
+///
+/// `live` is the driver of the connection Stroke actually holds, if any. The
+/// saved-connection id can be missing while a database is open (a connection
+/// opened from a URL, or one the app couldn't match to a saved entry); the
+/// live connection is what the data tools use, so it decides "connected".
 pub fn call_meta_tool(
     name: &str,
     connections: &[ConnMeta],
     active_id: Option<&str>,
+    live: Option<&str>,
 ) -> Result<String, String> {
     match name {
         "list_databases" => {
@@ -193,6 +224,7 @@ pub fn call_meta_tool(
                 "total": list.len(),
                 "active_id": active_id,
                 "active_name": active_name,
+                "connected": live.is_some(),
                 "note": if connections.len() > 1 {
                     "Multiple databases available. To switch, open Stroke and connect to the desired database. Then retry your request."
                 } else if connections.is_empty() {
@@ -218,10 +250,19 @@ pub fn call_meta_tool(
                     if let Some(f) = &c.file_path { v["file_path"] = json!(f); }
                     Ok(v.to_string())
                 }
-                None => Ok(json!({
-                    "connected": false,
-                    "note": "No database is currently connected. Open Stroke and connect to a database, then retry."
-                }).to_string()),
+                None => match live {
+                    // Open, just not one of the saved entries: the data tools
+                    // work, so say so rather than sending the agent away.
+                    Some(driver) => Ok(json!({
+                        "connected": true,
+                        "type": driver,
+                        "note": "A database is open in Stroke. list_tables and the other data tools run against it.",
+                    }).to_string()),
+                    None => Ok(json!({
+                        "connected": false,
+                        "note": "No database is currently connected. Open Stroke and connect to a database, then retry."
+                    }).to_string()),
+                },
             }
         }
 
@@ -232,6 +273,21 @@ pub fn call_meta_tool(
 /// `read_only`: the session is at Read only. The access check has already
 /// passed in `server::gate`; this adds a read-only transaction on the engines
 /// that have one, so a side effect the classifier missed still fails.
+/// The database the open connection is actually on, asked of the connection
+/// itself. The saved entry keeps the database it was saved with, so after a
+/// switch in the sidebar (D1 testing -> testingbackup, Postgres app -> app2)
+/// it named the old one while every query ran on the new one.
+pub async fn live_database_name(conn: &ActiveConnection) -> Option<String> {
+    match conn {
+        ActiveConnection::Postgres(pool) => sqlx::query_scalar::<_, String>("SELECT current_database()").fetch_one(pool).await.ok(),
+        ActiveConnection::Mysql(pool) => sqlx::query_scalar::<_, Option<String>>("SELECT DATABASE()").fetch_one(pool).await.ok().flatten(),
+        ActiveConnection::D1(cfg) => Some(cfg.name.clone()).filter(|n| !n.is_empty()).or_else(|| Some(cfg.database_id.clone())),
+        ActiveConnection::Sqlite(pool) => sqlx::query_scalar::<_, String>("SELECT file FROM pragma_database_list WHERE name = 'main'")
+            .fetch_one(pool).await.ok().filter(|f| !f.is_empty()),
+        _ => None,
+    }
+}
+
 pub async fn call_tool(
     conn: &ActiveConnection,
     name: &str,
@@ -281,7 +337,7 @@ pub async fn call_tool(
         }
         "sample_rows" => {
             let table = args["table"].as_str().ok_or("Missing table argument")?;
-            let schema = args["schema"].as_str().unwrap_or(if matches!(conn, ActiveConnection::Mysql(_) | ActiveConnection::Clickhouse(_)) { "" } else { "public" });
+            let schema = args["schema"].as_str().unwrap_or(if matches!(conn, ActiveConnection::Mysql(_) | ActiveConnection::Clickhouse(_) | ActiveConnection::Oracle(_)) { "" } else { "public" });
             let schema = if schema.is_empty() {
                 match conn {
                     ActiveConnection::Mssql(_) => "dbo",
@@ -305,6 +361,54 @@ pub async fn call_tool(
             };
             // Always read-only, whatever the session's level.
             execute_sql(conn, &sql, n, true).await
+        }
+        "share_link" => {
+            let kind = args["kind"].as_str().unwrap_or("result").to_string();
+            let title = args["title"].as_str().map(str::trim).filter(|t| !t.is_empty()).unwrap_or("Shared from Stroke").to_string();
+            let sql = args["sql"].as_str().map(str::trim).filter(|q| !q.is_empty()).map(str::to_string);
+            let mut share = crate::mcp::McpShare { id: 0, kind: kind.clone(), title, columns: vec![], rows: vec![], sql: sql.clone(), code: None, chart: None };
+            match kind.as_str() {
+                "result" | "chart" => {
+                    let sql = sql.ok_or("Pass the read-only SQL that produces the rows as `sql`.")?;
+                    let dialect = crate::mcp::access::Dialect::for_driver(conn.driver());
+                    if crate::mcp::access::script_level_in(dialect, &sql) > crate::mcp::access::READ
+                        || crate::mcp::access::statement_count(dialect, &sql) > 1
+                    {
+                        return Err("share_link only runs one read-only query (SELECT, WITH, …).".to_string());
+                    }
+                    let out: Value = serde_json::from_str(&execute_sql(conn, &sql, 5000, true).await?).map_err(|e| e.to_string())?;
+                    share.columns = out["columns"].as_array().map(|c| c.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default();
+                    share.rows = out["rows"].as_array().map(|r| r.iter().map(|row| row.as_array().cloned().unwrap_or_default()).collect()).unwrap_or_default();
+                    if share.rows.is_empty() {
+                        return Err("The query returned no rows, so there is nothing to share.".to_string());
+                    }
+                    if kind == "chart" {
+                        share.chart = Some(json!({
+                            "type": args["chart_type"].as_str().unwrap_or("bar"),
+                            "x": args["x_col"].as_str().map(str::to_string).or_else(|| share.columns.first().cloned()),
+                            "y": args["y_col"].as_str().map(|y| vec![y.to_string()]).unwrap_or_else(|| share.columns.get(1).cloned().into_iter().collect()),
+                            "group": args["group_col"].as_str(),
+                        }));
+                    }
+                }
+                "query" => {
+                    if share.sql.is_none() {
+                        return Err("Pass the SQL to share as `sql`.".to_string());
+                    }
+                }
+                "diagram" => {
+                    share.code = Some(args["code"].as_str().map(str::trim).filter(|c| !c.is_empty()).ok_or("Pass the Mermaid source as `code`.")?.to_string());
+                }
+                other => return Err(format!("Unknown share kind \"{other}\".")),
+            }
+            Ok(match crate::mcp::request_share(share).await? {
+                Some(url) => format!("The user created the link: {url}\nIt is end-to-end encrypted; the key is the part after #, so share the whole link."),
+                None => "The user closed the share dialog without creating a link.".to_string(),
+            })
+        }
+        "refresh_sidebar" => {
+            crate::mcp::emit_refresh();
+            Ok("Refreshed Stroke's sidebar.".to_string())
         }
         "open_in_stroke" => {
             let table = args["table"].as_str().map(str::trim).filter(|t| !t.is_empty());
@@ -538,7 +642,7 @@ async fn execute_sql(
             Ok(truncated_result_json(&result, max_rows))
         }
         ActiveConnection::Doc(d) => {
-            let result = crate::db::docdb::query(d, sql).await?;
+            let result = crate::db::docdb::query_as(d, sql, !read_only).await?;
             Ok(truncated_result_json(&result, max_rows))
         }
         ActiveConnection::Duckdb(h) if read_only => {
@@ -551,6 +655,14 @@ async fn execute_sql(
         }
         ActiveConnection::Mssql(h) if read_only => {
             let result = crate::db::mssql::execute_sql_readonly(h, sql).await?;
+            Ok(truncated_result_json(&result, max_rows))
+        }
+        ActiveConnection::Oracle(h) if read_only => {
+            let result = crate::db::oracle::execute_sql_readonly(h, sql).await?;
+            Ok(truncated_result_json(&result, max_rows))
+        }
+        ActiveConnection::Oracle(h) => {
+            let result = crate::db::oracle::execute_sql(h, sql).await?;
             Ok(truncated_result_json(&result, max_rows))
         }
         ActiveConnection::Mssql(h) => {
@@ -693,6 +805,10 @@ async fn list_tables(conn: &ActiveConnection, schema: &str) -> Result<String, St
         }
         ActiveConnection::Mssql(h) => {
             let tables = crate::db::mssql::list_tables(h, schema).await?;
+            Ok(json!({"tables":tables.iter().map(|t|&t.name).collect::<Vec<_>>()}).to_string())
+        }
+        ActiveConnection::Oracle(h) => {
+            let tables = crate::db::oracle::list_tables(h, schema).await?;
             Ok(json!({"tables":tables.iter().map(|t|&t.name).collect::<Vec<_>>()}).to_string())
         }
     }
@@ -852,6 +968,15 @@ async fn describe_table(
             let columns: Vec<_> = cols.iter().map(|c| json!({
                 "name": c.name, "type": c.data_type, "nullable": c.is_nullable,
                 "default": c.column_default, "comment": c.comment,
+            })).collect();
+            Ok(json!({"table":table,"columns":columns}).to_string())
+        }
+        ActiveConnection::Oracle(h) => {
+            let cols = crate::db::oracle::get_column_structure(h, schema, table).await?;
+            let columns: Vec<_> = cols.iter().map(|c| json!({
+                "name": c.name, "type": c.data_type, "nullable": c.is_nullable,
+                "default": c.column_default, "comment": c.comment,
+                "primary_key": c.is_primary_key, "foreign_key": c.foreign_key,
             })).collect();
             Ok(json!({"table":table,"columns":columns}).to_string())
         }
@@ -1114,6 +1239,7 @@ async fn check_migrations(conn: &ActiveConnection, schema: &str) -> Result<Strin
         ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => Ok(json!({"migrations":[],"note":"Migration detection not supported for DynamoDB"}).to_string()),
         ActiveConnection::Duckdb(_) => Ok(json!({"migrations":[],"note":"Migration detection not supported for DuckDB"}).to_string()),
         ActiveConnection::Mssql(_) => Ok(json!({"migrations":[],"note":"Migration detection not supported for MS SQL Server"}).to_string()),
+        ActiveConnection::Oracle(_) => Ok(json!({"migrations":[],"note":"Migration detection not supported for Oracle"}).to_string()),
     }
 }
 
@@ -1330,6 +1456,10 @@ async fn explain_query(conn: &ActiveConnection, sql: &str) -> Result<String, Str
             let r = crate::db::mssql::explain_showplan_all(h, sql).await?;
             Ok(json!({"plan":r.rows,"database":"mssql"}).to_string())
         }
+        ActiveConnection::Oracle(h) => {
+            let lines = crate::db::oracle::explain_lines(h, sql).await?;
+            Ok(json!({"plan":lines,"database":"oracle"}).to_string())
+        }
     }
 }
 
@@ -1428,6 +1558,10 @@ async fn get_database_stats(conn: &ActiveConnection, schema: &str) -> Result<Str
         ActiveConnection::Mssql(h) => {
             let tables = crate::db::mssql::list_tables(h, schema).await?;
             Ok(json!({"database":"mssql","table_count":tables.len()}).to_string())
+        }
+        ActiveConnection::Oracle(h) => {
+            let tables = crate::db::oracle::list_tables(h, schema).await?;
+            Ok(json!({"database":"oracle","table_count":tables.len()}).to_string())
         }
     }
 }

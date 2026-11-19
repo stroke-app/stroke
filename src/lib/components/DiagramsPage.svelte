@@ -21,6 +21,8 @@
   import X from '@lucide/svelte/icons/x'
   import Check from '@lucide/svelte/icons/check'
   import Search from '@lucide/svelte/icons/search'
+  import PanelLeftClose from '@lucide/svelte/icons/panel-left-close'
+  import PanelLeftOpen from '@lucide/svelte/icons/panel-left-open'
   import { cn } from '$lib/utils.js'
   import { focusTrap } from '$lib/actions/focus-trap.js'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
@@ -107,6 +109,14 @@
   let confirmingDelete = $state(false)
   let fullscreenCode = $state(/** @type {string | null} */ (null))
 
+  // The diagram list folds away for a wide canvas; remembered across sessions.
+  const LIST_KEY = 'stroke:diagrams-list-open'
+  let listOpen = $state((() => { try { return localStorage.getItem(LIST_KEY) !== '0' } catch { return true } })())
+  function toggleList() {
+    listOpen = !listOpen
+    try { localStorage.setItem(LIST_KEY, listOpen ? '1' : '0') } catch { /* not kept */ }
+  }
+
   const all = $derived($savedDiagrams)
   const filtered = $derived(
     searchQ ? all.filter((d) => d.name.toLowerCase().includes(searchQ.toLowerCase())) : all
@@ -184,7 +194,19 @@
 <div class="flex h-full min-h-0 flex-col overflow-hidden bg-background">
   <!-- Page header -->
   <div class="flex shrink-0 items-center justify-between gap-3 border-b border-border/50 px-4 py-3">
-    <h2 class="text-ui-sm font-medium text-foreground">Diagrams</h2>
+    <div class="flex min-w-0 items-center gap-1.5">
+      <button
+        type="button"
+        onclick={toggleList}
+        class="-ms-1.5 inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        title={listOpen ? 'Hide the diagram list' : 'Show the diagram list'}
+        aria-label={listOpen ? 'Hide the diagram list' : 'Show the diagram list'}
+        aria-expanded={listOpen}
+      >
+        {#if listOpen}<PanelLeftClose class="size-3.5 shrink-0" />{:else}<PanelLeftOpen class="size-3.5 shrink-0" />{/if}
+      </button>
+      <h2 class="text-ui-sm font-medium text-foreground">Diagrams</h2>
+    </div>
     <Button
       onclick={startNew}
        size="sm"
@@ -197,7 +219,7 @@
   <!-- Body: sidebar + main -->
   <div class="flex min-h-0 flex-1 overflow-hidden">
     <!-- Left sidebar -->
-    <div class="flex w-56 shrink-0 flex-col overflow-hidden border-r border-border/50 bg-panel">
+    <div class="flex w-56 shrink-0 flex-col overflow-hidden border-r border-border/50 bg-panel" style:display={listOpen ? null : 'none'}>
       <!-- Search -->
       <div class="shrink-0 border-b border-border/40 px-2 py-2">
         <div class="relative flex items-center">

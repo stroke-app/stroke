@@ -9,13 +9,14 @@
  * web access). AI keys never leave the keychain; AI profiles sync without them.
  */
 export const SYNCED_SETTINGS = /** @type {const} */ ([
-  'theme', 'font', 'iconStyle', 'iconSet', 'motion',
+  'theme', 'font', 'iconStyle', 'iconSet', 'motion', 'animatePanels', 'quitGuard',
   'tableStyle', 'rowSpacing', 'zebraRows', 'showRowNumbers', 'numberGrouping', 'gridFontSize',
   'tableTextAlign', 'highlightActiveRow', 'imagePreview', 'openUrlsOnClick', 'fkAutoExpandJson',
   'jsonTheme', 'jsonWordWrap', 'editorTheme', 'vimMode', 'sqlFormat', 'sqlEditor',
   'defaultDataView', 'paginationMode', 'nullSortOrder', 'previewDmlBeforeApply', 'sqlUndo',
   'maxQueryHistory', 'autoSaveQueries', 'cmdkAiEnabled', 'sidebarComments', 'sidebarRememberGroups',
   'agentChatFontSize', 'agentCodeFontSize', 'agentThinkingStyle', 'agentShowQueryCards',
+  'shareDefaults', 'sidebarStyle', 'aiInTab', 'streamResults', 'lazyWideColumns', 'liveModeEnabled',
 ])
 
 /** @param {Record<string, any>} s */
@@ -35,6 +36,7 @@ export function pickSyncedSettings(s) {
 export function syncLabel(s, now = Date.now()) {
   switch (s.phase) {
     case 'signed-out': return 'Sync off'
+    case 'pro': return 'Sync needs Pro'
     case 'checking': return 'Checking sync…'
     case 'setup': return 'Sync not set up'
     case 'locked': return 'Sync locked'

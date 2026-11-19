@@ -28,8 +28,8 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use super::connection::{
-    resolve_mysql_ssh, resolve_pg_ssh, AnyConnectionConfig, MssqlConfig, MysqlConfig, PgConfig,
-    RedisConfig, SqliteConfig,
+    resolve_mysql_ssh, resolve_pg_ssh, AnyConnectionConfig, MssqlConfig, MysqlConfig, OracleConfig,
+    PgConfig, RedisConfig, SqliteConfig,
 };
 use super::ssh_tunnel::SshTunnel;
 
@@ -48,7 +48,10 @@ struct Client {
 const PSQL_INSTALL: &str = if cfg!(target_os = "macos") {
     "brew install libpq"
 } else if cfg!(windows) {
-    "Install PostgreSQL from postgresql.org/download/windows. The Command Line Tools component alone is enough."
+    // No client-only package exists on Windows: this is the full PostgreSQL
+    // install (server and service included), which puts psql in
+    // Program Files\PostgreSQL\17\bin, where install_dirs() looks.
+    "winget install PostgreSQL.PostgreSQL.17"
 } else {
     "Install the PostgreSQL client: postgresql-client on Debian and Ubuntu, postgresql on Arch and Fedora."
 };
@@ -56,7 +59,9 @@ const PSQL_INSTALL: &str = if cfg!(target_os = "macos") {
 const MYSQL_INSTALL: &str = if cfg!(target_os = "macos") {
     "brew install mysql-client"
 } else if cfg!(windows) {
-    "Install the MySQL client from dev.mysql.com/downloads/installer, or MariaDB from mariadb.org/download. Either client works."
+    // As with psql, the client comes with the server: MariaDB's mysql.exe
+    // speaks to MySQL, TiDB and MariaDB, and lands in Program Files\MariaDB *\bin.
+    "winget install MariaDB.Server"
 } else {
     "Install a MySQL client: mysql-client or mariadb-client on Debian and Ubuntu, mariadb-clients on Arch."
 };
@@ -76,6 +81,13 @@ const SQLCMD_INSTALL: &str = if cfg!(target_os = "macos") {
 } else {
     "Install go-sqlcmd from github.com/microsoft/go-sqlcmd/releases."
 };
+
+/// SQL*Plus ships as an Instant Client package; SQLcl (`sql`) is a separate
+/// Java download. Neither has a package-manager install that works everywhere.
+const SQLPLUS_INSTALL: &str = "Install SQL*Plus: download the Instant Client \"SQL*Plus\" package for your platform \
+from https://www.oracle.com/database/technologies/instant-client/downloads.html and unzip it into the same folder \
+as Instant Client Basic, then add that folder to PATH. Or install SQLcl (the `sql` command) from \
+https://www.oracle.com/database/sqldeveloper/technologies/sqlcl/.";
 
 const REDIS_INSTALL: &str = if cfg!(target_os = "macos") {
     "brew install redis"
@@ -158,6 +170,7 @@ fn client_for(config: &AnyConnectionConfig) -> Result<Client, String> {
         ),
         AnyConnectionConfig::Sqlite(_) => client("sqlite3", &["sqlite3"], SQLITE_INSTALL),
         AnyConnectionConfig::Mssql(_) => client("sqlcmd", &["sqlcmd"], SQLCMD_INSTALL),
+        AnyConnectionConfig::Oracle(_) => client("sqlplus", &["sqlplus", "sql"], SQLPLUS_INSTALL),
         AnyConnectionConfig::Redis(_) => client("redis-cli", &["redis-cli", "valkey-cli", "memurai-cli"], REDIS_INSTALL),
         AnyConnectionConfig::Duckdb(_) => Err(
             "DuckDB lets one process at a time open a database file, and Stroke already has this one open."
@@ -181,7 +194,7 @@ fn client_for(config: &AnyConnectionConfig) -> Result<Client, String> {
             Err("PostHog is queried over its HTTP API and has no shell.".into())
         }
         AnyConnectionConfig::Mongodb(_) => client("mongosh", &["mongosh", "mongo"], MONGOSH_INSTALL),
-        AnyConnectionConfig::Dynamodb(_) | AnyConnectionConfig::Couchdb(_) => {
+        AnyConnectionConfig::Dynamodb(_) | AnyConnectionConfig::Couchdb(_) | AnyConnectionConfig::Elasticsearch(_) => {
             Err("This database has no interactive shell here; use the query editor instead.".into())
         }
     }
@@ -245,8 +258,24 @@ async fn find_binary(names: &[&str]) -> Option<PathBuf> {
     dirs.extend(install_dirs());
     names.iter().find_map(|name| {
         let file = if cfg!(windows) { format!("{name}.exe") } else { (*name).to_string() };
-        dirs.iter().map(|d| d.join(&file)).find(|p| is_executable(p))
+        dirs.iter()
+            .map(|d| d.join(&file))
+            .find(|p| is_executable(p) && (*name != "sql" || !is_other_sql(p)))
     })
+}
+
+/// A `sql` that is not Oracle's SQLcl. GNU Parallel (Homebrew's `parallel`,
+/// Debian's `parallel`) installs a Perl script named `sql` that takes a
+/// "dburl" and exits on anything else, so it would shadow SQLcl on PATH.
+fn is_other_sql(path: &Path) -> bool {
+    use std::io::Read;
+    let Ok(file) = std::fs::File::open(path) else { return false };
+    let mut head = Vec::new();
+    if file.take(64 * 1024).read_to_end(&mut head).is_err() {
+        return false;
+    }
+    let text = String::from_utf8_lossy(&head).to_ascii_lowercase();
+    text.contains("gnu parallel") || text.contains("dburl")
 }
 
 /// Client installs that stay off PATH: keg-only Homebrew formulas (libpq,
@@ -268,8 +297,31 @@ fn install_dirs() -> Vec<PathBuf> {
         ] {
             out.push(PathBuf::from(d));
         }
+        // SQLcl from the Homebrew cask, which links no `sql` onto PATH when
+        // GNU Parallel already owns that name.
+        for caskroom in ["/opt/homebrew/Caskroom/sqlcl", "/usr/local/Caskroom/sqlcl"] {
+            out.extend(versioned(Path::new(caskroom), "", "sqlcl/bin"));
+        }
+        out.push(PathBuf::from("/opt/oracle/sqlcl/bin"));
         out.extend(versioned(Path::new("/usr/lib/postgresql"), "", "bin"));
     }
+    // SQL*Plus unzipped into the Instant Client folder, wherever the Oracle
+    // connection itself looks for it (home, Downloads, /opt/oracle, C:\oracle),
+    // and SQLcl unzipped next to it.
+    out.extend(super::oracle::client_dir_candidates(""));
+    if let Some(home) = home_dir() {
+        // Downloads only off macOS: touching it there raises the "would like
+        // to access files in your Downloads folder" prompt (see oracle.rs).
+        let mut parents = vec![home.clone(), home.join("oracle")];
+        if !cfg!(target_os = "macos") {
+            parents.push(home.join("Downloads"));
+        }
+        for parent in parents {
+            out.push(parent.join("sqlcl").join("bin"));
+        }
+    }
+    #[cfg(windows)]
+    out.push(PathBuf::from("C:\\oracle\\sqlcl\\bin"));
     // winget and the per-user MSI put mongosh here, which a running app's PATH
     // often does not include until the next sign-in.
     #[cfg(windows)]
@@ -499,6 +551,13 @@ async fn mysql_launch(config: MysqlConfig, mariadb: bool) -> Result<Launch, Stri
             }
             _ => args.extend(["--ssl".into(), "--skip-ssl-verify-server-cert".into()]),
         }
+        // On Windows the MariaDB client does TLS through Schannel, whose TLS 1.3
+        // fails against TiDB Cloud and other servers with "ERROR 2026 ... The
+        // specified data could not be decrypted (SEC_E_DECRYPT_FAILURE)".
+        // TLS 1.2 is what those servers and the client agree on.
+        if cfg!(windows) && mode != "DISABLED" {
+            args.push("--tls-version=TLSv1.2".into());
+        }
     } else {
         args.push(format!("--ssl-mode={mode}"));
     }
@@ -566,6 +625,26 @@ fn mssql_launch(c: &MssqlConfig) -> Launch {
         unset: &["SQLCMDPASSWORD", "SQLCMDSERVER", "SQLCMDUSER", "SQLCMDDBNAME"],
         tunnel: None,
     }
+}
+
+/// `sqlplus user@connect_string`. Neither SQL*Plus nor SQLcl reads a password
+/// from the environment, and one on the command line is visible to every
+/// process, so the client asks for it in the terminal.
+/// SQL*Plus takes the target alone. SQLcl gets `-thin` first: it otherwise
+/// switches to the OCI (thick) driver whenever it sees an Instant Client or an
+/// Oracle Home nearby, and without Oracle's native library on its
+/// java.library.path that fails with "no ocijdbc23 in java.library.path",
+/// whatever the password. The thin driver needs nothing installed.
+fn oracle_launch(c: &OracleConfig, sqlcl: bool) -> Launch {
+    let cs = super::oracle::connect_string(c);
+    let user = c.user.trim();
+    let target = if user.is_empty() { format!("/@{cs}") } else { format!("{user}@{cs}") };
+    let mut args = Vec::new();
+    if sqlcl {
+        args.push("-thin".to_string());
+    }
+    args.push(target);
+    Launch { args, env: Vec::new(), unset: &["TWO_TASK"], tunnel: None }
 }
 
 fn redis_launch(c: &RedisConfig) -> Launch {
@@ -741,7 +820,14 @@ pub async fn terminal_open(
         AnyConnectionConfig::Libsql(_) => crate::providers::turso_cli_token(&app).await,
         _ => None,
     };
-    open_session(&state, config, cols, rows, turso_token).await
+    let turso_config = match (&config, &turso_token) {
+        (AnyConnectionConfig::Libsql(_), Some(_)) => {
+            use tauri::Manager;
+            app.path().app_config_dir().ok().and_then(|dir| quiet_turso_config(&dir.join("turso-cli")))
+        }
+        _ => None,
+    };
+    open_session(&state, config, cols, rows, turso_token, turso_config).await
 }
 
 /// Install the connection's client with this OS's package manager, without a
@@ -765,7 +851,7 @@ pub async fn terminal_install_client(config: AnyConnectionConfig) -> Result<Stri
             v
         }
         ["winget", "install", rest @ ..] if !rest.is_empty() => {
-            let mut v: Vec<String> = ["winget", "install", "--silent", "--accept-source-agreements", "--accept-package-agreements"]
+            let mut v: Vec<String> = ["winget", "install", "--silent", "--disable-interactivity", "--accept-source-agreements", "--accept-package-agreements"]
                 .iter()
                 .map(|s| s.to_string())
                 .collect();
@@ -789,6 +875,9 @@ pub async fn terminal_install_client(config: AnyConnectionConfig) -> Result<Stri
     })?;
     let mut cmd = tokio::process::Command::new(program);
     cmd.args(&argv[1..]).env("PATH", &path).env("HOMEBREW_NO_AUTO_UPDATE", "1").kill_on_drop(true);
+    // No console window: winget is a console program, and Windows gave it a
+    // cmd window of its own in front of Stroke for the whole install.
+    crate::proc::quiet(&mut cmd);
     let out = tokio::time::timeout(std::time::Duration::from_secs(600), cmd.output())
         .await
         .map_err(|_| "The install took longer than 10 minutes and was stopped.".to_string())?
@@ -823,12 +912,24 @@ pub async fn terminal_close(state: State<'_, TerminalState>, id: String) -> Resu
     Ok(())
 }
 
+/// Make the Turso CLI config folder Stroke points its shell at: autoupdate off.
+/// Returns None when it can't be written, and the CLI keeps its own.
+fn quiet_turso_config(dir: &Path) -> Option<PathBuf> {
+    std::fs::create_dir_all(dir).ok()?;
+    let file = dir.join("settings.json");
+    if !file.exists() {
+        std::fs::write(&file, r#"{"config":{"autoupdate":"off"}}"#).ok()?;
+    }
+    Some(dir.to_path_buf())
+}
+
 async fn open_session(
     state: &TerminalState,
     config: AnyConnectionConfig,
     cols: u16,
     rows: u16,
     turso_token: Option<String>,
+    turso_config: Option<PathBuf>,
 ) -> Result<TerminalSession, String> {
     reap_unattached(state);
     let t0 = Instant::now();
@@ -849,6 +950,10 @@ async fn open_session(
         }
         AnyConnectionConfig::Sqlite(c) => sqlite_launch(&c, client_version(&binary).await.as_deref()),
         AnyConnectionConfig::Mssql(c) => mssql_launch(&c),
+        AnyConnectionConfig::Oracle(c) => {
+            let sqlcl = binary.file_stem().and_then(|s| s.to_str()).is_some_and(|s| s.eq_ignore_ascii_case("sql"));
+            oracle_launch(&c, sqlcl)
+        }
         AnyConnectionConfig::Redis(c) => redis_launch(&c),
         // The URI carries host, credentials and options; mongosh reads it as is.
         // `--quiet` drops the startup banner.
@@ -870,6 +975,12 @@ async fn open_session(
             let mut env = Vec::new();
             if let Some(token) = turso_token {
                 env.push(("TURSO_API_TOKEN", token));
+                // A config folder of Stroke's own with autoupdate off: the CLI
+                // otherwise updates itself through Homebrew when the shell exits.
+                // The token above signs it in, so the user's own login isn't needed.
+                if let (false, Some(dir)) = (via_wsl, &turso_config) {
+                    env.push(("TURSO_CONFIG_FOLDER", dir.to_string_lossy().into_owned()));
+                }
                 // WSL only forwards the Windows variables WSLENV names.
                 if via_wsl {
                     env.push(("WSLENV", "TURSO_API_TOKEN/u".to_string()));
@@ -1183,6 +1294,27 @@ fn write_loop(mut writer: Box<dyn Write + Send>, keystrokes: mpsc::Receiver<Vec<
 
 #[cfg(test)]
 mod tests {
+    /// Where the first terminal of a session spends its time:
+    /// `cargo test --lib terminal_start_bench -- --ignored --nocapture`.
+    #[tokio::test]
+    #[ignore]
+    async fn terminal_start_bench() {
+        let t = std::time::Instant::now();
+        let path = crate::omniroute::user_path().await;
+        println!("user_path (login shell): {:?} ({} dirs)", t.elapsed(), std::env::split_paths(&path).count());
+        let t = std::time::Instant::now();
+        let _ = crate::omniroute::user_path().await;
+        println!("user_path again (cached): {:?}", t.elapsed());
+        for names in [&["psql"][..], &["mariadb", "mysql"][..], &["sqlite3"][..]] {
+            let t = std::time::Instant::now();
+            let found = find_binary(names).await;
+            let find = t.elapsed();
+            let t = std::time::Instant::now();
+            let v = match &found { Some(b) => client_version(b).await, None => None };
+            println!("{names:?}: find {find:?}, version {:?} -> {:?} {:?}", t.elapsed(), found, v);
+        }
+    }
+
     use super::*;
 
     #[cfg(target_os = "linux")]
@@ -1191,6 +1323,19 @@ mod tests {
         let Some(cmd) = linux_install("mysql") else { return };
         assert!(cmd.starts_with("sudo "), "{cmd}");
         assert_eq!(linux_install("sqlcmd"), None);
+    }
+
+    #[test]
+    fn gnu_parallel_sql_is_not_sqlcl() {
+        let dir = std::env::temp_dir().join(format!("stroke-sql-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let parallel = dir.join("parallel-sql");
+        std::fs::write(&parallel, "#!/usr/bin/perl\n# GNU Parallel: sql - execute a command on a database determined by a dburl\n").unwrap();
+        let sqlcl = dir.join("sqlcl-sql");
+        std::fs::write(&sqlcl, "#!/bin/bash\n# SQLcl launcher\nexec java -jar \"$SQLCL_HOME/lib/dbtools-sqlcl.jar\" \"$@\"\n").unwrap();
+        assert!(super::is_other_sql(&parallel));
+        assert!(!super::is_other_sql(&sqlcl));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -1316,7 +1461,7 @@ mod tests {
                 name: "t".into(),
                 file_path: db.display().to_string(),
             });
-            let session = open_session(&state, config, 80, 24, None).await.unwrap();
+            let session = open_session(&state, config, 80, 24, None, None).await.unwrap();
 
             let wrong = session.url.replace("token=", "token=x");
             assert!(tokio_tungstenite::connect_async(&wrong).await.is_err(), "a wrong token must not attach");

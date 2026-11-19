@@ -14,14 +14,18 @@
   import { cn }          from '$lib/utils.js'
   import { focusTrap } from '$lib/actions/focus-trap.js'
   import { updateCheck, updateDownload, updateStatus, updateRestart } from '$lib/api.js'
-  import { loadSettings } from '$lib/stores/settings.js'
+  import { loadSettings, updateSettings } from '$lib/stores/settings.js'
+  import ReleaseNotes from './ReleaseNotes.svelte'
   import { isRevealed }  from '$lib/app-reveal.js'
-  import { parseChangelog, releasesBetween } from '$lib/changelog.js'
+  import { parseChangelog, parseReleases, releasesBetween, releasesInRange } from '$lib/changelog.js'
   import WhatsNewDialog  from './WhatsNewDialog.svelte'
+  import { updateState, updateActions } from '$lib/stores/update-state.js'
 
   let {
     /** An update was found ('available'), or is downloaded and waiting ('ready'). */
     onupdatefound = /** @type {(state: 'available' | 'ready') => void} */ ((_state) => {}),
+    /** A manual check is running: the sidebar's update button spins (T3: no dialog for checking). */
+    onchecking = /** @type {(checking: boolean) => void} */ ((_c) => {}),
     /** A What's new highlight's button. @type {(id: import('$lib/whats-new.js').HighlightAction) => void} */
     onwhatsnewaction = () => {},
   } = $props()
@@ -32,6 +36,17 @@
   let releaseNotes = $state('')
   /** The downloaded build installs by itself when Stroke quits (updates.rs). */
   let applyOnQuit = $state(false)
+  /** A package manager owns this install (AUR, .deb, .rpm): it updates there. */
+  let manual = $state(false)
+  /** The command that updates it, when there is one (`yay -Syu stroke-bin`). */
+  let manualCommand = $state(/** @type {string | null} */ (null))
+  /** Installing asks for the system password (a Linux .deb, .rpm or Arch package). */
+  let needsPassword = $state(false)
+  let copied = $state(false)
+  /** The running build, for "You have v…". */
+  let appVersion = $state('')
+  /** Settings → Download and install updates automatically, from this window too. */
+  let autoUpdate = $state(loadSettings().autoUpdate)
   let progress = $state(0)
   let downloadedBytes = $state(0)
   let totalBytes = $state(0)
@@ -44,8 +59,10 @@
 
   /** First background check, once startup has settled. */
   const FIRST_CHECK_MS = 5_000
-  /** Stroke often stays open for days, so it looks again this often. */
+  /** Stroke often stays open for days, so it looks again this often. Nightly
+   *  ships several times a day, so it looks every hour. */
   const RECHECK_MS = 6 * 60 * 60 * 1000
+  const NIGHTLY_RECHECK_MS = 60 * 60 * 1000
 
   /** Manually trigger an update check (e.g. from the command palette). */
   export async function checkNow() {
@@ -58,19 +75,56 @@
     status = 'idle'
     errorMsg = ''
     checking = true
-    await checkForUpdate(true)
-    if (status === 'idle') status = 'up-to-date'
-    checking = false
+    onchecking(true)
+    // T3's pattern: checking is a spinner on the button, not a dialog; the
+    // answer is a toast. Only a found update opens anything.
+    let failure = /** @type {unknown} */ (null)
+    try {
+      const info = await updateCheck()
+      if (info?.staged) markReady(info, false)
+      else if (info && loadSettings().autoUpdate && !info.manual) {
+        // Automatic updates: no window. It downloads in the background and
+        // says so once, then again when it is ready.
+        adopt(info)
+        toast.info(`Downloading Stroke ${info.version}`, { description: 'It downloads in the background and installs the next time Stroke starts.' })
+        void install(true)
+      } else if (info) {
+        adopt(info)
+        status = 'available'
+        onupdatefound('available')
+      }
+    } catch (e) {
+      failure = e
+    } finally {
+      checking = false
+      onchecking(false)
+    }
+    if (failure) {
+      toast.error("Couldn't check for updates", {
+        description: failure instanceof Error ? failure.message : String(failure),
+        action: { label: 'Retry', onClick: () => void checkNow() },
+      })
+    } else if (status === 'idle') {
+      let v = ''
+      try { v = await (await import('@tauri-apps/api/app')).getVersion() } catch { /* dev */ }
+      toast.success('Stroke is up to date', { description: v ? `You're on v${v}.` : undefined })
+    }
   }
+
+  // Settings → Updates shows the same state.
+  $effect(() => {
+    updateState.set({ status, checking, version: updateVersion, progress, applyOnQuit })
+  })
+
+  /** "2.10.8" from "2.10.8-nightly.202611150842": the title stays one line. */
+  const shortVersion = $derived(updateVersion.replace(/-nightly\.\d+$/, ''))
 
   const visible = $derived(
     !dismissed &&
     (status === 'available' ||
      status === 'downloading' ||
      status === 'ready' ||
-     status === 'error' ||
-     status === 'up-to-date' ||
-     checking),
+     status === 'error'),
   )
 
   /** @param {number} bytes */
@@ -80,7 +134,27 @@
     return `${(bytes/(1024*1024)).toFixed(1)} MB`
   }
 
-  const changelog = $derived(parseChangelog(releaseNotes))
+  /**
+   * The update's notes as releases: Nightly's feed carries CHANGELOG.md
+   * sections for several versions (## [x.y.z]); a stable release carries one
+   * version's sections without the heading.
+   * @type {{ releases: import('$lib/changelog.js').ChangelogRelease[], omitted: number }}
+   */
+  const notes = $derived.by(() => {
+    const many = parseReleases(releaseNotes)
+    if (many.length) {
+      // The feed carries the whole recent changelog. Only what this install
+      // has not got yet: the versions after the running one, up to the update.
+      if (appVersion) {
+        const between = releasesInRange(many, appVersion, updateVersion, 8)
+        if (between.releases.length) return between
+      }
+      const own = many.filter((r) => r.version === updateVersion.replace(/-.*$/, ''))
+      return { releases: own.length ? own : many.slice(0, 1), omitted: 0 }
+    }
+    const sections = parseChangelog(releaseNotes)
+    return { releases: sections.length ? [{ version: updateVersion, date: '', sections }] : [], omitted: 0 }
+  })
 
   // Actionable states are true modals (dark backdrop, blocks the app);
   // passive states (checking / up-to-date) float without blocking.
@@ -95,6 +169,10 @@
   let announceTimer
 
   onMount(() => {
+    updateActions.check = () => void checkNow()
+    updateActions.show = () => { dismissed = false }
+    updateActions.restart = () => void restart()
+    import('@tauri-apps/api/app').then((m) => m.getVersion()).then((v) => (appVersion = v)).catch(() => {})
     // Runs in dev too: it is a version comparison, not an update check, and a
     // dev build that has genuinely changed version should say so.
     void announceNewVersion()
@@ -104,10 +182,25 @@
       .catch(() => { /* browser dev: no backend */ })
     if (import.meta.env.DEV) return () => clearTimeout(announceTimer)
     const first = setTimeout(() => void backgroundCheck(), FIRST_CHECK_MS)
-    const again = setInterval(() => void backgroundCheck(), RECHECK_MS)
+    /** @type {ReturnType<typeof setInterval> | undefined} */
+    let again
+    import('@tauri-apps/api/app')
+      .then((m) => m.getVersion())
+      .catch(() => '')
+      .then((v) => { again = setInterval(() => void backgroundCheck(), /-nightly/.test(v) ? NIGHTLY_RECHECK_MS : RECHECK_MS) })
+    // Back at the computer after a while: look then too, rather than waiting
+    // out the timer.
+    let lastCheck = Date.now()
+    const onFocus = () => {
+      if (Date.now() - lastCheck < 30 * 60 * 1000) return
+      lastCheck = Date.now()
+      void backgroundCheck()
+    }
+    window.addEventListener('focus', onFocus)
     return () => {
       clearTimeout(first)
       clearInterval(again)
+      window.removeEventListener('focus', onFocus)
       clearTimeout(announceTimer)
     }
   })
@@ -139,6 +232,32 @@
    * "updated to v1.24" on a first run is a lie about something the user did not
    * do; the version is recorded and the dialog waits for the next upgrade.
    */
+  /**
+   * What's new on demand (the palette): the newest highlights and the notes
+   * since the previous minor version, whenever it is asked for.
+   */
+  export async function showWhatsNew() {
+    let current = ''
+    try {
+      const { getVersion } = await import('@tauri-apps/api/app')
+      current = await getVersion()
+    } catch {
+      return
+    }
+    const base = current.replace(/-.*$/, '')
+    const [maj, min] = base.split('.').map(Number)
+    const previous = min > 0 ? `${maj}.${min - 1}.99` : `${Math.max(0, maj - 1)}.99.99`
+    /** @type {{ releases: import('$lib/changelog.js').ChangelogRelease[], omitted: number }} */
+    let notes = { releases: [], omitted: 0 }
+    try {
+      const { default: markdown } = await import('../../../CHANGELOG.md?raw')
+      notes = releasesBetween(markdown, previous, base)
+    } catch { /* the highlights still show */ }
+    const { latestHighlights } = await import('$lib/whats-new.js')
+    whatsNew = { previous: "", current, ...notes, highlights: latestHighlights(base) }
+    whatsNewOpen = true
+  }
+
   async function announceNewVersion() {
     let current = ''
     try {
@@ -162,7 +281,7 @@
     let notes = { releases: [], omitted: 0 }
     try {
       const { default: markdown } = await import('../../../CHANGELOG.md?raw')
-      notes = releasesBetween(markdown, previous, current)
+      notes = releasesBetween(markdown, previous, current, 8)
     } catch (e) {
       console.error('[updater] changelog unavailable:', e)
     }
@@ -214,6 +333,28 @@
     updateVersion = info.version
     releaseNotes = info.notes ?? ''
     applyOnQuit = info.applyOnQuit
+    manual = !!info.manual
+    manualCommand = info.manualCommand ?? null
+    needsPassword = !!info.needsPassword
+  }
+
+  async function copyCommand() {
+    if (!manualCommand) return
+    try {
+      await navigator.clipboard.writeText(manualCommand)
+      copied = true
+      setTimeout(() => (copied = false), 1600)
+    } catch { /* clipboard denied: the command is on screen to select */ }
+  }
+
+  async function openDownloads() {
+    const url = 'https://stroke.click/download?utm_source=stroke-app&utm_medium=update-dialog'
+    try {
+      const { openUrl } = await import('@tauri-apps/plugin-opener')
+      await openUrl(url)
+    } catch {
+      window.open(url, '_blank', 'noopener,noreferrer')
+    }
   }
 
   /**
@@ -256,7 +397,10 @@
    * it always has.
    */
   async function backgroundCheck() {
-    if (checking || status === 'available' || status === 'downloading' || status === 'ready') return
+    if (checking || status === 'downloading' || status === 'ready') return
+    // Offered and waiting: only worth asking again when it will download by
+    // itself (a quiet download that failed last time gets another go).
+    if (status === 'available' && !(loadSettings().autoUpdate && dismissed)) return
     if (status === 'error' && !dismissed) return
     let info
     try {
@@ -271,12 +415,17 @@
       return
     }
     adopt(info)
-    if (loadSettings().autoUpdate && info.applyOnQuit) {
+    // Automatic updates (the default) always download in the background, with
+    // no window: where it can, the build installs as Stroke quits; elsewhere the
+    // sidebar's pill offers Restart. With them off, the pill offers Update.
+    // Neither interrupts what is open.
+    // A package-managed install never downloads here: it only says so.
+    if (loadSettings().autoUpdate && !info.manual) {
       await install(true)
       return
     }
     status = 'available'
-    dismissed = false
+    dismissed = true
     onupdatefound('available')
   }
 
@@ -302,7 +451,9 @@
         }
       })
       // Opened from the status bar mid-download: show the result there.
+      const unseen = dismissed
       markReady(info, dismissed)
+      if (unseen) announceReady(info)
     } catch (e) {
       console.error('[updater] download failed:', e)
       if (quiet && dismissed) {
@@ -313,6 +464,22 @@
       }
       fail('install', e)
     }
+  }
+
+  /**
+   * A quiet download finished: say so once, with the one thing to do about it.
+   * Where the build installs on quit, nothing has to be done at all.
+   * @param {import('$lib/api.js').UpdateInfo} info
+   */
+  function announceReady(info) {
+    toast.success(`Stroke ${info.version} is ready`, {
+      id: 'update-ready',
+      description: info.applyOnQuit
+        ? 'It installs when you quit, so the next start is the new version.'
+        : 'Restart Stroke to install it.',
+      duration: 10000,
+      action: { label: 'Restart now', onClick: () => void restart() },
+    })
   }
 
   async function restart() {
@@ -362,209 +529,133 @@
 
 <!-- ── Centered update dialog (sits above the connection modal) ───── -->
 {#if visible}
-  <!-- Actionable states get a dark backdrop; passive states float without blocking. -->
+  <!-- Sparkle's update window, in the app's own style: the mark and what is
+       on offer, the notes right there, one choice, and the automatic setting
+       beside it. -->
   <div
-    class={cn(
-      'fixed inset-0 z-[200] flex items-center justify-center p-4',
-      !isModal && 'pointer-events-none',
-    )}
+    class="fixed inset-0 z-[200] flex items-center justify-center p-4"
     role="dialog"
-    aria-modal={isModal}
-    aria-label="Application update"
+    aria-modal="true"
+    aria-labelledby="update-title"
     tabindex="-1"
-    use:focusTrap={{ enabled: isModal }}
+    use:focusTrap={{ enabled: true }}
   >
-    {#if isModal}
-      <button
-        type="button"
-        tabindex="-1"
-        aria-label="Dismiss"
-        class="absolute inset-0 cursor-default bg-black/65"
-        onclick={() => (dismissed = true)}
-      ></button>
-    {/if}
+    <button
+      type="button"
+      tabindex="-1"
+      aria-label="Dismiss"
+      class="absolute inset-0 cursor-default bg-black/60"
+      onclick={() => (dismissed = true)}
+    ></button>
 
-    <div
-      class="pointer-events-auto relative w-[min(26.25rem,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-border/60 bg-background elevate-3-rim"
-    >
-      <!-- header row -->
-      <div class="flex items-center gap-3 border-b border-border/40 px-5 py-3.5">
-        <div class="shrink-0 rounded-lg bg-muted/50 p-2">
-          {#if status === 'ready' || status === 'up-to-date'}
-            <CheckCircle2 class="size-4 shrink-0 text-success" />
-          {:else if status === 'error'}
-            <AlertCircle class="size-4 shrink-0 text-destructive" />
-          {:else if checking}
-            <Loader2 class="size-4 shrink-0 animate-spin text-primary" />
-          {:else if status === 'available'}
-            <Sparkles class="size-4 shrink-0 text-primary" />
-          {:else}
-            <Download class="size-4 shrink-0 text-primary" />
-          {/if}
-        </div>
-
-        <span class="flex-1 whitespace-nowrap text-ui font-semibold text-foreground">
+    <div class="pointer-events-auto relative flex max-h-[min(40rem,calc(100vh-2rem))] w-[min(34rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-lg border border-border/60 bg-background elevate-3-rim">
+      <!-- Like What's new: a plain title with the short version, then the
+           exact build in mono and what this install is on. -->
+      <div class="flex flex-col gap-1 px-6 pt-6 pe-12">
+        <h2 id="update-title" class="text-ui-xl font-semibold tracking-tight text-balance text-foreground">
           {#if status === 'error'}
-            {failedAction === 'install' ? 'Download failed'
-              : failedAction === 'restart' ? "Couldn't install the update"
-              : "Couldn't check for updates"}
-          {:else if status === 'available'}
-            Stroke {updateVersion} available
-          {:else if status === 'downloading'}
-            Downloading update…
+            {failedAction === 'install' ? 'The download did not finish' : failedAction === 'restart' ? "Couldn't install the update" : "Couldn't check for updates"}
           {:else if status === 'ready'}
-            Ready to install
-          {:else if status === 'up-to-date'}
-            Up to date
-          {:else if checking}
-            Checking for updates…
+            Stroke {shortVersion} is ready
+          {:else if status === 'downloading'}
+            Downloading Stroke {shortVersion}
+          {:else}
+            Stroke {shortVersion} is available
           {/if}
-        </span>
-
-        <!-- Closable while downloading too: the download carries on, and the
-             status bar picks it up when it is done. -->
+        </h2>
+        {#if status === 'error'}
+          <p class="text-ui-xs break-words font-mono text-destructive">{errorMsg}</p>
+        {:else}
+          <p class="flex min-w-0 flex-wrap items-baseline gap-x-1.5 text-ui-sm text-muted-foreground">
+            <span class="truncate font-mono text-ui-xs tabular-nums" title={updateVersion}>{updateVersion}</span>
+            {#if appVersion}<span class="text-ui-xs">· you have <span class="font-mono tabular-nums">{appVersion.replace(/-nightly\.\d+$/, '')}</span></span>{/if}
+          </p>
+          <p class="mt-1 text-ui-xs text-pretty text-muted-foreground">
+            {#if status === 'ready'}
+              {applyOnQuit ? 'It installs when you quit, so the next start is the new version. Restart now to use it straight away.' : needsPassword ? 'Restart Stroke to install it. Your system asks for your password first.' : 'Restart Stroke to finish installing it.'}
+            {:else if status === 'downloading'}
+              {totalBytes > 0 ? `${fmt(downloadedBytes)} of ${fmt(totalBytes)}` : 'Starting'}. It keeps going if you close this.
+            {:else if manual}
+              {manualCommand ? 'Your package manager installed Stroke, so it updates there:' : 'Your package manager installed Stroke, so it updates there. Get the new package from the download page.'}
+            {/if}
+          </p>
+          {#if manual && manualCommand && status === 'available'}
+            <div class="mt-2 flex items-center gap-1 rounded-md bg-muted/40 py-1 ps-3 pe-1">
+              <code class="min-w-0 flex-1 truncate font-mono text-ui-xs text-foreground select-all">{manualCommand}</code>
+              <button type="button" class="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-ui-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" onclick={() => void copyCommand()}>
+                {#if copied}<CheckCircle2 class="size-3.5 shrink-0 text-success" />Copied{:else}Copy{/if}
+              </button>
+            </div>
+          {/if}
+        {/if}
         <button
           type="button"
           onclick={() => (dismissed = true)}
-          class="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          aria-label="Dismiss"
+          class="absolute top-4 right-4 inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          aria-label="Close"
         >
           <X class="size-4 shrink-0" />
         </button>
       </div>
 
-      <!-- body -->
-      <div class="px-5 py-4 text-ui-sm">
-
-        {#if status === 'available'}
-          <p class="mb-4 text-ui-sm text-muted-foreground">A new version is ready to install.</p>
-          <div class="flex gap-2.5">
-            <button
-              type="button"
-              onclick={() => void openChangelog()}
-              class= "field-surface inline-flex h-9 flex-1 items-center justify-center gap-1.5 whitespace-nowrap px-3 text-ui-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-            >
-              <ScrollText class="size-3.5 shrink-0" />
-              Release Notes
-            </button>
-            <Button
-              onclick={() => void install()}
-              class="flex-1" size="lg"
->
-              <Download class="size-3.5 shrink-0" />
-              Install
-            </Button>
+      {#if status === 'downloading'}
+        <div class="px-6 pt-4">
+          <div class="h-1.5 w-full overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuenow={progress} aria-valuemin="0" aria-valuemax="100" aria-label="Download progress">
+            <div class="h-full rounded-full bg-primary transition-[width] duration-150" style="width:{progress}%"></div>
           </div>
+        </div>
+      {/if}
 
-        {:else if status === 'downloading'}
-          <div class="flex flex-col gap-2.5">
-            <div class="flex items-center justify-between text-ui-xs text-muted-foreground">
-              <span>{totalBytes > 0 ? `${fmt(downloadedBytes)} / ${fmt(totalBytes)}` : 'Downloading…'}</span>
-              <span class="font-mono tabular-nums">{progress}%</span>
-            </div>
-            <div class="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-              <div
-                class="h-full rounded-full bg-primary transition-[width] duration-150"
-                style="width:{progress}%"
-              ></div>
-            </div>
-            <p class="text-ui-xs text-muted-foreground">
-              Stroke <span class="font-mono font-medium text-foreground">{updateVersion}</span>.
-              It keeps downloading if you close this.
-            </p>
-          </div>
-
-        {:else if status === 'ready'}
-          {#if applyOnQuit}
-            <p class="mb-4 text-ui-sm text-muted-foreground">
-              Stroke <span class="font-mono font-medium text-foreground">{updateVersion}</span> is ready. It installs when you quit.
-            </p>
-            <div class="flex gap-2.5">
-              <button
-                type="button"
-                onclick={() => (dismissed = true)}
-                class= "field-surface inline-flex h-9 flex-1 items-center justify-center gap-1.5 whitespace-nowrap px-3 text-ui-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-              >
-                Later
-              </button>
-              <Button
-                onclick={() => void restart()}
-                disabled={restarting}
-                class="flex-1" size="lg"
->
-                <RefreshCw class={cn('size-3.5 shrink-0', restarting && 'animate-spin')} />
-                Restart now
-              </Button>
-            </div>
+      {#if status !== 'error'}
+        <div class="mt-5 min-h-0 flex-1 overflow-y-auto border-t border-border/40 px-6 py-4 [scrollbar-gutter:stable]">
+          {#if notes.releases.length}
+            <ReleaseNotes releases={notes.releases} omitted={notes.omitted} compact />
           {:else}
-            <p class="mb-4 text-ui-sm text-muted-foreground">
-              Version <span class="font-mono font-medium text-foreground">{updateVersion}</span> downloaded. Restart to apply.
+            <p class="text-ui-sm text-muted-foreground">
+              The notes for this version are on the release page.
+              <button type="button" class="ms-1 inline-flex items-center gap-1 text-foreground underline-offset-4 hover:underline" onclick={() => void openChangelog()}>
+                Read them<ExternalLink class="size-3 shrink-0" />
+              </button>
             </p>
-            <div class="flex gap-2.5">
-              {#if changelog.length > 0}
-                <button
-                  type="button"
-                  onclick={() => void openChangelog()}
-                  class= "field-surface inline-flex h-9 flex-1 items-center justify-center gap-1.5 whitespace-nowrap px-3 text-ui-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                >
-                  <ScrollText class="size-3.5 shrink-0" />
-                  What's New
-                </button>
-              {/if}
-              <Button
-                onclick={() => void restart()}
-                disabled={restarting}
-                class="flex-1" size="lg"
->
-                <RefreshCw class={cn('size-3.5 shrink-0', restarting && 'animate-spin')} />
-                Restart now
-              </Button>
-            </div>
           {/if}
+        </div>
+      {/if}
 
-        {:else if status === 'error'}
-          <p class="mb-2.5 text-ui-sm text-muted-foreground">
-            {failedAction === 'install' ? 'The download did not finish.'
-              : failedAction === 'restart' ? 'The update could not be installed. You can try again or keep working.'
-              : 'Stroke could not reach the update server.'}
-          </p>
-          <!-- break-words: the endpoint URL is one long token and ran past the
-               dialog edge without it. -->
-          <p class="mb-4 font-mono text-ui-xs break-words text-destructive">{errorMsg}</p>
-          <div class="flex gap-2.5">
-            <button
-              type="button"
-              onclick={() => (dismissed = true)}
-              class="field-surface inline-flex h-9 flex-1 items-center justify-center gap-1.5 whitespace-nowrap px-3 text-ui-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-            >
-              Not now
-            </button>
-            <Button
-              onclick={() => void retry()}
-              class="flex-1" size="lg"
->
-              <RefreshCw class="size-3.5 shrink-0" />
-              Retry
-            </Button>
-          </div>
-
-        {:else if status === 'up-to-date' || checking}
-          <p class="text-ui-sm leading-relaxed text-muted-foreground">
-            {checking ? 'Checking GitHub for a newer release…' : "You're on the latest version."}
-          </p>
-          {#if !checking}
-            <button
-              type="button"
-              onclick={() => void openChangelog()}
-              class= "field-surface mt-4 inline-flex h-9 items-center gap-1.5 px-3 text-ui-sm text-muted-foreground transition-[color,background-color,transform] duration-150 ease-out hover:bg-muted hover:text-foreground active:scale-[0.97]"
-            >
-              <ScrollText class="size-3.5 shrink-0" />
-              View changelog
-              <ExternalLink class="ml-0.5 size-3.5 shrink-0 text-muted-foreground" />
-            </button>
-          {/if}
+      <div class={cn('flex flex-wrap items-center gap-3 border-t border-border/40 px-6 py-4', status === 'error' && 'mt-5')}>
+        {#if manual}<span class="min-w-0 flex-1"></span>{:else}
+        <label class="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-ui-xs text-muted-foreground">
+          <input
+            type="checkbox"
+            class="size-3.5 shrink-0 accent-[var(--primary)]"
+            checked={autoUpdate}
+            onchange={(e) => { autoUpdate = e.currentTarget.checked; updateSettings({ autoUpdate }) }}
+          />
+          <span class="min-w-0">Download and install updates automatically</span>
+        </label>
         {/if}
-
+        <div class="flex shrink-0 items-center gap-2">
+          {#if status === 'error'}
+            <Button variant="ghost" onclick={() => (dismissed = true)}>Not now</Button>
+            <Button onclick={() => void retry()}><RefreshCw class="size-3.5 shrink-0" />Try again</Button>
+          {:else if status === 'ready'}
+            <Button variant="ghost" onclick={() => (dismissed = true)}>{applyOnQuit ? 'On quit' : 'Later'}</Button>
+            <Button onclick={() => void restart()} disabled={restarting}>
+              <RefreshCw class={cn('size-3.5 shrink-0', restarting && 'animate-spin')} />Restart now
+            </Button>
+          {:else if status === 'downloading'}
+            <Button variant="ghost" onclick={() => (dismissed = true)}>Hide</Button>
+          {:else if manual}
+            <Button variant="ghost" onclick={() => (dismissed = true)}>Later</Button>
+            {#if manualCommand}
+              <Button onclick={() => void copyCommand()}>{copied ? 'Copied' : 'Copy command'}</Button>
+            {:else}
+              <Button onclick={() => void openDownloads()}>Download page<ExternalLink class="size-3.5 shrink-0" /></Button>
+            {/if}
+          {:else}
+            <Button variant="ghost" onclick={() => (dismissed = true)}>Later</Button>
+            <Button onclick={() => void install()}><Download class="size-3.5 shrink-0" />Install</Button>
+          {/if}
+        </div>
       </div>
     </div>
   </div>

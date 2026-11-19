@@ -1262,7 +1262,7 @@ pub struct ImportPreview {
 
 const IMPORT_MAX_BYTES: u64 = 256 * 1024 * 1024;
 
-fn read_import(path: &str) -> Result<(String, String), String> {
+pub(crate) fn read_import(path: &str) -> Result<(String, String), String> {
     let p = std::path::Path::new(path);
     let len = std::fs::metadata(p).map_err(|e| format!("Couldn't read the file: {e}"))?.len();
     if len > IMPORT_MAX_BYTES {
@@ -1329,6 +1329,8 @@ pub enum Stmt {
     Use(String),
     ShowDbs,
     ShowCollections,
+    /// `db.createCollection("name")`
+    CreateCollection(String),
     /// `db.<coll>.<method>(...)[.sort(...)][.limit(...)][.skip(...)]`
     Coll { coll: String, calls: Vec<Call> },
 }
@@ -1369,6 +1371,7 @@ fn calls(mut s: &str) -> Result<Vec<Call>, String> {
 const METHODS: &[&str] = &[
     "find", "findOne", "aggregate", "countDocuments", "estimatedDocumentCount", "distinct", "insertOne", "insertMany",
     "updateOne", "updateMany", "replaceOne", "deleteOne", "deleteMany", "getIndexes", "explain",
+    "createIndex", "dropIndex", "drop",
 ];
 
 pub fn parse(stmt: &str) -> Result<Stmt, String> {
@@ -1383,6 +1386,17 @@ pub fn parse(stmt: &str) -> Result<Stmt, String> {
         _ => {}
     }
     let rest = s.strip_prefix("db.").ok_or(usage)?;
+    // db.createCollection("name")
+    if let Some(r) = rest.strip_prefix("createCollection(") {
+        let r = r.trim();
+        let inner = r.strip_suffix(')').ok_or("createCollection() takes a quoted name")?.trim();
+        let name = inner
+            .strip_prefix('"').and_then(|v| v.strip_suffix('"'))
+            .or_else(|| inner.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')))
+            .filter(|n| !n.is_empty())
+            .ok_or("createCollection() takes a quoted name")?;
+        return Ok(Stmt::CreateCollection(name.to_string()));
+    }
     // db.getCollection("name").method(...)
     if let Some(r) = rest.strip_prefix("getCollection(") {
         let r = r.trim_start();
@@ -1429,6 +1443,10 @@ pub async fn query(m: &MongoConn, stmt: &str) -> Result<super::query::SqlResult,
         Stmt::ShowDbs => {
             let names = m.client.list_database_names().await.map_err(err)?;
             (names.into_iter().map(|n| json!({ "name": n })).collect(), None)
+        }
+        Stmt::CreateCollection(name) => {
+            m.client.database(&db_name).create_collection(&name).await.map_err(err)?;
+            (vec![], Some(format!("Created collection {name}")))
         }
         Stmt::ShowCollections => {
             let mut names = m.client.database(&db_name).list_collection_names().await.map_err(err)?;
@@ -1577,6 +1595,32 @@ pub async fn query(m: &MongoConn, stmt: &str) -> Result<super::query::SqlResult,
                     }
                     let r = if head.name == "deleteOne" { c.delete_one(f).await } else { c.delete_many(f).await }.map_err(err)?;
                     (vec![], Some(format!("Deleted {}", r.deleted_count)))
+                }
+                "createIndex" => {
+                    let keys = arg_doc(&args, 0, "index key")?;
+                    if keys.is_empty() {
+                        return Err("createIndex() takes the keys, like {email: 1}".into());
+                    }
+                    let opts = args.get(1).filter(|v| v.is_object());
+                    let mut options = mongodb::options::IndexOptions::default();
+                    if let Some(o) = opts {
+                        options.name = o.get("name").and_then(|v| v.as_str()).map(str::to_string);
+                        options.unique = o.get("unique").and_then(|v| v.as_bool());
+                        options.sparse = o.get("sparse").and_then(|v| v.as_bool());
+                        options.expire_after = o.get("expireAfterSeconds").and_then(|v| v.as_u64()).map(std::time::Duration::from_secs);
+                    }
+                    let model = mongodb::IndexModel::builder().keys(keys).options(options).build();
+                    let r = c.create_index(model).await.map_err(err)?;
+                    (vec![json!({ "name": r.index_name })], Some(format!("Created index {}", r.index_name)))
+                }
+                "dropIndex" => {
+                    let name = args.first().and_then(|v| v.as_str()).ok_or("dropIndex() takes the index name")?;
+                    c.drop_index(name).await.map_err(err)?;
+                    (vec![], Some(format!("Dropped index {name}")))
+                }
+                "drop" => {
+                    c.drop().await.map_err(err)?;
+                    (vec![], Some(format!("Dropped collection {coll}")))
                 }
                 other => return Err(format!("{other}() isn't supported here")),
             }

@@ -40,6 +40,30 @@ export const PROVIDERS = [
     },
   },
   {
+    id: 'xata', name: 'Xata', mode: 'token', engine: 'postgres',
+    blurb: 'Postgres with copy-on-write branches, every branch listed',
+    token: {
+      help: 'Create an API key in the Xata console under your account or organization settings, API keys.',
+      helpUrl: 'https://console.xata.io',
+      fields: [
+        { key: 'apiKey', label: 'API key', type: 'password', autocomplete: 'off', placeholder: 'xau_…', mono: true },
+      ],
+      join: (/** @type {Record<string, string>} */ v) => v.apiKey.trim(),
+    },
+  },
+  {
+    id: 'singlestore', name: 'SingleStore', mode: 'token', engine: 'mysql',
+    blurb: 'Workspaces and free starter workspaces, asks for the database password once',
+    token: {
+      help: 'Create a Management API key in the SingleStore portal under Configuration, API keys.',
+      helpUrl: 'https://portal.singlestore.com',
+      fields: [
+        { key: 'apiKey', label: 'Management API key', type: 'password', autocomplete: 'off', placeholder: 'API key', mono: true },
+      ],
+      join: (/** @type {Record<string, string>} */ v) => v.apiKey.trim(),
+    },
+  },
+  {
     id: 'posthog', name: 'PostHog', mode: 'token', engine: 'posthog',
     blurb: 'Product analytics, queried with HogQL. Read-only',
     token: {
@@ -97,6 +121,32 @@ export async function providerListDatabases(provider) {
 /** @param {string} provider @param {string} dbRef @returns {Promise<ProviderConnection>} */
 export async function providerBuildConnection(provider, dbRef) {
   return invoke('provider_build_connection', { provider, dbRef })
+}
+
+/**
+ * Where a new database can go: organization/workspace choices and the regions
+ * for `scope` (the first scope when omitted).
+ * @param {string} provider @param {string | null} [scope]
+ * @returns {Promise<import('./provider-create.js').CreateOptions>}
+ */
+export async function providerCreateOptions(provider, scope = null) {
+  return invoke('provider_create_options', { provider, scope })
+}
+
+/**
+ * Create a database on the provider. `password` is only for providers that
+ * need one up front (Supabase).
+ * @param {string} provider
+ * @param {{ name: string, scope?: string | null, region?: string | null, password?: string | null }} request
+ * @returns {Promise<import('./provider-create.js').CreatedDatabase>}
+ */
+export async function providerCreateDatabase(provider, request) {
+  return invoke('provider_create_database', { provider, request })
+}
+
+/** @param {string} provider @param {string} dbRef @returns {Promise<import('./provider-create.js').DatabaseStatus>} */
+export async function providerDatabaseStatus(provider, dbRef) {
+  return invoke('provider_database_status', { provider, dbRef })
 }
 
 /**

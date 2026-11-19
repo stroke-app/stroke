@@ -1,4 +1,5 @@
 <script>
+  import Kbd from './Kbd.svelte'
   import { toggleLightDark, isCurrentThemeDark } from '$lib/stores/settings.js'
   import DbIcon from './DbIcon.svelte'
   import { workspaces, activeWorkspaceId, inWorkspace } from '$lib/stores/workspaces.js'
@@ -21,6 +22,7 @@
   import { rootPxFor } from "$lib/type-scale.js";
   import SidebarObjects from "./SidebarObjects.svelte";
   import SidebarTree from "./SidebarTree.svelte";
+  import { treeConnectionScope } from "$lib/stores/sidebar-tree.js";
   import { objectsVersion } from "$lib/stores/sidebar-objects.svelte.js";
   import { listObjectComments } from "$lib/api.js";
   import { smoothScroll } from "$lib/smooth-scroll.js";
@@ -39,6 +41,8 @@
   import { t } from "$lib/i18n.js";
   import { visibleRowCount, soleMatch } from "$lib/sidebar-filter.js";
   import { splitSchemas, isSystemSchema } from "$lib/system-schemas.js";
+  import { aiChatList, requestChat } from "$lib/stores/ai-chat-bridge.js";
+  import { listConversations, deleteConversation, updateConversation } from "$lib/stores/conversations.js";
   import { formatTableRowCount, compareCreated } from "$lib/table-list.js";
   import {
     clampNavSidebarWidth,
@@ -78,13 +82,29 @@
     connections = [],
     /** id of the currently live connection (Connections panel highlight). */
     activeConnectionId = "",
+    /** AI chat opens as a tab (beta): list its chats here, above Connections. */
+    aiInTab = false,
+    /** The connection's chat key, and the test for its stored chats (lib/ai-chat-key.js). */
+    aiChatId = "",
+    /** @type {((key: string) => boolean) | null} */
+    aiChatMatch = null,
+    /** The AI tab is the active tab: the open chat's row is highlighted. */
+    aiTabActive = false,
+    /** Open a chat in the AI tab; null starts a new one. @type {(id: string | null) => void} */
+    onopenaichat = () => {},
     /** @type {(c: import('$lib/stores/connections.js').SavedConnection) => void} */
     onswitchconnection = () => {},
     onaddconnection = () => {},
     /** Sidebar footer (T3-style). */
     onopensettings = () => {},
     onopenshortcuts = () => {},
+    /** Settings, on the Labs page. @type {(() => void) | null} */
+    onopenlabs = null,
     oncheckupdates = () => {},
+    /** A manual update check is running: the button's icon fades in and out. */
+    checkingUpdate = false,
+    /** An update was found ('available') or downloaded ('ready'): the button becomes a pill (T3). */
+    updateState = /** @type {'' | 'available' | 'ready'} */ (''),
     /** @type {(id: string) => void} */
     onremoveconnection = () => {},
     /** @type {(id: string, group: string | null) => void} */
@@ -92,6 +112,10 @@
     /** A connection's colour or workspace changed; carries the saved list. @type {(list: any[]) => void} */
     onconnectionmeta = () => {},
     ondisconnectconnection = () => {},
+    /** Labs: the other open databases' table lists, for the tree. */
+    keptTrees = /** @type {{ key: string, conn: any, schema: string, tables: any[] }[]} */ ([]),
+    /** Labs: a table under another open database was opened in the tree. */
+    onopenkepttable = /** @type {(key: string, schema: string, name: string) => void} */ ((_k, _s, _n) => {}),
     /** Open an extension's detail tab (Extensions panel). @type {(ext: any) => void} */
     onopenextensiondetail = () => {},
     /** Which side the sidebar docks to. @type {'left' | 'right'} */
@@ -676,6 +700,17 @@
     // Objects always draws its group headers: an empty group still has its +.
     t !== 'search' && t !== 'queries' && t !== 'objects' && t !== 'tree' && !loadingTables && !!connectionName &&
     tabCounts[t] === 0 && !(t === 'databases' && dbHeld)
+  /**
+   * Tables the display options (Hide empty / Hide system) are keeping out of
+   * the list. A database whose tables were all just created has nothing but
+   * empty ones, and with Hide empty on it read as "No tables" through every
+   * refresh, with nothing saying why.
+   */
+  const hiddenByDisplay = $derived(
+    hideEmpty || hideSystem
+      ? tables.filter((t) => t.kind === 'table' && ((hideEmpty && t.rowCount === 0) || (hideSystem && (t.system ?? isSystemTable(t.name))))).length
+      : 0,
+  )
   /** True when the tab has rows but the filter hid all of them. @param {SidebarTab} t */
   const isTabEmptyFromFilter = (t) =>
     isTabEmpty(t) &&
@@ -772,6 +807,8 @@
   // ── Selection state ───────────────────────────────────────────────────────
   /** @type {Set<string>} */
   let selectedItems = $state(new Set())
+  /** A selection is under way: every row shows its select box. */
+  const selecting = $derived(selectedItems.size > 0)
   const menuTableSelected = $derived(selectedItems.has(menuTable))
   /** Anchor for shift range-select. @type {string | null} */
   let lastSelectedName = $state(null)
@@ -936,8 +973,12 @@
   /** @param {any[]} list */
   function applySortBy(list) {
     let result = list
-    if (hideEmpty) result = result.filter((t) => (t.rowCount ?? 0) > 0)
-    if (hideSystem) result = result.filter((t) => !isSystemTable(t.name))
+    // Only a table known to be empty hides. Counts arrive after the list (null
+    // until counted); reading unknown as empty hid every table on connect and
+    // showed "No tables" until the counts came in.
+    if (hideEmpty) result = result.filter((t) => t.rowCount !== 0)
+    // The engine's own flag where it gives one (Oracle), the name otherwise.
+    if (hideSystem) result = result.filter((t) => !(t.system ?? isSystemTable(t.name)))
     if (sortBy === 'rowCount') {
       result = [...result].sort((a, b) => (b.rowCount ?? 0) - (a.rowCount ?? 0))
     } else if (sortBy === 'created') {
@@ -957,6 +998,8 @@
   // Sorted, hide-filtered, un-pinned base - recomputes only when the data, sort,
   // hide toggles or pins change (NOT on every keystroke). The search term then
   // just filters this base, so typing avoids the sort + array clones.
+  /** The open schema's tables for the tree, under the same display options. */
+  const treeTables = $derived(treeMode ? applySortBy(tables) : tables);
   const sortedRegularBase = $derived(
     applySortBy(regularTables.filter((t) => !pinnedSet.has(t.name))),
   );
@@ -1491,6 +1534,28 @@
   let objectsPanel = $state(null)
   /** The Tree sidebar (beta), when it is the open tab. @type {SidebarTree | null} */
   let treePanel = $state(null)
+
+  /**
+   * A refresh keeps the list on screen (no loading dots), so `loadingTables`
+   * never turns on for it and the icon never moved: the click looked like it
+   * did nothing. The icon now turns for as long as the refresh runs, and for
+   * a beat at least, so a fast one still reads as done.
+   */
+  let refreshing = $state(false);
+  async function runRefresh(/** @type {(() => unknown)[]} */ ...steps) {
+    if (refreshing) return;
+    refreshing = true;
+    const started = performance.now();
+    try {
+      await Promise.all(steps.map((f) => Promise.resolve().then(f)));
+    } catch {
+      // The shell reports its own failures.
+    } finally {
+      const left = 450 - (performance.now() - started);
+      if (left > 0) await new Promise((r) => setTimeout(r, left));
+      refreshing = false;
+    }
+  }
   /** Rows in the Objects tree before and after the filter, for the tab strip. */
   let objectsTotal = $state(0)
   let objectsShown = $state(0)
@@ -1517,6 +1582,77 @@
     } catch { /* comments are extra: a failure leaves the rows as they were */ }
   }
 
+
+  // ── Chats (AI in a tab, beta) ────────────────────────────────────────────
+  // The mounted AI tab publishes its list (and which chat is replying); until
+  // it mounts, the stored list for this connection stands in.
+  const CHATS_LIMIT = 8
+  let chatsOpen = $state((() => { try { return localStorage.getItem('stroke:sidebar-chats-open') !== '0' } catch { return true } })())
+  let chatsShowAll = $state(false)
+  /** @type {import('$lib/stores/ai-chat-bridge.js').ChatRow[]} */
+  let storedChats = $state([])
+  $effect(() => {
+    const id = aiInTab ? aiChatId : ''
+    const match = aiChatMatch
+    if (!id) { storedChats = []; return }
+    // Re-read when the live list goes away (the tab closed): it may have changed.
+    void $aiChatList.live
+    let stale = false
+    listConversations(match ?? id)
+      .then((list) => { if (!stale) storedChats = list.map((c) => ({ id: c.id, title: c.title || 'New chat', updatedAt: c.updatedAt, where: [c.database, c.schema].filter(Boolean).join(' · ') })) })
+      .catch(() => {})
+    return () => { stale = true }
+  })
+  const liveChats = $derived($aiChatList.live && $aiChatList.connectionId === aiChatId)
+  const chats = $derived(liveChats ? $aiChatList.chats : storedChats)
+  const chatsShown = $derived(chatsShowAll ? chats : chats.slice(0, CHATS_LIMIT))
+  /** Every chat replying, including ones left running in the background. */
+  const chatBusy = $derived($aiChatList.busyIds ?? ($aiChatList.busyId ? [$aiChatList.busyId] : []))
+
+  // Rename and delete from the list. With the AI tab mounted it owns the list,
+  // so the request goes to it; before that, the stored list is changed here.
+  /** @type {string | null} */
+  let renamingChatId = $state(null)
+  let renamingChatTitle = $state('')
+  /** The chat whose delete button has been pressed once (it asks again). */
+  /** @type {string | null} */
+  let confirmDeleteChatId = $state(null)
+  /** @type {ReturnType<typeof setTimeout> | undefined} */
+  let confirmDeleteTimer
+  /** @param {{ id: string, title: string }} chat */
+  function startChatRename(chat) {
+    confirmDeleteChatId = null
+    renamingChatId = chat.id
+    renamingChatTitle = chat.title
+  }
+  async function commitChatRename() {
+    const id = renamingChatId
+    const title = renamingChatTitle.trim()
+    renamingChatId = null
+    if (!id || !title) return
+    if (liveChats) return requestChat({ type: 'rename', id, title })
+    await updateConversation(id, { title }).catch(() => {})
+    storedChats = storedChats.map((c) => (c.id === id ? { ...c, title } : c))
+  }
+  /** @param {string} id */
+  async function deleteChat(id) {
+    if (confirmDeleteChatId !== id) {
+      confirmDeleteChatId = id
+      clearTimeout(confirmDeleteTimer)
+      confirmDeleteTimer = setTimeout(() => (confirmDeleteChatId = null), 3000)
+      return
+    }
+    confirmDeleteChatId = null
+    clearTimeout(confirmDeleteTimer)
+    if (liveChats) return requestChat({ type: 'delete', id })
+    await deleteConversation(id).catch(() => {})
+    storedChats = storedChats.filter((c) => c.id !== id)
+  }
+  /** Focus and select a field as it mounts. @param {HTMLInputElement} el */
+  function selectOnMount(el) {
+    el.focus()
+    el.select()
+  }
 
   // ── Connections at the sidebar's foot ────────────────────────────────────
   const CONNS_LIMIT = 10
@@ -1748,7 +1884,8 @@
       </div>
       <RedisSidebarNav />
     </div>
-    {@render connectionsSection()}
+    {@render chatsSection()}
+    {#if !(treeMode && $treeConnectionScope === 'all' && activePanel === 'tree')}{@render connectionsSection()}{/if}
     {:else if navSidebarPanel === "tables"}
     <div class="flex min-h-0 flex-1 flex-col">
 
@@ -1859,8 +1996,10 @@
           </div>
           <div class="ml-auto flex shrink-0 items-center gap-0.5">
           {#if sidebarTab === 'tree'}
-            <!-- The explorer's own actions, in the same slot so the bar keeps its width. -->
-            <span class="invisible size-7 shrink-0" aria-hidden="true"></span>
+            <!-- The explorer's own actions, in the same slot so the bar keeps
+                 its width. Display options first, as on the table list: they
+                 sort and hide the tree's tables the same way. -->
+            {@render displayOptions()}
             <button
               type="button"
               class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40"
@@ -1876,9 +2015,9 @@
               title="Refresh"
               aria-label="Refresh"
               disabled={!connectionName}
-              onclick={() => { onrefresh(); treePanel?.refreshOpen() }}
+              onclick={() => void runRefresh(onrefresh, () => treePanel?.refreshOpen())}
             >
-              <Icon name="refresh-cw" class={cn("size-3.5", loadingTables && "animate-spin")} />
+              <Icon name="refresh-cw" class={cn("size-3.5", (loadingTables || refreshing) && "animate-spin")} />
             </button>
           {:else if sidebarTab === 'objects'}
             <!-- On Objects the bar's refresh and + act on objects, so the list
@@ -1918,87 +2057,16 @@
                they did nothing for the panel below, so they keep their space
                there (no shift between tabs) but are not shown or reachable. -->
           <div class={cn("flex items-center gap-0.5", (sidebarTab === 'queries' || sidebarTab === 'search') && "invisible")}>
-          <DropdownMenu.Root>
-            <DropdownMenu.Trigger
-              class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground data-[state=open]:bg-accent data-[state=open]:text-foreground disabled:pointer-events-none disabled:opacity-40"
-              title="Display options"
-              disabled={!connectionName}
-            >
-              <Icon name="list-filter" class="size-3.5 shrink-0" />
-            </DropdownMenu.Trigger>
-            <DropdownMenu.Content align="start" class="min-w-52">
-              <div class="px-2 pt-1 pb-1.5 text-ui-2xs text-muted-foreground leading-relaxed">
-                <span class="font-mono tabular-nums text-foreground/80">{regularTables.length}</span> tables{#if views.length} · <span class="font-mono tabular-nums text-foreground/80">{views.length}</span> views{/if}{#if matViews.length} · <span class="font-mono tabular-nums text-foreground/80">{matViews.length}</span> mat.{/if}
-                {#if hiddenCount > 0}<br /><span class="text-warning">{hiddenCount} hidden by filters</span>{/if}
-              </div>
-              <DropdownMenu.Separator />
-              <DropdownMenu.CheckboxItem
-                checked={showRowCount}
-                onCheckedChange={(v) => (showRowCount = v)}
-              ><Icon name="hash" class="text-muted-foreground" />Row counts</DropdownMenu.CheckboxItem>
-              <DropdownMenu.CheckboxItem
-                checked={hideEmpty}
-                onCheckedChange={(v) => (hideEmpty = v)}
-              ><Icon name="circle-slash" class="text-muted-foreground" />Hide empty tables</DropdownMenu.CheckboxItem>
-              <DropdownMenu.CheckboxItem
-                checked={hideSystem}
-                onCheckedChange={(v) => (hideSystem = v)}
-              ><Icon name="cog" class="text-muted-foreground" />Hide system tables</DropdownMenu.CheckboxItem>
-              <DropdownMenu.Separator />
-              <DropdownMenu.Label>Sort by</DropdownMenu.Label>
-              <!-- Field + direction merged: pick a field, click it again to flip. -->
-              <DropdownMenu.Item
-                closeOnSelect={false}
-                title="Click to flip direction"
-                onSelect={() => { if (sortBy === 'name') sortDir = sortDir === 'asc' ? 'desc' : 'asc'; else sortBy = 'name' }}
-              >
-                <Icon name={sortBy === 'name' && sortDir === 'desc' ? 'arrow-up-a-z' : 'arrow-down-a-z'} class="text-muted-foreground" />
-                Name
-                {#if sortBy === 'name'}
-                  <span class="ml-auto font-mono text-ui-2xs text-muted-foreground">{sortDir === 'asc' ? 'A→Z' : 'Z→A'}</span>
-                {/if}
-              </DropdownMenu.Item>
-              <DropdownMenu.Item
-                closeOnSelect={false}
-                title="Click to flip direction"
-                onSelect={() => { if (sortBy === 'rowCount') sortDir = sortDir === 'asc' ? 'desc' : 'asc'; else sortBy = 'rowCount' }}
-              >
-                <Icon name={sortBy === 'rowCount' && sortDir === 'asc' ? 'arrow-up-0-1' : 'arrow-down-0-1'} class="text-muted-foreground" />
-                Row count
-                {#if sortBy === 'rowCount'}
-                  <span class="ml-auto font-mono text-ui-2xs text-muted-foreground">{sortDir === 'desc' ? '9→0' : '0→9'}</span>
-                {/if}
-              </DropdownMenu.Item>
-              <!-- Newest first on the first pick: "what did I just make" is the
-                   usual question. Engines that keep no creation time (Postgres,
-                   SQLite, DuckDB) sort by creation order instead. -->
-              <DropdownMenu.Item
-                closeOnSelect={false}
-                title="Click to flip direction. MySQL and SQL Server sort by creation time; other engines by the order tables were created in."
-                onSelect={() => { if (sortBy === 'created') sortDir = sortDir === 'asc' ? 'desc' : 'asc'; else { sortBy = 'created'; sortDir = 'desc' } }}
-              >
-                <Icon name="clock" class="text-muted-foreground" />
-                Created
-                {#if sortBy === 'created'}
-                  <span class="ml-auto font-mono text-ui-2xs text-muted-foreground">{sortDir === 'desc' ? 'New→Old' : 'Old→New'}</span>
-                {/if}
-              </DropdownMenu.Item>
-              <DropdownMenu.Separator />
-              <DropdownMenu.Item onSelect={resetFilters} disabled={!filtersActive}>
-                <Icon name="rotate-ccw" class="text-muted-foreground" />
-                Reset filters &amp; sort
-              </DropdownMenu.Item>
-            </DropdownMenu.Content>
-          </DropdownMenu.Root>
+          {@render displayOptions()}
           <button
             type="button"
             class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40"
             title={withShortcut('Refresh tables', 'view.refresh')}
             disabled={loadingTables || !connectionName}
-            onclick={onrefresh}
+            onclick={() => void runRefresh(onrefresh)}
           >
             <Icon name="refresh-cw"
-              class={cn("size-3.5", loadingTables && "animate-spin")}
+              class={cn("size-3.5", (loadingTables || refreshing) && "animate-spin")}
             />
           </button>
           {#if !sqlTables}
@@ -2116,18 +2184,31 @@
                     </SearchableMenu>
             </div>
           {/if}
-          <div class="relative min-w-0 flex-1">
+          <!-- A field you can see at rest (faint fill), with room between the
+               magnifier and the text, so the caret never sits on the icon. -->
+          <div class="group/search relative min-w-0 flex-1">
           <Icon name="search"
-            class="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground"
+            class="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground transition-colors duration-150 group-focus-within/search:text-foreground"
           />
           <input
             type="search"
             bind:this={filterEl}
+            data-slash-focus="10"
+            aria-keyshortcuts="/"
             placeholder={connectionName ? "Search" : "Not connected"}
             value={localFilter}
             disabled={!connectionName}
             oninput={(e) => handleFilterInput(e.currentTarget.value)}
             onkeydown={(e) => {
+              // Escape clears the filter (the full list comes back at once, no
+              // debounce). Nothing typed: Escape is left for whatever is around.
+              if (e.key === 'Escape' && localFilter) {
+                e.preventDefault()
+                e.stopPropagation()
+                handleFilterInput('')
+                flushFilter()
+                return
+              }
               // Enter opens the match when the filter has left exactly one. The
               // debounce is committed first, or a fast typist who narrows to one
               // row and hits Enter within 200ms is judged against the previous
@@ -2187,11 +2268,12 @@
                 if (first) { e.preventDefault(); kbdNav = true; focusRow(first) }
               }
             }}
-            class="no-field-frame h-7 w-full min-w-0 rounded-md bg-transparent pl-7 pr-7 text-ui-sm text-foreground outline-none placeholder:text-muted-foreground focus-visible:bg-sidebar-accent/60 disabled:cursor-not-allowed disabled:opacity-40 [&::-webkit-search-cancel-button]:appearance-none"
+            class="peer no-field-frame h-8 w-full min-w-0 rounded-md bg-sidebar-accent/35 pl-[34px] pr-7 text-ui-sm text-foreground outline-none transition-colors duration-150 placeholder:text-muted-foreground hover:bg-sidebar-accent/50 focus-visible:bg-sidebar-accent/70 disabled:cursor-not-allowed disabled:opacity-40 [&::-webkit-search-cancel-button]:hidden"
             aria-label="Filter {activeTabLabel.toLowerCase()}"
             aria-describedby="sidebar-filter-hint"
             data-sidebar-filter
           />
+          <Kbd combo="/" class="pointer-events-none hidden peer-placeholder-shown:inline-flex peer-focus:hidden absolute top-1/2 right-2 -translate-y-1/2" aria-hidden="true" />
           {#if localFilter}
             <button
               type="button"
@@ -2277,7 +2359,8 @@
             {connection}
             {connections}
             {schemas}
-            {tables}
+            tables={treeTables}
+            showRowCounts={showRowCount}
             {activeSchema}
             {activeTable}
             {loadingTables}
@@ -2291,17 +2374,21 @@
               ontablefilter('')
             }}
             tableMenu={treeTableMenu}
+            {keptTrees}
+            {onopenkepttable}
             {ontableselect}
             onopentable={onrecentselect}
             {onschemachange}
             {onswitchconnection}
             {onswitchdatabase}
+            {onswitchdatabasenow}
             onopenobjectsql={onopenobjectsql}
             onexittop={() => { filterEl?.focus(); filterEl?.select() }}
             {onnewtable}
             {onnewschema}
             {onnewdatabase}
             {onconnectionmeta}
+            {onremoveconnection}
           />
         </div>
       {/if}
@@ -2720,7 +2807,7 @@
                           }}
                         >
                           <span
-                            class="relative size-4 shrink-0"
+                            class="group/sel relative size-4 shrink-0"
                             onclick={(e) => { e.stopPropagation(); selectItem(tableName, e.shiftKey) }}
                             onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); selectItem(tableName, e.shiftKey); } }}
                             role="checkbox"
@@ -2730,8 +2817,8 @@
                             {#if isSelected}
                               <Icon name="square-check" class="size-4 shrink-0 text-primary" />
                             {:else}
-                              <Icon name="pin" class="absolute inset-0 size-4 text-muted-foreground group-hover:opacity-0" />
-                              <Icon name="square" class="absolute inset-0 size-4 text-muted-foreground opacity-0 group-hover:opacity-100" />
+                              <Icon name="pin" class={cn("absolute inset-0 size-4 text-muted-foreground group-hover/sel:opacity-0", selecting && "opacity-0")} />
+                              <Icon name="square" class={cn("absolute inset-0 size-4 text-muted-foreground opacity-0 group-hover/sel:opacity-100", selecting && "opacity-100")} />
                             {/if}
                           </span>
                           <span class="min-w-0 truncate text-ui-sm leading-4">{@render hl(tableName)}</span>
@@ -2943,7 +3030,7 @@
                       title={comments.get(table.name) ? `${table.name}\n${comments.get(table.name)}` : table.name}
                     >
                       <span
-                        class="relative size-4 shrink-0"
+                        class="group/sel relative size-4 shrink-0"
                         onclick={(e) => { e.stopPropagation(); selectItem(table.name, e.shiftKey) }}
                         onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); selectItem(table.name, e.shiftKey); } }}
                         role="checkbox"
@@ -2953,8 +3040,11 @@
                         {#if isSelected}
                           <Icon name="square-check" class="size-4 shrink-0 text-primary" />
                         {:else}
-                          <Icon name="table-2" class={cn("absolute inset-0 size-4 group-hover:opacity-0", activeTable === table.name ? "text-foreground" : "text-muted-foreground")} />
-                          <Icon name="square" class="absolute inset-0 size-4 text-muted-foreground opacity-0 group-hover:opacity-100" />
+                          <!-- The table icon stays put on a row hover; the select box
+                               shows when the pointer is on the icon itself, or on
+                               every row once a selection has started. -->
+                          <Icon name="table-2" class={cn("absolute inset-0 size-4 group-hover/sel:opacity-0", activeTable === table.name ? "text-foreground" : "text-muted-foreground", selecting && "opacity-0")} />
+                          <Icon name="square" class={cn("absolute inset-0 size-4 text-muted-foreground opacity-0 group-hover/sel:opacity-100", selecting && "opacity-100")} />
                         {/if}
                       </span>
                       <span class="flex min-w-0 items-center gap-1.5">
@@ -3044,6 +3134,9 @@
                   <p class="mt-1 text-ui-2xs leading-relaxed text-muted-foreground">
                     {#if isTabEmptyFromFilter(lt)}
                       Nothing here matches “{debouncedFilter}”.
+                    {:else if lt === 'tables' && hiddenByDisplay > 0}
+                      {hiddenByDisplay} {hiddenByDisplay === 1 ? 'table is' : 'tables are'} hidden by your
+                      display options ({[hideEmpty && 'empty', hideSystem && 'system'].filter(Boolean).join(' and ')} tables).
                     {:else if lt === 'tables' && activeSchema}
                       Nothing in “{activeSchema}” yet.
                     {:else}
@@ -3051,7 +3144,12 @@
                     {/if}
                   </p>
                 </div>
-                {#if isTabEmptyFromFilter(lt)}
+                {#if lt === 'tables' && !isTabEmptyFromFilter(lt) && hiddenByDisplay > 0}
+                  <Button variant="outline" size="sm" onclick={() => { hideEmpty = false; hideSystem = false }}>
+                    <Icon name="eye" class="size-3.5 shrink-0" />
+                    Show them
+                  </Button>
+                {:else if isTabEmptyFromFilter(lt)}
                   <Button variant="outline" size="sm" onclick={() => handleFilterInput('')}>
                     <Icon name="x" class="size-3.5 shrink-0" />
                     Clear filter
@@ -3099,7 +3197,8 @@
         {/if}
       {/each}
     </div>
-    {@render connectionsSection()}
+    {@render chatsSection()}
+    {#if !(treeMode && $treeConnectionScope === 'all' && activePanel === 'tree')}{@render connectionsSection()}{/if}
     {:else if navSidebarPanel === "connections"}
       <ConnectionsSidebarPanel
         {connections}
@@ -3116,11 +3215,29 @@
     {/if}
 
     <!-- Footer, as in T3: app-wide controls as plain icons, one round action. -->
-    <div class="flex h-12 shrink-0 items-center gap-1 px-3">
-      <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:text-foreground" title="Settings" aria-label="Settings" onclick={onopensettings}><Icon name="settings" class="size-4 shrink-0" /></button>
-      <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:text-foreground" title={$isCurrentThemeDark ? 'Light theme' : 'Dark theme'} aria-label="Toggle theme" onclick={() => toggleLightDark()}><Icon name={$isCurrentThemeDark ? 'sun' : 'moon'} class="size-4 shrink-0" /></button>
-      <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:text-foreground" title="Keyboard shortcuts" aria-label="Keyboard shortcuts" onclick={onopenshortcuts}><Icon name="keyboard" class="size-4 shrink-0" /></button>
-      <button type="button" class="ml-auto inline-flex size-8 items-center justify-center rounded-full text-muted-foreground outline-none hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring" title="Check for updates" aria-label="Check for updates" onclick={oncheckupdates}><Icon name="arrow-up-circle" class="size-4 shrink-0" /></button>
+    <!-- Bottom-aligned with 4px under it, like the status bar beside it (h-9
+         with pb-1), so the icons here and its items share one centre line and
+         neither sits on the window edge. -->
+    <div class="flex h-12 shrink-0 items-end gap-0.5 px-2.5 pb-1">
+      <button type="button" class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title="Settings" aria-label="Settings" onclick={onopensettings}><Icon name="settings" class="size-3.5 shrink-0" /></button>
+      <button type="button" class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title={$isCurrentThemeDark ? 'Light theme' : 'Dark theme'} aria-label="Toggle theme" onclick={() => toggleLightDark()}><Icon name={$isCurrentThemeDark ? 'sun' : 'moon'} class="size-3.5 shrink-0" /></button>
+      <button type="button" class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title="Keyboard shortcuts" aria-label="Keyboard shortcuts" onclick={onopenshortcuts}><Icon name="keyboard" class="size-3.5 shrink-0" /></button>
+      {#if onopenlabs}<button type="button" class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title="Labs: features still being shaped" aria-label="Labs" onclick={onopenlabs}><Icon name="flask-conical" class="size-3.5 shrink-0" /></button>{/if}
+      {#if updateState}
+        <!-- T3's update pill: there when there is something to do, gone when
+             there isn't. Ready means downloaded; Restart installs it. -->
+        <button
+          type="button"
+          class="ml-auto mb-0.5 inline-flex h-6 items-center gap-1 rounded-full bg-primary px-2.5 text-ui-2xs font-medium text-primary-foreground transition-[background-color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-primary/90 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+          title={updateState === 'ready' ? 'The update is downloaded. Restart to install it.' : 'A new version of Stroke is available'}
+          onclick={oncheckupdates}
+        >
+          <Icon name={updateState === 'ready' ? 'refresh-cw' : 'download'} class="size-3 shrink-0" />
+          {updateState === 'ready' ? 'Restart' : 'Update'}
+        </button>
+      {:else}
+        <button type="button" class="ml-auto inline-flex size-7 items-center justify-center rounded-full text-muted-foreground outline-none transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none" title={checkingUpdate ? 'Checking for updates…' : 'Check for updates'} aria-label={checkingUpdate ? 'Checking for updates' : 'Check for updates'} aria-busy={checkingUpdate} disabled={checkingUpdate} onclick={oncheckupdates}><Icon name="download" class={checkingUpdate ? 'size-3.5 shrink-0 animate-pulse' : 'size-3.5 shrink-0'} /></button>
+      {/if}
     </div>
   </aside>
   </ContextMenu.Trigger>
@@ -3164,6 +3281,234 @@
   bind:cascade={dangerCascade}
   onconfirm={(c) => confirmDanger(c)}
 />
+
+{#snippet chatsSection()}
+  <!-- AI chats (beta, AI in a tab): the T3 thread list. A chat that is
+       replying says so in place of its time, so you can read a table while it
+       works and see when it is done. -->
+  {#if aiInTab && aiChatId}
+    <div class="flex max-h-[40%] shrink-0 flex-col pt-2">
+      <div class="flex h-9 shrink-0 items-center gap-1 pr-2 pl-4">
+        <button
+          type="button"
+          class="flex h-full min-w-0 flex-1 items-center gap-2 text-ui-sm text-foreground/80 hover:text-foreground"
+          aria-expanded={chatsOpen}
+          onclick={() => {
+            chatsOpen = !chatsOpen
+            try { localStorage.setItem('stroke:sidebar-chats-open', chatsOpen ? '1' : '0') } catch {}
+          }}
+        >
+          <span class="flex-1 text-left">Chats</span>
+          {#if chats.length}<span class="font-mono text-ui-2xs tabular-nums">{chats.length}</span>{/if}
+          <Icon name={chatsOpen ? 'chevron-down' : 'chevron-right'} class="size-3 shrink-0" />
+        </button>
+        <button
+          type="button"
+          class="hit-area inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground"
+          title="New chat"
+          aria-label="New chat"
+          onclick={() => onopenaichat(null)}
+        >
+          <Icon name="plus" class="size-3.5 shrink-0" />
+        </button>
+      </div>
+      {#if chatsOpen}
+        <div class="app-scroll min-h-0 overflow-y-auto px-2 pb-2">
+          {#if liveChats && chatBusy.includes('draft')}
+            <div class="flex h-7 w-full min-w-0 items-center gap-2 rounded-md bg-sidebar-accent px-2 text-ui-sm text-foreground">
+              <span class="min-w-0 flex-1 truncate">New chat</span>
+              <span class="flex shrink-0 items-center gap-1 text-ui-2xs text-primary"><Icon name="loader-2" class="size-3 shrink-0 animate-spin" />Working</span>
+            </div>
+          {/if}
+          {#each chatsShown as chat (chat.id)}
+            {@const open = aiTabActive && liveChats && $aiChatList.activeId === chat.id}
+            {@const busy = liveChats && chatBusy.includes(chat.id)}
+            {@const confirming = confirmDeleteChatId === chat.id}
+            <!-- One line per chat: the title, then the time or "Working". On
+                 hover (or focus) the time gives way to rename and delete; where
+                 it worked (database · schema) is in the tooltip. -->
+            {#if renamingChatId === chat.id}
+              <div class="flex h-7 w-full min-w-0 items-center rounded-md bg-sidebar-accent px-1">
+                <input
+                  use:selectOnMount
+                  class="h-6 min-w-0 flex-1 rounded-sm bg-transparent px-1 text-ui-sm text-foreground outline-none ring-1 ring-ring"
+                  aria-label="Chat name"
+                  bind:value={renamingChatTitle}
+                  onkeydown={(e) => {
+                    if (e.key === 'Enter') { e.preventDefault(); void commitChatRename() }
+                    else if (e.key === 'Escape') { e.preventDefault(); renamingChatId = null }
+                  }}
+                  onblur={() => void commitChatRename()}
+                />
+              </div>
+            {:else}
+              <ContextMenu.Root>
+              <ContextMenu.Trigger class="block w-full">
+              <div
+                class={cn(
+                  'group/chat relative flex h-7 w-full min-w-0 items-center rounded-md',
+                  open ? 'bg-sidebar-accent text-foreground' : 'text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground',
+                )}
+              >
+                <button
+                  type="button"
+                  class="flex h-full min-w-0 flex-1 items-center gap-2 rounded-md px-2 text-left text-ui-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  title={chat.where ? `${chat.title}\n${chat.where}` : chat.title}
+                  onclick={() => onopenaichat(chat.id)}
+                  ondblclick={() => startChatRename(chat)}
+                >
+                  <span class="min-w-0 flex-1 truncate">{chat.title}</span>
+                  {#if busy}
+                    <Icon name="loader-2" class="size-3 shrink-0 animate-spin text-primary" aria-label="Working" />
+                  {:else}
+                    <span class={cn('shrink-0 font-mono text-ui-2xs tabular-nums text-muted-foreground/80', !confirming && 'group-hover/chat:invisible group-focus-within/chat:invisible')}>{confirming ? '' : ago(chat.updatedAt)}</span>
+                  {/if}
+                </button>
+                {#if !busy}
+                  <div class={cn('absolute inset-y-0 right-1 flex items-center gap-0.5', confirming ? 'flex' : 'hidden group-hover/chat:flex group-focus-within/chat:flex')}>
+                    {#if !confirming}
+                      <button
+                        type="button"
+                        class="inline-flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-[color,background-color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.97]"
+                        title="Rename"
+                        aria-label="Rename chat"
+                        onclick={() => startChatRename(chat)}
+                      >
+                        <Icon name="pencil" class="size-3 shrink-0" />
+                      </button>
+                    {/if}
+                    <button
+                      type="button"
+                      class={cn(
+                        'inline-flex h-5 shrink-0 items-center justify-center gap-1 rounded-sm transition-[color,background-color,scale] duration-[120ms] ease-[var(--ease-out)] active:scale-[0.97]',
+                        confirming ? 'bg-destructive/12 px-1.5 text-ui-2xs font-medium text-destructive hover:bg-destructive/20' : 'w-5 text-muted-foreground hover:bg-sidebar-accent hover:text-destructive',
+                      )}
+                      title={confirming ? 'Click again to delete' : 'Delete'}
+                      aria-label={confirming ? 'Confirm delete chat' : 'Delete chat'}
+                      onclick={() => void deleteChat(chat.id)}
+                    >
+                      <Icon name="trash-2" class="size-3 shrink-0" />
+                      {#if confirming}Delete{/if}
+                    </button>
+                  </div>
+                {/if}
+              </div>
+              </ContextMenu.Trigger>
+              <ContextMenu.Content class="min-w-44">
+                <ContextMenu.Item onSelect={() => onopenaichat(chat.id)}>
+                  <Icon name="arrow-right" class="size-3.5 shrink-0" />Open
+                </ContextMenu.Item>
+                <ContextMenu.Item onSelect={() => startChatRename(chat)}>
+                  <Icon name="pencil" class="size-3.5 shrink-0" />Rename
+                </ContextMenu.Item>
+                <ContextMenu.Separator />
+                <ContextMenu.Item variant="destructive" onSelect={() => { confirmDeleteChatId = chat.id; void deleteChat(chat.id) }}>
+                  <Icon name="trash-2" class="size-3.5 shrink-0" />Delete
+                </ContextMenu.Item>
+              </ContextMenu.Content>
+              </ContextMenu.Root>
+            {/if}
+          {/each}
+          {#if !chats.length && !(liveChats && chatBusy.length)}
+            <button
+              type="button"
+              class="flex h-8 w-full items-center gap-2.5 rounded-md px-2 text-ui-sm text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground"
+              onclick={() => onopenaichat(null)}
+            >
+              <Icon name="bot" class="size-4 shrink-0" />
+              Ask about this database
+            </button>
+          {/if}
+          {#if chats.length > CHATS_LIMIT}
+            <button
+              type="button"
+              class="flex h-8 w-full items-center gap-2.5 rounded-md px-2 text-ui-sm text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground"
+              onclick={() => (chatsShowAll = !chatsShowAll)}
+            >
+              <Icon name={chatsShowAll ? 'chevron-up' : 'chevron-down'} class="size-4 shrink-0" />
+              {chatsShowAll ? 'Show less' : `Show ${chats.length - CHATS_LIMIT} more`}
+            </button>
+          {/if}
+        </div>
+      {/if}
+    </div>
+  {/if}
+{/snippet}
+
+{#snippet displayOptions()}
+          <DropdownMenu.Root>
+            <DropdownMenu.Trigger
+              class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground data-[state=open]:bg-accent data-[state=open]:text-foreground disabled:pointer-events-none disabled:opacity-40"
+              title="Display options"
+              disabled={!connectionName}
+            >
+              <Icon name="list-filter" class="size-3.5 shrink-0" />
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Content align="start" class="min-w-52">
+              <div class="px-2 pt-1 pb-1.5 text-ui-2xs text-muted-foreground leading-relaxed">
+                <span class="font-mono tabular-nums text-foreground/80">{regularTables.length}</span> tables{#if views.length} · <span class="font-mono tabular-nums text-foreground/80">{views.length}</span> views{/if}{#if matViews.length} · <span class="font-mono tabular-nums text-foreground/80">{matViews.length}</span> mat.{/if}
+                {#if hiddenCount > 0}<br /><span class="text-warning">{hiddenCount} hidden by filters</span>{/if}
+              </div>
+              <DropdownMenu.Separator />
+              <DropdownMenu.CheckboxItem
+                checked={showRowCount}
+                onCheckedChange={(v) => (showRowCount = v)}
+              ><Icon name="hash" class="text-muted-foreground" />Row counts</DropdownMenu.CheckboxItem>
+              <DropdownMenu.CheckboxItem
+                checked={hideEmpty}
+                onCheckedChange={(v) => (hideEmpty = v)}
+              ><Icon name="circle-slash" class="text-muted-foreground" />Hide empty tables</DropdownMenu.CheckboxItem>
+              <DropdownMenu.CheckboxItem
+                checked={hideSystem}
+                onCheckedChange={(v) => (hideSystem = v)}
+              ><Icon name="cog" class="text-muted-foreground" />Hide system tables</DropdownMenu.CheckboxItem>
+              <DropdownMenu.Separator />
+              <DropdownMenu.Label>Sort by</DropdownMenu.Label>
+              <!-- Field + direction merged: pick a field, click it again to flip. -->
+              <DropdownMenu.Item
+                closeOnSelect={false}
+                title="Click to flip direction"
+                onSelect={() => { if (sortBy === 'name') sortDir = sortDir === 'asc' ? 'desc' : 'asc'; else sortBy = 'name' }}
+              >
+                <Icon name={sortBy === 'name' && sortDir === 'desc' ? 'arrow-up-a-z' : 'arrow-down-a-z'} class="text-muted-foreground" />
+                Name
+                {#if sortBy === 'name'}
+                  <span class="ml-auto font-mono text-ui-2xs text-muted-foreground">{sortDir === 'asc' ? 'A→Z' : 'Z→A'}</span>
+                {/if}
+              </DropdownMenu.Item>
+              <DropdownMenu.Item
+                closeOnSelect={false}
+                title="Click to flip direction"
+                onSelect={() => { if (sortBy === 'rowCount') sortDir = sortDir === 'asc' ? 'desc' : 'asc'; else sortBy = 'rowCount' }}
+              >
+                <Icon name={sortBy === 'rowCount' && sortDir === 'asc' ? 'arrow-up-0-1' : 'arrow-down-0-1'} class="text-muted-foreground" />
+                Row count
+                {#if sortBy === 'rowCount'}
+                  <span class="ml-auto font-mono text-ui-2xs text-muted-foreground">{sortDir === 'desc' ? '9→0' : '0→9'}</span>
+                {/if}
+              </DropdownMenu.Item>
+              <!-- Newest first on the first pick: "what did I just make" is the
+                   usual question. Engines that keep no creation time (Postgres,
+                   SQLite, DuckDB) sort by creation order instead. -->
+              <DropdownMenu.Item
+                closeOnSelect={false}
+                title="Click to flip direction. MySQL and SQL Server sort by creation time; other engines by the order tables were created in."
+                onSelect={() => { if (sortBy === 'created') sortDir = sortDir === 'asc' ? 'desc' : 'asc'; else { sortBy = 'created'; sortDir = 'desc' } }}
+              >
+                <Icon name="clock" class="text-muted-foreground" />
+                Created
+                {#if sortBy === 'created'}
+                  <span class="ml-auto font-mono text-ui-2xs text-muted-foreground">{sortDir === 'desc' ? 'New→Old' : 'Old→New'}</span>
+                {/if}
+              </DropdownMenu.Item>
+              <DropdownMenu.Separator />
+              <DropdownMenu.Item onSelect={resetFilters} disabled={!filtersActive}>
+                <Icon name="rotate-ccw" class="text-muted-foreground" />
+                Reset filters &amp; sort
+              </DropdownMenu.Item>
+            </DropdownMenu.Content>
+          </DropdownMenu.Root>
+{/snippet}
 
 {#snippet connectionsSection()}
   <!-- Connections, pinned to the sidebar's foot (T3's "Settled" pattern): a

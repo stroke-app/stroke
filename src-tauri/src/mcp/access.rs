@@ -27,12 +27,19 @@ pub enum Dialect {
     Sql,
     /// Postgres: dollar quoting is real there, so `$$ ... $$` is a string.
     Postgres,
+    /// Oracle: `q'[...]'` quoting, and `BEGIN`/`DECLARE` open a PL/SQL block
+    /// that can run anything (EXECUTE IMMEDIATE included), not a transaction.
+    Oracle,
     /// The Mongo shell subset in `db::mongo`.
     Mongo,
     /// One raw Redis command.
     Redis,
     /// CouchDB and Firestore: their consoles only read.
     ReadOnlyDoc,
+    /// Elasticsearch and OpenSearch: Dev Tools requests, by method and path.
+    Elastic,
+    /// DynamoDB: PartiQL, or a JSON API call such as CreateTable.
+    Dynamo,
 }
 
 impl Dialect {
@@ -40,9 +47,12 @@ impl Dialect {
     pub fn for_driver(driver: &str) -> Self {
         match driver {
             "postgres" => Self::Postgres,
+            "oracle" => Self::Oracle,
             "mongodb" => Self::Mongo,
             "redis" => Self::Redis,
+            "elasticsearch" | "opensearch" => Self::Elastic,
             "couchdb" | "firestore" => Self::ReadOnlyDoc,
+            "dynamodb" => Self::Dynamo,
             _ => Self::Sql,
         }
     }
@@ -61,13 +71,39 @@ pub fn script_level_in(dialect: Dialect, sql: &str) -> u8 {
     match dialect {
         Dialect::Mongo => mongo_level(sql),
         Dialect::Redis => redis_level(sql),
+        Dialect::Dynamo => dynamo_level(sql),
         Dialect::ReadOnlyDoc => READ,
+        Dialect::Elastic => match crate::db::elastic::parse(sql) {
+            Ok(crate::db::elastic::Statement::Raw { method, path, .. }) => crate::db::elastic::request_level(&method, &path),
+            // SQL, index.search/get/count: reads. Anything unparsable is refused by the console itself.
+            _ => READ,
+        },
         Dialect::Sql | Dialect::Postgres => lexes(dialect)
             .into_iter()
             .flat_map(|lx| split_statements(sql, lx))
             .map(|s| statement_level(&s))
             .max()
             .unwrap_or(READ),
+        // The generic readings, and the statements as Oracle itself splits
+        // them (q-quotes, `/` lines, whole PL/SQL blocks); the worst wins.
+        Dialect::Oracle => {
+            let own = crate::db::oracle::split_statements(sql)
+                .iter()
+                .map(|s| oracle_statement_level(s))
+                .max()
+                .unwrap_or(READ);
+            own.max(script_level_in(Dialect::Sql, sql))
+        }
+    }
+}
+
+/// A PL/SQL block can do anything; the rest reads like any SQL statement once
+/// its literals are gone.
+fn oracle_statement_level(stmt: &str) -> u8 {
+    let bare = crate::db::oracle::strip_literals(stmt);
+    match words(&bare).first().map(String::as_str) {
+        Some("BEGIN") | Some("DECLARE") => DANGEROUS,
+        _ => statement_level(&bare),
     }
 }
 
@@ -81,6 +117,8 @@ pub fn statement_count(dialect: Dialect, sql: &str) -> usize {
             .map(|lx| split_statements(sql, lx).len())
             .max()
             .unwrap_or(0),
+        Dialect::Oracle => crate::db::oracle::split_statements(sql).len().max(statement_count(Dialect::Sql, sql)),
+        Dialect::Dynamo if crate::db::dynamodb::parse_api_call(sql).is_none() => statement_count(Dialect::Sql, sql),
         _ => usize::from(!sql.trim().is_empty()),
     }
 }
@@ -281,12 +319,35 @@ fn pragma_level(stmt: &str) -> u8 {
     }
 }
 
+/// DynamoDB: an API call by its operation, PartiQL like any SQL.
+fn dynamo_level(stmt: &str) -> u8 {
+    use crate::db::dynamodb::{parse_api_call, API_DANGEROUS, API_READS, API_SCHEMA, API_WRITES};
+    match parse_api_call(stmt) {
+        None => script_level_in(Dialect::Sql, stmt),
+        Some(Err(_)) => DANGEROUS,
+        Some(Ok((op, _))) => {
+            let op = op.as_str();
+            if API_READS.contains(&op) {
+                READ
+            } else if API_WRITES.contains(&op) {
+                WRITE
+            } else if API_SCHEMA.contains(&op) {
+                MODIFY
+            } else {
+                debug_assert!(API_DANGEROUS.contains(&op));
+                DANGEROUS
+            }
+        }
+    }
+}
+
 /// Mongo shell: classified from what `db::mongo::parse` will actually run.
 fn mongo_level(stmt: &str) -> u8 {
     use crate::db::mongo::{parse, Stmt};
     let Ok(parsed) = parse(stmt) else { return DANGEROUS };
     match parsed {
         Stmt::Use(_) | Stmt::ShowDbs | Stmt::ShowCollections => READ,
+        Stmt::CreateCollection(_) => MODIFY,
         Stmt::Coll { calls, .. } => {
             let Some(head) = calls.first() else { return DANGEROUS };
             let args: String = head.args.chars().filter(|c| !c.is_whitespace()).collect();
@@ -298,6 +359,8 @@ fn mongo_level(stmt: &str) -> u8 {
                 | "distinct" | "getIndexes" => READ,
                 "insertOne" | "insertMany" | "updateOne" | "replaceOne" | "deleteOne" => WRITE,
                 "updateMany" | "deleteMany" => if all_rows { DANGEROUS } else { WRITE },
+                "createIndex" | "dropIndex" => MODIFY,
+                // "drop" and anything unknown.
                 _ => DANGEROUS,
             }
         }
@@ -614,6 +677,31 @@ mod tests {
         assert_eq!(script_level("DELETE FROM \"Music\" WHERE Artist = 'x'"), WRITE);
         assert_eq!(script_level("TRUNCATE ks.t"), DANGEROUS);
         assert_eq!(script_level_in(Dialect::ReadOnlyDoc, "anything"), READ);
+        let d = |s: &str| script_level_in(Dialect::Dynamo, s);
+        assert_eq!(d(r#"SELECT * FROM "t""#), READ);
+        assert!(d(r#"DELETE FROM "t" WHERE pk = 'a'"#) >= WRITE);
+        assert_eq!(d(r#"{"operation": "Scan", "input": {"TableName": "t"}}"#), READ);
+        assert_eq!(d(r#"PutItem {"TableName": "t", "Item": {"pk": {"S": "a"}}}"#), WRITE);
+        assert_eq!(d(r#"CreateTable {"TableName": "t"}"#), MODIFY);
+        assert_eq!(d(r#"{"operation": "DeleteTable", "input": {"TableName": "t"}}"#), DANGEROUS);
+        assert_eq!(d(r#"{"operation": "Nope"}"#), DANGEROUS);
+        assert_eq!(Dialect::for_driver("dynamodb"), Dialect::Dynamo);
+        let m = |s: &str| script_level_in(Dialect::Mongo, s);
+        assert_eq!(m(r#"db.createCollection("shop")"#), MODIFY);
+        assert_eq!(m("db.users.createIndex({email: 1}, {unique: true})"), MODIFY);
+        assert_eq!(m(r#"db.users.dropIndex("email_1")"#), MODIFY);
+        assert_eq!(m("db.users.drop()"), DANGEROUS);
+        let es = |s| script_level_in(Dialect::Elastic, s);
+        assert_eq!(es("GET products/_search"), READ);
+        assert_eq!(es("POST products/_search\n{\"query\": {\"match_all\": {}}}"), READ);
+        assert_eq!(es("SELECT * FROM products"), READ);
+        assert_eq!(es("POST products/_doc\n{\"name\": \"a\"}"), WRITE);
+        assert_eq!(es("PUT products/_doc/1\n{\"name\": \"a\"}"), WRITE);
+        assert_eq!(es("DELETE products/_doc/1"), WRITE);
+        assert_eq!(es("PUT products"), MODIFY);
+        assert_eq!(es("PUT products/_mapping\n{\"properties\": {}}"), MODIFY);
+        assert_eq!(es("DELETE products"), DANGEROUS);
+        assert_eq!(es("PUT _cluster/settings\n{}"), DANGEROUS);
     }
 
     #[test]
@@ -622,7 +710,24 @@ mod tests {
         assert_eq!(Dialect::for_driver("mongodb"), Dialect::Mongo);
         assert_eq!(Dialect::for_driver("redis"), Dialect::Redis);
         assert_eq!(Dialect::for_driver("couchdb"), Dialect::ReadOnlyDoc);
+        assert_eq!(Dialect::for_driver("elasticsearch"), Dialect::Elastic);
+        assert_eq!(Dialect::for_driver("opensearch"), Dialect::Elastic);
         assert_eq!(Dialect::for_driver("cassandra"), Dialect::Sql);
-        assert_eq!(Dialect::for_driver("dynamodb"), Dialect::Sql);
+        assert_eq!(Dialect::for_driver("dynamodb"), Dialect::Dynamo);
+        assert_eq!(Dialect::for_driver("oracle"), Dialect::Oracle);
+    }
+
+    #[test]
+    fn oracle_scripts() {
+        let o = |s| script_level_in(Dialect::Oracle, s);
+        assert_eq!(o("SELECT * FROM emp WHERE action = 'DELETE'"), READ);
+        assert_eq!(o("select q'[it's]' from dual"), READ);
+        assert_eq!(o("INSERT INTO emp (id) VALUES (1)"), WRITE);
+        // A q-quote the generic lexer misreads must not hide what follows it.
+        assert_eq!(o("SELECT q'[it's]' FROM dual;\nDROP TABLE emp"), DANGEROUS);
+        // A PL/SQL block can run anything, DDL through EXECUTE IMMEDIATE included.
+        assert_eq!(o("BEGIN\n  EXECUTE IMMEDIATE 'DROP TABLE emp';\nEND;\n/"), DANGEROUS);
+        assert_eq!(o("DECLARE n NUMBER; BEGIN SELECT 1 INTO n FROM dual; END;"), DANGEROUS);
+        assert_eq!(statement_count(Dialect::Oracle, "SELECT 1 FROM dual;\nSELECT 2 FROM dual"), 2);
     }
 }

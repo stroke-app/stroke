@@ -243,7 +243,10 @@
     }
     const bw = x1 - x0 || 1, bh = y1 - y0 || 1
     const zFit = Math.min(cssW / bw, cssH / bh) * (1 - 0.12)
-    if (zFit >= READABLE_ZOOM) {
+    // A small schema always opens whole: anchoring it at the readable zoom cut
+    // the tables at the far end off screen, and the one you were looking for
+    // was often among them. The readable-zoom anchor is for big schemas.
+    if (zFit >= READABLE_ZOOM || (nodes.length <= 30 && zFit >= 0.4)) {
       fit(0.12, ms)
       return
     }
@@ -1075,10 +1078,12 @@
         nameW -= bw + 8
       }
       if (zoom >= LOD_ROWS) {
+        drawTableGlyph(p.x + 16, p.y + HDR_H / 2 - 6, c('mfg', 0.7))
+        forgetStyle()
         setFont(`600 14.5px ${FONT_SANS}`)
         setFill(c('fg', 1))
         ctx.textAlign = 'left'
-        fillClipped(d.name ?? '', p.x + 16, p.y + HDR_H / 2, nameW, 14.5)
+        fillClipped(d.name ?? '', p.x + 38, p.y + HDR_H / 2, nameW - 22, 14.5)
         // Column count, quiet, at the header's right edge.
         if (!isFocus && !inCount && nameW > 120) {
           setFont(FONT_TYPE)
@@ -1127,36 +1132,46 @@
       // A key into a hub names the hub. That relationship has no line of its
       // own (see hubEdges), so the row is where it is read.
       const hubRef = isFk && !isPk ? hubRefOf(col.foreignKey) : null
-      const badge = isPk ? 'pk' : hubRef ? `→ ${hubRef}` : isFk ? 'fk' : ''
-      let bw = badge ? 26 : 0
-      if (hubRef) { setFont(FONT_BADGE); bw = Math.min(110, Math.ceil(ctx.measureText(badge).width) + 14) }
-      const typeRight = p.x + NODE_W - (badge ? bw + 26 : 16)
-      const nameRight = showTypes ? typeRight - 4 : p.x + NODE_W - (badge ? bw + 20 : 16)
+      // Keys are a glyph in a slot before the name (key for primary, link for
+      // foreign), not a "pk"/"fk" chip after the type: the chips took 40 units
+      // from the type, which then cut off at numeric(1… and timestamp….
+      if (isPk) drawKeyGlyph(p.x + 21, midY, PK_INK, zoom)
+      else if (isFk) drawLinkGlyph(p.x + 21, midY, FK_INK)
+      forgetStyle()
+      // A key into a hub names the hub (that relationship has no line).
+      let refW = 0
+      if (hubRef) {
+        setFont(FONT_TYPE)
+        refW = Math.min(110, Math.ceil(ctx.measureText(`→ ${hubRef}`).width) + 8)
+      }
+      const typeRight = p.x + NODE_W - 14 - refW
+      const nameX = p.x + 36
+      let typeW = 0
+      if (showTypes) {
+        setFont(FONT_TYPE)
+        typeW = Math.min(132, ctx.measureText(String(col.dataType ?? '')).width)
+      }
+      const nameRight = showTypes ? typeRight - typeW - 10 : typeRight
 
       // Column name.
       setFont(isPk ? FONT_ROW_PK : FONT_ROW)
       setFill(isPk ? PK_NAME : isFk ? FK_NAME : c('fg', 0.82))
       ctx.textAlign = 'left'
-      fillClipped(col.name ?? '', p.x + 16, midY, nameRight - (p.x + 16), 12)
+      fillClipped(col.name ?? '', nameX, midY, nameRight - nameX, 12)
 
-      // Data type.
+      // Data type, whole where it fits (up to 132 units).
       if (showTypes) {
         setFont(FONT_TYPE)
         setFill(c('mfg', 0.6))
         ctx.textAlign = 'right'
-        fillClipped(String(col.dataType ?? ''), typeRight, midY, 72, 11, true)
+        fillClipped(String(col.dataType ?? ''), typeRight, midY, 132, 11, true)
       }
 
-      // PK / FK badge.
-      if (badge) {
-        const bx = p.x + NODE_W - bw - 12
-        roundRect(bx, cy + 6, bw, ROW_H - 12, 3)
-        setFill(isPk ? PK_WASH : FK_WASH)
-        ctx.fill()
-        setFont(FONT_BADGE)
-        setFill(isPk ? PK_INK : FK_INK)
-        ctx.textAlign = 'center'
-        ctx.fillText(badge, bx + bw / 2, midY + 0.5)
+      if (hubRef) {
+        setFont(FONT_TYPE)
+        setFill(FK_INK)
+        ctx.textAlign = 'right'
+        fillClipped(`→ ${hubRef}`, p.x + NODE_W - 14, midY, refW, 11, true)
       }
     }
 
@@ -1173,6 +1188,52 @@
       fillClipped(`+${d.hiddenCount} more`, p.x + 16, cy + ROW_H / 2, NODE_W - 32, 11)
     }
     ctx.globalAlpha = 1
+  }
+
+  /** A key glyph (primary key), 12 world units, centred at cx, cy. */
+  function drawKeyGlyph(/** @type {number} */ cx, /** @type {number} */ cy, /** @type {string} */ color, /** @type {number} */ zoom) {
+    ctx.save()
+    ctx.strokeStyle = color
+    ctx.lineWidth = 1.5
+    ctx.lineCap = 'round'
+    ctx.beginPath()
+    ctx.arc(cx - 2.5, cy - 1.5, 3, 0, Math.PI * 2)
+    ctx.moveTo(cx - 0.4, cy + 0.6); ctx.lineTo(cx + 4.5, cy + 5.5)
+    ctx.moveTo(cx + 2.6, cy + 3.6); ctx.lineTo(cx + 4.2, cy + 2)
+    ctx.stroke()
+    ctx.restore()
+    void zoom
+  }
+
+  /** A link glyph (foreign key): two offset rounded links. */
+  function drawLinkGlyph(/** @type {number} */ cx, /** @type {number} */ cy, /** @type {string} */ color) {
+    ctx.save()
+    ctx.strokeStyle = color
+    ctx.lineWidth = 1.5
+    ctx.lineCap = 'round'
+    ctx.beginPath()
+    ctx.moveTo(cx - 1, cy - 3.5); ctx.lineTo(cx + 1, cy - 3.5)
+    ctx.arc(cx + 1, cy - 1, 2.5, -Math.PI / 2, Math.PI / 2)
+    ctx.lineTo(cx - 1, cy + 1.5)
+    ctx.moveTo(cx + 1, cy + 3.5); ctx.lineTo(cx - 1, cy + 3.5)
+    ctx.arc(cx - 1, cy + 1, 2.5, Math.PI / 2, Math.PI * 1.5)
+    ctx.lineTo(cx + 1, cy - 1.5)
+    ctx.stroke()
+    ctx.restore()
+  }
+
+  /** A small table glyph for the card header. */
+  function drawTableGlyph(/** @type {number} */ x, /** @type {number} */ y, /** @type {string} */ color) {
+    ctx.save()
+    ctx.strokeStyle = color
+    ctx.lineWidth = 1.4
+    roundRect(x, y, 13, 12, 2.5)
+    ctx.stroke()
+    ctx.beginPath()
+    ctx.moveTo(x, y + 4); ctx.lineTo(x + 13, y + 4)
+    ctx.moveTo(x + 5, y + 4); ctx.lineTo(x + 5, y + 12)
+    ctx.stroke()
+    ctx.restore()
   }
 
   /**
@@ -1466,7 +1527,12 @@
     resize()
     ro = new ResizeObserver(resize)
     if (host) ro.observe(host)
-    themeObs = new MutationObserver(refreshTheme)
+    // Coalesced to a frame: reading the theme's colours forces a style recalc.
+    let themeFrame = 0
+    themeObs = new MutationObserver(() => {
+      cancelAnimationFrame(themeFrame)
+      themeFrame = requestAnimationFrame(refreshTheme)
+    })
     themeObs.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'data-theme', 'style'] })
     // Fit once positions are in (nodes may already be present, or arrive later).
     requestAnimationFrame(ensureFit)
@@ -1487,6 +1553,7 @@
   <canvas
     bind:this={canvas}
     class="block touch-none select-none"
+    ondragstart={(e) => e.preventDefault()}
     onpointerdown={onPointerDown}
     onpointermove={onPointerMove}
     onpointerup={onPointerUp}

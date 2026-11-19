@@ -1,4 +1,5 @@
-use super::connection::{require_conn, require_pool, ActiveConnection, DbState};
+use crate::db::connection::Db;
+use super::connection::{require_conn, require_pool, ActiveConnection};
 use super::schema::validate_ident;
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use futures::TryStreamExt;
@@ -9,7 +10,6 @@ use sqlx::{Column, Decode, Postgres, Row, TypeInfo, ValueRef};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use tauri::State;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize)]
@@ -1333,6 +1333,137 @@ pub(super) async fn fetch_table_column_names(
         .collect())
 }
 
+/// A column as the grid search sees it: its name and its type's category
+/// (`pg_type.typcategory`: N numeric, D date/time, B boolean, S string, ...).
+#[derive(Clone, Debug)]
+pub(super) struct SearchColumn {
+    pub name: String,
+    pub category: char,
+    pub type_name: String,
+}
+
+static SEARCH_COLUMNS_CACHE: std::sync::OnceLock<
+    std::sync::Mutex<HashMap<String, (std::time::Instant, Vec<SearchColumn>)>>,
+> = std::sync::OnceLock::new();
+
+/// Columns with their types, for the search predicate. Cached like the names.
+pub(super) async fn cached_search_columns(
+    pool: &sqlx::PgPool,
+    schema: &str,
+    table: &str,
+    refresh: bool,
+) -> Result<Vec<SearchColumn>, String> {
+    let key = pool_table_key(pool, schema, table);
+    let cache = SEARCH_COLUMNS_CACHE.get_or_init(|| std::sync::Mutex::new(HashMap::new()));
+    if !refresh {
+        if let Some((at, cols)) = cache.lock().ok().and_then(|m| m.get(&key).cloned()) {
+            if at.elapsed() < COLUMN_NAMES_TTL {
+                return Ok(cols);
+            }
+        }
+    }
+    validate_ident(schema)?;
+    validate_ident(table)?;
+    let rows = sqlx::query(
+        r#"
+        SELECT a.attname::text, t.typcategory::text, t.typname::text
+        FROM pg_attribute a
+        JOIN pg_class c ON c.oid = a.attrelid
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        JOIN pg_type t ON t.oid = a.atttypid
+        WHERE n.nspname = $1 AND c.relname = $2 AND a.attnum > 0 AND NOT a.attisdropped
+        ORDER BY a.attnum
+        "#,
+    )
+    .bind(schema)
+    .bind(table)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("Failed to load columns: {e}"))?;
+    let cols: Vec<SearchColumn> = rows
+        .iter()
+        .filter_map(|r| {
+            Some(SearchColumn {
+                name: r.try_get::<String, _>(0).ok()?,
+                category: r.try_get::<String, _>(1).ok()?.chars().next().unwrap_or('X'),
+                type_name: r.try_get::<String, _>(2).ok().unwrap_or_default(),
+            })
+        })
+        .collect();
+    if let Ok(mut m) = cache.lock() {
+        if m.len() > 4096 {
+            m.retain(|_, (at, _)| at.elapsed() < COLUMN_NAMES_TTL);
+        }
+        m.insert(key, (std::time::Instant::now(), cols.clone()));
+    }
+    Ok(cols)
+}
+
+/// Whether a column's text form could contain `term` at all, judged by its
+/// type alone. A number prints as digits, a sign, a point and an exponent, so
+/// "Product 1" can never be inside one; skipping it saves casting every value
+/// of it to text on every row of the scan, which on a 5M-row table was most
+/// of a search's time. Conservative: anything unsure is searched.
+pub(super) fn column_could_contain(col: &SearchColumn, term: &str) -> bool {
+    let lower = term.to_lowercase();
+    match col.category {
+        // Numbers: 12.5, -3, 1e+21, NaN, Infinity.
+        'N' if col.type_name != "money" => {
+            term.chars().all(|c| c.is_ascii_digit() || ".-+eE".contains(c))
+                || "nan".contains(lower.as_str())
+                || "-infinity".contains(lower.as_str())
+        }
+        // Dates and times: 2026-11-15 13:00:00.5+00, 13:00, plus infinity and BC.
+        'D' => {
+            term.chars().all(|c| c.is_ascii_digit() || "-:. +".contains(c))
+                || "-infinity".contains(lower.as_str())
+                || lower.trim() == "bc"
+        }
+        'B' => "true".contains(lower.as_str()) || "false".contains(lower.as_str()),
+        _ if col.type_name == "uuid" => term.chars().all(|c| c.is_ascii_hexdigit() || c == '-'),
+        _ => true,
+    }
+}
+
+/// The plain (not regex) search across `columns`, as fast as Postgres can run
+/// it while matching what ILIKE / LIKE would.
+///
+/// - Columns that can't contain the term are left out (column_could_contain);
+///   with none left the predicate is FALSE and the scan never starts.
+/// - A term without letters has no case, so case-insensitive is plain LIKE:
+///   on 5M rows a numeric search took 6.4s with ILIKE and 1.4s with LIKE.
+/// - Otherwise `lower(col) LIKE lower($1)`: the same rows as ILIKE, about
+///   twice as fast (2.05s vs 1.2s on one text column).
+fn build_plain_search(
+    builder: &mut QueryBuilder,
+    columns: &[SearchColumn],
+    term: &str,
+    case_sensitive: bool,
+) {
+    let has_case = term.chars().any(|c| c.is_lowercase() || c.is_uppercase());
+    let insensitive = !case_sensitive && has_case;
+    let searched: Vec<&SearchColumn> = columns.iter().filter(|c| column_could_contain(c, term)).collect();
+    if searched.is_empty() {
+        builder.push_condition("FALSE".to_string(), None);
+        return;
+    }
+    let pattern = builder.push_bind(format!("%{}%", escape_ilike_pattern(term)));
+    let parts: Vec<String> = searched
+        .iter()
+        .filter_map(|c| quoted_column(&c.name).ok().map(|col| (col, c)))
+        .map(|(col, c)| {
+            // Text needs no cast; everything else is searched as it prints.
+            let text = if c.category == 'S' { col } else { format!("{col}::text") };
+            if insensitive {
+                format!("lower({text}) LIKE lower({pattern}) ESCAPE '\\'")
+            } else {
+                format!("{text} LIKE {pattern} ESCAPE '\\'")
+            }
+        })
+        .collect();
+    builder.push_condition(format!("({})", parts.join(" OR ")), None);
+}
+
 fn ensure_column(column: &str, allowed: &[String]) -> Result<(), String> {
     if allowed.iter().any(|c| c == column) {
         Ok(())
@@ -1621,10 +1752,25 @@ pub(super) fn build_where(
     search_case_sensitive: bool,
     filters: &[RowFilter],
 ) -> Result<WhereClause, String> {
+    build_where_typed(columns, None, search, search_is_regex, search_case_sensitive, filters)
+}
+
+/// build_where with the columns' types, which lets a plain search skip the
+/// columns that can't match (see build_plain_search).
+pub(super) fn build_where_typed(
+    columns: &[String],
+    search_columns: Option<&[SearchColumn]>,
+    search: Option<&str>,
+    search_is_regex: bool,
+    search_case_sensitive: bool,
+    filters: &[RowFilter],
+) -> Result<WhereClause, String> {
     let mut builder = QueryBuilder::new();
 
     if let Some(term) = search.map(str::trim).filter(|s| !s.is_empty()) {
-        if search_is_regex {
+        if let (false, Some(typed)) = (search_is_regex, search_columns) {
+            build_plain_search(&mut builder, typed, term, search_case_sensitive);
+        } else if search_is_regex {
             let op = if search_case_sensitive { "~" } else { "~*" };
             let pattern = builder.push_bind(term.to_string());
             let parts: Vec<String> = columns
@@ -1786,6 +1932,7 @@ pub(crate) fn raw_filter_dialect(conn: &ActiveConnection) -> super::sql_util::Ra
         ActiveConnection::Mysql(_) => D::Mysql,
         ActiveConnection::Sqlite(_) | ActiveConnection::D1(_) | ActiveConnection::LibSql(_) => D::Sqlite,
         ActiveConnection::Duckdb(_) => D::Duckdb,
+        ActiveConnection::Oracle(_) => D::Oracle,
         ActiveConnection::Mssql(_) | ActiveConnection::Clickhouse(_) | ActiveConnection::Posthog(_) | ActiveConnection::Redis(_) | ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => D::Literal,
     }
 }
@@ -1811,7 +1958,7 @@ pub(crate) fn validate_raw_filters(conn: &ActiveConnection, filters: Option<&[Ro
 }
 
 pub async fn get_table_rows(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     table: String,
     limit: i64,
@@ -1906,6 +2053,11 @@ pub async fn get_table_rows(
                 &h, &schema, &table, limit, offset, search, sort_column, sort_direction, filters, include_meta,
             ).await;
         }
+        ActiveConnection::Oracle(h) => {
+            return super::oracle::get_table_rows(
+                &h, &schema, &table, limit, offset, search, sort_column, sort_direction, filters, include_meta,
+            ).await;
+        }
         ActiveConnection::Postgres(_) => {}
     }
     let pool = require_pool(&state)?;
@@ -1925,7 +2077,12 @@ pub async fn get_table_rows(
     } else {
         vec![]
     };
-    let where_clause = build_where(&table_columns, search.as_deref(), search_is_regex, search_case_sensitive, &filters)?;
+    let search_columns = if has_search && !search_is_regex {
+        cached_search_columns(&pool, &schema, &table, include_meta).await.ok()
+    } else {
+        None
+    };
+    let where_clause = build_where_typed(&table_columns, search_columns.as_deref(), search.as_deref(), search_is_regex, search_case_sensitive, &filters)?;
     let order_by = build_order_by(
         &table_columns,
         sort_column.as_deref(),
@@ -2368,6 +2525,54 @@ const ROW_ESTIMATE_SQL: &str = "SELECT GREATEST(c.reltuples::bigint, COALESCE(s.
      LEFT JOIN pg_catalog.pg_stat_all_tables s ON s.relid = c.oid \
      WHERE c.oid = $1::regclass";
 
+/// Long-running grid queries by key, so a newer one can cancel the older on
+/// the server. Searching a large table runs a filtered COUNT(*) per settled
+/// keystroke; each scans the whole table, and without this they all ran to
+/// the end (or the 30s timeout) on the database while only the last one was
+/// wanted.
+struct Superseded {
+    /// key -> (ticket, backend pid) of the query in flight under that key.
+    running: std::sync::Mutex<HashMap<String, (u64, i32)>>,
+    next: std::sync::atomic::AtomicU64,
+}
+
+impl Superseded {
+    /// Register `pid` under `key`, cancelling whatever ran there before.
+    fn claim(&self, pool: &sqlx::PgPool, key: &str, pid: i32) -> u64 {
+        let ticket = self.next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let prev = self
+            .running
+            .lock()
+            .ok()
+            .and_then(|mut m| m.insert(key.to_string(), (ticket, pid)));
+        if let Some((_, old)) = prev {
+            if old != pid {
+                let pool = pool.clone();
+                // Fire and forget: the old query's own caller sees 57014 and
+                // reports "unknown", which nobody is waiting for any more.
+                tokio::spawn(async move {
+                    let _ = sqlx::query("SELECT pg_cancel_backend($1)").bind(old).execute(&pool).await;
+                });
+            }
+        }
+        ticket
+    }
+
+    /// Forget `key` if it still holds this ticket (a newer query may own it).
+    fn release(&self, key: &str, ticket: u64) {
+        if let Ok(mut m) = self.running.lock() {
+            if m.get(key).is_some_and(|(t, _)| *t == ticket) {
+                m.remove(key);
+            }
+        }
+    }
+}
+
+static SUPERSEDED: std::sync::LazyLock<Superseded> = std::sync::LazyLock::new(|| Superseded {
+    running: std::sync::Mutex::new(HashMap::new()),
+    next: std::sync::atomic::AtomicU64::new(1),
+});
+
 /// Row count for the main grid, fetched separately so `get_table_rows` can
 /// return rows immediately (include_count = false) while the UI fills the total
 /// in asynchronously. Mirrors the count logic in `get_table_rows`: planner
@@ -2375,7 +2580,7 @@ const ROW_ESTIMATE_SQL: &str = "SELECT GREATEST(c.reltuples::bigint, COALESCE(s.
 /// (the WHERE clause bounds the scan). Non-Postgres engines return -1 - their
 /// `get_table_rows` already carries a real total, so the UI keeps that.
 pub async fn count_table_rows(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     table: String,
     search: Option<String>,
@@ -2386,6 +2591,8 @@ pub async fn count_table_rows(
     filters: Option<Vec<RowFilter>>,
     // Skip the planner estimate and COUNT(*) a large table too.
     exact: bool,
+    // A newer count under the same key cancels this one (see Superseded).
+    supersede: Option<String>,
 ) -> Result<i64, String> {
     validate_raw_filters(&require_conn(&state)?, filters.as_deref())?;
     match require_conn(&state)? {
@@ -2407,7 +2614,14 @@ pub async fn count_table_rows(
     } else {
         vec![]
     };
-    let where_clause = build_where(&table_columns, search.as_deref(), search_is_regex, search_case_sensitive, &filters)?;
+    // The same typed predicate as the rows query, or the pager would count
+    // something other than what the grid shows.
+    let search_columns = if has_search && !search_is_regex {
+        cached_search_columns(&pool, &schema, &table, false).await.ok()
+    } else {
+        None
+    };
+    let where_clause = build_where_typed(&table_columns, search_columns.as_deref(), search.as_deref(), search_is_regex, search_case_sensitive, &filters)?;
     let table_ref = format!(r#""{schema}"."{table}""#);
 
     const ESTIMATE_THRESHOLD: i64 = 100_000;
@@ -2446,7 +2660,22 @@ pub async fn count_table_rows(
     let _ = sqlx::query(&format!("SET LOCAL statement_timeout = '{GRID_COUNT_TIMEOUT}'"))
         .execute(&mut *tx)
         .await;
+    // This backend's pid, only when a newer count may need to cancel this one.
+    // Inside the transaction it is the backend that runs the COUNT, even behind
+    // a transaction-pooling proxy, so cancelling it can't hit anything else.
+    let pid: Option<i32> = if supersede.is_some() {
+        sqlx::query_scalar::<_, i32>("SELECT pg_backend_pid()").fetch_one(&mut *tx).await.ok()
+    } else {
+        None
+    };
+    let ticket = match (&supersede, pid) {
+        (Some(key), Some(pid)) => Some(SUPERSEDED.claim(&pool, key, pid)),
+        _ => None,
+    };
     let count = count_query.fetch_one(&mut *tx).await;
+    if let (Some(key), Some(t)) = (&supersede, ticket) {
+        SUPERSEDED.release(key, t);
+    }
     // COMMIT resets SET LOCAL exactly like ROLLBACK does, and unlike ROLLBACK it
     // is accepted by Nile's proxy (see execute_sql_pg).
     let _ = tx.commit().await;
@@ -2460,7 +2689,7 @@ pub async fn count_table_rows(
 }
 
 pub async fn update_table_cell(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     table: String,
     primary_key: HashMap<String, Value>,
@@ -2495,6 +2724,9 @@ pub async fn update_table_cell(
         }
         ActiveConnection::Mssql(h) => {
             return super::mssql::update_table_cell(&h, &schema, &table, primary_key, &column, &value).await;
+        }
+        ActiveConnection::Oracle(h) => {
+            return super::oracle::update_table_cell(&h, &schema, &table, primary_key, &column, &value).await;
         }
         ActiveConnection::Postgres(_) => {}
     }
@@ -2676,7 +2908,7 @@ pub(crate) async fn pg_insert_meta(
 }
 
 pub async fn insert_table_row(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     table: String,
     values: HashMap<String, Value>,
@@ -2714,6 +2946,10 @@ pub async fn insert_table_row(
         }
         ActiveConnection::Duckdb(h) => {
             let row = super::duckdb::insert_table_row(&h, &table, values).await?;
+            return Ok(InsertRowResult { row });
+        }
+        ActiveConnection::Oracle(h) => {
+            let row = super::oracle::insert_table_row(&h, &schema, &table, values).await?;
             return Ok(InsertRowResult { row });
         }
         ActiveConnection::Mssql(h) => {
@@ -2798,7 +3034,7 @@ pub async fn insert_table_row(
 }
 
 pub async fn delete_table_row(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     table: String,
     primary_key: HashMap<String, Value>,
@@ -2811,7 +3047,7 @@ pub async fn delete_table_row(
 }
 
 pub async fn delete_table_rows(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     table: String,
     primary_keys: Vec<HashMap<String, Value>>,
@@ -2844,6 +3080,9 @@ pub async fn delete_table_rows(
         }
         ActiveConnection::Mssql(h) => {
             return super::mssql::delete_table_rows(&h, &schema, &table, primary_keys).await;
+        }
+        ActiveConnection::Oracle(h) => {
+            return super::oracle::delete_table_rows(&h, &schema, &table, primary_keys).await;
         }
         ActiveConnection::Postgres(_) => {}
     }
@@ -3024,7 +3263,7 @@ pub(crate) fn describe_pk(pk_columns: &[String], primary_key: &HashMap<String, V
 /// Order is updates, deletes, then the insert, matching the review the user
 /// confirmed.
 pub async fn apply_table_changes(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     table: String,
     updates: Vec<RowUpdate>,
@@ -3275,7 +3514,7 @@ pub(crate) fn is_row_returning_sql(sql: &str) -> bool {
 
 /// Execute a single DDL statement that must run outside a transaction (e.g.
 /// CREATE DATABASE), directly on the connection, on any engine that has DDL.
-pub async fn execute_ddl(state: State<'_, DbState>, sql: String) -> Result<(), String> {
+pub async fn execute_ddl(state: Db<'_>, sql: String) -> Result<(), String> {
     let sql_str = sql.trim();
     if sql_str.is_empty() {
         return Err("Statement is empty".into());
@@ -3284,7 +3523,7 @@ pub async fn execute_ddl(state: State<'_, DbState>, sql: String) -> Result<(), S
 }
 
 pub async fn execute_sql(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     sql: String,
     query_id: Option<String>,
 ) -> Result<SqlResult, String> {
@@ -3308,6 +3547,20 @@ pub async fn execute_sql(
         // when the receiver fires.
         ActiveConnection::Postgres(pool) => execute_sql_pg(&pool, &sql_str, Some(cancel_rx)).await,
         ActiveConnection::Mysql(pool) => super::mysql::execute_sql(&pool, &sql_str, Some(cancel_rx)).await,
+        // Oracle interrupts the running call (OCIBreak); it then fails with
+        // ORA-01013, reported as a cancel.
+        ActiveConnection::Oracle(h) => {
+            let run = super::oracle::execute_sql(&h, &sql_str);
+            tokio::pin!(run);
+            tokio::select! {
+                r = &mut run => r,
+                _ = async { let _ = cancel_rx.await; } => {
+                    super::oracle::cancel(&h).await;
+                    let _ = run.await;
+                    Err(QUERY_CANCELLED.to_string())
+                }
+            }
+        }
         // Engines without a server-side cancel primitive: abandon the future when
         // cancelled so the UI unblocks (the statement then finishes or times out
         // server-side). This preserves the previous behavior for these engines.
@@ -3324,7 +3577,7 @@ pub async fn execute_sql(
                     ActiveConnection::Doc(d) => super::docdb::query(&d, &sql_str).await,
                     ActiveConnection::Duckdb(h) => super::duckdb::execute_sql(&h, &sql_str).await,
                     ActiveConnection::Mssql(h) => super::mssql::execute_sql(&h, &sql_str).await,
-                    ActiveConnection::Postgres(_) | ActiveConnection::Mysql(_) => unreachable!(),
+                    ActiveConnection::Postgres(_) | ActiveConnection::Mysql(_) | ActiveConnection::Oracle(_) => unreachable!(),
                 }
             } => r,
             _ = async { let _ = cancel_rx.await; } => Err(QUERY_CANCELLED.to_string()),
@@ -3375,6 +3628,7 @@ pub async fn execute_sql_on_conn(
         AnyConnectionConfig::Redis(c) => super::redis::query(&c, sql).await,
         AnyConnectionConfig::Dynamodb(c) => super::dynamodb::query(&c, sql).await,
         AnyConnectionConfig::Couchdb(c) => super::couchdb::query(&c, sql).await,
+        AnyConnectionConfig::Elasticsearch(c) => super::elastic::query(&c, sql).await,
         AnyConnectionConfig::Mongodb(_) => Err("Run MongoDB queries from the MongoDB console".into()),
         AnyConnectionConfig::Duckdb(c) => {
             let h = super::connection::open_duckdb(&c).await?;
@@ -3383,6 +3637,10 @@ pub async fn execute_sql_on_conn(
         AnyConnectionConfig::Mssql(c) => {
             let h = super::connection::open_mssql(&c).await?;
             super::mssql::execute_sql(&h, sql).await
+        }
+        AnyConnectionConfig::Oracle(c) => {
+            let h = super::connection::open_oracle(&c).await?;
+            super::oracle::execute_sql(&h, sql).await
         }
     };
     if let Ok(r) = &mut result {
@@ -3990,6 +4248,15 @@ fn next_word(sql: &str, from: usize) -> (&str, usize) {
 /// or the BEGIN … END body of a routine or trigger (`CREATE TRIGGER … BEGIN
 /// UPDATE …; END;` is one statement). Comment-only fragments are dropped.
 /// Mirrors `src/lib/sql-statements.js`.
+/// `split_sql_statements`, or the engine's own splitter where its scripts
+/// differ: Oracle runs PL/SQL blocks to a `/` line and rejects a trailing `;`.
+pub(crate) fn split_sql_for(conn: &ActiveConnection, sql: &str) -> Vec<String> {
+    match conn {
+        ActiveConnection::Oracle(_) => super::oracle::split_statements(sql),
+        _ => split_sql_statements(sql),
+    }
+}
+
 pub(crate) fn split_sql_statements(sql: &str) -> Vec<String> {
     let b = sql.as_bytes();
     let n = b.len();
@@ -4212,7 +4479,7 @@ async fn run_sql_multi_pg(
 }
 
 pub async fn execute_sql_multi(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     sql: String,
     query_id: Option<String>,
 ) -> Result<Vec<SqlResult>, String> {
@@ -4224,7 +4491,7 @@ pub async fn execute_sql_multi(
     let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
     let cancel_key = query_id.unwrap_or_else(|| "default".to_string());
     super::connection::register_cancel(&state, &cancel_key, cancel_tx);
-    let stmts = split_sql_statements(&sql_str);
+    let stmts = split_sql_for(&conn, &sql_str);
     if stmts.is_empty() {
         super::connection::unregister_cancel(&state, &cancel_key);
         return Err("Query is empty".into());
@@ -4238,6 +4505,11 @@ pub async fn execute_sql_multi(
         super::connection::unregister_cancel(&state, &cancel_key);
         return result;
     }
+    // Oracle's blocking call outlives the dropped future; interrupt it too.
+    let oracle_h = match &conn {
+        ActiveConnection::Oracle(h) => Some(h.clone()),
+        _ => None,
+    };
     let result = tokio::select! {
         r = async move {
             // Other engines: execute sequentially, one result set per statement.
@@ -4256,7 +4528,12 @@ pub async fn execute_sql_multi(
             }
             Ok(results)
         } => r,
-        _ = async { let _ = cancel_rx.await; } => Err(QUERY_CANCELLED.to_string()),
+        _ = async { let _ = cancel_rx.await; } => {
+            if let Some(h) = &oracle_h {
+                super::oracle::cancel(h).await;
+            }
+            Err(QUERY_CANCELLED.to_string())
+        }
     };
     super::connection::unregister_cancel(&state, &cancel_key);
     result
@@ -4277,6 +4554,7 @@ async fn run_one_other(conn: &ActiveConnection, stmt: &str) -> Result<SqlResult,
         ActiveConnection::Doc(d) => super::docdb::query(d, stmt).await,
         ActiveConnection::Duckdb(h) => super::duckdb::execute_sql(h, stmt).await,
         ActiveConnection::Mssql(h) => super::mssql::execute_sql(h, stmt).await,
+        ActiveConnection::Oracle(h) => super::oracle::execute_sql(h, stmt).await,
     }
 }
 
@@ -4316,7 +4594,7 @@ impl StatementOutcome {
 /// A single Postgres statement streams through `sink` (into the result store,
 /// in store mode). A script's results come back in the reply.
 pub async fn execute_sql_script(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     sql: String,
     query_id: Option<String>,
     sink: Option<&mut RowSink>,
@@ -4326,7 +4604,7 @@ pub async fn execute_sql_script(
         return Err("Query is empty".into());
     }
     let conn = require_conn(&state)?;
-    let stmts = split_sql_statements(&sql_str);
+    let stmts = split_sql_for(&conn, &sql_str);
     if stmts.is_empty() {
         return Err("Query is empty".into());
     }
@@ -4415,6 +4693,9 @@ async fn run_script_other(
     tokio::select! {
         _ = run => {}
         _ = async { let _ = cancel_rx.await; } => {
+            if let ActiveConnection::Oracle(h) = conn {
+                super::oracle::cancel(h).await;
+            }
             out.lock().unwrap().push(StatementOutcome::failed("", 0, QUERY_CANCELLED.into()));
         }
     }
@@ -4865,7 +5146,7 @@ const CELL_FETCH_HARD_MAX: i64 = 64 * 1024 * 1024;
 const CELL_FETCH_DEFAULT_MAX: i64 = 32 * 1024 * 1024;
 
 pub async fn fetch_cell_value(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     table: String,
     primary_key: HashMap<String, Value>,
@@ -4979,7 +5260,7 @@ pub async fn fetch_cell_value(
 }
 
 pub async fn get_column_stats(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     table: String,
     column: String,
@@ -5073,7 +5354,7 @@ pub async fn get_column_stats(
 /// MIN/MAX/DISTINCT on the column type (e.g. JSON/BLOB), so the panel still shows
 /// total + null counts instead of erroring.
 async fn column_stats_generic(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     schema: String,
     table: String,
     column: String,
@@ -5099,6 +5380,14 @@ async fn column_stats_generic(
                 format!("{}.{}", quote_bracket(&schema), quote_bracket(&table))
             };
             (t, quote_bracket(&column))
+        }
+        ActiveConnection::Oracle(_) => {
+            let t = if schema.is_empty() {
+                quote_double(&table)
+            } else {
+                format!("{}.{}", quote_double(&schema), quote_double(&table))
+            };
+            (t, quote_double(&column))
         }
         // SQLite, D1, LibSQL, DuckDB - double-quoted, single-namespace (no
         // PostgreSQL-style schema qualifier).
@@ -5160,6 +5449,7 @@ async fn dispatch_stats_sql(conn: &ActiveConnection, sql: &str) -> Result<SqlRes
         ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => Err("Column statistics are not supported on DynamoDB".into()),
         ActiveConnection::Duckdb(h) => super::duckdb::execute_sql(h, sql).await,
         ActiveConnection::Mssql(h) => super::mssql::execute_sql(h, sql).await,
+        ActiveConnection::Oracle(h) => super::oracle::execute_sql(h, sql).await,
     }
 }
 
@@ -5167,7 +5457,7 @@ async fn dispatch_stats_sql(conn: &ActiveConnection, sql: &str) -> Result<SqlRes
 /// connection. HTTP-based engines (D1, LibSQL, Clickhouse) are stateless so we
 /// return Ok immediately; a real request would validate their tokens but also
 /// incur network cost every 30 s.
-pub async fn ping_connection(state: State<'_, DbState>) -> Result<(), String> {
+pub async fn ping_connection(state: Db<'_>) -> Result<(), String> {
     let conn = require_conn(&state)?;
     match conn {
         // Remote pools: touch every idle connection, not just one (see keepalive_idle).
@@ -5180,6 +5470,7 @@ pub async fn ping_connection(state: State<'_, DbState>) -> Result<(), String> {
         ActiveConnection::D1(_) | ActiveConnection::LibSql(_) | ActiveConnection::Clickhouse(_) | ActiveConnection::Redis(_) | ActiveConnection::Posthog(_) | ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => Ok(()),
         ActiveConnection::Duckdb(h) => super::duckdb::execute_sql(&h, "SELECT 1").await.map(|_| ()),
         ActiveConnection::Mssql(h) => super::mssql::execute_sql(&h, "SELECT 1").await.map(|_| ()),
+        ActiveConnection::Oracle(h) => super::oracle::ping(&h).await,
     }
 }
 
@@ -5546,4 +5837,185 @@ mod nosql_console_live {
         let rc = ActiveConnection::Redis(crate::db::connection::RedisConfig { name: "t".into(), host: "127.0.0.1".into(), port: 6391, password: None, db: 0, tls: false });
         assert!(!run(&rc, "DBSIZE").await.rows.is_empty());
     }
+}
+
+#[cfg(test)]
+mod typed_search_tests {
+    use super::*;
+
+    fn col(name: &str, category: char, type_name: &str) -> SearchColumn {
+        SearchColumn { name: name.into(), category, type_name: type_name.into() }
+    }
+
+    fn cols() -> Vec<SearchColumn> {
+        vec![
+            col("id", 'N', "int4"),
+            col("name", 'S', "text"),
+            col("price", 'N', "numeric"),
+            col("at", 'D', "timestamptz"),
+            col("ok", 'B', "bool"),
+            col("uid", 'U', "uuid"),
+            col("doc", 'U', "jsonb"),
+        ]
+    }
+
+    fn sql(term: &str, case_sensitive: bool) -> String {
+        let names: Vec<String> = cols().iter().map(|c| c.name.clone()).collect();
+        build_where_typed(&names, Some(&cols()), Some(term), false, case_sensitive, &[]).unwrap().sql
+    }
+
+    #[test]
+    fn a_word_skips_numbers_dates_and_uuids() {
+        let w = sql("Product 1", false);
+        assert!(w.contains(r#"lower("name") LIKE lower($1)"#), "{w}");
+        assert!(w.contains(r#"lower("doc"::text)"#), "{w}");
+        assert!(!w.contains(r#""id""#) && !w.contains(r#""price""#) && !w.contains(r#""at""#) && !w.contains(r#""uid""#), "{w}");
+        assert!(!w.contains("ILIKE"), "{w}");
+    }
+
+    #[test]
+    fn digits_have_no_case_so_plain_like_everywhere_they_can_print() {
+        let w = sql("4999", false);
+        assert!(w.contains(r#""id"::text LIKE $1"#), "{w}");
+        assert!(w.contains(r#""price"::text LIKE $1"#), "{w}");
+        assert!(w.contains(r#""at"::text LIKE $1"#), "{w}");
+        assert!(w.contains(r#""uid"::text LIKE $1"#), "{w}");
+        assert!(!w.contains("lower("), "{w}");
+        assert!(!w.contains(r#""ok""#), "{w}");
+    }
+
+    #[test]
+    fn nothing_could_match_so_nothing_is_scanned() {
+        let only_numbers = vec![col("id", 'N', "int4"), col("at", 'D', "date")];
+        let w = build_where_typed(&["id".into(), "at".into()], Some(&only_numbers), Some("abc"), false, false, &[]).unwrap();
+        assert_eq!(w.sql, " WHERE FALSE");
+    }
+
+    #[test]
+    fn match_case_keeps_the_case() {
+        let w = sql("Product", true);
+        assert!(w.contains(r#""name" LIKE $1"#) && !w.contains("lower("), "{w}");
+    }
+
+    #[test]
+    fn booleans_and_specials_still_match() {
+        assert!(column_could_contain(&col("ok", 'B', "bool"), "tru"));
+        assert!(column_could_contain(&col("x", 'N', "float8"), "NaN"));
+        assert!(column_could_contain(&col("x", 'D', "timestamp"), "infinity"));
+        assert!(column_could_contain(&col("x", 'D', "date"), "2026-11"));
+        assert!(!column_could_contain(&col("x", 'D', "date"), "nov"));
+        assert!(column_could_contain(&col("m", 'N', "money"), "$"));
+    }
+}
+
+// ── Search index ─────────────────────────────────────────────────────────────
+// A trigram GIN index on lower(column) for each text column makes the grid's
+// `lower(col) LIKE lower($1)` search an index scan: on a 5M-row table a search
+// went from 1.2-2s to 18-110ms. Offered from the grid when a search is slow;
+// nothing here runs on its own.
+
+/// What the search index would cover, and what exists already.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchIndexStatus {
+    /// Text columns the search reads (the ones an index would cover).
+    pub text_columns: Vec<String>,
+    /// Of those, the ones that already have a trigram index on lower(col).
+    pub indexed: Vec<String>,
+    /// pg_trgm is installed, or can be installed here.
+    pub trgm_available: bool,
+    /// Planner estimate of the table's rows.
+    pub row_estimate: i64,
+}
+
+/// Name for the index on one column, within Postgres' 63-byte limit.
+fn search_index_name(table: &str, column: &str) -> String {
+    let mut name = format!("{table}_{column}_search_trgm");
+    if name.len() > 63 {
+        let mut cut = 63;
+        while !name.is_char_boundary(cut) { cut -= 1; }
+        name.truncate(cut);
+    }
+    name
+}
+
+pub async fn search_index_status(
+    state: Db<'_>,
+    schema: String,
+    table: String,
+) -> Result<SearchIndexStatus, String> {
+    let pool = require_pool(&state)?;
+    validate_ident(&schema)?;
+    validate_ident(&table)?;
+    let cols = cached_search_columns(&pool, &schema, &table, true).await?;
+    let text_columns: Vec<String> = cols.iter().filter(|c| c.category == 'S').map(|c| c.name.clone()).collect();
+    // Existing trigram indexes on lower(col) or col, by the columns they cover.
+    let defs: Vec<String> = sqlx::query_scalar(
+        "SELECT indexdef FROM pg_indexes WHERE schemaname = $1 AND tablename = $2 AND indexdef ILIKE '%gin_trgm_ops%'",
+    )
+    .bind(&schema)
+    .bind(&table)
+    .fetch_all(&pool)
+    .await
+    .unwrap_or_default();
+    // Postgres prints the expression as `lower("Name")` or, for varchar,
+    // `lower((name)::text)`: compare with quotes, parens and the cast removed.
+    let flat = |d: &str| d.replace("::text", "").replace(['"', '(', ')'], "");
+    let flat_defs: Vec<String> = defs.iter().map(|d| flat(d)).collect();
+    let indexed = text_columns
+        .iter()
+        .filter(|c| {
+            let want = format!("lower{c} gin_trgm_ops");
+            flat_defs.iter().any(|d| d.contains(&want))
+        })
+        .cloned()
+        .collect();
+    let trgm_available: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'pg_trgm')")
+        .fetch_one(&pool)
+        .await
+        .unwrap_or(false);
+    let row_estimate: i64 = sqlx::query_scalar::<_, i64>(ROW_ESTIMATE_SQL)
+        .bind(format!(r#""{schema}"."{table}""#))
+        .fetch_optional(&pool)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or(-1);
+    Ok(SearchIndexStatus { text_columns, indexed, trgm_available, row_estimate })
+}
+
+/// Create the missing trigram indexes. CONCURRENTLY, so the table stays
+/// readable and writable while they build; returns the indexes created.
+pub async fn create_search_index(
+    state: Db<'_>,
+    schema: String,
+    table: String,
+) -> Result<Vec<String>, String> {
+    let pool = require_pool(&state)?;
+    let status = search_index_status(state, schema.clone(), table.clone()).await?;
+    if !status.trgm_available {
+        return Err("This server doesn't have the pg_trgm extension, which the search index needs.".into());
+    }
+    sqlx::query("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+        .execute(&pool)
+        .await
+        .map_err(|e| format!("Couldn't enable pg_trgm (it needs a role that can create extensions): {e}"))?;
+    let mut created = Vec::new();
+    for col in status.text_columns.iter().filter(|c| !status.indexed.contains(c)) {
+        validate_ident(col)?;
+        let name = search_index_name(&table, col);
+        // CONCURRENTLY can't run in a transaction; a plain pool execute is
+        // its own statement. The statement timeout is lifted for it: a big
+        // table takes longer than the session default allows.
+        let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
+        let _ = sqlx::query("SET statement_timeout = 0").execute(&mut *conn).await;
+        let sql = format!(
+            r#"CREATE INDEX CONCURRENTLY IF NOT EXISTS "{name}" ON "{schema}"."{table}" USING gin (lower("{col}") gin_trgm_ops)"#
+        );
+        let res = sqlx::query(&sql).execute(&mut *conn).await;
+        let _ = sqlx::query("RESET statement_timeout").execute(&mut *conn).await;
+        res.map_err(|e| format!("Couldn't index {col}: {e}"))?;
+        created.push(name);
+    }
+    Ok(created)
 }

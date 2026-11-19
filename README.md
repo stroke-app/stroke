@@ -12,7 +12,7 @@ Stroke is a Rust + Svelte app for browsing, editing and querying databases. It s
 
 ## Databases
 
-**Engines:** PostgreSQL, MySQL, MariaDB, CockroachDB, SQLite, Turso / libSQL, Cloudflare D1, ClickHouse, DuckDB, SQL Server and Redis.
+**Engines:** PostgreSQL, MySQL, MariaDB, CockroachDB, SQLite, Turso / libSQL, Cloudflare D1, ClickHouse, DuckDB, SQL Server, Oracle (with Oracle Instant Client installed) and Redis.
 
 **Sign in and pick a database**, no connection string needed:
 
@@ -59,6 +59,8 @@ scoop install stroke
 ```
 
 Or grab an installer from [Releases](https://github.com/stroke-app/stroke/releases): `.dmg` for macOS (Apple Silicon or Intel), `-setup.exe` for Windows, `.deb` (Ubuntu 22.04+, Debian 12+), `.rpm` (Fedora 41+, RHEL 10) or `.AppImage` (Arch and any distro with glibc 2.35+) for Linux.
+
+On Wayland, Stroke runs natively. If a launch can't draw there (some GPU and driver setups), the next one falls back to X11 by itself. `STROKE_X11=1` forces X11; `STROKE_WAYLAND=1` forces Wayland and forgets the fallback.
 
 **Stroke Nightly** is built every night from the `nightly` branch and installs as a separate app beside Stroke, with its own settings, so you can try what's coming without risking your setup: [download the nightly](https://github.com/stroke-app/stroke/releases/tag/nightly). It updates itself every night something lands.
 

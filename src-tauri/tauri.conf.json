@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Stroke",
-  "version": "2.5.5",
+  "version": "3.0.0",
   "identifier": "com.broisnischal.stroke",
   "build": {
     "frontendDist": "../dist",
@@ -25,6 +25,13 @@
         "installMode": "passive"
       },
       "dialog": false
+    },
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "stroke"
+        ]
+      }
     }
   },
   "bundle": {
@@ -38,7 +45,8 @@
       "icons/icon.ico"
     ],
     "macOS": {
-      "signingIdentity": "-"
+      "signingIdentity": "-",
+      "entitlements": "./Entitlements.plist"
     },
     "windows": {
       "certificateThumbprint": null,

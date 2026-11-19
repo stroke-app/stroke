@@ -171,7 +171,7 @@
       >
         <span class="min-w-0 flex-1 truncate">{row.label}</span>
         {#if row.value === value}
-          <span class="shrink-0 text-ui-3xs text-muted-foreground">current</span>
+          <Icon name="check" class="size-3.5 shrink-0 text-foreground" aria-label="current" />
         {/if}
       </button>
     {/each}

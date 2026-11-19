@@ -217,7 +217,7 @@ async fn dispatch(
                 "protocolVersion": version,
                 "capabilities": { "tools": {}, "resources": {}, "prompts": {} },
                 "serverInfo": { "name": "Stroke", "version": env!("CARGO_PKG_VERSION") },
-                "instructions": "Stroke is the user's database client. Tools work on the database connected in Stroke right now. Look before you write: list_tables, describe_table and sample_rows show the real schema and values. Use open_in_stroke to show the user a table or hand them a query to review and run."
+                "instructions": "Stroke is the user's database client. Tools work on the database connected in Stroke right now. Look before you write: list_tables, describe_table and sample_rows show the real schema and values. Use open_in_stroke to show the user a table or hand them a query to review and run. Use share_link when the user wants a link to results, a chart, a query or a diagram."
             }))
         }
 
@@ -306,7 +306,21 @@ async fn dispatch(
             if name == "list_databases" || name == "current_database" {
                 let connections = state.connections.lock().map_err(|e| e.to_string())?.clone();
                 let active_id = state.active_conn_id.lock().map_err(|e| e.to_string())?.clone();
-                let text = tools::call_meta_tool(name, &connections, active_id.as_deref())?;
+                let live = conn.as_ref().map(|c| c.driver());
+                let mut text = tools::call_meta_tool(name, &connections, active_id.as_deref(), live)?;
+                // Say which database the queries really run on: after a switch
+                // the saved entry still names the one it was saved with.
+                if name == "current_database" {
+                    if let Some(db) = match conn.as_ref() { Some(c) => tools::live_database_name(c).await, None => None } {
+                        if let Ok(mut v) = serde_json::from_str::<Value>(&text) {
+                            if v.get("database").and_then(|d| d.as_str()).is_some_and(|saved| saved != db) {
+                                v["saved_database"] = v["database"].clone();
+                            }
+                            v["database"] = json!(db);
+                            text = v.to_string();
+                        }
+                    }
+                }
                 return Ok(json!({ "content": [{ "type": "text", "text": text }] }));
             }
 
@@ -524,7 +538,8 @@ mod tests {
     fn every_tool_argument_is_known() {
         // `query` (open_in_stroke) is SQL text but is never run: it only lands
         // in the editor for the user to review, so the gate does not apply.
-        const PLAIN: &[&str] = &["schema", "table", "format", "max_rows", "limit", "query"];
+        // share_link's `code` is Mermaid, and its `sql` is gated like any other.
+        const PLAIN: &[&str] = &["schema", "table", "format", "max_rows", "limit", "query", "kind", "title", "chart_type", "x_col", "y_col", "group_col", "code"];
         for tool in tools::tool_list().as_array().unwrap() {
             let name = tool["name"].as_str().unwrap();
             let props = tool["inputSchema"]["properties"].as_object().unwrap();

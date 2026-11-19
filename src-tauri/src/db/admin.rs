@@ -23,6 +23,7 @@ pub(crate) enum Dialect {
     Duckdb,
     Mssql,
     Clickhouse,
+    Oracle,
 }
 
 impl Dialect {
@@ -34,6 +35,7 @@ impl Dialect {
             ActiveConnection::Sqlite(_) | ActiveConnection::D1(_) | ActiveConnection::LibSql(_) => Some(Self::Sqlite),
             ActiveConnection::Duckdb(_) => Some(Self::Duckdb),
             ActiveConnection::Mssql(_) => Some(Self::Mssql),
+            ActiveConnection::Oracle(_) => Some(Self::Oracle),
             ActiveConnection::Clickhouse(_) => Some(Self::Clickhouse),
             ActiveConnection::Redis(_) | ActiveConnection::Posthog(_) | ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => None,
         }
@@ -90,7 +92,7 @@ fn qualified(d: Dialect, schema: &str, name: &str) -> String {
 
 fn quote(d: Dialect, ident: &str) -> String {
     match d {
-        Dialect::Postgres | Dialect::Sqlite | Dialect::Duckdb => quote_double(ident),
+        Dialect::Postgres | Dialect::Sqlite | Dialect::Duckdb | Dialect::Oracle => quote_double(ident),
         Dialect::Mysql | Dialect::Clickhouse => quote_backtick(ident),
         Dialect::Mssql => quote_bracket(ident),
     }
@@ -135,6 +137,7 @@ pub(crate) async fn run_statement(conn: &ActiveConnection, sql: &str) -> Result<
         ActiveConnection::LibSql(cfg) => super::libsql::query(cfg, sql, vec![]).await.map(|_| ()),
         ActiveConnection::Duckdb(h) => super::duckdb::execute_sql(h, sql).await.map(|_| ()),
         ActiveConnection::Mssql(h) => super::mssql::execute_sql(h, sql).await.map(|_| ()),
+        ActiveConnection::Oracle(h) => super::oracle::execute_sql(h, sql).await.map(|_| ()),
         ActiveConnection::Clickhouse(cfg) => super::clickhouse::query(cfg, sql).await.map(|_| ()),
         ActiveConnection::Redis(_) | ActiveConnection::Posthog(_) | ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => Err("This connection does not run DDL statements".into()),
     }

@@ -1,7 +1,15 @@
 <script>
+  import { toastPosition } from '$lib/stores/toast-position.js'
   import { onMount } from 'svelte'
   import { Toaster } from '$lib/components/ui/sonner/index.js'
   import StudioShell from './lib/components/StudioShell.svelte'
+  import DashboardWindow from './lib/components/DashboardWindow.svelte'
+
+  // A window opened for one dashboard (open_dashboard_window) shows only that.
+  const params = typeof location !== 'undefined' ? new URLSearchParams(location.search) : new URLSearchParams()
+  const dashboardView = params.get('view') === 'dashboard' ? { dash: params.get('dash') ?? '', conn: params.get('conn') ?? '' } : null
+  // The Local servers window (open_local_servers_window).
+  const localServersFrom = params.get('view') === 'local-servers' ? params.get('from') || 'main' : null
   import LicenseGate from './lib/components/LicenseGate.svelte'
   import AppLockGate from './lib/components/AppLockGate.svelte'
   import AppErrorBoundary from './lib/components/AppErrorBoundary.svelte'
@@ -12,28 +20,32 @@
   import { loadSettings, applySettings, installZoomShortcuts } from '$lib/stores/settings.js'
   import { installPlatformClass } from '$lib/platform.js'
   import { installClipboardBridge } from '$lib/clipboard.js'
+  import { installShiftWheel } from '$lib/shift-wheel.js'
+  import { installSlashFocus } from '$lib/slash-focus.js'
 
   onMount(async () => {
     installPlatformClass()
     applySettings(loadSettings())
     installZoomShortcuts()
+    // Shift + wheel scrolls sideways in every scroll area, whatever the webview does.
+    installShiftWheel()
+    // `/` focuses the search field in view.
+    installSlashFocus()
     // Route clipboard through Tauri's native plugin so copy works in the WKWebview
     // (navigator.clipboard is denied there, incl. Monaco's internal copy).
     void installClipboardBridge()
 
     // Dev-only console helpers (window.__TAURI__ isn't exposed without
-    // withGlobalTauri, which we keep off in production). Debug trial commands
-    // only exist in debug builds, so these are dev-only too.
+    // withGlobalTauri, which we keep off in production).
     if (import.meta.env.DEV) {
       const { invoke } = await import('@tauri-apps/api/core')
       const { refreshLicenseStatus } = await import('$lib/stores/license.js')
       // @ts-expect-error - dev-only debug surface
       window.__stroke = {
         status: () => invoke('check_license_status'),
-        resetTrial: async () => { await invoke('debug_reset_trial'); return refreshLicenseStatus() },
-        expireTrial: async (daysAgo = 20) => { await invoke('debug_set_trial_days_ago', { daysAgo }); return refreshLicenseStatus() },
+        refresh: () => refreshLicenseStatus(),
       }
-      console.info('[stroke] dev helpers → window.__stroke.status() / .expireTrial(20) / .resetTrial()')
+      console.info('[stroke] dev helpers → window.__stroke.status() / .refresh()')
     }
 
     // Suppress Tauri's internal "Couldn't find callback id" warning.
@@ -74,7 +86,13 @@
   })
 </script>
 
-<Toaster position="top-right" offset={{ top: '52px', right: '12px' }} closeButton />
+<!-- The corner is a setting (Appearance → Notifications). Top corners clear
+     the titlebar, bottom ones the status bar. -->
+<Toaster
+  position={$toastPosition}
+  offset={{ top: '52px', bottom: '40px', left: '12px', right: '12px' }}
+  closeButton
+/>
 <AppErrorBoundary>
   <!-- Mounts only when armed, throws on mount, and disarms itself first. Inside
        the boundary so the crash screen catches it; a sibling of the app rather
@@ -85,7 +103,15 @@
        behind it runs - not the license check, not a reconnect. -->
   <AppLockGate>
     <LicenseGate>
-      <StudioShell />
+      {#if dashboardView}
+        <DashboardWindow dashboardId={dashboardView.dash} connectionId={dashboardView.conn} />
+      {:else if localServersFrom}
+        {#await import('./lib/components/LocalServersWindow.svelte') then { default: LocalServersWindow }}
+          <LocalServersWindow from={localServersFrom} />
+        {/await}
+      {:else}
+        <StudioShell />
+      {/if}
     </LicenseGate>
   </AppLockGate>
 </AppErrorBoundary>

@@ -17,7 +17,7 @@ const LAST_ID_KEY  = 'stroke:last-connection-id'
 const DISCONNECTED_KEY = 'stroke:disconnected'
 
 /**
- * @typedef {'postgres' | 'sqlite' | 'd1' | 'mysql' | 'mariadb' | 'cockroachdb' | 'libsql' | 'clickhouse' | 'duckdb' | 'mssql' | 'redis' | 'valkey' | 'dynamodb' | 'couchdb' | 'cassandra' | 'firestore' | 'mongodb' | 'posthog'} DbType
+ * @typedef {'postgres' | 'sqlite' | 'd1' | 'mysql' | 'mariadb' | 'cockroachdb' | 'libsql' | 'clickhouse' | 'duckdb' | 'mssql' | 'oracle' | 'redis' | 'valkey' | 'dynamodb' | 'couchdb' | 'elasticsearch' | 'opensearch' | 'cassandra' | 'firestore' | 'mongodb' | 'posthog'} DbType
  *
  * @typedef {{ host: string, port?: number, username: string, privateKeyPath?: string }} SshConfig
  *
@@ -37,6 +37,10 @@ const DISCONNECTED_KEY = 'stroke:disconnected'
  *   secure?: boolean
  *   encrypt?: boolean
  *   trustCert?: boolean
+ *   serviceName?: string  - Oracle service name
+ *   sid?: string  - Oracle SID, instead of a service name
+ *   connectString?: string  - Oracle Easy Connect / TNS descriptor / tnsnames alias; overrides host, port, service and SID
+ *   clientLibDir?: string  - folder holding Oracle Instant Client
  *   filePath?: string
  *   accountId?: string
  *   databaseId?: string
@@ -45,7 +49,7 @@ const DISCONNECTED_KEY = 'stroke:disconnected'
  *   ssh?: SshConfig
  *   readOnly?: boolean
  *   environment?: 'prod' | 'staging' | 'dev' | null
- *   provider?: 'neon' | 'supabase' | 'planetscale' | 'prisma' | 'tidb' | 'turso' | 'nile' | 'railway' | 'upstash' | 'posthog'
+ *   provider?: 'neon' | 'supabase' | 'planetscale' | 'prisma' | 'tidb' | 'turso' | 'nile' | 'railway' | 'upstash' | 'posthog' | 'xata' | 'singlestore'
  *   projectId?: string  - PostHog project
  *   apiKey?: string     - PostHog personal API key
  *   providerRef?: string  - the provider's own id for this database (its db_ref), so reopening it from the provider picker connects with this entry instead of minting new credentials
@@ -350,6 +354,7 @@ export function upsertConnection(conn, { revive = false } = {}) {
   }
   const list = loadSavedConnections()
   const idx  = list.findIndex((c) => c.id === conn.id)
+  if (idx >= 0 && targetChanged(list[idx], conn)) closeParkedFor(conn.id)
   if (idx >= 0) {
     // A pin is set only through setConnectionMeta; a live copy written back
     // here (connect, database switch, edit) must not drop or revive it.
@@ -360,8 +365,43 @@ export function upsertConnection(conn, { revive = false } = {}) {
   return list
 }
 
+/**
+ * Fields that decide which server a connection reaches, and as whom. The
+ * database itself is not here: it is part of a set-aside pool's key, so
+ * switching databases is a different pool, not a changed one.
+ */
+const TARGET_FIELDS = ['type', 'host', 'port', 'db', 'tls', 'user', 'url', 'ssl', 'secure', 'encrypt', 'trustCert', 'serviceName', 'sid', 'connectString', 'clientLibDir', 'filePath', 'accountId', 'oauth', 'ssh', 'readOnly', 'projectId']
+
+/**
+ * True when an edit moves a saved connection to another server, login or
+ * mode. Name, colour, group, pin and the connect time don't count, so the
+ * write-back on every connect leaves its pools alone. A secret missing from
+ * the incoming copy is unchanged (a live copy may not carry it).
+ * @param {any} prev @param {any} next
+ */
+export function targetChanged(prev, next) {
+  const same = (/** @type {any} */ a, /** @type {any} */ b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null)
+  if (TARGET_FIELDS.some((f) => !same(prev[f], next[f]))) return true
+  return SECRET_FIELDS.some((f) => next[f] !== undefined && !same(prev[f], next[f]))
+}
+
+/**
+ * Labs, several connections at once: close every pool set aside for this
+ * saved connection (db/parked.rs), so switching back can't resume one that
+ * points at the old server or login. Nothing set aside: nothing happens.
+ * @param {string} id
+ */
+function closeParkedFor(id) {
+  try {
+    void invoke('close_parked', { key: null, connection: id }).catch(() => {})
+  } catch {
+    // Outside the desktop app there are no pools to close.
+  }
+}
+
 /** @param {string} id */
 export function removeConnection(id) {
+  closeParkedFor(id)
   const deleted = loadDeletedIds()
   deleted.add(id)
   // Before saveConnections, so the disk copy it writes carries the id too.

@@ -37,7 +37,10 @@ const WRAP_AAD: &[u8] = b"stroke-sync-key-v1";
 pub const KDF_M_KIB: u32 = 65_536;
 pub const KDF_T: u32 = 3;
 pub const KDF_P: u32 = 1;
-pub const KINDS: [&str; 3] = ["workspace", "connection", "settings"];
+/// Record kinds the app syncs. Keep in step with KINDS in src/lib/sync/engine.js
+/// and SYNC_KINDS in stroke-web's src/lib/sync/service.ts: a kind missing here
+/// fails the whole push ("Unknown record kind").
+pub const KINDS: [&str; 5] = ["workspace", "connection", "settings", "query", "library"];
 /// Server limit per push.
 const PUSH_BATCH: usize = 200;
 const MIN_PASSPHRASE: usize = 8;
@@ -323,6 +326,7 @@ fn sync_message(e: ApiError) -> String {
             "no_sync_key" => KEY_CHANGED.into(),
             "too_many_records" | "invalid_request" | "invalid_json" => format!("The server rejected the sync request ({code})."),
             "key_exists" => "Sync is already set up for this account. Unlock it with your passphrase.".into(),
+            "pro_required" => "pro_required".into(),
             "invalid_kind" | "invalid_id" => format!("The server rejected a record: {msg}"),
             "404" | "not_found" => "Sync isn't available on the server yet.".into(),
             _ => e.user_message(),
@@ -340,7 +344,7 @@ struct StoredKey {
     wrapped: String,
 }
 
-async fn load_local(app: &tauri::AppHandle) -> Option<([u8; 32], String)> {
+pub(crate) async fn load_local(app: &tauri::AppHandle) -> Option<([u8; 32], String)> {
     let raw = crate::secrets::read_all_async(app).await.get(SYNC_KEY_VAULT).cloned()?;
     let s: StoredKey = serde_json::from_str(&raw).ok()?;
     let key: [u8; 32] = unb64(&s.key).ok()?.try_into().ok()?;
@@ -415,6 +419,8 @@ pub struct SyncState {
     pub server_has_key: Option<bool>,
     /// The server's key changed (reset on another device): this device was locked.
     pub key_changed: bool,
+    /// The account has no paid Pro: sync isn't part of the trial.
+    pub pro_required: bool,
     pub offline: bool,
     pub error: Option<String>,
 }
@@ -438,6 +444,7 @@ pub async fn sync_state(app: tauri::AppHandle) -> Result<SyncState, String> {
             }
         }
         Err(ApiError::Network(_)) => s.offline = true,
+        Err(ApiError::Server(code, _)) if code == "pro_required" => s.pro_required = true,
         Err(e) => s.error = Some(sync_message(e)),
     }
     Ok(s)
@@ -477,10 +484,19 @@ pub async fn sync_unlock(app: tauri::AppHandle, passphrase: String) -> Result<()
 pub async fn sync_reset(app: tauri::AppHandle, passphrase: String) -> Result<(), String> {
     check_passphrase(&passphrase)?;
     let tok = token(&app).await?;
+    // The key this device still holds, if any: encrypted backups are re-wrapped
+    // under the new key, so a reset from here doesn't strand them.
+    let old = load_local(&app).await.map(|(k, _)| k);
     let key = random::<32>();
     let (wrapped, kdf) = blocking(move || wrap_key(&passphrase, &key)).await??;
     put_key(&account::base_url(), &tok, &wrapped, &kdf, true).await.map_err(sync_message)?;
-    store_local(&app, &key, &wrapped).await
+    store_local(&app, &key, &wrapped).await?;
+    if let Some(old) = old {
+        if let Err(e) = crate::cloud_backup::rewrap_backup_keys(&tok, &old, &key).await {
+            eprintln!("[sync] re-wrapping backup keys failed: {e}");
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -543,6 +559,17 @@ mod tests {
     /// Cheap parameters for tests that don't pin the real ones.
     fn fast_kdf() -> Kdf {
         Kdf { alg: "argon2id".into(), salt: b64(&seq::<16>(1)), m: 64, t: 1, p: 1 }
+    }
+
+    /// A fixed vector the website's unlock (stroke-web src/lib/backups/crypto.ts)
+    /// is checked against: passphrase "correct horse battery", key 0x42 * 32.
+    #[test]
+    fn known_answer_for_the_web_unlock() {
+        let kdf = Kdf { alg: "argon2id".into(), salt: b64(&[7u8; 16]), m: 1024, t: 2, p: 1 };
+        let kek = derive_kek("correct horse battery", &kdf).unwrap();
+        let wrapped = wrap_key_with_nonce(&kek, &[9u8; 24], &[0x42u8; 32]);
+        assert_eq!(unwrap_key("correct horse battery", &wrapped, &kdf).unwrap(), [0x42u8; 32]);
+        println!("UNLOCK {} {}", kdf.salt, wrapped);
     }
 
     #[test]
@@ -654,7 +681,9 @@ mod tests {
         assert!(encrypt_plain(&key, &mk("settings", "settings")).is_ok());
         assert!(encrypt_plain(&key, &mk("a b", "workspace")).is_err());
         assert!(encrypt_plain(&key, &mk(&"x".repeat(129), "workspace")).is_err());
-        assert!(encrypt_plain(&key, &mk("x", "query")).is_err());
+        assert!(encrypt_plain(&key, &mk("x", "query")).is_ok());
+        assert!(encrypt_plain(&key, &mk("x", "library")).is_ok());
+        assert!(encrypt_plain(&key, &mk("x", "secrets")).is_err());
         let tomb = encrypt_plain(&key, &PlainRecord { deleted: true, plaintext: None, ..mk("x", "workspace") }).unwrap();
         assert!(tomb.ciphertext.is_none());
         // Wire shape: no seq/updated_at on push.

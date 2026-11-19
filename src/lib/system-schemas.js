@@ -13,6 +13,13 @@ const SYSTEM_SCHEMAS = new Set([
   'pg_catalog',
   'pg_toast',
   'crdb_internal',
+  // Postgres extensions that keep their own bookkeeping in a schema:
+  // TimescaleDB (plus every `_timescaledb_*` schema, below) and PostGIS.
+  'timescaledb_information',
+  'timescaledb_experimental',
+  'topology',
+  'tiger',
+  'tiger_data',
   // Cross-engine (SQL standard)
   'information_schema',
   // MySQL / MariaDB
@@ -21,8 +28,14 @@ const SYSTEM_SCHEMAS = new Set([
   'sys',
   // SQL Server
   'guest',
-  // ClickHouse
+  // ClickHouse; also Oracle's SYSTEM user
   'system',
+  // Oracle: users the database itself creates and maintains
+  'anonymous', 'appqossys', 'audsys', 'ctxsys', 'dbsfwuser', 'dbsnmp', 'dgpdb_int', 'dip', 'dvf', 'dvsys',
+  'ggsharedcap', 'ggsys', 'gsmadmin_internal', 'gsmcatuser', 'gsmrootuser', 'gsmuser', 'lbacsys', 'mddata',
+  'mdsys', 'ojvmsys', 'olapsys', 'opsg_admin', 'oracle_ocm', 'orddata', 'ordplugins', 'ordsys', 'outln',
+  'remote_scheduler_agent', 'si_informtn_schema', 'sys$umf', 'sysbackup', 'sysdg', 'syskm', 'sysrac',
+  'vecsys', 'wmsys', 'xdb', 'xs$null', 'baasys',
 ])
 
 /** @param {string} name */
@@ -31,7 +44,8 @@ export function isSystemSchema(name) {
   if (!n) return false
   if (SYSTEM_SCHEMAS.has(n)) return true
   // Per-session and per-relation storage: generated names, nothing to browse.
-  return n.startsWith('pg_temp_') || n.startsWith('pg_toast_')
+  // TimescaleDB's catalog, cache, config and chunk schemas.
+  return n.startsWith('pg_temp_') || n.startsWith('pg_toast_') || n.startsWith('_timescaledb_')
 }
 
 /**

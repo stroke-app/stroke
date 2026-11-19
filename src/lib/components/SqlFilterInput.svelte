@@ -109,7 +109,7 @@
     placeholder={example}
     ariaLabel="SQL filter condition"
     completionSource={source}
-    {keys}
+    priorityKeys={keys}
     extensions={[singleLine]}
   />
 </div>

@@ -29,8 +29,9 @@
     max: 'The most reasoning the model allows.',
   }
 
-  // Enforced by Stroke's MCP server (src-tauri/src/mcp/access.rs), not left
-  // to the model: a statement above the level is refused.
+  // Enforced, not left to the model: Stroke's MCP server refuses a local
+  // agent's statement above the level, and the built-in chat checks each
+  // execute_sql with the same classifier (src-tauri/src/mcp/access.rs).
   const ACCESS = [
     { id: 'read', label: 'Read only', note: 'SELECT and EXPLAIN. Changes come back as SQL for you to run.', icon: Lock },
     { id: 'write', label: 'Read & write', note: 'Inserts, and updates or deletes with a WHERE clause.', icon: PenLine },

@@ -1,5 +1,5 @@
 <script>
-  import { onDestroy, tick } from "svelte";
+  import { onDestroy, tick, untrack } from "svelte";
   import { createSwapy } from "swapy";
   import EChartPanel from "./EChartPanel.svelte";
   import AiChartRenderer from "./AiChartRenderer.svelte";
@@ -15,8 +15,21 @@
     addChartToDashboard,
     removeChartFromDashboard,
     setItemSpan,
+    setItemSize,
     reorderItems,
+    addQueryToDashboard,
+    updateItem,
+    dashboardsConnectionId,
+    flushDashboards,
   } from "$lib/stores/dashboards.js";
+  import { listSavedQueries, queryTitle } from "$lib/stores/query-history.js";
+  import { executeSql } from "$lib/api.js";
+  import { isWriteSql } from "$lib/sql-write.js";
+  import { cardView, createQueue, agoText, formatKpi, queryView, QUERY_VIEWS } from "$lib/dashboard-live.js";
+  import RefreshCw from "@lucide/svelte/icons/refresh-cw";
+  import SquareTerminal from "@lucide/svelte/icons/square-terminal";
+  import SearchIcon from "@lucide/svelte/icons/search";
+  import Loader2 from "@lucide/svelte/icons/loader-2";
   import { cn } from "$lib/utils.js";
   import * as Dialog from "$lib/components/ui/dialog/index.js";
   import { Button } from "$lib/components/ui/button/index.js";
@@ -31,13 +44,180 @@
   import LayoutGrid from "@lucide/svelte/icons/layout-grid";
   import Presentation from "@lucide/svelte/icons/presentation";
   import Minimize2 from "@lucide/svelte/icons/minimize-2";
+  import MoreHorizontal from "@lucide/svelte/icons/more-horizontal";
+  import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
+  import SelectMenu from "./SelectMenu.svelte";
+  import FileCode from "@lucide/svelte/icons/file-code";
+  import AppWindow from "@lucide/svelte/icons/app-window";
+  import { toast } from "$lib/components/ui/sonner/toast.svelte.js";
 
   let {
     /** @type {import('$lib/stores/connections.js').SavedConnection | null} */
     connection = null,
     /** Open the SQL editor - where charts are made - from the empty picker. @type {(() => void) | null} */
     onopensqleditor = null,
+    /** Open a chart's query in a new editor tab. @type {((sql: string, title: string) => void) | null} */
+    onopensql = null,
+    /** The dashboard tab is the one on screen: only then do queries run. */
+    active = true,
   } = $props();
+
+  // ── Live data ──────────────────────────────────────────────────────────────
+  // Each card runs its saved chart's query again (read-only queries only), two
+  // at a time, and keeps the result here by chart id. Cards fall back to the
+  // snapshot taken when the chart was saved until their first run lands, or if
+  // the query writes, fails, or there is none.
+  const runQueue = createQueue(2);
+  /** @type {Record<string, { result?: any, at?: number, loading?: boolean, error?: string }>} */
+  let live = $state({});
+  let now = $state(Date.now());
+  $effect(() => {
+    const t = setInterval(() => (now = Date.now()), 15_000);
+    return () => clearInterval(t);
+  });
+
+  /** @param {import('$lib/stores/saved-charts.js').SavedChart | null} chart */
+  const canRun = (chart) => !!chart?.sql?.trim() && !isWriteSql(chart.sql);
+
+  /** @typedef {import('$lib/stores/dashboards.js').DashItem} DashItem */
+  /** Where a card's numbers live: its saved query's own key, or the chart's id (shared when a chart is on twice). @param {DashItem} item */
+  const keyOf = (item) => (item.query ? `q:${item.id}` : item.chartId ?? `x:${item.id}`);
+  /** The read-only SQL a card runs, or null when it only has a snapshot. @param {DashItem} item */
+  function sqlOf(item) {
+    const sql = item.query?.sql ?? getChart(item.chartId)?.sql ?? "";
+    return sql.trim() && !isWriteSql(sql) ? sql : null;
+  }
+
+  /** @param {DashItem} item */
+  async function refreshItem(item) {
+    const key = keyOf(item);
+    const sql = sqlOf(item);
+    if (!sql || live[key]?.loading) return;
+    live[key] = { ...live[key], loading: true, error: "" };
+    try {
+      const result = await runQueue(() => executeSql(sql));
+      live[key] = { result, at: Date.now(), loading: false, error: "" };
+    } catch (e) {
+      live[key] = { ...live[key], loading: false, error: String(/** @type {any} */ (e)?.message ?? e) };
+    }
+  }
+
+  function refreshAll() {
+    if (!activeDash) return;
+    const seen = new Set();
+    for (const item of activeDash.items) {
+      if (seen.has(keyOf(item))) continue;
+      seen.add(keyOf(item));
+      void refreshItem(item);
+    }
+  }
+
+  // First run for cards that have none yet, whenever the dashboard is on screen.
+  $effect(() => {
+    if (!active || !activeDash) return;
+    const items = activeDash.items;
+    untrack(() => { for (const item of items) if (!live[keyOf(item)]) void refreshItem(item); });
+  });
+  // Auto refresh, only while the tab and the window are in front.
+  $effect(() => {
+    const sec = activeDash?.refreshSec ?? 0;
+    if (!active || !sec) return;
+    const t = setInterval(() => { if (document.visibilityState === "visible") untrack(refreshAll); }, sec * 1000);
+    return () => clearInterval(t);
+  });
+  const REFRESH_CHOICES = [[0, "Off"], [30, "30 s"], [60, "1 min"], [300, "5 min"], [900, "15 min"]];
+  const anyLoading = $derived(Object.values(live).some((l) => l.loading));
+
+  /** What a card draws: its live result, or the saved snapshot. @param {import('$lib/stores/saved-charts.js').SavedChart | null} chart */
+  function viewFor(chart) {
+    const l = chart ? live[chart.id] : null;
+    if (chart && l?.result) {
+      try { return cardView(chart, l.result, $isCurrentThemeDark); } catch { /* fall back to the snapshot */ }
+    }
+    return null;
+  }
+
+  const SIZE_H = { s: 200, m: 280, l: 400 };
+  /** A card's height: resized by hand, or its s/m/l preset. @param {DashItem} item */
+  const heightOf = (item) => item.h ?? SIZE_H[item.size ?? "m"];
+
+  /** What a saved-query card draws from its last run. @param {DashItem} item */
+  function queryViewFor(item) {
+    const r = live[keyOf(item)]?.result;
+    if (!r || !item.query) return null;
+    try { return queryView(r, item.query.type, $isCurrentThemeDark); } catch { return null; }
+  }
+
+  // ── Resize ─────────────────────────────────────────────────────────────────
+  // The corner handle: width snaps to whole columns, height to 20px steps.
+  // The card follows the pointer; the store is written once, on release.
+  /** @type {{ id: string, span: number, h: number } | null} */
+  let resizing = $state(null);
+  const GRID_GAP = 12;
+
+  /** @param {PointerEvent} e @param {DashItem} item */
+  function startResize(e, item) {
+    if (!activeDash || !gridEl) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const dash = activeDash;
+    const cols = dash.columns;
+    const colW = (gridEl.clientWidth - GRID_GAP * (cols - 1)) / cols;
+    const x0 = e.clientX, y0 = e.clientY;
+    const span0 = Math.min(item.span, cols), h0 = heightOf(item);
+    const w0 = span0 * colW + (span0 - 1) * GRID_GAP;
+    resizing = { id: item.id, span: span0, h: h0 };
+    const el = /** @type {HTMLElement} */ (e.currentTarget);
+    el.setPointerCapture(e.pointerId);
+    /** @param {PointerEvent} ev */
+    const move = (ev) => {
+      const span = Math.max(1, Math.min(cols, Math.round((w0 + ev.clientX - x0 + GRID_GAP) / (colW + GRID_GAP))));
+      const h = Math.max(120, Math.min(900, Math.round((h0 + ev.clientY - y0) / 20) * 20));
+      resizing = { id: item.id, span, h };
+    };
+    const up = () => {
+      el.removeEventListener("pointermove", move);
+      el.removeEventListener("pointerup", up);
+      el.removeEventListener("pointercancel", up);
+      if (resizing && (resizing.span !== span0 || resizing.h !== h0)) updateItem(dash.id, item.id, { span: resizing.span, h: resizing.h });
+      resizing = null;
+    };
+    el.addEventListener("pointermove", move);
+    el.addEventListener("pointerup", up);
+    el.addEventListener("pointercancel", up);
+  }
+
+  /** Keyboard resize on the handle: arrows change width and height. @param {KeyboardEvent} e @param {DashItem} item */
+  function resizeKey(e, item) {
+    if (!activeDash) return;
+    const span = Math.min(item.span, activeDash.columns), h = heightOf(item);
+    const next =
+      e.key === "ArrowLeft" ? { span: Math.max(1, span - 1) }
+      : e.key === "ArrowRight" ? { span: Math.min(activeDash.columns, span + 1) }
+      : e.key === "ArrowUp" ? { h: Math.max(120, h - 20) }
+      : e.key === "ArrowDown" ? { h: Math.min(900, h + 20) }
+      : null;
+    if (!next) return;
+    e.preventDefault();
+    updateItem(activeDash.id, item.id, next);
+  }
+
+  /** A chart option shrunk to a thumbnail: the marks only, no axes, labels or tooltip. @param {any} o */
+  function thumbOption(o) {
+    if (!o) return o;
+    const strip = (/** @type {any} */ a) => (Array.isArray(a) ? a.map((x) => ({ ...x, show: false })) : a ? { ...a, show: false } : a);
+    return {
+      ...o,
+      animation: false,
+      tooltip: { show: false },
+      legend: { show: false },
+      title: { show: false },
+      grid: { left: 2, right: 2, top: 4, bottom: 2, containLabel: false },
+      xAxis: strip(o.xAxis),
+      yAxis: strip(o.yAxis),
+      series: (Array.isArray(o.series) ? o.series : o.series ? [o.series] : []).map((/** @type {any} */ x) => ({ ...x, label: { show: false }, symbol: "none", radius: x.type === "pie" ? ["0%", "85%"] : x.radius })),
+    };
+  }
 
   // ── Active dashboard ───────────────────────────────────────────────────────
   const activeDash = $derived(
@@ -82,14 +262,71 @@
     }
   }
 
+  /** The dashboard on its own, in a window for a second screen. */
+  async function openWindow() {
+    if (!activeDash || !connection?.id) return;
+    try {
+      // The window reads the dashboard from storage: write pending edits now,
+      // and pass the key the dashboards are stored under (the saved
+      // connection's id), not the live connection's.
+      flushDashboards();
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("open_dashboard_window", { dashboardId: activeDash.id, connectionId: dashboardsConnectionId() || connection.id, title: activeDash.name });
+    } catch (e) {
+      toast.error("Could not open the window", { description: String(e) });
+    }
+  }
+
   // ── Chart picker modal ─────────────────────────────────────────────────────
   let pickerOpen = $state(false);
 
-  /** @param {string} chartId */
+  let pickerQuery = $state("");
+  let pickerGroup = $state("");
+  /** @type {'charts' | 'queries'} */
+  let pickerTab = $state("charts");
+  /** @type {{ id: string, name: string, sql: string }[]} */
+  let savedQs = $state([]);
+  $effect(() => { if (!pickerOpen) { pickerQuery = ""; pickerGroup = ""; } });
+  // Open on what there is to add: saved queries when there are no charts yet.
+  $effect(() => { if (pickerOpen) untrack(() => { pickerTab = $savedCharts.length ? "charts" : "queries"; }); });
+  // The connection's saved queries, read fresh each time the picker opens.
+  $effect(() => {
+    if (!pickerOpen || !connection?.id) return;
+    const id = connection.id;
+    void listSavedQueries(id).then((qs) => { if (pickerOpen && connection?.id === id) savedQs = qs.filter((q) => q.sql?.trim()); });
+  });
+  const queryName = (/** @type {{ name?: string, sql: string }} */ q) => q.name?.trim() || queryTitle(q.sql);
+  const pickerQueries = $derived(
+    savedQs.filter((q) => {
+      const t = pickerQuery.trim().toLowerCase();
+      return !t || queryName(q).toLowerCase().includes(t) || q.sql.toLowerCase().includes(t);
+    }),
+  );
+  /** The card already showing this query. @param {string} sql */
+  const queryOnDash = (sql) => activeDash?.items.find((i) => i.query?.sql.trim() === sql.trim()) ?? null;
+  /** @param {{ name?: string, sql: string }} q */
+  function pickQuery(q) {
+    if (!activeDash) return;
+    const there = queryOnDash(q.sql);
+    if (there) removeChartFromDashboard(activeDash.id, there.id);
+    else addQueryToDashboard(activeDash.id, { sql: q.sql, name: queryName(q) });
+  }
+  const pickerGroups = $derived([...new Set($savedCharts.map((c) => c.group).filter(Boolean))]);
+  const pickerCharts = $derived(
+    $savedCharts.filter((c) => {
+      const q = pickerQuery.trim().toLowerCase();
+      return (!pickerGroup || c.group === pickerGroup) && (!q || c.name.toLowerCase().includes(q) || (c.group ?? "").toLowerCase().includes(q) || (c.config?.type ?? "").includes(q));
+    }),
+  );
+  /** How many times a chart is on this dashboard. @param {string} chartId */
+  const onDash = (chartId) => activeDash?.items.filter((i) => i.chartId === chartId).length ?? 0;
+
+  /** Add it, or take it off when it's already there. The picker stays open. @param {string} chartId */
   function pickChart(chartId) {
     if (!activeDash) return;
-    addChartToDashboard(activeDash.id, chartId);
-    pickerOpen = false;
+    const there = activeDash.items.find((i) => i.chartId === chartId);
+    if (there) removeChartFromDashboard(activeDash.id, there.id);
+    else addChartToDashboard(activeDash.id, chartId);
   }
 
   // ── Dashboard CRUD ─────────────────────────────────────────────────────────
@@ -103,6 +340,18 @@
     createDashboard(n);
     nameInput = "";
     namingOpen = false;
+  }
+
+  /** A new dashboard, named and ready to rename in place. */
+  function newDashboard() {
+    const d = createDashboard(`Dashboard ${$dashboards.length + 1}`);
+    if (d?.id) activeDashboardId.set(d.id);
+    void tick().then(() => startEditName());
+  }
+
+  /** Focus and select a field as it appears. @param {HTMLInputElement} el */
+  function focusSelect(el) {
+    queueMicrotask(() => { el.focus(); el.select(); });
   }
 
   function startEditName() {
@@ -145,7 +394,7 @@
   const layoutKey = $derived(
     activeDash
       ? `${activeDash.id}|${activeDash.columns}|${presenting}|${activeDash.items
-          .map((i) => `${i.id}:${Math.min(i.span, activeDash.columns)}`)
+          .map((i) => `${i.id}:${Math.min(i.span, activeDash.columns)}:${i.h ?? i.size ?? ""}`)
           .join(",")}`
       : "none",
   );
@@ -262,176 +511,90 @@
   {/if}
   <!-- Header -->
   {#if !presenting}
+  <!-- Toolbar: which dashboard (searchable), New, one menu for the rest,
+       then View only and Add chart. -->
   <div
-    class="studio-chrome flex h-10 shrink-0 items-center gap-2 border-b border-border bg-panel px-3"
+    class="studio-chrome flex h-12 shrink-0 items-center gap-2 border-b border-border/40 bg-panel px-4"
     data-studio-chrome
   >
-    <LayoutGrid class="size-4 shrink-0 text-muted-foreground" />
-
-    <!-- Dashboard selector -->
-    <div class="relative">
-      <button
-        type="button"
-        class="flex h-8 items-center gap-1.5 rounded-md bg-sidebar-accent/50 px-3 text-ui-sm hover:bg-sidebar-accent"
-        onclick={() => (dashDropdownOpen = !dashDropdownOpen)}
-      >
-        {#if editingName}
-          <span class="flex items-center gap-1">
-            <input
-              type="text"
-              bind:value={editNameInput}
-              class="w-32 bg-transparent font-medium outline-none"
-              onblur={commitEditName}
-              onkeydown={(e) => {
-                if (e.key === "Enter") commitEditName();
-                if (e.key === "Escape") editingName = false;
-              }}
-              onclick={(e) => e.stopPropagation()}
-            />
-            <span
-              role="button"
-              tabindex="0"
-              class="cursor-pointer text-primary"
-              onclick={(e) => { e.stopPropagation(); commitEditName(); }}
-              onkeydown={(e) => { if (e.key === "Enter") commitEditName(); }}
-            >
-              <Check class="size-3 shrink-0" />
-            </span>
-          </span>
-        {:else}
-          <span>{activeDash?.name ?? "Select dashboard"}</span>
-          <ChevronDown class="size-3 shrink-0 text-muted-foreground" />
-        {/if}
-      </button>
-
-      {#if dashDropdownOpen}
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div
-          class="absolute left-0 top-full z-50 mt-1 min-w-[180px] overflow-hidden rounded-[10px] border border-border/60 bg-popover p-1 elevate-2-rim"
-          onmouseleave={() => (dashDropdownOpen = false)}
-        >
-          {#each $dashboards as d (d.id)}
-            <button
-              type="button"
-              class={cn(
-                "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-ui-sm transition-colors hover:bg-accent",
-                d.id === $activeDashboardId
-                  ? "font-medium text-foreground"
-                  : "text-muted-foreground",
-              )}
-              onclick={() => { activeDashboardId.set(d.id); dashDropdownOpen = false; }}
-            >
-              <LayoutGrid class="size-3 shrink-0" />
-              <span class="flex-1 truncate">{d.name}</span>
-              {#if d.id !== $activeDashboardId}
-                <span
-                  role="button"
-                  tabindex="0"
-                  class="cursor-pointer text-muted-foreground hover:text-destructive"
-                  onclick={(e) => { e.stopPropagation(); deleteDashboard(d.id); }}
-                  onkeydown={(e) => { if (e.key === "Enter") { e.stopPropagation(); deleteDashboard(d.id); } }}
-                >
-                  <X class="size-3 shrink-0" />
-                </span>
-              {/if}
-            </button>
-          {/each}
-
-          <div class="border-t border-border/50 px-2 py-1.5">
-            {#if namingOpen}
-              <div class="flex items-center gap-1">
-                <input
-                  type="text"
-                  bind:value={nameInput}
-                  placeholder="Dashboard name…"
-                  class="no-field-frame h-8 flex-1 rounded-md border-0 bg-sidebar-accent/50 px-2.5 text-ui-sm outline-none focus:bg-sidebar-accent"
-                  onkeydown={(e) => {
-                    if (e.key === "Enter") handleCreateDashboard();
-                    if (e.key === "Escape") namingOpen = false;
-                  }}
-                />
-                <button type="button" class="text-primary" onclick={handleCreateDashboard}>
-                  <Check class="size-3 shrink-0" />
-                </button>
-              </div>
-            {:else}
-              <button
-                type="button"
-                class="flex w-full items-center gap-1.5 rounded-md px-1 py-0.5 text-ui-xs text-muted-foreground transition-colors hover:text-foreground"
-                onclick={() => { namingOpen = true; nameInput = ""; }}
-              >
-                <Plus class="size-3 shrink-0" />
-                New
-              </button>
-            {/if}
-          </div>
-        </div>
-      {/if}
-    </div>
-
+    {#if editingName && activeDash}
+      <input
+        type="text"
+        bind:value={editNameInput}
+        aria-label="Dashboard name"
+        class="no-field-frame h-8 w-56 rounded-lg border-0 bg-muted/60 px-2.5 text-ui-sm font-medium text-foreground outline-none focus:bg-muted/80"
+        onblur={commitEditName}
+        onkeydown={(e) => {
+          if (e.key === "Enter") commitEditName();
+          if (e.key === "Escape") editingName = false;
+        }}
+        use:focusSelect
+      />
+    {:else if $dashboards.length}
+      <SelectMenu
+        ariaLabel="Dashboard"
+        triggerClass="h-8 w-56"
+        contentClass="w-[var(--bits-popover-anchor-width)] min-w-[14rem]"
+        searchPlaceholder="Search dashboards"
+        value={$activeDashboardId ?? ""}
+        onValueChange={(v) => activeDashboardId.set(v)}
+        items={$dashboards.map((d) => ({ value: d.id, label: d.name, icon: "layout-grid", hint: `${d.items.length}`, keywords: [d.name] }))}
+      />
+    {/if}
+    <Button variant="outline" size="sm" class="gap-1.5" onclick={newDashboard}>
+      <Plus class="size-3.5 shrink-0" />New
+    </Button>
     {#if activeDash}
-      <!-- Rename -->
-      <button
-        type="button"
-        class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-        title="Rename dashboard"
-        onclick={startEditName}
-      >
-        <Pencil class="size-3.5 shrink-0" />
-      </button>
-
-      <!-- Column count cycle -->
-      <div class="flex items-center gap-px rounded-md border border-border/50">
-        {#each COL_OPTIONS as cols (cols)}
-          <button
-            type="button"
-            class={cn(
-              "flex h-7 w-7 items-center justify-center text-ui-2xs transition-colors first:rounded-l-md last:rounded-r-md",
-              activeDash.columns === cols
-                ? "bg-primary/15 text-primary font-medium"
-                : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
-            )}
-            title="{cols} columns"
-            onclick={() => updateDashboard(activeDash.id, { columns: cols })}
-          >{cols}</button>
-        {/each}
-      </div>
-
-      <!-- Delete -->
-      <button
-        type="button"
-        class={cn(
-          "inline-flex size-7 items-center justify-center rounded-md transition-colors",
-          confirmDeleteDash
-            ? "bg-destructive/15 text-destructive hover:bg-destructive/25"
-            : "text-muted-foreground hover:bg-muted/60 hover:text-destructive",
-        )}
-        title={confirmDeleteDash ? "Click again to confirm delete" : "Delete dashboard"}
-        onclick={handleDeleteDashboard}
-      >
-        <Trash2 class="size-3.5 shrink-0" />
-      </button>
+      <DropdownMenu.DropdownMenu>
+        <DropdownMenu.DropdownMenuTrigger class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground data-[state=open]:bg-accent" aria-label="Dashboard actions">
+          <MoreHorizontal class="size-4 shrink-0" />
+        </DropdownMenu.DropdownMenuTrigger>
+        <DropdownMenu.DropdownMenuContent align="start" class="min-w-48">
+          <DropdownMenu.DropdownMenuItem onclick={startEditName}><Pencil class="size-3.5 shrink-0" />Rename</DropdownMenu.DropdownMenuItem>
+          <DropdownMenu.DropdownMenuSub>
+            <DropdownMenu.DropdownMenuSubTrigger><LayoutGrid class="size-3.5 shrink-0" />Columns</DropdownMenu.DropdownMenuSubTrigger>
+            <DropdownMenu.DropdownMenuSubContent class="min-w-32">
+              {#each [1, 2, 3, 4, 5, 6] as cols (cols)}
+                <DropdownMenu.DropdownMenuItem onclick={() => updateDashboard(activeDash.id, { columns: cols })}>
+                  <span class="flex-1">{cols} {cols === 1 ? "column" : "columns"}</span>
+                  {#if activeDash.columns === cols}<Check class="size-3.5 shrink-0 text-primary" />{/if}
+                </DropdownMenu.DropdownMenuItem>
+              {/each}
+            </DropdownMenu.DropdownMenuSubContent>
+          </DropdownMenu.DropdownMenuSub>
+          <DropdownMenu.DropdownMenuSeparator />
+          <DropdownMenu.DropdownMenuItem variant="destructive" onclick={() => { if (activeDash) deleteDashboard(activeDash.id); }}><Trash2 class="size-3.5 shrink-0" />Delete dashboard</DropdownMenu.DropdownMenuItem>
+        </DropdownMenu.DropdownMenuContent>
+      </DropdownMenu.DropdownMenu>
     {/if}
 
     <div class="ml-auto flex items-center gap-1.5">
       {#if activeDash}
         {#if activeDash.items.length > 0}
-          <button
-            type="button"
-            class="inline-flex h-8 items-center gap-1.5 rounded-md bg-sidebar-accent/50 px-3 text-ui-sm text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
-            title="View only - hide every control (Esc to exit)"
-            onclick={() => setViewOnly(true)}
-          >
+          <div class="flex h-8 items-center rounded-md border border-border/60">
+            <button type="button" class="inline-flex h-full items-center gap-1.5 rounded-s-md px-2.5 text-ui-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" title="Run every chart's query again" onclick={refreshAll}>
+              <RefreshCw class={cn("size-3.5 shrink-0", anyLoading && "animate-spin")} />Refresh
+            </button>
+            <span class="h-4 w-px bg-border/60"></span>
+            <SelectMenu
+              ariaLabel="Auto refresh"
+              triggerClass="h-full w-auto gap-1 rounded-none rounded-e-md border-0 bg-transparent px-2 text-muted-foreground hover:text-foreground"
+              contentClass="w-40"
+              searchThreshold={99}
+              value={String(activeDash.refreshSec ?? 0)}
+              onValueChange={(v) => updateDashboard(activeDash.id, { refreshSec: Number(v) })}
+              items={REFRESH_CHOICES.map(([v, l]) => ({ value: String(v), label: v ? `Every ${l}` : "Auto off" }))}
+            />
+          </div>
+          <Button variant="ghost" size="sm" class="gap-1.5 text-muted-foreground hover:text-foreground" title="Open this dashboard in a window of its own, for a second screen" onclick={openWindow}>
+            <AppWindow class="size-3.5 shrink-0" />Open in window
+          </Button>
+          <Button variant="ghost" size="icon-sm" class="text-muted-foreground hover:text-foreground" title="View only: hide every control (Esc to exit)" aria-label="View only" onclick={() => setViewOnly(true)}>
             <Presentation class="size-3.5 shrink-0" />
-            View only
-          </button>
+          </Button>
         {/if}
-        <Button
-           size="sm"
-          onclick={() => (pickerOpen = true)}
->
-          <Plus class="size-3.5 shrink-0" />
-          Add Chart
+        <Button size="sm" class="gap-1.5" onclick={() => (pickerOpen = true)}>
+          <Plus class="size-3.5 shrink-0" />Add
         </Button>
       {/if}
     </div>
@@ -448,7 +611,7 @@
         <div class="text-center">
           <p class="font-medium text-foreground/60">No dashboard yet</p>
           <p class="mt-1 text-ui-sm text-muted-foreground">
-            Create a dashboard to arrange your saved charts
+            Saved charts and queries on one screen, refreshed live
           </p>
         </div>
         <Button
@@ -456,7 +619,7 @@
           onclick={() => createDashboard("My Dashboard")}
 >
           <Plus class="size-4 shrink-0" />
-          Create Dashboard
+          New dashboard
         </Button>
       </div>
 
@@ -465,14 +628,14 @@
         <div class="flex size-16 items-center justify-center rounded-lg border-2 border-dashed border-border/40">
           <BarChart2 class="size-8 shrink-0 text-muted-foreground" />
         </div>
-        <p class="text-ui-sm text-muted-foreground">Add charts to build your dashboard</p>
+        <p class="text-ui-sm text-muted-foreground">Add saved charts or queries</p>
         <button
           type="button"
           class="inline-flex h-8 items-center gap-1.5 rounded-md bg-sidebar-accent/50 px-4 text-ui-sm text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
           onclick={() => (pickerOpen = true)}
         >
           <Plus class="size-4 shrink-0" />
-          Add Chart
+          Add
         </button>
       </div>
 
@@ -481,7 +644,14 @@
       <div bind:this={gridEl} class="grid gap-3" style={gridStyle}>
         {#each activeDash.items as item (item.id)}
           {@const chart = getChart(item.chartId)}
-          {@const span = effectiveSpan(item)}
+          {@const rz = resizing?.id === item.id ? resizing : null}
+          {@const span = rz ? rz.span : effectiveSpan(item)}
+          {@const l = live[keyOf(item)]}
+          {@const view = item.query ? queryViewFor(item) : viewFor(chart)}
+          {@const h = (rz ? rz.h : heightOf(item)) + (presenting ? 40 : 0)}
+          {@const title = item.query?.name ?? chart?.name ?? "Missing chart"}
+          {@const runs = !!sqlOf(item)}
+          {@const status = l?.loading ? "loading" : l?.error ? "error" : l?.at ? "ok" : "idle"}
           <div
             data-swapy-slot={item.id}
             style="grid-column: span {span}"
@@ -489,80 +659,167 @@
             <div
               data-swapy-item={item.id}
               class={cn(
-                "group flex flex-col overflow-hidden rounded-lg border border-border/60 bg-card transition-colors",
-                // Taller cards with no chrome to fight for space when presenting.
-                presenting ? "h-[320px]" : "h-[260px] hover:border-border",
+                "group relative flex flex-col overflow-hidden rounded-lg border bg-card transition-colors",
+                rz ? "border-primary/60" : "border-border/60",
+                !presenting && !rz && "hover:border-border",
               )}
+              style="height:{h}px"
             >
-              <!-- Card header. View-only keeps the chart title (it labels the
-                   data) and drops every control. -->
-              <div
-                class={cn(
-                  "flex h-9 shrink-0 items-center gap-1 border-b border-border/40 bg-card",
-                  presenting ? "px-3" : "px-2",
-                )}
-              >
+              <div class={cn("flex h-9 shrink-0 items-center gap-2", presenting ? "px-3" : "ps-1.5 pe-1.5")}>
                 {#if !presenting}
-                  <!-- Drag handle -->
                   <div
                     data-swapy-handle
-                    class="flex size-6 cursor-grab items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground active:cursor-grabbing"
-                    title="Drag to reorder"
+                    class="-me-1 flex size-6 shrink-0 cursor-grab items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:text-foreground active:cursor-grabbing"
+                    title="Drag to move"
                   >
                     <Grip class="size-3.5 shrink-0" />
                   </div>
                 {/if}
-
-                <!-- Title -->
-                <span class="min-w-0 flex-1 truncate text-ui-xs font-medium text-foreground/80">
-                  {chart?.name ?? "Unknown chart"}
-                </span>
-
+                <!-- The card's state at a glance: live, refreshing, failed, or a saved snapshot. -->
+                <span
+                  class={cn(
+                    "size-1.5 shrink-0 rounded-full",
+                    status === "ok" && "bg-success",
+                    status === "loading" && "animate-pulse bg-warning",
+                    status === "error" && "bg-destructive",
+                    status === "idle" && "bg-muted-foreground/40",
+                  )}
+                  role="img"
+                  aria-label={status === "ok" ? "Live" : status === "loading" ? "Refreshing" : status === "error" ? "Failed" : runs ? "Not run yet" : "Saved snapshot"}
+                ></span>
+                <span class="min-w-0 flex-1 truncate text-ui-xs font-medium text-foreground" {title}>{title}</span>
+                {#if l?.at && !l.error}
+                  <span class="shrink-0 text-ui-3xs tabular-nums text-muted-foreground" title={new Date(l.at).toLocaleString()}>{agoText(l.at, now)}</span>
+                {:else if !runs && chart}
+                  <span class="shrink-0 text-ui-3xs text-muted-foreground" title="The query isn't read-only, so the dashboard doesn't run it again">snapshot</span>
+                {/if}
                 {#if !presenting}
-                <!-- Span selector (1 … columns) -->
-                <div class="flex items-center gap-px opacity-0 transition-opacity group-hover:opacity-100">
-                  {#each Array.from({ length: activeDash.columns }, (_, i) => i + 1) as s (s)}
-                    <button
-                      type="button"
-                      onclick={() => setItemSpan(activeDash.id, item.id, /** @type {1|2|3} */ (s))}
-                      class={cn(
-                        "hit-area flex size-5 items-center justify-center rounded-md text-ui-2xs font-mono transition-colors",
-                        span === s
-                          ? "bg-primary/15 text-primary"
-                          : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
-                      )}
-                      title="{s} column{s > 1 ? 's' : ''}"
-                    >{s}</button>
-                  {/each}
-                </div>
-
-                <!-- Remove -->
-                <button
-                  type="button"
-                  onclick={() => removeChartFromDashboard(activeDash.id, item.id)}
-                  class="hit-area ml-1 flex size-5 items-center justify-center rounded-md text-muted-foreground transition-colors group-hover:text-muted-foreground hover:!text-destructive"
-                  title="Remove from dashboard"
-                >
-                  <X class="size-3 shrink-0" />
-                </button>
+                  <div class="flex shrink-0 items-center opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                    {#if runs}
+                      <button type="button" class="flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" title="Refresh" aria-label="Refresh {title}" onclick={() => refreshItem(item)}>
+                        <RefreshCw class={cn("size-3.5 shrink-0", l?.loading && "animate-spin")} />
+                      </button>
+                    {/if}
+                    <DropdownMenu.DropdownMenu>
+                      <DropdownMenu.DropdownMenuTrigger class="flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground data-[state=open]:bg-accent" aria-label="Card options">
+                        <MoreHorizontal class="size-3.5 shrink-0" />
+                      </DropdownMenu.DropdownMenuTrigger>
+                      <DropdownMenu.DropdownMenuContent align="end" class="min-w-48">
+                        {#if item.query}
+                          <DropdownMenu.DropdownMenuSub>
+                            <DropdownMenu.DropdownMenuSubTrigger><BarChart2 class="size-3.5 shrink-0" />Show as</DropdownMenu.DropdownMenuSubTrigger>
+                            <DropdownMenu.DropdownMenuSubContent class="min-w-36">
+                              {#each QUERY_VIEWS as v (v)}
+                                <DropdownMenu.DropdownMenuItem onclick={() => item.query && updateItem(activeDash.id, item.id, { query: { ...item.query, type: v } })}>
+                                  <span class="flex-1">{v === "auto" ? "Automatic" : v[0].toUpperCase() + v.slice(1)}</span>
+                                  {#if (item.query.type ?? "auto") === v}<Check class="size-3.5 shrink-0 text-primary" />{/if}
+                                </DropdownMenu.DropdownMenuItem>
+                              {/each}
+                            </DropdownMenu.DropdownMenuSubContent>
+                          </DropdownMenu.DropdownMenuSub>
+                        {/if}
+                        <DropdownMenu.DropdownMenuSub>
+                          <DropdownMenu.DropdownMenuSubTrigger>Width</DropdownMenu.DropdownMenuSubTrigger>
+                          <DropdownMenu.DropdownMenuSubContent class="min-w-36">
+                            {#each Array.from({ length: activeDash.columns }, (_, i) => i + 1) as w (w)}
+                              <DropdownMenu.DropdownMenuItem onclick={() => setItemSpan(activeDash.id, item.id, w)}>
+                                <span class="flex-1">{w === activeDash.columns ? "Full width" : `${w} of ${activeDash.columns}`}</span>
+                                {#if span === w}<Check class="size-3.5 shrink-0 text-primary" />{/if}
+                              </DropdownMenu.DropdownMenuItem>
+                            {/each}
+                          </DropdownMenu.DropdownMenuSubContent>
+                        </DropdownMenu.DropdownMenuSub>
+                        <DropdownMenu.DropdownMenuSub>
+                          <DropdownMenu.DropdownMenuSubTrigger>Height</DropdownMenu.DropdownMenuSubTrigger>
+                          <DropdownMenu.DropdownMenuSubContent class="min-w-36">
+                            {#each [["s", "Small"], ["m", "Medium"], ["l", "Large"]] as [k, label] (k)}
+                              <DropdownMenu.DropdownMenuItem onclick={() => { updateItem(activeDash.id, item.id, { h: undefined }); setItemSize(activeDash.id, item.id, /** @type {'s'|'m'|'l'} */ (k)); }}>
+                                <span class="flex-1">{label}</span>
+                                {#if !item.h && (item.size ?? "m") === k}<Check class="size-3.5 shrink-0 text-primary" />{/if}
+                              </DropdownMenu.DropdownMenuItem>
+                            {/each}
+                          </DropdownMenu.DropdownMenuSubContent>
+                        </DropdownMenu.DropdownMenuSub>
+                        {#if (item.query?.sql ?? chart?.sql) && onopensql}
+                          <DropdownMenu.DropdownMenuItem onclick={() => onopensql?.(item.query?.sql ?? chart?.sql ?? "", title)}><SquareTerminal class="size-3.5 shrink-0" />Open query</DropdownMenu.DropdownMenuItem>
+                        {/if}
+                        <DropdownMenu.DropdownMenuSeparator />
+                        <DropdownMenu.DropdownMenuItem variant="destructive" onclick={() => removeChartFromDashboard(activeDash.id, item.id)}><X class="size-3.5 shrink-0" />Remove from dashboard</DropdownMenu.DropdownMenuItem>
+                      </DropdownMenu.DropdownMenuContent>
+                    </DropdownMenu.DropdownMenu>
+                  </div>
                 {/if}
               </div>
 
-              <!-- Chart body -->
               <div class="relative min-h-0 flex-1">
-                {#if chart?.previewOption && Object.keys(chart.previewOption).length > 0}
+                {#if l?.error}
+                  <!-- The error on the card itself, not behind a tooltip. -->
+                  <div class="absolute inset-0 flex flex-col items-center justify-center gap-2 px-6 text-center">
+                    <p class="text-ui-xs font-medium text-destructive">Query failed</p>
+                    <p class="line-clamp-3 max-w-md text-ui-2xs break-words text-muted-foreground" title={l.error}>{l.error}</p>
+                    <Button variant="outline" size="sm" class="mt-1" onclick={() => refreshItem(item)}>
+                      <RefreshCw class="size-3.5 shrink-0" />Retry
+                    </Button>
+                  </div>
+                {:else if view?.kpi}
+                  <div class="absolute inset-0 flex flex-col items-center justify-center gap-1 px-4 text-center">
+                    <span class={cn("font-semibold tracking-tight text-foreground tabular-nums", h >= 240 ? "text-ui-3xl" : "text-ui-2xl")}>{formatKpi(view.kpi.value)}</span>
+                    <span class="max-w-full truncate text-ui-xs text-muted-foreground">{view.kpi.label}</span>
+                  </div>
+                {:else if view && "table" in view && view.table}
+                  <div class="app-scroll absolute inset-0 overflow-auto">
+                    <table class="w-full border-collapse text-ui-2xs">
+                      <thead class="sticky top-0 bg-card">
+                        <tr>
+                          {#each view.table.columns as c, ci (ci)}
+                            <th class="border-b border-border/60 px-3 py-1.5 text-left font-medium whitespace-nowrap text-muted-foreground">{c}</th>
+                          {/each}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {#each view.table.rows as row, ri (ri)}
+                          <tr class="border-b border-border/30 last:border-0">
+                            {#each row as cell, ci (ci)}
+                              <td class="max-w-64 truncate px-3 py-1 font-mono whitespace-nowrap text-foreground tabular-nums">{cell === null ? "NULL" : typeof cell === "object" ? JSON.stringify(cell) : String(cell)}</td>
+                            {/each}
+                          </tr>
+                        {/each}
+                      </tbody>
+                    </table>
+                  </div>
+                {:else if view?.option}
+                  <EChartPanel option={view.option} class="absolute inset-0" />
+                {:else if chart?.previewOption && Object.keys(chart.previewOption).length > 0}
                   <EChartPanel option={restyleSavedOption(chart.previewOption, { isDark: $isCurrentThemeDark, compact: true })} class="absolute inset-0" />
                 {:else if chart?.aiSpec}
                   <div class="absolute inset-0">
                     <AiChartRenderer spec={chart.aiSpec} noTitle={true} />
                   </div>
+                {:else if l?.loading || (runs && !l)}
+                  <div class="absolute inset-0 flex items-center justify-center">
+                    <Loader2 class="size-4 shrink-0 animate-spin text-muted-foreground" />
+                  </div>
                 {:else}
                   <div class="absolute inset-0 flex items-center justify-center gap-2 text-muted-foreground">
-                    <BarChart2 class="size-6 shrink-0" />
-                    <span class="text-ui-xs">No preview</span>
+                    <BarChart2 class="size-5 shrink-0" />
+                    <span class="text-ui-xs">{item.query ? "No rows" : chart ? "No preview" : "This chart was deleted"}</span>
                   </div>
                 {/if}
               </div>
+
+              {#if !presenting}
+                <!-- Resize: drag the corner, or focus it and use the arrow keys. -->
+                <button
+                  type="button"
+                  class="absolute right-0 bottom-0 z-10 flex size-5 cursor-nwse-resize touch-none items-end justify-end p-1 text-muted-foreground/50 opacity-0 transition-opacity group-hover:opacity-100 hover:text-foreground focus-visible:opacity-100"
+                  title="Drag to resize"
+                  aria-label="Resize {title}: arrow keys change width and height"
+                  onpointerdown={(e) => startResize(e, item)}
+                  onkeydown={(e) => resizeKey(e, item)}
+                >
+                  <svg viewBox="0 0 8 8" class="size-2" aria-hidden="true"><path d="M7 1 1 7M7 4 4 7" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" /></svg>
+                </button>
+              {/if}
             </div>
           </div>
         {/each}
@@ -577,17 +834,67 @@
      instead and sat off to one side), with the focus trap and Escape handling
      every other dialog has. -->
 <Dialog.Root bind:open={pickerOpen}>
-  <Dialog.Content class="flex max-h-[min(36rem,80vh)] flex-col gap-0 overflow-hidden p-0 sm:max-w-xl">
+  <Dialog.Content class="flex max-h-[min(36rem,80vh)] flex-col gap-0 overflow-hidden p-0 sm:max-w-lg">
     <Dialog.Header class="shrink-0 gap-1 px-6 pt-6 pb-4">
-      <Dialog.Title>Add a chart</Dialog.Title>
-      <Dialog.Description class="text-ui-xs text-muted-foreground">
-        {$savedCharts.length
-          ? `Pick a saved chart to pin to ${activeDash?.name ?? "this dashboard"}.`
-          : "Charts you save from query results show up here."}
-      </Dialog.Description>
+      <Dialog.Title>Add to {activeDash?.name ?? "dashboard"}</Dialog.Title>
+      <Dialog.Description class="sr-only">Pick saved charts or saved queries. Pick one again to take it off.</Dialog.Description>
+      <div role="tablist" aria-label="What to add" class="mt-3 flex gap-1">
+        {#each [["charts", "Charts", $savedCharts.length], ["queries", "Saved queries", savedQs.length]] as [id, label, n] (id)}
+          <button
+            type="button"
+            role="tab"
+            aria-selected={pickerTab === id}
+            class={cn("flex h-7 items-center gap-1.5 rounded-md px-2.5 text-ui-xs transition-colors", pickerTab === id ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-muted/60 hover:text-foreground")}
+            onclick={() => (pickerTab = /** @type {'charts'|'queries'} */ (id))}
+          >{label}<span class="tabular-nums text-muted-foreground">{n}</span></button>
+        {/each}
+      </div>
     </Dialog.Header>
 
-    {#if $savedCharts.length === 0}
+    {#if pickerTab === "queries"}
+      <div class="flex shrink-0 flex-col gap-2 px-6 pb-2">
+        <label class="field-surface flex h-8 items-center gap-2 px-2.5">
+          <SearchIcon class="size-3.5 shrink-0 text-muted-foreground" />
+          <input bind:value={pickerQuery} placeholder="Search saved queries" aria-label="Search saved queries" class="no-field-frame min-w-0 flex-1 bg-transparent text-ui-sm outline-none placeholder:text-muted-foreground" />
+        </label>
+      </div>
+      <div class="app-scroll min-h-0 flex-1 overflow-y-auto px-3 pb-3">
+        <ul class="flex flex-col">
+          {#each pickerQueries as q (q.id)}
+            {@const there = !!queryOnDash(q.sql)}
+            {@const writes = isWriteSql(q.sql)}
+            <li>
+              <button
+                type="button"
+                onclick={() => pickQuery(q)}
+                aria-pressed={there}
+                disabled={writes && !there}
+                title={writes ? "This query writes, so a dashboard won't run it" : undefined}
+                class="group flex h-12 w-full items-center gap-3 rounded-lg px-3 text-left transition-colors hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:outline-none disabled:opacity-50 disabled:hover:bg-transparent"
+              >
+                <FileCode class="size-4 shrink-0 text-muted-foreground" />
+                <span class="min-w-0 flex-1">
+                  <span class="block truncate text-ui-sm text-foreground">{queryName(q)}</span>
+                  <span class="block truncate font-mono text-ui-2xs text-muted-foreground">{q.sql.replace(/\s+/g, " ").trim()}</span>
+                </span>
+                {#if there}
+                  <span class="flex shrink-0 items-center gap-1 text-ui-xs text-foreground"><Check class="size-3.5 shrink-0" />Added</span>
+                {:else if !writes}
+                  <span class="flex shrink-0 items-center gap-1 text-ui-xs text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"><Plus class="size-3.5 shrink-0" />Add</span>
+                {/if}
+              </button>
+            </li>
+          {/each}
+        </ul>
+        {#if !pickerQueries.length}
+          <p class="py-8 text-center text-ui-xs text-muted-foreground">{savedQs.length ? "No saved queries match." : "Queries you save in the SQL editor show up here."}</p>
+        {/if}
+      </div>
+      <div class="flex shrink-0 items-center justify-between gap-3 border-t border-border/40 px-6 py-3">
+        <span class="text-ui-xs text-muted-foreground">{activeDash?.items.length ?? 0} on {activeDash?.name ?? "this dashboard"}</span>
+        <Button size="sm" onclick={() => (pickerOpen = false)}>Done</Button>
+      </div>
+    {:else if $savedCharts.length === 0}
       <div class="flex flex-col items-center gap-3 px-6 pt-4 pb-8 text-center">
         <div class="flex size-11 items-center justify-center rounded-lg bg-muted/50 text-muted-foreground">
           <BarChart2 class="size-5 shrink-0" aria-hidden="true" />
@@ -611,34 +918,63 @@
         {/if}
       </div>
     {:else}
-      <div class="min-h-0 flex-1 overflow-y-auto px-6 pb-6">
-        <div class="grid grid-cols-2 gap-3">
-          {#each $savedCharts as chart (chart.id)}
-            <button
-              type="button"
-              onclick={() => pickChart(chart.id)}
-              class="group flex flex-col overflow-hidden rounded-lg border border-border/60 bg-background text-left transition-colors hover:border-ring/55 hover:bg-accent/30 focus-visible:border-ring/55 focus-visible:ring-2 focus-visible:ring-ring/18 focus-visible:outline-none"
-            >
-              <div class="relative h-28 border-b border-border/40 bg-sidebar/40">
-                {#if chart.previewOption && Object.keys(chart.previewOption).length > 0}
-                  <EChartPanel option={restyleSavedOption(chart.previewOption, { isDark: $isCurrentThemeDark, compact: true })} class="absolute inset-0" />
-                {:else if chart.aiSpec}
-                  <div class="absolute inset-0">
-                    <AiChartRenderer spec={chart.aiSpec} noTitle={true} />
-                  </div>
+      <div class="flex shrink-0 flex-col gap-2 px-6 pb-2">
+        <label class="field-surface flex h-8 items-center gap-2 px-2.5">
+          <SearchIcon class="size-3.5 shrink-0 text-muted-foreground" />
+          <input bind:value={pickerQuery} placeholder="Search charts" aria-label="Search charts" class="no-field-frame min-w-0 flex-1 bg-transparent text-ui-sm outline-none placeholder:text-muted-foreground" />
+        </label>
+        {#if pickerGroups.length > 1}
+          <div class="flex flex-wrap gap-1">
+            {#each ["", ...pickerGroups] as g (g)}
+              <button type="button"
+                class={cn("h-6 rounded-md px-2 text-ui-2xs transition-colors", pickerGroup === g ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-muted/60 hover:text-foreground")}
+                onclick={() => (pickerGroup = g)}>{g || "All"}</button>
+            {/each}
+          </div>
+        {/if}
+      </div>
+      <div class="app-scroll min-h-0 flex-1 overflow-y-auto px-3 pb-3">
+        <ul class="flex flex-col">
+          {#each pickerCharts as chart (chart.id)}
+            {@const n = onDash(chart.id)}
+            {@const thumb = viewFor(chart)}
+            <li>
+              <button
+                type="button"
+                onclick={() => pickChart(chart.id)}
+                aria-pressed={n > 0}
+                class="group flex h-14 w-full items-center gap-3 rounded-lg px-3 text-left transition-colors hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:outline-none"
+              >
+                <!-- A picture of the chart, not one to play with: no pointer events. -->
+                <span class="pointer-events-none relative h-10 w-16 shrink-0 overflow-hidden rounded-md bg-muted/40">
+                  {#if thumb?.kpi}
+                    <span class="absolute inset-0 flex items-center justify-center text-ui-xs font-semibold tabular-nums text-foreground">{formatKpi(thumb.kpi.value)}</span>
+                  {:else if thumb?.option || (chart.previewOption && Object.keys(chart.previewOption).length > 0)}
+                    <EChartPanel option={thumbOption(thumb?.option ?? restyleSavedOption(chart.previewOption, { isDark: $isCurrentThemeDark, compact: true }))} class="absolute inset-0" />
+                  {:else}
+                    <BarChart2 class="absolute inset-0 m-auto size-4 text-muted-foreground" aria-hidden="true" />
+                  {/if}
+                </span>
+                <span class="min-w-0 flex-1">
+                  <span class="block truncate text-ui-sm text-foreground">{chart.name}</span>
+                  <span class="block truncate text-ui-2xs text-muted-foreground">{chart.group || "No group"} · {chart.config?.type ?? "chart"}</span>
+                </span>
+                {#if n > 0}
+                  <span class="flex shrink-0 items-center gap-1 text-ui-xs text-foreground"><Check class="size-3.5 shrink-0" />Added</span>
                 {:else}
-                  <div class="absolute inset-0 flex items-center justify-center text-muted-foreground">
-                    <BarChart2 class="size-5 shrink-0" aria-hidden="true" />
-                  </div>
+                  <span class="flex shrink-0 items-center gap-1 text-ui-xs text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"><Plus class="size-3.5 shrink-0" />Add</span>
                 {/if}
-              </div>
-              <div class="flex flex-col gap-0.5 px-3 py-2">
-                <p class="truncate text-ui-xs font-medium text-foreground">{chart.name}</p>
-                {#if chart.group}<p class="truncate text-ui-3xs text-muted-foreground">{chart.group}</p>{/if}
-              </div>
-            </button>
+              </button>
+            </li>
           {/each}
-        </div>
+        </ul>
+        {#if !pickerCharts.length}
+          <p class="py-8 text-center text-ui-xs text-muted-foreground">No charts match.</p>
+        {/if}
+      </div>
+      <div class="flex shrink-0 items-center justify-between gap-3 border-t border-border/40 px-6 py-3">
+        <span class="text-ui-xs text-muted-foreground">{activeDash?.items.length ?? 0} on {activeDash?.name ?? "this dashboard"}</span>
+        <Button size="sm" onclick={() => (pickerOpen = false)}>Done</Button>
       </div>
     {/if}
   </Dialog.Content>

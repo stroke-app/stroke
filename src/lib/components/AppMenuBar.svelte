@@ -136,9 +136,11 @@
         {@render item("network", "Schema diagram", "erd", "", !connected)}
         <Menubar.Separator class={sepCls} />
         {@render item("git-compare", "Data diff", "dataDiff", "", !connected)}
+        {@render item("git-merge", "Migrations", "migrations", "", !connected)}
         {@render item("layout-dashboard", "Dashboard", "dashboard", "", !connected)}
         {@render item("history", "Activity log", "logs", "view.logs", !connected)}
         <Menubar.Separator class={sepCls} />
+        {@render item("database", "Local servers", "localServers", "")}
         {@render item("blocks", "Extensions", "extensions", "view.extensions")}
       </Menubar.Content>
     </Menubar.Portal>
@@ -155,7 +157,7 @@
         <Menubar.Separator class={sepCls} />
         {@render item("alert-triangle", "Report an issue…", "reportIssue")}
         {@render item("refresh-cw", "Check for updates", "checkUpdates")}
-        {@render item("info", "About and license", "about")}
+        {@render item("info", "About Stroke", "about")}
       </Menubar.Content>
     </Menubar.Portal>
   </Menubar.Menu>

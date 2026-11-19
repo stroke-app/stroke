@@ -22,6 +22,7 @@ export const QUERY_LANGUAGES = {
 - Writes: insertOne, insertMany, updateOne/updateMany with operators ({$set: {...}}), replaceOne, deleteOne/deleteMany (with a filter).
 - Values: ObjectId("…"), ISODate("2026-01-01"), NumberLong(…), NumberDecimal("…"). Field names may be unquoted.
 - "db" is the database selected in the sidebar; "use <db>;" switches it. For odd names use db.getCollection("name").
+- Collections and indexes (schema access): db.createCollection("name"); db.users.createIndex({email: 1}, {unique: true}); db.users.dropIndex("email_1"). Inserting into a missing collection creates it.
 - Always add .limit() to find() unless the user asks for everything.`,
   },
   couchdb: {
@@ -34,6 +35,22 @@ export const QUERY_LANGUAGES = {
   Sorting needs an index on the sort fields.
 - <db>.get("doc-id") for one document, <db>.all() for every document (capped).
 - Keys in selectors and options are quoted JSON strings. The editor is read-only for CouchDB: changes are made in the Browse page.`,
+  },
+  elasticsearch: {
+    name: 'Elasticsearch / OpenSearch requests',
+    fence: 'json',
+    collectionNoun: 'index',
+    guide: `Write one request per block. Three forms run in the query editor:
+- Dev Tools style: a request line, then the JSON body on the next lines:
+  GET logs/_search
+  {"query": {"bool": {"filter": [{"term": {"level": "error"}}, {"range": {"@timestamp": {"gte": "now-1d"}}}]}}, "size": 50, "sort": [{"@timestamp": "desc"}]}
+  Aggregations: "size": 0 and "aggs": {"by_level": {"terms": {"field": "level.keyword"}}}; buckets come back as rows.
+- Shell style: <index>.search({body}), <index>.get("id"), <index>.count({"query": {...}}).
+- SQL: SELECT level, COUNT(*) FROM logs GROUP BY level (needs the SQL feature on the server).
+- Text fields match with "match"; exact values, terms aggregations and sorting use the keyword sub-field (name.keyword) unless the mapping says the field is a keyword.
+- Writes, when your access level allows them: POST <index>/_doc with the document as the body, PUT <index>/_doc/<id> to set one by id, POST <index>/_update/<id> with {"doc": {...}}, DELETE <index>/_doc/<id>. Add ?refresh=true so the next search sees them.
+- Schema changes (schema access): PUT <index> with {"mappings": {"properties": {...}}} creates an index; PUT <index>/_mapping adds fields. Deleting an index is not available.
+- Always set "size" on searches unless the user asks for everything (the server caps from+size at 10,000).`,
   },
   firestore: {
     name: 'Firestore query chain',
@@ -68,7 +85,11 @@ export const QUERY_LANGUAGES = {
 - A SELECT without the partition key in WHERE scans the whole table: put the key in WHERE whenever possible.
 - No JOINs, no GROUP BY, no aggregate functions except size(), no LIMIT clause (results are paged).
 - Functions: begins_with(sk, 'ORDER#'), contains(tags, 'beta'), attribute_exists(x), attribute_type(x, 'S'), size(x).
-- Writes: INSERT INTO "t" VALUE {'pk': 'a', 'sk': 'b'}; UPDATE "t" SET x = 1 WHERE pk = 'a' AND sk = 'b'; DELETE FROM "t" WHERE pk = 'a' AND sk = 'b';`,
+- Writes: INSERT INTO "t" VALUE {'pk': 'a', 'sk': 'b'}; UPDATE "t" SET x = 1 WHERE pk = 'a' AND sk = 'b'; DELETE FROM "t" WHERE pk = 'a' AND sk = 'b';
+- PartiQL can't create or change tables. For that, run a DynamoDB API call as JSON in the same tool, one per call:
+  {"operation": "CreateTable", "input": {"TableName": "shop", "KeySchema": [{"AttributeName": "pk", "KeyType": "HASH"}, {"AttributeName": "sk", "KeyType": "RANGE"}], "AttributeDefinitions": [{"AttributeName": "pk", "AttributeType": "S"}, {"AttributeName": "sk", "AttributeType": "S"}], "BillingMode": "PAY_PER_REQUEST"}}
+  Also: DescribeTable, ListTables, UpdateTable, UpdateTimeToLive, DeleteTable, and the item calls PutItem, GetItem, UpdateItem, DeleteItem, Query, Scan, BatchGetItem, BatchWriteItem (up to 25 items), TransactWriteItems. Inputs use the AWS JSON format with typed values ({"S": "x"}, {"N": "1"}).
+- A new table takes a few seconds to become ACTIVE: DescribeTable until TableStatus is ACTIVE before writing to it.`,
   },
   redis: {
     name: 'Redis commands',
@@ -87,6 +108,8 @@ QUERY_LANGUAGES.valkey = QUERY_LANGUAGES.redis
 export function queryLanguageFor(engine) {
   // Valkey is Redis on the wire: same commands, same prompt.
   if (engine === 'valkey') engine = 'redis'
+  // OpenSearch speaks Elasticsearch's REST API and Query DSL.
+  if (engine === 'opensearch') engine = 'elasticsearch'
   return (engine && QUERY_LANGUAGES[engine]) || null
 }
 
@@ -129,6 +152,9 @@ export function sampleQuery(engine, schema, coll, n) {
       return /^[A-Za-z_$][\w$]*$/.test(coll) ? `db.${coll}.find({}).limit(${n})` : `db.getCollection(${JSON.stringify(coll)}).find({}).limit(${n})`
     case 'couchdb':
       return `${coll}.find({}, {"limit": ${n}})`
+    case 'elasticsearch':
+    case 'opensearch':
+      return `GET ${coll}/_search\n{"size": ${n}}`
     case 'firestore':
       return `${coll}.limit(${n})`
     case 'cassandra':
@@ -166,6 +192,6 @@ export function describeFromSample(coll, result) {
 export function runnableFences(engine) {
   const lang = queryLanguageFor(engine)
   if (!lang) return null
-  const extra = { mongodb: ['javascript', 'js', 'mongodb', 'mongo'], couchdb: ['javascript', 'js', 'json'], firestore: ['javascript', 'js'], cassandra: ['sql', 'cql'], dynamodb: ['sql', 'partiql'], redis: ['redis', 'text', 'bash'], valkey: ['redis', 'text', 'bash'] }
+  const extra = { mongodb: ['javascript', 'js', 'mongodb', 'mongo'], couchdb: ['javascript', 'js', 'json'], elasticsearch: ['json', 'http', 'text', 'sql'], opensearch: ['json', 'http', 'text', 'sql'], firestore: ['javascript', 'js'], cassandra: ['sql', 'cql'], dynamodb: ['sql', 'partiql'], redis: ['redis', 'text', 'bash'], valkey: ['redis', 'text', 'bash'] }
   return new Set([lang.fence, ...(/** @type {Record<string, string[]>} */ (extra)[/** @type {string} */ (engine)] ?? [])])
 }

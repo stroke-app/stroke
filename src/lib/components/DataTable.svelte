@@ -1,4 +1,5 @@
 <script>
+  import { isReadOnly, guardWrite } from '$lib/stores/read-only.js';
   import { tick, onDestroy, untrack } from "svelte";
   import {
     pgArrayElem, pgArrayText, isSqlArrayType, isVectorType, foldLines, valuesEqual,
@@ -61,6 +62,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     clampColumnWidth,
     columnAlignsRight,
     defaultColumnWidth,
+    fitColumnWidth,
   } from "$lib/table-column-widths.js";
   import { formatCompactCount } from "$lib/table-list.js";
   import { keycaps, comboTitle } from "$lib/shortcuts.js";
@@ -209,6 +211,8 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     embedded = false,
     showSelection = true,
     showRowExpand = true,
+    /** Review writes as SQL first when the setting asks. Off for engines whose writes are not SQL (document stores): their SQL would be fiction. */
+    previewWrites = true,
     /** Persist column widths per table, e.g. "public.users" */
     columnWidthsKey = undefined,
     /** Active connection id - scopes ALL per-table persistence (widths, staged
@@ -510,7 +514,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
    * @param {DmlReview} config
    */
   function requestWrite(config) {
-    if (!$appPreviewDml) { void config.run(); return; }
+    if (!$appPreviewDml || !previewWrites) { void config.run(); return; }
     // Apply again while the review is up: never confirm (a double-click would
     // skip the review) and never throw away SQL the user has typed.
     if (dmlPreview && (dmlPreviewRunning || dmlWasEdited)) { dmlPanel?.focus(); return; }
@@ -775,9 +779,6 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     return fallback
   }
   let fkDockHeight = $state(loadDockHeight('stroke:fk-dock-height', 260))
-  /** What the related rows need (FkSubviewPanel reports it): the dock never
-   *  stands taller than its rows, and never taller than the height you set. */
-  let fkFitHeight = $state(0)
   /** The full-size cell editor is the second dock, and remembers its own height. */
   let cellDockHeight = $state(loadDockHeight('stroke:cell-dock-height', 220))
   /** The DML review is the third, with its own height too. */
@@ -1862,7 +1863,9 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     if (openVectorViewer(rowIdx, colIdx)) return;
     if (openGeometryViewer(rowIdx, colIdx)) return;
 
-    if (readonly) return;
+    // Read-only mode says why nothing happened; a grid that is read-only by
+    // nature (query results) stays quiet.
+    if (readonly) { if (isReadOnly()) guardWrite('edit cells'); return; }
 
     const blocked = cellEditBlock?.(rowIdx, colIdx);
     if (blocked) {
@@ -2469,7 +2472,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   }
 
   function openInsertDraft(anchorRow = null) {
-    if (readonly) return
+    if (readonly) { if (isReadOnly()) guardWrite('add rows'); return }
     // Add on an open band appends: pressing it three times is three rows, not
     // the same row reset twice.
     newRowDrafts = [...(newRowDrafts ?? []), blankDraft()]
@@ -4575,12 +4578,155 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     const stored = key ? loadColumnWidths(key) : {}
     /** @type {Record<string, number>} */
     const next = {}
+    /** @type {Set<string>} */
+    const auto = new Set()
     for (const col of cols) {
       const dt = col.dataType ?? col.data_type ?? ""
-      next[col.name] = clampColumnWidth(stored[col.name] ?? defaultColumnWidth(dt))
+      // Builds before 2.21 saved every column's width when one was dragged,
+      // the untouched ones at their fixed type default (420 for text). A
+      // stored width equal to that default was never chosen: fit it instead.
+      const own = stored[col.name] != null && stored[col.name] !== clampColumnWidth(defaultColumnWidth(dt)) ? stored[col.name] : null
+      if (own == null) auto.add(col.name)
+      next[col.name] = clampColumnWidth(own ?? defaultColumnWidth(dt))
     }
     columnWidths = next
+    // Columns nobody has sized are fitted to their content once rows arrive.
+    _autoFitCols = auto
   })
+
+  // ── Auto-fit ──────────────────────────────────────────────────────────────
+  // A column nobody has dragged is as wide as its header and its values need,
+  // within AUTO_FIT_MIN..AUTO_FIT_MAX (long text truncates, it never widens a
+  // column past the cap). Measured once per table, when its first rows arrive,
+  // so paging and refreshes never move the columns. Not saved: a width only
+  // sticks when you drag it or double-click the edge.
+
+  /** Columns still waiting to be fitted (no stored width). */
+  let _autoFitCols = $state(/** @type {Set<string>} */ (new Set()))
+  /** @type {CanvasRenderingContext2D | null} */
+  let _measureCtx = null
+  /**
+   * The grid's own context when it exists. Glyph advances differ between it
+   * and a fresh offscreen canvas (13px Geist Mono: 8px there, 7.83 here), and
+   * a width measured on the other one came out a few characters short. Every
+   * draw sets its own font, so borrowing it between frames changes nothing.
+   */
+  function measureCtx() {
+    if (_ctx) return _ctx
+    // The same object the first paint will draw with (getContext is per element).
+    const own = canvasEl?.getContext('2d')
+    if (own) return own
+    // Only before the first paint (a double-click can't come earlier).
+    if (!_measureCtx && typeof document !== 'undefined') _measureCtx = document.createElement('canvas').getContext('2d')
+    return _measureCtx
+  }
+
+  /**
+   * The fitted width of one column, in logical px.
+   * @param {{ name: string, dataType?: string, data_type?: string }} col @param {number} colIdx
+   */
+  function fittedWidth(col, colIdx) {
+    const ctx = measureCtx()
+    if (!ctx || !colorProbe) return null
+    const fonts = _fonts ?? readFonts(colorProbe)
+    const z = canvasZoom || 1
+    const meta = colMeta.get(col.name)
+    const dt = col.dataType ?? col.data_type ?? ''
+    // The header as drawHeaderCell lays it out: name, required mark, key and
+    // link glyphs, the type, and room for the sort arrow.
+    ctx.font = fonts.header
+    let headerW = ctx.measureText(col.name).width / z
+    if (meta && !meta.nullable) headerW += ctx.measureText('*').width / z + 4
+    headerW += 7 + ((meta?.pk ? 1 : 0) + (meta?.fk ? 1 : 0)) * 18
+    if (dt) {
+      ctx.font = fonts.type
+      headerW += 5 + ctx.measureText(dt).width / z
+    }
+    headerW += 13 + 9 + 4
+    ctx.font = fonts.cell
+    // Monospace (the default): one rounded-up advance per character. Canvases
+    // disagree on the fraction (13px Geist Mono is 7.83 on one, 8 on the one
+    // the grid draws with), and the low answer cut values a few characters
+    // short. Rounding up matches the drawn width and never under-fits.
+    const iW = ctx.measureText('i').width
+    const mW = ctx.measureText('W').width
+    const mono = Math.abs(iW - mW) < 0.1
+    const glyph = Math.ceil(mW)
+    const n = Math.min(rows.length, 200)
+    const values = new Array(n)
+    for (let i = 0; i < n; i++) {
+      const v = rows[i]?.[colIdx]
+      values[i] = v == null ? '' : displayCell(v)
+    }
+    // A value only gets the whole cell while it leaves room for the hover
+    // icons (and a foreign key's link), or drawCell shortens it to make room.
+    const slack = ICON_HIT / z + (meta?.fk ? 20 : 0) + 2
+    return fitColumnWidth({
+      headerW,
+      values,
+      measure: (str) => (mono ? str.length * glyph : ctx.measureText(str).width * 1.03) / z + slack,
+      padX: 10,
+    })
+  }
+
+  /** Bumped when web fonts finish loading, so a fit waits for real metrics. */
+  let _fontsReady = $state(typeof document === 'undefined' || document.fonts?.status !== 'loading')
+  /** Bumped to retry a fit once the grid has painted (and has a context). */
+  let _fitRetry = $state(0)
+  $effect(() => {
+    const pending = _autoFitCols
+    void _fitRetry
+    if (pending.size === 0 || rows.length === 0 || !colorProbe) return
+    if (!_ctx && !canvasEl) {
+      requestAnimationFrame(() => { _fitRetry++ })
+      return
+    }
+    // Measured with the fallback face while the grid font is still loading,
+    // every column came out a few characters short.
+    if (!_fontsReady || document.fonts?.status === 'loading') {
+      void document.fonts?.ready.then(() => { _fontsReady = true })
+      _fontsReady = false
+      return
+    }
+    untrack(() => {
+      /** @type {Record<string, number>} */
+      const fitted = {}
+      columns.forEach((col, i) => {
+        if (!pending.has(col.name)) return
+        const w = fittedWidth(col, i)
+        if (w != null) fitted[col.name] = w
+      })
+      _autoFitCols = new Set()
+      if (Object.keys(fitted).length) columnWidths = { ...columnWidths, ...fitted }
+    })
+  })
+
+  /** Fit one column to its content and keep that width (double-click on its edge). @param {string} colName */
+  function fitColumnToContent(colName) {
+    const i = columns.findIndex((c) => c.name === colName)
+    if (i === -1) return
+    const w = fittedWidth(columns[i], i)
+    if (w == null) return
+    columnWidths = { ...columnWidths, [colName]: w }
+    keepWidth(colName, w)
+  }
+
+  /**
+   * Store one column's width, chosen by hand. Only columns someone sized are
+   * stored; the rest stay automatic and are fitted to what they hold.
+   * @param {string} colName @param {number} w
+   */
+  function keepWidth(colName, w) {
+    if (!columnWidthsKey) return
+    const stored = loadColumnWidths(columnWidthsKey)
+    // Drop the type defaults older builds stored for untouched columns.
+    for (const col of columns) {
+      const dt = col.dataType ?? col.data_type ?? ''
+      if (stored[col.name] === clampColumnWidth(defaultColumnWidth(dt))) delete stored[col.name]
+    }
+    stored[colName] = w
+    saveColumnWidths(columnWidthsKey, stored)
+  }
 
   // Virtual (relationship / expression) column widths persist alongside real
   // ones, under sibling keys so the real-column effect above never clobbers
@@ -4650,7 +4796,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     if (columnWidthsKey && resizingColName) {
       if (resizingColName.startsWith('__vrel__')) saveColumnWidths(`${columnWidthsKey}\x00__vrel`, _vrelWidths);
       else if (resizingColName.startsWith('__vcol__')) saveColumnWidths(`${columnWidthsKey}\x00__vcol`, _vexprWidths);
-      else saveColumnWidths(columnWidthsKey, columnWidths);
+      else keepWidth(resizingColName, columnWidths[resizingColName]);
     }
     resizingColName = null;
   }
@@ -4717,10 +4863,29 @@ import FilterX from "@lucide/svelte/icons/filter-x";
 
   /** Reset a column's width to its default. */
   function resetColumnWidth(colName) {
-    const col = columns.find((c) => c.name === colName)
+    const i = columns.findIndex((c) => c.name === colName)
+    const col = columns[i]
     const dt = col?.dataType ?? col?.data_type ?? ''
-    columnWidths = { ...columnWidths, [colName]: clampColumnWidth(defaultColumnWidth(dt)) }
-    if (columnWidthsKey) saveColumnWidths(columnWidthsKey, columnWidths)
+    // Back to automatic: fitted to the content, and no longer stored.
+    const w = col && rows.length ? fittedWidth(col, i) : null
+    columnWidths = { ...columnWidths, [colName]: w ?? clampColumnWidth(defaultColumnWidth(dt)) }
+    if (columnWidthsKey) {
+      const stored = loadColumnWidths(columnWidthsKey)
+      delete stored[colName]
+      saveColumnWidths(columnWidthsKey, stored)
+    }
+  }
+
+  /** Every column back to automatic: fitted to its content, nothing stored. */
+  function fitAllColumns() {
+    /** @type {Record<string, number>} */
+    const fitted = {}
+    columns.forEach((col, i) => {
+      const w = rows.length ? fittedWidth(col, i) : null
+      if (w != null) fitted[col.name] = w
+    })
+    columnWidths = { ...columnWidths, ...fitted }
+    if (columnWidthsKey) saveColumnWidths(columnWidthsKey, {})
   }
 
   // ── Per-tab expand/sub-view state preservation ───────────────────────────────
@@ -4908,6 +5073,8 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   // ever sets this, and draw() zeroes it on entry, so every other path into
   // draw() is a full repaint by construction.
   let _blitDy = 0
+  /** The same for a frame that is a pure horizontal move (see draw()). */
+  let _blitDx = 0
   /** A hover change that arrived mid-scroll, applied when scrolling stops. @type {[number | null, string | null] | null} */
   let _parkedHover = null
 
@@ -4935,6 +5102,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
         // from scratch - any artifact a blit could produce lives only while the
         // content is still moving, and never in a resting grid.
         _blitDy = 0
+        _blitDx = 0
         scheduleDraw()
         return
       }
@@ -4957,6 +5125,11 @@ import FilterX from "@lucide/svelte/icons/filter-x";
         _blitDy =
           sl === _loopLastLeft && _loopLastTop >= 0 && !_loopNeedsDraw
             ? _scrollTop - prevVirt
+            : 0
+        // And a pure horizontal move: same vertical offset, columns slide.
+        _blitDx =
+          st === _loopLastTop && _loopLastLeft >= 0 && !_loopNeedsDraw
+            ? sl - _loopLastLeft
             : 0
         _scrollLeft = sl
         _loopLastTop = st
@@ -5121,16 +5294,28 @@ import FilterX from "@lucide/svelte/icons/filter-x";
 
   // Repaint once webfonts finish loading - the canvas may first paint with a
   // fallback font that lacks glyphs (e.g. ʻ, macrons) and renders them as tofu.
+  // The glyph width and the truncation cache are keyed by the font *string*,
+  // which doesn't change when the face behind it arrives: kept, they went on
+  // cutting text at the fallback face's (wider) width, a few characters short.
+  // `loadingdone` covers a face that loads later, on first use.
   $effect(() => {
     if (typeof document === 'undefined' || !document.fonts) return
     let cancelled = false
-    document.fonts.ready.then(() => {
+    const refresh = () => {
       if (cancelled) return
       _fonts = null
       _readColor = null
+      _glyphFont = ''
+      _glyphWByFont.clear()
+      _truncCacheReset()
       _redrawToken++
-    })
-    return () => { cancelled = true }
+    }
+    document.fonts.ready.then(refresh)
+    document.fonts.addEventListener('loadingdone', refresh)
+    return () => {
+      cancelled = true
+      document.fonts.removeEventListener('loadingdone', refresh)
+    }
   })
 
   // Recreate the colour cache when the theme flips (the probe resolves the new
@@ -5183,61 +5368,167 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     if (p) _vimPrefixTimer = setTimeout(() => { _vimPrefix = '' }, 700)
   }
   /** Move the cell cursor by (dr, dc), clamped, and keep it in view. */
+  /**
+   * Grid Vim. Normal mode: hjkl and arrows-by-count, w/b next/previous column,
+   * 0/^ and $ row start/end, gg/G (and nG) first/last/nth row, H/M/L top,
+   * middle and bottom of the screen, Ctrl+d/u half a page, Ctrl+f/b a page.
+   * v starts a cell selection and V a row selection; motions extend it, y
+   * copies it (tab separated, pastes into a spreadsheet), Esc leaves it.
+   * Yank: yy the row, Y or yc the cell. p puts the clipboard into the cell
+   * (staged, like any edit). i/a/c/Enter edit, x sets NULL, dd deletes the
+   * row, u/Ctrl+r undo and redo, o expands the row, / searches.
+   */
+  /** @type {'' | 'v' | 'V'} */
+  let _vimVisual = ''
+  function vimEnterVisual(/** @type {'v' | 'V'} */ kind) {
+    const r = focusedRow ?? 0
+    if (focusedRow === null) focusedRow = 0
+    if (kind === 'V') {
+      selAnchor = { row: r, col: 0 }
+      focusedCol = Math.max(0, navigableColumns.length - 1)
+    } else {
+      if (focusedCol === null) focusedCol = 0
+      selAnchor = { row: r, col: focusedCol }
+    }
+    _vimVisual = kind
+    setVimSubMode('visual')
+    scheduleDraw()
+  }
+  function vimLeaveVisual() {
+    if (!_vimVisual) return
+    _vimVisual = ''
+    clearCellRange()
+    setVimSubMode('normal')
+    scheduleDraw()
+  }
+  /** First and last row on screen (the header excluded). */
+  function vimScreenRows() {
+    const n = rows.length
+    if (!n) return [0, 0]
+    let first = Math.min(n - 1, Math.max(0, Math.floor(_scrollTop / ROW_HEIGHT)))
+    while (first > 0 && rowViewportY(first) > HEADER_H) first--
+    while (first < n - 1 && rowViewportY(first) + ROW_HEIGHT <= HEADER_H) first++
+    let last = first
+    while (last < n - 1 && rowViewportY(last + 1) + ROW_HEIGHT <= _viewportHeight) last++
+    return [first, last]
+  }
+  /** @param {number} row */
+  function vimGoRow(row) {
+    const n = rows.length
+    if (!n) return
+    focusedRow = Math.min(Math.max(row, 0), n - 1)
+    if (focusedCol === null) focusedCol = 0
+    if (_vimVisual === 'V') focusedCol = Math.max(0, navigableColumns.length - 1)
+    scrollRowIntoView(focusedRow)
+    scheduleDraw()
+  }
   function vimMove(dr, dc) {
     const rowLen = rows.length, visLen = navigableColumns.length
     if (!rowLen || !visLen) return
     focusedRow = Math.min(Math.max((focusedRow ?? 0) + dr, 0), rowLen - 1)
-    focusedCol = Math.min(Math.max((focusedCol ?? 0) + dc, 0), visLen - 1)
-    selAnchor = null
+    focusedCol = _vimVisual === 'V' ? visLen - 1 : Math.min(Math.max((focusedCol ?? 0) + dc, 0), visLen - 1)
+    if (!_vimVisual) selAnchor = null
     scrollRowIntoView(focusedRow)
+    scheduleDraw()
+  }
+  async function vimPaste() {
+    if (focusedRow === null) return
+    const ci = visToActualColIdx(focusedCol ?? 0)
+    if (ci < 0) return
+    if (isReadOnly()) { guardWrite('edit cells'); return }
+    if (!canEditColumn(ci) || cellEditBlock?.(focusedRow, ci)) { toast.message('This cell can\'t be edited'); return }
+    let text = ''
+    try { text = await navigator.clipboard.readText() } catch { toast.error("Couldn't read the clipboard"); return }
+    stageEdit(focusedRow, ci, text.replace(/\r?\n$/, ''))
     scheduleDraw()
   }
   /** Interpret a key as a grid Vim normal-mode command. Returns true if consumed. */
   function handleVimGridKey(e) {
-    if (e.metaKey || e.ctrlKey || e.altKey) return false
     const k = e.key
+    // Ctrl chords Vim users reach for: page motions and redo.
+    if (e.ctrlKey && !e.metaKey && !e.altKey) {
+      const [first, last] = vimScreenRows()
+      const page = Math.max(1, last - first)
+      const cur = focusedRow ?? first
+      if (k === 'd') { e.preventDefault(); vimGoRow(cur + Math.ceil(page / 2)); return true }
+      if (k === 'u') { e.preventDefault(); vimGoRow(cur - Math.ceil(page / 2)); return true }
+      if (k === 'f') { e.preventDefault(); vimGoRow(cur + page); return true }
+      if (k === 'b') { e.preventDefault(); vimGoRow(cur - page); return true }
+      if (k === 'r') { e.preventDefault(); void redoEdit(); return true }
+      return false
+    }
+    if (e.metaKey || e.altKey) return false
     if (k === 'Escape') {
       _setVimPrefix(''); _vimCount = ''
+      if (_vimVisual) { e.preventDefault(); vimLeaveVisual(); return true }
       return false // let the default Escape cascade (clear range / blur) run
     }
     // Only single printable characters are Vim commands; arrows, Tab, Enter,
-    // Home/End, Page… keep their normal grid behavior in both modes.
-    if (k.length !== 1) return false
+    // Home/End, Page… keep their normal grid behavior in both modes (and an
+    // arrow collapses a visual selection, so the mode follows it).
+    if (k.length !== 1) { if (_vimVisual && /^(Arrow|Tab|Enter)/.test(k)) vimLeaveVisual(); return false }
     e.preventDefault()
 
     // Resolve a pending g/d/y prefix first.
     if (_vimPrefix) {
       const p = _vimPrefix; _setVimPrefix('')
-      if (p === 'g' && k === 'g') { focusedRow = 0; scrollRowIntoView(0); scheduleDraw(); return true }
+      const n = _vimCount ? parseInt(_vimCount, 10) : 0
+      _vimCount = ''
+      if (p === 'g' && k === 'g') { vimGoRow(n ? n - 1 : 0); return true }
       if (p === 'd' && k === 'd') { deleteRow(focusedRow ?? 0); return true }
-      if (p === 'y' && k === 'y') { void copyAs(focusedRow ?? 0, 'plain'); return true }
+      if (p === 'y' && k === 'y') { void copyAs(focusedRow ?? 0, 'plain'); toast.success('Yanked the row'); return true }
+      if (p === 'y' && (k === 'c' || k === 'w')) {
+        const ci = visToActualColIdx(focusedCol ?? 0)
+        if (focusedRow !== null && ci >= 0) void copyCellValue(focusedRow, ci)
+        return true
+      }
       // non-matching second key falls through to be handled fresh below
     }
 
     // Numeric count prefix (a lone "0" is the row-start motion, not a count).
     if ((k >= '1' && k <= '9') || (k === '0' && _vimCount !== '')) { _vimCount += k; return true }
+    const hadCount = _vimCount !== ''
     const count = Math.max(1, parseInt(_vimCount || '1', 10)); _vimCount = ''
     const ai = () => visToActualColIdx(focusedCol ?? 0)
+    const visLen = navigableColumns.length
+
+    // Visual mode: motions extend, y copies, v/V toggle, anything else leaves.
+    if (_vimVisual && (k === 'y' || k === 'Y')) {
+      void copyCellRange().then(() => toast.success('Yanked the selection'))
+      vimLeaveVisual()
+      return true
+    }
 
     switch (k) {
-      case 'g': case 'd': case 'y': _setVimPrefix(k); return true
+      case 'g': case 'd': case 'y': if (!_vimVisual) { _setVimPrefix(k); if (hadCount) _vimCount = String(count) } return true
       case 'h': vimMove(0, -count); return true
       case 'l': vimMove(0, count); return true
       case 'j': vimMove(count, 0); return true
       case 'k': vimMove(-count, 0); return true
-      case '0': focusedCol = 0; scheduleDraw(); return true
-      case '$': focusedCol = navigableColumns.length - 1; scheduleDraw(); return true
-      case 'G': { const last = rows.length - 1; if (last >= 0) { focusedRow = last; scrollRowIntoView(last); scheduleDraw() } return true }
-      case 'i': case 'a': case 'c': startEdit(focusedRow ?? 0, ai()); setVimSubMode('insert'); return true
-      case 'x': setCellNull(focusedRow ?? 0, ai()); return true
-      case '/': onrequestsearch(); return true
+      case 'w': vimMove(0, count); return true
+      case 'b': vimMove(0, -count); return true
+      case '0': case '^': if (_vimVisual !== 'V') { focusedCol = 0; scheduleDraw() } return true
+      case '$': if (visLen) { focusedCol = visLen - 1; scheduleDraw() } return true
+      case 'G': vimGoRow(hadCount ? count - 1 : rows.length - 1); return true
+      case 'H': { const [first, last] = vimScreenRows(); vimGoRow(Math.min(last, first + (hadCount ? count - 1 : 0))); return true }
+      case 'L': { const [first, last] = vimScreenRows(); vimGoRow(Math.max(first, last - (hadCount ? count - 1 : 0))); return true }
+      case 'M': { const [first, last] = vimScreenRows(); vimGoRow(Math.floor((first + last) / 2)); return true }
+      case 'v': if (_vimVisual === 'v') vimLeaveVisual(); else vimEnterVisual('v'); return true
+      case 'V': if (_vimVisual === 'V') vimLeaveVisual(); else vimEnterVisual('V'); return true
+      case 'Y': { const ci = ai(); if (focusedRow !== null && ci >= 0) void copyCellValue(focusedRow, ci); return true }
+      case 'p': void vimPaste(); return true
+      case 'u': void undoEdit(); return true
+      case 'o': if (showRowExpand && focusedRow !== null) toggleRowExpand(focusedRow); return true
+      case 'i': case 'a': case 'c': vimLeaveVisual(); startEdit(focusedRow ?? 0, ai()); setVimSubMode('insert'); return true
+      case 'x': if (!_vimVisual) setCellNull(focusedRow ?? 0, ai()); return true
+      case '/': vimLeaveVisual(); onrequestsearch(); return true
       default: return true // unmapped printable char - consume so it can't type-to-edit
     }
   }
   // Mirror the grid's edit state into the shared Vim indicator while focused.
   $effect(() => {
     if (!$appVimMode || !isTableFocused) return
-    setVimSubMode(editingCell ? 'insert' : 'normal')
+    setVimSubMode(editingCell ? 'insert' : _vimVisual ? 'visual' : 'normal')
   })
 
   /** @param {KeyboardEvent} e */
@@ -5403,8 +5694,9 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     // Alt+D copies the focused row into the insert draft, beside the Alt+F /
     // Alt+E pair - all three act on what the cursor is standing on.
     if (!editingCell && e.altKey && !e.ctrlKey && !e.metaKey && (e.key === "d" || e.key === "D")) {
-      if (!readonly && focusedRow !== null) {
+      if (focusedRow !== null) {
         e.preventDefault();
+        if (readonly) { if (isReadOnly()) guardWrite('duplicate rows'); return; }
         duplicateRow(focusedRow);
         return;
       }
@@ -5635,12 +5927,66 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   // Re-measured automatically whenever ctx.font changes (zoom / cell vs header).
   let _glyphW = 0
   let _glyphFont = ''
+
+  /**
+   * Make a context's `font` cheap. Reading `ctx.font` re-serialises the whole
+   * font string on every call, and the draw loop asks for it twice per cell
+   * (textWidth, truncText): 250ms of a 7s scroll went to that alone. Setting
+   * it re-parses even when nothing changed. This keeps the last value in JS:
+   * reads return it, a set to the same string is skipped, and save/restore
+   * keep it in step with the canvas's own font stack.
+   * @param {CanvasRenderingContext2D} ctx
+   */
+  function trackFont(ctx) {
+    const c = /** @type {any} */ (ctx)
+    if (c.__fontTracked) return
+    const desc = Object.getOwnPropertyDescriptor(CanvasRenderingContext2D.prototype, 'font')
+    if (!desc?.get || !desc.set) return
+    let cur = desc.get.call(ctx)
+    let lastSet = ''
+    /** @type {[string, string][]} */
+    const stack = []
+    Object.defineProperty(ctx, 'font', {
+      configurable: true,
+      get: () => cur,
+      set: (/** @type {string} */ v) => {
+        if (v === lastSet) return
+        desc.set.call(ctx, v)
+        lastSet = v
+        cur = desc.get.call(ctx)
+      },
+    })
+    const save = ctx.save.bind(ctx)
+    const restore = ctx.restore.bind(ctx)
+    ctx.save = () => { stack.push([cur, lastSet]); save() }
+    ctx.restore = () => {
+      restore()
+      const top = stack.pop()
+      if (top) [cur, lastSet] = top
+    }
+    // A canvas resize resets the context's state, font included, behind the
+    // setter's back; the resize path calls this to re-read it.
+    c.__fontReset = () => { cur = desc.get.call(ctx); lastSet = ''; stack.length = 0 }
+    c.__fontTracked = true
+  }
+
+  /** Glyph width per font string: the grid switches between its cell, header
+   *  and type fonts several times a frame, and each switch re-measured 'i' and
+   *  'W' (22 measureText calls a frame while scrolling). Cleared with the
+   *  truncation cache when web fonts load. @type {Map<string, number>} */
+  const _glyphWByFont = new Map()
   function _syncGlyphW(/** @type {CanvasRenderingContext2D} */ ctx) {
-    if (ctx.font === _glyphFont) return
-    const a = ctx.measureText('i').width
-    const b = ctx.measureText('W').width
-    _glyphW = Math.abs(a - b) < 0.1 ? b : 0 // 0 ⇒ not monospace → fall back to measureText
-    _glyphFont = ctx.font
+    const font = ctx.font
+    if (font === _glyphFont) return
+    let w = _glyphWByFont.get(font)
+    if (w === undefined) {
+      const a = ctx.measureText('i').width
+      const b = ctx.measureText('W').width
+      w = Math.abs(a - b) < 0.1 ? b : 0 // 0 ⇒ not monospace → fall back to measureText
+      _glyphWByFont.set(font, w)
+    }
+    _glyphW = w
+    _glyphFont = font
   }
 
   /** Width of `str` under the active font (O(1) for monospace). */
@@ -5695,7 +6041,25 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   }
 
   /** The measuring half of truncText - only reached on a cache miss. */
+  /** Printable ASCII: one glyph advance each in a monospace face. */
+  const _ASCII_RE = /^[\x20-\x7e]*$/
+  /** Width of '…' under _glyphFont (re-measured when the font changes). */
+  let _ellW = 0
+  let _ellFont = ''
+
   function _truncMeasure(ctx, text, maxW, len) {
+    // Monospace and printable ASCII (most database values): every character is
+    // exactly one advance, so the cut is arithmetic and needs no measuring. A
+    // scroll brings a new set of strings into view every frame, and each one
+    // missed the cache and paid 2-3 measureText shaping passes.
+    if (_glyphW > 0) {
+      const head = text.length > 256 ? text.slice(0, Math.ceil(maxW / _glyphW) + 2) : text
+      if (_ASCII_RE.test(head)) {
+        if (_ellFont !== _glyphFont) { _ellW = ctx.measureText('…').width; _ellFont = _glyphFont }
+        const k = Math.max(0, Math.floor((maxW - _ellW) / _glyphW))
+        return k >= len ? text : text.slice(0, k) + '…'
+      }
+    }
     // Only the head of a long value can ever be on screen, so only the head is
     // measured. measureText shapes every character it is given, and a long cell
     // (a 2,000-character Devanagari or markdown chunk) paid a whole-string
@@ -5815,7 +6179,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     if (!ctx || !read || !canvasEl || !colorProbe) return
     // Drop any scroll delta seen while holding: the first real frame after a
     // hold is a different table and must repaint whole, never blit the old one.
-    if (holdPaint && _surfaceHasFrame) { _blitDy = 0; return }
+    if (holdPaint && _surfaceHasFrame) { _blitDy = 0; _blitDx = 0; return }
     _surfaceHasFrame = true
     if (!hasHeldFrame && columns.length > 0) hasHeldFrame = true
 
@@ -5856,6 +6220,8 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     // stuttering: not a canvas bug, starvation.
     const dy = _blitDy
     _blitDy = 0
+    const dxs = _blitDx
+    _blitDx = 0
     // Band a scheduled frame was limited to (scheduleBandDraw), or null.
     const band = _drawBand
     _drawBand = null
@@ -5890,13 +6256,35 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     // between rows), so only those rows are repainted and the rest of the
     // canvas - header included - is left as it is. Same row-band repaint the
     // blit uses for its strip, with the same preconditions on the body.
+    // Horizontal scrolling repainted every visible cell every frame (3.1ms
+    // median and a 14ms worst case against the vertical path's ~2ms). The same
+    // trick applies sideways: with nothing pinned, the whole canvas, header and
+    // body, is a rigid horizontal translation of the last frame, so it is moved
+    // by dx and only the uncovered strip of columns is drawn. Pinned columns
+    // stay put while the rest slides, so a table with any keeps the full paint.
+    const canBlitX =
+      !canBlit &&
+      dy === 0 &&
+      dxs !== 0 &&
+      Number.isInteger(dxs) &&
+      Math.abs(dxs) < _viewportWidth - 1 &&
+      blitScale > 0 &&
+      Number.isInteger(dxs * blitScale) &&
+      geom.frozenWidth === 0 &&
+      !_sawSkeleton &&
+      !newRowDrafts &&
+      visibleColumns.length > 0
+    /** Columns outside [stripX0, stripX1) are skipped this frame (CSS px). */
+    let stripX0 = 0
+    let stripX1 = Infinity
     const partial =
       !canBlit &&
+      !canBlitX &&
       band !== null &&
       !_sawSkeleton &&
       !newRowDrafts &&
       visibleColumns.length > 0
-    if (!canBlit && !partial) _imgWanted.clear()
+    if (!canBlit && !canBlitX && !partial) _imgWanted.clear()
     // Font sizes and the layout constants (ROW_HEIGHT, HEADER_H, …) are both
     // `<base px> * canvasZoom`, so text and geometry cannot land on different
     // zoom rungs however this cache is invalidated. Do NOT re-source either one
@@ -6009,6 +6397,38 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       // background (drawHeaderRow starts with a full-width fill), and everything
       // between is either blitted or in the strip.
       fillPanel(ctx, cPanel, 0, stripTop, W, stripH)
+    } else if (canBlitX) {
+      // Same exact 1:1 device-pixel copy as the vertical case, through the
+      // scratch surface, of the whole viewport height (the header slides too).
+      const devH = Math.floor(H * blitScale)
+      const devW = ctx.canvas.width
+      const kDev = dxs * blitScale
+      const keepDev = devW - Math.abs(kDev)
+      const srcX = kDev > 0 ? kDev : 0
+      const dstX = kDev > 0 ? 0 : -kDev
+      const scratch = blitScratch(keepDev, devH)
+      if (scratch) {
+        scratch.ctx.setTransform(1, 0, 0, 1, 0, 0)
+        scratch.ctx.clearRect(0, 0, keepDev, devH)
+        scratch.ctx.drawImage(ctx.canvas, srcX, 0, keepDev, devH, 0, 0, keepDev, devH)
+        ctx.save()
+        ctx.setTransform(1, 0, 0, 1, 0, 0)
+        ctx.drawImage(scratch.canvas, 0, 0, keepDev, devH, dstX, 0, keepDev, devH)
+        ctx.restore()
+      }
+      // The uncovered strip, rounded outward, cleared, then clipped to below.
+      if (kDev > 0) {
+        stripX0 = Math.floor((dstX + keepDev) / blitScale)
+        stripX1 = W
+      } else {
+        stripX0 = 0
+        stripX1 = Math.ceil(-dxs)
+      }
+      fillPanel(ctx, cPanel, stripX0, 0, stripX1 - stripX0, H)
+      ctx.save()
+      ctx.beginPath()
+      ctx.rect(stripX0, 0, stripX1 - stripX0, H)
+      ctx.clip()
     } else if (partial) {
       stripTop = Math.max(HEADER_H, Math.floor(band[0]))
       stripH = Math.max(0, Math.ceil(Math.min(H, band[1])) - stripTop)
@@ -6137,6 +6557,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       // 150-cell viewport paid ~3000 graph reads a frame for values that cannot
       // change mid-frame. Read once here, then drawCell only touches this object.
       cols: geom.cols, pinnedCols, scrollLeft: _scrollLeft, viewportWidth: W,
+      stripX0, stripX1,
       padX: CELL_PAD_X, iconHit: ICON_HIT, zoom: canvasZoom, fonts: _fonts,
       highlightActiveRow: $appHighlightActiveRow,
       nameToActualIdx: _nameToActualIdx, colCache: _colCache,
@@ -6198,7 +6619,10 @@ import FilterX from "@lucide/svelte/icons/filter-x";
 
     // ── Header (pinned) - skip entirely when no columns visible ───────────
     // A band frame never touches it: the rows it repaints are clipped below it.
-    if (visibleColumns.length > 0 && !partial) {
+    // A vertical blit frame leaves it too: the copy never touches the header
+    // band, nothing in it depends on the vertical offset, and anything that
+    // would change it (hover, sort, selection) forces a full frame instead.
+    if (visibleColumns.length > 0 && !partial && !canBlit) {
       drawHeaderRow(ctx, {
         W, cPanel, cFg, cMuted, cGrid, cBorder, cMutedBg, cAccent, cPrimary, cRing,
         AMBER, AMBER_FG, BLUE_FG, RED, usedW,
@@ -6208,8 +6632,10 @@ import FilterX from "@lucide/svelte/icons/filter-x";
         // body context carried `fonts`, this one did not, and only the one
         // branch gated on the gutter being enabled ever touched it.
         fonts: _fonts,
+        stripX0, stripX1,
       })
     }
+    if (canBlitX) ctx.restore()
 
     // Now that the visible set is known, drop the backlog the viewport has moved
     // past and start whatever decodes fit in the remaining slots.
@@ -6264,6 +6690,13 @@ import FilterX from "@lucide/svelte/icons/filter-x";
    *  that holds nothing yet: a fresh or just-resized canvas is blank (or black
    *  in WebKit) and has to be painted. */
   const holdPaint = $derived(loading && columns.length === 0)
+  /** A fetch has finished since mount, so empty columns are the table's own, not "not loaded yet". */
+  let finishedLoad = $state(false)
+  let sawLoading = false
+  $effect(() => {
+    if (loading) sawLoading = true
+    else if (sawLoading) finishedLoad = true
+  })
   /** The canvas has shown a real table at least once. Until then a first load
    *  has no previous frame to hold, and an empty grid sat on screen for the
    *  whole fetch - placeholder rows stand in for it (see the empty states). */
@@ -6479,12 +6912,16 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     // condition re-entered it once per column per row.
     const cols = c.cols
     const sl = c.scrollLeft
-    for (let ci = c.firstColIdx, nc = cols.length, vpw = c.viewportWidth; ci < nc; ci++) {
+    // On a horizontal blit frame only the columns crossing the uncovered strip
+    // are drawn (c.stripX0/X1; 0/Infinity on every other frame).
+    const right = Math.min(c.viewportWidth, c.stripX1)
+    const left = Math.max(0, c.stripX0)
+    for (let ci = c.firstColIdx, nc = cols.length; ci < nc; ci++) {
       const col = cols[ci]
       if (col.pinned) continue
       const dx = col.contentX - sl
-      if (dx >= vpw) break
-      if (dx + col.w <= 0) continue
+      if (dx >= right) break
+      if (dx + col.w <= left) continue
       drawCell(ctx, idx, col, dx, ry, rh, c)
     }
 
@@ -6496,7 +6933,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       }
     }
 
-    drawRowGutters(ctx, idx, -_scrollLeft, ry, rh, c)
+    if (gutterWidth - sl > left && -sl < right) drawRowGutters(ctx, idx, -sl, ry, rh, c)
 
     // Staged-delete decoration: a left red bar + a strikethrough across the row.
     if (isPendingDelete) {
@@ -6533,7 +6970,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       for (let vi = 0; vi < _vexprLayout.length; vi++) {
         const vc = _vexprLayout[vi]
         const cellX = vc.x - _scrollLeft
-        if (cellX + vc.w <= 0 || cellX >= _viewportWidth) continue
+        if (cellX + vc.w <= left || cellX >= right) continue
         fillPanel(ctx, c.cPanel, cellX, ry, vc.w, rh)
         const isVHov = hoveredRow === idx && hoveredColName === vc.hoverKey
         if (isVHov) { ctx.fillStyle = withAlpha(c.cMutedBg, 0.15); ctx.fillRect(cellX, ry, vc.w, rh) }
@@ -6560,7 +6997,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       const vc = virtualRelCols[vi]
       const cw = _vrelLayout[vi].w
       const cellX = _vrelLayout[vi].x - _scrollLeft
-      if (cellX + cw <= 0 || cellX >= _viewportWidth) continue
+      if (cellX + cw <= left || cellX >= right) continue
       // Panel base, then the row's own tint on top: painting only the panel left
       // the relationship columns dark while the rest of a selected row lit up,
       // so the highlight stopped mid-row.
@@ -7054,12 +7491,15 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     ctx.fillStyle = withAlpha(c.cMutedBg, 0.38)
     ctx.fillRect(0, 0, c.W, HEADER_H)
 
+    // Horizontal blit frame: only the uncovered strip's headers.
+    const hRight = Math.min(c.W, c.stripX1 ?? Infinity)
+    const hLeft = Math.max(0, c.stripX0 ?? 0)
     // Non-pinned headers. Ordered by ascending contentX → break past the right edge.
     for (const col of geom.cols) {
       if (col.pinned) continue
       const dx = col.contentX - _scrollLeft
-      if (dx >= c.W) break
-      if (dx + col.w <= 0) continue
+      if (dx >= hRight) break
+      if (dx + col.w <= hLeft) continue
       drawHeaderCell(ctx, col, dx, c)
     }
 
@@ -7407,6 +7847,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     // canvas and the visible one would stay black. Binding to canvasEl every call
     // keeps _ctx and the on-screen canvas in lockstep.
     _ctx = canvas.getContext('2d')
+    if (_ctx) trackFont(_ctx)
     const cssW = Math.max(1, Math.round(_viewportWidth))
     // Height is not simply the viewport's. Resizing the backing store on WebKit
     // swaps the new bitmap in a frame before the new box size lands, so the
@@ -7431,6 +7872,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       canvas.height = bh
       resized = true
       _surfaceHasFrame = false
+      if (_ctx) /** @type {any} */ (_ctx).__fontReset?.()
     }
     // canvas.width/height assignment resets the transform, so always (re)apply it.
     if (_ctx) _ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
@@ -7596,9 +8038,46 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       scroller?.sync()
     }
 
+    // The axis is decided once per gesture. A trackpad keeps sending wheel events
+    // for a second or more after the fingers lift (momentum), and reading Shift
+    // per event turned that coast sideways the moment Shift went down, or back
+    // to vertical when it came up. A gap of more than GESTURE_GAP ms between
+    // events starts a new gesture, which reads Shift afresh.
+    //
+    // Shift pressed during a scroll, or just after it seemed to stop, holds the
+    // scroll vertical until the wheel has been quiet for COAST_QUIET ms. A
+    // trackpad's coast thins out at its tail, and a busy frame (a focused cell
+    // redraws more) stretched the gap past GESTURE_GAP, so the rest of the
+    // coast was read as a new Shift gesture and the grid slid sideways.
+    // Gaps are timed from the events' own timestamps, which a stalled main
+    // thread does not stretch.
+    const GESTURE_GAP = 100
+    const COAST_QUIET = 350
+    let _gestureAt = -Infinity
+    let _gestureShift = false
+    let _coastHold = false
+    /** @param {WheelEvent} e @returns {boolean} the gesture scrolls sideways */
+    const gestureShift = (e) => {
+      const now = e.timeStamp || performance.now()
+      const gap = now - _gestureAt
+      if (gap > (_coastHold ? COAST_QUIET : GESTURE_GAP)) {
+        _coastHold = false
+        _gestureShift = e.shiftKey
+      }
+      _gestureAt = now
+      return _gestureShift
+    }
+    const gestureLive = () => performance.now() - _gestureAt <= (_coastHold ? COAST_QUIET : GESTURE_GAP)
+    /** Shift went down: during or right after a vertical scroll, keep it vertical. @param {KeyboardEvent} e */
+    const noteShift = (e) => {
+      if (e.type !== 'keydown' || e.key !== 'Shift' || e.repeat) return
+      if (!_gestureShift && performance.now() - _gestureAt <= COAST_QUIET) _coastHold = true
+    }
+
     // Non-passive: live for every tick under eased scrolling, otherwise only while
     // a modifier that needs preventDefault is down.
     const onWheelActive = (/** @type {WheelEvent} */ e) => {
+      const sideways = gestureShift(e)
       if (e.ctrlKey) { e.preventDefault(); doZoom(e.deltaY); return }
       if (e.altKey && !e.shiftKey && !e.metaKey) {
         const { dy } = wheelPixels(e, el.clientHeight)
@@ -7612,7 +8091,19 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       const inner = e.target instanceof Element
         ? e.target.closest('[data-fk-subview-scroll]')
         : null
-      if (e.shiftKey) {
+      if (e.shiftKey && !sideways) {
+        // Shift went down during a vertical coast: keep it vertical. macOS may
+        // already have swapped the deltas onto X for Shift, so take either.
+        if (inner && inner !== el) return
+        const { dx, dy } = wheelPixels(e, el.clientHeight)
+        const delta = dy || dx
+        if (!delta) return
+        e.preventDefault()
+        if (scroller) scroller.push(0, delta)
+        else el.scrollTop += delta
+        return
+      }
+      if (sideways) {
         // Normalize FIRST. A mouse that reports deltaMode 1 (lines) sends ±1..3,
         // and treating that as pixels moved the grid by three pixels a notch -
         // horizontal scrolling looked broken under eased scrolling while native
@@ -7620,9 +8111,14 @@ import FilterX from "@lucide/svelte/icons/filter-x";
         const { dx, dy } = wheelPixels(e, el.clientWidth)
         const delta = dy || dx // shift + vertical wheel IS horizontal movement
         if (!delta) return
-        if (inner && inner !== el && inner.scrollWidth > inner.clientWidth) {
-          e.preventDefault()
-          inner.scrollLeft += delta
+        // Over the panel the grid behind it never moves: scrolling something
+        // you can't see was what Shift+wheel did there whenever the panel
+        // itself was not wider than its box.
+        if (inner && inner !== el) {
+          if (inner.scrollWidth > inner.clientWidth) {
+            e.preventDefault()
+            inner.scrollLeft += delta
+          }
           return
         }
         e.preventDefault()
@@ -7636,12 +8132,18 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       if (inner && inner !== el) return
       const { dx, dy } = wheelPixels(e, el.clientHeight)
       if (!dy && !dx) return
+      // Only take the wheel when the grid can move that way. At an edge (or a
+      // small embedded grid that fits, like an AI result) the tick goes to the
+      // page around it: swallowing it trapped the AI chat's scroll under the
+      // pointer whenever a result table was beneath it.
+      const canY = dy < 0 ? el.scrollTop > 0 : el.scrollTop + el.clientHeight < el.scrollHeight - 1
+      const canX = dx < 0 ? el.scrollLeft > 0 : el.scrollLeft + el.clientWidth < el.scrollWidth - 1
       // A trackpad's horizontal swipe arrives as plain deltaX (no Shift).
-      if (dy && el.scrollHeight > el.clientHeight) {
+      if (dy && canY) {
         e.preventDefault()
         scroller.push(0, dy)
       }
-      if (dx && el.scrollWidth > el.clientWidth) {
+      if (dx && canX) {
         e.preventDefault()
         scroller.push(dx, 0)
       }
@@ -7655,6 +8157,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     // active listener is attached so a real Ctrl+wheel isn't handled twice.
     const onWheelPassive = (/** @type {WheelEvent} */ e) => {
       if (_activeAttached) return
+      gestureShift(e)
       if (e.ctrlKey) doZoom(e.deltaY)
     }
 
@@ -7671,10 +8174,17 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     // Under eased scrolling the listener stays attached; the modifier gating below
     // is what keeps it OFF the hot path when the OS is doing the scrolling.
     /** @param {KeyboardEvent} e */
+    let _detachTimer = 0
     const onKey = (e) => {
+      noteShift(e)
       if (easedScroll) return
-      if (e.ctrlKey || e.shiftKey || e.altKey) attach()
-      else detach()
+      clearTimeout(_detachTimer)
+      if (e.ctrlKey || e.shiftKey || e.altKey) { attach(); return }
+      // Shift came up mid-gesture: stay attached until the coast ends, or the
+      // rest of a sideways swipe would fall to the browser and go vertical.
+      if (!gestureLive()) { detach(); return }
+      const later = () => { if (gestureLive()) _detachTimer = window.setTimeout(later, GESTURE_GAP); else detach() }
+      _detachTimer = window.setTimeout(later, GESTURE_GAP)
     }
     // A keyboard scroll, scrollIntoView, or a scrollbar drag moved the element
     // without us: adopt the new position so the next wheel tick eases from there.
@@ -7700,6 +8210,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     window.addEventListener('blur', onBlur)
     return () => {
       scroller?.stop()
+      clearTimeout(_detachTimer)
       detach()
       el.removeEventListener('pointerdown', onInterrupt)
       el.removeEventListener('scroll', onScrollSync)
@@ -8633,6 +9144,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
                   class="absolute top-0 w-2.5 -translate-x-1/2 cursor-col-resize pointer-events-auto touch-none"
                   style="left:{h.x}px; height:{HEADER_H}px"
                   onpointerdown={(e) => onResizeHandleDown(e, h.name)}
+                  ondblclick={(e) => { e.preventDefault(); e.stopPropagation(); if (!h.name.startsWith('__')) fitColumnToContent(h.name) }}
                   onpointerenter={() => onResizeHandleEnter(h.name)}
                   onpointerleave={onResizeHandleLeave}
                   onwheel={blockPointerZoom}
@@ -8710,17 +9222,23 @@ import FilterX from "@lucide/svelte/icons/filter-x";
                        panel out again on every scroll frame. No `will-change` on
                        it: a promoted layer here painted at a stale offset for a
                        frame on tab switches and resizes (see the canvas anchor). -->
-                  {#if rowViewportY(exIdx) > -_viewportHeight * 2 && rowViewportY(exIdx) < _viewportHeight + ROW_HEIGHT}
+                  {#if rowViewportY(exIdx) > -_viewportHeight * 3 && rowViewportY(exIdx) < _viewportHeight * 3}
                     <!-- Only near the viewport: on a huge table the y would be past
                          WebKit's layout range, and the height a panel had is kept while
-                         it is away (trackExpandHeight), so the rows below do not move. -->
+                         it is away (trackExpandHeight), so the rows below do not move.
+                         Three screens each way: the window below used to end one row
+                         past the bottom edge, so scrolling down built each JSON panel
+                         in the frame it came into view, and it showed as a blank gap
+                         and a dropped frame. Now it is built well before it is seen. -->
                     {@const clipTopScaled = Math.max(0, HEADER_H - (rowViewportY(exIdx) + ROW_HEIGHT))}
                     <div style="position:sticky;top:0;left:0;width:0;height:0;overflow:visible;z-index:10">
                       <div
                         class="absolute left-0 top-0"
                         style="transform:translateY({rowViewportY(exIdx) + ROW_HEIGHT + clipTopScaled}px); width:{_viewportWidth}px{clipTopScaled > 0 ? '; overflow:hidden' : ''}"
                       >
-                        <div style={clipTopScaled > 0 ? `margin-top:-${clipTopScaled}px` : ''} use:trackExpandHeight={exIdx}>
+                        <!-- contain: a panel's own layout and paint stay inside it, so
+                             one changing (a tree node opened) re-lays out only itself. -->
+                        <div style="contain:layout paint style{clipTopScaled > 0 ? `; margin-top:-${clipTopScaled}px` : ''}" use:trackExpandHeight={exIdx}>
                           {@render expandBody(exIdx)}
                         </div>
                       </div>
@@ -8982,6 +9500,16 @@ import FilterX from "@lucide/svelte/icons/filter-x";
             <!-- Under the grace window: the last frame stays as it is. A quick
                  load lands before anything changes; a slow one gets the
                  placeholder rows above - one loading look, not three. -->
+          {:else if !loading && columns.length === 0 && finishedLoad}
+            <!-- A table with no columns at all is legal in Postgres (TimescaleDB's
+                 cache_inval_* tables are exactly that). It drew as a blank pane
+                 that read as "the data didn't load". -->
+            <div class="pointer-events-none absolute inset-0 z-[3] flex items-center justify-center" role="status" aria-live="polite">
+              <div class="flex flex-col items-center gap-2 px-4 text-center">
+                <Table2 class="size-8 text-muted-foreground" />
+                <p class="text-ui-sm text-muted-foreground">This table has no columns</p>
+              </div>
+            </div>
           {:else if columns.length > 0 && visibleColumns.length === 0}
             <div class="pointer-events-none absolute inset-0 z-[3] flex items-center justify-center" role="status" aria-live="polite">
               <div class="flex flex-col items-center gap-2 px-4 text-center">
@@ -9202,6 +9730,10 @@ import FilterX from "@lucide/svelte/icons/filter-x";
         <ContextMenu.Item onSelect={() => runMenuAction(() => resetColumnWidth(hcol))}>
           <RotateCcw />
           {$t('menu.resetWidth')}
+        </ContextMenu.Item>
+        <ContextMenu.Item onSelect={() => runMenuAction(fitAllColumns)}>
+          <MoveHorizontal />
+          {$t('menu.fitAllColumns')}
         </ContextMenu.Item>
         <ContextMenu.Separator />
         <!-- Copying a column was only possible by selecting it first; the header
@@ -9592,12 +10124,15 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   </ContextMenu.Root>
 
 <!-- Related-rows dock, sits BELOW the scroll container in this flex column, so
-     it never scrolls with the grid and the grid never fights its inner scroll. -->
+     it never scrolls with the grid and the grid never fights its inner scroll.
+     One height whatever it holds (the one the user dragged, kept across
+     sessions): fitting it to its rows made it open at one row, jump when the
+     rows arrived and collapse on "No related rows", moving the grid each time. -->
 {#if fkSubview !== null && rows[fkSubview.rowIdx] !== undefined}
   {@const fkIdx = fkSubview.rowIdx}
   <div
     class="relative z-10 flex shrink-0 flex-col border-t border-border/60 bg-background"
-    style="height:{fkFitHeight > 0 ? Math.min(fkDockHeight, fkFitHeight) : fkDockHeight}px"
+    style="height:{fkDockHeight}px"
   >
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
     <div
@@ -9612,7 +10147,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       metrics={gridMetrics}
       fkLabel={fkSubview.label}
       sourceHint={`row ${fkIdx + 1}`}
-      bind:fitHeight={fkFitHeight}
+      many={fkSubview.kind === 'reverse'}
       onclose={() => { fkSubview = null }}
       onfullview={() => {
         const sv = fkSubview

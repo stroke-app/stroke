@@ -43,7 +43,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: nightly
+          # The branch, not the `nightly` tag of the same name.
+          ref: refs/heads/nightly
           fetch-depth: 0
 
       - id: check
@@ -64,9 +65,27 @@ jobs:
             echo "Building $VERSION from $SHA (last nightly: ${LAST:-none})."
           fi
 
+  # ── 1b. Tests: unit tests, then every main dialog and page mounted once ────
+  # A Nightly that crashes on open is worse than no Nightly. Two did, from a
+  # missing import and an effect loop; the component smoke tests catch both.
+  test:
+    needs: check
+    if: needs.check.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.check.outputs.sha }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
   # ── 2. Build every platform ────────────────────────────────────────────────
   build:
-    needs: check
+    needs: [check, test]
     if: needs.check.outputs.build == 'true'
     strategy:
       fail-fast: false
@@ -83,7 +102,8 @@ jobs:
           - platform: macos-latest
             name: macos-aarch64
             args: '--target aarch64-apple-darwin --bundles app,dmg'
-          - platform: macos-latest
+          # Intel runner: a separate pool from the busy arm64 one, and a native x64 build.
+          - platform: macos-15-intel
             name: macos-x64
             args: '--target x86_64-apple-darwin --bundles app,dmg'
 
@@ -191,9 +211,79 @@ jobs:
           esac
           ls -la out
 
+      # The .deb is an update payload too: a .deb install updates from the
+      # app (the updater runs pkexec dpkg -i on it), so it needs a signature.
+      - name: Sign the .deb
+        if: matrix.name == 'linux'
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          npx tauri signer sign out/stroke-nightly_amd64.deb
+          test -s out/stroke-nightly_amd64.deb.sig
+
       - uses: actions/upload-artifact@v4
         with:
           name: nightly-${{ matrix.name }}
+          path: out/*
+          if-no-files-found: error
+          retention-days: 3
+
+  # ── 2b. The Arch package ────────────────────────────────────────────────────
+  #      The same package the AUR builds (stroke-nightly-bin, from the .deb),
+  #      built here so an Arch install can update from the app: it downloads
+  #      this and runs `pkexec pacman -U` on it. Same name and version as the
+  #      AUR's, so yay sees the result as up to date.
+  build-pacman:
+    needs: [check, build]
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: Tools
+        run: pacman -Syu --noconfirm --needed base-devel nodejs npm git sudo
+
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.check.outputs.sha }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: nightly-linux
+          path: linux
+
+      - name: Build the package
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+          COMMIT: ${{ needs.check.outputs.sha }}
+        run: |
+          set -euo pipefail
+          PKGVER="${VERSION//-/.}"
+          useradd -m builder
+          mkdir -p /tmp/pkg
+          # Named the way the PKGBUILD's source names it, so makepkg uses this
+          # file instead of downloading a release that isn't published yet.
+          cp linux/stroke-nightly_amd64.deb "/tmp/pkg/stroke-nightly-${PKGVER}.deb"
+          SHA=$(sha256sum "/tmp/pkg/stroke-nightly-${PKGVER}.deb" | cut -d' ' -f1)
+          sed -e "s/@PKGVER@/${PKGVER}/" -e "s/@SHA256@/${SHA}/" -e "s/@COMMIT@/${COMMIT}/" \
+            packaging/aur/stroke-nightly-bin/PKGBUILD.in > /tmp/pkg/PKGBUILD
+          chown -R builder /tmp/pkg
+          sudo -u builder bash -c 'cd /tmp/pkg && makepkg --nodeps --noconfirm'
+          mkdir -p out
+          cp /tmp/pkg/stroke-nightly-bin-*.pkg.tar.zst out/stroke-nightly_x86_64.pkg.tar.zst
+          ls -la out
+
+      - name: Sign
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          npx -y @tauri-apps/cli@2 signer sign out/stroke-nightly_x86_64.pkg.tar.zst
+          test -s out/stroke-nightly_x86_64.pkg.tar.zst.sig
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nightly-pacman
           path: out/*
           if-no-files-found: error
           retention-days: 3
@@ -202,7 +292,7 @@ jobs:
   #      Only after every platform built: a failed night keeps the previous
   #      nightly up instead of publishing a partial one.
   publish:
-    needs: [check, build]
+    needs: [check, build, build-pacman]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -223,7 +313,9 @@ jobs:
         run: |
           set -euo pipefail
           BASE="https://github.com/${GITHUB_REPOSITORY}/releases/download/nightly"
-          VERSION="$VERSION" BASE="$BASE" node -e "
+          git fetch -q origin master || true
+          STABLE=$(git show origin/master:src-tauri/tauri.conf.json 2>/dev/null | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{console.log(JSON.parse(s).version)}catch{console.log('')}})")
+          VERSION="$VERSION" BASE="$BASE" STABLE="$STABLE" node -e "
             const fs = require('fs')
             const { VERSION, BASE } = process.env
             const sig = (f) => fs.readFileSync('out/' + f, 'utf8').trim()
@@ -231,9 +323,23 @@ jobs:
               'darwin-aarch64': { url: BASE + '/stroke-nightly_aarch64.app.tar.gz', signature: sig('stroke-nightly_aarch64.app.tar.gz.sig') },
               'darwin-x86_64':  { url: BASE + '/stroke-nightly_x64.app.tar.gz',     signature: sig('stroke-nightly_x64.app.tar.gz.sig') },
               'linux-x86_64':   { url: BASE + '/stroke-nightly_amd64.AppImage',      signature: sig('stroke-nightly_amd64.AppImage.sig') },
+              // Linux packages update from the app too, each from its own entry:
+              // a .deb through pkexec dpkg, an Arch install through pkexec pacman.
+              'linux-x86_64-deb':    { url: BASE + '/stroke-nightly_amd64.deb',            signature: sig('stroke-nightly_amd64.deb.sig') },
+              'linux-x86_64-pacman': { url: BASE + '/stroke-nightly_x86_64.pkg.tar.zst',   signature: sig('stroke-nightly_x86_64.pkg.tar.zst.sig') },
               'windows-x86_64': { url: BASE + '/stroke-nightly_x64-setup.exe',       signature: sig('stroke-nightly_x64-setup.exe.sig') },
             }
-            const notes = 'Stroke Nightly ' + VERSION + '. See the nightly release for what changed.'
+            // The changelog since the last stable release, in CHANGELOG.md's own
+            // format: the update window parses it into New / Improved / Fixed.
+            let notes = 'Stroke Nightly ' + VERSION + '. See the nightly release for what changed.'
+            try {
+              const cl = fs.readFileSync('CHANGELOG.md', 'utf8')
+              const stable = process.env.STABLE || ''
+              const start = cl.indexOf('## [')
+              const end = stable ? cl.indexOf('## [' + stable + ']') : -1
+              const body = start === -1 ? '' : cl.slice(start, end > start ? end : undefined).trim()
+              if (body) notes = body.slice(0, 60000)
+            } catch {}
             fs.writeFileSync('out/latest.json', JSON.stringify({ version: VERSION, notes, pub_date: new Date().toISOString(), platforms }, null, 2))
           "
           cat out/latest.json
@@ -253,7 +359,7 @@ jobs:
             echo "| macOS (Apple Silicon) | \`stroke-nightly_aarch64.dmg\` |"
             echo "| macOS (Intel) | \`stroke-nightly_x64.dmg\` |"
             echo "| Windows | \`stroke-nightly_x64-setup.exe\` |"
-            echo "| Linux | \`stroke-nightly_amd64.AppImage\` · \`stroke-nightly_amd64.deb\` |"
+            echo "| Linux | \`stroke-nightly_amd64.AppImage\` · \`stroke-nightly_amd64.deb\` · \`stroke-nightly_x86_64.pkg.tar.zst\` (Arch) |"
             echo
             echo "### Changes since the last nightly"
             if [ -n "$PREV" ]; then
@@ -284,3 +390,49 @@ jobs:
             --prerelease \
             --latest=false
           echo "✅ Published Stroke Nightly ${VERSION}"
+
+  # Arch: refresh stroke-nightly-bin on the AUR with this build. Skipped
+  # without the AUR_SSH_PRIVATE_KEY secret (forks).
+  update-aur:
+    needs: [check, publish]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.check.outputs.sha }}
+
+      - name: Fill in the PKGBUILD
+        id: pkg
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+          COMMIT: ${{ needs.check.outputs.sha }}
+          AUR_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$AUR_KEY" ]; then
+            echo "No AUR_SSH_PRIVATE_KEY secret: skipping the AUR publish."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # pacman versions can't hold "-": 2.8.8-nightly.2026... -> 2.8.8.nightly.2026...
+          PKGVER="${VERSION//-/.}"
+          curl -fsSL --retry 5 --retry-delay 5 -o stroke-nightly.deb \
+            "https://github.com/${GITHUB_REPOSITORY}/releases/download/nightly/stroke-nightly_amd64.deb"
+          SHA=$(sha256sum stroke-nightly.deb | cut -d' ' -f1)
+          mkdir -p aur
+          sed -e "s/@PKGVER@/${PKGVER}/" -e "s/@SHA256@/${SHA}/" -e "s/@COMMIT@/${COMMIT}/" \
+            packaging/aur/stroke-nightly-bin/PKGBUILD.in > aur/PKGBUILD
+          cat aur/PKGBUILD
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Push to the AUR
+        if: steps.pkg.outputs.skip == 'false'
+        uses: KSXGitHub/github-actions-deploy-aur@v4.1.1
+        with:
+          pkgname: stroke-nightly-bin
+          pkgbuild: aur/PKGBUILD
+          commit_username: broisnees
+          commit_email: broisnees@users.noreply.github.com
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: "Update to ${{ needs.check.outputs.version }}"
+          ssh_keyscan_types: rsa,ecdsa,ed25519

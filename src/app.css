@@ -519,11 +519,13 @@ html[data-os="linux"]   { --window-radius: 8px; }
        a WebKit font assertion on Linux startup; text-size-adjust is a no-op on desktop. */
   }
 
-  /* Windows renders variable fonts noticeably lighter than macOS/Linux due to
-     DirectWrite's grayscale AA. Bump weight slightly so strokes look consistent. */
-  html[data-os="windows"] {
+  /* Windows renders the bundled variable fonts noticeably lighter than
+     macOS/Linux due to DirectWrite's grayscale AA. Bump weight slightly so
+     strokes look consistent. The system face (Segoe UI, the Windows default)
+     is drawn at its own weight: it is hinted for ClearType, and 430 made it
+     heavier than every other window on screen. */
+  html[data-os="windows"]:not([data-font="apple"]) {
     font-weight: 430;
-    -webkit-font-smoothing: antialiased;
   }
 
   /* Linux/WebKitGTK: subpixel rendering is unavailable on Wayland (the compositor
@@ -532,9 +534,20 @@ html[data-os="linux"]   { --window-radius: 8px; }
      'antialiased' forces consistent grayscale AA regardless of the user's fontconfig
      setup; bumping weight to 450 restores stroke visibility lost without subpixels. */
   html[data-os="linux"] {
-    font-weight: 450;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+  }
+  /* The bump is for the bundled faces only. The System preset is the desktop's
+     own font (Cantarell, Noto Sans, Ubuntu), already tuned for its renderer,
+     and at 450 it read heavier than every other window. */
+  html[data-os="linux"]:not([data-font="apple"]) {
+    font-weight: 450;
+  }
+  /* Small UI text: let the face's own kerning and contextual forms apply on
+     every platform (WebKitGTK and WebView2 left kerning off below ~14px). */
+  html {
+    font-kerning: normal;
+    font-feature-settings: "kern" 1, "calt" 1;
   }
 
   body {
@@ -1278,6 +1291,14 @@ select optgroup {
 /* The OS preference, unless Settings → Appearance has overridden it to "Full".
    `data-motion` is absent when the setting is "System", so the media query is
    the only thing deciding then. */
+/* Labs, switching between open databases: the whole screen swaps at once, so
+   nothing fades or slides for that frame (StudioShell sets it for two frames).
+   Without it every tab pill, row highlight and chip ran its own 100ms
+   transition and the swap read as layers flickering in turn. */
+html[data-swapping] :is(*, *::before, *::after) {
+  transition: none !important;
+}
+
 @media (prefers-reduced-motion: reduce) {
   html:not([data-motion="full"]) :is(*, *::before, *::after) {
     animation-duration: 0.01ms !important;
@@ -1511,8 +1532,165 @@ pre code,
   border-radius: inherit;
 }
 .mark-grain::before {
-  background: linear-gradient(to bottom, rgb(255 255 255 / 0.22), rgb(255 255 255 / 0) 55%, rgb(0 0 0 / 0.12));
+  /* A sheen across the top like light on a lacquered key, and a shade at the foot. */
+  background:
+    radial-gradient(120% 75% at 50% -10%, rgb(255 255 255 / 0.34), rgb(255 255 255 / 0.08) 55%, transparent 70%),
+    linear-gradient(to bottom, transparent 45%, rgb(0 0 0 / 0.24));
 }
+
+/* ── Plan key ────────────────────────────────────────────────────────────────
+   A small dark keycap: a body a shade off the page, a hairline ring, a lit top
+   edge and a shade at the foot, bold light text. Plan badges (Pro, Trial,
+   Free); `--chip` only tints the text, so Pro reads plain and Trial amber. */
+.chip-gloss {
+  --chip: var(--foreground);
+  display: inline-flex;
+  align-items: center;
+  border-radius: 0.3125rem;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  color: color-mix(in oklch, var(--chip) 92%, var(--foreground));
+  background: linear-gradient(
+    to bottom,
+    color-mix(in oklch, var(--foreground) 11%, var(--background)),
+    color-mix(in oklch, var(--foreground) 4%, var(--background))
+  );
+  box-shadow:
+    inset 0 0 0 1px color-mix(in oklch, var(--foreground) 26%, transparent),
+    inset 0 1px 0 color-mix(in oklch, white 20%, transparent),
+    inset 0 -1px 0 rgb(0 0 0 / 0.22),
+    0 1px 2px rgb(0 0 0 / 0.3);
+}
+.chip-gloss.chip-warning { --chip: var(--warning); }
+/* ── Glossy key ──────────────────────────────────────────────────────────────
+   A neutral lacquered key, like the workspace marks: a surface lifted a step
+   off the page, a sheen across the top, a shade at the foot, a hairline ring
+   and fine grain. Built from --foreground/--background, so it reads as a key
+   in every theme, light or dark. `--key-dot` tints the optional status dot. */
+.key-gloss {
+  --key-dot: var(--success);
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 7px;
+  color: var(--foreground);
+  background: linear-gradient(
+    to bottom,
+    color-mix(in oklch, var(--foreground) 13%, var(--background)),
+    color-mix(in oklch, var(--foreground) 5%, var(--background))
+  );
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklch, white 16%, transparent),
+    inset 0 0 0 1px color-mix(in oklch, var(--foreground) 12%, transparent),
+    0 1px 2px rgb(0 0 0 / 0.22);
+}
+.key-gloss::before,
+.key-gloss::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  border-radius: inherit;
+}
+.key-gloss::before {
+  background:
+    radial-gradient(120% 80% at 50% -15%, color-mix(in oklch, white 22%, transparent), transparent 65%),
+    linear-gradient(to bottom, transparent 50%, rgb(0 0 0 / 0.12));
+}
+.key-gloss::after {
+  opacity: 0.18;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='1.1' numOctaves='3' stitchTiles='stitch'/><feColorMatrix values='0.6 0.6 0.6 0 -0.4  0.6 0.6 0.6 0 -0.4  0.6 0.6 0.6 0 -0.4  0 0 0 0 1'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  background-size: 120px 120px;
+}
+.key-gloss .key-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: var(--key-dot);
+  box-shadow: 0 0 6px color-mix(in oklch, var(--key-dot) 70%, transparent);
+}
+.chip-gloss.chip-muted { --chip: var(--muted-foreground); }
+/* ── Keycap button ────────────────────────────────────────────────────────────
+   The Pro chip's dark key, at button size: the same lifted fill, hairline
+   ring, sheen on top and shade at the foot. A press sinks the cap 1px and
+   flattens its drop, the way a key goes down. Built from --foreground and
+   --background, so it reads as a key in every theme. */
+.keycap-btn {
+  color: var(--foreground);
+  background: linear-gradient(
+    to bottom,
+    color-mix(in oklch, var(--foreground) 14%, var(--background)),
+    color-mix(in oklch, var(--foreground) 6%, var(--background))
+  );
+  box-shadow:
+    inset 0 0 0 1px color-mix(in oklch, var(--foreground) 22%, transparent),
+    inset 0 1px 0 color-mix(in oklch, white 18%, transparent),
+    inset 0 -2px 0 rgb(0 0 0 / 0.22),
+    0 1px 2px rgb(0 0 0 / 0.3);
+  transition: transform 100ms cubic-bezier(0.165, 0.84, 0.44, 1), box-shadow 100ms cubic-bezier(0.165, 0.84, 0.44, 1), background 150ms ease-out;
+}
+@media (hover: hover) and (pointer: fine) {
+  .keycap-btn:not(:disabled):hover {
+    background: linear-gradient(
+      to bottom,
+      color-mix(in oklch, var(--foreground) 18%, var(--background)),
+      color-mix(in oklch, var(--foreground) 9%, var(--background))
+    );
+  }
+}
+.keycap-btn:not(:disabled):active {
+  transform: translateY(1px);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in oklch, var(--foreground) 22%, transparent),
+    inset 0 1px 0 color-mix(in oklch, white 10%, transparent),
+    inset 0 -1px 0 rgb(0 0 0 / 0.18);
+}
+.keycap-btn:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.keycap-btn:disabled { color: var(--muted-foreground); opacity: 0.6; }
+/* Light themes: a white key on a pale page, with a lighter shade at its foot. */
+html:not(.dark) .keycap-btn {
+  background: linear-gradient(to bottom, var(--background), color-mix(in oklch, var(--foreground) 5%, var(--background)));
+  box-shadow:
+    inset 0 0 0 1px color-mix(in oklch, var(--foreground) 16%, transparent),
+    inset 0 -2px 0 rgb(0 0 0 / 0.06),
+    0 1px 2px rgb(0 0 0 / 0.08);
+}
+@media (hover: hover) and (pointer: fine) {
+  html:not(.dark) .keycap-btn:not(:disabled):hover {
+    background: linear-gradient(to bottom, var(--background), color-mix(in oklch, var(--foreground) 8%, var(--background)));
+  }
+}
+html:not(.dark) .keycap-btn:not(:disabled):active {
+  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--foreground) 16%, transparent), inset 0 1px 1px rgb(0 0 0 / 0.06);
+}
+html:not(.dark) .key-well { box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.06), inset 0 0 0 1px color-mix(in oklch, var(--foreground) 12%, transparent); }
+html:not(.dark) .key-well:focus-within { box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.06), 0 0 0 2px var(--ring); }
+@media (prefers-reduced-motion: reduce) {
+  .keycap-btn { transition: background 150ms ease-out; }
+  .keycap-btn:not(:disabled):active { transform: none; }
+}
+/* A field drawn as a well: a step darker than its surface, no border, a
+   faint inner shade. Focus deepens it and adds the ring. */
+.key-well {
+  background: color-mix(in oklch, var(--foreground) 4%, var(--background));
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.25), inset 0 0 0 1px color-mix(in oklch, var(--foreground) 8%, transparent);
+  transition: box-shadow 150ms ease-out, background 150ms ease-out;
+}
+.key-well:focus-within {
+  background: color-mix(in oklch, var(--foreground) 2%, var(--background));
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.25), 0 0 0 2px var(--ring);
+}
+.key-well[data-invalid] {
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.25), inset 0 0 0 1px var(--destructive);
+}
+.chip-gloss.chip-primary { --chip: var(--primary); }
 .mark-grain::after {
   opacity: 0.32;
   mix-blend-mode: overlay;
@@ -1572,4 +1750,84 @@ pre code,
 .ai-gen-dots i:nth-child(3) { animation-delay: 0.4s; }
 @media (prefers-reduced-motion: reduce) {
   .ai-gen-sweep, .ai-gen-bar, .ai-gen-node, .ai-gen-line, .ai-gen-dots i { animation: none; }
+}
+
+/* Press feedback, app-wide: compact controls only. Icon buttons (sized
+   with a size-* utility), the shared Button and menu, popover and select
+   triggers shrink to 0.97 while held, so a click always answers.
+
+   Only real <button>s, and never a wide one. A right-click menu's trigger
+   wraps a whole area (the sidebar, the tab bar, the data grid), and full-width
+   rows, headers and size-full hit areas are buttons too; shrinking those made
+   the panel jump on every click. A component's own active:scale-* (a utility)
+   still wins over this base rule. */
+@layer base {
+  :where(
+      button[class*="size-"],
+      button[data-slot="button"],
+      a[data-slot="button"],
+      button[data-slot="dropdown-menu-trigger"],
+      button[data-slot="popover-trigger"],
+      button[data-slot="select-trigger"],
+      button[data-slot="dialog-trigger"]
+    ):not(
+      :disabled,
+      [aria-disabled="true"],
+      [data-no-press],
+      [class*="size-full"],
+      [class*="w-full"],
+      [class*="flex-1"],
+      [class*="inset-0"]
+    ) {
+    transition-property: color, background-color, border-color, box-shadow, opacity, scale;
+    transition-duration: 120ms;
+    transition-timing-function: cubic-bezier(0.23, 1, 0.32, 1);
+  }
+  :where(
+      button[class*="size-"],
+      button[data-slot="button"],
+      a[data-slot="button"],
+      button[data-slot="dialog-trigger"]
+    ):not(
+      :disabled,
+      [aria-disabled="true"],
+      [data-no-press],
+      /* Menu, popover and select triggers: bits-ui opens them on pointerdown
+         and anchors to the button's box at that moment, scaled to 97%, so the
+         popup moved down a pixel when the button sprang back. */
+      [aria-haspopup],
+      [class*="size-full"],
+      [class*="w-full"],
+      [class*="flex-1"],
+      [class*="inset-0"]
+    ):active {
+    scale: 0.97;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    :where(button, a[data-slot="button"]):active {
+      scale: none;
+    }
+  }
+}
+
+/* Popup triggers never take a press scale, from any class. bits-ui opens a
+   menu, popover or select on pointerdown and anchors it to the trigger's box
+   at that instant; scaled to 97% the popup was placed against a smaller box
+   and moved a pixel when the button sprang back. Unlayered and !important so
+   it wins over every `active:scale-*` utility on a trigger. */
+[aria-haspopup]:active {
+  scale: none !important;
+}
+
+/* Linux (WebKitGTK) can draw a scroll area's scrollbar on its own layer, above
+   everything, so the sidebar's bar showed through Settings and other dialogs.
+   While a dialog is open, the scrollbars behind it are hidden; the dialog's
+   own keep working. */
+html[data-os="linux"]:has([role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"])
+  :is(.app-scroll, .overflow-auto, .overflow-y-auto, .overflow-x-auto):not(:is([role="dialog"], [role="alertdialog"]) *) {
+  scrollbar-width: none;
+}
+html[data-os="linux"]:has([role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"])
+  :is(.app-scroll, .overflow-auto, .overflow-y-auto, .overflow-x-auto):not(:is([role="dialog"], [role="alertdialog"]) *)::-webkit-scrollbar {
+  display: none;
 }

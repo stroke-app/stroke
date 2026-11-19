@@ -1,8 +1,3 @@
-<script module>
-  /** Providers whose only database was opened automatically this session. */
-  const autoPickedProviders = new Set()
-</script>
-
 <script>
   // One-flow provider sign-in: authorize (OAuth) or paste a token, list every
   // database on the account, and hand a ready-to-connect spec to the parent.
@@ -14,8 +9,11 @@
   import AlertTriangle from '@lucide/svelte/icons/alert-triangle'
   import RefreshCw from '@lucide/svelte/icons/refresh-cw'
   import ArrowRight from '@lucide/svelte/icons/arrow-right'
-  import X from '@lucide/svelte/icons/x'
+  import Plus from '@lucide/svelte/icons/plus'
+  import ExternalLink from '@lucide/svelte/icons/external-link'
   import DbIcon from './DbIcon.svelte'
+  import ProviderCreateDatabase from './ProviderCreateDatabase.svelte'
+  import { createSpec, CREATE_ELSEWHERE } from '$lib/provider-create.js'
   import ProviderAuthPanel from './ProviderAuthPanel.svelte'
   import { Button } from '$lib/components/ui/button/index.js'
   import ConfirmDialog from './ConfirmDialog.svelte'
@@ -38,7 +36,13 @@
     providerLogout,
     providerListDatabases,
     providerBuildConnection,
+    providerCreateOptions,
+    providerCreateDatabase,
+    providerDatabaseStatus,
+    providerToSaved,
+    AUTH_FAILURE,
   } from '$lib/providers.js'
+  import { executeSqlOnConnection } from '$lib/api.js'
   import { readProviderList, writeProviderList, clearProviderLists } from '$lib/provider-list-cache.js'
 
   let {
@@ -101,16 +105,8 @@
   let selectedRef = $state('')
   /** The list is being fetched again from the refresh button (the picker stays usable). */
   let refreshing = $state(false)
-  // One database on the account: open it without asking. Once per visit, so a
-  // failed connect lands back on the picker instead of retrying in a loop.
-  // Only the first time per app session: coming back to this page (to refresh
-  // the list, or after a failed connect) must leave the picker in your hands.
-  $effect(() => {
-    if (phase !== 'selecting' || selectedRef || databases.length !== 1) return
-    if (autoPickedProviders.has(provider)) return
-    autoPickedProviders.add(provider)
-    void pick(databases[0].db_ref)
-  })
+  // Picking is always yours, even with one database on the account: opening it
+  // unasked connected to something you may only have wanted to look at.
 
   // `SearchableMenu` owns the query, the filtering and the keyboard: the input
   // autofocuses on open, Arrow keys move the highlight, Enter selects, Esc closes.
@@ -405,7 +401,60 @@
     return providerBuildConnection(provider, ref)
   }
 
-  async function pick(ref) {
+  // ── Create a database ─────────────────────────────────────────────────────
+  // Providers whose API lets this sign-in create one get a form in the panel;
+  // the rest (CREATE_ELSEWHERE) keep a link to their dashboard, with the reason.
+  const spec = $derived(createSpec(provider))
+  const elsewhere = $derived(CREATE_ELSEWHERE[provider] ?? null)
+  /** The create form is open in place of the picker. */
+  let creatingDb = $state(false)
+
+  /**
+   * The new database is ready: refresh the list so it shows, then connect to
+   * it. A Supabase project connects with the password the form generated.
+   * @param {import('$lib/provider-create.js').CreatedDatabase} db
+   * @param {{ password: string | null }} extra
+   */
+  async function onDatabaseCreated(db, { password }) {
+    creatingDb = false
+    await loadDatabases({ quiet: true })
+    if (!databases.some((d) => d.db_ref === db.db_ref)) {
+      databases = [...databases, { db_ref: db.db_ref, name: db.name, region: null, kind: null, host: null }]
+    }
+    if (phase !== 'selecting') return
+    toast.success(`Created ${db.name}`)
+    await pick(db.db_ref, { password, fresh: true })
+  }
+
+  /**
+   * The form closed. When the user stopped waiting on a database that is
+   * still provisioning, it keeps going on the provider: say so and list it.
+   * @param {import('$lib/provider-create.js').CreatedDatabase | null} pendingDb
+   */
+  function onCreateClosed(pendingDb) {
+    creatingDb = false
+    if (!pendingDb) return
+    toast(`${pendingDb.name} is still being set up`, {
+      description: `${meta?.name ?? 'The provider'} keeps going without Stroke. Pick it from the list once it's ready.`,
+    })
+    void loadDatabases({ quiet: true })
+  }
+
+  async function openDashboard() {
+    if (!elsewhere) return
+    try {
+      const { openUrl } = await import('@tauri-apps/plugin-opener')
+      await openUrl(elsewhere.url)
+    } catch { /* the reason text names the dashboard */ }
+  }
+
+  /**
+   * @param {string} ref
+   * @param {{ password?: string | null, fresh?: boolean }} [opts] a password already known for
+   *   this database (one Stroke just generated), so it is not asked for; `fresh`
+   *   for one just created, which may take a few seconds more to take connections.
+   */
+  async function pick(ref, { password = null, fresh = false } = {}) {
     selectedRef = ref
     phase = 'building'
     try {
@@ -425,8 +474,9 @@
       if (conn.needs_password) {
         // Reuse a previously-saved password for this exact database (host + user)
         // so we don't ask again. Otherwise ask inline, then connect.
-        const known = resolvePassword(conn.host, conn.username)
+        const known = password || resolvePassword(conn.host, conn.username)
         if (known) {
+          if (fresh) await untilAccepting({ ...conn, password: known })
           phase = 'selecting'
           onselect({ ...conn, password: known })
           return
@@ -435,6 +485,7 @@
         pw = ''
         phase = 'password'
       } else {
+        if (fresh) await untilAccepting(conn)
         phase = 'selecting'
         onselect(conn)
       }
@@ -481,6 +532,35 @@
     }
   }
 
+  /**
+   * A database the provider just made can report ready a few seconds before it
+   * takes connections: Prisma Postgres answers "Failed to connect to upstream
+   * database" at first. Try it quietly (about 40s) so the first connect is the
+   * one that works. Gives up silently: the real connect then reports why.
+   * @param {Record<string, any>} conn
+   */
+  async function untilAccepting(conn) {
+    const saved = providerToSaved({ ...conn }, { provider, saved: [], newId: () => 'probe' })
+    const probe = saved.type === 'redis' ? 'PING' : 'SELECT 1'
+    warming = true
+    try {
+      for (let i = 0; i < 16; i++) {
+        try {
+          await executeSqlOnConnection(/** @type {any} */ (saved), probe)
+          return
+        } catch (e) {
+          // Wrong credentials won't fix themselves; stop and let the connect say so.
+          if (AUTH_FAILURE.test(String(e))) return
+        }
+        await new Promise((r) => setTimeout(r, Math.min(1000 + i * 500, 4000)))
+      }
+    } finally {
+      warming = false
+    }
+  }
+  /** A new database is being waited on: the trigger says "Starting…". */
+  let warming = $state(false)
+
   /** Merge the entered password into the resolved spec and connect. */
   function confirmPassword() {
     if (!resolved || !pw.trim()) return
@@ -494,6 +574,7 @@
     await providerLogout(provider)
     clearProviderLists(cacheKey)
     prefetched.clear()
+    creatingDb = false
     phase = 'idle'
     databases = []
     selectedRef = ''
@@ -516,7 +597,7 @@
         subtitle={meta?.token?.help ?? `Paste your ${meta?.name} credentials.`}
         hint="Stored in this machine's keychain"
       >
-        {#snippet mark()}<DbIcon id={provider} class="size-4 shrink-0" />{/snippet}
+        {#snippet mark()}<DbIcon id={provider} class="size-5 shrink-0" />{/snippet}
         {#snippet action()}
           {#if meta?.token?.helpUrl}
             <Button
@@ -588,7 +669,7 @@
         subtitle="Opens your browser to authorize. Your {meta?.name} password never passes through Stroke."
         hint={meta?.signIn ?? ''}
       >
-        {#snippet mark()}<DbIcon id={provider} class="size-4 shrink-0" />{/snippet}
+        {#snippet mark()}<DbIcon id={provider} class="size-5 shrink-0" />{/snippet}
         {#snippet action()}
           <Button class="group" onclick={startAuth}>
             Sign in
@@ -602,48 +683,40 @@
     <ProviderAuthPanel
       tone="busy"
       progress
-      title="Waiting for {meta?.name}…"
+      title="Waiting for {meta?.name}"
       subtitle={deviceCode
-        ? `Confirm this code on the ${meta?.name} page in your browser, then come back here.`
-        : 'Finish authorizing in the browser tab, then come back here.'}
-      hint="Times out in 5 min"
+        ? `Confirm this code on the ${meta?.name} page in your browser. This page carries on by itself.`
+        : `Approve Stroke in the ${meta?.name} tab in your browser. This page carries on by itself.`}
+      timeout={300}
     >
-      {#snippet mark()}<DbIcon id={provider} class="size-4 shrink-0" />{/snippet}
+      {#snippet mark()}<DbIcon id={provider} class="size-5 shrink-0" />{/snippet}
       {#snippet action()}
-        <Button variant="ghost" size="sm" onclick={cancelAuth}>
-          <X class="size-3.5 shrink-0" /> Cancel
-        </Button>
+        <Button variant="ghost" size="sm" onclick={cancelAuth}>Cancel</Button>
+      {/snippet}
+      {#snippet footer()}
+        {#if deviceCode}
+          <output
+            aria-label="Confirmation code"
+            class="me-2 rounded-md border border-border/60 bg-background px-2.5 py-1 font-mono text-ui-sm font-semibold tracking-[0.2em] tabular-nums text-foreground select-all"
+          >{deviceCode.userCode}</output>
+          <Button variant="ghost" size="xs" onclick={copyDeviceCode}>
+            {#if codeCopied}<Check class="size-3 shrink-0 text-success" aria-hidden="true" /> Copied{:else}Copy code{/if}
+          </Button>
+          <Button variant="ghost" size="xs" onclick={reopenDevicePage}>Open the page again</Button>
+          <span class="sr-only" role="status">{codeCopied ? 'Code copied' : ''}</span>
+        {:else if authUrl}
+          <span class="me-1">Browser didn't open?</span>
+          <Button variant="ghost" size="xs" onclick={reopenAuthPage}>Open again</Button>
+          <Button variant="ghost" size="xs" onclick={copyAuthLink}>
+            {#if linkCopied}<Check class="size-3 shrink-0 text-success" aria-hidden="true" /> Copied{:else}Copy link{/if}
+          </Button>
+          <span class="sr-only" role="status">{linkCopied ? 'Link copied' : ''}</span>
+        {:else}
+          <Loader2 class="size-3 shrink-0 animate-spin" aria-hidden="true" />
+          <span class="ms-1">Opening your browser</span>
+        {/if}
       {/snippet}
     </ProviderAuthPanel>
-    {#if deviceCode}
-      <!-- Sits on the panel's text edge (32px well + 12px gap), so the code
-           reads as part of the step above rather than a new section. -->
-      <div class="flex flex-wrap items-center gap-3 ps-11">
-        <output
-          aria-label="Confirmation code"
-          class="rounded-lg border border-border/60 bg-muted/30 px-3.5 py-2 font-mono text-ui-lg font-semibold tracking-[0.2em] tabular-nums text-foreground select-all"
-        >{deviceCode.userCode}</output>
-        <Button variant="outline" size="sm" onclick={copyDeviceCode}>
-          {#if codeCopied}<Check class="size-3.5 shrink-0 text-success" aria-hidden="true" /> Copied{:else}Copy code{/if}
-        </Button>
-        <Button variant="ghost" size="sm" class="text-muted-foreground" onclick={reopenDevicePage}>
-          Open the page again
-        </Button>
-        <span class="sr-only" role="status">{codeCopied ? 'Code copied' : ''}</span>
-      </div>
-    {:else if authUrl}
-      <!-- The way back when the browser didn't open (no default browser set)
-           or the tab was closed: open it again, or copy the link into any
-           browser. Same text edge as the panel above. -->
-      <div class="flex flex-wrap items-center gap-x-1 gap-y-1 ps-11 text-ui-2xs text-muted-foreground">
-        <span class="me-1">Browser didn't open?</span>
-        <Button variant="ghost" size="xs" onclick={reopenAuthPage}>Open again</Button>
-        <Button variant="ghost" size="xs" onclick={copyAuthLink}>
-          {#if linkCopied}<Check class="size-3 shrink-0 text-success" aria-hidden="true" /> Copied{:else}Copy link{/if}
-        </Button>
-        <span class="sr-only" role="status">{linkCopied ? 'Link copied' : ''}</span>
-      </div>
-    {/if}
 
   {:else if phase === 'fetching'}
     <ProviderAuthPanel
@@ -653,7 +726,7 @@
       subtitle="Loading your databases…"
       hint={meta?.name ?? ''}
     >
-      {#snippet mark()}<Check class="size-4 shrink-0 text-success" />{/snippet}
+      {#snippet mark()}<Check class="size-5 shrink-0 text-success" />{/snippet}
     </ProviderAuthPanel>
 
   {:else if phase === 'error'}
@@ -661,7 +734,7 @@
          in through the browser again even when the sign-in was fine and only
          the database list fell over. -->
     <ProviderAuthPanel tone="error" title={shownError.title} subtitle={shownError.detail} hint="Nothing was saved">
-      {#snippet mark()}<AlertTriangle class="size-4 shrink-0 text-destructive" />{/snippet}
+      {#snippet mark()}<AlertTriangle class="size-5 shrink-0 text-destructive" />{/snippet}
       {#snippet action()}
         <div class="flex shrink-0 items-center gap-2">
           {#if sessionExpired && meta?.mode === 'token'}
@@ -686,17 +759,17 @@
     </ProviderAuthPanel>
 
   {:else if phase === 'selecting' || phase === 'building' || phase === 'password'}
-    <!-- Connected account: brand mark, who you are, sign out. -->
-    <div class="flex items-center gap-3 rounded-lg border border-border/60 bg-muted/20 px-3.5 py-3">
-      <div class="grid size-9 shrink-0 place-items-center rounded-lg border border-border/60 bg-background">
-        <DbIcon id={provider} class={cn('size-4.5 shrink-0', engineTint(provider))} />
-      </div>
+    <!-- Connected account: brand mark, who you are, sign out. A plain row over
+         a hairline, not a boxed card (T3's settings rows): the form below is
+         the content, this is just whose account it is. -->
+    <div class="flex items-center gap-3 border-b border-border/50 pb-3">
+      <DbIcon id={provider} class={cn('size-5 shrink-0', engineTint(provider))} />
       <div class="min-w-0 flex-1">
         <p class="flex items-center gap-2 text-ui-sm font-medium text-foreground">
           {meta?.name}
           <span class="inline-flex items-center gap-1.5 text-ui-2xs font-normal text-success"><span class="size-1.5 rounded-full bg-success" aria-hidden="true"></span>Connected</span>
         </p>
-        <p class="truncate text-ui-xs text-muted-foreground">Pick a database to connect</p>
+        <p class="truncate text-ui-xs text-muted-foreground">{creatingDb ? 'Create a database' : 'Pick a database to connect'}</p>
       </div>
       <Button variant="ghost" size="sm" class="shrink-0 text-muted-foreground hover:text-foreground" onclick={() => (confirmSignOut = true)}>
         <LogOut class="size-3.5 shrink-0" aria-hidden="true" />
@@ -706,7 +779,7 @@
 
     {#if phase === 'password'}
       <!-- Inline password step, providers that don't expose the DB password -->
-      <div class="flex flex-col gap-2.5 rounded-lg border border-border/50 p-3">
+      <div class="flex flex-col gap-2.5">
         <p class="text-ui-xs text-foreground">
           Database password for <span class="font-medium">{resolved?.name}</span>
         </p>
@@ -753,20 +826,45 @@
         </div>
       </div>
 
+    {:else if creatingDb && spec}
+      <ProviderCreateDatabase
+        providerName={meta?.name ?? provider}
+        iconId={provider}
+        {spec}
+        taken={databases.map((d) => d.name)}
+        loadOptions={(scope) => providerCreateOptions(provider, scope)}
+        create={(req) => providerCreateDatabase(provider, req)}
+        checkStatus={(ref) => providerDatabaseStatus(provider, ref)}
+        oncreated={(db, extra) => void onDatabaseCreated(db, extra)}
+        onclose={onCreateClosed}
+      />
+
     <!-- Database picker: the same searchable dropdown the D1 flow uses. -->
     {:else if databases.length > 0}
       <!-- A field-width control, not a full-bleed bar: capped at 28rem so the
            name, the chevron and the list below sit where the eye reads, and the
            menu opens at the trigger's width (with a floor for long names). -->
       <div class="flex min-w-0 flex-col gap-1.5">
-        <div class="flex items-center gap-1.5">
+        <div class="flex h-7 items-center gap-1.5">
           <span id="pc-db-label" class="flex items-baseline gap-1.5 text-ui-xs font-medium text-foreground/80">
             Database
             <span class="text-ui-2xs tabular-nums text-muted-foreground">{databases.length}</span>
           </span>
+          {#if spec}
+            <Button
+              variant="ghost"
+              size="xs"
+              class="ml-auto text-muted-foreground"
+              disabled={phase === 'building'}
+              onclick={() => (creatingDb = true)}
+            >
+              <Plus class="size-3 shrink-0" aria-hidden="true" />
+              New database
+            </Button>
+          {/if}
           <button
           type="button"
-          class="ml-auto inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
+          class="{spec ? '' : 'ml-auto '}inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
           title="Refresh the list"
           aria-label="Refresh databases"
           disabled={refreshing}
@@ -792,7 +890,7 @@
             >
               <DbIcon id={provider} class={cn('size-4 shrink-0', selectedDbName ? 'text-foreground' : 'text-muted-foreground')} />
               <span class={cn('min-w-0 flex-1 truncate', selectedDbName ? 'font-medium text-foreground' : 'text-muted-foreground')}>
-                {selectedDbName || 'Select a database'}
+                {warming ? `Starting ${selectedDbName || 'the database'}…` : selectedDbName || 'Select a database'}
               </span>
               <!-- The spinner belongs on the trigger now. It used to sit on the
                    selected row, which the dropdown closes over on select, so
@@ -819,18 +917,39 @@
       <!-- The same shape as the sidebar's empty tabs: a mark in a well, a title, one
      line on what to do, one button. Generous padding, because this block is
      the whole content of the panel when it shows. -->
-      <div class="flex flex-col items-center gap-4 rounded-lg border border-dashed border-border/60 px-6 py-10 text-center">
-        <div class="flex size-10 items-center justify-center rounded-lg border border-border/60 bg-muted/30">
+      <div class="flex flex-col items-center gap-4 px-6 py-10 text-center">
+        <div class="flex size-10 items-center justify-center rounded-lg bg-muted/40">
           <DbIcon id={provider} class="size-5 text-muted-foreground" />
         </div>
         <div class="flex max-w-[36ch] flex-col gap-1">
           <p class="text-ui-sm font-medium text-foreground">No databases yet</p>
-          <p class="text-pretty text-ui-xs leading-relaxed text-muted-foreground">Nothing on this {meta?.name ?? ''} account yet. Create one in the {meta?.name ?? 'provider'} dashboard, then refresh.</p>
+          <p class="text-pretty text-ui-xs leading-relaxed text-muted-foreground">
+            {#if spec}
+              Nothing on this {meta?.name ?? ''} account yet. Create one here and Stroke connects to it when it's ready.
+            {:else if elsewhere}
+              {elsewhere.reason}
+            {:else}
+              Nothing on this {meta?.name ?? ''} account yet. Create one in the {meta?.name ?? 'provider'} dashboard, then refresh.
+            {/if}
+          </p>
         </div>
-        <Button variant="outline" size="sm" class="group active:scale-[0.96]" onclick={() => loadDatabases()}>
-          <RefreshCw class="size-3.5 shrink-0" aria-hidden="true" />
-          Refresh
-        </Button>
+        <div class="flex flex-wrap items-center justify-center gap-2">
+          {#if spec}
+            <Button onclick={() => (creatingDb = true)}>
+              <Plus class="size-3.5 shrink-0" aria-hidden="true" />
+              Create database
+            </Button>
+          {:else if elsewhere}
+            <Button variant="outline" onclick={openDashboard}>
+              Open {meta?.name} dashboard
+              <ExternalLink class="size-3.5 shrink-0" aria-hidden="true" />
+            </Button>
+          {/if}
+          <Button variant={spec || elsewhere ? 'ghost' : 'outline'} class="group" onclick={() => loadDatabases()}>
+            <RefreshCw class="size-3.5 shrink-0" aria-hidden="true" />
+            Refresh
+          </Button>
+        </div>
       </div>
     {/if}
 

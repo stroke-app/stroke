@@ -279,6 +279,42 @@ pub struct MssqlConfig {
 /// Only one desktop connection is ever live, so lock contention is a non-issue.
 pub type MssqlHandle = Arc<tokio::sync::Mutex<crate::db::mssql::MssqlClient>>;
 
+// ── Oracle ──────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OracleConfig {
+    pub name: String,
+    #[serde(default)]
+    pub host: String,
+    #[serde(default = "default_oracle_port")]
+    pub port: u16,
+    /// Service name (Easy Connect `//host:port/service`). Used unless `sid` is set.
+    #[serde(default)]
+    pub service_name: String,
+    /// Legacy SID; connects through a full descriptor when set.
+    #[serde(default)]
+    pub sid: String,
+    /// Easy Connect string, TNS descriptor or tnsnames.ora alias. Overrides
+    /// host, port, service name and SID when set.
+    #[serde(default)]
+    pub connect_string: String,
+    pub user: String,
+    #[serde(default)]
+    pub password: String,
+    /// Folder holding Oracle Instant Client, when it isn't somewhere the app
+    /// finds by itself.
+    #[serde(default)]
+    pub client_lib_dir: String,
+}
+
+fn default_oracle_port() -> u16 {
+    1521
+}
+
+/// One synchronous Oracle session; see `db::oracle`.
+pub type OracleHandle = Arc<crate::db::oracle::OracleSession>;
+
 // ── Any-connection config for cross-connection queries ────────────────────────
 
 /// Accepts the full saved-connection JSON from the frontend and routes to the
@@ -305,10 +341,14 @@ pub enum AnyConnectionConfig {
     Dynamodb(crate::db::dynamodb::DynamoConfig),
     #[serde(rename = "couchdb")]
     Couchdb(crate::db::couchdb::CouchConfig),
+    #[serde(rename = "elasticsearch", alias = "opensearch")]
+    Elasticsearch(crate::db::elastic::EsConfig),
     #[serde(rename = "duckdb")]
     Duckdb(DuckdbConfig),
     #[serde(rename = "mssql")]
     Mssql(MssqlConfig),
+    #[serde(rename = "oracle")]
+    Oracle(OracleConfig),
     #[serde(rename = "posthog")]
     Posthog(PosthogConfig),
     /// Only the terminal (mongosh) uses this path; queries go through db::mongo.
@@ -332,6 +372,7 @@ pub enum ActiveConnection {
     Doc(crate::db::docdb::DocConn),
     Duckdb(DuckdbHandle),
     Mssql(MssqlHandle),
+    Oracle(OracleHandle),
     Posthog(PosthogConfig),
 }
 
@@ -349,6 +390,7 @@ impl ActiveConnection {
             Self::Doc(d) => d.driver(),
             Self::Duckdb(_) => "duckdb",
             Self::Mssql(_) => "mssql",
+            Self::Oracle(_) => "oracle",
             Self::Posthog(_) => "posthog",
         }
     }
@@ -358,6 +400,13 @@ impl ActiveConnection {
 
 pub struct DbState {
     pub conn: Arc<Mutex<Option<ActiveConnection>>>,
+    /// Labs, several connections at once: pools set aside by a switch, by the
+    /// connection key the page chose, oldest first. Switching back resumes one
+    /// without connecting again. Capped (see `parked`).
+    pub parked: Arc<Mutex<Vec<(String, ActiveConnection)>>>,
+    /// The page's key for the open (front) pool, when it has said. A call routed
+    /// to another key is served from `parked`; see `require_conn`.
+    pub active_key: Arc<Mutex<Option<String>>>,
     /// Cancel handles for the queries currently in flight, keyed by the id the
     /// caller sent. Keyed rather than a single slot because the UI runs several
     /// queries at once (one per editor tab) - with one slot, the second run
@@ -370,6 +419,8 @@ impl Default for DbState {
     fn default() -> Self {
         Self {
             conn: Arc::new(Mutex::new(None)),
+            parked: Arc::new(Mutex::new(Vec::new())),
+            active_key: Arc::new(Mutex::new(None)),
             cancels: Arc::new(Mutex::new(std::collections::HashMap::new())),
         }
     }
@@ -377,21 +428,80 @@ impl Default for DbState {
 
 /// Register a cancel handle for `id`, replacing (and dropping) any handle already
 /// stored under it.
-pub fn register_cancel(state: &State<'_, DbState>, id: &str, tx: oneshot::Sender<()>) {
+pub fn register_cancel(state: &Db<'_>, id: &str, tx: oneshot::Sender<()>) {
     if let Ok(mut map) = state.cancels.lock() {
         map.insert(id.to_string(), tx);
     }
 }
 
 /// Drop the cancel handle for `id` (query finished, cancelling it is meaningless).
-pub fn unregister_cancel(state: &State<'_, DbState>, id: &str) {
+pub fn unregister_cancel(state: &Db<'_>, id: &str) {
     if let Ok(mut map) = state.cancels.lock() {
         map.remove(id);
     }
 }
 
-/// Returns a clone of the active connection, or an error if disconnected.
-pub fn require_conn(state: &State<'_, DbState>) -> Result<ActiveConnection, String> {
+/// `State<DbState>` plus the database the call is for.
+///
+/// Labs, several connections at once: tabs from several databases are open
+/// together, and each call the page makes names its database in a `__conn`
+/// argument (src/lib/api.js). The key is read from the request itself, so a
+/// call sent just before a switch still reaches the database it was made for,
+/// whichever pool is in front by the time it runs. Without one, the call goes
+/// to the front pool, as before.
+#[derive(Clone)]
+pub struct Db<'r> {
+    state: State<'r, DbState>,
+    /// The `__conn` key the page sent, if any.
+    pub route: Option<String>,
+}
+
+impl<'r> Db<'r> {
+    /// For code that has the managed state but no request (MCP, background work):
+    /// it always means the front pool.
+    pub fn front(state: State<'r, DbState>) -> Self {
+        Self { state, route: None }
+    }
+    pub fn inner(&self) -> &'r DbState {
+        self.state.inner()
+    }
+}
+
+impl std::ops::Deref for Db<'_> {
+    type Target = DbState;
+    fn deref(&self) -> &DbState {
+        self.state.inner()
+    }
+}
+
+impl<'r, 'de: 'r, R: tauri::Runtime> tauri::ipc::CommandArg<'de, R> for Db<'r> {
+    fn from_command(command: tauri::ipc::CommandItem<'de, R>) -> Result<Self, tauri::ipc::InvokeError> {
+        let route = match command.message.payload() {
+            tauri::ipc::InvokeBody::Json(v) => v.get("__conn").and_then(|k| k.as_str()).filter(|k| !k.is_empty()).map(str::to_string),
+            _ => None,
+        };
+        let state = <State<'r, DbState> as tauri::ipc::CommandArg<'de, R>>::from_command(command)?;
+        Ok(Self { state, route })
+    }
+}
+
+/// Returns a clone of the connection the call is for, or an error if there is
+/// none. A routed call (see `Db`) gets its own database's pool: the front one
+/// when that is its key, else the one kept aside for it. A key whose pool was
+/// closed (pushed out by the cap, or its connection edited) is an error rather
+/// than a quiet run on whatever database happens to be in front.
+pub fn require_conn(state: &Db<'_>) -> Result<ActiveConnection, String> {
+    if let Some(key) = state.route.as_deref() {
+        let front = state.active_key.lock().map_err(|e| e.to_string())?.clone();
+        if front.as_deref() != Some(key) {
+            if let Some((_, c)) = state.parked.lock().map_err(|e| e.to_string())?.iter().find(|(k, _)| k == key) {
+                return Ok(c.clone());
+            }
+            if front.is_some() {
+                return Err("That database's connection was closed. Click its tab to open it again.".to_string());
+            }
+        }
+    }
     state
         .conn
         .lock()
@@ -401,7 +511,7 @@ pub fn require_conn(state: &State<'_, DbState>) -> Result<ActiveConnection, Stri
 }
 
 /// Convenience helper kept for all existing PostgreSQL-specific code.
-pub fn require_pool(state: &State<'_, DbState>) -> Result<PgPool, String> {
+pub fn require_pool(state: &Db<'_>) -> Result<PgPool, String> {
     match require_conn(state)? {
         ActiveConnection::Postgres(pool) => Ok(pool),
         other => Err(format!(
@@ -433,21 +543,33 @@ pub fn update_d1_token(token: &str) {
     }
 }
 
-fn set_conn(state: &State<'_, DbState>, conn: Option<ActiveConnection>) -> Result<(), String> {
+fn set_conn(state: &Db<'_>, conn: Option<ActiveConnection>) -> Result<(), String> {
     *state.conn.lock().map_err(|e| e.to_string())? = conn;
+    // A fresh pool: the page names its key once it knows it (set_active_conn_key).
+    *state.active_key.lock().map_err(|e| e.to_string())? = None;
     Ok(())
 }
 
-async fn close_existing(state: &State<'_, DbState>) {
+async fn close_existing(state: &Db<'_>) {
     let old = state.conn.lock().ok().and_then(|mut g| g.take());
     let Some(conn) = old else { return };
+    close_in_background(conn);
+}
+
+/// Drain a pool off the request path (see close_existing).
+pub fn close_in_background(conn: ActiveConnection) {
     // Drain the old pool in the background. Pool::close() waits for every
     // connection to be handed back - and against a dead peer (sleep/wake,
     // network change: exactly the state a reconnect follows) that stalls for
     // seconds. Nothing downstream needs the drain to finish - the state slot
     // is already empty - so never make connect/switch wait on it. The timeout
     // caps the drain; after that the OS cleans up the sockets.
-    tokio::spawn(async move {
+    //
+    // tauri's runtime, not tokio::spawn: this is also called from sync
+    // commands (park_connection, resume_connection, close_parked), which run
+    // outside any Tokio context. tokio::spawn panics there, and with
+    // panic = "abort" that closed the whole app on a Labs switch or disconnect.
+    tauri::async_runtime::spawn(async move {
         let timeout = std::time::Duration::from_secs(3);
         match conn {
             ActiveConnection::Postgres(p) => {
@@ -1227,7 +1349,7 @@ pub async fn test_connection(config: PgConfig) -> Result<(), String> {
 }
 
 pub async fn connect(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     tunnel_state: State<'_, TunnelState>,
     config: PgConfig,
 ) -> Result<(), String> {
@@ -1305,7 +1427,7 @@ pub async fn test_sqlite_connection(config: SqliteConfig) -> Result<(), String> 
     Ok(())
 }
 
-pub async fn connect_sqlite(state: State<'_, DbState>, config: SqliteConfig) -> Result<(), String> {
+pub async fn connect_sqlite(state: Db<'_>, config: SqliteConfig) -> Result<(), String> {
     let pool = open_sqlite(&config).await?;
     close_existing(&state).await;
     set_conn(&state, Some(ActiveConnection::Sqlite(pool)))
@@ -1406,7 +1528,7 @@ pub async fn test_mysql_connection(config: MysqlConfig) -> Result<(), String> {
 }
 
 pub async fn connect_mysql(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     tunnel_state: State<'_, TunnelState>,
     config: MysqlConfig,
 ) -> Result<(), String> {
@@ -1440,7 +1562,7 @@ pub async fn test_d1_connection(config: D1Config) -> Result<(), String> {
     Ok(())
 }
 
-pub async fn connect_d1(state: State<'_, DbState>, config: D1Config) -> Result<(), String> {
+pub async fn connect_d1(state: Db<'_>, config: D1Config) -> Result<(), String> {
     // Validate credentials before storing
     test_d1_connection(config.clone()).await?;
     close_existing(&state).await;
@@ -1454,7 +1576,7 @@ pub async fn test_libsql_connection(config: LibSqlConfig) -> Result<(), String> 
     Ok(())
 }
 
-pub async fn connect_libsql(state: State<'_, DbState>, config: LibSqlConfig) -> Result<(), String> {
+pub async fn connect_libsql(state: Db<'_>, config: LibSqlConfig) -> Result<(), String> {
     test_libsql_connection(config.clone()).await?;
     close_existing(&state).await;
     set_conn(&state, Some(ActiveConnection::LibSql(config)))
@@ -1471,7 +1593,7 @@ pub async fn test_clickhouse_connection(config: ClickhouseConfig) -> Result<(), 
     .await
 }
 
-pub async fn connect_clickhouse(state: State<'_, DbState>, config: ClickhouseConfig) -> Result<(), String> {
+pub async fn connect_clickhouse(state: Db<'_>, config: ClickhouseConfig) -> Result<(), String> {
     // Validate credentials/reachability before storing.
     test_clickhouse_connection(config.clone()).await?;
     close_existing(&state).await;
@@ -1484,7 +1606,7 @@ pub async fn test_posthog_connection(config: PosthogConfig) -> Result<(), String
     crate::db::posthog::query(&config, "SELECT 1").await.map(|_| ())
 }
 
-pub async fn connect_posthog(state: State<'_, DbState>, config: PosthogConfig) -> Result<(), String> {
+pub async fn connect_posthog(state: Db<'_>, config: PosthogConfig) -> Result<(), String> {
     test_posthog_connection(config.clone()).await?;
     close_existing(&state).await;
     set_conn(&state, Some(ActiveConnection::Posthog(config)))
@@ -1492,31 +1614,36 @@ pub async fn connect_posthog(state: State<'_, DbState>, config: PosthogConfig) -
 
 // ── DynamoDB connect / test ───────────────────────────────────────────────────
 
-pub async fn connect_dynamodb(state: State<'_, DbState>, config: crate::db::dynamodb::DynamoConfig) -> Result<(), String> {
+pub async fn connect_dynamodb(state: Db<'_>, config: crate::db::dynamodb::DynamoConfig) -> Result<(), String> {
     crate::db::dynamodb::ping(&config).await?;
     set_conn(&state, Some(ActiveConnection::Dynamodb(config)))
 }
 
 // ── Document engines connect ──────────────────────────────────────────────────
 
-pub async fn connect_cassandra(state: State<'_, DbState>, config: crate::db::cassandra::CassandraConfig) -> Result<(), String> {
+pub async fn connect_cassandra(state: Db<'_>, config: crate::db::cassandra::CassandraConfig) -> Result<(), String> {
     let session = crate::db::cassandra::connect(&config).await?;
     set_conn(&state, Some(ActiveConnection::Doc(crate::db::docdb::DocConn::Cassandra(session))))
 }
 
-pub async fn connect_mongo(state: State<'_, DbState>, config: crate::db::mongo::MongoConfig) -> Result<(), String> {
+pub async fn connect_mongo(state: Db<'_>, config: crate::db::mongo::MongoConfig) -> Result<(), String> {
     let handle = crate::db::mongo::connect(&config).await?;
     set_conn(&state, Some(ActiveConnection::Doc(crate::db::docdb::DocConn::Mongo(handle))))
 }
 
-pub async fn connect_firestore(state: State<'_, DbState>, config: crate::db::firestore::FirestoreConfig) -> Result<(), String> {
+pub async fn connect_firestore(state: Db<'_>, config: crate::db::firestore::FirestoreConfig) -> Result<(), String> {
     crate::db::firestore::ping(&config).await?;
     set_conn(&state, Some(ActiveConnection::Doc(crate::db::docdb::DocConn::Firestore(config))))
 }
 
-pub async fn connect_couchdb(state: State<'_, DbState>, config: crate::db::couchdb::CouchConfig) -> Result<(), String> {
+pub async fn connect_couchdb(state: Db<'_>, config: crate::db::couchdb::CouchConfig) -> Result<(), String> {
     crate::db::couchdb::ping(&config).await?;
     set_conn(&state, Some(ActiveConnection::Doc(crate::db::docdb::DocConn::Couch(config))))
+}
+
+pub async fn connect_elastic(state: Db<'_>, config: crate::db::elastic::EsConfig) -> Result<(), String> {
+    let config = crate::db::elastic::connect(config).await?;
+    set_conn(&state, Some(ActiveConnection::Doc(crate::db::docdb::DocConn::Elastic(config))))
 }
 
 // ── Redis connect / test ──────────────────────────────────────────────────────
@@ -1526,7 +1653,7 @@ pub async fn test_redis_connection(config: RedisConfig) -> Result<(), String> {
     connect_racing_probe(&host, port, None, crate::db::redis::ping(&config)).await
 }
 
-pub async fn connect_redis(state: State<'_, DbState>, config: RedisConfig) -> Result<(), String> {
+pub async fn connect_redis(state: Db<'_>, config: RedisConfig) -> Result<(), String> {
     // Validate credentials/reachability before storing.
     test_redis_connection(config.clone()).await?;
     close_existing(&state).await;
@@ -1562,7 +1689,7 @@ pub async fn test_duckdb_connection(config: DuckdbConfig) -> Result<(), String> 
     crate::db::duckdb::ping(&handle).await
 }
 
-pub async fn connect_duckdb(state: State<'_, DbState>, config: DuckdbConfig) -> Result<(), String> {
+pub async fn connect_duckdb(state: Db<'_>, config: DuckdbConfig) -> Result<(), String> {
     let handle = open_duckdb(&config).await?;
     crate::db::duckdb::ping(&handle).await?;
     close_existing(&state).await;
@@ -1582,16 +1709,40 @@ pub async fn test_mssql_connection(config: MssqlConfig) -> Result<(), String> {
     crate::db::mssql::ping(&handle).await
 }
 
-pub async fn connect_mssql(state: State<'_, DbState>, config: MssqlConfig) -> Result<(), String> {
+pub async fn connect_mssql(state: Db<'_>, config: MssqlConfig) -> Result<(), String> {
     let handle = open_mssql(&config).await?;
     close_existing(&state).await;
     set_conn(&state, Some(ActiveConnection::Mssql(handle)))
 }
 
+// ── Oracle connect / test ───────────────────────────────────────────────────────
+
+pub(crate) async fn open_oracle(config: &OracleConfig) -> Result<OracleHandle, String> {
+    crate::db::oracle::prepare_client(&config.client_lib_dir).await?;
+    match crate::db::oracle::probe_target(config) {
+        Some((host, port)) => connect_racing_probe(&host, port, None, crate::db::oracle::connect(config)).await,
+        // A tnsnames.ora alias: nothing to probe, so only the deadline applies.
+        None => tokio::time::timeout(CONNECT_DEADLINE, crate::db::oracle::connect(config))
+            .await
+            .map_err(|_| format!("Oracle connection timed out after {}s", CONNECT_DEADLINE.as_secs()))?,
+    }
+}
+
+pub async fn test_oracle_connection(config: OracleConfig) -> Result<(), String> {
+    let handle = open_oracle(&config).await?;
+    crate::db::oracle::ping(&handle).await
+}
+
+pub async fn connect_oracle(state: Db<'_>, config: OracleConfig) -> Result<(), String> {
+    let handle = open_oracle(&config).await?;
+    close_existing(&state).await;
+    set_conn(&state, Some(ActiveConnection::Oracle(handle)))
+}
+
 // ── Disconnect ────────────────────────────────────────────────────────────────
 
 pub async fn disconnect(
-    state: State<'_, DbState>,
+    state: Db<'_>,
     tunnel_state: State<'_, TunnelState>,
 ) -> Result<(), String> {
     // close_existing already sets state to None atomically via take() before

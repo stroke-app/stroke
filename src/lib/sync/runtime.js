@@ -6,12 +6,16 @@
 import { invoke } from '@tauri-apps/api/core'
 import { writable, get } from 'svelte/store'
 import { account } from '$lib/stores/account.js'
+import { hasPaidPro, licenseStatus } from '$lib/stores/license.js'
 import { workspaces, replaceWorkspaces, DEFAULT_WORKSPACE_ID } from '$lib/stores/workspaces.js'
 import { loadSavedConnections, upsertConnection, removeConnection, newConnectionId } from '$lib/stores/connections.js'
 import { loadSettings, updateSettings } from '$lib/stores/settings.js'
 import { aiProfiles, activeProfileId, replaceProfiles } from '$lib/stores/ai-settings.js'
 import { keybindings, replaceKeybindings } from '$lib/stores/keybindings.js'
 import { onLocalChange } from './changes.js'
+import { savedSnapshot, loadSavedSnapshot, applySyncedQuery, removeSyncedQuery } from '$lib/stores/query-history.js'
+import { reloadChartsConnection } from '$lib/stores/saved-charts.js'
+import { reloadDashboards } from '$lib/stores/dashboards.js'
 import { createSyncEngine, resetSyncBookkeeping, clearSyncBookkeeping } from './engine.js'
 import { pickSyncedSettings } from './policy.js'
 
@@ -47,6 +51,20 @@ const adapters = {
     conflictCopy: (data) =>
       upsertConnection({ ...data, id: newConnectionId(), name: `${data.name || 'Connection'} (conflicted copy)` }),
   },
+  // One saved query per record (the editor's Saved list).
+  query: {
+    list: () => savedSnapshot().map((q) => ({ id: q.id, data: q })),
+    upsert: (data) => void applySyncedQuery(data),
+    remove: (id) => void removeSyncedQuery(id),
+  },
+  // One connection's saved charts, chart groups, dashboards and query
+  // folders. Connection ids are the same on every device, so the record id is
+  // the connection's.
+  library: {
+    list: () => libraryRecords(),
+    upsert: (data) => applyLibrary(data),
+    remove: () => {},
+  },
   settings: {
     list: () => [
       {
@@ -71,6 +89,48 @@ const adapters = {
   },
 }
 
+/** localStorage keys a connection's library is made of, by field. */
+const LIBRARY_KEYS = /** @type {const} */ ({
+  charts: 'stroke:saved-charts:',
+  chartGroups: 'stroke:chart-groups:',
+  dashboards: 'stroke:dashboards:',
+  queryFolders: 'stroke:query-folders:',
+})
+
+/** Every connection's library from localStorage. */
+function libraryRecords() {
+  /** @type {Map<string, Record<string, any>>} */
+  const byConn = new Map()
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i) ?? ''
+      for (const [field, prefix] of Object.entries(LIBRARY_KEYS)) {
+        if (!key.startsWith(prefix)) continue
+        const id = key.slice(prefix.length)
+        if (!id) continue
+        let value
+        try { value = JSON.parse(localStorage.getItem(key) ?? 'null') } catch { continue }
+        if (value == null) continue
+        const rec = byConn.get(id) ?? { id }
+        rec[field] = value
+        byConn.set(id, rec)
+      }
+    }
+  } catch { /* storage blocked */ }
+  return [...byConn.values()].map((data) => ({ id: data.id, data }))
+}
+
+/** Write a connection's library from another device, then reload what is open. @param {Record<string, any>} data */
+function applyLibrary(data) {
+  if (!data?.id) return
+  for (const [field, prefix] of Object.entries(LIBRARY_KEYS)) {
+    if (data[field] === undefined) continue
+    try { localStorage.setItem(prefix + data.id, JSON.stringify(data[field])) } catch { /* full */ }
+  }
+  reloadChartsConnection()
+  reloadDashboards()
+}
+
 const engine = createSyncEngine({
   invoke,
   adapters,
@@ -79,13 +139,17 @@ const engine = createSyncEngine({
     if (kinds.has('connection')) {
       try { window.dispatchEvent(new CustomEvent('stroke:connections-synced')) } catch { /* no window */ }
     }
+    // The Saved list and the query folders read on demand: tell them to.
+    if (kinds.has('query') || kinds.has('library')) {
+      try { window.dispatchEvent(new CustomEvent('stroke:library-synced')) } catch { /* no window */ }
+    }
   },
 })
 
 // ── Status ────────────────────────────────────────────────────────────────────
 
 /**
- * @typedef {'signed-out' | 'checking' | 'setup' | 'locked' | 'ready' | 'syncing' | 'offline' | 'error'} SyncPhase
+ * @typedef {'signed-out' | 'checking' | 'pro' | 'setup' | 'locked' | 'ready' | 'syncing' | 'offline' | 'error'} SyncPhase
  * @typedef {{ phase: SyncPhase, lastSyncedAt: number, items: number, error: string | null,
  *   keyChanged: boolean, undecryptable: number }} SyncStatus
  */
@@ -121,14 +185,20 @@ export async function refreshSyncState() {
     setStatus({ phase: 'signed-out', error: null })
     return get(syncStatus)
   }
-  if (get(syncStatus).phase === 'signed-out') setStatus({ phase: 'checking' })
+  // Sync is part of paid Pro, not the trial: no server call to find that out.
+  if (!get(hasPaidPro)) {
+    setStatus({ phase: 'pro', error: null })
+    return get(syncStatus)
+  }
+  if (get(syncStatus).phase === 'signed-out' || get(syncStatus).phase === 'pro') setStatus({ phase: 'checking' })
   try {
-    /** @type {{ signed_in: boolean, unlocked: boolean, server_has_key: boolean | null, key_changed: boolean, offline: boolean, error: string | null }} */
+    /** @type {{ signed_in: boolean, unlocked: boolean, server_has_key: boolean | null, key_changed: boolean, pro_required?: boolean, offline: boolean, error: string | null }} */
     const st = await invoke('sync_state')
     if (st.key_changed) resetSyncBookkeeping(localStorage)
     /** @type {SyncPhase} */
     let phase
     if (!st.signed_in) phase = 'signed-out'
+    else if (st.pro_required) phase = 'pro'
     else if (st.unlocked) phase = st.offline ? 'offline' : 'ready'
     else if (st.server_has_key === false) phase = 'setup'
     else if (st.server_has_key === true) phase = 'locked'
@@ -165,6 +235,27 @@ export function syncNow() {
   return running
 }
 
+/** A local change has happened since the last run started (debounce pending). */
+let pendingLocal = false
+
+/**
+ * Before the app closes: push what changed in the last couple of seconds (the
+ * change debounce would otherwise lose it with the process), or let a run in
+ * flight finish. Waits at most `timeoutMs`, and not at all when there is
+ * nothing to send or sync isn't set up, so quitting is never held hostage by
+ * the network.
+ * @param {number} [timeoutMs]
+ * @returns {Promise<boolean>} whether it waited for a sync
+ */
+export async function flushSyncBeforeExit(timeoutMs = 3000) {
+  if (!get(account)?.signed_in) return false
+  const phase = get(syncStatus).phase
+  if (phase !== 'ready' && phase !== 'syncing') return false
+  if (!pendingLocal && !running) return false
+  await Promise.race([syncNow().catch(() => {}), new Promise((r) => setTimeout(r, timeoutMs))])
+  return true
+}
+
 /** After a 429, no automatic sync until then (ms). */
 let backoffUntil = 0
 const BACKOFF_MS = 60_000
@@ -180,7 +271,12 @@ async function runOnce() {
     if (st.phase !== 'ready') return
   }
   setStatus({ phase: 'syncing', error: null })
+  // Whatever changed until now goes out with this run.
+  pendingLocal = false
   try {
+    // Saved queries are read from a copy loaded out of IndexedDB; never run
+    // before it is there, or this device would look as if it had none.
+    await loadSavedSnapshot()
     const r = await engine.run()
     const last = { lastSyncedAt: Date.now(), items: r.items }
     try { localStorage.setItem(LAST_KEY, JSON.stringify(last)) } catch { /* shown, not kept */ }
@@ -198,6 +294,10 @@ async function runOnce() {
       setStatus({ phase: 'checking', keyChanged: true })
       await refreshSyncState()
       setStatus({ keyChanged: true })
+      return
+    }
+    if (msg === 'pro_required') {
+      setStatus({ phase: 'pro', error: null })
       return
     }
     if (msg === 'rate_limited') {
@@ -259,6 +359,7 @@ export function startSync() {
   /** @type {ReturnType<typeof setTimeout> | null} */
   let debounce = null
   onLocalChange(() => {
+    pendingLocal = true
     if (debounce) clearTimeout(debounce)
     debounce = setTimeout(() => {
       debounce = null
@@ -275,15 +376,37 @@ export function startSync() {
     })
   } catch { /* no window */ }
 
-  // Launch, sign-in and sign-out all arrive through the account store.
+  // Buying Pro (or losing it) changes what sync can do: ask again.
+  let wasPaid = /** @type {boolean | null} */ (null)
+  licenseStatus.subscribe(() => {
+    const paid = get(hasPaidPro)
+    if (paid === wasPaid) return
+    const first = wasPaid === null
+    wasPaid = paid
+    if (!first && get(account)?.signed_in) void refreshSyncState().then((st) => { if (st.phase === 'ready') void syncNow() })
+  })
+
+  // Launch, sign-in, sign-out and a switch to another account all arrive
+  // through the account store. Who is signed in matters, not only whether:
+  // signing in as someone else must not keep the last account's sync state.
   let wasSignedIn = /** @type {boolean | null} */ (null)
+  let wasUser = /** @type {string | null} */ (null)
   account.subscribe((a) => {
     if (!a) return
     const signedIn = !!a.signed_in
-    if (signedIn === wasSignedIn) return
+    const user = signedIn ? (a.user?.id ?? a.user?.email ?? '') : null
+    if (signedIn === wasSignedIn && user === wasUser) return
     const before = wasSignedIn
+    const switched = !!before && signedIn && wasUser !== null && user !== wasUser
     wasSignedIn = signedIn
+    wasUser = user
     if (signedIn) {
+      if (switched) {
+        clearSyncBookkeeping(localStorage)
+        try { localStorage.removeItem(LAST_KEY) } catch { /* ignore */ }
+      }
+      // Start from nothing known: the phase is the new account's, not the last one's.
+      setStatus({ phase: 'checking', error: null, keyChanged: false, lastSyncedAt: switched ? 0 : get(syncStatus).lastSyncedAt, items: switched ? 0 : get(syncStatus).items })
       lastFocus = Date.now()
       void syncNow()
     } else {

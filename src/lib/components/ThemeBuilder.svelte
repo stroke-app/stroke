@@ -18,8 +18,6 @@
   import Plus from '@lucide/svelte/icons/plus'
   import Minus from '@lucide/svelte/icons/minus'
   import Shuffle from '@lucide/svelte/icons/shuffle'
-  import ChevronLeft from '@lucide/svelte/icons/chevron-left'
-  import ChevronRight from '@lucide/svelte/icons/chevron-right'
   import { Button } from '$lib/components/ui/button/index.js'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
   import { cn } from '$lib/utils.js'
@@ -179,11 +177,6 @@
     draft.colors = Array.from({ length: n }, (_, k) => ({ h: (start + k * (360 / Math.max(2, n + 1))) % 360, s: 0.35 + Math.random() * 0.5 }))
   }
 
-  // ── Swatches ───────────────────────────────────────────────────────────────
-  /** @type {HTMLDivElement | null} */
-  let strip = $state(null)
-  const scrollStrip = (/** @type {number} */ dir) => strip?.scrollBy({ left: dir * 160, behavior: 'smooth' })
-
   // ── Wave slider (intensity) ────────────────────────────────────────────────
   /** @type {HTMLDivElement | null} */
   let wave = $state(null)
@@ -284,11 +277,11 @@
 </script>
 
 <Dialog.Root bind:open {onOpenChange}>
-  <Dialog.Content showCloseButton={false} class="w-full max-w-sm gap-0 overflow-hidden p-0">
+  <Dialog.Content showCloseButton={false} class="w-full max-w-xs gap-0 overflow-hidden p-0">
     <Dialog.Title class="sr-only">Theme builder</Dialog.Title>
     <Dialog.Description class="sr-only">Pick colours, intensity and grain for the Custom theme.</Dialog.Description>
 
-    <div class="flex flex-col gap-4 p-4">
+    <div class="flex flex-col gap-3 p-3">
       <!-- Mode -->
       <div class="flex items-center justify-center gap-2" role="radiogroup" aria-label="Appearance">
         {#each MODES as m (m.id)}
@@ -300,11 +293,11 @@
             title={m.label}
             aria-label={m.label}
             class={cn(
-              'inline-flex size-9 items-center justify-center rounded-md transition-colors',
+              'inline-flex size-7 items-center justify-center rounded-md transition-colors',
               draft.mode === m.id ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground',
             )}
             onclick={() => (draft.mode = m.id)}
-          ><Glyph class="size-4 shrink-0" /></button>
+          ><Glyph class="size-3.5 shrink-0" /></button>
         {/each}
       </div>
 
@@ -341,7 +334,7 @@
             aria-label={`Colour ${i + 1}`}
             class={cn(
               'absolute -translate-x-1/2 -translate-y-1/2 rounded-full border-white shadow-[0_2px_10px_rgb(0_0_0/0.35)] transition-[width,height,border-width] duration-150',
-              i === active ? 'size-12 border-[5px]' : 'size-8 border-[3px]',
+              i === active ? 'size-9 border-[3px]' : 'size-6 border-2',
             )}
             style="left: {p.x}%; top: {p.y}%; background: {swatchCss(c)};"
             onpointerdown={(e) => startPad(e, i)}
@@ -350,28 +343,59 @@
       </div>
 
       <!-- Add / remove / shuffle -->
-      <div class="flex items-center justify-center gap-6 text-muted-foreground">
-        <button type="button" title="Add a colour" aria-label="Add a colour" disabled={draft.colors.length >= MAX_COLORS} class="inline-flex size-8 items-center justify-center rounded-md transition-colors hover:bg-muted/60 hover:text-foreground disabled:opacity-30" onclick={addColor}><Plus class="size-4 shrink-0" /></button>
-        <button type="button" title="Remove the selected colour" aria-label="Remove the selected colour" disabled={draft.colors.length <= 1} class="inline-flex size-8 items-center justify-center rounded-md transition-colors hover:bg-muted/60 hover:text-foreground disabled:opacity-30" onclick={removeColor}><Minus class="size-4 shrink-0" /></button>
-        <button type="button" title="Shuffle" aria-label="Shuffle colours" class="inline-flex size-8 items-center justify-center rounded-md transition-colors hover:bg-muted/60 hover:text-foreground" onclick={shuffle}><Shuffle class="size-4 shrink-0" /></button>
+      <div class="flex items-center justify-center gap-3 text-muted-foreground">
+        <button type="button" title="Add a colour" aria-label="Add a colour" disabled={draft.colors.length >= MAX_COLORS} class="inline-flex size-7 items-center justify-center rounded-md transition-colors hover:bg-muted/60 hover:text-foreground disabled:opacity-30" onclick={addColor}><Plus class="size-3.5 shrink-0" /></button>
+        <button type="button" title="Remove the selected colour" aria-label="Remove the selected colour" disabled={draft.colors.length <= 1} class="inline-flex size-7 items-center justify-center rounded-md transition-colors hover:bg-muted/60 hover:text-foreground disabled:opacity-30" onclick={removeColor}><Minus class="size-3.5 shrink-0" /></button>
+        <button type="button" title="Shuffle" aria-label="Shuffle colours" class="inline-flex size-7 items-center justify-center rounded-md transition-colors hover:bg-muted/60 hover:text-foreground" onclick={shuffle}><Shuffle class="size-3.5 shrink-0" /></button>
       </div>
 
-      <!-- Swatches -->
-      <div class="flex items-center gap-1">
-        <button type="button" aria-label="Earlier colours" class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:text-foreground" onclick={() => scrollStrip(-1)}><ChevronLeft class="size-4 shrink-0" /></button>
-        <div bind:this={strip} class="no-scrollbar flex min-w-0 flex-1 gap-2 overflow-x-auto py-1">
-          {#each PRESETS as p (p.name)}
+      <!-- Swatches: a wrapped grid, every colour in view (a scrolling strip hid
+           most of them and drew a scrollbar over the row). Black and Matte
+           also set the surface ladder. -->
+      <div class="grid grid-cols-10 gap-1.5" role="group" aria-label="Colours">
+        {#each PRESETS as p (p.name)}
+          {@const on = draft.colors[active]?.h === p.h && draft.colors[active]?.s === p.s && (!p.surface || draft.surface === p.surface)}
+          <button
+            type="button"
+            title={p.name}
+            aria-label={p.name}
+            aria-pressed={on}
+            class={cn(
+              'aspect-square w-full rounded-full border border-black/10 shadow-sm transition-[scale,box-shadow] duration-[120ms] ease-[var(--ease-out)] hover:scale-110 active:scale-[0.97]',
+              on && 'ring-2 ring-ring ring-offset-1 ring-offset-background',
+            )}
+            style="background: {p.surface === 'black' ? '#050505' : swatchCss(p)}"
+            onclick={() => {
+              draft.colors[active] = { h: p.h, s: p.s }
+              if (p.surface) {
+                draft.surface = p.surface
+                if (p.surface === 'black') draft.mode = 'dark'
+              }
+            }}
+          ></button>
+        {/each}
+      </div>
+
+      <!-- Surface: the ladder the layers sit on. -->
+      <div class="flex items-center gap-3">
+        <span class="w-14 shrink-0 text-ui-xs text-muted-foreground">Surface</span>
+        <div class="flex min-w-0 flex-1 gap-0.5 rounded-md bg-muted/50 p-0.5" role="radiogroup" aria-label="Surface">
+          {#each [{ id: 'default', label: 'Default' }, { id: 'matte', label: 'Matte' }, { id: 'black', label: 'Black' }] as o (o.id)}
             <button
               type="button"
-              title={p.name}
-              aria-label={p.name}
-              class="size-8 shrink-0 rounded-full border border-black/10 shadow-sm transition-transform hover:scale-110"
-              style="background: {swatchCss(p)}"
-              onclick={() => (draft.colors[active] = { h: p.h, s: p.s })}
-            ></button>
+              role="radio"
+              aria-checked={(draft.surface ?? 'default') === o.id}
+              class={cn(
+                'flex h-6 flex-1 items-center justify-center rounded-sm text-ui-2xs font-medium transition-colors',
+                (draft.surface ?? 'default') === o.id ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+              )}
+              onclick={() => {
+                draft.surface = /** @type {any} */ (o.id)
+                if (o.id === 'black') draft.mode = 'dark'
+              }}
+            >{o.label}</button>
           {/each}
         </div>
-        <button type="button" aria-label="More colours" class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:text-foreground" onclick={() => scrollStrip(1)}><ChevronRight class="size-4 shrink-0" /></button>
       </div>
 
       <!-- Opacity: below 100% the window turns to glass (macOS) -->
@@ -385,13 +409,13 @@
           aria-valuemin="30"
           aria-valuemax="100"
           aria-valuenow={Math.round(draft.alpha * 100)}
-          class="relative h-6 min-w-0 flex-1 cursor-ew-resize touch-none select-none rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          class="relative h-5 min-w-0 flex-1 cursor-ew-resize touch-none select-none rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring"
           style="background-image: linear-gradient(90deg, transparent, {swatchCss(draft.colors[0])}), repeating-conic-gradient(color-mix(in oklch, var(--foreground) 14%, transparent) 0 25%, transparent 0 50%); background-size: 100% 100%, 10px 10px;"
           onpointerdown={startAlpha}
           onkeydown={alphaKey}
         >
           <span
-            class="pointer-events-none absolute top-1/2 size-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-white/30 shadow-[0_1px_6px_rgb(0_0_0/0.35)]"
+            class="pointer-events-none absolute top-1/2 size-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-white/30 shadow-[0_1px_6px_rgb(0_0_0/0.35)]"
             style="left: {((draft.alpha - 0.3) / 0.7) * 100}%"
           ></span>
         </div>
@@ -408,7 +432,7 @@
           aria-valuemin="0"
           aria-valuemax="100"
           aria-valuenow={Math.round(draft.intensity * 100)}
-          class="relative h-12 min-w-0 flex-1 cursor-ew-resize touch-none select-none rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          class="relative h-9 min-w-0 flex-1 cursor-ew-resize touch-none select-none rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring"
           onpointerdown={startWave}
           onkeydown={(e) => sliderKey(e, 'intensity')}
         >
@@ -420,7 +444,7 @@
             <path d={wavePath} fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" class="text-foreground/60" clip-path="url(#tb-wave-on)" vector-effect="non-scaling-stroke" />
           </svg>
           <span
-            class="pointer-events-none absolute top-0 h-12 w-5 -translate-x-1/2 rounded-full bg-white shadow-[0_2px_8px_rgb(0_0_0/0.3)]"
+            class="pointer-events-none absolute top-0 h-9 w-4 -translate-x-1/2 rounded-full bg-white shadow-[0_2px_8px_rgb(0_0_0/0.3)]"
             style="left: {draft.intensity * 100}%"
           ></span>
         </div>
@@ -434,7 +458,7 @@
           aria-valuemax="100"
           aria-valuenow={Math.round(draft.noise * 100)}
           title="Grain"
-          class="relative size-20 shrink-0 cursor-grab touch-none select-none rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring active:cursor-grabbing"
+          class="relative size-14 shrink-0 cursor-grab touch-none select-none rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring active:cursor-grabbing"
           onpointerdown={startDial}
           onkeydown={(e) => sliderKey(e, 'noise')}
         >
@@ -443,14 +467,14 @@
             {@const lit = (k / (TICKS - 1)) <= draft.noise + 0.0001}
             <span
               class={cn('absolute left-1/2 top-1/2 size-1 rounded-full', lit ? 'bg-foreground/70' : 'bg-foreground/20')}
-              style="transform: translate(-50%, -50%) rotate({a}deg) translateY(-36px);"
+              style="transform: translate(-50%, -50%) rotate({a}deg) translateY(-25px);"
             ></span>
           {/each}
           <span
-            class="absolute inset-3 rounded-full border border-border/60 bg-muted shadow-[inset_0_1px_0_rgb(255_255_255/0.08),0_2px_6px_rgb(0_0_0/0.3)]"
+            class="absolute inset-2 rounded-full border border-border/60 bg-muted shadow-[inset_0_1px_0_rgb(255_255_255/0.08),0_2px_6px_rgb(0_0_0/0.3)]"
             style="background-image: {NOISE_SVG}; transform: rotate({dialAngle}deg);"
           >
-            <span class="absolute left-1/2 top-1.5 h-2.5 w-1 -translate-x-1/2 rounded-full bg-foreground/80"></span>
+            <span class="absolute left-1/2 top-1 h-2 w-0.5 -translate-x-1/2 rounded-full bg-foreground/80"></span>
           </span>
         </div>
       </div>
@@ -472,7 +496,7 @@
         <Button type="button" size="sm" variant="outline" onclick={() => importCode(importText)}>Load</Button>
       </div>
     {/if}
-    <div class="flex items-center gap-2 border-t border-border/50 bg-muted/20 px-4 py-3">
+    <div class="flex items-center gap-1 border-t border-border/50 bg-muted/20 px-3 py-2">
       <Button type="button" variant="ghost" size="sm" onclick={copyCode} title="Copy this theme as a code to share">Copy code</Button>
       <Button type="button" variant="ghost" size="sm" onclick={() => (importing = !importing)} aria-pressed={importing}>Import</Button>
       <span class="flex-1"></span>

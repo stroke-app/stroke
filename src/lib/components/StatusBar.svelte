@@ -21,6 +21,7 @@
   import { vimSubMode, VIM_MODE_LABEL } from '$lib/vim/vim.js'
   import { listDatabases, canSwitchDatabase, currentDatabaseKey, isCurrentDatabase } from '$lib/databases.js'
   import { engineFamily } from '$lib/stores/connections.js'
+  import { oracleContainerName } from '$lib/api.js'
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js'
   import AppearanceMenu from './AppearanceMenu.svelte'
   import CreateDatabaseDialog from './CreateDatabaseDialog.svelte'
@@ -43,6 +44,12 @@
     savedConnections = [],
     activeConnectionId = '',
     mcpRunning = false,
+    /** Round trip of the last database ping in ms; null before the first. */
+    latencyMs = /** @type {number | null} */ (null),
+    /** No network at all on this computer. */
+    offline = false,
+    /** Check the connection now (the connectivity chip's click). */
+    onping = /** @type {() => void} */ (() => {}),
     hasUpdate = false,
     /** The update is downloaded and waiting: the badge offers the restart. */
     updateReady = false,
@@ -52,6 +59,12 @@
     onswitchd1database = /** @type {(db: { databaseId: string, name: string }) => void} */ ((_db) => {}),
     onswitchproviderdb = /** @type {(db: { provider: string, dbRef: string, name: string }) => void} */ ((_db) => {}),
     onswitchconnection = /** @type {(conn: import('$lib/stores/connections.js').SavedConnection) => void} */ ((_c) => {}),
+    /** Labs, several databases open: all of them, the one in front marked. Empty otherwise. */
+    openDatabases = /** @type {{ key: string, label: string, current: boolean }[]} */ ([]),
+    /** Bring an open database to the front. */
+    onopendatabase = /** @type {(key: string) => void} */ ((_k) => {}),
+    /** Labs: the database being opened while the one on screen stays up. */
+    switchingTo = '',
     oncheckupdate = /** @type {() => void} */ (() => {}),
     onopenmodelsettings = /** @type {() => void} */ (() => {}),
     aiMode = false,
@@ -85,6 +98,8 @@
     /** Live mode (auto-refresh active table) - Postgres/SQLite only. */
     live = false,
     liveSupported = false,
+    /** The engine has a native change signal (Postgres, SQLite); the rest poll. */
+    liveNative = false,
     ontogglelive = /** @type {() => void} */ (() => {}),
     oncreatedatabase = /** @type {(opts: import('./CreateDatabaseDialog.svelte').CreateDbOptions) => Promise<void>} */ (async () => {}),
     /** Global read-only toggle - prevents all writes across the whole session */
@@ -236,15 +251,33 @@
   /** Label shown in the trigger for the active db. Provider connections all use
    * the db name "postgres", so show the project name instead (from the connection
    * name, e.g. "Prisma · stroke-testing" → "stroke-testing"). */
+  /** Oracle's "database" is the container the session landed in, which the
+   *  saved config may not name: a blank service name goes to the listener's
+   *  default, often the root. Asked once per connection. */
+  let oracleContainer = $state('')
+  $effect(() => {
+    const id = connection?.type === 'oracle' && !connectionLost ? connection.id : null
+    oracleContainer = ''
+    if (!id) return
+    let stale = false
+    oracleContainerName()
+      .then((name) => { if (!stale) oracleContainer = name })
+      .catch(() => {})
+    return () => { stale = true }
+  })
+  /** The root holds only Oracle's own schemas; user tables live in a PDB. */
+  const oracleInRoot = $derived(oracleContainer === 'CDB$ROOT')
+
   const currentDbLabel = $derived(
-    isRedis ? `db ${redisDb}`
+    connection?.type === 'oracle' ? (oracleContainer || connection?.serviceName || connection?.sid || '')
+    : isRedis ? `db ${redisDb}`
     : isProvider ? ((connection?.name?.split(' · ').pop()) || connection?.name || currentDb)
     : isD1 ? (connection?.database || connection?.name || '')
     : currentDb,
   )
   // Document and key-value stores (other than Redis, which has numbered dbs)
   // have no "current database" to show or switch; the chip only said "No database".
-  const NO_DB_ENGINES = new Set(['dynamodb', 'couchdb', 'cassandra', 'firestore', 'valkey', 'mongodb'])
+  const NO_DB_ENGINES = new Set(['dynamodb', 'couchdb', 'elasticsearch', 'opensearch', 'cassandra', 'firestore', 'valkey', 'mongodb'])
   const hideDbChip = $derived(NO_DB_ENGINES.has(connection?.type ?? '') && !currentDbLabel)
   /** Key of the active db, used to mark the current row. */
   const currentDbKey = $derived(currentDatabaseKey(connection))
@@ -292,11 +325,14 @@
       : connection?.type === 'posthog' ? 'PostHog'
       : connection?.type === 'duckdb' ? 'DuckDB'
       : connection?.type === 'mssql' ? 'SQL Server'
+      : connection?.type === 'oracle' ? 'Oracle'
       : connection?.type === 'd1' ? 'D1'
       : connection?.type === 'redis' ? 'Redis'
       : connection?.type === 'valkey' ? 'Valkey'
       : connection?.type === 'dynamodb' ? 'DynamoDB'
       : connection?.type === 'couchdb' ? 'CouchDB'
+      : connection?.type === 'elasticsearch' ? 'Elasticsearch'
+      : connection?.type === 'opensearch' ? 'OpenSearch'
       : connection?.type === 'cassandra' ? 'Cassandra'
       : connection?.type === 'firestore' ? 'Firestore'
       : connection?.type === 'mongodb' ? 'MongoDB'
@@ -360,7 +396,7 @@
     })
   }
 
-  const iconBtn = 'inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-sidebar-accent/60 hover:text-foreground'
+  const iconBtn = 'inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-[color,background-color,scale] duration-[120ms] ease-[var(--ease-out)] active:scale-[0.97] hover:bg-sidebar-accent/60 hover:text-foreground'
   /** Shared label+icon button */
   const labelBtn = 'flex h-7 items-center gap-2 rounded-md px-2.5 text-ui-xs hover:bg-sidebar-accent/60 hover:text-foreground data-[state=open]:bg-sidebar-accent/60 data-[state=open]:text-foreground'
 
@@ -443,7 +479,7 @@
 {/snippet}
 
 <div
-  class={cn('@container/sb flex h-8 shrink-0 items-center gap-0.5 bg-panel text-ui-xs text-muted-foreground select-none', 'px-2')}
+  class={cn('@container/sb flex h-9 shrink-0 items-center gap-0.5 bg-panel pb-1 text-ui-xs text-muted-foreground select-none', 'px-2')}
   data-studio-region="statusbar"
 >
   <!-- ── Left group ──────────────────────────────────────────────────── -->
@@ -571,12 +607,16 @@
           <DropdownMenu.Trigger
             class={cn(labelBtn, 'text-muted-foreground', !canSwitchDb && 'cursor-default hover:bg-transparent hover:text-foreground')}
             disabled={!canSwitchDb}
-            title={canSwitchDb ? withShortcut('Switch database', 'database.switch') : currentDbLabel}
+            title={oracleInRoot
+              ? 'Connected to the root container, which holds only Oracle\'s own schemas. Set the service name to a pluggable database such as FREEPDB1.'
+              : canSwitchDb ? withShortcut('Switch database', 'database.switch') : currentDbLabel}
           >
             {#if connection?.type === 'sqlite'}
               <Icon name="hard-drive" class="size-3.5 shrink-0" />
             {:else if isD1}
               <Icon name="cloud" class="size-3.5 shrink-0" />
+            {:else if oracleInRoot}
+              <Icon name="alert-triangle" class="size-3.5 shrink-0 text-warning" />
             {:else}
               <Icon name="database" class="size-3.5 shrink-0" />
             {/if}
@@ -642,9 +682,7 @@
                     {/if}
                     <span class="min-w-0 flex-1 truncate">{db.label}</span>
                     {#if isCurrent}
-                      <span class="ml-auto flex shrink-0 items-center gap-1 font-sans text-ui-3xs text-muted-foreground">
-                        current <Icon name="check" class="size-3.5 shrink-0 text-foreground" />
-                      </span>
+                      <Icon name="check" class="ml-auto size-3.5 shrink-0 text-foreground" />
                     {/if}
                   </button>
                 {/each}
@@ -687,6 +725,30 @@
       </div>
       {/if}
 
+      <!-- Labs, several databases open: the database chip above is the one in
+           front; the others follow it, once each, as plain names. Clicking one
+           brings it forward (its tabs are already in the tab bar). While one
+           opens, its name shows with a spinner and the page stays as it is. -->
+      {#if switchingTo}
+        <span role="status" class="flex h-7 min-w-0 shrink-0 items-center gap-1.5 px-2 text-ui-xs text-muted-foreground">
+          <Icon name="loader-2" class="size-3.5 shrink-0 animate-spin" />
+          <span class="max-w-[8rem] truncate">{switchingTo}</span>
+        </span>
+      {:else if openDatabases.length > 1}
+        <div role="group" aria-label="Other open databases" class="flex min-w-0 items-center @max-[48rem]/sb:hidden">
+          {#each openDatabases.filter((d) => !d.current) as db (db.key)}
+            <button
+              type="button"
+              class="flex h-7 min-w-0 max-w-[9rem] items-center rounded-md px-2 text-ui-xs text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground"
+              title={`Switch to ${db.label}`}
+              onclick={() => onopendatabase(db.key)}
+            >
+              <span class="truncate">{db.label}</span>
+            </button>
+          {/each}
+        </div>
+      {/if}
+
       <!-- Read-only is a fact about this connection, so it sits with it and says
            so in words; it used to be an orange lock among the tool icons. -->
       {#if connection}
@@ -716,27 +778,33 @@
       {/if}
 
       <!-- Live mode toggle (experimental, only shown when enabled in Settings) -->
-      {#if showTableNav && liveSupported && $appLiveMode}
+      {#if liveSupported && $appLiveMode}
         {@render sep()}
+        <!-- A pill: a ringed dot that breathes while it is watching, a hollow
+             one while it is not. The tooltip says how changes are detected. -->
         <button
           type="button"
           class={cn(
-            'flex h-7 items-center gap-1.5 rounded-md px-2 transition-[background-color,color] duration-150',
+            'mx-0.5 inline-flex h-6 items-center gap-1.5 rounded-full border px-2 text-ui-2xs font-medium transition-[background-color,color,border-color] duration-150',
             live
-              ? 'font-medium text-success bg-success/10 hover:bg-success/16'
-              : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground',
+              ? 'border-success/30 bg-success/10 text-success hover:bg-success/15'
+              : 'border-border/70 text-muted-foreground hover:bg-muted/50 hover:text-foreground',
           )}
           onclick={ontogglelive}
           aria-pressed={live}
-          title={live ? 'Live: on, auto-refreshes when this table changes' : 'Live: off, click to auto-refresh on changes'}
+          title={live
+            ? `Live: refreshes when this table changes (${liveNative ? 'watching its change counter' : 'checking every 3 seconds'}). Click to stop.`
+            : 'Live: refresh this table automatically when its rows change'}
         >
-          {#if live}
-            <span class="size-1.5 shrink-0 rounded-full bg-success motion-safe:animate-pulse"></span>
-            <span>Live</span>
-          {:else}
-            <Icon name="radio" class="size-3 shrink-0" />
-            <span>Live</span>
-          {/if}
+          <span class="relative flex size-2 shrink-0 items-center justify-center" aria-hidden="true">
+            {#if live}
+              <span class="absolute inline-flex size-full rounded-full bg-success/60 motion-safe:animate-ping"></span>
+              <span class="relative inline-flex size-1.5 rounded-full bg-success"></span>
+            {:else}
+              <span class="inline-flex size-1.5 rounded-full border border-current"></span>
+            {/if}
+          </span>
+          Live
         </button>
       {/if}
 
@@ -783,16 +851,13 @@
 
     <!-- Vim mode indicator (experimental) -->
     {#if $appVimMode}
+      <!-- A neutral key with a mode dot: the key reads the same in every theme,
+           and only the dot carries the mode's colour. -->
       <span
-        class={cn(
-          'inline-flex h-6 items-center rounded-md px-1.5 font-mono text-ui-3xs font-semibold uppercase tracking-[0.06em]',
-          $vimSubMode === 'insert' && 'bg-success/15 text-success',
-          $vimSubMode === 'visual' && 'bg-warning/15 text-warning',
-          $vimSubMode === 'command' && 'bg-primary/15 text-primary',
-          $vimSubMode === 'normal' && 'bg-muted/40 text-muted-foreground',
-        )}
+        class="key-gloss mx-0.5 h-6 gap-1.5 px-2.5 font-mono text-ui-3xs font-semibold uppercase tracking-[0.08em]"
+        style:--key-dot={$vimSubMode === 'visual' ? 'var(--warning)' : $vimSubMode === 'command' ? 'var(--primary)' : $vimSubMode === 'normal' ? 'var(--muted-foreground)' : 'var(--success)'}
         title="Vim mode · {VIM_MODE_LABEL[$vimSubMode]} (experimental)"
-      >{VIM_MODE_LABEL[$vimSubMode]}</span>
+      ><span class="key-dot shrink-0" aria-hidden="true"></span>{VIM_MODE_LABEL[$vimSubMode]}</span>
     {/if}
 
 
@@ -867,8 +932,10 @@
 
     {#if !sidebarWidth}{@render globalTools()}{@render sep()}{/if}
 
-    <!-- Update badge -->
-    {#if hasUpdate}
+    <!-- Update badge: only while the sidebar is hidden. With it open, the
+         sidebar's own Update pill says the same thing, and two buttons for one
+         update read as two updates. -->
+    {#if hasUpdate && !sidebarWidth}
       <button
         type="button"
         class="flex h-7 items-center gap-2 rounded-md px-2.5 text-ui-xs font-medium text-warning transition-colors hover:bg-muted/50 hover:text-warning"
@@ -879,6 +946,45 @@
         <span class="@max-[52.5rem]/sb:hidden">{updateReady ? 'Restart to update' : 'Update'}</span>
       </button>
       {@render sep()}
+    {/if}
+
+    <!-- Connectivity: the database's round trip from the health ping, so a
+         slow link is visible before a query is. Three signal bars (lit by how
+         fast it answers) and the number; the wifi glyph read as this
+         computer's network rather than the database. -->
+    {#if connection}
+      {@const tone = offline || connectionLost ? 'bad' : latencyMs == null ? 'idle' : latencyMs < 150 ? 'good' : latencyMs < 400 ? 'fair' : 'bad'}
+      {@const lit = offline || connectionLost ? 0 : tone === 'good' ? 3 : tone === 'fair' ? 2 : tone === 'bad' ? 1 : 0}
+      <button
+        type="button"
+        class={cn(
+          'flex h-7 items-center gap-1.5 rounded-md px-1.5 text-ui-xs transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent/60 active:scale-[0.97]',
+          tone === 'bad' ? 'text-destructive' : tone === 'fair' ? 'text-warning' : 'text-muted-foreground hover:text-foreground',
+        )}
+        onclick={onping}
+        title={offline
+          ? 'Offline. Reconnects when the network is back.'
+          : connectionLost
+            ? 'Not responding. Click to retry.'
+            : latencyMs == null
+              ? 'Checking the connection'
+              : `${latencyMs} ms round trip${tone === 'fair' ? ', slow' : tone === 'bad' ? ', very slow' : ''}. Click to re-check.`}
+        aria-label={offline ? 'Offline' : connectionLost ? 'Database not responding' : latencyMs == null ? 'Checking connection' : `Database round trip ${latencyMs} milliseconds`}
+      >
+        <span class="flex h-2.5 items-end gap-px" aria-hidden="true">
+          {#each [1, 2, 3] as bar (bar)}
+            <span
+              class={cn(
+                'w-0.5 rounded-full transition-colors duration-150',
+                bar === 1 ? 'h-1' : bar === 2 ? 'h-1.75' : 'h-2.5',
+                bar <= lit ? 'bg-current' : 'bg-current opacity-25',
+                latencyMs == null && !offline && !connectionLost && 'motion-safe:animate-pulse',
+              )}
+            ></span>
+          {/each}
+        </span>
+        <span class="tabular-nums @max-[40rem]/sb:hidden">{offline ? 'Offline' : connectionLost ? 'No response' : latencyMs == null ? '' : `${latencyMs}ms`}</span>
+      </button>
     {/if}
 
     <!-- MCP status -->

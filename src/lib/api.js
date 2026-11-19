@@ -77,8 +77,21 @@ async function healD1Auth(msg) {
   }
 }
 
+/**
+ * Labs, several connections at once: the key of the database the page is on.
+ * Every call carries it as `__conn` (read by the Rust `Db` extractor), so a
+ * call sent just before a switch still runs on the database it was made for,
+ * whichever pool is in front by the time it lands. Empty: no routing.
+ */
+let _connRoute = ''
+/** @param {string} key */
+export function setConnRoute(key) {
+  _connRoute = key || ''
+}
+
 async function inv(command, args = {}) {
   const t0 = performance.now()
+  if (_connRoute && args && typeof args === 'object' && !('__conn' in args)) args = { ...args, __conn: _connRoute }
   try {
     const r = await invoke(command, args)
     traceIpc(command, performance.now() - t0, true)
@@ -356,6 +369,16 @@ export async function cloudflareListD1Databases(apiToken, accountId) {
   return inv('cloudflare_list_d1_databases', { apiToken, accountId })
 }
 
+/**
+ * Create a D1 database in an account. `locationHint` is one of Cloudflare's
+ * region hints (wnam, enam, weur, eeur, apac, oc), or null to let it choose.
+ * @param {string} apiToken @param {string} accountId @param {string} name @param {string | null} [locationHint]
+ * @returns {Promise<{ uuid: string, name: string, created_at?: string, num_tables?: number }>}
+ */
+export async function cloudflareCreateD1Database(apiToken, accountId, name, locationHint = null) {
+  return inv('cloudflare_create_d1_database', { apiToken, accountId, name, locationHint })
+}
+
 /** @param {{ name: string, url: string, authToken?: string }} config */
 export async function testLibSqlConnection(config) {
   return inv('test_libsql', { config })
@@ -614,6 +637,63 @@ export async function connectCouch(config) {
 export async function couchRequest(method, path, body) {
   if (method !== 'GET' && !path.endsWith('/_find')) assertWritable('change documents')
   return inv('couchdb_request', { method, path, body: body ?? null })
+}
+
+// ── Elasticsearch / OpenSearch ────────────────────────────────────────────────
+
+/** @typedef {{ type?: string, name?: string, url?: string, user?: string, password?: string, apiKey?: string, insecure?: boolean }} EsConnConfig */
+
+/** @param {EsConnConfig} config */
+function normalizeEs(config) {
+  const flavor = config.type === 'opensearch' ? 'opensearch' : 'elasticsearch'
+  return {
+    type: flavor,
+    flavor,
+    name: String(config.name || (flavor === 'opensearch' ? 'OpenSearch' : 'Elasticsearch')),
+    url: String(config.url || 'http://localhost:9200').trim(),
+    user: (config.user && String(config.user).trim()) || null,
+    password: config.password || null,
+    apiKey: (config.apiKey && String(config.apiKey).trim()) || null,
+    insecure: !!config.insecure,
+  }
+}
+
+/**
+ * Connection test; resolves to what the server says it is.
+ * @param {EsConnConfig} config
+ * @returns {Promise<{ flavor: 'elasticsearch' | 'opensearch', version: string, cluster: string }>}
+ */
+export async function testElastic(config) {
+  return inv('test_elastic', { config: normalizeEs(config) })
+}
+
+/** @param {EsConnConfig} config */
+export async function connectElastic(config) {
+  return connectInv('connect_elastic_db', { config: normalizeEs(config) })
+}
+
+/** Endpoints that only read even when sent as a POST (search bodies). */
+const ES_POST_READS = /(^|\/)_(search|count|msearch|mget|explain|field_caps|validate|analyze|sql|plugins|pit|search_shards|termvectors)(\/|\?|$)/
+
+/**
+ * One REST call on the active connection (`path` relative to the server).
+ * Cluster administration and index deletion are refused by the backend.
+ * @param {'GET'|'POST'|'PUT'|'DELETE'} method @param {string} path @param {any} [body]
+ * @returns {Promise<any>}
+ */
+export async function elasticRequest(method, path, body) {
+  if (method !== 'GET' && !(method === 'POST' && ES_POST_READS.test(path))) assertWritable('change documents')
+  return inv('elastic_request', { method, path, body: body ?? null })
+}
+
+/**
+ * Import a JSON, JSON Lines or CSV file into an index (`_bulk`, 500 at a time).
+ * @param {string} index @param {string} path @param {{ format?: string, infer?: boolean }} [opts]
+ * @returns {Promise<{ inserted: number, failed: number, errors: string[] }>}
+ */
+export async function elasticImport(index, path, opts = {}) {
+  assertWritable('import documents')
+  return inv('elastic_import', { index, path, format: opts.format || null, infer: opts.infer ?? true })
 }
 
 // ── MongoDB ───────────────────────────────────────────────────────────────────
@@ -927,6 +1007,43 @@ export async function connectMssql(config) {
   return connectInv('connect_mssql_db', { config: normalizeMssql(config) })
 }
 
+// ── Oracle ────────────────────────────────────────────────────────────────────
+
+/**
+ * @typedef {{ name?: string, host?: string, port?: number|string, serviceName?: string, sid?: string,
+ *   connectString?: string, user?: string, password?: string, clientLibDir?: string }} OracleConnConfig
+ */
+
+/** @param {OracleConnConfig} config */
+function normalizeOracle(config) {
+  return {
+    name: String(config.name || 'Oracle'),
+    host: String(config.host || '127.0.0.1').trim(),
+    port: Math.min(65535, Math.max(1, Number(config.port) || 1521)),
+    serviceName: String(config.serviceName ?? '').trim(),
+    sid: String(config.sid ?? '').trim(),
+    connectString: String(config.connectString ?? '').trim(),
+    user: String(config.user ?? '').trim(),
+    password: String(config.password ?? ''),
+    clientLibDir: String(config.clientLibDir ?? '').trim(),
+  }
+}
+
+/** @param {OracleConnConfig} config */
+export async function testOracleConnection(config) {
+  return inv('test_oracle', { config: normalizeOracle(config) })
+}
+
+/** @param {OracleConnConfig} config */
+export async function connectOracle(config) {
+  return connectInv('connect_oracle_db', { config: normalizeOracle(config) })
+}
+
+/** The container the Oracle session is in: a pluggable database (FREEPDB1) or CDB$ROOT. */
+export async function oracleContainerName() {
+  return /** @type {Promise<string>} */ (inv('oracle_container_name'))
+}
+
 /**
  * Resolve saved-connection hostnames into the OS resolver cache ahead of time.
  *
@@ -1000,6 +1117,15 @@ export async function dockerRunDb(dbType, eventId) {
  */
 export async function scanLocalStudios() {
   return inv('scan_local_studios')
+}
+
+/**
+ * What the Docker launcher can start: one row per image, grouped by kind.
+ * @typedef {{ id: string, label: string, engine: string, icon: string, group: string, image: string, note: string, port: number }} DockerTemplate
+ * @returns {Promise<DockerTemplate[]>}
+ */
+export async function dockerTemplates() {
+  return inv('docker_templates')
 }
 
 /**
@@ -1290,7 +1416,7 @@ export async function getTableRows(schema, table, limit, offset, query = {}) {
  * count is unavailable (non-Postgres engine); callers keep their current total.
  * @param {string} schema
  * @param {string} table
- * @param {{ search?: string, searchIsRegex?: boolean, searchCaseSensitive?: boolean, filters?: { column: string, op: string, value?: string }[] }} [query]
+ * @param {{ search?: string, searchIsRegex?: boolean, searchCaseSensitive?: boolean, filters?: { column: string, op: string, value?: string }[], supersede?: string }} [query]
  * @returns {Promise<number>}
  */
 export async function countTableRows(schema, table, query = {}) {
@@ -1306,8 +1432,31 @@ export async function countTableRows(schema, table, query = {}) {
     // Settings → SQL editor → Exact row count: COUNT(*) even where the
     // planner's estimate would answer instantly.
     exact: (() => { try { return loadSettings().sqlEditor?.exactRowCount === true } catch { return false } })(),
+    // A newer count with the same key cancels this one on the server.
+    supersede: query.supersede ?? null,
   })
   return Number(n)
+}
+
+/**
+ * Which text columns a search index would cover, which already have one, and
+ * whether pg_trgm is available (Postgres).
+ * @param {string} schema @param {string} table
+ * @returns {Promise<{ textColumns: string[], indexed: string[], trgmAvailable: boolean, rowEstimate: number }>}
+ */
+export async function searchIndexStatus(schema, table) {
+  return inv('pg_search_index_status', { schema, table })
+}
+
+/**
+ * Create trigram indexes on the table's text columns so searching it is an
+ * index scan. Builds CONCURRENTLY: the table stays usable meanwhile.
+ * @param {string} schema @param {string} table
+ * @returns {Promise<string[]>} the indexes created
+ */
+export async function createSearchIndex(schema, table) {
+  assertWritable('create a search index')
+  return inv('pg_create_search_index', { schema, table })
 }
 
 /**
@@ -1361,6 +1510,15 @@ export async function cancelQuery(queryId) {
 }
 
 /** @param {string} sql @param {string} [queryId] */
+/**
+ * The access level a script needs on the open connection: 0 read, 1 read &
+ * write, 2 modify schema, 3 dangerous (src-tauri/src/mcp/access.rs).
+ * @param {string} sql @returns {Promise<number>}
+ */
+export async function sqlAccessLevel(sql) {
+  return await inv('sql_access_level', { sql })
+}
+
 export async function executeSql(sql, queryId) {
   if (isWriteSql(sql)) assertWritable('run that statement')
   const _t0 = performance.now()
@@ -1529,8 +1687,13 @@ export async function instanceSetConfig(name, value) {
  * @param {string} sql
  * @returns {Promise<{ plan: object, planningTime: number, executionTime: number, driver: string }>}
  */
-export async function explainSql(sql) {
-  return inv('pg_explain_sql', { sql })
+/**
+ * The query plan. `analyze` (Postgres) runs the statement for actual rows and
+ * times, inside a transaction that is rolled back; off, only estimates.
+ * @param {string} sql @param {{ analyze?: boolean }} [opts]
+ */
+export async function explainSql(sql, opts = {}) {
+  return inv('pg_explain_sql', { sql, analyze: opts.analyze ?? true })
 }
 
 /**
@@ -1714,7 +1877,7 @@ export async function mcpSetReadonly(readonly) {
  * @typedef {{ includeSchema?: boolean, includeData?: boolean, includeSequences?: boolean, includeEnums?: boolean, includeFunctions?: boolean, includeTriggers?: boolean, includeViews?: boolean }} BackupOptions
  * @typedef {{ sql: string, tableCount: number, rowCount: number, cancelled: boolean, path: string | null, bytes: number, failedTables: number, elapsedMs: number }} BackupExportResult
  * @typedef {{ statementsOk: number, statementsErr: number, statementsSkipped: number, cancelled: boolean, errors: string[], elapsedMs: number }} BackupImportResult
- * @typedef {{ size: number, engine: string | null, stroke: boolean, incomplete: boolean }} BackupFileInfo
+ * @typedef {{ size: number, engine: string | null, stroke: boolean, incomplete: boolean, encrypted?: boolean, encoding: string, preview: string, previewTruncated: boolean }} BackupFileInfo
  */
 
 /**
@@ -1737,21 +1900,22 @@ export async function backupExport(schema = null, tables = null, options = null,
 /**
  * Restore a dump into the connected database: a file `path` (read in Rust) or
  * a `sql` string. Progress arrives as `restore-progress` events.
- * @param {{ sql?: string | null, path?: string | null }} source
+ * @param {{ sql?: string | null, path?: string | null, encoding?: string | null }} source `encoding` decodes the file (WHATWG label); null detects it.
  * @returns {Promise<BackupImportResult>}
  */
-export async function backupImport({ sql = null, path = null }) {
+export async function backupImport({ sql = null, path = null, encoding = null }) {
   assertWritable('restore a backup')
-  return inv('backup_import', { sql, path })
+  return inv('backup_import', { sql, path, encoding })
 }
 
 /**
  * Size and origin (engine, Stroke or not, cancelled export) of a dump file.
  * @param {string} path
+ * @param {string | null} [encoding] Decode the preview with this (WHATWG label); null detects it.
  * @returns {Promise<BackupFileInfo>}
  */
-export async function backupInspectFile(path) {
-  return inv('backup_inspect_file', { path })
+export async function backupInspectFile(path, encoding = null) {
+  return inv('backup_inspect_file', { path, encoding })
 }
 
 /**
@@ -1770,7 +1934,8 @@ export async function pickBackupSavePath(defaultName) {
  */
 export async function pickBackupFile() {
   const { open } = await import('@tauri-apps/plugin-dialog')
-  const path = await open({ multiple: false, filters: [{ name: 'SQL', extensions: ['sql', 'txt'] }] })
+  // .gz and .stroke: scheduled backups (gzip, and end-to-end encrypted).
+  const path = await open({ multiple: false, filters: [{ name: 'SQL backups', extensions: ['sql', 'txt', 'gz', 'stroke'] }] })
   return typeof path === 'string' ? path : null
 }
 
@@ -2084,7 +2249,7 @@ async function blobToBase64(blob) {
 // install can finish on its own (src-tauri/src/updates.rs).
 
 /**
- * @typedef {{ version: string, currentVersion: string, notes: string, date: number | null, staged: boolean, applyOnQuit: boolean }} UpdateInfo
+ * @typedef {{ version: string, currentVersion: string, notes: string, date: number | null, staged: boolean, applyOnQuit: boolean, manual: boolean, manualCommand: string | null, needsPassword: boolean }} UpdateInfo
  * @typedef {{ event: 'started', data: { contentLength: number | null } } | { event: 'progress', data: { downloaded: number } } | { event: 'finished' }} UpdateDownloadEvent
  */
 
@@ -2155,3 +2320,71 @@ export function agentInterrupt(conversationId) {
 export function agentStop(conversationId) {
   return invoke('agent_stop', { conversationId })
 }
+
+// ── Share links ─────────────────────────────────────────────────────────────
+// The content is encrypted in the webview (share-crypto.js); Rust only carries
+// ciphertext to stroke.click with the account token.
+
+/**
+ * @param {{ kind: string, expiresIn: number | null, maxViews: number | null, passwordSalt: string | null }} meta
+ * @param {Uint8Array} blob
+ * @returns {Promise<{ id: string, url: string }>}
+ */
+export async function shareCreate(meta, blob) {
+  return inv('share_create', { meta, blob: Array.from(blob) })
+}
+
+/**
+ * @typedef {{ id: string, kind: string, size: number, createdAt: number, expiresAt: number | null, maxViews: number | null, views: number, lastViewedAt: number | null, hasPassword: boolean, revoked: boolean, active: boolean }} ShareRow
+ * @typedef {{ maxBytes: number, maxActive: number | null, maxExpirySeconds: number | null, never: boolean, password: boolean, rows: number }} ShareLimits
+ * @returns {Promise<{ plan: 'free' | 'pro', limits: ShareLimits, shares: ShareRow[] }>}
+ */
+export async function shareList() {
+  return inv('share_list')
+}
+
+/** @param {string} id */
+export async function shareRevoke(id) {
+  return inv('share_revoke', { id })
+}
+
+// ── Stroke Nightly beside a stable install ──────────────────────────────────
+
+/** Download and install Stroke Nightly next to this app. Resolves to where it went. */
+export async function nightlyInstall() {
+  return /** @type {Promise<string>} */ (inv('nightly_install'))
+}
+
+/** @param {string} path what nightlyInstall returned */
+export async function nightlyOpen(path) {
+  return inv('nightly_open', { path })
+}
+
+/** @typedef {'stable' | 'nightly'} UpdateTrack */
+
+/** Where the app for `track` is installed already, or null. @param {UpdateTrack} track */
+export async function trackInstalled(track) {
+  return /** @type {Promise<string | null>} */ (inv('track_installed', { track }))
+}
+
+/** Download and install the app for `track`; resolves to where it went. @param {UpdateTrack} track */
+export async function trackInstall(track) {
+  return /** @type {Promise<string>} */ (inv('track_install', { track }))
+}
+
+/** Start the app installed for `track`. @param {UpdateTrack} track @param {string} path */
+export async function trackOpen(track, path) {
+  return inv('track_open', { track, path })
+}
+
+/** D1 Time Travel: the bookmark for now, or nearest an RFC 3339 timestamp. @param {string} [timestamp] */
+export async function d1Bookmark(timestamp) {
+  return /** @type {Promise<string>} */ (inv('d1_bookmark', { timestamp: timestamp || null }))
+}
+
+/** D1 Time Travel: rewind the database to a bookmark; resolves to the previous one. @param {string} bookmark */
+export async function d1Restore(bookmark) {
+  assertWritable('restore the database')
+  return /** @type {Promise<string>} */ (inv('d1_restore', { bookmark }))
+}
+

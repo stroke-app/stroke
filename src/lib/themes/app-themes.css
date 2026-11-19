@@ -43,7 +43,7 @@ html[data-theme="light"] {
   --ring:                     oklch(0.560 0.120 264);
   --sidebar:                  oklch(0.955 0.004 264);
   --sidebar-foreground:       oklch(0.20 0.010 264);
-  --sidebar-accent:           oklch(0.925 0.006 264);
+  --sidebar-accent:           oklch(0.914 0.007 264);
   --sidebar-accent-foreground: oklch(0.16 0.010 264);
   --panel:                    oklch(0.986 0.002 264);
   --sidebar-border:           oklch(0.855 0.006 264);
@@ -82,7 +82,7 @@ html[data-theme="parchment"] {
   --sidebar-accent-foreground: oklch(0.165 0.022 64);
   --sidebar-border:           oklch(0.788 0.022 78);
   --panel:                    oklch(0.958 0.015 83);
-  --table-grid:               oklch(0.768 0.026 76);
+  --table-grid:               oklch(0.868 0.020 78);
   --link:                     oklch(0.40 0.16 252);
   --link-hover:               oklch(0.30 0.18 252);
   --editor-surface:           #faf7f0;
@@ -93,9 +93,9 @@ html[data-theme="parchment"] {
 html[data-theme="ice"] {
   --background:               oklch(0.982 0.008 242);
   --foreground:               oklch(0.135 0.026 252);
-  --card:                     oklch(0.990 0.005 238);
+  --card:                     oklch(0.998 0.002 238);
   --card-foreground:          oklch(0.135 0.026 252);
-  --popover:                  oklch(0.990 0.005 238);
+  --popover:                  oklch(0.998 0.002 238);
   --popover-foreground:       oklch(0.135 0.026 252);
   --primary:                  oklch(0.46 0.20 252);
   --primary-foreground:       oklch(0.982 0.005 238);
@@ -115,7 +115,7 @@ html[data-theme="ice"] {
   --sidebar-accent-foreground: oklch(0.135 0.026 252);
   --sidebar-border:           oklch(0.800 0.026 240);
   --panel:                    oklch(0.972 0.010 240);
-  --table-grid:               oklch(0.774 0.028 240);
+  --table-grid:               oklch(0.880 0.018 240);
   --link:                     oklch(0.42 0.22 252);
   --link-hover:               oklch(0.32 0.24 252);
   --editor-surface:           #f2f5fc;
@@ -134,7 +134,7 @@ html[data-theme="dark"] {
   --card-foreground:          oklch(0.940 0 0);
   --popover:                  oklch(0.168 0 0);
   --popover-foreground:       oklch(0.940 0 0);
-  --primary:                  oklch(0.585 0.178 266);
+  --primary:                  oklch(0.555 0.185 266);
   --primary-foreground:       oklch(0.99 0 0);
   --secondary:                oklch(0.220 0 0);
   --secondary-foreground:     oklch(0.880 0 0);
@@ -152,9 +152,9 @@ html[data-theme="dark"] {
   --sidebar-foreground:       oklch(0.880 0 0);
   --sidebar-accent:           oklch(0.240 0 0);
   --sidebar-accent-foreground: oklch(0.980 0 0);
-  --sidebar-border:           oklch(0.235 0 0);
+  --sidebar-border:           oklch(0.262 0 0);
   --panel:                    oklch(0.118 0 0);
-  --table-grid:               oklch(0.272 0 0);
+  --table-grid:               oklch(0.215 0 0);
   --link:                     oklch(0.74 0.11 252);
   --link-hover:               oklch(0.82 0.09 252);
   --editor-surface:           #1c1c1c;
@@ -234,7 +234,7 @@ html[data-theme="clay"] {
   --sidebar-foreground:       oklch(0.250 0.022 58);
   --sidebar-accent:           oklch(0.915 0.015 72);
   --sidebar-accent-foreground: oklch(0.190 0.022 58);
-  --sidebar-border:           oklch(0.890 0.015 70);
+  --sidebar-border:           oklch(0.862 0.017 70);
   --panel:                    oklch(0.983 0.007 75);
   --table-grid:               oklch(0.885 0.015 70);
   --link:                     oklch(0.480 0.135 40);
@@ -287,6 +287,39 @@ html[data-theme="hotdog"] {
 }
 
 /* ── Midnight - deep ocean navy, blue accent ── */
+/* ── Bro - pure black page, the sidebar a step up, quiet grey text, one blue ── */
+html[data-theme="bro"] {
+  --background:               oklch(0.150 0.002 286);
+  --foreground:               oklch(0.955 0.002 286);
+  --card:                     oklch(0.195 0.002 286);
+  --card-foreground:          oklch(0.955 0.002 286);
+  --popover:                  oklch(0.205 0.003 286);
+  --popover-foreground:       oklch(0.955 0.002 286);
+  --primary:                  oklch(0.660 0.170 256);
+  --primary-foreground:       oklch(0.985 0.002 286);
+  --secondary:                oklch(0.225 0.003 286);
+  --secondary-foreground:     oklch(0.900 0.002 286);
+  --muted:                    oklch(0.225 0.003 286);
+  --muted-foreground:         oklch(0.660 0.004 286);
+  --accent:                   oklch(0.245 0.003 286);
+  --accent-foreground:        oklch(0.975 0.002 286);
+  --destructive:              oklch(0.640 0.200 25);
+  --border:                   oklch(0.255 0.003 286);
+  --input:                    oklch(0.275 0.003 286);
+  --ring:                     oklch(0.660 0.170 256);
+  --sidebar:                  oklch(0.180 0.002 286);
+  --sidebar-foreground:       oklch(0.900 0.002 286);
+  --sidebar-accent:           oklch(0.245 0.003 286);
+  --sidebar-accent-foreground: oklch(0.975 0.002 286);
+  --sidebar-border:           oklch(0.230 0.003 286);
+  --panel:                    oklch(0.150 0.002 286);
+  --table-grid:               oklch(0.240 0.003 286);
+  --link:                     oklch(0.700 0.150 256);
+  --link-hover:               oklch(0.790 0.120 256);
+  --editor-surface:           #0e0e10;
+  --editor-line-highlight:    #18181b;
+}
+
 html[data-theme="midnight"] {
   --background:               oklch(0.140 0.030 265);
   --foreground:               oklch(0.930 0.016 250);
@@ -389,9 +422,9 @@ html[data-theme="slate"] {
 html[data-theme="mono"] {
   --background:               oklch(0 0 0);
   --foreground:               oklch(0.985 0 0);
-  --card:                     oklch(0.072 0 0);
+  --card:                     oklch(0.120 0 0);
   --card-foreground:          oklch(0.985 0 0);
-  --popover:                  oklch(0.072 0 0);
+  --popover:                  oklch(0.120 0 0);
   --popover-foreground:       oklch(0.985 0 0);
   --primary:                  oklch(0.985 0 0);
   --primary-foreground:       oklch(0 0 0);
@@ -399,19 +432,19 @@ html[data-theme="mono"] {
   --secondary-foreground:     oklch(0.900 0 0);
   --muted:                    oklch(0.150 0 0);
   --muted-foreground:         oklch(0.698 0 0);
-  --accent:                   oklch(0.168 0 0);
+  --accent:                   oklch(0.200 0 0);
   --accent-foreground:        oklch(0.985 0 0);
   --destructive:              oklch(0.65 0.20 25);
-  --border:                   oklch(0.230 0 0);
+  --border:                   oklch(0.262 0 0);
   --input:                    oklch(0.230 0 0);
   --ring:                     oklch(0.780 0 0);
   --sidebar:                  oklch(0 0 0);
   --sidebar-foreground:       oklch(0.880 0 0);
-  --sidebar-accent:           oklch(0.135 0 0);
+  --sidebar-accent:           oklch(0.185 0 0);
   --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border:           oklch(0.210 0 0);
+  --sidebar-border:           oklch(0.240 0 0);
   --panel:                    oklch(0.045 0 0);
-  --table-grid:               oklch(0.238 0 0);
+  --table-grid:               oklch(0.190 0 0);
   --link:                     oklch(0.74 0.11 252);
   --link-hover:               oklch(0.82 0.09 252);
   --editor-surface:           #000000;
@@ -480,11 +513,11 @@ html[data-theme="github-light"] {
   --ring:                     #0969da;
   --sidebar:                  #f6f8fa;
   --sidebar-foreground:       #1f2328;
-  --sidebar-accent:           #eaeef2;
+  --sidebar-accent:           #e3e8ee;
   --sidebar-accent-foreground:#1f2328;
   --sidebar-border:           #d1d9e0;
   --panel:                    #ffffff;
-  --table-grid:               #d1d9e0;
+  --table-grid:               #e1e6eb;
   --link:                     #0969da;
   --link-hover:               #0a5cc0;
   --editor-surface:           #ffffff;
@@ -564,31 +597,31 @@ html[data-theme="catppuccin"] {
 /* ── Solarized - Ethan Schoonover's classic dark, blue accent ── */
 html[data-theme="solarized"] {
   --background:               #002b36;
-  --foreground:               #93a1a1;
+  --foreground:               #a3b1b1;
   --card:                     #073642;
   --card-foreground:          #93a1a1;
   --popover:                  #073642;
   --popover-foreground:       #93a1a1;
-  --primary:                  #268bd2;
+  --primary:                  #2f97df;
   --primary-foreground:       #002b36;
   --secondary:                #073642;
   --secondary-foreground:     #eee8d5;
   --muted:                    #073642;
-  --muted-foreground:         #839496;
+  --muted-foreground:         #8d9fa1;
   --accent:                   #0d3b47;
   --accent-foreground:        #eee8d5;
-  --destructive:              #dc322f;
-  --border:                   #0f3d49;
+  --destructive:              #e8534f;
+  --border:                   #15485a;
   --input:                    #123f4b;
   --ring:                     #268bd2;
   --sidebar:                  #00212b;
   --sidebar-foreground:       #93a1a1;
   --sidebar-accent:           #073642;
   --sidebar-accent-foreground:#eee8d5;
-  --sidebar-border:           #0f3d49;
+  --sidebar-border:           #15485a;
   --panel:                    #01313d;
-  --table-grid:               #0f3d49;
-  --link:                     #268bd2;
+  --table-grid:               #0c3a46;
+  --link:                     #4ea3e3;
   --link-hover:               #4ba3d8;
   --editor-surface:           #002b36;
   --editor-line-highlight:    #073642;
@@ -738,7 +771,7 @@ html[data-theme="matte"] {
   --sidebar-accent-foreground: oklch(0.940 0 0);
   --sidebar-border:           oklch(0.305 0 0);
   --panel:                    oklch(0.202 0 0);
-  --table-grid:               oklch(0.335 0 0);
+  --table-grid:               oklch(0.262 0 0);
   --link:                     oklch(0.955 0 0);
   --link-hover:               oklch(0.995 0 0);
   --editor-surface:           oklch(0.190 0 0);
@@ -1000,7 +1033,7 @@ html[data-theme="glass-dark"] {
   --card-foreground:          oklch(0.955 0 0);
   --popover:                  oklch(0.195 0.004 264);
   --popover-foreground:       oklch(0.955 0 0);
-  --primary:                  oklch(0.640 0.170 258);
+  --primary:                  oklch(0.560 0.180 260);
   --primary-foreground:       oklch(0.99 0 0);
   --secondary:                oklch(0.250 0.004 264);
   --secondary-foreground:     oklch(0.900 0 0);
@@ -1018,7 +1051,7 @@ html[data-theme="glass-dark"] {
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border:           oklch(0.300 0.004 264);
   --panel:                    oklch(0.150 0.004 264);
-  --table-grid:               oklch(0.310 0.004 264);
+  --table-grid:               oklch(0.265 0.004 264);
   --link:                     oklch(0.76 0.11 252);
   --link-hover:               oklch(0.84 0.09 252);
   --editor-surface:           #222327;

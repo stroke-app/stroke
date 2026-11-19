@@ -1,6 +1,9 @@
 <script>
   import { onDestroy } from 'svelte'
   import FieldSelect from './FieldSelect.svelte'
+  import ScheduledBackups from './ScheduledBackups.svelte'
+  import LockKeyhole from '@lucide/svelte/icons/lock-keyhole'
+  import CalendarClock from '@lucide/svelte/icons/calendar-clock'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
   import { Button } from '$lib/components/ui/button/index.js'
   import { Checkbox } from '$lib/components/ui/checkbox/index.js'
@@ -27,6 +30,7 @@
   import TriangleAlert from '@lucide/svelte/icons/triangle-alert'
   import CircleAlert from '@lucide/svelte/icons/circle-alert'
   import FileText from '@lucide/svelte/icons/file-text'
+  import ScrollText from '@lucide/svelte/icons/scroll-text'
   import FolderOpen from '@lucide/svelte/icons/folder-open'
   import Copy from '@lucide/svelte/icons/copy'
   import Search from '@lucide/svelte/icons/search'
@@ -46,20 +50,48 @@
     schemas = /** @type {string[]} */ ([]),
     /** @type {TableRow[]} */
     tables = [],
+    /** After a restore that applied anything: reload the schema tree and tables. */
+    onrestored = /** @type {() => void | Promise<void>} */ (() => {}),
+    /** The saved connection behind this database, for scheduled backups. */
+    savedConnection = /** @type {{ id: string, name?: string, type?: string } | null} */ (null),
   } = $props()
 
-  /** @type {'backup'|'restore'} */
+  // ── Live log ────────────────────────────────────────────────────────────────
+  /** @typedef {{ id: number, at: number, level: string, text: string }} LogLine */
+  /** Lines kept on the page; a long run drops the oldest. */
+  const LOG_CAP = 2000
+  /** @type {LogLine[]} */
+  let logLines = $state([])
+  let logSeq = 0
+  let showLog = $state(false)
+  /** @param {string} level @param {string} text */
+  function addLog(level, text) {
+    logLines.push({ id: logSeq++, at: Date.now(), level, text })
+    if (logLines.length > LOG_CAP) logLines.splice(0, logLines.length - LOG_CAP)
+  }
+  /** @type {HTMLElement|null} */
+  let logEl = $state(null)
+  // Follow new lines while the reader is at the bottom; stay put when they scrolled up.
+  let followLog = true
+  $effect(() => {
+    void logLines.length
+    if (logEl && followLog) logEl.scrollTop = logEl.scrollHeight
+  })
+  const logTime = (/** @type {number} */ t) => new Date(t).toLocaleTimeString([], { hour12: false })
+
+  /** @type {'backup'|'restore'|'schedule'} */
   let activeTab = $state('backup')
 
   const supportsSchemaFilter = $derived(dbType === 'postgres' || dbType === 'mysql')
   const isPostgres = $derived(dbType === 'postgres')
-  const isSqliteFamily = $derived(dbType === 'sqlite' || dbType === 'd1')
+  const isSqliteFamily = $derived(dbType === 'sqlite' || dbType === 'd1' || dbType === 'libsql')
   const dbLabel = $derived(
     /** @type {Record<string, string>} */ ({
       postgres: 'PostgreSQL',
       mysql: 'MySQL',
       sqlite: 'SQLite',
       d1: 'Cloudflare D1',
+      libsql: 'libSQL / Turso',
       duckdb: 'DuckDB',
       mssql: 'SQL Server',
     })[dbType ?? ''] ?? 'Database',
@@ -287,6 +319,12 @@
       runTables.push({ key, schema: p.schema ?? null, name: p.name, est: null, status: 'pending', rows: 0, error: null })
     }
     const row = runTables[i]
+    if (p.status !== row.status) {
+      const label = p.schema && multiSchema ? `${p.schema}.${p.name}` : p.name
+      if (p.status === 'running') addLog('info', `${label}: exporting`)
+      else if (p.status === 'done') addLog('ok', `${label}: ${rowsText(p.rows ?? 0)}`)
+      else if (p.status === 'error') addLog('error', `${label}: ${p.error ?? 'failed'}`)
+    }
     row.status = p.status
     row.rows = p.rows ?? 0
     row.error = p.error ?? null
@@ -294,6 +332,7 @@
 
   /** @param {any} p */
   function onBackupLog(p) {
+    if (p?.message) addLog(p.level ?? 'info', p.message)
     if (p?.level === 'warn' && !/^Cancelled/.test(p.message)) exportNotes.push(p.message)
   }
 
@@ -324,6 +363,7 @@
     exportPath = path
     runTables = []
     runIndex = new Map()
+    logLines = []
     exportStartedAt = Date.now()
     startClock()
     stopListening()
@@ -399,6 +439,39 @@
   /** @type {FileInfo|null} */
   let importInfo = $state(null)
   let importConfirmed = $state(false)
+  /** The encoding to read the file with; 'auto' is what the file looks like. */
+  let importEncoding = $state('auto')
+
+  /** Encodings dumps come in, by WHATWG label. */
+  const ENCODINGS = [
+    { value: 'utf-8', label: 'UTF-8' },
+    { value: 'utf-16le', label: 'UTF-16 LE' },
+    { value: 'utf-16be', label: 'UTF-16 BE' },
+    { value: 'windows-1252', label: 'Latin-1 (Windows-1252)' },
+    { value: 'iso-8859-2', label: 'Central European (ISO-8859-2)' },
+    { value: 'windows-1251', label: 'Cyrillic (Windows-1251)' },
+    { value: 'shift_jis', label: 'Japanese (Shift_JIS)' },
+    { value: 'gbk', label: 'Chinese (GBK)' },
+    { value: 'euc-kr', label: 'Korean (EUC-KR)' },
+  ]
+  const encodingName = (/** @type {string} */ v) => ENCODINGS.find((e) => e.value === v)?.label ?? v.toUpperCase()
+  const encodingOptions = $derived([
+    { value: 'auto', label: importInfo?.encoding ? `Detected: ${encodingName(importInfo.encoding)}` : 'Detect' },
+    ...ENCODINGS,
+  ])
+
+  /** Read the file again with another encoding, so the preview shows what will run. */
+  async function changeEncoding(/** @type {string} */ v) {
+    importEncoding = v
+    if (!importPath || importInfo?.encrypted) return
+    const path = importPath
+    try {
+      const info = await backupInspectFile(path, v === 'auto' ? null : v)
+      if (importPath === path) importInfo = info
+    } catch (e) {
+      toast.error('Could not read the file', { description: errText(e) })
+    }
+  }
   let importStopping = $state(false)
   let importStartedAt = $state(0)
   let importProgress = $state({ bytesDone: 0, bytesTotal: 0, ok: 0, failed: 0 })
@@ -417,7 +490,7 @@
     const ok =
       dbType === 'postgres' ? e.includes('postgres')
       : dbType === 'mysql' ? e.includes('mysql') || e.includes('maria')
-      : dbType === 'sqlite' || dbType === 'd1' ? e.includes('sqlite') || e.includes('d1')
+      : dbType === 'sqlite' || dbType === 'd1' || dbType === 'libsql' ? e.includes('sqlite') || e.includes('d1') || e.includes('libsql')
       : true
     return ok ? null : importInfo?.engine ?? null
   })
@@ -435,6 +508,7 @@
     importPath = path
     importInfo = null
     importConfirmed = false
+    importEncoding = 'auto'
     try {
       importInfo = await backupInspectFile(path)
     } catch (e) {
@@ -461,11 +535,28 @@
     importStartedAt = Date.now()
     startClock()
     stopListening()
-    unlisteners = [await listenTo('restore-progress', (p) => (importProgress = p))]
+    logLines = []
+    let lastTenth = -1
+    unlisteners = await Promise.all([
+      listenTo('restore-progress', (p) => {
+        importProgress = p
+        // A line every 10% of the file, so the log moves on a clean run too.
+        const tenth = p?.bytesTotal ? Math.floor((p.bytesDone / p.bytesTotal) * 10) : -1
+        if (tenth > lastTenth && tenth < 10) {
+          lastTenth = tenth
+          addLog('info', `${tenth * 10}% of the file · ${statementsText(p.ok)} applied${p.failed ? ` · ${fmtInt(p.failed)} failed` : ''}`)
+        }
+      }),
+      listenTo('restore-log', (p) => p?.message && addLog(p.level ?? 'info', p.message)),
+    ])
     try {
-      const result = await backupImport({ path: importPath })
+      const result = await backupImport({ path: importPath, encoding: importEncoding === 'auto' ? null : importEncoding })
       importResult = result
       importPhase = 'done'
+      if (result.statementsOk > 0) {
+        addLog('info', 'Refreshing the schema')
+        try { await onrestored() } catch { /* the sidebar's own refresh still works */ }
+      }
     } catch (e) {
       importError = errText(e)
       importPhase = 'error'
@@ -490,6 +581,45 @@
     importProgress = { bytesDone: 0, bytesTotal: 0, ok: 0, failed: 0 }
   }
 </script>
+
+{#snippet logToggle()}
+  <Button
+    variant={showLog ? 'secondary' : 'ghost'}
+    size="sm"
+    class="h-7 gap-1.5"
+    aria-pressed={showLog}
+    onclick={() => (showLog = !showLog)}
+  >
+    <ScrollText class="size-3.5 shrink-0" />Log
+  </Button>
+{/snippet}
+
+{#snippet logPanel()}
+  <!-- Focusable so the log can be scrolled from the keyboard. -->
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+  <div
+    bind:this={logEl}
+    onscroll={() => { if (logEl) followLog = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 24 }}
+    class="app-scroll min-h-0 flex-1 overflow-y-auto border-t border-border/60 bg-background/40 px-4 py-2 font-mono text-ui-xs leading-relaxed"
+    role="log"
+    aria-label="Live log"
+    tabindex="0"
+  >
+    {#each logLines as line (line.id)}
+      <div class="flex gap-3">
+        <span class="shrink-0 tabular-nums text-muted-foreground/70">{logTime(line.at)}</span>
+        <span
+          class={cn(
+            'min-w-0 break-words whitespace-pre-wrap',
+            line.level === 'error' ? 'text-destructive' : line.level === 'warn' ? 'text-warning' : line.level === 'ok' ? 'text-success' : 'text-foreground/85',
+          )}
+        >{line.text}</span>
+      </div>
+    {:else}
+      <p class="text-muted-foreground">Waiting for the first line…</p>
+    {/each}
+  </div>
+{/snippet}
 
 {#snippet progressBar(/** @type {number} */ fraction, /** @type {'running'|'done'|'warn'|'error'} */ tone)}
   <div
@@ -540,13 +670,18 @@
         <Tabs.Trigger value="restore" class="px-3 text-ui-xs" disabled={exportRunning}>
           <Upload class="size-3.5 shrink-0" />Restore
         </Tabs.Trigger>
+        <Tabs.Trigger value="schedule" class="px-3 text-ui-xs">
+          <CalendarClock class="size-3.5 shrink-0" />Scheduled
+        </Tabs.Trigger>
       </Tabs.List>
     </Tabs.Root>
     <span class="min-w-0 flex-1"></span>
     <span class="min-w-0 truncate text-ui-xs text-muted-foreground">{dbLabel}</span>
   </div>
 
-  {#if activeTab === 'backup'}
+  {#if activeTab === 'schedule'}
+    <ScheduledBackups connection={savedConnection} />
+  {:else if activeTab === 'backup'}
     <div class="flex min-h-0 flex-1 overflow-hidden">
       <!-- Left: what to export -->
       <aside class="flex w-80 shrink-0 flex-col border-r border-border/60" aria-label="Backup options">
@@ -664,6 +799,7 @@
                 {:else}Export failed{/if}
               </p>
               <span class="flex-1"></span>
+              {@render logToggle()}
               <span class="font-mono text-ui-xs tabular-nums text-muted-foreground">{fmtElapsed(exportElapsed)}</span>
             </div>
             {@render progressBar(
@@ -731,7 +867,9 @@
             {/if}
           </div>
 
-          {#if runTables.length}
+          {#if showLog}
+            {@render logPanel()}
+          {:else if runTables.length}
             <ul class="app-scroll min-h-0 flex-1 overflow-y-auto py-1" aria-label="Tables">
               {#each runTables as t (t.key)}
                 <li class="flex h-8 items-center gap-2.5 px-4" title={t.error ?? undefined}>
@@ -785,6 +923,13 @@
               </p>
             {/if}
 
+            {#if importInfo?.encrypted}
+              <Alert.Root>
+                <LockKeyhole />
+                <Alert.Title>End-to-end encrypted</Alert.Title>
+                <Alert.Description>A scheduled backup. It opens on this computer with your sync key; unlock sync first if it's locked.</Alert.Description>
+              </Alert.Root>
+            {/if}
             {#if importInfo?.incomplete}
               <Alert.Root variant="destructive">
                 <CircleAlert />
@@ -800,6 +945,19 @@
               </Alert.Root>
             {/if}
           </section>
+
+          {#if importPath && importInfo && !importInfo.encrypted && importPhase === 'idle'}
+            <section class="flex flex-col gap-2">
+              <label for="restore-encoding" class={sectionLabel}>Encoding</label>
+              <FieldSelect
+                id="restore-encoding"
+                class="w-full"
+                value={importEncoding}
+                options={encodingOptions}
+                onchange={(v) => void changeEncoding(v)}
+              />
+            </section>
+          {/if}
 
           {#if importPath && importPhase === 'idle'}
             <section class="flex flex-col gap-2">
@@ -836,7 +994,19 @@
 
       <!-- Right: the run -->
       <section class="flex min-w-0 flex-1 flex-col" aria-label="Restore progress">
-        {#if importPhase === 'idle'}
+        {#if importPhase === 'idle' && importInfo?.preview}
+          <div class="flex h-9 shrink-0 items-center gap-2 border-b border-border/60 px-4">
+            <FileText class="size-3.5 shrink-0 text-muted-foreground" />
+            <p class="min-w-0 flex-1 truncate text-ui-xs text-muted-foreground">
+              {importInfo.previewTruncated ? 'First 100,000 characters' : 'The whole file'}
+            </p>
+          </div>
+          <div class="flex min-h-0 flex-1 flex-col">
+            {#await import('./CodeEditor.svelte') then { default: CodeEditor }}
+              <CodeEditor value={importInfo.preview} readOnly lang="sql" ariaLabel="Preview of the file" />
+            {/await}
+          </div>
+        {:else if importPhase === 'idle'}
           {@render emptyState(
             Upload,
             'Restore from a .sql file',
@@ -853,6 +1023,7 @@
                 {:else}Restore complete{/if}
               </p>
               <span class="flex-1"></span>
+              {@render logToggle()}
               <span class="font-mono text-ui-xs tabular-nums text-muted-foreground">{fmtElapsed(importElapsed)}</span>
             </div>
             {@render progressBar(
@@ -889,7 +1060,9 @@
             {/if}
           </div>
 
-          {#if importResult?.errors.length}
+          {#if showLog}
+            {@render logPanel()}
+          {:else if importResult?.errors.length}
             <div class="flex min-h-0 flex-1 flex-col px-4 pb-4">
               <Alert.Root variant="destructive" class="flex min-h-0 flex-col">
                 <div class="flex items-center gap-2">

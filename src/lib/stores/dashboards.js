@@ -1,3 +1,4 @@
+import { notifyLocalChange } from '$lib/sync/changes.js'
 import { writable } from 'svelte/store'
 import { debounce } from '$lib/utils.js'
 
@@ -5,15 +6,23 @@ import { debounce } from '$lib/utils.js'
  * @typedef {{
  *   id: string,
  *   chartId: string | null,
- *   span: 1 | 2 | 3,
+ *   span: number,
+ *   size?: 's' | 'm' | 'l',
+ *   h?: number,
+ *   query?: { sql: string, name: string, type?: string },
  * }} DashItem
+ *
+ * A card shows a saved chart (`chartId`), or a saved query (`query`) drawn as
+ * a number, a chart or a table. `h` is its height in pixels once resized by
+ * hand; `size` is the older s/m/l preset it falls back to.
  *
  * @typedef {{
  *   id: string,
  *   name: string,
- *   columns: 2 | 3,
+ *   columns: number,
  *   items: DashItem[],
  *   createdAt: number,
+ *   refreshSec?: number,
  * }} Dashboard
  */
 
@@ -51,6 +60,7 @@ export const activeDashboardId = writable(/** @type {string | null} */ (null))
 // resize, add) don't JSON.stringify + write on every change.
 const persistDashboards = debounce((/** @type {Dashboard[]} */ v, /** @type {string} */ connId) => {
   try { localStorage.setItem(KEY(connId), JSON.stringify(v)) } catch {}
+  notifyLocalChange('library')
 }, 300)
 dashboards.subscribe(v => {
   if (!_connId) return
@@ -79,6 +89,40 @@ export function switchDashboardsConnection(connectionId) {
   _connId = connectionId
   dashboards.set(loadDashboards(_connId))
   activeDashboardId.set(loadActiveId(_connId))
+}
+
+/** Write pending edits now (another window is about to read them). */
+export function flushDashboards() {
+  persistDashboards.flush()
+}
+
+/** The connection key the dashboards are stored under right now. */
+export function dashboardsConnectionId() {
+  return _connId
+}
+
+/**
+ * The connection key whose dashboards hold `dashId`, `preferred` first. A
+ * dashboard window opened with a key the tab didn't store under (an older
+ * build, a connection matched another way) still finds its dashboard.
+ * @param {string} dashId @param {string} preferred @returns {string | null}
+ */
+export function findDashboardScope(dashId, preferred) {
+  /** @param {string | null} raw */
+  const has = (raw) => {
+    try {
+      const list = JSON.parse(raw ?? 'null')
+      return Array.isArray(list) && list.some((d) => d?.id === dashId)
+    } catch { return false }
+  }
+  try {
+    if (preferred && has(localStorage.getItem(KEY(preferred)))) return preferred
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i)
+      if (k?.startsWith('stroke:dashboards:') && has(localStorage.getItem(k))) return k.slice('stroke:dashboards:'.length)
+    }
+  } catch { /* storage unavailable */ }
+  return null
 }
 
 /** @param {string} name @returns {Dashboard} */
@@ -114,6 +158,29 @@ export function addChartToDashboard(dashId, chartId) {
   ))
 }
 
+/**
+ * A saved query as a card: it runs on the dashboard and is drawn by what it
+ * returns (one value as a number, rows as a chart or a table).
+ * @param {string} dashId @param {{ sql: string, name: string }} query
+ */
+export function addQueryToDashboard(dashId, query) {
+  const itemId = `item-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+  dashboards.update(ds => ds.map(d =>
+    d.id === dashId
+      ? { ...d, items: [...d.items, { id: itemId, chartId: null, span: 1, query: { sql: query.sql, name: query.name } }] }
+      : d
+  ))
+}
+
+/** @param {string} dashId @param {string} itemId @param {Partial<DashItem>} patch */
+export function updateItem(dashId, itemId, patch) {
+  dashboards.update(ds => ds.map(d =>
+    d.id === dashId
+      ? { ...d, items: d.items.map(i => i.id === itemId ? { ...i, ...patch } : i) }
+      : d
+  ))
+}
+
 /** @param {string} dashId @param {string} itemId */
 export function removeChartFromDashboard(dashId, itemId) {
   dashboards.update(ds => ds.map(d =>
@@ -123,11 +190,20 @@ export function removeChartFromDashboard(dashId, itemId) {
   ))
 }
 
-/** @param {string} dashId @param {string} itemId @param {1|2|3} span */
+/** @param {string} dashId @param {string} itemId @param {number} span */
 export function setItemSpan(dashId, itemId, span) {
   dashboards.update(ds => ds.map(d =>
     d.id === dashId
       ? { ...d, items: d.items.map(i => i.id === itemId ? { ...i, span } : i) }
+      : d
+  ))
+}
+
+/** Card height. @param {string} dashId @param {string} itemId @param {'s'|'m'|'l'} size */
+export function setItemSize(dashId, itemId, size) {
+  dashboards.update(ds => ds.map(d =>
+    d.id === dashId
+      ? { ...d, items: d.items.map(i => i.id === itemId ? { ...i, size } : i) }
       : d
   ))
 }
@@ -141,4 +217,10 @@ export function reorderItems(dashId, newOrder) {
     const rest = d.items.filter(i => !newOrder.includes(i.id))
     return { ...d, items: [...reordered, ...rest] }
   }))
+}
+
+/** Re-read the open connection's dashboards (sync wrote new ones). */
+export function reloadDashboards() {
+  if (!_connId) return
+  dashboards.set(loadDashboards(_connId))
 }

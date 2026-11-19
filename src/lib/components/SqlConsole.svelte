@@ -1,7 +1,9 @@
 <script>
   import { IS_MAC } from '$lib/shortcuts.js'
-  import { rowsToCsv, rowsToJson, rowsToSql, rowsToTsv, rowsToMarkdown, rowsToJsonl, rowsToObjects, saveExportFile, buildExportFilename } from '$lib/export.js'
+  import { rowsToCsv, rowsToJson, rowsToSql, rowsToTsv, rowsToMarkdown, rowsToJsonl, rowsToObjects, saveExportFile, buildExportFilename, exportRows, EXPORT_FORMATS } from '$lib/export.js'
   import Play from "@lucide/svelte/icons/play";
+  import PanelBottom from "@lucide/svelte/icons/panel-bottom";
+  import PanelRight from "@lucide/svelte/icons/panel-right";
   import WifiOff from "@lucide/svelte/icons/wifi-off";
   import Braces from "@lucide/svelte/icons/braces";
   import Wand2 from "@lucide/svelte/icons/wand-2";
@@ -13,6 +15,8 @@
   import Code2 from "@lucide/svelte/icons/code-2";
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
   import Download from "@lucide/svelte/icons/download";
+  import Share2 from "@lucide/svelte/icons/share-2";
+  import { requestShare, chartTitle, resultsTitle } from "$lib/share-flow.js";
   import Table2 from "@lucide/svelte/icons/table-2";
   import SlidersHorizontal from "@lucide/svelte/icons/sliders-horizontal";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
@@ -39,6 +43,7 @@
   import Square from "@lucide/svelte/icons/square";
   import Variable from "@lucide/svelte/icons/variable";
   import X from "@lucide/svelte/icons/x";
+  import Search from "@lucide/svelte/icons/search";
   import TextCursorInput from "@lucide/svelte/icons/text-cursor-input";
   import TextSelect from "@lucide/svelte/icons/text-select";
   import { Button } from "$lib/components/ui/button/index.js";
@@ -161,6 +166,8 @@
     onrunnewtab = undefined,
     /** Ask the AI chat about a statement (its Ask AI action). @type {((sql: string) => void) | undefined} */
     onaskai = undefined,
+    /** Send a ready prompt to the AI chat (Explain's Ask AI). @type {((prompt: string) => void) | undefined} */
+    onaskaiprompt = undefined,
   } = $props();
 
   /** @type {{ focus: () => void, markRunning: (ranStatement?: string | null) => void, markExecuted: (ranStatement?: string | null, run?: { ms?: number | null, rows?: number | null }) => void, markOutcomes: (outcomes: Array<{ sql: string, sent?: string, error: string | null, position: number | null, ms?: number | null, rows?: number | null, affected?: number | null }>) => void, clearRunMarks: () => void, markReverted: (undoId: string) => void, replaceInFailed: (name: string, replacement: string) => boolean, getStatementAtCursor: () => string, getSelectionText: () => string } | null} */
@@ -565,7 +572,15 @@
     if (windowed) onstoredsort(resultSort)
   }
 
-  async function handleExplain() {
+  // Postgres: measure (runs, then rolls back) or only estimate. Kept per app.
+  let explainAnalyze = $state((() => { try { return localStorage.getItem('stroke:explain-analyze') !== 'false' } catch { return true } })())
+
+  /** @param {boolean} [analyze] */
+  async function handleExplain(analyze = explainAnalyze) {
+    if (analyze !== explainAnalyze) {
+      explainAnalyze = analyze
+      try { localStorage.setItem('stroke:explain-analyze', String(analyze)) } catch { /* blocked */ }
+    }
     const querySql = sql.trim()
     if (!querySql) return
     outputView = 'explain'
@@ -574,7 +589,7 @@
     explainResult = null
     if (!outputVisible) outputVisible = true
     try {
-      explainResult = await explainSql(querySql)
+      explainResult = await explainSql(querySql, { analyze: explainAnalyze })
     } catch (e) {
       explainError = String(e)
     } finally {
@@ -599,7 +614,9 @@
       if (!active) return
       const mod = e.metaKey || e.ctrlKey
       if (!mod || e.altKey) return
-      if (e.key === 'j' && !e.shiftKey) {
+      // Mod+Shift+J: Mod+J is the terminal dock everywhere, and binding it here
+      // too flipped the results and the terminal with one press.
+      if ((e.key === 'j' || e.key === 'J') && e.shiftKey) {
         e.preventDefault()
         toggleOutput()
       } else if ((e.key === 'b' || e.key === 'B') && e.shiftKey) {
@@ -640,20 +657,17 @@
   const jsonText = $derived(rowObjects.length > 0 ? JSON.stringify(rowObjects, null, 2) : '[]')
 
   // ── Export helpers ──────────────────────────────────────────────────────────
-  /** Unified export via the shared generators + native Save dialog.
-   * @param {'csv'|'json'|'sql'|'tsv'|'md'|'jsonl'} format */
+  /** Save the result in any format (export.js), with the native Save dialog.
+   * @param {import('$lib/export.js').ExportFormat} format */
   async function exportAs(format) {
     const columns = currentDisplay.columns.map((c) => ({ name: c.name ?? String(c) }))
     // A windowed result holds only the rows near the viewport here.
     const rows = /** @type {any[][]} */ (windowed ? await onloadallrows() : currentDisplay.rows)
-    const content =
-      format === 'csv' ? rowsToCsv(columns, rows)
-        : format === 'json' ? rowsToJson(columns, rows)
-        : format === 'sql' ? rowsToSql(columns, rows, 'query_result')
-        : format === 'tsv' ? rowsToTsv(columns, rows)
-        : format === 'md' ? rowsToMarkdown(columns, rows)
-        : rowsToJsonl(columns, rows)
-    await saveExportFile(content, buildExportFilename('query_result', format), format)
+    try {
+      await exportRows(format, columns, rows, 'query_result')
+    } catch (e) {
+      toast.error('Export failed', { description: String(/** @type {any} */ (e)?.message ?? e) })
+    }
   }
 
   /** @type {HTMLElement | null} */
@@ -814,6 +828,62 @@
     if (queryCopiedTimer) clearTimeout(queryCopiedTimer)
     if (errorCopyTimer) clearTimeout(errorCopyTimer)
   })
+
+  /** @type {any} */
+  let chartViewRef = $state(null)
+
+  // ── Find in results ───────────────────────────────────────────────────────
+  // Narrows the grid to rows with a cell containing the text (any case) and
+  // highlights it. A windowed result is not all in memory, so there it only
+  // highlights what is loaded.
+  let findOpen = $state(false)
+  let findText = $state('')
+  /** @type {HTMLInputElement | null} */
+  let findInput = $state(null)
+  const findTerm = $derived(findText.trim().toLowerCase())
+  /** @param {unknown} v */
+  const cellText = (v) => (v === null || v === undefined ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v))
+  const foundRows = $derived.by(() => {
+    const all = currentDisplay.rows
+    if (!findOpen || !findTerm || windowed) return all
+    return all.filter((/** @type {unknown[]} */ r) => r.some((v) => cellText(v).toLowerCase().includes(findTerm)))
+  })
+  function openFind() {
+    findOpen = true
+    if (outputView !== 'table') outputView = 'table'
+    if (!outputVisible) toggleOutput()
+    tick().then(() => { findInput?.focus(); findInput?.select() })
+  }
+  function closeFind() {
+    findOpen = false
+    findText = ''
+  }
+  /** @param {KeyboardEvent} e */
+  function onFindKey(e) {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeFind() }
+  }
+
+  /** The results as a share source, in the order and columns shown. */
+  function resultSource() {
+    const cols = currentDisplay.columns.map((/** @type {any} */ c) => ({ name: c.name ?? String(c), type: c.dataType ?? c.data_type ?? c.type }))
+    return { columns: cols, rows: currentDisplay.rows }
+  }
+
+  /** Share what's on screen: the chart in Chart view, otherwise the rows. */
+  function shareShown() {
+    const { columns: cols, rows: r } = resultSource()
+    if (outputView === 'chart' && chartViewRef?.shareSpec) {
+      const spec = chartViewRef.shareSpec()
+      requestShare({ kind: 'chart', title: chartTitle(spec), chart: spec, columns: cols, rows: r })
+    } else {
+      requestShare({ kind: 'result', title: shareTitle(), columns: cols, rows: r, sql })
+    }
+  }
+
+  /** A share's default title: the query's first meaningful line. */
+  function shareTitle() {
+    return resultsTitle(sql)
+  }
 </script>
 
 <div class="flex min-h-0 flex-1 overflow-hidden">
@@ -1010,7 +1080,7 @@
           outputView === 'explain' ? 'text-foreground' : 'text-muted-foreground',
         )}
         disabled={!sql.trim() || explainLoading}
-        onclick={handleExplain}
+        onclick={() => void handleExplain()}
         aria-label="Explain plan"
         title={tipText('Explain plan', 'Visualize how the database executes this query, spot slow scans and missing indexes.')}
       >
@@ -1051,6 +1121,19 @@
           <DropdownMenu.Item onSelect={() => copyQueryAs('prisma')}>
             <Code2 class="size-3.5 shrink-0 text-muted-foreground" />
             <span data-slot="menu-label">Copy as Prisma</span>
+          </DropdownMenu.Item>
+          <DropdownMenu.Separator />
+          <!-- An encrypted link: the results (columns you choose, personal
+               data masked) or just the query. -->
+          {#if columns.length > 0}
+            <DropdownMenu.Item onSelect={() => requestShare({ kind: 'result', title: shareTitle(), ...resultSource(), sql })}>
+              <Share2 class="size-3.5 shrink-0 text-muted-foreground" />
+              <span data-slot="menu-label">Share results…</span>
+            </DropdownMenu.Item>
+          {/if}
+          <DropdownMenu.Item onSelect={() => requestShare({ kind: 'query', title: shareTitle(), sql })}>
+            <Share2 class="size-3.5 shrink-0 text-muted-foreground" />
+            <span data-slot="menu-label">Share query…</span>
           </DropdownMenu.Item>
         </DropdownMenu.Content>
       </DropdownMenu.Root>
@@ -1351,6 +1434,44 @@
           </button>
         {/each}
       </div>
+      {#if resultShown && currentDisplay.rows.length > 0}
+        <span class="mx-1 h-4 w-px shrink-0 bg-border/60" aria-hidden="true"></span>
+        {#if findOpen}
+          <div class="flex h-7 items-center gap-1 rounded-md bg-muted/50 ps-2 pe-0.5" role="search">
+            <Search class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+            <input
+              bind:this={findInput}
+              bind:value={findText}
+              onkeydown={onFindKey}
+              placeholder="Find in results"
+              aria-label="Find in results"
+              spellcheck="false"
+              autocomplete="off"
+              class="no-field-frame no-focus-ring h-full w-40 min-w-0 border-0 bg-transparent px-1 text-ui-xs text-foreground shadow-none outline-none placeholder:text-muted-foreground"
+            />
+            {#if findTerm}
+              <span class="shrink-0 pe-1 text-ui-2xs text-muted-foreground tabular-nums" aria-live="polite">
+                {#if windowed}highlighting{:else}{foundRows.length.toLocaleString()} of {currentDisplay.rows.length.toLocaleString()}{/if}
+              </span>
+            {/if}
+            <button
+              type="button"
+              class="inline-flex size-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              title="Close (Esc)"
+              aria-label="Close find"
+              onclick={closeFind}
+            ><X class="size-3 shrink-0" /></button>
+          </div>
+        {:else}
+          <button
+            type="button"
+            class="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+            title={tipText('Find in results', 'Show only the rows that contain some text.', [mod, 'F'])}
+            aria-label="Find in results"
+            onclick={openFind}
+          ><Search class="size-3.5 shrink-0" /></button>
+        {/if}
+      {/if}
       </div>
 
 
@@ -1393,6 +1514,18 @@
 
 
         <div class="flex items-center gap-0.5">
+        {#if resultShown && currentDisplay.rows.length > 0 && (outputView === 'table' || outputView === 'chart' || outputView === 'json')}
+          <!-- Share what's shown as an encrypted link (the chart in Chart view). -->
+          <button
+            type="button"
+            class="flex h-7 items-center gap-1.5 rounded-md px-2 text-ui-xs text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+            title={outputView === 'chart' ? 'Share this chart as a link' : 'Share these results as a link'}
+            aria-label={outputView === 'chart' ? 'Share chart' : 'Share results'}
+            onclick={shareShown}
+          >
+            <Share2 class="size-3.5 shrink-0" />Share
+          </button>
+        {/if}
         <!-- Export dropdown, only when there are results -->
         {#if resultShown && currentDisplay.rows.length > 0}
           <DropdownMenu.Root>
@@ -1403,34 +1536,42 @@
             >
               <Download class="size-3.5" />
             </DropdownMenu.Trigger>
-            <DropdownMenu.Content align="end" class="min-w-36">
-              <DropdownMenu.Item class="gap-2 font-mono text-ui-xs" onclick={() => exportAs('csv')}>
-                <Download class="size-3.5 shrink-0 text-muted-foreground" />CSV
-              </DropdownMenu.Item>
-              <DropdownMenu.Item class="gap-2 font-mono text-ui-xs" onclick={() => exportAs('json')}>
-                <Download class="size-3.5 shrink-0 text-muted-foreground" />JSON
-              </DropdownMenu.Item>
-              <DropdownMenu.Item class="gap-2 font-mono text-ui-xs" onclick={() => exportAs('sql')}>
-                <Download class="size-3.5 shrink-0 text-muted-foreground" />SQL (INSERT)
-              </DropdownMenu.Item>
-              <DropdownMenu.Item class="gap-2 font-mono text-ui-xs" onclick={() => exportAs('tsv')}>
-                <Download class="size-3.5 shrink-0 text-muted-foreground" />TSV
-              </DropdownMenu.Item>
-              <DropdownMenu.Item class="gap-2 font-mono text-ui-xs" onclick={() => exportAs('md')}>
-                <Download class="size-3.5 shrink-0 text-muted-foreground" />Markdown
-              </DropdownMenu.Item>
-              <DropdownMenu.Item class="gap-2 font-mono text-ui-xs" onclick={() => exportAs('jsonl')}>
-                <Download class="size-3.5 shrink-0 text-muted-foreground" />JSON Lines
-              </DropdownMenu.Item>
+            <DropdownMenu.Content align="end" class="min-w-52">
+              {#each EXPORT_FORMATS as fmt (fmt.id)}
+                <DropdownMenu.Item onclick={() => void exportAs(fmt.id)}>
+                  <Download class="size-3.5 shrink-0 text-muted-foreground" />
+                  <span data-slot="menu-label">{fmt.label}</span>
+                  <span class="ml-auto text-ui-2xs text-muted-foreground">{fmt.hint}</span>
+                </DropdownMenu.Item>
+              {/each}
             </DropdownMenu.Content>
           </DropdownMenu.Root>
         {/if}
 
+        <!-- Where the results sit: under the editor or to its right. -->
+        <div role="group" aria-label="Results position" class="flex items-center">
+          {#each [{ id: false, Icon: PanelBottom, label: 'Results below the editor' }, { id: true, Icon: PanelRight, label: 'Results beside the editor' }] as pos (pos.label)}
+            {@const on = $appSqlEditor.resultsBeside === pos.id}
+            <button
+              type="button"
+              aria-pressed={on}
+              aria-label={pos.label}
+              title={pos.label}
+              onclick={() => { if (!on) setSqlEditorOption('resultsBeside', pos.id); if (!outputVisible) toggleOutput() }}
+              class={cn(
+                'inline-flex size-6 items-center justify-center rounded-md transition-colors',
+                on && outputVisible ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground',
+              )}
+            >
+              <pos.Icon class="size-3.5" />
+            </button>
+          {/each}
+        </div>
         <button
           type="button"
           onclick={toggleOutput}
           class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
-          title={tipText(outputVisible ? 'Hide results' : 'Show results', 'Collapse the results panel to give the editor the full height.', [mod, 'J'])}
+          title={tipText(outputVisible ? 'Hide results' : 'Show results', 'Collapse the results panel to give the editor the full height.', [mod, '⇧', 'J'])}
         >
           <ChevronDown class={cn('size-3.5 transition-transform duration-150', outputVisible ? '' : 'rotate-180')} />
         </button>
@@ -1439,7 +1580,19 @@
     </div>
 
     {#if outputVisible}
-      <div class="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-panel">
+      <!-- Mod+F inside the results finds in them; in the editor it stays the
+           editor's own find. -->
+      <div
+        class="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-panel"
+        role="presentation"
+        onkeydown={(e) => {
+          if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (e.key === 'f' || e.key === 'F') && currentDisplay.rows.length && (outputView === 'table' || outputView === 'json' || outputView === 'chart')) {
+            e.preventDefault()
+            e.stopPropagation()
+            openFind()
+          }
+        }}
+      >
         {#key `${outputView}:${Math.min(activeResultIdx, Math.max(resultSets.length - 1, 0))}`}
           {#if outputView === 'history' || outputView === 'saved' || outputView === 'charts'}
             <QueryHistoryPanel
@@ -1503,7 +1656,7 @@
                 <p class="font-mono text-ui-xs text-destructive">{explainError}</p>
               </div>
             {:else if explainResult}
-              <ExplainPlan result={explainResult} />
+              <ExplainPlan result={explainResult} sql={sql} analyze={explainAnalyze} onrerun={(on) => void handleExplain(on)} onaskai={onaskaiprompt} />
             {:else}
               <div class="flex h-full flex-col items-center justify-center gap-2 text-center">
                 <ScanSearch class="size-6 text-muted-foreground" />
@@ -1515,6 +1668,7 @@
               <JsonViewer json={jsonText} data={rowObjects} shownRows={rowObjects.length} rowCount={currentDisplay.rows.length} onshowtable={() => (outputView = 'table')} />
             {:else if outputView === 'chart'}
               <ChartView
+                bind:this={chartViewRef}
                 columns={currentDisplay.columns}
                 rows={currentDisplay.rows}
                 {sql}
@@ -1524,7 +1678,8 @@
             {:else}
               <DataTable
                 columns={currentDisplay.columns}
-                rows={currentDisplay.rows}
+                rows={foundRows}
+                searchQuery={findOpen ? findText : ''}
                 loading={loading || sorting}
                 bind:selected
                 rowSort={resultSort}

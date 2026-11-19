@@ -1,13 +1,15 @@
 <script>
+  import { formatApiCall } from '$lib/dynamo-json.js'
   import ArrowLeft from '@lucide/svelte/icons/arrow-left'
   import { onMount, onDestroy, untrack, tick } from 'svelte'
+  import { panelMotionOff, slidePanel } from '$lib/panel-motion.js'
   import { fade } from 'svelte/transition'
   import { traceInteraction } from '$lib/perf.js'
-  import { couchAdapter, cassandraAdapter, firestoreAdapter, mongoAdapter, uriHost } from '$lib/doc-adapters.js'
+  import { couchAdapter, cassandraAdapter, elasticAdapter, firestoreAdapter, mongoAdapter, uriHost } from '$lib/doc-adapters.js'
   import { queryLanguageFor } from '$lib/ai-query-languages.js'
   import { setQueryEngine } from '$lib/ai.js'
   import { revealApp, isRevealed } from '$lib/app-reveal.js'
-  import { setReadOnly } from '$lib/stores/read-only.js'
+  import { setReadOnly, readOnlyMode } from '$lib/stores/read-only.js'
   import { isWriteSql, sqlRunEffects, stripSqlComments } from '$lib/sql-write.js'
   import { parseWrite, runWithUndo, undoDialect, keepUndo, getUndo, dropUndo, revertSummary } from '$lib/sql-undo.js'
   import { bumpObjects } from '$lib/stores/sidebar-objects.svelte.js'
@@ -40,8 +42,10 @@
   import { createHotkey } from '@tanstack/svelte-hotkeys'
   import { createCommandHotkey, matchesCommand } from '$lib/command-hotkey.js'
   import { IS_MAC } from '$lib/shortcuts.js'
-  import { findSearchInput, isTypingTarget } from '$lib/focus-search.js'
-  import { appFkAutoExpandJson, cycleTheme, restorePreviousTheme, isCurrentThemeDark, loadSettings, appPaginationMode, appVimMode, appAutoSaveQueries, appStreamResults, appSqlUndo, appSqlEditor, increaseZoom, decreaseZoom, resetZoom, updateSettings } from '$lib/stores/settings.js'
+  import { isTypingTarget } from '$lib/focus-search.js'
+  import { slashFocusTarget } from '$lib/slash-focus.js'
+  import QuitHint from './QuitHint.svelte'
+  import { appFkAutoExpandJson, cycleTheme, restorePreviousTheme, isCurrentThemeDark, loadSettings, appPaginationMode, appVimMode, appAutoSaveQueries, appStreamResults, appSqlUndo, appSqlEditor, appAiInTab, increaseZoom, decreaseZoom, resetZoom, updateSettings } from '$lib/stores/settings.js'
   import { requireUnlock } from '$lib/stores/app-lock.js'
   import { isTextEntryTarget, setVimSubMode } from '$lib/vim/vim.js'
   import { normalizeColumn, columnType } from '$lib/column.js'
@@ -56,12 +60,9 @@
   import SidebarQueries from './SidebarQueries.svelte'
   import TabBar from './TabBar.svelte'
   import PaneLayout from './PaneLayout.svelte'
-  import PaneSnapshot from './PaneSnapshot.svelte'
   import * as PaneTree from '$lib/pane-layout.js'
   import TabLoading from './TabLoading.svelte'
   import TableToolbar from './TableToolbar.svelte'
-  import ImportDataDialog from './ImportDataDialog.svelte'
-  import DataTable from './DataTable.svelte'
   import RowDetailPanel from './RowDetailPanel.svelte'
   // TableJsonView / TableTextView are NOT imported here: both reach the CodeMirror
   // editor and its languages statically, which would drag them into the boot
@@ -69,15 +70,14 @@
   // view mode. They load via {#await import()} at their (already guarded) call
   // sites below, exactly like MapPage / EntityRelationPage.
   import TableRecordView from './TableRecordView.svelte'
-  import CommandPalette from './CommandPalette.svelte'
   // AiChat / AiSidebar (large, pull in marked + shiki) are loaded lazily the first time
   // the AI panel is opened - see the {#await import()} blocks below.
-  import AiSettingsDialog from './AiSettingsDialog.svelte'
   import ConnectionModal from './ConnectionModal.svelte'
   import { terminalDockOpen as terminalDockStore } from '$lib/stores/redis-nav.js'
   import DbIcon from './DbIcon.svelte'
-  import DockerLaunchModal from './DockerLaunchModal.svelte'
-  import CreateTableDialog from './CreateTableDialog.svelte'
+  import { requestShare, sharesPageRequest, chartTitle, shareRequest } from '$lib/share-flow.js'
+  import MySharesDialog from './MySharesDialog.svelte'
+  import Icon from './Icon.svelte'
   import CreateSchemaDialog from './CreateSchemaDialog.svelte'
   import GenerateSqlDialog from './GenerateSqlDialog.svelte'
   import { genSelectStar } from '$lib/sql-generate.js'
@@ -90,11 +90,14 @@
   import { buildBatchUpdateSql } from '$lib/sql-batch-update.js'
   import { buildSearchQuery, searchOptionsSupported, supportedSearchOptions } from '$lib/search-options.js'
   import Onboarding from './Onboarding.svelte'
-  import SettingsDialog from './SettingsDialog.svelte'
   import KeyboardShortcutsDialog from './KeyboardShortcutsDialog.svelte'
+  import LeaderPanel from './LeaderPanel.svelte'
+  import { requestChat } from '$lib/stores/ai-chat-bridge.js'
+  import { aiChatKey, chatBelongsTo } from '$lib/ai-chat-key.js'
   import InsiderDialog from './InsiderDialog.svelte'
   import AboutDialog from './AboutDialog.svelte'
   import ReportIssueDialog from './ReportIssueDialog.svelte'
+  import { crashReportFields } from '$lib/crash-report.js'
   import UpdateDialog from './UpdateDialog.svelte'
   import StatusBar from './StatusBar.svelte'
   import QueryLogConsole from './QueryLogConsole.svelte'
@@ -106,6 +109,7 @@
   import DatabaseInfoDialog from './DatabaseInfoDialog.svelte'
   import { CatalogCache, catalogKey, connectionPrefix } from '$lib/catalog-cache.js'
   import { whenIdle } from '$lib/idle.js'
+  import { studioEngine as studioEngineFor } from '$lib/studio-share.js'
   import { refreshExternalPlugins, stopAllExternalPlugins } from '$lib/plugins/external/host.js'
   import {
     dbAdminKind,
@@ -139,7 +143,7 @@
   import WifiOff from '@lucide/svelte/icons/wifi-off'
   import Unplug from '@lucide/svelte/icons/unplug'
   import RefreshCw from '@lucide/svelte/icons/refresh-cw'
-  import {
+  import { setConnRoute,
     disconnectPostgres,
     prewarmDns,
     listSchemas,
@@ -147,6 +151,8 @@
     getTableRowCounts,
     getTableRows,
     countTableRows,
+    searchIndexStatus,
+    createSearchIndex,
     liveStart,
     liveStop,
     getTableColumnStructure,
@@ -223,8 +229,16 @@
     findSchemaTimelineTab,
     createDataDiffTab,
     findDataDiffTab,
+    createMigrationsTab,
+    findMigrationsTab,
     createLicenseTab,
+    createAiTab,
+    findAiTab,
     findLicenseTab,
+    createShortcutsTab,
+    findShortcutsTab,
+    createSharesTab,
+    findSharesTab,
     findTableTab,
     findSchemaTab,
     findOrmTab,
@@ -300,7 +314,7 @@
     engineFamily,
   } from '$lib/stores/connections.js'
   import { hasPro, FREE_CONNECTION_LIMIT } from '$lib/stores/license.js'
-  import { engineSupports, engineLabel } from '$lib/db-capabilities.js'
+  import { engineSupports, engineLabel, isKeyValue } from '$lib/db-capabilities.js'
   import * as Dialog from '$lib/components/ui/dialog/index.js'
   import KeyRound from '@lucide/svelte/icons/key-round'
   import {
@@ -313,9 +327,14 @@
     connectPosthog,
     connectDuckdb,
     connectMssql,
+    connectOracle,
     connectRedis,
     connectDynamo,
     connectCouch,
+    connectElastic,
+    terminalClient,
+    elasticRequest,
+    elasticImport,
     couchRequest,
     connectCassandra,
     connectFirestore,
@@ -359,7 +378,7 @@
     remapNullableRowIndex,
     remapRowIndexSet,
   } from '$lib/table-row-indices.js'
-  import { rowsToCsv, rowsToJson, rowsToCsvAsync, rowsToJsonAsync, rowsToSql, rowsToTsv, rowsToMarkdown, rowsToJsonl, saveExportFile, buildExportFilename } from '$lib/export.js'
+  import { rowsToCsv, rowsToJson, rowsToCsvAsync, rowsToJsonAsync, rowsToSql, rowsToTsv, rowsToMarkdown, rowsToJsonl, saveExportFile, buildExportFilename, exportRows as exportRowsAs } from '$lib/export.js'
   import {
     recordQueryExecution,
     listQueryHistory,
@@ -423,6 +442,30 @@
   let connection = $state(null)
   /** @type {boolean} - true when the DB went away mid-session */
   let connectionLost = $state(false)
+  /** The last health ping's round trip, in ms (null before the first). */
+  let dbLatencyMs = $state(/** @type {number | null} */ (null))
+  /** The computer has no network at all (navigator.onLine). */
+  let offline = $state(typeof navigator !== 'undefined' ? !navigator.onLine : false)
+  $effect(() => {
+    const on = () => { offline = false; void pingNow() }
+    const off = () => { offline = true }
+    window.addEventListener('online', on)
+    window.addEventListener('offline', off)
+    return () => { window.removeEventListener('online', on); window.removeEventListener('offline', off) }
+  })
+  /** One timed ping, for the status bar's click and coming back online. */
+  async function pingNow() {
+    if (!connection) return
+    const t0 = performance.now()
+    try {
+      await pingConnection()
+      dbLatencyMs = Math.round(performance.now() - t0)
+      if (connectionLost) { connectionLost = false; error = '' }
+    } catch {
+      if (!connectionLost) connectionLost = true
+      void silentReconnect()
+    }
+  }
   let autoConnecting = $state(false)
   /** Name of the connection the overlay is waiting on. */
   let autoConnectName = $state('')
@@ -477,6 +520,38 @@
   let showConnectionModal = $state(false)
   /** Engine chosen on the welcome screen - the modal opens straight into its form. */
   let connectionModalEngine = $state('')
+  /** A connection handed over by a stroke:// link or the command line (launch.rs). */
+  let connectionModalUri = $state('')
+  let connectionModalName = $state('')
+
+  // `npx strokedb`, stroke.click/studio, or `stroke postgres://…`: open the New
+  // Connection dialog filled in from it. Never connects by itself - a link can
+  // come from any page. Taken once on startup (a link that launched the app
+  // lands before this listens) and again on each `open-request`.
+  onMount(() => {
+    /** @type {(() => void) | null} */
+    let off = null
+    let gone = false
+    const take = async () => {
+      const { invoke } = await import('@tauri-apps/api/core')
+      const req = /** @type {{ uri: string, name?: string | null } | null} */ (await invoke('take_open_request').catch(() => null))
+      if (!req?.uri || gone) return
+      // Re-opening re-runs the dialog's open effect, which reads the new string.
+      showConnectionModal = false
+      await tick()
+      connectionModalEngine = ''
+      connectionModalUri = req.uri
+      connectionModalName = req.name ?? ''
+      showConnectionModal = true
+      revealApp()
+    }
+    void import('@tauri-apps/api/event')
+      .then(({ listen }) => listen('open-request', () => void take()))
+      .then((u) => { if (gone) u(); else off = u })
+      .then(() => take())
+      .catch(() => {})
+    return () => { gone = true; off?.() }
+  })
   /** @type {HTMLElement | null} */
   let welcomeConnectBtn = $state(null)
 
@@ -503,6 +578,31 @@
     }
   }
   let showDockerModal = $state(false)
+  /** Local servers live in their own window; its Open button connects here. */
+  async function openLocalServers() {
+    try {
+      const { getCurrentWindow } = await import('@tauri-apps/api/window')
+      const { openLocalServersWindow } = await import('$lib/local-servers.js')
+      await openLocalServersWindow(getCurrentWindow().label)
+    } catch (e) {
+      toast.error('Could not open Local servers', { description: String(e) })
+    }
+  }
+  $effect(() => {
+    let off = () => {}
+    let gone = false
+    void import('@tauri-apps/api/event')
+      .then(({ listen }) => listen('local-server-connect', (e) => {
+        // Ids are stable per server: one opened before keeps what was set on
+        // it since (a password for a server Stroke didn't make).
+        const info = /** @type {any} */ (e.payload)
+        const saved = loadSavedConnections().find((c) => c.id === info.id)
+        void handleDockerConnect(saved ? { ...saved } : info)
+      }))
+      .then((un) => { if (gone) un(); else off = un })
+      .catch(() => {})
+    return () => { gone = true; off() }
+  })
   let dockerInitialDb = $state(/** @type {string | null} */ (null))
   /** Bottom query-log console visibility. */
   let queryLogOpen = $state(false)
@@ -542,9 +642,147 @@
   let showInsiderModal = $state(false)
   let showAboutModal = $state(false)
   let showReportIssueDialog = $state(false)
+  /**
+   * The last run crashed (src-tauri/src/crash.rs left a report): offered once,
+   * as a prefilled crash report, shortly after launch.
+   * @type {{ title: string, body: string, details: string } | null}
+   */
+  let crashReport = $state(null)
+  let crashReportShown = false
+  onMount(() => {
+    const t = setTimeout(() => {
+      void import('@tauri-apps/api/core')
+        .then(({ invoke }) => invoke('take_crash_report'))
+        .then((r) => {
+          const c = /** @type {{ message: string, location: string, thread: string, version: string, os: string, at: number, backtrace: string } | null} */ (r)
+          if (!c) return
+          crashReport = crashReportFields(c)
+          crashReportShown = true
+          showReportIssueDialog = true
+        })
+        .catch(() => {})
+    }, 1200)
+    return () => clearTimeout(t)
+  })
+  $effect(() => {
+    // Closed: later reports from the menu start blank again.
+    if (!showReportIssueDialog && crashReportShown) {
+      crashReportShown = false
+      crashReport = null
+    }
+  })
+  /** My shares (share links made on this account). */
+  let showMyShares = $state(false)
   let showDisconnectDialog = $state(false)
   let showAiModelSettings = $state(false)
   let showProGate = $state(false)
+  // ── Dialogs loaded on first use ─────────────────────────────────────────
+  // Settings, the command palette, the AI settings and a few one-off dialogs
+  // were in the startup bundle (about 210KB of the 1.3MB entry) although none
+  // of them shows at launch. Each now mounts the first time it opens and stays
+  // mounted after, so closing keeps its exit animation. They are also fetched
+  // once the window is idle (below), so the first open is still instant.
+  // Keep these specifiers identical to the {#await import()} blocks in the
+  // markup so Vite resolves both to the same chunk.
+  // The data grid (about 400KB) is the first thing a table tab needs but
+  // nothing before one opens, so it is not in the startup bundle: it loads
+  // the first time a table renders, or earlier, the moment a connection
+  // starts, so it is in memory by the time the rows arrive.
+  /** @type {Promise<typeof import('./DataTable.svelte')> | null} */
+  let dataTableModule = null
+  const loadDataTable = () => (dataTableModule ??= import('./DataTable.svelte'))
+  $effect(() => {
+    if (connection) void loadDataTable()
+  })
+
+  const lazyDialogs = {
+    settings: () => import('./SettingsDialog.svelte'),
+    aiSettings: () => import('./AiSettingsDialog.svelte'),
+    palette: () => import('./CommandPalette.svelte'),
+    createTable: () => import('./CreateTableDialog.svelte'),
+    importData: () => import('./ImportDataDialog.svelte'),
+    share: () => import('./ShareDialog.svelte'),
+    docker: () => import('./DockerLaunchModal.svelte'),
+  }
+  let dialogMounted = $state({ settings: false, aiSettings: false, palette: false, createTable: false, importData: false, share: false, docker: false })
+  // Mount on first open; never unmount (closing keeps its animation).
+  $effect(() => {
+    if (showSettingsModal) dialogMounted.settings = true
+    if (showAiModelSettings) dialogMounted.aiSettings = true
+    if (commandOpen) dialogMounted.palette = true
+    if (showCreateTableDialog) dialogMounted.createTable = true
+    if (importDataOpen) dialogMounted.importData = true
+    if ($shareRequest) dialogMounted.share = true
+    if (showDockerModal) dialogMounted.docker = true
+  })
+  onMount(() => {
+    // The palette and Settings first: they are the ones a shortcut opens.
+    const order = [loadDataTable, lazyDialogs.palette, lazyDialogs.settings, lazyDialogs.aiSettings, lazyDialogs.share, lazyDialogs.createTable, lazyDialogs.importData, lazyDialogs.docker]
+    let i = 0
+    let cancel = () => {}
+    const pump = () => {
+      if (i >= order.length) return
+      order[i++]().catch(() => {})
+      cancel = whenIdle(pump, { timeout: 3000 })
+    }
+    cancel = whenIdle(pump, { timeout: 3000 })
+    return () => cancel()
+  })
+
+  // ── Labs: share as a web studio ─────────────────────────────────────────
+  let showStudioShare = $state(false)
+  /** @type {{ link: string, write: boolean, stop: () => void } | null} */
+  let studioShare = $state(null)
+  let studioShareStatus = $state(/** @type {'connecting' | 'online' | 'offline'} */ ('offline'))
+  /** The connection the share answers for; a switch away pauses it (isLive). */
+  let studioShareConnId = ''
+  const studioShareUnsupported = $derived(
+    connection && !studioEngineOf(connection) ? 'The web studio speaks PostgreSQL, MySQL and SQLite. Share a connection to one of those.' : '',
+  )
+  /** @param {any} c */
+  function studioEngineOf(c) {
+    return studioEngineFor(c?.type ?? dbType)
+  }
+  /** @param {boolean} write */
+  async function startStudioShare(write) {
+    stopStudioShare()
+    const c = connection
+    const engine = studioEngineOf(c)
+    if (!c || !engine) return
+    studioShareConnId = activeConnectionId ?? ''
+    const { startShare } = await import('$lib/studio-share.js')
+    studioShare = await startShare({
+      engine,
+      name: c.name || c.database || 'Database',
+      database: c.database || c.filePath?.split(/[\\/]/).pop() || c.name || '',
+      host: c.host || (engine === 'sqlite' ? 'local file' : ''),
+      write,
+      isLive: () => !!connection && (activeConnectionId ?? '') === studioShareConnId,
+      onStatus: (st) => (studioShareStatus = st),
+      // A local stroke-web for testing the relay; unset in every release build.
+      origin: import.meta.env.VITE_STUDIO_ORIGIN || undefined,
+    })
+  }
+  function stopStudioShare() {
+    studioShare?.stop()
+    studioShare = null
+    studioShareStatus = 'offline'
+  }
+  // Disconnecting ends the share; so does turning the Labs switch off.
+  $effect(() => {
+    if (!connection && studioShare) untrack(() => stopStudioShare())
+  })
+  /** The Labs switch, live: the palette entry follows it. */
+  let studioShareEnabled = $state(loadSettings().studioShare === true)
+  $effect(() => {
+    const changed = (/** @type {Event} */ e) => {
+      studioShareEnabled = /** @type {CustomEvent} */ (e).detail === true
+      if (!studioShareEnabled) stopStudioShare()
+    }
+    window.addEventListener('stroke:studio-share-changed', changed)
+    return () => window.removeEventListener('stroke:studio-share-changed', changed)
+  })
+
   let commandOpen = $state(false)
   let commandPage = $state(/** @type {'root'|'docker'|'connections'|'tables'|'pages'} */ ('root'))
   // Reset to the root view whenever the palette closes so generic openers
@@ -559,7 +797,7 @@
   const isRedis = $derived(dbType === 'redis')
   const isDynamo = $derived(dbType === 'dynamodb')
   /** Document / wide-column engines browsed with DocBrowser. */
-  const isDoc = $derived(dbType === 'couchdb' || dbType === 'cassandra' || dbType === 'firestore' || dbType === 'mongodb')
+  const isDoc = $derived(dbType === 'couchdb' || dbType === 'cassandra' || dbType === 'firestore' || dbType === 'mongodb' || dbType === 'elasticsearch' || dbType === 'opensearch')
   /** Key-value and document engines have their own page and none of the relational UI. */
   const isKV = $derived(isRedis || isDynamo || isDoc)
   // AI replies on a NoSQL connection get Run buttons on blocks in its own language.
@@ -569,6 +807,7 @@
   /** The engine's adapter for DocBrowser. */
   const docAdapter = $derived(
     dbType === 'couchdb' ? couchAdapter(couchRequest)
+    : dbType === 'elasticsearch' || dbType === 'opensearch' ? elasticAdapter(elasticRequest, dbType, { pick: pickImportFile, preview: mongoImportPreview, run: elasticImport })
     : dbType === 'mongodb' ? mongoAdapter({ collections: mongoCollections, describe: mongoDescribe, find: mongoFind, count: mongoCount, save: mongoSave, remove: mongoDelete, explain: mongoExplain, schema: mongoSchema, indexes: { list: mongoIndexes, create: mongoCreateIndex, drop: mongoDropIndex }, updateField: mongoUpdateField, aggregate: mongoAggregate, import: { pick: pickImportFile, preview: mongoImportPreview, run: mongoImport } })
     : dbType === 'firestore' ? firestoreAdapter(firestoreRequest, { projectId: connection?.projectId ?? '', database: connection?.database ?? '' })
     : dbType === 'cassandra' ? cassandraAdapter({ tables: cassandraTables, describe: cassandraDescribe, page: cassandraPage, save: cassandraSave, remove: cassandraDelete })
@@ -605,13 +844,16 @@
   /** @type {import('./UpdateDialog.svelte').default | null} */
   let updateDialog = $state(null)
   let statusBarHasUpdate = $state(false)
+  /** A manual update check is running (the sidebar button spins). */
+  let checkingUpdate = $state(false)
+  /** The running version, for the welcome screen's footer. */
+  let appVersion = $state('')
+  $effect(() => {
+    import('@tauri-apps/api/app').then((m) => m.getVersion()).then((v) => (appVersion = v)).catch(() => {})
+  })
   /** The update is downloaded: the status bar offers the restart. */
   let statusBarUpdateReady = $state(false)
   let sidebarOpen = $state(loadLayout().navSidebarOpen)
-  /** The nav sidebar was open when a visual page took the width; put it back on leaving. */
-  let _sidebarBeforeErd = false
-  /** Tab kinds that are a picture first: they get the sidebar's width. */
-  const WIDE_TAB_KINDS = new Set(['erd', 'reltree', 'diagrams'])
   let sidebarEverOpened = $state(loadLayout().navSidebarOpen)
   /** Which switchable sidebar panel is showing: 'tables' | 'connections' | 'extensions'. */
   let navSidebarPanel = $state(loadLayout().navSidebarPanel ?? 'tables')
@@ -647,11 +889,13 @@
     // lights, "History") and no status bar. Using the table view's heights there
     // left the AI header showing above inset pages (shortcuts, connections) and
     // its footer below them.
-    // The title bar is a fixed 52px at every zoom (TitleBar counter-zooms it),
-    // in AI mode too. 38px was left from an older bar, so on Windows/Linux the
-    // connection page, shortcuts and onboarding covered its bottom 14px.
-    root.style.setProperty('--app-titlebar-h', '52px')
-    root.style.setProperty('--app-statusbar-h', !aiMode && statusBarVisible ? '32px' : '0px')
+    // The title bar is a fixed height at every zoom (TitleBar counter-zooms it),
+    // in AI mode too.
+    // Windows/Linux use a 40px bar (TitleBar), the height of their own title bars.
+    root.style.setProperty('--app-titlebar-h', IS_MAC ? '52px' : '40px')
+    // The status bar is h-8, which grows with the app zoom; a fixed 32px let
+    // the connection page's footer slide over it when zoomed in.
+    root.style.setProperty('--app-statusbar-h', !aiMode && statusBarVisible ? 'calc(var(--spacing) * 9)' : '0px')
   })
   // Width for the loading-fallback shell, so the spinner fills a properly-sized
   // sidebar panel (matching saved width) instead of a zero-width strip while the
@@ -768,7 +1012,11 @@
   // cheap change signal (Postgres pg_stat counters / SQLite data_version). Off by
   // default; per-session, applies to the active table tab.
   let liveEnabled = $state(false)
-  const liveSupported = $derived(connection?.type === 'postgres' || connection?.type === 'sqlite')
+  // Every engine with table tabs can go live. Postgres and SQLite have a cheap
+  // native change signal (backend watcher); the rest poll the visible page and
+  // refresh only when its rows changed.
+  const liveNative = $derived(connection?.type === 'postgres' || connection?.type === 'sqlite')
+  const liveSupported = $derived(!!connection)
   // Stable identity of what should be watched - only changes when the target
   // table changes, so row refetches (which replace the tab object) don't churn it.
   const liveTableKey = $derived.by(() => {
@@ -791,7 +1039,7 @@
     // cleanup (which stops the watcher) *before* re-executing this effect, so
     // the returned cleanup is the single stop path - calling it again here
     // would be a redundant double-stop.
-    if (!key) return
+    if (!key || !untrack(() => liveNative)) return
     const [schema, table] = JSON.parse(key)
     void liveStart(schema, table).catch((e) => {
       liveEnabled = false
@@ -805,6 +1053,41 @@
   // Auto-disable when the connection can't support live mode (switched to MySQL,
   // disconnected, etc.) so the toggle never lingers in an impossible state.
   $effect(() => { if (!liveSupported && liveEnabled) liveEnabled = false })
+
+  // The poll for engines without a native watcher: every LIVE_POLL_MS, fetch
+  // the visible page with the same search, sort and filters and compare it to
+  // what is on screen. Only a real difference refreshes (once), so a quiet
+  // table costs one small query every few seconds and never flickers.
+  const LIVE_POLL_MS = 3000
+  $effect(() => {
+    const key = liveTableKey
+    if (!key || liveNative) return
+    const [schema, table] = JSON.parse(key)
+    let busy = false
+    const timer = setInterval(async () => {
+      if (busy || document.hidden || loadingRows || editingCell || hasAnyUnsavedChanges()) return
+      if (activeTab?.kind !== 'table' || activeSchema !== schema || activeTable !== table) return
+      // A windowed view (very large page) is assembled from many fetches; the
+      // poll covers ordinary pages only.
+      if (effectivePageSize > WINDOW_THRESHOLD || !columns.length) return
+      busy = true
+      try {
+        const { sortColumn, sortDirection, sorts } = sortForApi(rowSort, rowSortMore)
+        const data = await getTableRows(schema, table, effectivePageSize, currentOffset, {
+          ...apiSearch(rowSearch),
+          sortColumn, sortDirection, sorts,
+          filters: filtersForApi(rowFilters, columns),
+          includeMeta: false,
+          includeCount: false,
+        })
+        if (!liveEnabled || liveTableKey !== key || loadingRows || editingCell) return
+        const next = data.rows ?? []
+        if (next.length !== rows.length || JSON.stringify(next) !== JSON.stringify(rows)) onLiveChange({ schema, table })
+      } catch { /* a failed poll is retried next tick */ }
+      finally { busy = false }
+    }, LIVE_POLL_MS)
+    return () => clearInterval(timer)
+  })
 
   /** Refetch the active table (throttled) when the backend reports a change. */
   function onLiveChange(/** @type {{ schema: string, table: string } | undefined} */ payload) {
@@ -853,7 +1136,6 @@
   let securityEverOpened = $state(false)
   let logsEverOpened = $state(false)
   /** The terminal page lives exactly as long as its tab, and its client with it. */
-  const hasTerminalTab = $derived(tabs.some((t) => t.kind === 'terminal'))
   /** The welcome page's tiles: six when connected (two rows of three), four otherwise and for Redis. */
   const welcomeTileCount = $derived(connection ? 6 : 4)
   /** Welcome tile icon colours: theme tokens, written out whole so Tailwind sees them. */
@@ -882,7 +1164,8 @@
   let dynamoEverOpened = $state(false)
   let docsEverOpened = $state(false)
   /** The collection/table the Browse page shows: the sidebar's selection. */
-  let docCollection = $state('')
+  /** The open document tab's collection (each docs tab keeps its own). */
+  const docCollection = $derived(activeTab?.kind === 'docs' ? (/** @type {any} */ (activeTab).collection ?? '') : '')
   /** The DynamoDB table the DynamoDB page shows. */
   let dynamoTable = $state('')
   /** Engines whose sidebar schema is part of the collection's name (db.coll, keyspace.table). */
@@ -902,6 +1185,7 @@
   let searchEverOpened = $state(false)
   let schemaTimelineEverOpened = $state(false)
   let dataDiffEverOpened = $state(false)
+  let migrationsEverOpened = $state(false)
   let ormSchemaEverOpened = $state(false)
   /** @type {{ focusEditor: () => void, openQuery?: (content: string) => void } | null} */
   let sqlConsoleRef = $state(null)
@@ -1182,6 +1466,7 @@
     if (activeTab?.kind === 'orm') ormEverOpened = true
     if (activeTab?.kind === 'security') securityEverOpened = true
     if (activeTab?.kind === 'logs') logsEverOpened = true
+    if (activeTab?.kind === 'ai') aiTabEverOpened = true
     if (activeTab?.kind === 'insights') insightsEverOpened = true
     if (activeTab?.kind === 'advisor') advisorEverOpened = true
     if (activeTab?.kind === 'golf') golfEverOpened = true
@@ -1196,21 +1481,13 @@
     if (activeTab?.kind === 'charts') chartsEverOpened = true
     if (activeTab?.kind === 'dashboard') dashboardEverOpened = true
     if (activeTab?.kind === 'erd') erdEverOpened = true
-    // The visual pages want the width: the nav sidebar folds while one of them
-    // is the active tab and comes back when another kind is. Untracked so
-    // Ctrl+B on the tab itself is not undone by this effect re-running.
-    untrack(() => {
-      if (activeTab && WIDE_TAB_KINDS.has(activeTab.kind)) {
-        if (sidebarOpen) { _sidebarBeforeErd = true; sidebarOpen = false }
-      } else if (_sidebarBeforeErd) {
-        _sidebarBeforeErd = false
-        sidebarOpen = true
-      }
-    })
+    // The sidebar stays as you left it on every page, the diagrams included:
+    // folding it on its own took the table list away mid-task. ⌘B hides it.
     if (activeTab?.kind === 'diagrams') diagramsEverOpened = true
     if (activeTab?.kind === 'search') searchEverOpened = true
     if (activeTab?.kind === 'schema-timeline') schemaTimelineEverOpened = true
     if (activeTab?.kind === 'data-diff') dataDiffEverOpened = true
+    if (activeTab?.kind === 'migrations') migrationsEverOpened = true
     if (activeTab?.kind === 'orm-schema') ormSchemaEverOpened = true
   })
 
@@ -1238,6 +1515,7 @@
     { kind: 'erd',             get: () => erdEverOpened,            set: (/** @type {boolean} */ v) => (erdEverOpened = v) },
     { kind: 'diagrams',        get: () => diagramsEverOpened,       set: (/** @type {boolean} */ v) => (diagramsEverOpened = v) },
     { kind: 'schema-timeline', get: () => schemaTimelineEverOpened, set: (/** @type {boolean} */ v) => (schemaTimelineEverOpened = v) },
+    { kind: 'migrations',      get: () => migrationsEverOpened,     set: (/** @type {boolean} */ v) => (migrationsEverOpened = v) },
     { kind: 'orm-schema',      get: () => ormSchemaEverOpened,      set: (/** @type {boolean} */ v) => (ormSchemaEverOpened = v) },
   ])
   /** kind → Date.now() when it last became hidden; absent while active or unmounted. */
@@ -1467,14 +1745,30 @@
       try {
         const { getCurrentWindow } = await import('@tauri-apps/api/window')
         const win = getCurrentWindow()
-        unlisten = await win.onCloseRequested(async (event) => {
-          if (!hasAnyUnsavedChanges()) return
-          // Stop the close, ask in-app, then force-close if confirmed. Use destroy()
-          // (not close()) so we don't re-enter this handler.
+        // Closing the window: unsaved table edits ask first, then anything sync
+        // has not sent yet goes out (a few seconds at most) before the window
+        // is destroyed. destroy(), not close(), so this handler isn't re-entered.
+        const offClose = await win.onCloseRequested(async (event) => {
+          const unsaved = hasAnyUnsavedChanges()
+          const { flushSyncBeforeExit } = await import('$lib/sync/runtime.js')
           event.preventDefault()
-          const ok = await askConfirm('You have unsaved table changes. Discard them and quit?', 'Discard & quit')
-          if (ok) await win.destroy()
+          if (unsaved && !(await askConfirm('You have unsaved table changes. Discard them and quit?', 'Discard & quit'))) return
+          await flushSyncBeforeExit()
+          await win.destroy()
         })
+        // ⌘Q / Quit: the Rust side holds the exit and asks here first.
+        const { listen } = await import('@tauri-apps/api/event')
+        const { invoke } = await import('@tauri-apps/api/core')
+        const offQuit = await listen('app-quit-requested', async () => {
+          if (hasAnyUnsavedChanges() && !(await askConfirm('You have unsaved table changes. Discard them and quit?', 'Discard & quit'))) {
+            await invoke('cancel_quit').catch(() => {})
+            return
+          }
+          const { flushSyncBeforeExit } = await import('$lib/sync/runtime.js')
+          await flushSyncBeforeExit()
+          await invoke('quit_now').catch(() => {})
+        })
+        unlisten = () => { offClose(); offQuit() }
       } catch { /* non-Tauri / web preview - no window close event */ }
     })()
     return () => unlisten()
@@ -1920,8 +2214,10 @@ let rowSearch = $state('')
   $effect(() => {
     if (!connection) {
       connectionLost = false
+      dbLatencyMs = null
       return
     }
+    void pingNow()
     let stopped = false
     /** @type {ReturnType<typeof setTimeout> | undefined} */
     let timer
@@ -1936,7 +2232,10 @@ let rowSearch = $state('')
       // remote connection. The next tick after the window is shown will ping.
       if (typeof document !== 'undefined' && document.hidden) { schedule(); return }
       try {
+        // Timed: the status bar shows the round trip, so a slow link is visible.
+        const t0 = performance.now()
         await pingConnection()
+        dbLatencyMs = Math.round(performance.now() - t0)
         if (connectionLost) { connectionLost = false; error = '' }
       } catch {
         if (!connectionLost) connectionLost = true
@@ -2096,6 +2395,10 @@ let rowSearch = $state('')
       : '',
   )
 
+  /** AI chats follow the connection, not the database (lib/ai-chat-key.js). */
+  const aiChatId = $derived(aiChatKey(connection))
+  const aiChatMatch = $derived((/** @type {string} */ k) => chatBelongsTo(k, connection))
+
   // ID of the currently-active saved connection (for highlighting in the palette)
   const activeConnectionId = $derived(
     connection
@@ -2142,9 +2445,25 @@ let rowSearch = $state('')
     return 'Stroke'
   })
 
+  /** The saved connection last connected from, as onConnected was told it. */
+  let connectedSavedId = $state('')
+  /**
+   * The saved connection the AI tools should call active. activeConnectionId
+   * matches on host, database and user, which misses after switching database
+   * inside a connection, for URL and provider connections, and so on; the AI
+   * then said "no database is connected" while one was. The id the connection
+   * was opened with is exact. (activeConnectionId stays as it is: drafts and
+   * history are keyed by it.)
+   */
+  const mcpActiveId = $derived(
+    connection
+      ? (connectedSavedId && savedConnections.some((c) => c.id === connectedSavedId) ? connectedSavedId : activeConnectionId) || null
+      : null,
+  )
+
   // Keep MCP layer in sync with saved connections + active connection (no passwords sent).
   $effect(() => {
-    void mcpUpdateConnections(savedConnections, activeConnectionId || null)
+    void mcpUpdateConnections(savedConnections, mcpActiveId)
   })
 
   // Persist the Query Editor buffer per connection so reopening the tab (or
@@ -2232,6 +2551,12 @@ let rowSearch = $state('')
 
   $effect(() => {
     if (commandOpen && persistConnectionId) void refreshQueryStores()
+  })
+  // Saved queries and folders arriving from another device.
+  $effect(() => {
+    const on = () => void refreshQueryStores()
+    window.addEventListener('stroke:library-synced', on)
+    return () => window.removeEventListener('stroke:library-synced', on)
   })
 
   $effect(() => {
@@ -2627,15 +2952,34 @@ let rowSearch = $state('')
   function handleWhatsNewAction(id) {
     if (id === 'enable-tree-sidebar') {
       updateSettings({ sidebarStyle: 'tree' })
-      toast.success('Explorer tree is on', { description: 'Switch back any time in Settings → General.' })
+      toast.success('Explorer tree is on', { description: 'Switch back any time in Settings → Labs.' })
     } else if (id === 'open-themes') {
       menuActions.theme?.()
     } else if (id === 'open-shortcuts') {
-      showShortcutsModal = true
+      openShortcuts()
     } else if (id === 'open-connections') {
       showConnectionModal = true
+    } else if (id === 'enable-ai-tab') {
+      updateSettings({ aiInTab: true })
+      toast.success('AI chat opens in a tab now', { description: 'Switch back any time in Settings → Labs.' })
+    } else if (id === 'open-docker') {
+      commandPage = 'docker'
+      commandOpen = true
+    } else if (id === 'open-ai') {
+      openAiTab()
+    } else if (id === 'open-local-servers') {
+      void openLocalServers()
+    } else if (id === 'open-migrations') {
+      openMigrationsTab()
+    } else if (id === 'open-backups') {
+      openBackupTab()
     }
   }
+
+  createCommandHotkey('theme.pick', (e) => {
+    e.preventDefault()
+    menuActions.theme?.()
+  })
 
   createCommandHotkey('palette.open', (e) => {
     e.preventDefault()
@@ -2855,11 +3199,105 @@ let rowSearch = $state('')
   }
   /** The full-window AI chat, so the title bar's sidebar button can drive its chat list. @type {any} */
   let aiFullRef = $state(null)
+  /** The AI chat in its tab, for messages sent from elsewhere. @type {any} */
+  /**
+   * The AI tab's chat instances. One is on screen (`aiPrimaryKey`); the others
+   * are chats still replying after you started or opened another, kept mounted
+   * until their reply lands so leaving a chat never cancels it.
+   * @type {{ key: string, initialRequest: import('$lib/stores/ai-chat-bridge.js').ChatRequest | null, convId: string | null, busy: boolean }[]}
+   */
+  let aiInstances = $state([{ key: 'ai-0', initialRequest: null, convId: null, busy: false }])
+  let aiPrimaryKey = $state('ai-0')
+  let aiListVersion = $state(0)
+  let aiInstanceSeq = 0
+  /** @type {Record<string, any>} */
+  let aiTabRefs = $state({})
+  const aiTabRef = $derived(aiTabRefs[aiPrimaryKey] ?? null)
+  const aiBackgroundBusy = $derived(aiInstances.filter((i) => i.key !== aiPrimaryKey && i.busy).map((i) => i.convId ?? 'draft'))
+
+  function dropIdleAiInstances() {
+    aiInstances = aiInstances.filter((i) => i.key === aiPrimaryKey || i.busy)
+  }
+
+  /**
+   * An AI chat instance was asked for another chat while replying.
+   * @param {string} fromKey
+   * @param {import('$lib/stores/ai-chat-bridge.js').ChatRequest} req
+   */
+  function aiHandoff(fromKey, req) {
+    if (req.type === 'delete') {
+      aiInstances = aiInstances.filter((i) => i.key === aiPrimaryKey || i.convId !== req.id)
+      return
+    }
+    if (req.type === 'open') {
+      const running = aiInstances.find((i) => i.key !== fromKey && i.busy && i.convId === req.id)
+      if (running) {
+        aiPrimaryKey = running.key
+        dropIdleAiInstances()
+        return
+      }
+    }
+    const key = `ai-${++aiInstanceSeq}`
+    aiInstances = [...aiInstances, { key, initialRequest: req, convId: null, busy: false }]
+    aiPrimaryKey = key
+    dropIdleAiInstances()
+  }
+
+  /**
+   * @param {string} key
+   * @param {string | null} convId
+   * @param {boolean} busy
+   */
+  function aiBusyChange(key, convId, busy) {
+    const inst = aiInstances.find((i) => i.key === key)
+    if (!inst) return
+    const was = inst.busy
+    inst.convId = convId
+    inst.busy = busy
+    if (was && !busy && key !== aiPrimaryKey) {
+      // Its reply is saved: refresh the list now, and once more after the
+      // title it generates in the background lands, then let it go.
+      aiListVersion++
+      setTimeout(() => {
+        aiInstances = aiInstances.filter((i) => i.key !== key || i.key === aiPrimaryKey || i.busy)
+        aiListVersion++
+      }, 8000)
+    }
+  }
+  let aiTabEverOpened = $state(false)
   let terminalDockOpen = $state(false)
   let terminalDockEver = $state(false)
   let terminalDockHeight = $state(Number(loadLayout().terminalDockHeight) || 260)
   /** @type {HTMLDivElement | null} */
   let terminalDockEl = $state(null)
+  // The dock slides up from the bottom edge with a transform only, and the
+  // page above changes size once, at the keypress, never mid-slide: an open
+  // takes its room first and slides into it; a close gives the room back and
+  // slides out over the page. Resizing the page on every frame is what made it
+  // stutter, and resizing it at the end of the slide is what made it jump.
+  /** @type {'closed' | 'opening' | 'open' | 'closing'} */
+  let terminalDockPhase = $state('closed')
+  const terminalDockShown = $derived(terminalDockPhase !== 'closed')
+  const terminalDockOverlay = $derived(terminalDockPhase === 'closing')
+  const terminalDockMoving = $derived(terminalDockPhase === 'opening' || terminalDockPhase === 'closing')
+  $effect(() => {
+    const open = terminalDockOpen
+    untrack(() => {
+      if (panelMotionOff()) { terminalDockPhase = open ? 'open' : 'closed'; return }
+      if (open) {
+        if (terminalDockPhase === 'open') return
+        terminalDockPhase = 'opening'
+        void tick()
+          .then(() => slidePanel(terminalDockEl, 'bottom', true))
+          .then(() => { if (terminalDockOpen) terminalDockPhase = 'open' })
+      } else if (terminalDockPhase !== 'closed') {
+        terminalDockPhase = 'closing'
+        void tick()
+          .then(() => slidePanel(terminalDockEl, 'bottom', false))
+          .then(() => { if (!terminalDockOpen) terminalDockPhase = 'closed' })
+      }
+    })
+  })
   function toggleTerminalDock() {
     if (!connection) return
     terminalDockOpen = !terminalDockOpen
@@ -2893,6 +3331,22 @@ let rowSearch = $state('')
     return () => window.removeEventListener('stroke:terminal-dock-toggle', on)
   })
   $effect(() => { terminalDockStore.set(terminalDockOpen) })
+  // A column clicked in the sidebar tree: once its table's rows are up, scroll
+  // the grid to that column and light it.
+  let pendingFocusColumn = $state(/** @type {{ schema: string, table: string, column: string } | null} */ (null))
+  $effect(() => {
+    const on = (/** @type {Event} */ e) => { pendingFocusColumn = /** @type {CustomEvent} */ (e).detail ?? null }
+    window.addEventListener('stroke:focus-column', on)
+    return () => window.removeEventListener('stroke:focus-column', on)
+  })
+  $effect(() => {
+    const p = pendingFocusColumn
+    if (!p || loadingRows || activeTab?.kind !== 'table') return
+    if (p.table !== activeTable || p.schema !== activeSchema) return
+    if (!columns.some((/** @type {any} */ c) => c.name === p.column)) return
+    pendingFocusColumn = null
+    requestAnimationFrame(() => focusTableColumn?.(p.column))
+  })
   // A Redis sidebar click while another tab is showing: bring the Redis page up
   // (it then replays the click).
   $effect(() => {
@@ -2934,6 +3388,20 @@ let rowSearch = $state('')
     e.preventDefault()
     toggleTerminalDock()
   })
+  // Find the connection's CLI and read its version while the app is idle, so
+  // the first terminal opens on a cached answer: on Windows that lookup scans
+  // the Program Files installs and spawns `--version`, which was most of the
+  // wait before the prompt appeared. Best effort; errors are the terminal's
+  // to report when it is opened.
+  $effect(() => {
+    const conn = connection
+    const type = dbType
+    if (!conn || !type) return
+    const run = () => { void terminalClient({ ...conn, type }).catch(() => {}) }
+    const ric = /** @type {any} */ (window).requestIdleCallback
+    const id = ric ? ric(run, { timeout: 4000 }) : setTimeout(run, 1500)
+    return () => { (ric ? /** @type {any} */ (window).cancelIdleCallback : clearTimeout)(id) }
+  })
   // A new connection gets a fresh client: close the old panel's session.
   $effect(() => {
     void connectionId
@@ -2953,6 +3421,13 @@ let rowSearch = $state('')
     }
     if (aiMode) exitAiMode()
     openTerminalTab()
+  })
+
+  createCommandHotkey('view.terminalNew', (e) => {
+    if (!connection) return
+    e.preventDefault()
+    if (aiMode) exitAiMode()
+    openNewTerminalTab()
   })
 
   // Tab-bar visibility toggle moved here so Mod+Shift+T can reopen closed tabs.
@@ -3034,11 +3509,13 @@ let rowSearch = $state('')
     schema: () => openSchemaTab(),
     erd: () => openErdTab(),
     dataDiff: () => openDataDiffTab(),
+    migrations: () => openMigrationsTab(),
+    localServers: () => { commandOpen = false; void openLocalServers() },
     dashboard: () => openDashboardTab(),
     logs: () => openLogsTab(),
     extensions: () => openExtensionsTab(),
 
-    shortcuts: () => (showShortcutsModal = true),
+    shortcuts: () => openShortcuts(),
     changelog: () => void openExternalUrl('https://stroke.click/changelog?utm_source=stroke-app&utm_medium=menu&utm_campaign=changelog'),
     reportIssue: () => (showReportIssueDialog = true),
     // ⌘A from the native menu: select all in whatever has focus.
@@ -3163,7 +3640,42 @@ let rowSearch = $state('')
   createCommandHotkey('help.shortcuts', (e) => {
     if (commandOpen || showConnectionModal || showSettingsModal || showShortcutsModal) return
     e.preventDefault()
-    showShortcutsModal = true
+    openShortcuts()
+  })
+
+  // ── Leader key ──────────────────────────────────────────────────────────
+  // ⌘; (Ctrl+; elsewhere), then one key. The panel lists them, and the
+  // letters are the words' first letters, so they are learned by using them.
+  let leaderOpen = $state(false)
+  /** @param {number} n */
+  function goToTab(n) {
+    if (!connection || tabs.length === 0) return
+    const idx = n === 9 ? tabs.length - 1 : Math.min(n - 1, tabs.length - 1)
+    void activateTab(tabs[idx].id)
+  }
+  /** @type {import('./LeaderPanel.svelte').LeaderAction[]} */
+  const leaderActions = $derived([
+    ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => ({ key: String(n), label: `Tab ${n}`, run: () => goToTab(n) })),
+    ...(connection
+      ? [
+          { key: 's', label: 'New SQL query', run: () => openNewSqlTab() },
+          { key: 'a', label: 'AI chat', run: () => openAiTab() },
+          { key: 't', label: 'Terminal', run: () => { if (aiMode) exitAiMode(); openTerminalTab() } },
+          { key: 'e', label: 'Schema diagram', run: () => openErdTab() },
+          { key: 'b', label: 'Show or hide sidebar', run: () => toggleSidebar() },
+          { key: 'l', label: 'Logs', run: () => openLogsTab() },
+          { key: 'w', label: 'Close tab', run: () => { if (activeTabId) void closeTab(activeTabId) } },
+          { key: 'r', label: 'Reopen closed tab', run: () => reopenLastClosedTab() },
+        ]
+      : []),
+    { key: 'c', label: 'Connections', run: () => { showConnectionModal = true } },
+    { key: 'k', label: 'Command palette', run: () => { commandOpen = true } },
+    { key: ',', label: 'Settings', run: () => { showSettingsModal = true } },
+    { key: '/', label: 'All shortcuts', run: () => openShortcuts() },
+  ])
+  createCommandHotkey('leader', (e) => {
+    e.preventDefault()
+    leaderOpen = !leaderOpen
   })
 
   // Jump straight to tab N (Ctrl/⌘+1..8); 9 always jumps to the last tab -
@@ -3296,6 +3808,7 @@ let rowSearch = $state('')
     // Each branch prevents lower-priority handlers from firing.
     if (commandOpen)           { e.preventDefault(); commandOpen = false;           return }
     if (showShortcutsModal)    { e.preventDefault(); showShortcutsModal = false;    return }
+    if (showMyShares)          { e.preventDefault(); showMyShares = false;          return }
     if (showAiModelSettings)   { e.preventDefault(); showAiModelSettings = false;   return }
     if (showAboutModal)        { e.preventDefault(); showAboutModal = false;        return }
     if (showInsiderModal)      { e.preventDefault(); showInsiderModal = false;      return }
@@ -3516,7 +4029,7 @@ let rowSearch = $state('')
   // reachable without anyone registering it. See $lib/focus-search.js.
   createCommandHotkey('search.focus', (e) => {
     if (isTypingTarget(document.activeElement)) return
-    const el = findSearchInput()
+    const el = /** @type {HTMLInputElement | null} */ (slashFocusTarget())
     if (!el) return
     e.preventDefault()
     el.focus()
@@ -3533,7 +4046,7 @@ let rowSearch = $state('')
     // mid-sentence.
     if (isTypingTarget(document.activeElement)) return
     e.preventDefault()
-    showShortcutsModal = true
+    openShortcuts()
   })
 
   // Same panel via a modifier chord (Ctrl/⌘+?), which works even while a text
@@ -3541,7 +4054,7 @@ let rowSearch = $state('')
   createCommandHotkey('help.shortcutsAlt', (e) => {
     if (commandOpen || showConnectionModal || showSettingsModal || showShortcutsModal) return
     e.preventDefault()
-    showShortcutsModal = true
+    openShortcuts()
   })
 
   createCommandHotkey('settings.open', (e) => {
@@ -3614,6 +4127,13 @@ let rowSearch = $state('')
       await refreshDashboardCharts()
       return
     }
+    // Document stores and Redis browse in pages of their own: they reload on
+    // this event, and the sidebar's collections and keys re-list beside them.
+    if (activeTab?.kind === 'docs' || activeTab?.kind === 'redis') {
+      window.dispatchEvent(new CustomEvent('stroke:refresh-view'))
+      await loadTables({ force: true, quiet: true })
+      return
+    }
     await loadTables({ force: true })
   }
 
@@ -3668,6 +4188,38 @@ let rowSearch = $state('')
   }
 
 
+  // The AI panel slides in from the right edge with a transform only, lying
+  // over the page while it moves, so the page beside it is laid out once
+  // rather than on every frame. Switching to or from full AI mode is instant
+  // (a different layout).
+  /** @type {HTMLDivElement | null} */
+  let aiPanelEl = $state(null)
+  /** @type {'closed' | 'opening' | 'open' | 'closing'} */
+  let aiPanelPhase = $state(untrack(() => (aiSidebarOpen && !aiMode ? 'open' : 'closed')))
+  const aiPanelShown = $derived(aiPanelPhase !== 'closed')
+  const aiPanelOverlay = $derived(aiPanelPhase === 'closing')
+  let aiPanelMode = untrack(() => aiMode)
+  $effect(() => {
+    const want = aiSidebarOpen && !aiMode
+    const modeFlip = aiMode !== aiPanelMode
+    aiPanelMode = aiMode
+    untrack(() => {
+      if (modeFlip || panelMotionOff()) { aiPanelPhase = want ? 'open' : 'closed'; return }
+      if (want) {
+        if (aiPanelPhase === 'open') return
+        aiPanelPhase = 'opening'
+        void tick()
+          .then(() => slidePanel(aiPanelEl, 'right', true))
+          .then(() => { if (aiSidebarOpen && !aiMode) aiPanelPhase = 'open' })
+      } else if (aiPanelPhase !== 'closed') {
+        aiPanelPhase = 'closing'
+        void tick()
+          .then(() => slidePanel(aiPanelEl, 'right', false))
+          .then(() => { if (!(aiSidebarOpen && !aiMode)) aiPanelPhase = 'closed' })
+      }
+    })
+  })
+
   function toggleAiSidebar() {
     if (!connection) return
     if (!AI_SIDEBAR_ENABLED) { if (aiMode) exitAiMode(); else enterAiMode(); return }
@@ -3677,14 +4229,14 @@ let rowSearch = $state('')
 
   /** Open where AI messages go: the sidebar, or full AI mode while it is off. */
   function openAiSurface() {
-    if (!AI_SIDEBAR_ENABLED) { enterAiMode(); return }
+    if (!AI_SIDEBAR_ENABLED) { openAiTab(); return }
     if (!aiSidebarOpen) {
       aiSidebarOpen = true
       aiSidebarEverOpened = true
       saveLayout({ aiSidebarOpen: true })
     }
   }
-  const aiTargetRef = () => (AI_SIDEBAR_ENABLED ? aiSidebarRef : aiFullRef)
+  const aiTargetRef = () => (AI_SIDEBAR_ENABLED ? aiSidebarRef : $appAiInTab ? aiTabRef : aiFullRef)
 
   function toggleStatusBar() {
     statusBarVisible = !statusBarVisible
@@ -3728,6 +4280,13 @@ let rowSearch = $state('')
     openAiSurface()
     const block = `\n\n\`\`\`${queryLanguageFor(dbType)?.fence ?? 'sql'}\n${sql.trim()}\n\`\`\``
     whenRefReady(aiTargetRef, (r) => (r.draftMessage ? r.draftMessage(block) : r.sendMessage(`Explain this SQL.${block}`)))
+  }
+
+  /** Send a whole prompt to the AI chat as it is (Explain's Ask AI). @param {string} prompt */
+  function askAiPrompt(prompt) {
+    if (!connection || !prompt.trim()) return
+    openAiSurface()
+    whenRefReady(aiTargetRef, (r) => r.sendMessage(prompt))
   }
 
   /**
@@ -3992,9 +4551,24 @@ let rowSearch = $state('')
     clearTableEditor()
   }
 
+  /** AI chat: a tab beside the others, or the window's AI mode. */
   function openAiTab() {
     if (!$hasPro) { showProGate = true; return }
+    if ($appAiInTab && connection) {
+      if (aiMode) exitAiMode()
+      openSingletonTab({ find: findAiTab, create: createAiTab })
+      return
+    }
     enterAiMode()
+  }
+
+  /**
+   * The sidebar's Chats list: open that chat (or a new one) in the AI tab.
+   * @param {string | null} id
+   */
+  function openAiChat(id) {
+    requestChat(id ? { type: 'open', id } : { type: 'new' })
+    openAiTab()
   }
 
   // Open a pro-gated singleton tab: focus it if already open, otherwise create,
@@ -4074,6 +4648,18 @@ let rowSearch = $state('')
     clearTableEditor()
   }
 
+  /** Another terminal tab: a second psql beside the first, numbered. */
+  function openNewTerminalTab() {
+    if (!connection) return
+    saveActiveTabState()
+    dropWelcomeTabs()
+    const n = tabs.filter((t) => t.kind === 'terminal').length + 1
+    const tab = { ...createTerminalTab(), title: n > 1 ? `Terminal ${n}` : 'Terminal' }
+    tabs = [...tabs, tab]
+    activeTabId = tab.id
+    clearTableEditor()
+  }
+
   /** The Redis keyspace workspace. NOT pro-gated - it's the primary (and only)
    *  interface for a Redis connection, so it must open on connect for everyone. */
   function openRedisTab() {
@@ -4099,13 +4685,34 @@ let rowSearch = $state('')
     clearTableEditor()
   }
 
-  /** The document browser: the main page of a CouchDB / Cassandra / Firestore connection. */
-  function openDocsTab() {
-    const existing = findDocsTab(tabs)
-    if (existing) { void activateTab(existing.id); return }
+  /**
+   * The document browser (MongoDB, CouchDB, Elasticsearch, Firestore,
+   * Cassandra...), one tab per collection like table tabs. A collection
+   * already open is focused; the blank Browse tab a connection opens on takes
+   * the first collection picked; any other pick opens its own tab. No
+   * collection: back to the docs tab used last, or a blank one.
+   * @param {string} [collection]
+   */
+  function openDocsTab(collection) {
+    const docs = tabs.filter((t) => t.kind === 'docs')
+    if (collection === undefined) {
+      const last = docs.find((t) => t.id === activeTabId) ?? docs.at(-1)
+      if (last) { void activateTab(last.id); return }
+      collection = ''
+    }
+    const name = /** @type {string} */ (collection)
+    const same = docs.find((t) => (/** @type {any} */ (t).collection ?? '') === name)
+    if (same) { void activateTab(same.id); return }
+    const title = name ? name.slice(name.lastIndexOf('.') + 1) : 'Browse'
+    const blank = name ? docs.find((t) => !(/** @type {any} */ (t).collection)) : null
+    if (blank) {
+      tabs = tabs.map((t) => (t.id === blank.id ? /** @type {any} */ ({ ...t, collection: name, title }) : t))
+      void activateTab(blank.id)
+      return
+    }
     saveActiveTabState()
     dropWelcomeTabs()
-    const tab = createDocsTab()
+    const tab = /** @type {any} */ ({ ...createDocsTab(), collection: name, title })
     tabs = [...tabs, tab]
     activeTabId = tab.id
     clearTableEditor()
@@ -4150,10 +4757,38 @@ let rowSearch = $state('')
     clearTableEditor()
   }
 
-  /** Close the license tab after a successful activation. */
-  function closeLicenseTab() {
-    const existing = findLicenseTab(tabs)
-    if (existing) void closeTab(existing.id)
+  /** Shared links as a tab; without a connection there is no tab bar, so the overlay. */
+  function openSharesTab() {
+    commandOpen = false
+    showSettingsModal = false
+    if (!connection) { showMyShares = true; return }
+    const existing = findSharesTab(tabs)
+    if (existing) { void activateTab(existing.id); return }
+    saveActiveTabState()
+    dropWelcomeTabs()
+    const tab = createSharesTab()
+    tabs = [...tabs, tab]
+    activeTabId = tab.id
+    clearTableEditor()
+  }
+  // Anything can ask for the page (the share dialog, Settings, the AI's link
+  // card) through share-flow.js without a callback chain.
+  let _sharesReq = 0
+  onMount(() => sharesPageRequest.subscribe((n) => {
+    if (n > _sharesReq) { _sharesReq = n; openSharesTab() }
+  }))
+
+  /** Keyboard shortcuts as a tab; without a connection there is no tab bar, so the overlay. */
+  function openShortcuts() {
+    if (!connection) { showShortcutsModal = true; return }
+    const existing = findShortcutsTab(tabs)
+    if (existing) { void activateTab(existing.id); return }
+    saveActiveTabState()
+    dropWelcomeTabs()
+    const tab = createShortcutsTab()
+    tabs = [...tabs, tab]
+    activeTabId = tab.id
+    clearTableEditor()
   }
 
   function openJsonTab() {
@@ -4221,6 +4856,10 @@ let rowSearch = $state('')
 
   function openDataDiffTab() {
     openSingletonTab({ find: findDataDiffTab, create: createDataDiffTab })
+  }
+
+  function openMigrationsTab() {
+    openSingletonTab({ find: findMigrationsTab, create: createMigrationsTab })
   }
 
   /**
@@ -4551,7 +5190,7 @@ let rowSearch = $state('')
   // belong to a group.
   /** @param {StudioTab} t */
   function isGroupable(t) {
-    return t.kind !== 'ai'
+    return $appAiInTab || t.kind !== 'ai'
   }
 
   /**
@@ -5853,6 +6492,7 @@ let rowSearch = $state('')
           const n = await countTableRows(s.schema, s.table, {
             ...apiSearch(s.rowSearch),
             filters: filtersForApi(s.rowFilters),
+            supersede: tabId ? `${tabId}:count` : undefined,
           })
           if (typeof n === 'number' && n >= 0) {
             patchTab({ total: n })
@@ -6568,6 +7208,43 @@ let rowSearch = $state('')
     }
   }
 
+  /** A searched count slower than this offers a search index (Postgres). */
+  const SLOW_SEARCH_MS = 1500
+  /** Tables already offered one this session: asked once, not on every search. */
+  const searchIndexOffered = new Set()
+
+  /**
+   * A search on this table was slow: offer trigram indexes on its text columns,
+   * which turn the scan into an index lookup (1-2s to well under 0.1s on 5M
+   * rows). Only when there is something to index and pg_trgm is available.
+   * @param {string} schema @param {string} table
+   */
+  async function offerSearchIndex(schema, table) {
+    if (dbType !== 'postgres' || $readOnlyMode) return
+    const key = `${persistConnectionId}:${schema}.${table}`
+    if (searchIndexOffered.has(key)) return
+    searchIndexOffered.add(key)
+    let st
+    try { st = await searchIndexStatus(schema, table) } catch { return }
+    const missing = st.textColumns.filter((c) => !st.indexed.includes(c))
+    if (!st.trgmAvailable || missing.length === 0) return
+    const cols = missing.length <= 3 ? missing.join(', ') : `${missing.slice(0, 3).join(', ')} and ${missing.length - 3} more`
+    toast.info(`Searching ${table} is slow`, {
+      description: `A search index on ${cols} makes it near-instant. It builds in the background and the table stays usable.`,
+      duration: 15000,
+      action: {
+        label: 'Speed up',
+        onClick: () => {
+          toast.promise(createSearchIndex(schema, table), {
+            loading: `Building the search index on ${table}…`,
+            success: (made) => `Search index ready on ${table} (${made.length} column${made.length === 1 ? '' : 's'})`,
+            error: (e) => String(/** @type {any} */ (e)?.message ?? e),
+          })
+        },
+      },
+    })
+  }
+
   /**
    * Background row-count pass for the main grid. Runs after loadRows() has
    * already painted the rows, so COUNT(*) never blocks the initial view. The
@@ -6585,8 +7262,13 @@ let rowSearch = $state('')
   async function refreshRowCount(tabId, seq, schema, table, query, sig = '', viewKey = '') {
     if (!table) return
     try {
-      const n = await countTableRows(schema, table, query)
+      // One count per tab on the server: a newer one cancels this.
+      const countStarted = performance.now()
+      const n = await countTableRows(schema, table, { ...query, supersede: tabId ? `${tabId}:count` : undefined })
       if (seq !== loadSeqOf(tabId)) return
+      if (typeof n === 'number' && n >= 0 && query?.search && !query.searchIsRegex && performance.now() - countStarted > SLOW_SEARCH_MS) {
+        void offerSearchIndex(schema, table)
+      }
       if (typeof n === 'number' && n >= 0) {
         patchTableTab(tabId ?? '', { total: n })
         if (tabId !== activeTabId) return
@@ -6677,13 +7359,33 @@ let rowSearch = $state('')
   /** @param {'csv' | 'json'} format */
   let exportingData = $state(false)
 
+  /** Share the open table's rows, or its chart, as an encrypted link. @param {string} mode */
+  function shareTableView(mode) {
+    const visibleIdxs = columns.map((_, i) => i).filter((i) => !hiddenColumns.has(columns[i].name))
+    const picked = (selected.size > 0 && selected.size < rows.length)
+      ? [...selected].sort((a, b) => a - b).map((i) => rows[i]).filter(Boolean)
+      : rows.filter(Boolean)
+    const cols = visibleIdxs.map((i) => ({ name: columns[i].name, type: columns[i].dataType ?? columns[i].data_type }))
+    const cells = picked.map((r) => visibleIdxs.map((i) => r[i]))
+    const source = connection?.name ? `${connection.name} · ${activeSchema ? activeSchema + '.' : ''}${activeTable}` : String(activeTable ?? '')
+    if (mode === 'chart' && chartPane?.shareSpec) {
+      requestShare({ kind: 'chart', title: chartTitle(chartPane.shareSpec()), source, chart: chartPane.shareSpec(), columns: dataViewColumns.map((c) => ({ name: c.name, type: c.dataType ?? c.data_type })), rows: dataViewRows })
+      return
+    }
+    requestShare({ kind: 'table', title: String(activeTable ?? 'Rows'), source, columns: cols, rows: cells, totalRows: Math.max(total || 0, cells.length) })
+  }
+
   async function handleExport(format) {
     if (exportingData) return
     exportingData = true
     // Windowed results keep only a few resident windows, so read the full
     // ordered set from the server for export instead of the sparse client array.
     let sourceRows = rows
-    if (windowed) {
+    // Paged mode holds only the page on screen. An export is of the table (with
+    // its filters and sort), so read the rest too; it used to save the one page
+    // and say "Exported 100 rows" of a table that has 5,000.
+    const wholeTable = windowed || (selected.size === 0 && total > rows.length)
+    if (wholeTable) {
       const fetchId = toast.info('Fetching all rows for export…', { duration: 60 * 60 * 1000 })
       try {
         sourceRows = await fetchAllRows()
@@ -6727,15 +7429,14 @@ let rowSearch = $state('')
           ? await rowsToCsvAsync(exportColumns, exportCells)
           : await rowsToJsonAsync(exportColumns, exportCells)
       } else {
-        content =
-          format === 'csv' ? rowsToCsv(exportColumns, exportCells)
-            : format === 'json' ? rowsToJson(exportColumns, exportCells)
-            : format === 'sql' ? rowsToSql(exportColumns, exportCells, activeTable || 'exported_table')
-            : format === 'tsv' ? rowsToTsv(exportColumns, exportCells)
-            : format === 'md' ? rowsToMarkdown(exportColumns, exportCells)
-            : rowsToJsonl(exportColumns, exportCells)
+        // The other formats build in one go (Excel and Parquet as files). This
+        // was outside an else, so a big CSV was built twice: once in chunks,
+        // then thrown away and built again in one blocking pass.
+        content = ''
       }
-      const saved = await saveExportFile(content, filename, format)
+      const saved = content
+        ? await saveExportFile(content, filename, format)
+        : await exportRowsAs(format, exportColumns, exportCells, activeTable || 'exported_table')
       toast.dismiss(toastId)
       if (saved) {
         toast.success(`Exported ${formatCompactCount(n)} rows`, { description: filename })
@@ -7107,6 +7808,11 @@ let rowSearch = $state('')
   }
 
   async function onConnected(conn, savedId) {
+    // A fresh pool is in front and unnamed: no routing until the switch that
+    // opened it names it (handleSwitchDatabase), or a call meant for this
+    // database could be sent to a kept one for the database just left.
+    setConnRoute('')
+    connectedSavedId = savedId ?? ''
     // Labels belong to the database they were read from.
     void import('$lib/plugins/extensions/fk-labels.js').then((m) => m.clearFkLabels())
     recordActivity({ type: 'connect', title: `Connected to ${conn.name ?? conn.database ?? conn.filePath ?? 'database'}`, success: true })
@@ -7145,14 +7851,10 @@ let rowSearch = $state('')
     flushSqlTabs()
     _sqlTabsRestoredFor = ''
     tabs = []
-    _liveRowsByTab.clear()
-    _tabRowsMru = []
-    _loadSeqByTab.clear()
-    fetchingTabIds.clear()
-    _sqlQueryIdByTab.clear()
-    for (const id of [..._sqlViewsByTab.keys()]) forgetSqlResult(id)
-    _sqlRowsByTab.clear()
-    _autoRefreshByTab.clear()
+    // Labs: the tabs kept for the other open databases keep their rows and
+    // results. Wiping them handed a resumed grid the proxied copy of its rows
+    // (slow to scroll) and dropped every kept SQL result.
+    forgetTabCaches(keptTabIds())
     _autoRefreshTick += 1
     _busyJobs.clear()
     _busyTick += 1
@@ -7160,12 +7862,11 @@ let rowSearch = $state('')
     // open the keyspace workspace instead of the welcome tab + tables sidebar.
     const fam = engineFamily(conn.type)
     const connIsDynamo = fam === 'dynamodb'
-    const connIsDoc = fam === 'couchdb' || fam === 'cassandra' || fam === 'firestore' || fam === 'mongodb'
+    const connIsDoc = fam === 'couchdb' || fam === 'cassandra' || fam === 'firestore' || fam === 'mongodb' || fam === 'elasticsearch' || fam === 'opensearch'
     const connIsRedis = fam === 'redis'
-    docCollection = ''
     dynamoTable = ''
     if (connIsDoc) {
-      openDocsTab()
+      openDocsTab('')
     } else if (connIsDynamo) {
       openDynamoTab()
     } else if (connIsRedis) {
@@ -7218,6 +7919,39 @@ let rowSearch = $state('')
   onMount(() => installInputShortcuts())
   // Every MCP tool call lands in the Logs page (filter: MCP).
   onMount(() => { void listenMcpActivity() })
+  // An agent's (or any MCP client's) statements change the database behind
+  // the sidebar's back: a CREATE VIEW left the tree saying "Empty". Each
+  // successful execute_sql goes through the same refresh the SQL editor runs
+  // after its own statements, merged over a short burst. refresh_sidebar asks
+  // for a full reload outright.
+  onMount(() => {
+    /** @type {(() => void)[]} */
+    const offs = []
+    /** @type {string[]} */
+    let pending = []
+    let timer = 0
+    void import('@tauri-apps/api/event').then(async ({ listen }) => {
+      offs.push(await listen('mcp-activity', (e) => {
+        const a = /** @type {{ tool?: string, detail?: string, ok?: boolean }} */ (e.payload ?? {})
+        if (a.tool !== 'execute_sql' || !a.ok || !a.detail || !connection) return
+        pending.push(a.detail)
+        clearTimeout(timer)
+        timer = window.setTimeout(() => {
+          const ran = pending.join(';\n')
+          pending = []
+          void refreshAfterSql(sqlRunEffects(ran))
+          // Mongo, Redis, Elasticsearch...: their statements are not SQL, so the
+          // effects above read nothing. Their pages reload, and the sidebar.
+          if (isKeyValue(connection?.type)) {
+            window.dispatchEvent(new CustomEvent('stroke:refresh-view'))
+            void loadTables({ force: true, quiet: true })
+          }
+        }, 300)
+      }))
+      offs.push(await listen('mcp-refresh', () => { if (connection) void handleRefresh() }))
+    }).catch(() => {})
+    return () => { clearTimeout(timer); for (const off of offs) off() }
+  })
   // open_in_stroke: an MCP client (or agent) shows the user a table or hands
   // them a query to review. Nothing is run.
   onMount(() => {
@@ -7228,8 +7962,33 @@ let rowSearch = $state('')
         const o = /** @type {{ table?: string | null, schema?: string | null, query?: string | null }} */ (e.payload ?? {})
         if (!connection) return
         if (aiMode) exitAiMode()
-        if (o.query) void openQueryInEditor(o.query)
+        if (o.query) void openQueryInEditor(isDynamo ? formatApiCall(o.query) : o.query)
         else if (o.table) void openTableTab(o.schema || activeSchema, o.table)
+      }).then((u) => { off = u }),
+    ).catch(() => {})
+    return () => off?.()
+  })
+
+  // share_link: an agent asks for a link. The share dialog opens prefilled;
+  // the person creates it (or closes the dialog) and the answer goes back.
+  onMount(() => {
+    /** @type {(() => void) | null} */
+    let off = null
+    void import('@tauri-apps/api/event').then(({ listen }) =>
+      listen('mcp-share', async (e) => {
+        const m = /** @type {{ id: number, kind: string, title: string, columns: string[], rows: unknown[][], sql?: string | null, code?: string | null, chart?: { type: string, x: string, y: string[], group?: string | null } | null }} */ (e.payload)
+        const { invoke } = await import('@tauri-apps/api/core')
+        const answer = (/** @type {string | null} */ url) => void invoke('mcp_share_result', { id: m.id, url }).catch(() => {})
+        const columns = m.columns.map((name) => ({ name }))
+        /** @type {import('$lib/share-flow.js').ShareSource | null} */
+        const src =
+          m.kind === 'chart' && m.chart ? { kind: 'chart', title: m.title, chart: m.chart, columns, rows: m.rows }
+          : m.kind === 'result' ? { kind: 'result', title: m.title, columns, rows: m.rows, sql: m.sql ?? undefined }
+          : m.kind === 'query' && m.sql ? { kind: 'query', title: m.title, sql: m.sql }
+          : m.kind === 'diagram' && m.code ? { kind: 'mermaid', title: m.title, code: m.code }
+          : null
+        if (!src) { answer(null); return }
+        requestShare(src, answer)
       }).then((u) => { off = u }),
     ).catch(() => {})
     return () => off?.()
@@ -7410,9 +8169,11 @@ let rowSearch = $state('')
       else if (last.type === 'posthog') await withTimeout(connectPosthog(last))
       else if (last.type === 'duckdb') await withTimeout(connectDuckdb(last))
       else if (last.type === 'mssql') await withTimeout(connectMssql(last))
+      else if (last.type === 'oracle') await withTimeout(connectOracle(last))
       else if (engineFamily(last.type) === 'redis') await withTimeout(connectRedis(last))
       else if (last.type === 'dynamodb') await withTimeout(connectDynamo(last))
       else if (last.type === 'couchdb') await withTimeout(connectCouch(last))
+      else if (last.type === 'elasticsearch' || last.type === 'opensearch') await withTimeout(connectElastic(last))
       else if (last.type === 'cassandra') await withTimeout(connectCassandra(last))
       else if (last.type === 'firestore') await withTimeout(connectFirestore(last))
       else if (last.type === 'mongodb') await withTimeout(connectMongo(last))
@@ -7471,8 +8232,7 @@ let rowSearch = $state('')
     if (aiMode) exitAiMode()
     // NoSQL: the sidebar picks what the engine's own page shows.
     if (isDoc) {
-      docCollection = docQualified && activeSchema ? `${activeSchema}.${name}` : name
-      openDocsTab()
+      openDocsTab(docQualified && activeSchema ? `${activeSchema}.${name}` : name)
       return
     }
     if (isDynamo) {
@@ -7490,6 +8250,9 @@ let rowSearch = $state('')
 
   function enterAiMode() {
     if (!connection) return
+    // AI in a tab: every way into AI mode (⌘⇧E, the title bar, the
+    // palette) opens the tab instead.
+    if ($appAiInTab) { openSingletonTab({ find: findAiTab, create: createAiTab }); return }
     aiMode = true
     saveAiMode(true)
   }
@@ -7551,6 +8314,8 @@ let rowSearch = $state('')
 
   /** Ask first: switching drops the pool, the catalog and every open tab. */
   function requestDatabaseSwitch(/** @type {{ key: string, label: string }} */ entry) {
+    // Labs, several connections at once: nothing closes, so there is nothing to confirm.
+    if (multiConnection()) return switchDatabaseNow(entry)
     pendingDbSwitch = entry
     showSwitchDbDialog = true
   }
@@ -7725,7 +8490,22 @@ let rowSearch = $state('')
     // Remember where the user was so reconnecting restores this schema.
     if (!forget && persistConnectionId && activeSchema) setLastSchema(persistConnectionId, activeSchema)
     recordActivity({ type: 'disconnect', title: `Disconnected from ${connection?.name ?? 'database'}`, success: true })
+    // Labs, other databases still open: close this one and go to the one used
+    // last, the way closing a window leaves the others up.
+    const here = sessionKey(connection)
+    sessionOrder = sessionOrder.filter((k) => k !== here)
+    const next = [..._sessions].filter(([k]) => k !== here).at(-1)
+    if (next && multiConnection()) {
+      const left = connection?.name ?? connection?.database ?? 'database'
+      setConnRoute('')
+      try { await disconnectPostgres() } catch { /* ignore */ }
+      if (await resumeKept(next[0], next[1], null)) {
+        toast.success(`Disconnected from ${left}`, { description: `Now on ${next[1].label}.` })
+        return
+      }
+    }
     setWasDisconnected(true)
+    setConnRoute('')
     try { await disconnectPostgres() } catch { /* ignore */ }
     try { await mcpStop() } catch { /* ignore */ }
     mcpRunning = false
@@ -7733,6 +8513,31 @@ let rowSearch = $state('')
     clearConnectionState()
     showConnectionModal = true
   }
+
+  /** Labs: close every open database at once (the dialog's Disconnect all). */
+  /** Close every kept database; the one on screen stays. */
+  async function closeKeptSessions() {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core')
+      await invoke('close_parked', { key: null, connection: null })
+    } catch { /* the pools close with the app anyway */ }
+    _sessions.clear()
+    sessionOrder = []
+    sessionsTick++
+  }
+
+  async function handleDisconnectAll() {
+    await closeKeptSessions()
+    await handleDisconnect()
+  }
+
+  // Labs turned off in Settings: the other open databases close, so the tab
+  // bar and the status bar go back to the one connection on screen.
+  $effect(() => {
+    const on = () => { void closeKeptSessions() }
+    window.addEventListener('stroke:multi-connection-off', on)
+    return () => window.removeEventListener('stroke:multi-connection-off', on)
+  })
 
   /**
    * A saved connection was deleted (sidebar or connection modal). Deleting the
@@ -7742,34 +8547,35 @@ let rowSearch = $state('')
    */
   function handleConnectionRemoved(id) {
     savedConnections = loadSavedConnections()
+    // Labs: its kept tabs go with it (its pools are closed by removeConnection).
+    for (const key of [..._sessions.keys()]) if (key.startsWith(`${id}|`)) _sessions.delete(key)
+    sessionsTick++
     if (connection && id && (id === persistConnectionId || id === connection.id)) {
       void handleDisconnect({ forget: true })
     }
   }
 
   /** @param {{ db_type: string, host: string, port: number, user: string, password: string, database: string, name: string }} info */
+  /**
+   * A container the Docker launcher started: save it and open it. The backend
+   * returns the saved-connection shape for its engine (Postgres, MongoDB,
+   * Redis, Oracle, ...).
+   * @param {Record<string, any>} info
+   */
   async function handleDockerConnect(info) {
-    const conn = /** @type {import('$lib/stores/connections.js').SavedConnection} */ ({
-      id: crypto.randomUUID(),
-      type: info.db_type === 'mysql' ? 'mysql' : 'postgres',
-      name: info.name,
-      host: info.host,
-      port: info.port,
-      user: info.user,
-      password: info.password,
-      database: info.database,
-      ssl: false,
-    })
+    const conn = /** @type {import('$lib/stores/connections.js').SavedConnection} */ ({ id: crypto.randomUUID(), ...info })
     upsertConnection(conn)
     await disconnectPostgres().catch(() => {})
     connection = null
     clearConnectionState()
     beginConnectOverlay(conn.name ?? '')
     try {
-      if (conn.type === 'mysql' || conn.type === 'mariadb') await connectMysql(conn)
-      else await connectPostgres(conn)
+      await connectByType(conn)
       await onConnected(conn, conn.id)
       showDockerModal = false
+      // Connected from another window (Local servers) while the connection
+      // screen was up: show the database, not the screen.
+      showConnectionModal = false
     } catch (e) {
       error = String(e)
       showDockerModal = false
@@ -7821,42 +8627,340 @@ let rowSearch = $state('')
     else if (conn.type === 'posthog') await connectPosthog(conn)
     else if (conn.type === 'duckdb') await connectDuckdb(conn)
     else if (conn.type === 'mssql') await connectMssql(conn)
+    else if (conn.type === 'oracle') await connectOracle(conn)
     else if (engineFamily(conn.type) === 'redis') await connectRedis(conn)
     else if (conn.type === 'dynamodb') await connectDynamo(conn)
     else if (conn.type === 'couchdb') await connectCouch(conn)
+    else if (conn.type === 'elasticsearch' || conn.type === 'opensearch') await connectElastic(conn)
     else if (conn.type === 'cassandra') await connectCassandra(conn)
     else if (conn.type === 'firestore') await connectFirestore(conn)
     else if (conn.type === 'mongodb') await connectMongo(conn)
     else await connectPostgres(conn)
   }
 
-  /** @param {import('$lib/stores/connections.js').SavedConnection} conn */
-  async function handleSwitchDatabase(conn) {
+  // ── Labs: several connections at once ───────────────────────────────────
+  // A switch sets the open pool aside (Rust keeps it, see db/parked.rs) and
+  // keeps this page's tabs for it here; switching back resumes the pool with
+  // no connect round trip and puts the tabs back. Table tabs come back without
+  // their rows (marked evicted) and refetch when shown, so a kept session
+  // costs a tab list, not its data. SSH-tunnelled connections share one
+  // tunnel slot, so they still connect each time.
+  /**
+   * @typedef {{ conn: any, label: string, tabs: StudioTab[], activeTabId: string | null,
+   *   activeSchema: string, activeTable: string | null, schemas: string[], tables: any[] }} KeptSession
+   */
+  /** @type {Map<string, KeptSession>} */
+  const _sessions = new Map()
+  /** Bumped on every change to _sessions, so the tab bar re-reads it. */
+  let sessionsTick = $state(0)
+  /** Labs: the database being opened while the one on screen stays up ('' when none). */
+  let switchingTo = $state('')
+  /** Databases in the order they were first opened: the tab bar groups by it, so tabs don't jump around on a switch. */
+  let sessionOrder = $state(/** @type {string[]} */ ([]))
+  const multiConnection = () => loadSettings().multiConnection === true
+  /** One key per database, not per saved connection: a server holds several. @param {any} c */
+  const sessionKey = (c) => (c ? [c.id ?? '', c.type, c.databaseId ?? c.database ?? c.filePath ?? ''].join('|') : '')
+  /** @param {any} c */
+  const keepable = (c) => !!c && !c.ssh?.host
+  /** A database's short name for its tabs. @param {any} c */
+  const sessionLabel = (c) => String(c?.database || c?.name || c?.filePath?.split(/[\\/]/).pop() || c?.host || 'database')
+  /** @param {string} key */
+  function noteSession(key) {
+    if (key && !sessionOrder.includes(key)) sessionOrder = [...sessionOrder, key]
+  }
+
+  /** Every tab id kept for another open database. */
+  function keptTabIds() {
+    /** @type {Set<string>} */
+    const ids = new Set()
+    for (const s of _sessions.values()) for (const t of s.tabs) ids.add(t.id)
+    return ids
+  }
+
+  /** Drop the per-tab row and result caches, except for the tabs in `keep`. @param {Set<string>} keep */
+  function forgetTabCaches(keep) {
+    /** @param {Map<string, any> | Set<string>} m */
+    const prune = (m) => { for (const id of [...m.keys()]) if (!keep.has(id)) m.delete(id) }
+    prune(_liveRowsByTab)
+    _tabRowsMru = _tabRowsMru.filter((id) => keep.has(id))
+    prune(_loadSeqByTab)
+    prune(fetchingTabIds)
+    prune(_sqlQueryIdByTab)
+    for (const id of [..._sqlViewsByTab.keys()]) if (!keep.has(id)) forgetSqlResult(id)
+    prune(_sqlRowsByTab)
+    prune(_autoRefreshByTab)
+  }
+
+  /** Put the open connection's tabs (and its sidebar) aside under its key. */
+  function keepSession() {
+    if (!connection) return
+    saveActiveTabState()
+    flushSqlTabs()
+    const key = sessionKey(connection)
+    noteSession(key)
+    // Newest last, so the cap drops the one used longest ago (as db/parked.rs does).
+    _sessions.delete(key)
+    _sessions.set(key, {
+      conn: connection,
+      label: sessionLabel(connection),
+      // The tab on screen keeps its rows, so coming back to it is instant;
+      // the others refetch when shown, so a kept database costs little.
+      tabs: tabs.map((t) => {
+        if (!(t.kind === 'table' && t.state && t.id !== activeTabId)) return t
+        _liveRowsByTab.delete(t.id)
+        return { ...t, state: { ...t.state, rows: [], selected: new Set(), windowedHead: false, windowedLoaded: [], windowCount: 0, loadingRows: false, evicted: true } }
+      }),
+      activeTabId,
+      activeSchema,
+      activeTable,
+      schemas,
+      tables,
+    })
+    while (_sessions.size > 8) {
+      const old = /** @type {string} */ (_sessions.keys().next().value)
+      _sessions.delete(old)
+      sessionOrder = sessionOrder.filter((k) => k !== old)
+    }
+    sessionsTick++
+  }
+
+  /** Bring a kept session's tabs back over the fresh connection's default tab. @param {any} conn */
+  async function restoreSession(conn) {
+    const key = sessionKey(conn)
+    const s = _sessions.get(key)
+    if (!s || !s.tabs.length) return
+    _sessions.delete(key)
+    sessionsTick++
+    tabs = s.tabs
+    // Its editor tabs are already here: don't add the stored copies again.
+    if (tabs.some((t) => t.kind === 'sql')) _sqlTabsRestoredFor = sqlDraftKey
+    if (s.activeSchema && s.activeSchema !== activeSchema && schemas.includes(s.activeSchema)) {
+      activeSchema = s.activeSchema
+      await loadTables()
+    }
+    const front = tabs.find((t) => t.id === s.activeTabId) ?? tabs[0]
+    activeTabId = front.id
+    await applyTabToEditor(front)
+  }
+
+  /**
+   * Switch to a kept database in place: its pool is already open (resumed in
+   * Rust), so nothing is torn down and nothing reconnects. The connection,
+   * sidebar and tabs are swapped in one go and refreshed quietly behind, so
+   * the switch shows no welcome screen, no empty sidebar and no spinner.
+   * @param {any} conn @param {KeptSession} s @param {string | null} [focusTab]
+   */
+  async function resumeSession(conn, s, focusTab = null) {
+    connectedSavedId = conn.id ?? ''
+    connection = conn
+    savedConnections = loadSavedConnections()
+    tableReadonly = savedConnections.find((c) => c.id === conn.id)?.readOnly ?? conn.readOnly ?? false
+    if (conn.id) setLastConnectionId(conn.id)
+    error = ''
+    connectionLost = false
+    tableColumnsCache = new Map()
+    resetIncomingFkCache()
+    _catalog.clear()
+    _sqlHintsLoadedFor = ''
+    indexes = []
+    enums = []
+    triggers = []
+    sequences = []
+    tableFilter = ''
+    structureColumns = []
+    structureSearch = ''
+    schemas = s.schemas
+    activeSchema = s.activeSchema
+    tables = s.tables
+    activeTable = s.activeTable
+    // The list on screen is this database's: a refresh keeps it up (no dots).
+    _tablesKey = catalogKey(persistConnectionId, 'tables', activeSchema)
+    loadingTables = false
+    tabs = s.tabs
+    if (tabs.some((t) => t.kind === 'sql')) _sqlTabsRestoredFor = sqlDraftKey
+    const front = tabs.find((t) => t.id === focusTab) ?? tabs.find((t) => t.id === s.activeTabId) ?? tabs[0]
+    activeTabId = front?.id ?? null
+    if (front) await applyTabToEditor(front)
+    void refreshQueryStores().catch(() => {})
+    // Catch up quietly: the kept lists can be a little behind.
+    void (async () => {
+      const at = persistConnectionId
+      try { await loadSchemas() } catch { /* the table list still refreshes */ }
+      if (!connectionMoved(at)) await loadTables({ force: true, quiet: true })
+    })()
+  }
+
+  /** The kept session holding a tab, if any. @param {string} id */
+  function sessionOfTab(id) {
+    for (const [key, s] of _sessions) if (s.tabs.some((t) => t.id === id)) return { key, s }
+    return null
+  }
+
+  /** A tab of another open database: switch to that database, on that tab. @param {string} id */
+  async function activateForeignTab(id) {
+    const hit = sessionOfTab(id)
+    if (!hit) return
+    // The clicked tab lights up now, not when its database is in front.
+    pressedTab = id
+    try { await handleSwitchDatabase(hit.s.conn, { focusTab: id }) } finally { pressedTab = '' }
+  }
+  /** Labs: a tab of another database that was clicked and is being brought forward. */
+  let pressedTab = $state('')
+
+  /** Close a tab of another open database without switching to it. @param {string} id */
+  function closeForeignTab(id) {
+    const hit = sessionOfTab(id)
+    if (!hit) return
+    const left = hit.s.tabs.filter((t) => t.id !== id)
+    if (left.length) _sessions.set(hit.key, { ...hit.s, tabs: left, activeTabId: hit.s.activeTabId === id ? left[0].id : hit.s.activeTabId })
+    else _sessions.set(hit.key, { ...hit.s, tabs: [] })
+    sessionsTick++
+  }
+
+  /**
+   * Labs: one tab bar for every open database. This database's tabs and the
+   * kept ones, in the order the databases were opened, so no tab moves on a
+   * switch. They look like any other tab: which database one belongs to is in
+   * its tooltip and in the status bar (openDatabases).
+   */
+  const barTabs = $derived.by(() => {
+    void sessionsTick
+    const own = $appAiInTab ? tabs : tabs.filter((t) => t.kind !== 'ai')
+    if (!connection || _sessions.size === 0) return own
+    const here = sessionKey(connection)
+    const kept = [..._sessions].filter(([k, s]) => k !== here && s.tabs.some((t) => t.kind !== 'welcome'))
+    if (!kept.length) return own
+    const label = sessionLabel(connection)
+    const order = sessionOrder.includes(here) ? sessionOrder : [...sessionOrder, here]
+    /** @type {any[]} */
+    const out = []
+    for (const k of order) {
+      const group = k === here
+        ? own.map((t) => ({ ...t, connLabel: label }))
+        : (_sessions.get(k)?.tabs ?? []).filter((t) => t.kind !== 'welcome' && ($appAiInTab || t.kind !== 'ai')).map((t) => ({ ...t, connLabel: _sessions.get(k)?.label, foreign: true }))
+      out.push(...group)
+    }
+    return out
+  })
+
+  /** Labs: the databases open now, in tab-bar order, for the status bar. */
+  const openDatabases = $derived.by(() => {
+    void sessionsTick
+    if (!connection || _sessions.size === 0) return []
+    const here = sessionKey(connection)
+    const order = sessionOrder.includes(here) ? sessionOrder : [...sessionOrder, here]
+    /** @type {{ key: string, label: string, current: boolean }[]} */
+    const out = []
+    for (const k of order) {
+      if (k === here) out.push({ key: k, label: sessionLabel(connection), current: true })
+      else if (_sessions.has(k)) out.push({ key: k, label: /** @type {KeptSession} */ (_sessions.get(k)).label, current: false })
+    }
+    return out.length > 1 ? out : []
+  })
+
+  /**
+   * Labs, tree sidebar: the other open databases with the table list they
+   * had, so their branches can stay open beside this one's.
+   */
+  const keptTrees = $derived.by(() => {
+    void sessionsTick
+    if (!connection || _sessions.size === 0) return []
+    const here = sessionKey(connection)
+    return [..._sessions]
+      .filter(([k]) => k !== here)
+      .map(([key, s]) => ({ key, conn: s.conn, schema: s.activeSchema ?? '', tables: s.tables ?? [] }))
+  })
+
+  /**
+   * A table under another open database in the tree: bring that database
+   * forward, on that table (its tab when one is open, a new one otherwise).
+   * @param {string} key @param {string} schema @param {string} name
+   */
+  async function openKeptTable(key, schema, name) {
+    const s = _sessions.get(key)
+    if (!s) return
+    const tab = findTableTab(s.tabs, schema, name)
+    await handleSwitchDatabase(s.conn, { focusTab: tab?.id ?? null })
+    if (!tab && connection && sessionKey(connection) === key) await openTableTab(schema, name)
+  }
+
+  /** Status bar: bring an open database to the front. @param {string} key */
+  function openKeptDatabase(key) {
+    const s = _sessions.get(key)
+    if (s) void handleSwitchDatabase(s.conn)
+  }
+
+  /**
+   * @param {import('$lib/stores/connections.js').SavedConnection} conn
+   * @param {{ focusTab?: string | null }} [opts] Labs: the tab to land on
+   */
+  async function handleSwitchDatabase(conn, opts = {}) {
     // A deliberate switch is the other half of "PIN to open or reconnect".
     // Resolves true immediately unless a PIN is set with the connect prompt on.
     if (!(await requireUnlock('Unlock to connect to a database'))) return
+    if (switchingTo) return
     // Disconnect current before connecting to the new one to avoid the race
     // where set_conn(None) could fire after connect_* sets the new connection.
     const previous = connection
-    await disconnectPostgres().catch(() => {})
-    connection = null
-    clearConnectionState()
-    // Connect to the chosen saved connection
-    beginConnectOverlay(conn.name ?? conn.database ?? conn.host ?? '')
-    try {
-      try {
-        await connectByType(conn)
-      } catch (e) {
-        // Provider credentials revoked or rotated in the provider's console:
-        // mint fresh ones once, the same recovery the connect dialog does.
-        const { AUTH_FAILURE, providerBuildConnection, providerToSaved } = await import('$lib/providers.js')
-        if (!(conn.provider && conn.providerRef && AUTH_FAILURE.test(String(e)))) throw e
-        const fresh = await providerBuildConnection(conn.provider, conn.providerRef)
-        if (fresh.needs_password) throw e
-        conn = { ...providerToSaved({ ...fresh, providerRef: conn.providerRef }, { provider: conn.provider, saved: [conn], readOnly: conn.readOnly, newId: newConnectionId }), id: conn.id, name: conn.name }
-        await connectByType(conn)
+    const multi = multiConnection()
+    /** Labs: the database left stays open and on screen until the new one is ready. */
+    let kept = ''
+    if (multi && keepable(previous)) {
+      if (previous && sessionKey(previous) === sessionKey(conn)) {
+        // Already here: just the tab.
+        if (opts.focusTab) void activateTab(opts.focusTab)
+        return
       }
+      kept = sessionKey(previous)
+      keepSession()
+      await liveStop().catch(() => {})
+      const { invoke } = await import('@tauri-apps/api/core')
+      const parked = await invoke('park_connection', { key: kept }).then(() => true).catch(() => false)
+      if (!parked) {
+        kept = ''
+        await disconnectPostgres().catch(() => {})
+      } else {
+        // What is on screen keeps working while the next database opens: its
+        // calls name its pool, which now waits in the parked list.
+        setConnRoute(kept)
+      }
+      // A database kept open comes back in place: no teardown, no overlay,
+      // no welcome screen in between (that was the flicker).
+      const key = sessionKey(conn)
+      const session = keepable(conn) ? _sessions.get(key) : undefined
+      if (session && (await resumeKept(key, session, opts.focusTab ?? null))) return
+    } else {
+      await disconnectPostgres().catch(() => {})
+    }
+    // Labs: a kept pool for this database comes back at once, no overlay.
+    let resumed = false
+    if (multi && keepable(conn)) {
+      const { invoke } = await import('@tauri-apps/api/core')
+      resumed = await invoke('resume_connection', { key: sessionKey(conn) }).then(Boolean).catch(() => false)
+    }
+    if (kept) {
+      // The page stays as it is; the status bar says what is opening.
+      switchingTo = conn.name ?? conn.database ?? conn.host ?? ''
+    } else {
+      connection = null
+      clearConnectionState()
+      if (!resumed) beginConnectOverlay(conn.name ?? conn.database ?? conn.host ?? '')
+    }
+    try {
+      if (!resumed) conn = await connectWithRecovery(conn)
+      if (kept) clearConnectionState()
+      switchingTo = ''
       await onConnected(conn, conn.id)
+      if (multi && keepable(conn)) {
+        // Name the new front pool, so calls routed to it (and to the kept
+        // ones) find the right database.
+        const key = sessionKey(conn)
+        noteSession(key)
+        setConnRoute(key)
+        void import('@tauri-apps/api/core').then(({ invoke }) => invoke('set_active_conn_key', { key })).catch(() => {})
+      } else setConnRoute('')
+      if (multi) await restoreSession(conn)
+      if (opts.focusTab && tabs.some((t) => t.id === opts.focusTab)) void activateTab(opts.focusTab)
       // The switch landed, so the sidebar goes back to the tables of the
       // database you are now in. Every route into a switch - the Databases tab,
       // the status bar, the command palette, a context menu, another saved
@@ -7865,23 +8969,78 @@ let rowSearch = $state('')
       // at any more, and the Databases tab is a switcher, not a destination.
       sidebarShowTables()
     } catch (e) {
+      switchingTo = ''
       // Say why, then put the user back where they were instead of leaving
       // them disconnected behind a dialog with no message in it.
       toast.error(`Could not connect to ${conn.name ?? conn.database ?? conn.host ?? 'the database'}`, { description: String(e) })
+      const back = kept ? _sessions.get(kept) : undefined
+      if (back && (await resumeKept(kept, back, null))) return
       let restored = false
       if (previous) {
         try {
+          if (kept) clearConnectionState()
           await connectByType(previous)
           await onConnected(previous, previous.id)
           restored = true
         } catch { /* fall through to the dialog */ }
       }
       if (!restored) {
+        connection = null
         error = String(e)
         showConnectionModal = true
       }
     } finally {
       autoConnecting = false
+    }
+  }
+
+  /**
+   * Labs: bring a kept database to the front, in place. False when its pool
+   * is gone (closed by the cap, or its connection edited): connect instead.
+   * @param {string} key @param {KeptSession} session @param {string | null} focusTab
+   */
+  async function resumeKept(key, session, focusTab) {
+    const { invoke } = await import('@tauri-apps/api/core')
+    const ok = await invoke('resume_connection', { key }).then(Boolean).catch(() => false)
+    if (!ok) return false
+    setConnRoute(key)
+    _sessions.delete(key)
+    noteSession(key)
+    sessionsTick++
+    holdTransitions()
+    await resumeSession(session.conn, session, focusTab)
+    sidebarShowTables()
+    return true
+  }
+
+  /** Swap the screen without transitions until two frames after the change (app.css, data-swapping). */
+  function holdTransitions() {
+    const root = document.documentElement
+    root.setAttribute('data-swapping', '')
+    clearTimeout(_swapTimer)
+    _swapTimer = setTimeout(() => requestAnimationFrame(() => requestAnimationFrame(() => root.removeAttribute('data-swapping'))), 0)
+  }
+  /** @type {ReturnType<typeof setTimeout> | undefined} */
+  let _swapTimer
+
+  /**
+   * Connect, and when a provider's credentials were revoked or rotated in its
+   * console, mint fresh ones once: the same recovery the connect dialog does.
+   * Returns the connection as connected (fresh credentials included).
+   * @param {any} conn
+   */
+  async function connectWithRecovery(conn) {
+    try {
+      await connectByType(conn)
+      return conn
+    } catch (e) {
+      const { AUTH_FAILURE, providerBuildConnection, providerToSaved } = await import('$lib/providers.js')
+      if (!(conn.provider && conn.providerRef && AUTH_FAILURE.test(String(e)))) throw e
+      const fresh = await providerBuildConnection(conn.provider, conn.providerRef)
+      if (fresh.needs_password) throw e
+      const next = { ...providerToSaved({ ...fresh, providerRef: conn.providerRef }, { provider: conn.provider, saved: [conn], readOnly: conn.readOnly, newId: newConnectionId }), id: conn.id, name: conn.name }
+      await connectByType(next)
+      return next
     }
   }
 
@@ -7956,11 +9115,32 @@ let rowSearch = $state('')
    * the tables, the other objects, and the sidebar's list of databases.
    */
   async function reloadAfterAiDdl() {
+    const connAtCall = persistConnectionId
     invalidateCatalog()
     databasesRefreshKey++
     await loadSchemas()
     await loadTables({ force: true, quiet: true })
     bumpObjects()
+    scheduleCatalogRecheck(connAtCall)
+  }
+
+  /**
+   * One quiet re-read of the table list a second after a catalog change. The
+   * immediate reload can lose a race (an agent's burst, a switch, a load
+   * already in flight that lands last with the old list), and then a CREATE
+   * VIEW from the AI sat as "Empty" in the sidebar until a manual refresh. A
+   * second look costs one catalog query and only follows DDL.
+   * @param {string} connAtCall
+   */
+  let _catalogRecheck = 0
+  function scheduleCatalogRecheck(connAtCall) {
+    clearTimeout(_catalogRecheck)
+    _catalogRecheck = window.setTimeout(() => {
+      if (!connection || connectionMoved(connAtCall)) return
+      _catalog.invalidate(catalogKey(persistConnectionId, 'tables', activeSchema))
+      void loadTables({ force: true, quiet: true })
+      bumpObjects()
+    }, 1000)
   }
 
   async function handleRefresh() {
@@ -8007,6 +9187,7 @@ let rowSearch = $state('')
     if (fx.catalog) {
       _sqlHintsLoadedFor = ''
       await loadTables({ force: true })
+      scheduleCatalogRecheck(connAtCall)
     } else {
       // Rows only: the catalog stands and only counts moved. The tables the run
       // named are re-counted in place; engines that count inline (SQLite and
@@ -8708,6 +9889,8 @@ let rowSearch = $state('')
 <ConnectionModal
   bind:open={showConnectionModal}
   bind:initialEngine={connectionModalEngine}
+  bind:initialUri={connectionModalUri}
+  bind:initialName={connectionModalName}
   onconnected={(conn, id) => onConnected(conn, id)}
   maxConnections={$hasPro ? Infinity : FREE_CONNECTION_LIMIT}
   activeConnectionName={connection ? (connection.name || connection.database || connection.host || connection.filePath || 'Connected') : ''}
@@ -8750,7 +9933,9 @@ let rowSearch = $state('')
   loading={dbInfoLoading}
   error={dbInfoError}
 />
-<DisconnectDialog bind:open={showDisconnectDialog} connectionName={connection ? (connection.name || connection.database || connection.host || connection.filePath || 'Connected') : ''} ondisconnect={() => handleDisconnect()} />
+<DisconnectDialog bind:open={showDisconnectDialog} connectionName={connection ? (connection.name || connection.database || connection.host || connection.filePath || 'Connected') : ''} others={keptTrees.map((k) => _sessions.get(k.key)?.label ?? 'database')} ondisconnect={() => handleDisconnect()} ondisconnectall={() => void handleDisconnectAll()} />
+{#if dialogMounted.createTable}
+  {#await lazyDialogs.createTable() then { default: CreateTableDialog }}
 <CreateTableDialog
   bind:open={showCreateTableDialog}
   {activeSchema}
@@ -8760,6 +9945,8 @@ let rowSearch = $state('')
   {tables}
   onopensql={openObjectSql}
 />
+  {/await}
+{/if}
 <CreateSchemaDialog
   bind:open={showCreateSchemaDialog}
   existingSchemas={schemas}
@@ -8780,14 +9967,21 @@ let rowSearch = $state('')
   dialect={dbType}
   onopeninsql={(sql) => { if (aiMode) exitAiMode(); void openQueryInEditor(sql) }}
 />
+
+{#if dialogMounted.docker}
+  {#await lazyDialogs.docker() then { default: DockerLaunchModal }}
 <DockerLaunchModal
   bind:open={showDockerModal}
   initialDbType={dockerInitialDb}
   onconnect={handleDockerConnect}
 />
+  {/await}
+{/if}
 
 <McpPanel bind:open={showMcpPanel} connected={!!connection} />
 
+{#if dialogMounted.settings}
+  {#await lazyDialogs.settings() then { default: SettingsDialog }}
 <SettingsDialog
   bind:open={showSettingsModal}
   bind:section={settingsSection}
@@ -8797,7 +9991,11 @@ let rowSearch = $state('')
   onopenextensions={() => openExtensionsTab()}
   onopenlicense={() => openLicenseTab()}
 />
+  {/await}
+{/if}
 
+{#if dialogMounted.importData}
+  {#await lazyDialogs.importData() then { default: ImportDataDialog }}
 <ImportDataDialog
   bind:open={importDataOpen}
   schema={activeSchema}
@@ -8806,15 +10004,50 @@ let rowSearch = $state('')
   {primaryKey}
   onimported={() => reloadTableFromQuery(false)}
 />
+  {/await}
+{/if}
 
+{#if dialogMounted.aiSettings}
+  {#await lazyDialogs.aiSettings() then { default: AiSettingsDialog }}
 <AiSettingsDialog bind:open={showAiModelSettings} />
+  {/await}
+{/if}
 
 <KeyboardShortcutsDialog bind:open={showShortcutsModal} />
+<LeaderPanel bind:open={leaderOpen} actions={leaderActions} />
 
 <InsiderDialog bind:open={showInsiderModal} />
 
 <AboutDialog bind:open={showAboutModal} onopenreport={() => (showReportIssueDialog = true)} />
-<ReportIssueDialog bind:open={showReportIssueDialog} />
+<ReportIssueDialog
+  bind:open={showReportIssueDialog}
+  initialType={crashReport ? 'crash' : 'bug'}
+  initialTitle={crashReport?.title ?? ''}
+  initialBody={crashReport?.body ?? ''}
+  details={crashReport?.details ?? ''}
+  heading={crashReport ? 'Stroke quit unexpectedly' : 'Report an issue'}
+  lead={crashReport ? 'Stroke closed by itself last time. This report holds the error and where in Stroke it happened, nothing else; read it over before you send it.' : ''}
+/>
+<!-- Share links: one dialog for every kind, opened through requestShare(). -->
+{#if showStudioShare || studioShare}
+  {#await import('./StudioShareDialog.svelte') then { default: StudioShareDialog }}
+    <StudioShareDialog
+      bind:open={showStudioShare}
+      databaseName={connection?.name || connection?.database || ''}
+      share={studioShare}
+      status={studioShareStatus}
+      unsupported={studioShareUnsupported}
+      onstart={(write) => startStudioShare(write)}
+      onstop={stopStudioShare}
+    />
+  {/await}
+{/if}
+{#if dialogMounted.share}
+  {#await lazyDialogs.share() then { default: ShareDialog }}
+<ShareDialog />
+  {/await}
+{/if}
+<MySharesDialog bind:open={showMyShares} />
 
 <Dialog.Root bind:open={showProGate} closeOnEscape={true} closeOnOutsideClick={true}>
   <Dialog.Portal>
@@ -8861,9 +10094,12 @@ let rowSearch = $state('')
     statusBarHasUpdate = true
     statusBarUpdateReady = state === 'ready'
   }}
+  onchecking={(c) => (checkingUpdate = c)}
 />
 
 
+{#if dialogMounted.palette}
+  {#await lazyDialogs.palette() then { default: CommandPalette }}
 <CommandPalette
   bind:open={commandOpen}
   bind:page={commandPage}
@@ -8898,6 +10134,9 @@ let rowSearch = $state('')
   onopensecurity={() => { if (aiMode) exitAiMode(); openSecurityTab() }}
   onopenlogs={() => { if (aiMode) exitAiMode(); openLogsTab() }}
   onopenterminal={() => { if (aiMode) exitAiMode(); if (!terminalDockOpen) toggleTerminalDock() }}
+  onnewterminal={() => { commandOpen = false; if (aiMode) exitAiMode(); openNewTerminalTab() }}
+  onopenwhatsnew={() => { commandOpen = false; void updateDialog?.showWhatsNew?.() }}
+  onsharestudio={studioShareEnabled ? () => { commandOpen = false; showStudioShare = true } : null}
   onopeninsights={() => { if (aiMode) exitAiMode(); openInsightsTab() }}
   onopenadvisor={() => { if (aiMode) exitAiMode(); openAdvisorTab() }}
   onopenobjects={() => { if (aiMode) exitAiMode(); openObjectsTab() }}
@@ -8918,12 +10157,14 @@ let rowSearch = $state('')
   {hasInsights}
   {hasAdvisor}
   onopenJsonViewer={() => { if (aiMode) exitAiMode(); openJsonTab() }}
-  onopenshortcuts={() => (showShortcutsModal = true)}
+  onopenshortcuts={() => openShortcuts()}
+  onopenmyshares={() => openSharesTab()}
   onopenkeybindings={() => { settingsSection = 'keybindings'; showSettingsModal = true }}
   onopenabout={() => (showAboutModal = true)}
   onopenreport={() => (showReportIssueDialog = true)}
   oncheckupdate={() => void updateDialog?.checkNow()}
   ondockerlaunch={(dbType) => { commandOpen = false; dockerInitialDb = dbType; showDockerModal = true }}
+  onopendocker={(c) => { commandOpen = false; void handleDockerConnect(c) }}
   onswitchdatabase={handleSwitchDatabase}
   {queryHistory}
   {savedQueries}
@@ -8934,9 +10175,13 @@ let rowSearch = $state('')
   onopennotebookfile={() => { commandOpen = false; void openNotebookFromFile() }}
   openschematimeline={() => { commandOpen = false; openSchemaTimelineTab() }}
   opendatadiff={() => { commandOpen = false; openDataDiffTab() }}
+  openmigrations={() => { commandOpen = false; openMigrationsTab() }}
+  openlocalservers={() => { commandOpen = false; void openLocalServers() }}
   schemaContext={aiSchemaContext}
   onaskcontinue={handleAskContinue}
 />
+  {/await}
+{/if}
 
 
 <!-- Capture phase, deliberately - see onWindowKeydownCapture. -->
@@ -8988,18 +10233,18 @@ let rowSearch = $state('')
   {#snippet tabStrip()}
     {#if tabsInTitle}
       <TabBar
-            tabs={tabs.filter((t) => t.kind !== 'ai')}
-            {activeTabId}
-            onselect={(id) => activateTab(id)}
-            onclose={closeTab}
-            oncloseothers={closeOtherTabs}
+            tabs={barTabs}
+            activeTabId={pressedTab || activeTabId}
+            onselect={(id) => (tabs.some((t) => t.id === id) ? activateTab(id) : activateForeignTab(id))}
+            onclose={(id) => (tabs.some((t) => t.id === id) ? closeTab(id) : closeForeignTab(id))}
+            oncloseothers={(id) => { if (tabs.some((t) => t.id === id)) closeOtherTabs(id) }}
             oncloseall={closeAllTabs}
             onclosemany={(ids, anchorId) => void closeManyTabs(ids, anchorId)}
-            onduplicate={(id) => void duplicateTab(id)}
-            onresettable={(id) => void resetTableTab(id)}
+            onduplicate={(id) => { if (tabs.some((t) => t.id === id)) void duplicateTab(id) }}
+            onresettable={(id) => { if (tabs.some((t) => t.id === id)) void resetTableTab(id) }}
             onreopenclosed={reopenLastClosedTab}
             canreopenclosed={closedTabStack.length > 0}
-            onpintoggle={toggleTabPin}
+            onpintoggle={(id) => { if (tabs.some((t) => t.id === id)) toggleTabPin(id) }}
             onnewsql={() => { if (aiMode) exitAiMode(); openNewSqlTab() }}
           />
     {/if}
@@ -9040,9 +10285,17 @@ let rowSearch = $state('')
           </div>
         {/snippet}
       <Sidebar
+        aiInTab={$appAiInTab && $hasPro}
+        aiTabActive={activeTab?.kind === 'ai'}
+        aiChatId={aiChatId}
+        aiChatMatch={aiChatMatch}
+        onopenaichat={openAiChat}
         onopensettings={() => (showSettingsModal = true)}
-        onopenshortcuts={() => (showShortcutsModal = true)}
+        onopenlabs={() => { settingsSection = 'labs'; showSettingsModal = true }}
+        onopenshortcuts={() => openShortcuts()}
         oncheckupdates={() => void updateDialog?.checkNow?.()}
+        {checkingUpdate}
+        updateState={statusBarUpdateReady ? 'ready' : statusBarHasUpdate ? 'available' : ''}
         tableNav={activeTab?.kind === 'table' && !!activeTable}
         bind:openFindReplace={sidebarOpenFindReplace}
         bind:showTablesTab={sidebarShowTables}
@@ -9069,6 +10322,8 @@ let rowSearch = $state('')
         onsetconnectiongroup={(id, group) => { savedConnections = setConnectionGroup(id, group) }}
         onconnectionmeta={(list) => { savedConnections = list }}
         ondisconnectconnection={() => handleDisconnect()}
+        {keptTrees}
+        onopenkepttable={(k, sc, n) => void openKeptTable(k, sc, n)}
         onopenextensiondetail={(ext) => openExtensionDetailTab(ext)}
         side={sidebarSide}
         onmoveside={moveSidebar}
@@ -9151,8 +10406,8 @@ let rowSearch = $state('')
        sidebar is its own full-height column (T3), so its edge runs unbroken. -->
   <div class="flex min-h-0 min-w-0 flex-1 flex-col">
 {#if !aiMode && IS_MAC}{@render titleBar()}{/if}
-  <div class="flex min-h-0 flex-1 overflow-hidden">
-  <main class="relative flex min-h-0 min-w-0 flex-1 flex-col bg-panel" data-studio-region="main">
+  <div class="relative flex min-h-0 flex-1 overflow-hidden">
+  <main class={cn("relative flex min-h-0 min-w-0 flex-1 flex-col bg-panel", terminalDockMoving && "overflow-hidden")} data-studio-region="main">
     {#if accountPageOpen && !connection}
       <div class="absolute inset-0 z-30 flex flex-col bg-panel">
         <div class="flex h-9 shrink-0 items-center border-b border-border/50 px-2">
@@ -9161,7 +10416,7 @@ let rowSearch = $state('')
           </button>
         </div>
         {#await import('./LicensePage.svelte')}<TabLoading />{:then { default: LicensePage }}
-          <LicensePage onactivated={() => (accountPageOpen = false)} />
+          <LicensePage />
         {/await}
       </div>
     {/if}
@@ -9259,15 +10514,31 @@ let rowSearch = $state('')
           </section>
         </div>
 
-        <p class="absolute inset-x-0 bottom-6 text-center text-ui-2xs text-muted-foreground">
-          made with care by
+        <!-- The version and a way to check for a newer one: with no
+             connection open there is no sidebar, and so no update button. -->
+        <p class="absolute inset-x-0 bottom-6 flex items-center justify-center gap-2 text-ui-2xs text-muted-foreground">
+          {#if appVersion}
+            <span class="tabular-nums">v{appVersion}</span>
+            <span aria-hidden="true">·</span>
+          {/if}
+          <button
+            type="button"
+            disabled={checkingUpdate}
+            class="inline-flex items-center gap-1 text-foreground/80 underline-offset-4 transition-[color,scale] duration-[120ms] ease-[var(--ease-out)] hover:text-foreground hover:underline active:scale-[0.97] disabled:pointer-events-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            onclick={() => void updateDialog?.checkNow?.()}
+          >
+            <Icon name="refresh-cw" class={cn('size-3 shrink-0', checkingUpdate && 'animate-spin')} aria-hidden="true" />
+            {checkingUpdate ? 'Checking' : 'Check for updates'}
+          </button>
+          <span aria-hidden="true">·</span>
+          <span>made with care by
           <a
             href="https://nischal-dahal.com.np"
             target="_blank"
             rel="noreferrer"
             class="text-foreground/80 underline-offset-4 transition-colors hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
             onclick={(e) => { e.preventDefault(); void openExternalUrl('https://nischal-dahal.com.np') }}
-          >@broisnees</a>
+          >@broisnees</a></span>
         </p>
       </div>
     {:else}
@@ -9283,16 +10554,20 @@ let rowSearch = $state('')
               bind:this={aiFullRef}
               externalToggle
               schemaContext={{ ...aiSchemaContext, activeTable: null, columns: [], primaryKey: [], foreignKeys: [] }}
-              {connectionId}
+              connectionId={aiChatId}
+              chatMatch={aiChatMatch}
+              database={connection?.database ?? ''}
+              connectionConfig={connection}
               isActive={aiMode}
               mode="full"
               onexit={exitAiMode}
               onopensettings={() => (showSettingsModal = true)}
-              onopenshortcuts={() => (showShortcutsModal = true)}
+              onopenshortcuts={() => openShortcuts()}
               onwritesql={(sql) => void handleAiWriteSql(sql)}
               onopenmodelsettings={() => (showAiModelSettings = true)}
               onopendiagramspage={() => { exitAiMode(); openDiagramsTab() }}
               onschemadirty={reloadAfterAiDdl}
+              onsqlran={(sql) => void refreshAfterSql(sqlRunEffects(sql))}
             />
             </svelte:boundary>
           {/await}
@@ -9321,18 +10596,18 @@ let rowSearch = $state('')
              (T3 has one row). A second tab brings the strip back. -->
         {#if tabBarVisible && !tabsInTitle}
           <TabBar
-            tabs={tabs.filter((t) => t.kind !== 'ai')}
-            {activeTabId}
-            onselect={(id) => activateTab(id)}
-            onclose={closeTab}
-            oncloseothers={closeOtherTabs}
+            tabs={barTabs}
+            activeTabId={pressedTab || activeTabId}
+            onselect={(id) => (tabs.some((t) => t.id === id) ? activateTab(id) : activateForeignTab(id))}
+            onclose={(id) => (tabs.some((t) => t.id === id) ? closeTab(id) : closeForeignTab(id))}
+            oncloseothers={(id) => { if (tabs.some((t) => t.id === id)) closeOtherTabs(id) }}
             oncloseall={closeAllTabs}
             onclosemany={(ids, anchorId) => void closeManyTabs(ids, anchorId)}
-            onduplicate={(id) => void duplicateTab(id)}
-            onresettable={(id) => void resetTableTab(id)}
+            onduplicate={(id) => { if (tabs.some((t) => t.id === id)) void duplicateTab(id) }}
+            onresettable={(id) => { if (tabs.some((t) => t.id === id)) void resetTableTab(id) }}
             onreopenclosed={reopenLastClosedTab}
             canreopenclosed={closedTabStack.length > 0}
-            onpintoggle={toggleTabPin}
+            onpintoggle={(id) => { if (tabs.some((t) => t.id === id)) toggleTabPin(id) }}
             onnewsql={() => { if (aiMode) exitAiMode(); openNewSqlTab() }}
           />
         {/if}
@@ -9341,21 +10616,23 @@ let rowSearch = $state('')
 
       {#snippet groupPane(/** @type {import('$lib/pane-layout.js').GroupNode} */ group, /** @type {boolean} */ isFocused)}
         {#if tabBarVisible && !tabsInTitle}
+          <!-- One pane: the same bar as without panes, so Labs' other open
+               databases show their tabs here too. Split, each pane lists its own. -->
           <TabBar
-            tabs={group.tabIds.map((id) => tabsById.get(id)).filter(Boolean)}
-            activeTabId={group.activeTabId}
-            onselect={(id) => void focusTabInGroup(group.id, id)}
-            onclose={(id) => void closeTabInGroup(group.id, id)}
-            oncloseothers={closeOtherTabs}
+            tabs={paneCount <= 1 && barTabs.some((t) => t.foreign) ? barTabs : group.tabIds.map((id) => tabsById.get(id)).filter(Boolean)}
+            activeTabId={pressedTab || group.activeTabId}
+            onselect={(id) => (tabs.some((t) => t.id === id) ? void focusTabInGroup(group.id, id) : void activateForeignTab(id))}
+            onclose={(id) => (tabs.some((t) => t.id === id) ? void closeTabInGroup(group.id, id) : closeForeignTab(id))}
+            oncloseothers={(id) => { if (tabs.some((t) => t.id === id)) closeOtherTabs(id) }}
             oncloseall={closeAllTabs}
             onclosemany={(ids, anchorId) => void closeManyTabs(ids, anchorId)}
-            onduplicate={(id) => void duplicateTab(id)}
-            onresettable={(id) => void resetTableTab(id)}
+            onduplicate={(id) => { if (tabs.some((t) => t.id === id)) void duplicateTab(id) }}
+            onresettable={(id) => { if (tabs.some((t) => t.id === id)) void resetTableTab(id) }}
             onreopenclosed={reopenLastClosedTab}
             canreopenclosed={closedTabStack.length > 0}
-            onpintoggle={toggleTabPin}
+            onpintoggle={(id) => { if (tabs.some((t) => t.id === id)) toggleTabPin(id) }}
             onnewsql={() => { if (aiMode) exitAiMode(); openNewSqlTab() }}
-            ondragtabstart={(id) => beginTabDrag(id)}
+            ondragtabstart={(id) => { if (tabs.some((t) => t.id === id)) beginTabDrag(id) }}
             ondragtabmove={(x, y) => moveTabDrag(x, y)}
             ondragtabend={() => endTabDrag()}
           />
@@ -9363,13 +10640,15 @@ let rowSearch = $state('')
         {#if isFocused}
           {@render sharedContent()}
         {:else}
-          <PaneSnapshot tab={tabsById.get(group.activeTabId ?? '') ?? null} toolbarSpacer={tableToolbarVisible} connectionId={persistConnectionId} {schemas} />
+          {#await import('./PaneSnapshot.svelte') then { default: PaneSnapshot }}
+            <PaneSnapshot tab={tabsById.get(group.activeTabId ?? '') ?? null} toolbarSpacer={tableToolbarVisible} connectionId={persistConnectionId} {schemas} />
+          {/await}
         {/if}
       {/snippet}
 
       {#snippet sharedContent()}
       {#if activeTab?.kind === 'ai'}
-        <!-- AI is handled via AI mode toggle -->
+        <!-- AI in a tab: drawn by the kept-alive block below -->
       {:else if activeTab?.kind === 'schema'}
         <svelte:boundary failed={tabError}>
           {#await import('./SchemaPage.svelte')}<TabLoading />{:then { default: SchemaPage }}
@@ -9426,7 +10705,48 @@ let rowSearch = $state('')
         >
           <svelte:boundary failed={tabError}>
             {#await import('./BackupPage.svelte')}<TabLoading />{:then { default: BackupPage }}
-              <BackupPage dbType={dbType} activeSchema={activeSchema} {schemas} tables={tables.map((t) => ({ name: t.name, rowCount: t.rowCount }))} />
+              <BackupPage dbType={dbType} activeSchema={activeSchema} {schemas} savedConnection={savedConnections.find((c) => c.id === activeConnectionId) ?? null} tables={tables.map((t) => ({ name: t.name, rowCount: t.rowCount }))} onrestored={async () => { await loadSchemas(); await loadTables({ force: true }); bumpObjects() }} />
+            {/await}
+          </svelte:boundary>
+        </div>
+      {/if}
+
+      <!-- AI chat tab - mount once, keep alive so a reply keeps streaming
+           while you look at a table. Its chats are listed in the sidebar. -->
+      {#if aiTabEverOpened && $appAiInTab}
+        <div
+          class={activeTab?.kind === 'ai' ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}
+          inert={activeTab?.kind !== 'ai' || undefined}
+        >
+          <svelte:boundary failed={tabError}>
+            {#await import('./AiChat.svelte')}<TabLoading />{:then { default: AiChat }}
+              {#each aiInstances as inst (inst.key)}
+              {@const primary = inst.key === aiPrimaryKey}
+              <div class={primary ? 'flex min-h-0 flex-1 flex-col' : 'hidden'} inert={!primary || undefined}>
+              <AiChat
+                bind:this={aiTabRefs[inst.key]}
+                listInSidebar
+                {primary}
+                backgroundBusy={primary ? aiBackgroundBusy : []}
+                initialRequest={inst.initialRequest}
+                listVersion={primary ? aiListVersion : 0}
+                onhandoff={(req) => aiHandoff(inst.key, req)}
+                onbusychange={(convId, busy) => aiBusyChange(inst.key, convId, busy)}
+                schemaContext={{ ...aiSchemaContext, activeTable: null, columns: [], primaryKey: [], foreignKeys: [] }}
+                connectionId={aiChatId}
+                chatMatch={aiChatMatch}
+                database={connection?.database ?? ''}
+                connectionConfig={connection}
+                isActive={primary && activeTab?.kind === 'ai'}
+                mode="full"
+                onwritesql={(sql) => void handleAiWriteSql(sql)}
+                onopenmodelsettings={() => (showAiModelSettings = true)}
+                onopendiagramspage={openDiagramsTab}
+                onschemadirty={reloadAfterAiDdl}
+              onsqlran={(sql) => void refreshAfterSql(sqlRunEffects(sql))}
+              />
+              </div>
+              {/each}
             {/await}
           </svelte:boundary>
         </div>
@@ -9448,18 +10768,20 @@ let rowSearch = $state('')
 
       <!-- Terminal tab - mounted only while the tab exists: closing the tab
            unmounts the page, which kills its psql (and frees the connection). -->
-      {#if hasTerminalTab}
+      <!-- One page per terminal tab, each its own session: a second psql runs
+           beside the first, and closing a tab ends only its own. -->
+      {#each tabs.filter((t) => t.kind === 'terminal') as tt (tt.id)}
         <div
-          class={activeTab?.kind === 'terminal' ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}
-          inert={activeTab?.kind !== 'terminal' || undefined}
+          class={activeTabId === tt.id ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}
+          inert={activeTabId !== tt.id || undefined}
         >
           <svelte:boundary failed={tabError}>
             {#await import('./TerminalPage.svelte')}<TabLoading />{:then { default: TerminalPage }}
-              <TerminalPage active={activeTab?.kind === 'terminal'} {connection} {dbType} getHints={buildSqlHints} />
+              <TerminalPage active={activeTabId === tt.id} {connection} {dbType} getHints={buildSqlHints} onnew={openNewTerminalTab} />
             {/await}
           </svelte:boundary>
         </div>
-      {/if}
+      {/each}
 
       <!-- Instance Insights tab - mount once, keep alive -->
       {#if insightsEverOpened}
@@ -9499,7 +10821,7 @@ let rowSearch = $state('')
         >
           <svelte:boundary failed={tabError}>
             {#await import('./AdvisorPage.svelte')}<TabLoading />{:then { default: AdvisorPage }}
-              <AdvisorPage connectionId={persistConnectionId} />
+              <AdvisorPage connectionId={persistConnectionId} onopensql={(sql) => void openQueryInEditor(sql)} />
             {/await}
           </svelte:boundary>
         </div>
@@ -9532,7 +10854,7 @@ let rowSearch = $state('')
         >
           <svelte:boundary failed={tabError}>
             {#await import('./RedisKeyspacePage.svelte')}<TabLoading />{:then { default: RedisKeyspacePage }}
-              <RedisKeyspacePage active={activeTab?.kind === 'redis'} {connection} />
+              <RedisKeyspacePage active={activeTab?.kind === 'redis'} {connection} live={liveEnabled} />
             {/await}
           </svelte:boundary>
         </div>
@@ -9557,27 +10879,33 @@ let rowSearch = $state('')
         </div>
       {/if}
 
-      <!-- Document browser tab (CouchDB / Cassandra / Firestore) - mount once, keep alive -->
+      <!-- Document browser tabs (MongoDB, CouchDB, Elasticsearch, Firestore,
+           Cassandra...), one per collection, each mounted once and kept alive
+           so switching back keeps its page, filters and scroll. -->
       {#if docsEverOpened && docAdapter}
-        <div
-          class={activeTab?.kind === 'docs' ? 'flex min-h-0 flex-1' : 'hidden'}
-          inert={activeTab?.kind !== 'docs' || undefined}
-        >
-          <svelte:boundary failed={tabError}>
-            {#await import('./DocBrowser.svelte')}<TabLoading />{:then { default: DocBrowser }}
-              {#key dbType}
-                <DocBrowser
-                  active={activeTab?.kind === 'docs'}
-                  {connection}
-                  adapter={docAdapter}
-                  collection={docCollection}
-                  where={docWhere}
-                  onopensql={(text, coll) => { if (aiMode) exitAiMode(); openSqlTabWith(text, coll ? `${docAdapter.consoleLabel} · ${coll}` : docAdapter.consoleLabel) }}
-                />
-              {/key}
-            {/await}
-          </svelte:boundary>
-        </div>
+        {#each tabs.filter((t) => t.kind === 'docs') as dt (dt.id)}
+          {@const on = activeTab?.id === dt.id}
+          <div
+            class={on ? 'flex min-h-0 flex-1' : 'hidden'}
+            inert={!on || undefined}
+          >
+            <svelte:boundary failed={tabError}>
+              {#await import('./DocBrowser.svelte')}<TabLoading />{:then { default: DocBrowser }}
+                {#key dbType}
+                  <DocBrowser
+                    active={on}
+                    live={liveEnabled}
+                    {connection}
+                    adapter={docAdapter}
+                    collection={/** @type {any} */ (dt).collection ?? ''}
+                    where={docWhere}
+                    onopensql={(text, coll) => { if (aiMode) exitAiMode(); openSqlTabWith(text, coll ? `${docAdapter.consoleLabel} · ${coll}` : docAdapter.consoleLabel) }}
+                  />
+                {/key}
+              {/await}
+            </svelte:boundary>
+          </div>
+        {/each}
       {/if}
 
       <!-- Map tab - mount once, keep alive (holds viewport + fetched features) -->
@@ -9621,12 +10949,34 @@ let rowSearch = $state('')
         {/key}
       {/if}
 
+      <!-- Shared links tab: mounts while active, and reloads each time it is shown -->
+      {#if activeTab?.kind === 'shares'}
+        <div class="flex min-h-0 flex-1 flex-col">
+          <svelte:boundary failed={tabError}>
+            {#await import('./SharesPage.svelte')}<TabLoading />{:then { default: SharesPage }}
+              <SharesPage />
+            {/await}
+          </svelte:boundary>
+        </div>
+      {/if}
+
+      <!-- Keyboard shortcuts tab: light, so it mounts while it is the active tab only -->
+      {#if activeTab?.kind === 'shortcuts'}
+        <div class="flex min-h-0 flex-1 flex-col">
+          <svelte:boundary failed={tabError}>
+            {#await import('./KeyboardShortcutsPage.svelte')}<TabLoading />{:then { default: KeyboardShortcutsPage }}
+              <KeyboardShortcutsPage />
+            {/await}
+          </svelte:boundary>
+        </div>
+      {/if}
+
       <!-- License tab, rarely opened, no keep-alive needed -->
       {#if activeTab?.kind === 'license'}
         <div class="flex min-h-0 flex-1 flex-col">
           <svelte:boundary failed={tabError}>
             {#await import('./LicensePage.svelte')}<TabLoading />{:then { default: LicensePage }}
-              <LicensePage onactivated={closeLicenseTab} />
+              <LicensePage />
             {/await}
           </svelte:boundary>
         </div>
@@ -9685,7 +11035,7 @@ let rowSearch = $state('')
         >
           <svelte:boundary failed={tabError}>
             {#await import('./DashboardPage.svelte')}<TabLoading />{:then { default: DashboardPage }}
-              <DashboardPage {connection} onopensqleditor={openSqlTab} />
+              <DashboardPage {connection} active={activeTab?.kind === 'dashboard'} onopensqleditor={openSqlTab} onopensql={(sql, title) => openSqlTabWith(sql, title)} />
             {/await}
           </svelte:boundary>
         </div>
@@ -9727,9 +11077,10 @@ let rowSearch = $state('')
                 schema={activeSchema}
                 dialect={dbType}
                 active={activeTab?.kind === 'search'}
-                onopentable={(tableName, searchTerm) => {
+                {schemas}
+                onopentable={(tableName, searchTerm, inSchema) => {
                   if (aiMode) exitAiMode()
-                  void openTableTab(activeSchema, tableName, { search: searchTerm })
+                  void openTableTab(inSchema || activeSchema, tableName, { search: searchTerm })
                 }}
               />
             {/await}
@@ -9786,6 +11137,27 @@ let rowSearch = $state('')
                 connectionLabel={connection?.name ?? connection?.database ?? connection?.filePath ?? ''}
                 dbType={dbType}
                 connections={savedConnections}
+                onopensql={(sql) => { if (aiMode) exitAiMode(); void openQueryInEditor(sql) }}
+              />
+            {/await}
+          </svelte:boundary>
+        </div>
+      {/if}
+
+      <!-- Migrations tab: Prisma / Drizzle, mount once, keep alive -->
+      {#if migrationsEverOpened}
+        <div
+          class={activeTab?.kind === 'migrations' ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}
+          inert={activeTab?.kind !== 'migrations' || undefined}
+        >
+          <svelte:boundary failed={tabError}>
+            {#await import('./MigrationsPage.svelte')}<TabLoading />{:then { default: MigrationsPage }}
+              <MigrationsPage
+                connection={persistConnectionId ? { id: persistConnectionId, name: connection?.name } : null}
+                family={dbType}
+                schema={dbType === 'postgres' ? activeSchema : null}
+                active={activeTab?.kind === 'migrations'}
+                onopensql={(sql, title) => openSqlTabWith(sql, title)}
               />
             {/await}
           </svelte:boundary>
@@ -9872,6 +11244,7 @@ let rowSearch = $state('')
             paramScope={`${persistConnectionId ?? ''}|${activeTab?.kind === 'sql' ? (/** @type {any} */ (activeTab).savedQueryId ?? activeTab.title) : ''}`}
             onrunnewtab={(sql) => void runSqlInNewTab(sql)}
             onaskai={askAiAboutSql}
+            onaskaiprompt={askAiPrompt}
             windowed={sqlWindowed}
             dataVersion={sqlDataVersion}
             windowStatus={sqlWindowStatus}
@@ -10102,6 +11475,7 @@ let rowSearch = $state('')
             onfindreplace={() => openFindReplacePanel()}
             ondeleteselected={() => stageDeleteSelectedRows()}
             onexport={handleExport}
+            onshare={shareTableView}
             onimport={() => (importDataOpen = true)}
             onexportdiagram={(kind) => erdPane?.exportDiagram?.(kind)}
             onexportchart={(kind) => chartPane?.exportChart?.(kind)}
@@ -10144,6 +11518,7 @@ let rowSearch = $state('')
               <!-- The grid stays mounted (hidden) in other view modes so staged
                    edits, selection and scroll position survive mode switches. -->
               <div class={dataViewMode === 'table' ? 'flex min-h-0 min-w-0 flex-1' : 'hidden'}>
+              {#await loadDataTable() then { default: DataTable }}
               <DataTable
                 bind:this={dataTable}
                 {columns}
@@ -10248,6 +11623,7 @@ let rowSearch = $state('')
                 bind:stageDeleteSelected={stageDeleteSelectedRows}
                 readonly={tableReadonly}
               />
+              {/await}
               </div>
               {#if dataViewMode === 'json'}
                 {#await import('./TableJsonView.svelte')}<TabLoading />{:then { default: TableJsonView }}
@@ -10375,7 +11751,9 @@ let rowSearch = $state('')
             <Icon class={cn('size-4 shrink-0', toneCls)} />
             <span class="min-w-0 truncate text-ui-sm">{label}</span>
             {#if locked}<Lock class="size-3 shrink-0 text-warning" aria-label="Pro feature" />{/if}
-            {#if opts.keys}<span class="ml-auto shrink-0 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">{@render chord(opts.keys)}</span>{/if}
+            <!-- In the layout only while it shows: hidden but laid out, the chord
+                 kept its width and cut "Search" to "Se..." at every pane size. -->
+            {#if opts.keys}<span class="ml-auto hidden shrink-0 group-hover:inline-flex group-focus-visible:inline-flex">{@render chord(opts.keys)}</span>{/if}
           </button>
         {/snippet}
 
@@ -10420,7 +11798,7 @@ let rowSearch = $state('')
             <!-- The one main control: everything starts in ⌘K. -->
             <button
               type="button"
-              class="flex h-11 w-full items-center gap-3 rounded-md border border-border/60 bg-sidebar px-3.5 text-left text-ui-sm text-muted-foreground shadow-sm transition-colors hover:border-border hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+              class="flex h-11 w-full cursor-pointer items-center gap-3 rounded-lg bg-muted/40 px-3.5 text-left text-ui-sm text-muted-foreground transition-colors duration-150 hover:bg-muted/70 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
               onclick={() => { commandPage = 'root'; commandOpen = true }}
             >
               <Search class="size-4 shrink-0" />
@@ -10468,17 +11846,19 @@ let rowSearch = $state('')
            actions float at the top-right of the terminal itself. -->
       <div
         bind:this={terminalDockEl}
-        class={terminalDockOpen ? 'relative flex shrink-0 flex-col border-t border-border/60 bg-panel' : 'hidden'}
+        class={!terminalDockShown ? 'hidden' : terminalDockOverlay ? 'absolute inset-x-0 bottom-0 z-20 flex flex-col border-t border-border/60 bg-panel will-change-transform' : 'relative flex shrink-0 flex-col border-t border-border/60 bg-panel'}
         style:height="{terminalDockHeight}px"
         inert={!terminalDockOpen || undefined}
       >
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div class="absolute inset-x-0 -top-1 z-10 h-2 cursor-row-resize" onpointerdown={startTerminalDockResize}></div>
-        <svelte:boundary failed={tabError}>
-          {#await import('./TerminalPage.svelte')}<TabLoading />{:then { default: TerminalPage }}
-            <TerminalPage active={terminalDockOpen} prewarm {connection} {dbType} getHints={buildSqlHints} docked onclose={() => (terminalDockOpen = false)} />
-          {/await}
-        </svelte:boundary>
+        <div class="absolute inset-0 flex flex-col">
+          <svelte:boundary failed={tabError}>
+            {#await import('./TerminalPage.svelte')}<TabLoading />{:then { default: TerminalPage }}
+              <TerminalPage active={terminalDockOpen} prewarm {connection} {dbType} getHints={buildSqlHints} docked onclose={() => (terminalDockOpen = false)} onpopout={() => { terminalDockOpen = false; openNewTerminalTab() }} />
+            {/await}
+          </svelte:boundary>
+        </div>
       </div>
     {/if}
   </main>
@@ -10486,7 +11866,9 @@ let rowSearch = $state('')
 
   {#if aiSidebarEverOpened && connection}
     <div
-      style={aiSidebarOpen && !aiMode ? '' : 'display:none'}
+      bind:this={aiPanelEl}
+      class={aiPanelOverlay ? 'absolute inset-y-0 right-0 z-30 flex justify-end will-change-transform' : 'flex shrink-0 justify-end'}
+      style={aiPanelShown ? '' : 'display:none'}
       inert={!aiSidebarOpen || aiMode || undefined}
     >
       {#await import('./AiSidebar.svelte')}
@@ -10517,7 +11899,10 @@ let rowSearch = $state('')
           <AiSidebar
             bind:this={aiSidebarRef}
             schemaContext={aiSchemaContext}
-            {connectionId}
+            connectionId={aiChatId}
+            chatMatch={aiChatMatch}
+            database={connection?.database ?? ''}
+            connectionConfig={connection}
             isActive={aiSidebarOpen && !aiMode}
             currentView={activeTab?.kind ?? 'welcome'}
             currentSql={sqlText}
@@ -10560,10 +11945,17 @@ let rowSearch = $state('')
   onscrolltableleft={() => scrollTableLeft()}
   onscrolltableright={() => scrollTableRight()}
   live={liveEnabled}
-  {liveSupported}
+  liveSupported={liveSupported && (activeTab?.kind === 'table' || activeTab?.kind === 'docs' || activeTab?.kind === 'redis')}
+  {liveNative}
   ontogglelive={() => { liveEnabled = !liveEnabled }}
   onswitchconnection={handleSwitchDatabase}
+  {openDatabases}
+  onopendatabase={openKeptDatabase}
+  {switchingTo}
   {mcpRunning}
+  latencyMs={dbLatencyMs}
+  {offline}
+  onping={() => void pingNow()}
   hasUpdate={statusBarHasUpdate}
   updateReady={statusBarUpdateReady}
   onopenmcp={() => (showMcpPanel = true)}
@@ -10641,3 +12033,5 @@ let rowSearch = $state('')
   </div>
 {/if}
 </div>
+
+<QuitHint />

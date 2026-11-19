@@ -7,7 +7,9 @@
   import OctagonX from '@lucide/svelte/icons/octagon-x'
   import TriangleAlert from '@lucide/svelte/icons/triangle-alert'
   import X from '@lucide/svelte/icons/x'
+  import LoaderCircle from '@lucide/svelte/icons/loader-circle'
   import { toast } from './toast.svelte.js'
+  import { cn } from '$lib/utils.js'
 
   let {
     position = 'top-right',
@@ -75,7 +77,7 @@
   })
 
   const base =
-    'group/toast pointer-events-auto relative flex w-full items-start gap-2.5 overflow-hidden rounded-xl border border-border/50 bg-popover px-3.5 py-3 text-popover-foreground elevate-2-rim'
+    'group/toast pointer-events-auto relative flex w-full items-start gap-2.5 overflow-hidden rounded-lg border border-border/50 bg-popover px-3 py-2.5 text-popover-foreground elevate-2-rim'
 
   const iconWrap = 'flex h-[1.15rem] shrink-0 items-center justify-center'
 
@@ -84,16 +86,20 @@
     error: 'text-destructive',
     info: 'text-info',
     warning: 'text-warning',
+    loading: 'text-muted-foreground',
   }
 
   /** @param {string} pos @param {string | Record<string, string | number>} off */
   function hostInsetStyle(pos, off) {
     const [y, x] = pos.split('-')
     /** @type {Record<string, string>} */
-    const style = { width: 'min(20rem, calc(100vw - 1.5rem))' }
+    const style = { width: 'min(19rem, calc(100vw - 1.5rem))' }
 
     const apply = (/** @type {Record<string, string | number>} */ o) => {
-      for (const key of ['top', 'right', 'bottom', 'left']) {
+      // Only the corner's own two edges: an offset object may carry all four
+      // (one per corner the user can pick), and pinning both top and bottom
+      // would stretch the stack down the whole window.
+      for (const key of ['top', 'right', 'bottom', 'left'].filter((k) => k === y || k === x)) {
         const v = o[key]
         if (v !== undefined) style[key] = typeof v === 'number' ? `${v}px` : String(v)
       }
@@ -133,7 +139,7 @@
   onmouseleave={toast.resumeAll}
 >
   {#if showClearAll}
-    <div class="ml-auto flex shrink-0 items-center gap-1.5" transition:fly={{ y: -8, duration: reduced ? 0 : 160 }}>
+    <div class={cn('flex shrink-0 items-center gap-1.5', String(position).endsWith('left') ? 'mr-auto' : 'ml-auto', String(position).startsWith('bottom') && 'order-last')} transition:fly={{ y: -8, duration: reduced ? 0 : 160 }}>
       {#if queued > 0}
         <!-- Says the stack is capped, rather than leaving the other 215 to look
              like they were dropped. -->
@@ -157,7 +163,7 @@
       style="font-family: var(--font-sans); font-size: var(--app-font-size);"
       role="status"
       in:fly={{ y: flyY, duration: reduced ? 0 : 200 }}
-      out:fly={{ x: 24, duration: reduced ? 0 : OUT_MS, delay: clearing && !reduced ? i * STAGGER_MS : 0 }}
+      out:fly={{ x: String(position).endsWith('left') ? -24 : 24, duration: reduced ? 0 : OUT_MS, delay: clearing && !reduced ? i * STAGGER_MS : 0 }}
       animate:flip={{ duration: clearing || reduced ? 0 : 200 }}
     >
       {#if t.type !== 'message'}
@@ -170,6 +176,8 @@
             <Info class="size-4 shrink-0" strokeWidth={2} />
           {:else if t.type === 'warning'}
             <TriangleAlert class="size-4 shrink-0" strokeWidth={2} />
+          {:else if t.type === 'loading'}
+            <LoaderCircle class="size-4 shrink-0 animate-spin" strokeWidth={2} />
           {/if}
         </span>
       {/if}
@@ -188,6 +196,16 @@
               {t.description}
             </div>
           {/if}
+        {/if}
+        {#if t.progress != null}
+          <!-- Determinate when a fraction is known, a sweep while it is not. -->
+          <div class="mt-2 h-1 w-full overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={t.progress >= 0 ? Math.round(t.progress * 100) : undefined}>
+            {#if t.progress >= 0}
+              <div class="h-full rounded-full bg-primary transition-[width] duration-300 ease-out" style="width: {Math.max(4, Math.min(100, t.progress * 100))}%"></div>
+            {:else}
+              <div class="toast-indeterminate h-full w-1/3 rounded-full bg-primary"></div>
+            {/if}
+          </div>
         {/if}
         {#if t.action}
           <button

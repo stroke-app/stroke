@@ -119,7 +119,15 @@ export function formatTable(columns, rows, maxWidth = 120) {
  *   describe?: (table: string) => Promise<{ columns: { name: string }[], rows: unknown[][] }>,
  * }} opts
  */
-export function createSqlRepl({ write, run, name, historyKey, language = 'SQL', listTables, describe, cols }) {
+/**
+ * @typedef {{ usage: string, help: string, run: (arg: string, ask: (q: string) => Promise<string>) => Promise<string | void> }} ExtraCommand
+ *   An engine's own command (D1's .bookmark, .restore): `run` returns text to print.
+ */
+export function createSqlRepl({ write, run, name, historyKey, language = 'SQL', listTables, describe, cols, commands = /** @type {Record<string, ExtraCommand>} */ ({}) }) {
+  /** A question waiting for its answer line (a confirmation). @type {((answer: string) => void) | null} */
+  let asking = null
+  /** @param {string} q */
+  const ask = (q) => new Promise((resolve) => { busy = false; write(q); asking = (v) => { busy = true; resolve(v) } })
   /** @type {string[]} */
   let history = []
   try { history = JSON.parse(localStorage.getItem(historyKey ?? '') ?? '[]') } catch { history = [] }
@@ -188,6 +196,8 @@ export function createSqlRepl({ write, run, name, historyKey, language = 'SQL', 
         `  .tables  (ls)          list tables`,
         `  .schema [table]        ${describe ? 'keys and indexes' : 'CREATE statements'}`,
         `  .clear   (clear)       clear the screen (Ctrl+L)`,
+        ...Object.entries(commands).map(([k, c]) => `  ${c.usage.padEnd(22)} ${c.help}`),
+        `  Every command also works with a / in front: /tables, /help, /clear${Object.keys(commands).length ? ', /' + Object.keys(commands)[0].slice(1) : ''}`,
         `  Tab completes table names, keywords and commands (Tab twice lists the matches)`,
         `  ↑ ↓ history · Ctrl+C cancel the statement · Ctrl+U clear the line`,
       ].join('\r\n') + '\r\n')
@@ -216,6 +226,16 @@ export function createSqlRepl({ write, run, name, historyKey, language = 'SQL', 
       }
     } else if (c === '.clear') {
       write('\x1b[2J\x1b[3J\x1b[H')
+    } else if (commands[c]) {
+      busy = true
+      try {
+        const out = await commands[c].run(cmd.trim().slice(c.length).trim(), ask)
+        if (out) write(String(out).replace(/\r?\n/g, '\r\n') + '\r\n')
+      } catch (e) {
+        write(`${RED}${String(e).replace(/^Error:\s*/, '')}${RESET}\r\n`)
+      } finally {
+        busy = false
+      }
     } else {
       write(`${RED}Unknown command ${c}. Try .help${RESET}\r\n`)
     }
@@ -334,8 +354,19 @@ export function createSqlRepl({ write, run, name, historyKey, language = 'SQL', 
     line = ''
     cursor = 0
     histIdx = -1
+    // A confirmation question is waiting: this line is its answer.
+    if (asking) {
+      const answer = asking
+      asking = null
+      busy = false
+      answer(text.trim())
+      return
+    }
     const word = text.trim().replace(/;$/, '').toLowerCase()
-    const cmd = text.trim().startsWith('.') ? text.trim() : SHELL_WORDS[word]
+    // `/tables`, `/help`, `/bookmark`: Cloudflare's console spells commands with
+    // a slash; they mean the dot-command of the same name. `/?` is help.
+    const slash = /^\/[a-z?]/i.test(text.trim()) ? (text.trim() === '/?' ? '.help' : '.' + text.trim().slice(1)) : ''
+    const cmd = slash || (text.trim().startsWith('.') ? text.trim() : SHELL_WORDS[word])
     if (cmd) {
       // Works mid-statement too: what was being typed is kept, not swallowed.
       if (history[history.length - 1] !== text.trim()) { history.push(text.trim()); saveHistory() }
@@ -382,6 +413,18 @@ export function createSqlRepl({ write, run, name, historyKey, language = 'SQL', 
         return
       case '\x1b[3~':
         if (cursor < line.length) { line = line.slice(0, cursor) + line.slice(cursor + 1); redraw() }
+        return
+      // Ctrl+D: delete under the cursor, as bash, psql and sqlite3 do mid-line.
+      // On an empty line there is no session to end, so it only rings.
+      case '\x04':
+        if (cursor < line.length) { line = line.slice(0, cursor) + line.slice(cursor + 1); redraw() }
+        else if (!line) write('\x07')
+        return
+      // Ctrl+X: cut the line to the clipboard (what Windows users expect).
+      case '\x18':
+        if (!line) { write('\x07'); return }
+        try { void navigator.clipboard?.writeText(line).catch(() => {}) } catch { /* no clipboard */ }
+        line = ''; cursor = 0; redraw()
         return
       case '\x1b[D': if (cursor > 0) { cursor--; write('\x1b[D') } return
       case '\x1b[C': if (cursor < line.length) { cursor++; write('\x1b[C') } return

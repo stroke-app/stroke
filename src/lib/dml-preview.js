@@ -8,7 +8,7 @@
  * `src-tauri/src/db/*` per engine family; the inlined literals are for display
  * only and are NOT what gets sent to the database.
  *
- * @typedef {'postgres' | 'mysql' | 'sqlite' | 'd1' | 'libsql' | 'duckdb' | 'clickhouse' | 'mssql'} Dialect
+ * @typedef {'postgres' | 'mysql' | 'sqlite' | 'd1' | 'libsql' | 'duckdb' | 'clickhouse' | 'mssql' | 'oracle'} Dialect
  *
  * @typedef {{ name: string, [k: string]: unknown }} Column
  *

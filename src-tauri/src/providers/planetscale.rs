@@ -4,6 +4,7 @@
  * (PlanetScale returns a password exactly once, at password-creation time).
  */
 
+use super::SendRetry;
 use super::{http, OAuthConfig, ProviderConnection, ProviderDatabase};
 use serde_json::Value;
 
@@ -34,7 +35,7 @@ async fn get(token: &str, path: &str) -> Result<Value, String> {
     let resp = http()
         .get(format!("{API}{path}"))
         .bearer_auth(token)
-        .send()
+        .send_retrying()
         .await
         .map_err(|e| format!("PlanetScale request failed: {e}"))?;
     let status = resp.status().as_u16();
@@ -186,7 +187,7 @@ pub async fn build_connection(token: &str, db_ref: &str) -> Result<ProviderConne
         ))
         .bearer_auth(token)
         .json(&serde_json::json!({ "name": "stroke", "role": "admin" }))
-        .send()
+        .send_retrying()
         .await
         .map_err(|e| format!("PlanetScale password create failed: {e}"))?;
     let status = resp.status().as_u16();

@@ -18,14 +18,21 @@ import { writable, get } from 'svelte/store'
 
 /** @typedef {'auto' | 'light' | 'dark'} CustomMode */
 /** A colour on the builder's pad: hue in degrees, strength 0..1. @typedef {{ h: number, s: number }} PadColor */
-/** `alpha` 1 is a solid window; below it the window turns to glass (macOS). @typedef {{ mode: CustomMode, colors: PadColor[], intensity: number, noise: number, alpha: number }} CustomTheme */
+/**
+ * `alpha` 1 is a solid window; below it the window turns to glass (macOS).
+ * `surface`: the ladder the surfaces sit on. `matte` is softer and flatter (less
+ * contrast between layers, less colour); `black` drops the dark ladder to true
+ * black for OLED screens and a high-contrast look.
+ * @typedef {'default' | 'matte' | 'black'} CustomSurface
+ * @typedef {{ mode: CustomMode, colors: PadColor[], intensity: number, noise: number, alpha: number, surface?: CustomSurface }} CustomTheme
+ */
 
 const KEY = 'stroke:custom-theme'
 const CSS_KEY = 'stroke:custom-theme-css'
 export const MAX_COLORS = 3
 
 /** @type {CustomTheme} */
-export const DEFAULT_CUSTOM = { mode: 'auto', colors: [{ h: 265, s: 0.55 }], intensity: 0.5, noise: 0, alpha: 1 }
+export const DEFAULT_CUSTOM = { mode: 'auto', colors: [{ h: 265, s: 0.55 }], intensity: 0.5, noise: 0, alpha: 1, surface: /** @type {CustomSurface} */ ('default') }
 
 /** Below this the Custom theme is translucent (the window's glass material shows). */
 export const ALPHA_GLASS_BELOW = 0.98
@@ -34,17 +41,28 @@ export const customIsGlass = (t = get(customTheme)) => t.alpha < ALPHA_GLASS_BEL
 
 /** Preset swatches for the builder's row, as pad colours. */
 export const PRESETS = [
+  // Surfaces first: these set the ladder as well as the colour.
+  { name: 'Black', h: 0, s: 0, surface: 'black' },
+  { name: 'Matte', h: 250, s: 0.06, surface: 'matte' },
+  { name: 'Graphite', h: 250, s: 0.04 },
+  { name: 'Stone', h: 70, s: 0.08 },
   { name: 'Cream', h: 70, s: 0.18 },
+  { name: 'Sand', h: 80, s: 0.3 },
+  { name: 'Coffee', h: 55, s: 0.38 },
+  { name: 'Rose', h: 10, s: 0.38 },
   { name: 'Pink', h: 350, s: 0.45 },
   { name: 'Mauve', h: 320, s: 0.32 },
   { name: 'Red', h: 22, s: 0.7 },
   { name: 'Orange', h: 48, s: 0.72 },
   { name: 'Yellow', h: 92, s: 0.65 },
   { name: 'Green', h: 152, s: 0.62 },
+  { name: 'Mint', h: 165, s: 0.35 },
+  { name: 'Olive', h: 115, s: 0.4 },
   { name: 'Teal', h: 190, s: 0.55 },
   { name: 'Sky', h: 232, s: 0.5 },
   { name: 'Indigo', h: 270, s: 0.45 },
   { name: 'Violet', h: 300, s: 0.6 },
+  { name: 'Ocean', h: 215, s: 0.65 },
   { name: 'Slate', h: 255, s: 0.12 },
 ]
 
@@ -65,6 +83,7 @@ function normalize(raw) {
     intensity: Number.isFinite(raw?.intensity) ? clamp(raw.intensity) : DEFAULT_CUSTOM.intensity,
     noise: Number.isFinite(raw?.noise) ? clamp(raw.noise) : 0,
     alpha: Number.isFinite(raw?.alpha) ? clamp(raw.alpha, 0.3, 1) : 1,
+    surface: raw?.surface === 'matte' || raw?.surface === 'black' ? raw.surface : 'default',
   }
 }
 
@@ -155,72 +174,85 @@ export function customTokens(t, dark = customIsDark(t)) {
   const tint = (/** @type {PadColor} */ c, k = 1) => c.s * (dark ? 0.008 + 0.05 * i : 0.006 + 0.035 * i) * k
   const h = c1.h, ha = c2.h, hs = c3.h
   const accentC = Math.max(0.1, Math.min(0.21, 0.08 + c2.s * 0.15))
+  const surface = t.surface ?? 'default'
+  // Surfaces on the chosen ladder. Black (dark only) pulls every layer down by
+  // the background's own lightness, so the canvas is true black and the
+  // layers above keep their steps; matte compresses the steps and the colour.
+  const base = dark ? 0.135 : 0.965
+  /** @param {number} l @param {number} c @param {number} hh */
+  const S = (l, c, hh) => {
+    if (surface === 'black' && dark) return ok(Math.max(0, l - 0.135), c * 0.5, hh)
+    if (surface === 'matte') return ok(base + (l - base) * 0.6 + (dark ? 0.035 : -0.02), c * 0.45, hh)
+    return ok(l, c, hh)
+  }
+  /** Text: a touch softer on matte so it does not glare off the flat ground. @param {number} l @param {number} c @param {number} hh */
+  const F = (l, c, hh) => ok(surface === 'matte' ? (dark ? l - 0.05 : l + 0.04) : l, c, hh)
 
   if (dark) {
     const primary = ok(0.68, accentC, ha)
     return {
-      '--background': ok(0.135 + 0.025 * i * c1.s, tint(c1), h),
-      '--foreground': ok(0.95, tint(c1, 0.25), h),
-      '--card': ok(0.185, tint(c1), h),
-      '--card-foreground': ok(0.95, tint(c1, 0.25), h),
-      '--popover': ok(0.18, tint(c1), h),
-      '--popover-foreground': ok(0.95, tint(c1, 0.25), h),
+      '--background': S(0.135 + 0.025 * i * c1.s, tint(c1), h),
+      '--foreground': F(0.95, tint(c1, 0.25), h),
+      '--card': S(0.185, tint(c1), h),
+      '--card-foreground': F(0.95, tint(c1, 0.25), h),
+      '--popover': S(0.18, tint(c1), h),
+      '--popover-foreground': F(0.95, tint(c1, 0.25), h),
       '--primary': primary,
       '--primary-foreground': ok(0.16, 0.02, ha),
-      '--secondary': ok(0.235, tint(c1), h),
-      '--secondary-foreground': ok(0.9, tint(c1, 0.3), h),
-      '--muted': ok(0.235, tint(c1), h),
-      '--muted-foreground': ok(0.73, tint(c1, 0.6), h),
-      '--accent': ok(0.27, tint(c1, 1.1), h),
+      '--secondary': S(0.235, tint(c1), h),
+      '--secondary-foreground': F(0.9, tint(c1, 0.3), h),
+      '--muted': S(0.235, tint(c1), h),
+      '--muted-foreground': F(0.73, tint(c1, 0.6), h),
+      '--accent': S(0.27, tint(c1, 1.1), h),
       '--accent-foreground': ok(0.97, tint(c1, 0.25), h),
       '--destructive': ok(0.65, 0.2, 25),
-      '--border': ok(0.29, tint(c1, 0.9), h),
-      '--input': ok(0.31, tint(c1, 0.9), h),
+      '--border': S(0.29, tint(c1, 0.9), h),
+      '--input': S(0.31, tint(c1, 0.9), h),
       '--ring': primary,
-      '--sidebar': ok(0.165 + 0.02 * i * c3.s, tint(c3, 1.15), hs),
-      '--sidebar-foreground': ok(0.9, tint(c3, 0.3), hs),
-      '--sidebar-accent': ok(0.26, tint(c3, 1.1), hs),
+      '--sidebar': S(0.165 + 0.02 * i * c3.s, tint(c3, 1.15), hs),
+      '--sidebar-foreground': F(0.9, tint(c3, 0.3), hs),
+      '--sidebar-accent': S(0.26, tint(c3, 1.1), hs),
       '--sidebar-accent-foreground': ok(0.98, tint(c3, 0.25), hs),
-      '--sidebar-border': ok(0.27, tint(c3, 0.9), hs),
-      '--panel': ok(0.135 + 0.025 * i * c1.s, tint(c1), h),
-      '--table-grid': ok(0.29, tint(c1, 0.9), h),
+      '--sidebar-border': S(0.27, tint(c3, 0.9), hs),
+      '--panel': S(0.135 + 0.025 * i * c1.s, tint(c1), h),
+      '--table-grid': S(0.29, tint(c1, 0.9), h),
       '--link': ok(0.77, Math.min(0.14, accentC), ha),
       '--link-hover': ok(0.84, Math.min(0.11, accentC), ha),
-      '--editor-surface': toHex(ok(0.17, tint(c1), h)),
-      '--editor-line-highlight': toHex(ok(0.21, tint(c1), h)),
+      '--editor-surface': toHex(S(0.17, tint(c1), h)),
+      '--editor-line-highlight': toHex(S(0.21, tint(c1), h)),
     }
   }
   const primary = ok(0.52, accentC, ha)
   return {
-    '--background': ok(0.965 - 0.02 * i * c1.s, tint(c1), h),
-    '--foreground': ok(0.17, tint(c1, 0.6), h),
-    '--card': ok(0.995, tint(c1, 0.3), h),
-    '--card-foreground': ok(0.17, tint(c1, 0.6), h),
-    '--popover': ok(0.995, tint(c1, 0.3), h),
-    '--popover-foreground': ok(0.17, tint(c1, 0.6), h),
+    '--background': S(0.965 - 0.02 * i * c1.s, tint(c1), h),
+    '--foreground': F(0.17, tint(c1, 0.6), h),
+    '--card': S(0.995, tint(c1, 0.3), h),
+    '--card-foreground': F(0.17, tint(c1, 0.6), h),
+    '--popover': S(0.995, tint(c1, 0.3), h),
+    '--popover-foreground': F(0.17, tint(c1, 0.6), h),
     '--primary': primary,
     '--primary-foreground': ok(0.99, 0, 0),
-    '--secondary': ok(0.935, tint(c1), h),
-    '--secondary-foreground': ok(0.23, tint(c1, 0.6), h),
-    '--muted': ok(0.935, tint(c1), h),
-    '--muted-foreground': ok(0.46, tint(c1, 0.8), h),
-    '--accent': ok(0.915, tint(c1, 1.2), h),
+    '--secondary': S(0.935, tint(c1), h),
+    '--secondary-foreground': F(0.23, tint(c1, 0.6), h),
+    '--muted': S(0.935, tint(c1), h),
+    '--muted-foreground': F(0.46, tint(c1, 0.8), h),
+    '--accent': S(0.915, tint(c1, 1.2), h),
     '--accent-foreground': ok(0.17, tint(c1, 0.6), h),
     '--destructive': ok(0.55, 0.22, 25),
-    '--border': ok(0.86, tint(c1, 1.1), h),
-    '--input': ok(0.845, tint(c1, 1.1), h),
+    '--border': S(0.86, tint(c1, 1.1), h),
+    '--input': S(0.845, tint(c1, 1.1), h),
     '--ring': primary,
-    '--sidebar': ok(0.945 - 0.025 * i * c3.s, tint(c3, 1.3), hs),
-    '--sidebar-foreground': ok(0.24, tint(c3, 0.6), hs),
-    '--sidebar-accent': ok(0.9, tint(c3, 1.3), hs),
+    '--sidebar': S(0.945 - 0.025 * i * c3.s, tint(c3, 1.3), hs),
+    '--sidebar-foreground': F(0.24, tint(c3, 0.6), hs),
+    '--sidebar-accent': S(0.9, tint(c3, 1.3), hs),
     '--sidebar-accent-foreground': ok(0.14, tint(c3, 0.6), hs),
-    '--sidebar-border': ok(0.865, tint(c3, 1.1), hs),
-    '--panel': ok(0.965 - 0.02 * i * c1.s, tint(c1), h),
-    '--table-grid': ok(0.87, tint(c1, 1.1), h),
+    '--sidebar-border': S(0.865, tint(c3, 1.1), hs),
+    '--panel': S(0.965 - 0.02 * i * c1.s, tint(c1), h),
+    '--table-grid': S(0.87, tint(c1, 1.1), h),
     '--link': ok(0.5, Math.min(0.17, accentC), ha),
     '--link-hover': ok(0.42, Math.min(0.17, accentC), ha),
-    '--editor-surface': toHex(ok(0.985, tint(c1, 0.4), h)),
-    '--editor-line-highlight': toHex(ok(0.95, tint(c1, 0.6), h)),
+    '--editor-surface': toHex(S(0.985, tint(c1, 0.4), h)),
+    '--editor-line-highlight': toHex(S(0.95, tint(c1, 0.6), h)),
   }
 }
 
@@ -312,7 +344,7 @@ const SHARE_PREFIX = 'stroke-theme:'
 /** @param {CustomTheme} t */
 export function encodeCustomTheme(t) {
   const n = normalize(t)
-  const packed = [1, n.mode[0], n.colors.map((c) => [Math.round(c.h), Math.round(c.s * 100)]), Math.round(n.intensity * 100), Math.round(n.noise * 100), Math.round(n.alpha * 100)]
+  const packed = [1, n.mode[0], n.colors.map((c) => [Math.round(c.h), Math.round(c.s * 100)]), Math.round(n.intensity * 100), Math.round(n.noise * 100), Math.round(n.alpha * 100), n.surface === 'default' ? 0 : n.surface === 'matte' ? 1 : 2]
   const b64 = btoa(JSON.stringify(packed)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
   return SHARE_PREFIX + b64
 }
@@ -338,6 +370,7 @@ export function decodeCustomTheme(code) {
       intensity: Number(p[3]) / 100,
       noise: Number(p[4]) / 100,
       alpha: Number(p[5]) / 100,
+      surface: p[6] === 1 ? 'matte' : p[6] === 2 ? 'black' : 'default',
     })
   } catch {
     return null

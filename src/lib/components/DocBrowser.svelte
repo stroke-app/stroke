@@ -1,4 +1,5 @@
 <script>
+  import SelectMenu from './SelectMenu.svelte'
   // One page for document and wide-column databases (MongoDB, CouchDB,
   // Cassandra, Firestore). The collection comes from the app sidebar. Layout
   // follows the SQL table page: a dense toolbar, a query bar in the engine's
@@ -15,6 +16,8 @@
   import ConfirmDialog from './ConfirmDialog.svelte'
   import { rowsToCsv, saveExportFile, buildExportFilename } from '$lib/export.js'
   import Kbd from './Kbd.svelte'
+  import { matchesCommand } from '$lib/command-hotkey.js'
+  import { isTypingTarget } from '$lib/focus-search.js'
   import DataTable from './DataTable.svelte'
   import { Button } from '$lib/components/ui/button/index.js'
   import { readOnlyMode, guardWrite, READ_ONLY_HINT } from '$lib/stores/read-only.js'
@@ -58,10 +61,22 @@
    *   onopensql?: (text: string, collection: string) => void,
    * }}
    */
-  let { active = false, connection = null, adapter, collection = '', where = '', onopensql = () => {} } = $props()
+  let { active = false, connection = null, adapter, collection = '', where = '', onopensql = () => {}, live = false } = $props()
 
   const readOnly = $derived($readOnlyMode)
   const noun = $derived(adapter.noun)
+  /** "an index", "a collection". @param {string} w */
+  const article = (w) => (/^[aeiou]/i.test(w) ? 'an' : 'a')
+  const isSearchEngine = $derived(connection?.type === 'elasticsearch' || connection?.type === 'opensearch')
+  /** The first steps on an empty cluster: make an index, add a document, search it. */
+  const ES_STARTER = `PUT products
+
+POST products/_doc
+{ "name": "Wireless Headphones", "price": 79.99, "in_stock": true }
+
+GET products/_search
+{ "query": { "match": { "name": "headphones" } } }
+`
   const options = $derived(adapter.options ?? [])
 
   /** @param {unknown} e */
@@ -264,14 +279,18 @@
       ])
       if (t !== token) return
       if (!isAll) capped = false
-      docs = res.docs
+      // A refresh that brings back the same documents changes nothing on
+      // screen: no new arrays, no repaint, the open document stays open.
+      const samePage = p === page && res.docs.length === docs.length && JSON.stringify(res.docs) === JSON.stringify(docs)
+      if (!samePage) docs = res.docs
+      const turned = p !== page
       page = p
       const next = cursors.slice(0, p + 1)
       if (res.cursor != null) next[p + 1] = res.cursor
       cursors = next
       total = count ?? null
-      dataVersion += 1
-      closePanel()
+      if (!samePage) dataVersion += 1
+      if (turned) closePanel()
     } catch (e) {
       if (t === token) error = msg(e)
     } finally {
@@ -286,11 +305,22 @@
     void restart()
   }
 
-  const grid = $derived(docGrid(docs, keys))
+  /** The previous grid's columns, reused while the fields are the same so the
+   *  table keeps its layout across a refresh instead of rebuilding it. */
+  let _gridCols = /** @type {any[]} */ ([])
+  const grid = $derived.by(() => {
+    const g = docGrid(docs, keys)
+    const same = g.columns.length === _gridCols.length && g.columns.every((c, i) => c.name === _gridCols[i]?.name && c.dataType === _gridCols[i]?.dataType)
+    if (same) g.columns = _gridCols
+    else _gridCols = g.columns
+    return g
+  })
   const ids = $derived(docs.map((d) => adapter.idOf(d, info?.meta)))
 
   // ── View ───────────────────────────────────────────────────────────────────
   const VIEW_KEY = 'stroke:docs:view'
+  /** @type {Record<string, string>} */
+  const VIEW_ICON = { table: 'table-2', json: 'braces', schema: 'list-tree', indexes: 'layers', aggregate: 'workflow' }
   /** @typedef {'table' | 'json' | 'schema' | 'indexes' | 'aggregate'} View */
   const views = $derived([
     { v: 'table', l: 'Table', I: Sheet },
@@ -447,6 +477,27 @@
   let applyEdits = $state(/** @type {() => void | Promise<void>} */ (() => {}))
   let resetEdits = $state(/** @type {() => void} */ (() => {}))
   let applying = $state(false)
+  // The table's Apply and Discard keys work here too (StudioShell binds them
+  // for SQL tables only): Mod+S writes the staged edits, Alt+Backspace drops
+  // them, unless the caret is in a text field.
+  /** @param {KeyboardEvent} e */
+  function onStagedKey(e) {
+    if (!active || pendingEditCount === 0 || applying) return
+    if (matchesCommand(e, 'table.apply')) {
+      e.preventDefault()
+      if (!readOnly) void applyStaged()
+    } else if ((matchesCommand(e, 'table.discard') || matchesCommand(e, 'table.discardAlt')) && !isTypingTarget(document.activeElement)) {
+      e.preventDefault()
+      resetEdits()
+    }
+  }
+  $effect(() => {
+    // Capture phase: the grid and the app's own Mod+S stop the key before it
+    // bubbles to the window, which is why Apply's shortcut did nothing here.
+    window.addEventListener('keydown', onStagedKey, true)
+    return () => window.removeEventListener('keydown', onStagedKey, true)
+  })
+
   async function applyStaged() {
     if (!guardWrite(`change ${noun.items}`)) return
     applying = true
@@ -635,18 +686,50 @@
   let dragStart = 0
   let dragScale = 1
 
-  const iconBtn = 'inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40'
+  const iconBtn = 'inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-[color,background-color,scale] duration-[120ms] ease-[var(--ease-out)] active:scale-[0.97] hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40'
   /** A quiet text toggle: the on state is foreground, the rest muted. No pill, no frame. */
   const pageSelectTrigger = 'h-8 min-w-0 gap-1 rounded-lg! border-transparent! bg-transparent! focus-visible:border-ring! data-[state=open]:border-ring! px-2 text-ui-xs font-normal tabular-nums shadow-none hover:bg-accent!'
   const textToggle = 'inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-ui-xs transition-colors hover:text-foreground'
+  // ⌘R, or an agent's change: reload what is on screen.
+  $effect(() => {
+    const on = () => { if (active) { void refreshInfo(); void load(page) } }
+    window.addEventListener('stroke:refresh-view', on)
+    return () => window.removeEventListener('stroke:refresh-view', on)
+  })
+  // Live mode: reload the page on screen every few seconds. A refresh that
+  // brings back the same documents changes nothing (see load), so a quiet
+  // collection costs one small query per tick and never repaints.
+  $effect(() => {
+    if (!live || !active) return
+    const timer = setInterval(() => {
+      if (document.hidden || loading || applying || pendingEditCount > 0 || !coll || !info) return
+      if (view !== 'table' && view !== 'json') return
+      void load(page)
+    }, 3000)
+    return () => clearInterval(timer)
+  })
 </script>
 
 <div class="flex min-h-0 flex-1 flex-col overflow-hidden bg-panel">
   {#if !coll}
     <div class="flex flex-1 flex-col items-center justify-center gap-2 text-center">
       <PanelLeft class="size-6 shrink-0 text-muted-foreground/70" />
-      <p class="text-ui-sm text-foreground">Pick a {noun.collection.toLowerCase()} in the sidebar</p>
+      <p class="text-ui-sm text-foreground">Pick {article(noun.collection)} {noun.collection.toLowerCase()} in the sidebar</p>
       {#if where}<p class="font-mono text-ui-2xs text-muted-foreground">{where}</p>{/if}
+      {#if isSearchEngine}
+        <!-- A new cluster has no indices, so the sidebar says Empty and there is
+             nothing to pick. The console makes the first one. -->
+        <p class="mt-3 max-w-80 text-ui-xs leading-relaxed text-pretty text-muted-foreground">
+          No indices yet? Create one and add a document in the console, then refresh the sidebar.
+        </p>
+        <button
+          type="button"
+          class="mt-1 inline-flex h-8 items-center gap-1.5 rounded-lg border border-border/80 px-3 text-ui-xs font-medium text-foreground transition-colors hover:bg-muted/50"
+          onclick={() => onopensql(ES_STARTER, '')}
+        >
+          <TerminalIcon class="size-3.5 shrink-0 text-muted-foreground" />Open console
+        </button>
+      {/if}
     </div>
   {:else}
     <!-- Header: what this is, and the few things to do with it. No divider. -->
@@ -678,19 +761,17 @@
         {/if}
       </div>
       <span class={cn('mx-1 h-4 w-px shrink-0 bg-border/50', !dataView && 'hidden')} aria-hidden="true"></span>
-      <!-- Views: with more than two, only the current one keeps its label. -->
-      <!-- One segmented control, text only: five icons in a row read as a puzzle. -->
-      <div class="flex h-8 items-center gap-0.5 rounded-lg bg-muted/50 p-0.5" role="group" aria-label="View">
-        {#each views as m (m.v)}
-          {@const on = view === m.v}
-          <button
-            type="button"
-            aria-pressed={on}
-            class={cn('inline-flex h-full items-center rounded-md px-2.5 text-ui-xs transition-colors', on ? 'bg-background text-foreground shadow-sm ring-1 ring-border/50' : 'text-muted-foreground hover:text-foreground')}
-            onclick={() => setView(/** @type {View} */ (m.v))}
-          >{m.v === 'table' ? noun.items.replace(/^./, (c) => c.toUpperCase()) : m.l}</button>
-        {/each}
-      </div>
+      <!-- Views: one dropdown (the current view, its icon, a chevron), the
+           same select the rest of the app uses. -->
+      <SelectMenu
+        ariaLabel="View"
+        triggerClass="h-8 w-36"
+        contentClass="w-[var(--bits-popover-anchor-width)] min-w-[11rem]"
+        align="end"
+        value={view}
+        onValueChange={(v) => setView(/** @type {View} */ (v))}
+        items={views.map((m) => ({ value: m.v, label: m.v === 'table' ? noun.items.replace(/^./, (c) => c.toUpperCase()) : m.l, icon: VIEW_ICON[m.v] }))}
+      />
       <button type="button" class={iconBtn} onclick={() => void load(page)} disabled={!info} title="Refresh" aria-label="Refresh">
         <RefreshCw class={cn('size-3.5', loading && 'animate-spin')} />
       </button>
@@ -819,18 +900,6 @@
     <div class="flex min-h-0 flex-1 overflow-hidden">
       <!-- Data: the one framed surface on the page, pager inside it. -->
       <section class="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" aria-label={`${noun.items} in ${coll}`}>
-        {#if pendingEditCount > 0}
-          <!-- Staged edits float over the grid, out of the header's way: nothing
-               is written until Apply, as on SQL tables. -->
-          <div class="absolute bottom-4 left-1/2 z-30 flex -translate-x-1/2 items-center gap-1 whitespace-nowrap rounded-full border border-border/60 bg-popover py-1 pl-4 pr-1 elevate-2-rim" role="status">
-            <span class="size-1.5 shrink-0 rounded-full bg-warning"></span>
-            <span class="ml-1.5 mr-2 text-ui-xs tabular-nums text-foreground">{pendingEditCount.toLocaleString()} unsaved {pendingEditCount === 1 ? 'change' : 'changes'}</span>
-            <Button size="sm" variant="ghost" class="h-7 rounded-full" disabled={applying} onclick={() => resetEdits()}>Discard</Button>
-            <Button size="sm" class="h-7 rounded-full" disabled={applying || readOnly} title={readOnly ? READ_ONLY_HINT : 'Write the staged changes'} onclick={() => void applyStaged()}>
-              {#if applying}<LoaderCircle class="animate-spin" />{/if}Apply
-            </Button>
-          </div>
-        {/if}
         {#if !dataView}
           {#if !info}
             <div class="flex flex-1 items-center justify-center">{#if error}<p class="text-ui-xs text-destructive">{error}</p>{:else}<LoaderCircle class="size-4 shrink-0 animate-spin text-muted-foreground" />{/if}</div>
@@ -883,6 +952,7 @@
               bind:resetEdits
               cellEditBlock={inlineEdit ? cellEditBlock : null}
               cellParser={inlineEdit ? parseDocCell : null}
+              previewWrites={false}
             />
           </div>
         {:else}
@@ -893,6 +963,23 @@
           </div>
         {/if}
 
+        {#if pendingEditCount > 0}
+          <!-- Staged edits: a bar docked under the grid, like the SQL review,
+               instead of a pill floating over the rows. Nothing is written
+               until Apply; each document is saved by its id. -->
+          <div class="flex h-10 shrink-0 items-center gap-2 border-t border-border/50 bg-muted/20 ps-3 pe-2" role="status">
+            <span class="size-1.5 shrink-0 rounded-full bg-warning" aria-hidden="true"></span>
+            <span class="text-ui-xs font-medium tabular-nums text-foreground">{pendingEditCount.toLocaleString()} unsaved {pendingEditCount === 1 ? 'change' : 'changes'}</span>
+            <span class="hidden min-w-0 truncate text-ui-2xs text-muted-foreground sm:inline">Each {noun.item.toLowerCase()} is saved by its id when you apply.</span>
+            <span class="flex-1"></span>
+            <Button size="sm" variant="ghost" class="h-7 gap-1.5 px-2.5 text-muted-foreground hover:text-foreground" disabled={applying} onclick={() => resetEdits()}>
+              Discard<Kbd command="table.discard" />
+            </Button>
+            <Button size="sm" class="h-7 gap-1.5 ps-2.5 pe-1.5" disabled={applying || readOnly} title={readOnly ? READ_ONLY_HINT : 'Write the staged changes'} onclick={() => void applyStaged()}>
+              {#if applying}<LoaderCircle class="animate-spin" />{:else}<Check class="size-3.5 shrink-0" />{/if}Apply changes<Kbd command="table.apply" class="text-primary-foreground/80" />
+            </Button>
+          </div>
+        {/if}
       </section>
 
       {#if explainQuery && dataView && adapter.explain}

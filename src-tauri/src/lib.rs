@@ -10,14 +10,22 @@
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 mod account;
+mod backup_crypto;
+mod cloud_backup;
+mod local_servers;
+mod shares;
+mod nightly;
 mod agents;
 mod app_lock;
 mod cloudflare;
+mod display_backend;
 mod commands;
 mod connection_store;
 mod copilot;
+mod crash;
 mod db;
 mod docker;
+mod launch;
 mod license;
 #[cfg(target_os = "macos")]
 mod mac_chrome;
@@ -31,6 +39,7 @@ mod providers;
 mod secrets;
 mod sync;
 mod updates;
+mod quit;
 mod web_search;
 
 use db::{ActiveConnection, DbState, TunnelState};
@@ -184,6 +193,7 @@ fn guard_windows_webview(window: &tauri::WebviewWindow) {
         ICoreWebView2AcceleratorKeyPressedEventArgs2, COREWEBVIEW2_KEY_EVENT_KIND,
         COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN, COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN,
         COREWEBVIEW2_PROCESS_FAILED_KIND, COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED,
+        COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED,
     };
     use webview2_com::{AcceleratorKeyPressedEventHandler, ProcessFailedEventHandler};
     use windows_core::Interface;
@@ -247,6 +257,15 @@ fn guard_windows_webview(window: &tauri::WebviewWindow) {
                 let host = host.clone();
                 tauri::async_runtime::spawn(async move {
                     let _ = host.set_decorations(true);
+                });
+            } else if kind == COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED {
+                // Only the page's process went (the browser is still up): the
+                // window stayed white with nothing to click. Load the page
+                // again; it reconnects the way a launch does.
+                log::error!("webview2: render process exited, reloading the page");
+                let host = host.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = host.reload();
                 });
             }
             Ok(())
@@ -405,12 +424,17 @@ fn unlock_macos_webview_frame_rate(window: &tauri::WebviewWindow) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // First, so a panic anywhere after this leaves a report (see crash.rs).
+    crash::install();
     // One TLS crypto provider for the whole process. Two are compiled in
     // (ring, which every driver used so far, and aws-lc-rs from tiberius 0.13),
     // and with both rustls has no default: any client built without naming one
     // (MongoDB, Redis, Postgres, SQL Server) would panic on its first TLS
     // connection. ring keeps TLS exactly as it was.
     let _ = rustls::crypto::ring::default_provider().install_default();
+
+    // Wayland or X11, before GTK starts and before any thread (display_backend.rs).
+    display_backend::choose();
 
     // Linux WebKitGTK rendering fix - set before any threads spawn.
     #[cfg(target_os = "linux")]
@@ -447,6 +471,8 @@ pub fn run() {
     let db_conn: Arc<Mutex<Option<ActiveConnection>>> = Arc::new(Mutex::new(None));
     let db_state = DbState {
         conn: Arc::clone(&db_conn),
+        parked: Arc::new(Mutex::new(Vec::new())),
+        active_key: Arc::new(Mutex::new(None)),
         cancels: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
     };
     let db_conn_for_setup = Arc::clone(&db_conn);
@@ -458,6 +484,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::AppleScript, None))
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_deep_link::init())
         .manage(db_state)
         .manage(mcp_state)
         .manage(agents::AgentsState::default())
@@ -468,7 +495,11 @@ pub fn run() {
         .manage(db::terminal::TerminalState::default())
         .manage(db::result_store::ResultStore::default())
         .manage(updates::UpdateState::default())
+        .manage(launch::LaunchState::default())
         .setup(move |app| {
+            display_backend::watch(app.handle().clone());
+            // Local servers marked "Start with Stroke".
+            local_servers::autostart(app.handle().clone());
             // Linux packages renamed the binary from `app` to `stroke` (2.5.6), and
             // a launch-at-login entry stores the binary's path. Re-enabling an
             // enabled entry rewrites it with the current path, so it doesn't
@@ -493,6 +524,7 @@ pub fn run() {
             // driver refreshing an expired Cloudflare token mid-session.
             cloudflare::set_app_handle(app.handle().clone());
             if let Ok(dir) = app.path().app_data_dir() {
+                crash::set_dir(dir.clone());
                 db::connection::set_data_dir(dir);
             }
             db::connection::register_active_conn(std::sync::Arc::clone(&db_conn_for_setup));
@@ -638,9 +670,12 @@ pub fn run() {
                 _ => {}
             });
 
+            install_open_links(app.handle());
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            crash::take_crash_report,
             plugins::plugins_list,
             plugins::plugins_read_source,
             plugins::plugins_install,
@@ -657,6 +692,9 @@ pub fn run() {
             commands::ai_fetch_page,
             commands::read_file,
             commands::open_new_window,
+            commands::open_dashboard_window,
+            commands::sql_access_level,
+            launch::take_open_request,
             commands::reveal_window,
             commands::restart_app,
             updates::update_check,
@@ -699,6 +737,21 @@ pub fn run() {
             commands::test_couchdb,
             commands::connect_couchdb_db,
             commands::couchdb_request,
+            commands::test_elastic,
+            commands::connect_elastic_db,
+            commands::elastic_request,
+            shares::share_create,
+            shares::share_list,
+            shares::share_revoke,
+            nightly::nightly_install,
+            nightly::nightly_open,
+            nightly::track_installed,
+            nightly::track_install,
+            nightly::track_open,
+            mcp::mcp_share_result,
+            commands::d1_bookmark,
+            commands::d1_restore,
+            commands::elastic_import,
             commands::test_cassandra,
             commands::connect_cassandra_db,
             commands::cassandra_tables,
@@ -731,6 +784,9 @@ pub fn run() {
             commands::connect_duckdb_db,
             commands::test_mssql,
             commands::connect_mssql_db,
+            commands::test_oracle,
+            commands::connect_oracle_db,
+            commands::oracle_container_name,
             commands::pg_list_schemas,
             commands::pg_list_tables,
             commands::pg_table_row_counts,
@@ -753,6 +809,8 @@ pub fn run() {
             commands::get_table_ddl_on_connection,
             commands::pg_get_table_rows,
             commands::pg_count_table_rows,
+            commands::pg_search_index_status,
+            commands::pg_create_search_index,
             commands::pg_get_column_stats,
             commands::geo_overview,
             commands::geo_features,
@@ -763,6 +821,7 @@ pub fn run() {
             commands::instance_set_config,
             commands::instance_replication,
             commands::pg_execute_sql,
+            commands::share_execute_sql,
             commands::pg_execute_sql_multi,
             commands::pg_execute_sql_stream,
             commands::result_window,
@@ -799,6 +858,7 @@ pub fn run() {
             omniroute::omniroute_running,
             docker::docker_check,
             docker::docker_run_db,
+            docker::docker_templates,
             docker::scan_docker_databases,
             docker::docker_container_action,
             db::local_scan::scan_local_studios,
@@ -821,6 +881,7 @@ pub fn run() {
             cloudflare::cloudflare_logout,
             cloudflare::cloudflare_list_accounts,
             cloudflare::cloudflare_list_d1_databases,
+            cloudflare::cloudflare_create_d1_database,
             providers::provider_start_oauth,
             providers::provider_cancel_oauth,
             providers::provider_store_token,
@@ -829,6 +890,9 @@ pub fn run() {
             providers::provider_warm,
             providers::provider_list_databases,
             providers::provider_build_connection,
+            providers::provider_create_options,
+            providers::provider_create_database,
+            providers::provider_database_status,
             db::backup::backup_export,
             db::backup::backup_import,
             db::backup::backup_cancel,
@@ -845,14 +909,10 @@ pub fn run() {
             db::terminal::terminal_install_client,
             db::terminal::terminal_close,
             commands::check_license_status,
-            commands::activate_license,
-            commands::deactivate_license,
-            commands::run_license_check,
             account::account_sign_in,
             account::account_cancel_sign_in,
             account::account_status,
             account::account_sign_out,
-            account::account_skip_onboarding,
             account::account_paste_code,
             sync::sync_state,
             sync::sync_setup,
@@ -873,10 +933,38 @@ pub fn run() {
             commands::get_autostart_status,
             commands::advisor_scan,
             commands::cancel_query,
-            #[cfg(debug_assertions)]
-            commands::debug_set_trial_days_ago,
-            #[cfg(debug_assertions)]
-            commands::debug_reset_trial,
+            quit::quit_now,
+            quit::cancel_quit,
+            quit::set_quit_guard,
+            db::parked::park_connection,
+            db::parked::set_active_conn_key,
+            db::parked::resume_connection,
+            db::parked::close_parked,
+            db::parked::parked_connections,
+            commands::export_parquet,
+            cloud_backup::backup_jobs_list,
+            db::migrations::migrations_project,
+            local_servers::local_servers_env,
+            local_servers::local_servers_list,
+            local_servers::local_server_create,
+            local_servers::local_server_start,
+            local_servers::local_server_stop,
+            local_servers::local_server_delete,
+            local_servers::local_server_update,
+            local_servers::local_server_logs,
+            local_servers::local_server_free_port,
+            local_servers::brew_services_list,
+            local_servers::brew_service_action,
+            local_servers::local_servers_discover,
+            local_servers::local_server_reveal,
+            local_servers::open_local_servers_window,
+            local_servers::local_server_connect_in,
+            cloud_backup::backup_job_save,
+            cloud_backup::backup_job_patch,
+            cloud_backup::backup_job_delete,
+            cloud_backup::backup_s3_save,
+            cloud_backup::backup_s3_status,
+            cloud_backup::backup_job_run,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
@@ -885,6 +973,17 @@ pub fn run() {
                 code: Some(tauri::RESTART_EXIT_CODE),
                 ..
             } => updates::note_restart(app),
+            // ⌘Q / Quit with the window still open: hold the exit once and let
+            // the page finish what it must (unsaved edits, the last sync push),
+            // then it calls quit_now. If the page doesn't answer in 6 s the app
+            // quits anyway, so a stuck page can never keep it open. Closing the
+            // last window arrives here with no windows left and is not held.
+            tauri::RunEvent::ExitRequested { code: None, api, .. }
+                if !quit::approved() && !app.webview_windows().is_empty() =>
+            {
+                api.prevent_exit();
+                quit::requested(app);
+            }
             // The last window closed, or the OS is shutting down. Reap the
             // OmniRoute proxy we spawned, or it survives every app quit.
             tauri::RunEvent::Exit => {
@@ -897,4 +996,37 @@ pub fn run() {
             }
             _ => {}
         });
+}
+
+/// `stroke://open?url=…` links and a connection on the command line (see
+/// launch.rs). A link that launches the app arrives in argv on Windows and Linux
+/// and through `get_current` on macOS; one sent to the running app comes to
+/// `on_open_url`. Either way the page only gets a prefilled dialog.
+fn install_open_links(app: &tauri::AppHandle) {
+    use tauri_plugin_deep_link::DeepLinkExt;
+    let links = app.deep_link();
+    // The installers register the scheme; a dev build or an AppImage has no
+    // installer, so it registers itself (per-user, overwritten on each run).
+    #[cfg(any(target_os = "linux", all(debug_assertions, windows)))]
+    {
+        if let Err(e) = links.register_all() {
+            log::warn!("Could not register stroke:// links: {e}");
+        }
+    }
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let first = links
+        .get_current()
+        .ok()
+        .flatten()
+        .and_then(|urls| urls.iter().find_map(|u| launch::parse_link(u.as_str())))
+        .or_else(|| launch::from_args(std::env::args(), &cwd));
+    if let Some(req) = first {
+        launch::deliver(app, req);
+    }
+    let handle = app.clone();
+    links.on_open_url(move |event| {
+        if let Some(req) = event.urls().iter().find_map(|u| launch::parse_link(u.as_str())) {
+            launch::deliver(&handle, req);
+        }
+    });
 }

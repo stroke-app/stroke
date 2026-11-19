@@ -67,3 +67,12 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+/* A loading toast whose amount is unknown: a bar that sweeps across. */
+.toast-indeterminate {
+  animation: toast-sweep 1.3s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+@keyframes toast-sweep {
+  from { transform: translateX(-110%); }
+  to { transform: translateX(330%); }
+}

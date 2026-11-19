@@ -45,3 +45,15 @@ describe('isSafeHref', () => {
     }
   })
 })
+
+import { renderSafeMarkdown } from './markdown-safe.js'
+describe('renderSafeMarkdown', () => {
+  it('renders markdown but not raw HTML, script links or images', () => {
+    const html = renderSafeMarkdown('# T\n\n**b** <img src=x onerror=alert(1)> [x](javascript:alert(1)) [ok](https://a.b) ![i](https://a.b/i.png)')
+    expect(html).toContain('<h1')
+    expect(html).toContain('<strong>b</strong>')
+    expect(html).not.toContain('<img')
+    expect(html).not.toContain('href="javascript')
+    expect(html).toContain('href="https://a.b"')
+  })
+})

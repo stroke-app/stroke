@@ -1,4 +1,4 @@
-/** @typedef {'table' | 'sql' | 'ddl' | 'welcome' | 'ai' | 'schema' | 'orm' | 'security' | 'logs' | 'extensions' | 'extension-detail' | 'backup' | 'json' | 'charts' | 'dashboard' | 'erd' | 'reltree' | 'diagrams' | 'search' | 'notebook' | 'schema-timeline' | 'data-diff' | 'insights' | 'objects' | 'redis' | 'dynamodb' | 'docs' | 'license' | 'orm-schema' | 'map' | 'advisor' | 'golf' | 'terminal'} StudioTabKind */
+/** @typedef {'table' | 'sql' | 'ddl' | 'welcome' | 'ai' | 'schema' | 'orm' | 'security' | 'logs' | 'extensions' | 'extension-detail' | 'backup' | 'json' | 'charts' | 'dashboard' | 'erd' | 'reltree' | 'diagrams' | 'search' | 'notebook' | 'schema-timeline' | 'data-diff' | 'migrations' | 'insights' | 'objects' | 'redis' | 'dynamodb' | 'docs' | 'license' | 'orm-schema' | 'map' | 'advisor' | 'golf' | 'terminal' | 'shortcuts' | 'shares'} StudioTabKind */
 
 import { loadDefaultPageSize } from '$lib/table-query.js'
 
@@ -233,8 +233,11 @@ const SINGLETON_TAB_TITLES = {
   search: 'Find in database',
   'schema-timeline': 'Schema timeline',
   'data-diff': 'Data diff',
+  migrations: 'Migrations',
   golf: 'VACUUM',
   terminal: 'Terminal',
+  shortcuts: 'Keyboard shortcuts',
+  shares: 'Shared links',
 }
 
 /** @param {StudioTabKind} kind */
@@ -279,8 +282,13 @@ export const createLicenseTab = () => createKindTab('license')
 export const createSearchTab = () => createKindTab('search')
 export const createSchemaTimelineTab = () => createKindTab('schema-timeline')
 export const createDataDiffTab = () => createKindTab('data-diff')
+export const createMigrationsTab = () => createKindTab('migrations')
 /** The connection's own CLI (psql, mysql, sqlite3...) in a real terminal. */
 export const createTerminalTab = () => createKindTab('terminal')
+/** Every shortcut, searchable and remappable. */
+export const createShortcutsTab = () => createKindTab('shortcuts')
+/** Every share link this account made: views, expiry, revoke. */
+export const createSharesTab = () => createKindTab('shares')
 
 /** @type {(tabs: StudioTab[]) => StudioTab | null} */
 export const findAiTab = (tabs) => findTabByKind(tabs, 'ai')
@@ -330,11 +338,17 @@ export const findErdTab = (tabs) => findTabByKind(tabs, 'erd')
 /** @type {(tabs: StudioTab[]) => StudioTab | null} */
 export const findLicenseTab = (tabs) => findTabByKind(tabs, 'license')
 /** @type {(tabs: StudioTab[]) => StudioTab | null} */
+export const findShortcutsTab = (tabs) => findTabByKind(tabs, 'shortcuts')
+/** @type {(tabs: StudioTab[]) => StudioTab | null} */
+export const findSharesTab = (tabs) => findTabByKind(tabs, 'shares')
+/** @type {(tabs: StudioTab[]) => StudioTab | null} */
 export const findSearchTab = (tabs) => findTabByKind(tabs, 'search')
 /** @type {(tabs: StudioTab[]) => StudioTab | null} */
 export const findSchemaTimelineTab = (tabs) => findTabByKind(tabs, 'schema-timeline')
 /** @type {(tabs: StudioTab[]) => StudioTab | null} */
 export const findDataDiffTab = (tabs) => findTabByKind(tabs, 'data-diff')
+/** @param {StudioTab[]} tabs */
+export const findMigrationsTab = (tabs) => findTabByKind(tabs, 'migrations')
 
 /** @param {string} extensionId @param {string} name */
 export function createExtensionDetailTab(extensionId, name) {
@@ -362,8 +376,11 @@ export function tabDisplayTitle(tab) {
   if (tab.kind === 'table' && tab.state) return tableTabTitle(/** @type {TableTabState} */ (tab.state))
   // Honour a custom title: a DDL viewer ("DDL · users") and the 2nd/3rd editor
   // ("Query Editor 2") are separate buffers and must not all read "Query Editor".
+  if (tab.kind === 'terminal') return tab.title || 'Terminal'
   if (tab.kind === 'sql') return tab.title || 'Query Editor'
   if (tab.kind === 'notebook') return tab.title || 'Untitled Notebook'
+  // A document tab is named after its collection.
+  if (tab.kind === 'docs') return tab.title || 'Browse'
   if (tab.kind === 'extension-detail') return tab.title || tab.state?.extensionId || 'Extension'
   return SINGLETON_TAB_TITLES[tab.kind] ?? tab.title
 }
