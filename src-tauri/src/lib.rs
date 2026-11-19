@@ -498,6 +498,8 @@ pub fn run() {
         .manage(launch::LaunchState::default())
         .setup(move |app| {
             display_backend::watch(app.handle().clone());
+            // Local servers marked "Start with Stroke".
+            local_servers::autostart(app.handle().clone());
             // Linux packages renamed the binary from `app` to `stroke` (2.5.6), and
             // a launch-at-login entry stores the binary's path. Re-enabling an
             // enabled entry rewrites it with the current path, so it doesn't
@@ -952,6 +954,10 @@ pub fn run() {
             local_servers::local_server_free_port,
             local_servers::brew_services_list,
             local_servers::brew_service_action,
+            local_servers::local_servers_discover,
+            local_servers::local_server_reveal,
+            local_servers::open_local_servers_window,
+            local_servers::local_server_connect_in,
             cloud_backup::backup_job_save,
             cloud_backup::backup_job_patch,
             cloud_backup::backup_job_delete,

@@ -34,6 +34,47 @@ pub struct MigrationProject {
     /// The folder the migrations were read from.
     pub dir: String,
     pub files: Vec<MigrationFile>,
+    /// Every `.sql` file in the folder by file name, journal or not: what
+    /// `wrangler d1 migrations apply` runs and records in `d1_migrations`.
+    pub sql_files: Vec<MigrationFile>,
+    /// The D1 database a `wrangler.toml` / `wrangler.json(c)` next to the
+    /// migrations names, for the apply command.
+    pub wrangler_db: Option<String>,
+}
+
+/// The first `database_name = "x"` (TOML) or `"database_name": "x"` (JSON).
+fn database_name(text: &str) -> Option<String> {
+    for (i, _) in text.match_indices("database_name") {
+        let rest = text[i + "database_name".len()..].trim_start_matches('"').trim_start();
+        let Some(rest) = rest.strip_prefix([':', '=']) else { continue };
+        let rest = rest.trim_start();
+        let q = rest.chars().next().filter(|c| *c == '"' || *c == '\'')?;
+        let v: String = rest[1..].chars().take_while(|c| *c != q).collect();
+        if !v.is_empty() {
+            return Some(v);
+        }
+    }
+    None
+}
+
+/// `database_name` from the first wrangler config in `from` or a folder above
+/// it, up to `root`.
+fn wrangler_db(root: &Path, from: &Path) -> Option<String> {
+    let mut dir = Some(from);
+    while let Some(d) = dir {
+        for f in ["wrangler.toml", "wrangler.jsonc", "wrangler.json"] {
+            if let Ok(text) = std::fs::read_to_string(d.join(f)) {
+                if let Some(name) = database_name(&text) {
+                    return Some(name);
+                }
+            }
+        }
+        if d == root {
+            break;
+        }
+        dir = d.parent();
+    }
+    None
 }
 
 const MAX_SQL: usize = 2 * 1024 * 1024;
@@ -71,6 +112,33 @@ fn is_prisma_dir(dir: &Path) -> bool {
 /// Drizzle output folders: they hold `meta/_journal.json`.
 fn is_drizzle_dir(dir: &Path) -> bool {
     dir.join("meta").join("_journal.json").is_file()
+}
+
+/// A plain `migrations/` folder of `.sql` files, as Wrangler (D1) keeps them.
+fn is_sql_dir(dir: &Path) -> bool {
+    dir.file_name().is_some_and(|n| n == "migrations")
+        && std::fs::read_dir(dir)
+            .map(|rd| rd.flatten().any(|e| e.path().extension().is_some_and(|x| x == "sql")))
+            .unwrap_or(false)
+}
+
+/// Every `.sql` file directly in `dir`, by name; `name` keeps the `.sql`
+/// (that's what `d1_migrations.name` holds).
+pub fn read_sql_dir(dir: &Path) -> Vec<MigrationFile> {
+    let Ok(rd) = std::fs::read_dir(dir) else { return Vec::new() };
+    let mut names: Vec<String> = rd
+        .flatten()
+        .filter(|e| e.path().is_file() && e.path().extension().is_some_and(|x| x == "sql"))
+        .filter_map(|e| e.file_name().to_str().map(String::from))
+        .collect();
+    names.sort();
+    names
+        .into_iter()
+        .filter_map(|name| {
+            let (sql, checksum) = read_sql(&dir.join(&name))?;
+            Some(MigrationFile { name, sql, checksum, when: None })
+        })
+        .collect()
 }
 
 /// Folders worth looking into for a project root, a few levels down, skipping
@@ -113,6 +181,13 @@ pub fn find(root: &Path, tool: Option<&str>) -> Option<(String, PathBuf)> {
             return Some(("prisma".into(), d.clone()));
         }
     }
+    // No journal anywhere: a Wrangler migrations folder reads like Drizzle's
+    // SQL files, applied by name.
+    if want_drizzle {
+        if let Some(d) = dirs.iter().find(|d| is_sql_dir(d) && !is_prisma_dir(d)) {
+            return Some(("drizzle".into(), d.clone()));
+        }
+    }
     None
 }
 
@@ -135,6 +210,10 @@ pub fn read_prisma(dir: &Path) -> Vec<MigrationFile> {
 }
 
 pub fn read_drizzle(dir: &Path) -> Result<Vec<MigrationFile>, String> {
+    if !is_drizzle_dir(dir) {
+        // A Wrangler folder: its files are the migrations, in name order.
+        return Ok(read_sql_dir(dir).into_iter().map(|f| MigrationFile { name: f.name.trim_end_matches(".sql").to_string(), ..f }).collect());
+    }
     let journal = std::fs::read_to_string(dir.join("meta").join("_journal.json"))
         .map_err(|e| format!("Could not read meta/_journal.json: {e}"))?;
     let v: serde_json::Value = serde_json::from_str(&journal).map_err(|e| format!("meta/_journal.json isn't valid JSON: {e}"))?;
@@ -174,7 +253,9 @@ pub async fn migrations_project(dir: String, tool: Option<String>) -> Result<Mig
             "No Prisma or Drizzle migrations in this folder. Pick the project folder (the one with prisma/ or drizzle.config).".to_string()
         })?;
         let files = if tool == "prisma" { read_prisma(&found) } else { read_drizzle(&found)? };
-        Ok(MigrationProject { tool, dir: found.to_string_lossy().into_owned(), files })
+        let sql_files = if tool == "drizzle" { read_sql_dir(&found) } else { Vec::new() };
+        let wrangler_db = wrangler_db(&root, &found);
+        Ok(MigrationProject { tool, dir: found.to_string_lossy().into_owned(), files, sql_files, wrangler_db })
     })
     .await
     .map_err(|e| e.to_string())?
@@ -230,6 +311,29 @@ mod tests {
         assert_eq!(files[0].checksum, sha256_hex(b"CREATE TABLE users();"));
         assert!(files[2].checksum.is_empty());
         assert!(find(&root, Some("prisma")).is_none());
+        // Every .sql file, journal or not, for D1's d1_migrations.
+        std::fs::write(out.join("0001b_hand_written.sql"), "SELECT 1;").unwrap();
+        std::fs::write(root.join("wrangler.jsonc"), "{\n  \"d1_databases\": [{ \"database_name\": \"shop-db\", \"binding\": \"DB\" }]\n}").unwrap();
+        assert_eq!(wrangler_db(&root, &dir).as_deref(), Some("shop-db"));
+        std::fs::remove_file(root.join("wrangler.jsonc")).unwrap();
+        std::fs::write(root.join("wrangler.toml"), "[[d1_databases]]\nbinding = \"DB\"\ndatabase_name = \"shop-db\"\n").unwrap();
+        assert_eq!(wrangler_db(&root, &dir).as_deref(), Some("shop-db"));
+        let all = read_sql_dir(&dir);
+        assert_eq!(all.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(), ["0000_init.sql", "0001_posts.sql", "0001b_hand_written.sql"]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_wrangler_migrations_folder_reads_as_drizzle() {
+        let root = tmp("wrangler");
+        let m = root.join("migrations");
+        std::fs::create_dir_all(&m).unwrap();
+        std::fs::write(m.join("0002_b.sql"), "SELECT 2;").unwrap();
+        std::fs::write(m.join("0001_a.sql"), "SELECT 1;").unwrap();
+        let (tool, dir) = find(&root, None).unwrap();
+        assert_eq!((tool.as_str(), dir.clone()), ("drizzle", m.clone()));
+        let files = read_drizzle(&dir).unwrap();
+        assert_eq!(files.iter().map(|f| f.name.as_str()).collect::<Vec<_>>(), ["0001_a", "0002_b"]);
         let _ = std::fs::remove_dir_all(&root);
     }
 }

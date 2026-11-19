@@ -1,16 +1,16 @@
 <script>
   // One dashboard in a window of its own, for a second screen: the cards and
   // nothing else. Each card runs its query on the connection the app has open,
-  // refreshes on the dashboard's interval, and says in its footer whether the
-  // last run was OK. Edits made in the main window's Dashboard tab show up here
-  // as they're saved (the `storage` event), so this window has no editing of
-  // its own.
+  // refreshes on the dashboard's interval, and shows when it last ran. Edits
+  // made in the main window's Dashboard tab show up here as they're saved (the
+  // `storage` event); this window only switches dashboards, refreshes and goes
+  // full screen.
   import { onMount, untrack } from 'svelte'
   import EChartPanel from './EChartPanel.svelte'
   import WindowControls from './WindowControls.svelte'
   import FieldSelect from './FieldSelect.svelte'
   import { revealApp } from '$lib/app-reveal.js'
-  import { dashboards, switchDashboardsConnection, reloadDashboards, updateDashboard } from '$lib/stores/dashboards.js'
+  import { dashboards, switchDashboardsConnection, reloadDashboards, updateDashboard, findDashboardScope } from '$lib/stores/dashboards.js'
   import { savedCharts, switchChartsConnection, reloadChartsConnection } from '$lib/stores/saved-charts.js'
   import { loadSavedConnections } from '$lib/stores/connections.js'
   import { executeSql } from '$lib/api.js'
@@ -21,6 +21,8 @@
   import { cn } from '$lib/utils.js'
   import RefreshCw from '@lucide/svelte/icons/refresh-cw'
   import LayoutGrid from '@lucide/svelte/icons/layout-grid'
+  import Maximize2 from '@lucide/svelte/icons/maximize-2'
+  import Minimize2 from '@lucide/svelte/icons/minimize-2'
 
   let {
     dashboardId = '',
@@ -29,9 +31,21 @@
 
   const isMac = detectOs() === 'macos'
 
+  // svelte-ignore state_referenced_locally
+  let currentId = $state(dashboardId)
+  // svelte-ignore state_referenced_locally
+  let scope = $state(connectionId)
+  let ready = $state(false)
+  let fullscreen = $state(false)
+  let width = $state(1440)
+
   onMount(() => {
-    switchDashboardsConnection(connectionId)
-    switchChartsConnection(connectionId)
+    // The dashboard is stored under the saved connection's id; fall back to
+    // any connection that has it, so an older link still opens.
+    scope = findDashboardScope(dashboardId, connectionId) ?? connectionId
+    switchDashboardsConnection(scope)
+    switchChartsConnection(scope)
+    ready = true
     document.documentElement.classList.add('dark')
     revealApp()
     /** @param {StorageEvent} e */
@@ -40,13 +54,42 @@
       if (e.key.startsWith('stroke:dashboards')) reloadDashboards()
       if (e.key.includes('chart')) reloadChartsConnection()
     }
+    /** @param {KeyboardEvent} e */
+    const onKey = (e) => {
+      if (e.key === 'F11' || (e.key === 'f' && (e.metaKey || e.ctrlKey) && e.shiftKey)) {
+        e.preventDefault()
+        void toggleFullscreen()
+      } else if (e.key === 'Escape' && fullscreen) {
+        void toggleFullscreen()
+      } else if (e.key === 'r' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault()
+        refreshAll()
+      }
+    }
     window.addEventListener('storage', onStorage)
-    return () => window.removeEventListener('storage', onStorage)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('storage', onStorage)
+      window.removeEventListener('keydown', onKey)
+    }
   })
 
-  const dash = $derived($dashboards.find((d) => d.id === dashboardId) ?? null)
-  const connName = $derived(loadSavedConnections().find((c) => c.id === connectionId)?.name ?? '')
+  async function toggleFullscreen() {
+    try {
+      const { getCurrentWindow } = await import('@tauri-apps/api/window')
+      const win = getCurrentWindow()
+      const next = !(await win.isFullscreen())
+      await win.setFullscreen(next)
+      fullscreen = next
+    } catch { /* not in Tauri */ }
+  }
+
+  const dash = $derived($dashboards.find((d) => d.id === currentId) ?? null)
+  const connName = $derived(loadSavedConnections().find((c) => c.id === scope)?.name ?? '')
   $effect(() => { document.title = dash?.name ?? 'Dashboard' })
+
+  /** Fewer columns when the window is narrow, so a card is never a sliver. */
+  const cols = $derived(dash ? Math.max(1, Math.min(dash.columns, width < 720 ? 1 : width < 1100 ? 2 : dash.columns)) : 1)
 
   // ── Live data (as the Dashboard tab runs it) ───────────────────────────────
   const runQueue = createQueue(2)
@@ -54,7 +97,7 @@
   let live = $state({})
   let now = $state(Date.now())
   $effect(() => {
-    const t = setInterval(() => (now = Date.now()), 15_000)
+    const t = setInterval(() => (now = Date.now()), 5_000)
     return () => clearInterval(t)
   })
 
@@ -106,6 +149,7 @@
   })
   const anyLoading = $derived(Object.values(live).some((l) => l.loading))
   const failed = $derived(dash ? dash.items.filter((i) => live[keyOf(i)]?.error).length : 0)
+  const lastAt = $derived(dash ? Math.max(0, ...dash.items.map((i) => live[keyOf(i)]?.at ?? 0)) : 0)
 
   /** What a card draws. @param {DashItem} item */
   function viewOf(item) {
@@ -121,63 +165,110 @@
   }
 
   const SIZE_H = { s: 240, m: 340, l: 480 }
-  /** A little taller than in the tab: the window has the room and a footer. @param {DashItem} item */
-  const heightOf = (item) => Math.round((item.h ?? SIZE_H[item.size ?? 'm']) * (item.h ? 1.2 : 1)) + 44
+  /** A little taller than in the tab: the window has the room. @param {DashItem} item */
+  const heightOf = (item) => Math.round((item.h ?? SIZE_H[item.size ?? 'm']) * (item.h ? 1.15 : 1)) + 48
 
   const REFRESH = [[0, 'Off'], [30, '30 s'], [60, '1 min'], [300, '5 min'], [900, '15 min']]
+  const dashOptions = $derived($dashboards.map((d) => ({ value: d.id, label: d.name })))
 </script>
 
-<div class="flex h-screen flex-col overflow-hidden bg-[#141414] text-[#e8e8e8]" style="color-scheme: dark">
-  <!-- Title bar: the dashboard's name in the middle, the way a report is headed. -->
-  <header class="relative flex h-11 shrink-0 items-center gap-2 px-3" data-tauri-drag-region>
-    <div class={cn('flex items-center gap-1', isMac && 'ps-[72px]')} data-tauri-drag-region>
-      <button
-        type="button"
-        class="flex size-7 items-center justify-center rounded-md text-[#9a9a9a] transition-colors hover:bg-white/[0.06] hover:text-white"
-        title="Refresh every card"
-        aria-label="Refresh every card"
-        onclick={refreshAll}
-      >
-        <RefreshCw class={cn('size-3.5 shrink-0', anyLoading && 'animate-pulse')} />
-      </button>
+<svelte:window bind:innerWidth={width} />
+
+<div class="flex h-screen flex-col overflow-hidden bg-background text-foreground" style="color-scheme: dark">
+  <!-- Title bar: which dashboard, its state, and the window's controls. -->
+  {#if !fullscreen}
+    <header class="flex h-12 shrink-0 items-center gap-2 border-b border-border/50 px-3" data-tauri-drag-region>
+      <div class={cn('flex min-w-0 items-center gap-2', isMac && 'ps-[72px]')} data-tauri-drag-region>
+        <LayoutGrid class="size-4 shrink-0 text-muted-foreground" />
+        {#if dashOptions.length > 1}
+          <FieldSelect
+            size="sm"
+            class="w-52 max-w-[40vw] border-0 bg-transparent font-medium hover:bg-muted/60"
+            aria-label="Dashboard"
+            value={currentId}
+            options={dashOptions}
+            onchange={(v) => { currentId = v; live = {} }}
+          />
+        {:else}
+          <h1 class="truncate text-ui-sm font-medium">{dash?.name ?? 'Dashboard'}</h1>
+        {/if}
+        {#if connName}
+          <span class="hidden items-center gap-1.5 truncate text-ui-xs text-muted-foreground sm:flex" title={failed ? `${failed} card${failed === 1 ? '' : 's'} failed` : 'Every card is OK'}>
+            <span class={cn('size-1.5 shrink-0 rounded-full', failed ? 'bg-destructive' : 'bg-success')}></span>
+            {connName}
+          </span>
+        {/if}
+      </div>
+      <div class="flex-1 self-stretch" data-tauri-drag-region></div>
       {#if dash}
+        <span class="hidden text-ui-xs text-muted-foreground tabular-nums md:block" aria-live="polite">
+          {anyLoading ? 'Updating' : lastAt ? `Updated ${agoText(lastAt, now)}` : ''}
+        </span>
+        <button
+          type="button"
+          class="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+          title="Refresh every card (Ctrl+R)"
+          aria-label="Refresh every card"
+          onclick={refreshAll}
+        >
+          <RefreshCw class={cn('size-3.5 shrink-0', anyLoading && 'animate-pulse')} />
+        </button>
         <FieldSelect
           size="sm"
-          class="w-40 border-0 bg-transparent text-[#c8c8c8] hover:bg-white/[0.06]"
+          class="w-44 border-0 bg-transparent text-muted-foreground hover:bg-muted/60"
           aria-label="Auto refresh"
           value={String(dash.refreshSec ?? 0)}
           options={REFRESH.map(([v, l]) => ({ value: String(v), label: v ? `Every ${l}` : 'Auto refresh off' }))}
           onchange={(v) => dash && updateDashboard(dash.id, { refreshSec: Number(v) })}
         />
+        <button
+          type="button"
+          class="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+          title="Full screen (F11)"
+          aria-label="Full screen"
+          onclick={() => void toggleFullscreen()}
+        >
+          <Maximize2 class="size-3.5 shrink-0" />
+        </button>
       {/if}
-    </div>
-    <h1 class="pointer-events-none absolute inset-x-0 text-center text-ui-sm font-medium tracking-[0.08em] text-[#e8e8e8] uppercase" data-tauri-drag-region>
-      {dash?.name ?? 'Dashboard'}
-    </h1>
-    <div class="flex-1" data-tauri-drag-region></div>
-    {#if connName}
-      <span class="flex items-center gap-2 text-ui-xs text-[#9a9a9a]" title={failed ? `${failed} card${failed === 1 ? '' : 's'} failed` : 'Every card is OK'}>
-        <span class={cn('size-2 rounded-full', failed ? 'bg-[#ff5f57]' : 'bg-[#28c840]')}></span>
-        {connName}
-      </span>
-    {/if}
-    {#if !isMac}<WindowControls />{/if}
-  </header>
+      {#if !isMac}<WindowControls />{/if}
+    </header>
+  {:else}
+    <button
+      type="button"
+      class="group fixed top-3 right-3 z-10 flex h-8 items-center gap-1.5 rounded-md bg-muted/80 px-2.5 text-ui-xs text-muted-foreground opacity-40 transition-opacity hover:text-foreground hover:opacity-100 focus-visible:opacity-100"
+      onclick={() => void toggleFullscreen()}
+    >
+      <Minimize2 class="size-3.5 shrink-0" />Exit full screen
+    </button>
+  {/if}
 
-  <main class="app-scroll min-h-0 flex-1 overflow-y-auto px-6 pt-6 pb-10 md:px-14 md:pt-10">
-    {#if !dash}
-      <div class="flex h-full flex-col items-center justify-center gap-2 text-center">
-        <LayoutGrid class="size-6 shrink-0 text-[#6b6b6b]" />
-        <p class="text-ui-sm text-[#c8c8c8]">This dashboard was deleted</p>
+  <main class={cn('app-scroll min-h-0 flex-1 overflow-y-auto', width < 720 ? 'p-4' : 'p-6 lg:p-8')}>
+    {#if ready && !dash}
+      <div class="flex h-full flex-col items-center justify-center gap-3 text-center">
+        <span class="flex size-10 items-center justify-center rounded-lg bg-muted/60 text-muted-foreground"><LayoutGrid class="size-5 shrink-0" /></span>
+        <div class="flex flex-col gap-1">
+          <p class="text-ui-sm font-medium">This dashboard isn't here anymore</p>
+          <p class="text-ui-xs text-muted-foreground">It was deleted, or it belongs to another connection.</p>
+        </div>
+        {#if dashOptions.length}
+          <div class="mt-2 flex max-w-md flex-wrap justify-center gap-2">
+            {#each dashOptions as o (o.value)}
+              <button type="button" class="h-8 rounded-md border border-border/60 px-3 text-ui-sm transition-colors hover:bg-muted/60" onclick={() => { currentId = o.value; live = {} }}>{o.label}</button>
+            {/each}
+          </div>
+        {/if}
       </div>
-    {:else if dash.items.length === 0}
-      <div class="flex h-full flex-col items-center justify-center gap-2 text-center">
-        <LayoutGrid class="size-6 shrink-0 text-[#6b6b6b]" />
-        <p class="text-ui-sm text-[#c8c8c8]">Nothing on {dash.name} yet</p>
-        <p class="text-ui-xs text-[#8a8a8a]">Add charts or saved queries from the Dashboard tab; they show up here.</p>
+    {:else if dash && dash.items.length === 0}
+      <div class="flex h-full flex-col items-center justify-center gap-3 text-center">
+        <span class="flex size-10 items-center justify-center rounded-lg bg-muted/60 text-muted-foreground"><LayoutGrid class="size-5 shrink-0" /></span>
+        <div class="flex flex-col gap-1">
+          <p class="text-ui-sm font-medium">Nothing on {dash.name} yet</p>
+          <p class="text-ui-xs text-muted-foreground">Add charts or saved queries in the Dashboard tab. They show up here as you add them.</p>
+        </div>
       </div>
-    {:else}
-      <div class="grid gap-7" style="grid-template-columns: repeat({dash.columns}, minmax(0, 1fr))">
+    {:else if dash}
+      <div class="grid gap-4 lg:gap-5" style="grid-template-columns: repeat({cols}, minmax(0, 1fr))">
         {#each dash.items as item, i (item.id)}
           {@const chart = getChart(item.chartId)}
           {@const l = live[keyOf(item)]}
@@ -186,34 +277,63 @@
           {@const color = REPORT_COLORS[i % REPORT_COLORS.length]}
           {@const status = l?.loading && !l?.result ? 'loading' : l?.error ? 'error' : l?.at ? 'ok' : sqlOf(item) ? 'loading' : 'idle'}
           <section
-            class="flex flex-col overflow-hidden rounded-lg bg-[#1b1b1b] shadow-[0_1px_0_rgb(255_255_255/0.04)_inset,0_20px_40px_-24px_rgb(0_0_0/0.8)]"
-            style="grid-column: span {Math.min(item.span, dash.columns)}; height: {heightOf(item)}px"
+            class="group flex flex-col overflow-hidden rounded-lg border border-border/50 bg-card"
+            style="grid-column: span {Math.min(item.span, cols)}; height: {heightOf(item)}px"
             aria-label={title}
           >
+            <header class="flex h-11 shrink-0 items-center gap-2.5 px-4">
+              <span
+                class={cn(
+                  'size-2 shrink-0 rounded-full',
+                  status === 'ok' && 'bg-success',
+                  status === 'loading' && 'animate-pulse bg-warning',
+                  status === 'error' && 'bg-destructive',
+                  status === 'idle' && 'bg-muted-foreground/40',
+                )}
+                role="img"
+                aria-label={status === 'ok' ? 'OK' : status === 'loading' ? 'Running' : status === 'error' ? 'Failed' : 'Not running'}
+              ></span>
+              <h2 class="min-w-0 flex-1 truncate text-ui-sm font-medium" title={title}>{title}</h2>
+              <span class="shrink-0 text-ui-2xs text-muted-foreground tabular-nums">
+                {status === 'error' ? 'Failed' : l?.loading ? 'Running' : l?.at ? agoText(l.at, now) : ''}
+              </span>
+              {#if sqlOf(item)}
+                <button
+                  type="button"
+                  class="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-[opacity,colors] group-hover:opacity-100 hover:bg-muted/60 hover:text-foreground focus-visible:opacity-100"
+                  title="Refresh"
+                  aria-label="Refresh {title}"
+                  onclick={() => refreshItem(item)}
+                >
+                  <RefreshCw class={cn('size-3.5 shrink-0', l?.loading && 'animate-pulse')} />
+                </button>
+              {/if}
+            </header>
             <div class="relative min-h-0 flex-1">
               {#if l?.error}
-                <div class="absolute inset-0 flex flex-col items-center justify-center gap-1.5 px-8 text-center">
-                  <p class="text-ui-sm font-medium text-[#ff8a80]">Query failed</p>
-                  <p class="line-clamp-3 max-w-lg text-ui-xs break-words text-[#9a9a9a]">{l.error}</p>
+                <div class="absolute inset-0 flex flex-col items-center justify-center gap-2 px-8 text-center">
+                  <p class="text-ui-sm font-medium text-destructive">Query failed</p>
+                  <p class="line-clamp-3 max-w-lg text-ui-xs break-words text-muted-foreground">{l.error}</p>
+                  <button type="button" class="mt-1 h-7 rounded-md border border-border/60 px-2.5 text-ui-xs transition-colors hover:bg-muted/60" onclick={() => refreshItem(item)}>Try again</button>
                 </div>
               {:else if view?.kpi}
-                <div class="absolute inset-0 flex flex-col items-center justify-center gap-2">
+                <div class="absolute inset-0 flex flex-col items-center justify-center gap-2 pb-4">
                   <span class="text-[clamp(2.5rem,6vw,4.5rem)] leading-none font-semibold tracking-tight tabular-nums" style="color: {color}">{formatKpi(view.kpi.value)}</span>
-                  <span class="text-ui-xs tracking-[0.06em] text-[#9a9a9a] uppercase">{view.kpi.label}</span>
+                  <span class="text-ui-xs text-muted-foreground">{view.kpi.label}</span>
                 </div>
               {:else if view?.table}
-                <div class="app-scroll absolute inset-0 overflow-auto px-4 pt-3">
+                <div class="app-scroll absolute inset-0 overflow-auto px-2">
                   <table class="w-full border-collapse text-ui-xs">
-                    <thead class="sticky top-0 bg-[#1b1b1b]">
+                    <thead class="sticky top-0 bg-card">
                       <tr>
                         {#each view.table.columns as c, ci (ci)}
-                          <th class="border-b border-white/10 px-3 py-2 text-left font-medium whitespace-nowrap text-[#9a9a9a]">{c}</th>
+                          <th class="border-b border-border/60 px-3 py-2 text-left font-medium whitespace-nowrap text-muted-foreground">{c}</th>
                         {/each}
                       </tr>
                     </thead>
                     <tbody>
                       {#each view.table.rows as row, ri (ri)}
-                        <tr class="border-b border-white/[0.05] last:border-0">
+                        <tr class="border-b border-border/30 last:border-0">
                           {#each row as cell, ci (ci)}
                             <td class="max-w-72 truncate px-3 py-1.5 font-mono whitespace-nowrap tabular-nums">{cell === null ? 'NULL' : typeof cell === 'number' ? reportNumber(cell) : typeof cell === 'object' ? JSON.stringify(cell) : String(cell)}</td>
                           {/each}
@@ -223,44 +343,15 @@
                   </table>
                 </div>
               {:else if view?.option}
-                <EChartPanel option={reportOption(view.option, color)} class="absolute inset-x-2 top-3 bottom-0" />
+                <EChartPanel option={reportOption(view.option, color)} class="absolute inset-x-2 top-0 bottom-2" />
+              {:else if status === 'loading'}
+                <div class="absolute inset-x-4 top-2 bottom-4 animate-pulse rounded-md bg-muted/40" aria-hidden="true"></div>
               {:else if status === 'idle'}
-                <div class="absolute inset-0 flex items-center justify-center text-ui-xs text-[#8a8a8a]">
+                <div class="absolute inset-0 flex items-center justify-center px-6 text-center text-ui-xs text-muted-foreground">
                   {chart ? 'This chart writes, so it only runs from the editor' : 'This chart was deleted'}
                 </div>
               {/if}
             </div>
-            <!-- Footer: state, refresh, the name, and the verdict. -->
-            <footer class="grid h-11 shrink-0 grid-cols-[1fr_auto_1fr] items-center px-4">
-              <div class="flex items-center gap-3">
-                <span
-                  class={cn(
-                    'size-2.5 rounded-full',
-                    status === 'ok' && 'bg-[#28c840]',
-                    status === 'loading' && 'animate-pulse bg-[#f5b400]',
-                    status === 'error' && 'bg-[#ff5f57]',
-                    status === 'idle' && 'bg-[#4a4a4a]',
-                  )}
-                  role="img"
-                  aria-label={status === 'ok' ? 'OK' : status === 'loading' ? 'Running' : status === 'error' ? 'Failed' : 'Not running'}
-                ></span>
-                {#if sqlOf(item)}
-                  <button
-                    type="button"
-                    class="flex size-6 items-center justify-center rounded-md text-[#8a8a8a] transition-colors hover:bg-white/[0.06] hover:text-white"
-                    title={l?.at ? `Refresh · updated ${agoText(l.at, now)}` : 'Refresh'}
-                    aria-label="Refresh {title}"
-                    onclick={() => refreshItem(item)}
-                  >
-                    <RefreshCw class="size-3.5 shrink-0" />
-                  </button>
-                {/if}
-              </div>
-              <p class="max-w-[40ch] truncate text-center text-ui-sm font-medium tracking-[0.06em] uppercase">{title}</p>
-              <p class="justify-self-end text-ui-xs tracking-[0.04em] text-[#9a9a9a] uppercase tabular-nums">
-                {status === 'ok' ? 'OK' : status === 'error' ? 'Failed' : status === 'loading' ? 'Running' : '·'}
-              </p>
-            </footer>
           </section>
         {/each}
       </div>

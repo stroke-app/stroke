@@ -74,3 +74,15 @@ describe('helpers', () => {
     expect(rowsOf({ columns: [{ name: 'a' }, { name: 'b' }], rows: [[1, 2]] })).toEqual([{ a: 1, b: 2 }])
   })
 })
+
+describe('mergeD1', () => {
+  it('matches d1_migrations names to the folder files', async () => {
+    const { mergeD1 } = await import('./migrations.js')
+    const rows = [{ id: 1, name: '0000_init.sql', applied_at: '2026-01-02 10:00:00' }, { id: 2, name: 'old.sql', applied_at: '2026-01-03 10:00:00' }]
+    const files = [{ name: '0000_init.sql', sql: 'a', checksum: 'x', when: null }, { name: '0001_more.sql', sql: 'b', checksum: 'y', when: null }]
+    const list = mergeD1(rows, files)
+    expect(list.map((m) => [m.name, m.status, m.missingFile])).toEqual([['0000_init', 'applied', false], ['0001_more', 'pending', false], ['old', 'applied', true]])
+    expect(list[0].appliedAt).toBe(Date.parse('2026-01-02T10:00:00Z'))
+    expect(mergeD1(rows, null).every((m) => m.status === 'applied')).toBe(true)
+  })
+})
