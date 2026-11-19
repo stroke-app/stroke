@@ -4,6 +4,43 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.0.0] - 2026-11-19
+
+### New Features
+
+#### Stroke 3
+- **One account, three computers** - Sign in with GitHub or Google. Your license comes with your account and covers up to 3 computers; manage them at stroke.click/app. Paid Pro keeps working offline for 30 days.
+- **Sync** - Workspaces, connections, settings, saved queries, charts and dashboards sync between your computers, end-to-end encrypted.
+- **21 databases** - New since 2.3: Oracle, Elasticsearch, OpenSearch, Xata and SingleStore, alongside MongoDB, CouchDB, Cassandra, DynamoDB, Firestore and Redis.
+- **Several databases at once (Labs)** - Keep more than one connection open, each with its tabs, and switch instantly.
+
+#### AI
+- **AI chat in a tab** - AI opens beside your tables instead of taking over the window, and its chats live in the sidebar. On by default in this version; switch it off in Settings → Labs.
+- **Access levels for every model** - Read only, Read & write, Modify schema or Dangerous, now enforced for the built-in models and API keys too, not only local agents.
+- **Plans and step timeline** - A multi-step request shows its plan, each tool call is one row with its result, and a finished turn says what changed.
+
+#### Your databases
+- **Local database servers** - Run Postgres, MySQL or Redis on this computer in any version, in their own window, start them with Stroke, and see the servers already running here.
+- **Migrations** - Drizzle, Prisma, Wrangler (D1) and plain SQL folders: what has run, what is pending, and the SQL of each.
+- **Scheduled backups** - To Stroke Cloud or your own S3, end-to-end encrypted, with a preview of a dump and its encoding before you restore.
+- **Docker in one step** - ⌘K → Docker starts any of 18 databases, already connected.
+- **Dashboards** - Live chart cards that refresh themselves, open in their own window, full screen.
+- **Paste any connection string** - .env lines, ORM URLs and key/value strings land on the right form.
+
+#### Everywhere
+- **Leader key** - Press ⌘; (Ctrl+; on Windows and Linux), then one key.
+- **Share as a web studio (Labs)** - Share a database through a link that opens in any browser.
+- **SQL notebooks** - Variables, import and export, autosave.
+- **Results beside the editor** - Put SQL results below or beside the editor.
+- **Quieter updates** - Updates download in the background and install as Stroke quits. Homebrew, Scoop, AUR, .deb and .rpm installs update through their package manager.
+
+### Changes
+- A faster start: Settings, the command palette and one-off dialogs load on first use, and the data grid loads lazily.
+- Windows and Linux get a 40px title bar with native window buttons, and native Wayland on Linux.
+- echarts 6.1, which fixes an XSS advisory; charts look as they did.
+- The Explorer tree stays in Labs (Settings → Labs).
+
+
 ## [2.20.4] - 2026-11-19
 
 ### Changes
