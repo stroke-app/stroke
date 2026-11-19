@@ -35,6 +35,9 @@ pub struct LocalServer {
     pub runtime: String,
     #[serde(default)]
     pub created_at: i64,
+    /// Start it when Stroke opens.
+    #[serde(default)]
+    pub autostart: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -45,6 +48,26 @@ pub struct ServerState {
     pub running: bool,
     /// Why it can't run right now (Docker not running, binary gone).
     pub problem: Option<String>,
+    /// When the running server started, ms since the epoch.
+    pub started_at: Option<i64>,
+    /// Size of a native server's data folder.
+    pub disk_bytes: Option<u64>,
+    /// Where a native server keeps its data.
+    pub data_dir: Option<String>,
+}
+
+/// A database server listening on this computer that Stroke didn't make:
+/// Postgres.app, a Homebrew service, a docker compose container.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FoundServer {
+    pub engine: String,
+    pub port: u16,
+    /// docker | process
+    pub source: String,
+    /// The container's name, or the engine for a plain process.
+    pub name: String,
+    pub image: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -436,6 +459,40 @@ async fn docker_running(id: &str) -> Result<bool, String> {
     }
 }
 
+/// When a running server started: Docker's StartedAt, Postgres's
+/// postmaster.pid (its third line), or the pid file's time for the rest.
+async fn started_at(app: &AppHandle, s: &LocalServer) -> Option<i64> {
+    if s.runtime == "docker" {
+        let out = run(&docker().ok()?, &["inspect", "-f", "{{.State.StartedAt}}", &container(&s.id)]).await.ok()?;
+        return chrono::DateTime::parse_from_rfc3339(out.trim()).ok().map(|t| t.timestamp_millis());
+    }
+    let dir = server_dir(app, &s.id).ok()?;
+    if s.engine == "postgres" {
+        let text = std::fs::read_to_string(dir.join("data").join("postmaster.pid")).ok()?;
+        return text.lines().nth(2)?.trim().parse::<i64>().ok().map(|t| t * 1000);
+    }
+    let modified = std::fs::metadata(pid_file(app, &s.id).ok()?).ok()?.modified().ok()?;
+    Some(chrono::DateTime::<chrono::Utc>::from(modified).timestamp_millis())
+}
+
+/// Bytes under `dir`, files only, not following links.
+fn dir_size(dir: &Path) -> u64 {
+    let mut total = 0;
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&d) else { continue };
+        for e in rd.flatten() {
+            let Ok(meta) = e.metadata() else { continue };
+            if meta.is_dir() {
+                stack.push(e.path());
+            } else if meta.is_file() {
+                total += meta.len();
+            }
+        }
+    }
+    total
+}
+
 async fn state_of(app: &AppHandle, s: LocalServer, docker_ok: bool) -> ServerState {
     let (running, problem) = if s.runtime == "docker" {
         if !docker_ok {
@@ -460,7 +517,203 @@ async fn state_of(app: &AppHandle, s: LocalServer, docker_ok: bool) -> ServerSta
         let problem = if up || native_binary(&s.engine).is_some() { None } else { Some(format!("{} isn't installed anymore", s.engine)) };
         (up, problem)
     };
-    ServerState { server: s, running, problem }
+    let started_at = if running { started_at(app, &s).await } else { None };
+    let (disk_bytes, data_dir) = if s.runtime == "native" {
+        match server_dir(app, &s.id) {
+            Ok(dir) => {
+                let data = dir.join("data");
+                let shown = data.to_string_lossy().into_owned();
+                let size = tokio::task::spawn_blocking(move || dir_size(&data)).await.ok();
+                (size, Some(shown))
+            }
+            Err(_) => (None, None),
+        }
+    } else {
+        (None, None)
+    };
+    ServerState { server: s, running, problem, started_at, disk_bytes, data_dir }
+}
+
+// ── Finding servers Stroke didn't make ──────────────────────────────────────
+
+/// Ports each engine is usually found on.
+const PROBE_PORTS: &[(&str, std::ops::RangeInclusive<u16>)] = &[
+    ("postgres", 5432..=5440),
+    ("mysql", 3306..=3310),
+    ("redis", 6379..=6382),
+    ("mongodb", 27017..=27020),
+];
+
+/// What answers on a port, checked by speaking a few bytes of the engine's
+/// protocol: Postgres answers an SSLRequest with S or N, MySQL and MariaDB
+/// greet first with protocol version 10, Redis answers PING. MongoDB has no
+/// cheap greeting, so an open port in its range counts.
+async fn identify(engine: &str, port: u16) -> Option<String> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let t = Duration::from_millis(500);
+    let mut stream = tokio::time::timeout(t, tokio::net::TcpStream::connect(("127.0.0.1", port))).await.ok()?.ok()?;
+    let mut buf = [0u8; 128];
+    match engine {
+        "postgres" => {
+            stream.write_all(&[0, 0, 0, 8, 0x04, 0xd2, 0x16, 0x2f]).await.ok()?;
+            let n = tokio::time::timeout(t, stream.read(&mut buf)).await.ok()?.ok()?;
+            (n == 1 && (buf[0] == b'S' || buf[0] == b'N')).then(|| "postgres".to_string())
+        }
+        "mysql" => {
+            let n = tokio::time::timeout(t, stream.read(&mut buf)).await.ok()?.ok()?;
+            if n > 5 && buf[4] == 10 {
+                let greeting = String::from_utf8_lossy(&buf[5..n]).to_ascii_lowercase();
+                Some(if greeting.contains("mariadb") { "mariadb" } else { "mysql" }.to_string())
+            } else {
+                None
+            }
+        }
+        "redis" => {
+            stream.write_all(b"PING\r\n").await.ok()?;
+            let n = tokio::time::timeout(t, stream.read(&mut buf)).await.ok()?.ok()?;
+            let reply = String::from_utf8_lossy(&buf[..n]);
+            (reply.starts_with("+PONG") || reply.starts_with("-NOAUTH") || reply.starts_with("-ERR")).then(|| "redis".to_string())
+        }
+        "mongodb" => Some("mongodb".to_string()),
+        _ => None,
+    }
+}
+
+/// Engine of a container image, when it's a database.
+fn image_engine(image: &str) -> Option<&'static str> {
+    let base = image.rsplit('/').next().unwrap_or(image).split([':', '@']).next().unwrap_or("");
+    Some(match base {
+        b if b.starts_with("postgres") || b.starts_with("postgis") || b == "timescaledb" || b.starts_with("pgvector") => "postgres",
+        b if b.starts_with("mariadb") => "mariadb",
+        b if b.starts_with("mysql") || b.starts_with("percona") => "mysql",
+        b if b.starts_with("redis") || b.starts_with("valkey") => "redis",
+        b if b.starts_with("mongo") => "mongodb",
+        _ => return None,
+    })
+}
+
+/// Host ports a `docker ps` Ports column publishes ("0.0.0.0:5432->5432/tcp, [::]:5432->5432/tcp").
+fn published_ports(ports: &str) -> Vec<u16> {
+    let mut out: Vec<u16> = ports
+        .split(',')
+        .filter_map(|p| p.split("->").next()?.rsplit(':').next()?.trim().parse().ok())
+        .collect();
+    out.dedup();
+    out
+}
+
+#[tauri::command]
+pub async fn local_servers_discover(app: AppHandle) -> Result<Vec<FoundServer>, String> {
+    let ours: Vec<u16> = load(&app)?.iter().map(|s| s.port).collect();
+    let mut found: Vec<FoundServer> = Vec::new();
+    // Containers first: they carry a name worth showing.
+    if let Some(d) = which("docker") {
+        if let Ok(out) = run(&d, &["ps", "--format", "{{.Names}}\t{{.Image}}\t{{.Ports}}\t{{.Labels}}"]).await {
+            for line in out.lines() {
+                let cols: Vec<&str> = line.split('\t').collect();
+                if cols.len() < 3 || cols.get(3).is_some_and(|l| l.contains("app=stroke")) {
+                    continue;
+                }
+                let Some(engine) = image_engine(cols[1]) else { continue };
+                for port in published_ports(cols[2]) {
+                    if ours.contains(&port) || found.iter().any(|f| f.port == port) {
+                        continue;
+                    }
+                    found.push(FoundServer { engine: engine.into(), port, source: "docker".into(), name: cols[0].to_string(), image: Some(cols[1].to_string()) });
+                }
+            }
+        }
+    }
+    let probes = PROBE_PORTS.iter().flat_map(|(engine, range)| range.clone().map(move |p| (*engine, p)))
+        .filter(|(_, p)| !ours.contains(p) && !found.iter().any(|f| f.port == *p))
+        .map(|(engine, port)| async move { identify(engine, port).await.map(|e| (e, port)) });
+    for (engine, port) in futures::future::join_all(probes).await.into_iter().flatten() {
+        let label = match engine.as_str() { "postgres" => "PostgreSQL", "mysql" => "MySQL", "mariadb" => "MariaDB", "redis" => "Redis", _ => "MongoDB" };
+        found.push(FoundServer { engine, port, source: "process".into(), name: label.into(), image: None });
+    }
+    found.sort_by_key(|f| f.port);
+    Ok(found)
+}
+
+/// Start the servers marked to start with Stroke. Runs once at launch.
+pub fn autostart(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let Ok(servers) = load(&app) else { return };
+        for s in servers.into_iter().filter(|s| s.autostart) {
+            if let Err(e) = local_server_start(app.clone(), s.id.clone()).await {
+                log::warn!("local server {} didn't start at launch: {e}", s.name);
+            }
+        }
+    });
+}
+
+/// Show a native server's data folder in the file manager.
+#[tauri::command]
+pub async fn local_server_reveal(app: AppHandle, id: String) -> Result<(), String> {
+    let s = find(&app, &id)?;
+    if s.runtime != "native" {
+        return Err("A Docker server keeps its data in a Docker volume".into());
+    }
+    let data = server_dir(&app, &id)?.join("data");
+    tauri_plugin_opener::reveal_item_in_dir(&data).map_err(|e| e.to_string())
+}
+
+/// The Local servers window: one per app, focused when it's already open.
+#[tauri::command]
+pub async fn open_local_servers_window(app: AppHandle, from: String) -> Result<(), String> {
+    let label = "main-local-servers";
+    if let Some(w) = app.webview_windows().get(label) {
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+        return Ok(());
+    }
+    let from: String = from.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').take(64).collect();
+    let url = format!("/?view=local-servers&from={from}");
+    let mut builder = tauri::WebviewWindowBuilder::new(&app, label, tauri::WebviewUrl::App(url.into()))
+        .title("Local Servers")
+        .inner_size(980.0, 640.0)
+        .min_inner_size(720.0, 460.0)
+        .resizable(true)
+        .visible(false)
+        .background_color(tauri::window::Color(8, 8, 8, 255))
+        .devtools(cfg!(debug_assertions))
+        .zoom_hotkeys_enabled(false)
+        .on_navigation(crate::navigation_allowed);
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder
+            .title_bar_style(tauri::TitleBarStyle::Overlay)
+            .hidden_title(true)
+            .traffic_light_position(crate::mac_chrome::traffic_light_position());
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        builder = builder.decorations(false);
+    }
+    let window = builder.build().map_err(|e| e.to_string())?;
+    let surface = crate::surface_for_theme(window.theme().unwrap_or(tauri::Theme::Dark));
+    let _ = window.set_background_color(Some(surface));
+    crate::set_webview_backdrop(&window, surface);
+    crate::guard_webview(&window);
+    crate::arm_reveal_failsafe(&window);
+    Ok(())
+}
+
+/// Connect to a server in an app window: the Local servers window hands the
+/// connection to the window it was opened from (or the first main window)
+/// and brings that one forward.
+#[tauri::command]
+pub async fn local_server_connect_in(app: AppHandle, target: String, connection: serde_json::Value) -> Result<(), String> {
+    let windows = app.webview_windows();
+    let w = windows
+        .get(target.as_str())
+        .filter(|_| target.starts_with("main") && target != "main-local-servers" && !target.starts_with("main-dashboard-"))
+        .or_else(|| windows.get("main"))
+        .or_else(|| windows.iter().find(|(l, _)| l.starts_with("main") && *l != "main-local-servers" && !l.starts_with("main-dashboard-")).map(|(_, w)| w))
+        .ok_or("Open a Stroke window first")?;
+    let _ = w.unminimize();
+    let _ = w.set_focus();
+    w.emit("local-server-connect", connection).map_err(|e| e.to_string())
 }
 
 // ── Commands ────────────────────────────────────────────────────────────────
@@ -548,6 +801,7 @@ pub async fn local_server_create(app: AppHandle, spec: NewServer) -> Result<Loca
         port: spec.port,
         runtime: spec.runtime.clone(),
         created_at: chrono::Utc::now().timestamp_millis(),
+        autostart: false,
     };
     let dir = server_dir(&app, &id)?;
     let made = async {
@@ -739,9 +993,12 @@ pub async fn local_server_delete(app: AppHandle, id: String) -> Result<(), Strin
 
 /// Rename a server or move it to another port (it has to be stopped for a port change).
 #[tauri::command]
-pub async fn local_server_update(app: AppHandle, id: String, name: Option<String>, port: Option<u16>) -> Result<LocalServer, String> {
+pub async fn local_server_update(app: AppHandle, id: String, name: Option<String>, port: Option<u16>, autostart: Option<bool>) -> Result<LocalServer, String> {
     let mut servers = load(&app)?;
     let idx = servers.iter().position(|s| s.id == id).ok_or("That server no longer exists")?;
+    if let Some(a) = autostart {
+        servers[idx].autostart = a;
+    }
     if let Some(n) = name.map(|n| n.trim().to_string()).filter(|n| !n.is_empty()) {
         servers[idx].name = n;
     }
@@ -841,8 +1098,19 @@ mod tests {
         assert!(validate(&spec("oracle", "23", 1521, "docker"), &[]).is_err());
         assert!(validate(&spec("redis", "7; rm -rf /", 6380, "docker"), &[]).is_err());
         assert!(validate(&spec("redis", "7", 80, "docker"), &[]).unwrap_err().contains("1024"));
-        let taken = LocalServer { id: "a".into(), name: "Air".into(), engine: "postgres".into(), version: "16".into(), port: 5432, runtime: "docker".into(), created_at: 0 };
+        let taken = LocalServer { id: "a".into(), name: "Air".into(), engine: "postgres".into(), version: "16".into(), port: 5432, runtime: "docker".into(), created_at: 0, autostart: false };
         assert!(validate(&spec("mysql", "8.4", 5432, "docker"), &[taken]).unwrap_err().contains("Air"));
+    }
+
+    #[test]
+    fn other_servers_are_recognised_by_image_and_port() {
+        assert_eq!(image_engine("postgres:16-alpine"), Some("postgres"));
+        assert_eq!(image_engine("docker.io/bitnami/mariadb:11"), Some("mariadb"));
+        assert_eq!(image_engine("ghcr.io/x/pgvector/pgvector:pg17"), Some("postgres"));
+        assert_eq!(image_engine("valkey/valkey:8"), Some("redis"));
+        assert_eq!(image_engine("nginx:latest"), None);
+        assert_eq!(published_ports("0.0.0.0:5433->5432/tcp, [::]:5433->5432/tcp"), vec![5433]);
+        assert_eq!(published_ports("6379/tcp"), Vec::<u16>::new());
     }
 
     #[test]

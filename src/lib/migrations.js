@@ -10,6 +10,9 @@
 // counts as applied when its journal `when` is at or before the newest
 // created_at, which is how Drizzle's migrator decides; `hash` is the SHA-256
 // of the .sql file. Drizzle records no failures (a failed run rolls back).
+// Cloudflare D1 projects apply the same files with `wrangler d1 migrations
+// apply`, which keeps its own `d1_migrations` (id, name, applied_at), `name`
+// being the file name: every .sql file in the folder, in the journal or not.
 
 /**
  * @typedef {'applied' | 'pending' | 'failed' | 'rolled-back'} MigrationStatus
@@ -143,6 +146,36 @@ export function mergeDrizzle(rows, files) {
   return out
 }
 
+/**
+ * @param {Record<string, any>[]} rows `d1_migrations`
+ * @param {MigrationFile[] | null} files every .sql file in the folder (name with `.sql`); null when no folder is set
+ * @returns {Migration[]}
+ */
+export function mergeD1(rows, files) {
+  const strip = (/** @type {string} */ n) => n.replace(/\.sql$/i, '')
+  /** @type {Map<string, Record<string, any>>} */
+  const ran = new Map(rows.map((r) => [strip(String(r.name ?? '')), r]))
+  const fileByName = new Map((files ?? []).map((f) => [strip(f.name), f]))
+  const names = [...new Set([...fileByName.keys(), ...ran.keys()])].filter(Boolean).sort()
+  return names.map((name) => {
+    const row = ran.get(name)
+    const file = fileByName.get(name)
+    return {
+      name,
+      status: /** @type {MigrationStatus} */ (row ? 'applied' : 'pending'),
+      appliedAt: row ? toMs(row.applied_at) : null,
+      startedAt: null,
+      durationMs: null,
+      steps: null,
+      logs: null,
+      sql: file?.sql ?? null,
+      changed: false,
+      missingFile: !!files && !file,
+      attempts: row ? 1 : 0,
+    }
+  })
+}
+
 /** @param {Migration[]} list */
 export function counts(list) {
   const c = { applied: 0, pending: 0, failed: 0, rolledBack: 0, changed: 0 }
@@ -159,10 +192,11 @@ export function counts(list) {
 /**
  * The SELECTs that read each tool's table, per engine family. Prisma's table
  * lives in the connection's schema; Drizzle's in `drizzle` on Postgres.
- * @param {'prisma' | 'drizzle'} tool @param {string} family @param {string | null} schema
+ * @param {'prisma' | 'drizzle' | 'd1'} tool @param {string} family @param {string | null} schema
  * @returns {string[]} tried in order until one works
  */
 export function migrationQueries(tool, family, schema) {
+  if (tool === 'd1') return family === 'd1' || family === 'sqlite' ? ['SELECT id, name, applied_at FROM "d1_migrations" ORDER BY id'] : []
   const q = family === 'mysql' ? (/** @type {string} */ s) => `\`${s.replace(/`/g, '``')}\`` : (/** @type {string} */ s) => `"${s.replace(/"/g, '""')}"`
   if (tool === 'prisma') {
     const cols = 'id, checksum, finished_at, migration_name, logs, rolled_back_at, started_at, applied_steps_count'

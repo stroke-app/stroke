@@ -8,6 +8,8 @@
   // A window opened for one dashboard (open_dashboard_window) shows only that.
   const params = typeof location !== 'undefined' ? new URLSearchParams(location.search) : new URLSearchParams()
   const dashboardView = params.get('view') === 'dashboard' ? { dash: params.get('dash') ?? '', conn: params.get('conn') ?? '' } : null
+  // The Local servers window (open_local_servers_window).
+  const localServersFrom = params.get('view') === 'local-servers' ? params.get('from') || 'main' : null
   import LicenseGate from './lib/components/LicenseGate.svelte'
   import AppLockGate from './lib/components/AppLockGate.svelte'
   import AppErrorBoundary from './lib/components/AppErrorBoundary.svelte'
@@ -103,6 +105,10 @@
     <LicenseGate>
       {#if dashboardView}
         <DashboardWindow dashboardId={dashboardView.dash} connectionId={dashboardView.conn} />
+      {:else if localServersFrom}
+        {#await import('./lib/components/LocalServersWindow.svelte') then { default: LocalServersWindow }}
+          <LocalServersWindow from={localServersFrom} />
+        {/await}
       {:else}
         <StudioShell />
       {/if}

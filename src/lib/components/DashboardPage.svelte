@@ -19,6 +19,8 @@
     reorderItems,
     addQueryToDashboard,
     updateItem,
+    dashboardsConnectionId,
+    flushDashboards,
   } from "$lib/stores/dashboards.js";
   import { listSavedQueries, queryTitle } from "$lib/stores/query-history.js";
   import { executeSql } from "$lib/api.js";
@@ -264,8 +266,12 @@
   async function openWindow() {
     if (!activeDash || !connection?.id) return;
     try {
+      // The window reads the dashboard from storage: write pending edits now,
+      // and pass the key the dashboards are stored under (the saved
+      // connection's id), not the live connection's.
+      flushDashboards();
       const { invoke } = await import("@tauri-apps/api/core");
-      await invoke("open_dashboard_window", { dashboardId: activeDash.id, connectionId: connection.id, title: activeDash.name });
+      await invoke("open_dashboard_window", { dashboardId: activeDash.id, connectionId: dashboardsConnectionId() || connection.id, title: activeDash.name });
     } catch (e) {
       toast.error("Could not open the window", { description: String(e) });
     }

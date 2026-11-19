@@ -4582,8 +4582,12 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     const auto = new Set()
     for (const col of cols) {
       const dt = col.dataType ?? col.data_type ?? ""
-      if (stored[col.name] == null) auto.add(col.name)
-      next[col.name] = clampColumnWidth(stored[col.name] ?? defaultColumnWidth(dt))
+      // Builds before 2.21 saved every column's width when one was dragged,
+      // the untouched ones at their fixed type default (420 for text). A
+      // stored width equal to that default was never chosen: fit it instead.
+      const own = stored[col.name] != null && stored[col.name] !== clampColumnWidth(defaultColumnWidth(dt)) ? stored[col.name] : null
+      if (own == null) auto.add(col.name)
+      next[col.name] = clampColumnWidth(own ?? defaultColumnWidth(dt))
     }
     columnWidths = next
     // Columns nobody has sized are fitted to their content once rows arrive.
@@ -4704,7 +4708,24 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     const w = fittedWidth(columns[i], i)
     if (w == null) return
     columnWidths = { ...columnWidths, [colName]: w }
-    if (columnWidthsKey) saveColumnWidths(columnWidthsKey, columnWidths)
+    keepWidth(colName, w)
+  }
+
+  /**
+   * Store one column's width, chosen by hand. Only columns someone sized are
+   * stored; the rest stay automatic and are fitted to what they hold.
+   * @param {string} colName @param {number} w
+   */
+  function keepWidth(colName, w) {
+    if (!columnWidthsKey) return
+    const stored = loadColumnWidths(columnWidthsKey)
+    // Drop the type defaults older builds stored for untouched columns.
+    for (const col of columns) {
+      const dt = col.dataType ?? col.data_type ?? ''
+      if (stored[col.name] === clampColumnWidth(defaultColumnWidth(dt))) delete stored[col.name]
+    }
+    stored[colName] = w
+    saveColumnWidths(columnWidthsKey, stored)
   }
 
   // Virtual (relationship / expression) column widths persist alongside real
@@ -4775,7 +4796,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     if (columnWidthsKey && resizingColName) {
       if (resizingColName.startsWith('__vrel__')) saveColumnWidths(`${columnWidthsKey}\x00__vrel`, _vrelWidths);
       else if (resizingColName.startsWith('__vcol__')) saveColumnWidths(`${columnWidthsKey}\x00__vcol`, _vexprWidths);
-      else saveColumnWidths(columnWidthsKey, columnWidths);
+      else keepWidth(resizingColName, columnWidths[resizingColName]);
     }
     resizingColName = null;
   }
@@ -4853,6 +4874,18 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       delete stored[colName]
       saveColumnWidths(columnWidthsKey, stored)
     }
+  }
+
+  /** Every column back to automatic: fitted to its content, nothing stored. */
+  function fitAllColumns() {
+    /** @type {Record<string, number>} */
+    const fitted = {}
+    columns.forEach((col, i) => {
+      const w = rows.length ? fittedWidth(col, i) : null
+      if (w != null) fitted[col.name] = w
+    })
+    columnWidths = { ...columnWidths, ...fitted }
+    if (columnWidthsKey) saveColumnWidths(columnWidthsKey, {})
   }
 
   // ── Per-tab expand/sub-view state preservation ───────────────────────────────
@@ -9697,6 +9730,10 @@ import FilterX from "@lucide/svelte/icons/filter-x";
         <ContextMenu.Item onSelect={() => runMenuAction(() => resetColumnWidth(hcol))}>
           <RotateCcw />
           {$t('menu.resetWidth')}
+        </ContextMenu.Item>
+        <ContextMenu.Item onSelect={() => runMenuAction(fitAllColumns)}>
+          <MoveHorizontal />
+          {$t('menu.fitAllColumns')}
         </ContextMenu.Item>
         <ContextMenu.Separator />
         <!-- Copying a column was only possible by selecting it first; the header

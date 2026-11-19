@@ -91,6 +91,40 @@ export function switchDashboardsConnection(connectionId) {
   activeDashboardId.set(loadActiveId(_connId))
 }
 
+/** Write pending edits now (another window is about to read them). */
+export function flushDashboards() {
+  persistDashboards.flush()
+}
+
+/** The connection key the dashboards are stored under right now. */
+export function dashboardsConnectionId() {
+  return _connId
+}
+
+/**
+ * The connection key whose dashboards hold `dashId`, `preferred` first. A
+ * dashboard window opened with a key the tab didn't store under (an older
+ * build, a connection matched another way) still finds its dashboard.
+ * @param {string} dashId @param {string} preferred @returns {string | null}
+ */
+export function findDashboardScope(dashId, preferred) {
+  /** @param {string | null} raw */
+  const has = (raw) => {
+    try {
+      const list = JSON.parse(raw ?? 'null')
+      return Array.isArray(list) && list.some((d) => d?.id === dashId)
+    } catch { return false }
+  }
+  try {
+    if (preferred && has(localStorage.getItem(KEY(preferred)))) return preferred
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i)
+      if (k?.startsWith('stroke:dashboards:') && has(localStorage.getItem(k))) return k.slice('stroke:dashboards:'.length)
+    }
+  } catch { /* storage unavailable */ }
+  return null
+}
+
 /** @param {string} name @returns {Dashboard} */
 export function createDashboard(name) {
   const id = `dash-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`

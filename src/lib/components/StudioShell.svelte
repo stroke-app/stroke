@@ -578,7 +578,31 @@
     }
   }
   let showDockerModal = $state(false)
-  let showLocalServers = $state(false)
+  /** Local servers live in their own window; its Open button connects here. */
+  async function openLocalServers() {
+    try {
+      const { getCurrentWindow } = await import('@tauri-apps/api/window')
+      const { openLocalServersWindow } = await import('$lib/local-servers.js')
+      await openLocalServersWindow(getCurrentWindow().label)
+    } catch (e) {
+      toast.error('Could not open Local servers', { description: String(e) })
+    }
+  }
+  $effect(() => {
+    let off = () => {}
+    let gone = false
+    void import('@tauri-apps/api/event')
+      .then(({ listen }) => listen('local-server-connect', (e) => {
+        // Ids are stable per server: one opened before keeps what was set on
+        // it since (a password for a server Stroke didn't make).
+        const info = /** @type {any} */ (e.payload)
+        const saved = loadSavedConnections().find((c) => c.id === info.id)
+        void handleDockerConnect(saved ? { ...saved } : info)
+      }))
+      .then((un) => { if (gone) un(); else off = un })
+      .catch(() => {})
+    return () => { gone = true; off() }
+  })
   let dockerInitialDb = $state(/** @type {string | null} */ (null))
   /** Bottom query-log console visibility. */
   let queryLogOpen = $state(false)
@@ -3478,7 +3502,7 @@ let rowSearch = $state('')
     erd: () => openErdTab(),
     dataDiff: () => openDataDiffTab(),
     migrations: () => openMigrationsTab(),
-    localServers: () => { commandOpen = false; showLocalServers = true },
+    localServers: () => { commandOpen = false; void openLocalServers() },
     dashboard: () => openDashboardTab(),
     logs: () => openLogsTab(),
     extensions: () => openExtensionsTab(),
@@ -8541,6 +8565,9 @@ let rowSearch = $state('')
       await connectByType(conn)
       await onConnected(conn, conn.id)
       showDockerModal = false
+      // Connected from another window (Local servers) while the connection
+      // screen was up: show the database, not the screen.
+      showConnectionModal = false
     } catch (e) {
       error = String(e)
       showDockerModal = false
@@ -9932,11 +9959,7 @@ let rowSearch = $state('')
   dialect={dbType}
   onopeninsql={(sql) => { if (aiMode) exitAiMode(); void openQueryInEditor(sql) }}
 />
-{#if showLocalServers}
-  {#await import('./LocalServersDialog.svelte') then { default: LocalServersDialog }}
-    <LocalServersDialog bind:open={showLocalServers} onopen={(c) => void handleDockerConnect(c)} />
-  {/await}
-{/if}
+
 {#if dialogMounted.docker}
   {#await lazyDialogs.docker() then { default: DockerLaunchModal }}
 <DockerLaunchModal
@@ -10145,7 +10168,7 @@ let rowSearch = $state('')
   openschematimeline={() => { commandOpen = false; openSchemaTimelineTab() }}
   opendatadiff={() => { commandOpen = false; openDataDiffTab() }}
   openmigrations={() => { commandOpen = false; openMigrationsTab() }}
-  openlocalservers={() => { commandOpen = false; showLocalServers = true }}
+  openlocalservers={() => { commandOpen = false; void openLocalServers() }}
   schemaContext={aiSchemaContext}
   onaskcontinue={handleAskContinue}
 />
