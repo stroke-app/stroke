@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.20.3] - 2026-11-19
+
+### Changes
+- Move local servers to their own window; fix dashboard window and D1 migrations (#305)
+
+
 ## [2.20.2] - 2026-11-18
 
 ### Changes
