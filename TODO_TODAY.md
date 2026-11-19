@@ -1,6 +1,6 @@
 # TODO
 
-What is open as of 2026-11-17 (nightly at 2.16.8, stable at 2.3.0). Security
+What is open as of 2026-11-19 (nightly at 2.20.x, stable at 2.3.0). Security
 items live in `TODO_SECURITY.md`.
 
 ## v3
@@ -19,13 +19,15 @@ release with a freeze and a test pass, not a plain promote. In order:
       v3 build through the updater. Connections, keychain passwords,
       settings, query history, notebooks and Pro all have to survive. On
       macOS, Windows and Linux: the updater is what breaks first.
-- [ ] **AI access levels for built-in models.** The Read only / Read & write
+- [x] **AI access levels for built-in models.** Done in 2.20.4: every
+      execute_sql is classified by `access.rs` and refused above the level.
+      Was: The Read only / Read & write
       control exists for local agents only (enforced by the MCP server).
       Built-in models (Stroke Free, API keys) can run writes, asking only
       before destructive ones. Enforce a level in `AiChat`'s `execute_sql`
       with the same classifier as `src-tauri/src/mcp/access.rs`, then show
       the control.
-- [ ] **echarts 6** (PR #14): clears the echarts XSS advisory; the charts need
+- [x] **echarts 6** (on 6.1.0, audit clean): clears the echarts XSS advisory; the charts need
       testing.
 - [ ] **Real hardware.** Windows: theme switching and zoom without flicker,
       Alt+K in the SQL editor, the title bar with the sidebar on the right,
@@ -49,18 +51,19 @@ release with a freeze and a test pass, not a plain promote. In order:
 
 ## Next up
 
-- [ ] **Layout control.** Three buttons in the title bar for the sidebar (⌘B),
+- [x] **Layout control.** Dropped; the SQL results bottom/right switch
+      replaced it (2.19.x). Was: Three buttons in the title bar for the sidebar (⌘B),
       the terminal panel (⌘J) and the docked AI panel (⌘⌥B), the open edge
       filled. Built on the `layout-and-dashboard` branch; check it in the
       running app on every OS before merging.
-- [ ] **Dashboard tab redesign.** A 12-column grid of chart cards, each with a
+- [x] **Dashboard tab redesign.** Shipped, plus a dashboard window. Was: A 12-column grid of chart cards, each with a
       status dot, refresh, an auto-refresh interval, a title and its error on
       the card. Resize and rearrange cards, add one from any saved query, and
       save the layout.
 - [ ] **Admin metrics page** on stroke.click, for me only: sign-ups, active
       trials, trial-to-Pro conversion, revenue, downloads, active devices,
       app versions in use, countries, backups and sponsors, over time.
-- [ ] **Local database servers.** Postgres, MySQL and Redis side by side in
+- [x] **Local database servers.** Shipped as their own window. Was: Postgres, MySQL and Redis side by side in
       any version, with Start, Stop, the port and Open, per server on Docker
       or as native binaries; Homebrew services listed too.
 
