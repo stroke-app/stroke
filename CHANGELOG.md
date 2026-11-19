@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [2.20.4] - 2026-11-19
+
+### Changes
+- Hold the built-in AI chat to its access level; redesign Migrations (#306)
+
+
 ## [2.20.3] - 2026-11-19
 
 ### Changes
