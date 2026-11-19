@@ -465,7 +465,7 @@ jobs:
           curl -fsSL -o stroke.deb "$URL"
           SHA=$(sha256sum stroke.deb | cut -d' ' -f1)
           mkdir -p aur
-          sed -e "s/@VERSION@/${VERSION}/" -e "s/@SHA256@/${SHA}/" packaging/aur/stroke-bin/PKGBUILD.in > aur/PKGBUILD
+          sed -e "s/@VERSION@/${VERSION}/" -e "s/@PKGREL@/1/" -e "s/@SHA256@/${SHA}/" packaging/aur/stroke-bin/PKGBUILD.in > aur/PKGBUILD
           cat aur/PKGBUILD
           echo "skip=false" >> "$GITHUB_OUTPUT"
 
