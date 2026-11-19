@@ -693,6 +693,7 @@ pub fn run() {
             commands::read_file,
             commands::open_new_window,
             commands::open_dashboard_window,
+            commands::sql_access_level,
             launch::take_open_request,
             commands::reveal_window,
             commands::restart_app,

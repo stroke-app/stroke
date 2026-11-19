@@ -1669,6 +1669,17 @@ pub async fn share_execute_sql(state: Db<'_>, sql: String, read_only: bool) -> R
     crate::mcp::tools::call_tool(&conn, "execute_sql", &serde_json::json!({ "sql": sql, "max_rows": 1000 }), read_only).await
 }
 
+/// The access level a script needs on the open connection (0 read, 1 read &
+/// write, 2 modify schema, 3 dangerous), by the classifier the MCP server
+/// enforces. The built-in AI chat checks it before running a statement, so
+/// its access setting holds the same way a local agent's does.
+#[tauri::command]
+pub async fn sql_access_level(state: Db<'_>, sql: String) -> Result<u8, String> {
+    use crate::mcp::access;
+    let dialect = require_conn(&state).map(|c| access::Dialect::for_driver(c.driver())).unwrap_or(access::Dialect::Sql);
+    Ok(access::script_level_in(dialect, &sql))
+}
+
 #[tauri::command]
 pub async fn pg_execute_sql_multi(
     state: Db<'_>,

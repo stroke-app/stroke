@@ -48,7 +48,7 @@
   import { Input } from "$lib/components/ui/input/index.js";
   import { Label } from "$lib/components/ui/label/index.js";
   import { cn } from "$lib/utils.js";
-  import { executeSql, executeSqlOnConnection, aiWebSearch, aiFetchPage, saveExportAs, agentStart, agentSend, agentInterrupt, agentStop } from "$lib/api.js";
+  import { sqlAccessLevel, executeSql, executeSqlOnConnection, aiWebSearch, aiFetchPage, saveExportAs, agentStart, agentSend, agentInterrupt, agentStop } from "$lib/api.js";
   import { queryLanguageFor, sampleQuery, describeFromSample } from "$lib/ai-query-languages.js";
   import {
     profileAgent,
@@ -429,6 +429,9 @@
     convList = await listConversations(chatMatch ?? (connectionId || undefined));
   }
 
+  /** Access levels as the backend ranks them (src-tauri/src/mcp/access.rs). @type {Record<string, number>} */
+  const ACCESS_RANK = { read: 0, write: 1, modify: 2, dangerous: 3 };
+  const ACCESS_NAMES = ["Read only", "Read & write", "Modify schema", "Dangerous"];
   /** Engines where execute_sql's `database` argument can open another database by name. */
   const CROSS_DB_ENGINES = new Set(["postgres", "cockroachdb", "mysql", "mariadb", "mssql", "clickhouse"]);
 
@@ -2386,7 +2389,17 @@
       planSteps: true,
     });
     const ci = $aiChatParams.customInstructions.trim();
-    turnSystemPrompt = ci ? `${ci}\n\n---\n\n${basePrompt}` : basePrompt;
+    // What execute_sql will run, so the model proposes SQL instead of
+    // sending statements the access level refuses.
+    const rank = isReadOnly() ? 0 : ACCESS_RANK[$agentPrefs.access] ?? 0;
+    const accessNote = `=== ACCESS ===\nThe user set this chat to "${ACCESS_NAMES[rank]}". ${[
+      "execute_sql runs reads only (SELECT, WITH, EXPLAIN, SHOW). For anything that changes data or schema, give the SQL in a ```sql block for the user to run, and say they can raise the access level under the composer.",
+      "execute_sql runs reads, INSERTs, and UPDATEs or DELETEs with a WHERE clause. Schema changes go in a ```sql block for the user.",
+      "execute_sql runs reads, writes with a WHERE clause, and CREATE, ALTER and indexes. Nothing that drops or truncates: give that SQL in a ```sql block.",
+      "execute_sql runs anything; destructive statements still ask the user first.",
+    ][rank]}`;
+    const withAccess = `${basePrompt}\n\n${accessNote}`;
+    turnSystemPrompt = ci ? `${ci}\n\n---\n\n${withAccess}` : withAccess;
 
     // Smart context management: sliding window + optional summarization.
     // managedLen marks where new messages start after the turn - used to append to rawApiHistory.
@@ -3279,6 +3292,28 @@
             content: JSON.stringify({ error: "Empty SQL provided" }),
           });
           return;
+        }
+        // The chat's access level, held the way the MCP server holds a local
+        // agent's: the statement is classified on the engine it would run
+        // on, and anything above the level isn't run.
+        {
+          const allowed = ACCESS_RANK[$agentPrefs.access] ?? 0;
+          /** @type {number} */
+          let needs = 3;
+          try { needs = Number(await sqlAccessLevel(sql)); } catch { /* unknown: treat as the highest */ }
+          if (needs > allowed) {
+            const now = Date.now();
+            const level = ACCESS_NAMES[needs] ?? "Dangerous";
+            addBuiltinStep({ id: String(call.id || uid()), tool: "execute_sql", op: "query", detail: sql, status: "error", error: `Not run: needs "${level}" access, and the chat is set to "${ACCESS_NAMES[allowed]}".`, startedAt: now, endedAt: now });
+            apiHistory.push({
+              role: "tool",
+              tool_call_id: call.id,
+              content: JSON.stringify({
+                error: `Refused: this needs "${level}" access and the chat is set to "${ACCESS_NAMES[allowed]}". Do not retry it. Give the user the SQL in a \`\`\`sql block to review and run, or ask them to raise the access level under the composer.`,
+              }),
+            });
+            return;
+          }
         }
         if (isDestructiveSql(sql)) {
           const confirmed = await waitForConfirm(sql);
@@ -4842,11 +4877,7 @@
             </span>
           {/if}
           <span class="flex-1"></span>
-          {#if profileAgent($aiSettings)}
-            <AgentComposerChips agent={profileAgent($aiSettings) ?? ""} part="access" />
-          {:else if $readOnlyMode}
-            <span class="flex shrink-0 items-center gap-1.5"><Lock class="size-3.5 shrink-0" />Read only</span>
-          {/if}
+          <AgentComposerChips agent={profileAgent($aiSettings) ?? ""} part="access" />
         </div>
 {/snippet}
 

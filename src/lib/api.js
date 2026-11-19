@@ -1510,6 +1510,15 @@ export async function cancelQuery(queryId) {
 }
 
 /** @param {string} sql @param {string} [queryId] */
+/**
+ * The access level a script needs on the open connection: 0 read, 1 read &
+ * write, 2 modify schema, 3 dangerous (src-tauri/src/mcp/access.rs).
+ * @param {string} sql @returns {Promise<number>}
+ */
+export async function sqlAccessLevel(sql) {
+  return await inv('sql_access_level', { sql })
+}
+
 export async function executeSql(sql, queryId) {
   if (isWriteSql(sql)) assertWritable('run that statement')
   const _t0 = performance.now()
