@@ -630,9 +630,9 @@ export const DEFAULT_SETTINGS = {
   // Beta: 'tree' swaps the sidebar's Tables / Objects / Databases tabs for one
   // explorer tree (connection > database > schema > groups > objects > columns).
   sidebarStyle: 'classic',
-  // Beta: AI chat opens as a tab beside your tables, its chats listed in the
-  // sidebar, instead of taking over the whole window.
-  aiInTab: false,
+  // AI chat opens as a tab beside your tables, its chats listed in the
+  // sidebar, instead of taking over the whole window. Still in Labs, but on by default since 3.0.
+  aiInTab: true,
   // On by default. A column averaging half a megabyte a row is fetched as a
   // size, and its value is loaded per cell on demand - the difference between a
   // table opening in a second and in eleven. Off restores the old behaviour:
@@ -1003,7 +1003,15 @@ export function loadSettings() {
     const sidebarRememberGroups = parsed.sidebarRememberGroups !== false
     const liveModeEnabled = parsed.liveModeEnabled === true
     const sidebarStyle = parsed.sidebarStyle === 'tree' ? 'tree' : 'classic'
-    const aiInTab = parsed.aiInTab === true
+    // Absent means on. A stored `false` from before 3.0, when this was a Labs
+    // switch off by default, can't be told from a choice, so it turns on once.
+    let aiInTab = parsed.aiInTab !== false
+    try {
+      if (localStorage.getItem('stroke:ai-in-tab-default-v3') !== '1') {
+        if (!aiInTab) { aiInTab = true; settingsMigrated = true }
+        localStorage.setItem('stroke:ai-in-tab-default-v3', '1')
+      }
+    } catch {}
     const lazyWideColumns = parsed.lazyWideColumns !== false
     const nullSortOrder = NULL_SORT_IDS.includes(parsed.nullSortOrder) ? parsed.nullSortOrder : DEFAULT_NULL_SORT
     const agentChatFontSize = migrateAgentFont(parsed.agentChatFontSize, LEGACY_AGENT_CHAT_FONT, DEFAULT_AGENT_CHAT_FONT)

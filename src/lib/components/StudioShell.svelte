@@ -2952,7 +2952,7 @@ let rowSearch = $state('')
   function handleWhatsNewAction(id) {
     if (id === 'enable-tree-sidebar') {
       updateSettings({ sidebarStyle: 'tree' })
-      toast.success('Explorer tree is on', { description: 'Switch back any time in Settings → General.' })
+      toast.success('Explorer tree is on', { description: 'Switch back any time in Settings → Labs.' })
     } else if (id === 'open-themes') {
       menuActions.theme?.()
     } else if (id === 'open-shortcuts') {
@@ -2961,10 +2961,18 @@ let rowSearch = $state('')
       showConnectionModal = true
     } else if (id === 'enable-ai-tab') {
       updateSettings({ aiInTab: true })
-      toast.success('AI chat opens in a tab now', { description: 'Switch back any time in Settings → General.' })
+      toast.success('AI chat opens in a tab now', { description: 'Switch back any time in Settings → Labs.' })
     } else if (id === 'open-docker') {
       commandPage = 'docker'
       commandOpen = true
+    } else if (id === 'open-ai') {
+      openAiTab()
+    } else if (id === 'open-local-servers') {
+      void openLocalServers()
+    } else if (id === 'open-migrations') {
+      openMigrationsTab()
+    } else if (id === 'open-backups') {
+      openBackupTab()
     }
   }
 
@@ -3191,7 +3199,7 @@ let rowSearch = $state('')
   }
   /** The full-window AI chat, so the title bar's sidebar button can drive its chat list. @type {any} */
   let aiFullRef = $state(null)
-  /** The AI chat in its tab (beta), for messages sent from elsewhere. @type {any} */
+  /** The AI chat in its tab, for messages sent from elsewhere. @type {any} */
   /**
    * The AI tab's chat instances. One is on screen (`aiPrimaryKey`); the others
    * are chats still replying after you started or opened another, kept mounted
@@ -4543,7 +4551,7 @@ let rowSearch = $state('')
     clearTableEditor()
   }
 
-  /** AI chat: a tab beside the others (beta setting), or the window's AI mode. */
+  /** AI chat: a tab beside the others, or the window's AI mode. */
   function openAiTab() {
     if (!$hasPro) { showProGate = true; return }
     if ($appAiInTab && connection) {
@@ -8242,7 +8250,7 @@ let rowSearch = $state('')
 
   function enterAiMode() {
     if (!connection) return
-    // AI in a tab (beta): every way into AI mode (⌘⇧E, the title bar, the
+    // AI in a tab: every way into AI mode (⌘⇧E, the title bar, the
     // palette) opens the tab instead.
     if ($appAiInTab) { openSingletonTab({ find: findAiTab, create: createAiTab }); return }
     aiMode = true
@@ -10640,7 +10648,7 @@ let rowSearch = $state('')
 
       {#snippet sharedContent()}
       {#if activeTab?.kind === 'ai'}
-        <!-- AI in a tab (beta): drawn by the kept-alive block below -->
+        <!-- AI in a tab: drawn by the kept-alive block below -->
       {:else if activeTab?.kind === 'schema'}
         <svelte:boundary failed={tabError}>
           {#await import('./SchemaPage.svelte')}<TabLoading />{:then { default: SchemaPage }}
@@ -10703,7 +10711,7 @@ let rowSearch = $state('')
         </div>
       {/if}
 
-      <!-- AI chat tab (beta) - mount once, keep alive so a reply keeps streaming
+      <!-- AI chat tab - mount once, keep alive so a reply keeps streaming
            while you look at a table. Its chats are listed in the sidebar. -->
       {#if aiTabEverOpened && $appAiInTab}
         <div
