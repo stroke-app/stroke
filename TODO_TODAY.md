@@ -9,8 +9,11 @@ Stable has been on 2.3.0 since 2026-11-02, with 273 commits on `nightly`
 since. Every Stable user jumps across all of it in one update, so v3 is a
 release with a freeze and a test pass, not a plain promote. In order:
 
-- [ ] **Feature freeze.** Fixes only on `nightly` until v3 ships.
-- [ ] **Decide what leaves Labs.** Several connections at once and the tree
+- [x] **Feature freeze.** Fixes only on `nightly` until v3 ships.
+- [x] **Decide what leaves Labs.** Decided for 3.0: AI chat in a tab stays
+      in Labs but is on by default (turned on once for everyone); the tree
+      sidebar and several connections stay opt-in.
+      Was: Several connections at once and the tree
       sidebar: graduate both to the default (they are what the site and the
       email show) and test them as the default on every engine, or ship v3
       with them still opt-in.
@@ -39,14 +42,19 @@ release with a freeze and a test pass, not a plain promote. In order:
 - [ ] **The license change**, settled before the release: the same wording on
       the site's legal pages, in the app (license page, About) and in the
       email.
-- [ ] **Release notes: what changed since 2.3.0.** Written once, used for the
+- [x] **Release notes: what changed since 2.3.0.** Written once, used for the
       release page, the in-app What's new, the email and the launch posts.
-- [ ] **Rollback plan.** Keep the 2.3.0 installers easy to find, and know how
+- [x] **Rollback plan.** If v3 breaks on day one, run
+      `gh release edit v2.3.0 --repo stroke-app/stroke --latest`: the Stable
+      updater reads `releases/latest/download/latest.json`, so nobody else
+      moves to v3. The updater never downgrades, so anyone already on v3 needs
+      a 3.0.1 fix.
+      Before: Keep the 2.3.0 installers easy to find, and know how
       to point the Stable updater back at 2.3.0 if v3 breaks something on day
       one.
 - [ ] **Release candidate.** A few days of daily use on Nightly with nothing
       new landing.
-- [ ] **Ship it.** Label the release PR `release:major` (CONTRIBUTING.md), then
+- [x] **Ship it.** Label the release PR `release:major` (CONTRIBUTING.md), then
       Actions, *Promote nightly to stable*.
 
 ## Next up

@@ -9,7 +9,7 @@
 import { compareVersions } from '$lib/changelog.js'
 
 /**
- * @typedef {'enable-tree-sidebar' | 'open-themes' | 'open-shortcuts' | 'open-connections' | 'enable-ai-tab' | 'open-docker'} HighlightAction
+ * @typedef {'enable-tree-sidebar' | 'open-themes' | 'open-shortcuts' | 'open-connections' | 'enable-ai-tab' | 'open-docker' | 'open-ai' | 'open-local-servers' | 'open-migrations' | 'open-backups'} HighlightAction
  * @typedef {{
  *   id: string,
  *   icon: 'tree' | 'themes' | 'keyboard' | 'database',
@@ -22,6 +22,41 @@ import { compareVersions } from '$lib/changelog.js'
 
 /** Newest first. @type {{ after: string, items: Highlight[] }[]} */
 export const HIGHLIGHT_SETS = [
+  {
+    // Stroke 3.0: the first Stable after 2.3.0, so most people see this set.
+    after: '2.20.4',
+    items: [
+      {
+        id: 'v3-ai-tab',
+        icon: 'database',
+        beta: true,
+        title: 'AI chat sits beside your tables',
+        body: 'AI opens as a tab next to your tables and queries, and its chats live in the sidebar with the database each one worked in. Pick Read only, Read & write or more for any model.',
+        action: { id: 'open-ai', label: 'Open AI chat' },
+      },
+      {
+        id: 'v3-local-servers',
+        icon: 'database',
+        title: 'Local database servers',
+        body: 'Run Postgres, MySQL or Redis on this computer in any version, start them with Stroke, and see the servers already running here.',
+        action: { id: 'open-local-servers', label: 'Open local servers' },
+      },
+      {
+        id: 'v3-migrations',
+        icon: 'database',
+        title: 'Migrations, applied and pending',
+        body: 'Point Stroke at a Drizzle, Prisma, Wrangler or plain SQL folder and see what has run, what is waiting, and the SQL of each one.',
+        action: { id: 'open-migrations', label: 'Open Migrations' },
+      },
+      {
+        id: 'v3-backups',
+        icon: 'database',
+        title: 'Scheduled, encrypted backups',
+        body: 'Back up on a schedule to Stroke Cloud or your own S3, end-to-end encrypted, and preview a dump before you restore it.',
+        action: { id: 'open-backups', label: 'Set up backups' },
+      },
+    ],
+  },
   {
     after: '2.6.0',
     items: [
