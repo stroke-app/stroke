@@ -191,7 +191,7 @@
         {#if columns.length > 0}
           <div class="border-b border-border/40 px-3 py-3">
             <p class="mb-2 text-ui-xs font-medium text-foreground/60">Columns</p>
-            <div class="mb-1.5 flex items-center gap-1.5 rounded border border-border/50 bg-muted/30 px-2 py-1">
+            <div class="search-shell mb-1.5 flex h-7 items-center gap-1.5 px-2">
               <Search class="size-3.5 shrink-0 text-muted-foreground" />
               <input
                 type="text"

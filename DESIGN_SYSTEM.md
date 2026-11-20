@@ -354,6 +354,11 @@ secondary line, if any, is `text-ui-2xs text-muted-foreground` in plain words
 focuses it (a `size-5` clear (×) button replaces the keycap while it has text).
 Focus moves the outline to `border-ring/70`. Do not hand-roll a search input;
 pass `rank={null}` for a field `/` should not focus.
+Where a field keeps its own keyboard handling or toolbar cluster, put
+`search-box no-field-frame` on the input (icon positioned over it), or
+`search-shell` on a wrapper row that holds icon, input and buttons. Both draw
+the same outline. Filter rows at the top of a menu or popover list
+(`data-slot="menu-search"`) stay frameless: the menu is already the box.
 
 **Prominent pick lists** (provider DB lists, account lists):
 ```

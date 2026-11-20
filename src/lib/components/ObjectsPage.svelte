@@ -428,7 +428,7 @@
             // behind it is the page, and there is nothing to close.
             if (e.key === 'Escape' && objQuery) { e.preventDefault(); e.stopPropagation(); objQuery = '' }
           }}
-          class="field-surface h-7 w-full border-transparent bg-accent/40 pl-8 pr-7 text-ui-sm text-foreground placeholder:text-muted-foreground transition-colors focus:bg-input/30 focus:outline-none"
+          class="search-box no-field-frame h-7 w-full pl-8 pr-7 text-ui-sm"
         />
         {#if objQuery}
           <button

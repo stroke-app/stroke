@@ -299,8 +299,8 @@
     <div class="mx-auto w-full max-w-3xl">
       <div
         class={cn(
-          'flex h-11 items-center gap-2 rounded-lg bg-muted/50 ps-3.5 pe-1.5 transition-colors focus-within:bg-muted/70',
-          regexError && 'bg-destructive/8',
+          'search-shell flex h-11 items-center gap-2 ps-3.5 pe-1.5',
+          regexError && 'border-destructive/50 bg-destructive/8',
         )}
       >
         <Search class="size-4 shrink-0 text-muted-foreground" />

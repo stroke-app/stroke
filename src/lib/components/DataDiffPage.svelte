@@ -761,7 +761,7 @@
            stranded outside a pill it clearly belonged to.
            `ps-4`, not `pl-4` - this strip mirrors under RTL. -->
       <div class="ms-auto flex items-center gap-2 pb-2.5 ps-4">
-        <div class="flex h-7 items-center gap-1.5 rounded-md border border-border/40 bg-muted/30 px-2 transition-colors focus-within:border-border">
+        <div class="search-shell flex h-7 items-center gap-1.5 px-2">
           <Search class="size-3 shrink-0 text-muted-foreground" />
           <input type="text" bind:value={searchQuery} placeholder="Search rows…"
             aria-label="Search diff rows"

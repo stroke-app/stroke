@@ -1376,6 +1376,23 @@ html[data-motion="reduced"] .animate-spin {
   .search-box:focus-visible { box-shadow: 0 0 0 2px color-mix(in oklab, var(--ring) 15%, transparent); }
   .search-box:disabled { cursor: not-allowed; opacity: 0.4; }
   .search-box::-webkit-search-cancel-button { display: none; }
+  /* The same box for a search built as a wrapper (icon, input, buttons in one
+     row): the wrapper carries the outline and lights up while the input has focus. */
+  .search-shell {
+    border-radius: var(--radius-lg);
+    border: 1px solid color-mix(in oklab, var(--border) 80%, transparent);
+    background-color: color-mix(in oklab, var(--muted) 30%, transparent);
+    color: var(--foreground);
+    transition: border-color 150ms ease-out, background-color 150ms ease-out, box-shadow 150ms ease-out;
+  }
+  .search-shell:hover { border-color: color-mix(in oklab, var(--foreground) 20%, transparent); }
+  .search-shell:focus-within {
+    border-color: color-mix(in oklab, var(--ring) 70%, transparent);
+    background-color: color-mix(in oklab, var(--muted) 45%, transparent);
+  }
+  .search-shell:has(:focus-visible) { box-shadow: 0 0 0 2px color-mix(in oklab, var(--ring) 15%, transparent); }
+  .search-shell input { background: transparent; color: inherit; }
+  .search-shell input::placeholder { color: var(--muted-foreground); }
 }
 
 /* ── Hover-revealed row actions stay reachable by keyboard ───────────────────

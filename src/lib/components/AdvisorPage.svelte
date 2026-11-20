@@ -283,7 +283,7 @@
                 bind:value={query}
                 placeholder="Filter by table, check…"
                 aria-label="Filter findings"
-                class="field-surface h-7 w-52 bg-background pl-7 pr-2 text-ui-xs text-foreground placeholder:text-muted-foreground focus:border-primary/40 focus:outline-none"
+                class="search-box no-field-frame h-7 w-52 pl-7 pr-2 text-ui-xs"
               />
             </div>
           </div>

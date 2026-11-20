@@ -899,7 +899,7 @@
           bind:this={structureSearchEl}
           type="text"
           aria-label="Search column"
-          class="field-surface h-7 w-full min-w-0 pl-8 pr-7 font-mono text-ui-sm shadow-none outline-none"
+          class="search-box no-field-frame h-7 w-full min-w-0 pl-8 pr-7 font-mono text-ui-sm"
           placeholder="Search column…"
           value={structureSearch}
           oninput={(e) =>
@@ -926,7 +926,7 @@
             // frame rule in app.css; the radius no longer has anything to beat.
             // The shared field frame (fill + hairline, accent edge on focus, no
             // shadow), same as every NoSQL field.
-            "h-8 w-full min-w-0 pl-8 text-ui-sm shadow-none outline-none placeholder:text-muted-foreground",
+            "search-box no-field-frame h-8 w-full min-w-0 pl-8 text-ui-sm",
             // Right padding is whatever the cluster in that corner occupies:
             // options trigger, keycaps, both, or neither.
             // hint (⌘F) and the toggles never coexist: the hint is for an empty

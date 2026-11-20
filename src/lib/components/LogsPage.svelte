@@ -196,7 +196,7 @@
       <input
         type="text"
         placeholder="Search logs…"
-        class= "field-surface h-7 w-full bg-background/40 pl-7 pr-2.5 font-mono text-ui-xs text-foreground outline-none placeholder:text-muted-foreground transition-colors hover:bg-background/60"
+        class="search-box no-field-frame h-7 w-full pl-7 pr-2.5 font-mono text-ui-xs"
         bind:this={searchEl}
         bind:value={search}
       />

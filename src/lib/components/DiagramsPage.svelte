@@ -228,7 +228,7 @@
             type="text"
             placeholder="Search diagrams…"
             bind:value={searchQ}
-            class= "field-surface h-7 w-full bg-background/50 pl-6 pr-2 text-ui-xs text-foreground placeholder:text-muted-foreground focus:outline-none"
+            class="search-box no-field-frame h-7 w-full pl-6 pr-2 text-ui-xs"
           />
         </div>
       </div>

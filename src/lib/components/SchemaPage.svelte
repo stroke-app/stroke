@@ -227,7 +227,7 @@
         placeholder="Filter…"
         bind:this={filterEl}
         bind:value={filter}
-        class= "field-surface h-7 w-full bg-background/40 pl-7 pr-2.5 text-ui-xs text-foreground outline-none transition-colors hover:bg-background/60"
+        class="search-box no-field-frame h-7 w-full pl-7 pr-2.5 text-ui-xs"
       />
     </div>
   </div>
