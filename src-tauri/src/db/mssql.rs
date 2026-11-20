@@ -41,6 +41,13 @@ pub async fn remember(handle: &MssqlHandle, cfg: &MssqlConfig) {
     }
 }
 
+/// Drop a handle's registry entry once the handle is done with (a
+/// transaction's own client). The entry holds the login, and the address it
+/// is keyed by can be reused by the next handle.
+pub fn forget(handle: &MssqlHandle) {
+    SESSIONS.lock().unwrap_or_else(|e| e.into_inner()).remove(&key(handle));
+}
+
 /// A new client on the same server and login, for a transaction: on the
 /// shared client every other query would have run inside it.
 pub async fn open_tx_client(handle: &MssqlHandle) -> Result<MssqlHandle, String> {

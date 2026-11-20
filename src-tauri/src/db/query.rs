@@ -6250,6 +6250,51 @@ mod stream_tests {
         check(&store, "ch-big", r, before, 120).await;
     }
 
+    //   STROKE_TEST_CH=18123:password cargo test --lib stream_tests::clickhouse_live
+    fn live_clickhouse() -> Option<super::super::connection::ClickhouseConfig> {
+        let spec = std::env::var("STROKE_TEST_CH").ok()?;
+        let (port, pw) = spec.split_once(':')?;
+        let mut cfg = fake_clickhouse_cfg(port.parse().ok()?);
+        cfg.password = pw.into();
+        Some(cfg)
+    }
+
+    #[tokio::test]
+    async fn clickhouse_live_streams_and_stops() {
+        let Some(cfg) = live_clickhouse() else { return };
+        let store = super::super::result_store::ResultStore::default();
+        let mut sink = sink_into(&store, "ch-live");
+        let before = rss_mb();
+        let (_tx, rx) = tokio::sync::oneshot::channel();
+        let stop = super::super::stop::Stop::from_rx(rx);
+        let sql = format!("SELECT number + 1 AS id, hex(MD5(toString(number))) AS v FROM numbers({N})");
+        let r = super::super::clickhouse::stream_into(&cfg, &sql, &mut sink, &stop).await.unwrap();
+        assert_eq!(r.columns[0].name, "id");
+        assert_eq!(r.row_count, Some(N as i64));
+        let stored = store.get("ch-live").unwrap();
+        assert_eq!(stored.len(), N);
+        // UInt64 arrives quoted (output_format_json_quote_64bit_integers), as
+        // it did collected: values past 2^53 stay exact in the grid.
+        let deep: Vec<Value> = serde_json::from_str(&stored.read_window(N - 1, 1).unwrap()).unwrap();
+        assert_eq!(deep[0][0], serde_json::json!(N.to_string()));
+        let grew = rss_mb().saturating_sub(before);
+        assert!(grew < 120, "memory grew {grew} MB while streaming");
+
+        // Stop: the server must not keep running the query.
+        let mut sink = sink_into(&store, "ch-stop");
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let stop = super::super::stop::Stop::from_rx(rx);
+        tokio::spawn(async move { tokio::time::sleep(std::time::Duration::from_millis(800)).await; let _ = tx.send(()); });
+        let marker = "stroke_live_stop_marker";
+        let long = format!("SELECT count() AS {marker} FROM numbers(100000000000) WHERE sipHash64(number) = 1");
+        let t0 = std::time::Instant::now();
+        let e = super::super::clickhouse::stream_into(&cfg, &long, &mut sink, &stop).await.unwrap_err();
+        assert_eq!(e, QUERY_CANCELLED);
+        assert!(t0.elapsed() < std::time::Duration::from_secs(15));
+        let left = super::super::clickhouse::query(&cfg, &format!("SELECT count() FROM system.processes WHERE query LIKE '%{marker}%' AND query NOT LIKE '%system.processes%'")).await.unwrap();
+        assert_eq!(left.rows[0][0].as_str().map(|s| s.to_string()).unwrap_or(left.rows[0][0].to_string()), "0", "query still running on the server");
+    }
+
     #[tokio::test]
     async fn clickhouse_error_after_the_first_rows_is_reported() {
         let port = fake_clickhouse(500, "Code: 241. DB::Exception: Memory limit exceeded\n").await;
