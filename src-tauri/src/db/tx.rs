@@ -57,6 +57,13 @@ enum TxConn {
     Postgres(sqlx::pool::PoolConnection<sqlx::Postgres>),
     Mysql(sqlx::pool::PoolConnection<sqlx::MySql>),
     Sqlite(sqlx::pool::PoolConnection<sqlx::Sqlite>),
+    // These engines hold one shared connection rather than a pool, so a
+    // transaction opens a connection of its own beside it (see each module's
+    // open_tx_*): on the shared one, every grid page and sidebar query would
+    // have run inside the transaction.
+    Duckdb(super::connection::DuckdbHandle),
+    Mssql(super::connection::MssqlHandle),
+    Oracle(super::connection::OracleHandle),
 }
 
 impl TxConn {
@@ -67,6 +74,11 @@ impl TxConn {
             TxConn::Postgres(c) => drop(c.detach()),
             TxConn::Mysql(c) => drop(c.detach()),
             TxConn::Sqlite(c) => drop(c.detach()),
+            // Their own connection: dropping it closes it, and the server
+            // rolls back what it held.
+            TxConn::Duckdb(h) => drop(h),
+            TxConn::Mssql(h) => drop(h),
+            TxConn::Oracle(h) => drop(h),
         }
     }
 
@@ -75,6 +87,9 @@ impl TxConn {
             TxConn::Postgres(_) => "postgres",
             TxConn::Mysql(_) => "mysql",
             TxConn::Sqlite(_) => "sqlite",
+            TxConn::Duckdb(_) => "duckdb",
+            TxConn::Mssql(_) => "mssql",
+            TxConn::Oracle(_) => "oracle",
         }
     }
 }
@@ -329,9 +344,9 @@ pub async fn tx_begin(db: Db<'_>, session_id: String) -> Result<TxStatus, String
         ActiveConnection::Sqlite(pool) => TxConn::Sqlite(
             pool.acquire().await.map_err(|e| format!("Could not open a transaction: {e}"))?,
         ),
-        ActiveConnection::Duckdb(_) | ActiveConnection::Mssql(_) | ActiveConnection::Oracle(_) => {
-            return Err("Explicit transactions are not supported for this engine yet".into())
-        }
+        ActiveConnection::Duckdb(h) => TxConn::Duckdb(super::duckdb::open_tx_conn(h).await.map_err(|e| format!("Could not open a transaction: {e}"))?),
+        ActiveConnection::Mssql(h) => TxConn::Mssql(super::mssql::open_tx_client(h).await.map_err(|e| format!("Could not open a transaction: {e}"))?),
+        ActiveConnection::Oracle(h) => TxConn::Oracle(super::oracle::open_tx_session(h).await.map_err(|e| format!("Could not open a transaction: {e}"))?),
         ActiveConnection::D1(_) | ActiveConnection::LibSql(_) => {
             return Err("Explicit transactions need a persistent connection, which HTTP-based engines do not have".into())
         }
@@ -504,8 +519,43 @@ async fn run_statement(conn: &mut TxConn, sql: &str) -> Result<u64, String> {
         TxConn::Postgres(c) => sqlx::query(sql).execute(&mut **c).await.map(|r| r.rows_affected()),
         TxConn::Mysql(c) => sqlx::query(sql).execute(&mut **c).await.map(|r| r.rows_affected()),
         TxConn::Sqlite(c) => sqlx::query(sql).execute(&mut **c).await.map(|r| r.rows_affected()),
+        // BEGIN / COMMIT / ROLLBACK in each engine's own words.
+        TxConn::Duckdb(h) => {
+            let stmt = if sql == "BEGIN" { "BEGIN TRANSACTION" } else { sql };
+            return super::duckdb::batch(h, stmt).await.map(|_| 0);
+        }
+        TxConn::Mssql(h) => {
+            let stmt = match sql {
+                "BEGIN" => "BEGIN TRANSACTION",
+                "COMMIT" => "COMMIT TRANSACTION",
+                // A failed statement can have ended the transaction already.
+                "ROLLBACK" => "IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION",
+                other => other,
+            };
+            return super::mssql::batch(h, stmt).await.map(|_| 0);
+        }
+        TxConn::Oracle(h) => {
+            return match sql {
+                // Oracle starts a transaction with its first statement.
+                "BEGIN" => Ok(0),
+                "COMMIT" => super::oracle::commit(h).await.map(|_| 0),
+                "ROLLBACK" => super::oracle::rollback(h).await.map(|_| 0),
+                other => super::oracle::execute_in_tx(h, other).await.map(|r| r.row_count.unwrap_or(0).max(0) as u64),
+            };
+        }
     }
     .map_err(|e| e.to_string())
+}
+
+/// A statement on one of the single-connection engines, inside its open
+/// transaction. None for the pooled engines, which take the sqlx path.
+async fn execute_on_handle(conn: &TxConn, stmt: &str) -> Option<Result<SqlResult, String>> {
+    Some(match conn {
+        TxConn::Duckdb(h) => super::duckdb::execute_sql(h, stmt).await,
+        TxConn::Mssql(h) => super::mssql::execute_sql(h, stmt).await,
+        TxConn::Oracle(h) => super::oracle::execute_in_tx(h, stmt).await,
+        _ => return None,
+    })
 }
 
 /// Run the user's SQL, returning rows when the last statement produces them.
@@ -520,6 +570,23 @@ async fn execute_in(conn: &mut TxConn, sql: &str) -> Result<SqlResult, String> {
     }
     let last = stmts.len() - 1;
     let mut affected: u64 = 0;
+
+    if matches!(conn, TxConn::Duckdb(_) | TxConn::Mssql(_) | TxConn::Oracle(_)) {
+        let mut out = None;
+        for stmt in &stmts {
+            let r = execute_on_handle(conn, stmt).await.expect("single-connection engine").map_err(|e| format!("Query failed: {e}"))?;
+            if r.columns.is_empty() {
+                affected += r.row_count.unwrap_or(0).max(0) as u64;
+            }
+            out = Some(r);
+        }
+        let mut r = out.expect("non-empty");
+        if r.columns.is_empty() {
+            r.row_count = Some(affected as i64);
+            r.message = Some(format!("{affected} row{} affected (not committed yet)", if affected == 1 { "" } else { "s" }));
+        }
+        return Ok(r);
+    }
 
     for (i, stmt) in stmts.iter().enumerate() {
         if i == last && is_row_returning_sql(stmt) {
@@ -598,6 +665,9 @@ async fn fetch_rows(conn: &mut TxConn, stmt: &str) -> Result<SqlResult, String> 
                     (0..row.len()).map(|i| super::sqlite::cell_to_json(row, i)).collect(),
                 );
             }
+        }
+        TxConn::Duckdb(_) | TxConn::Mssql(_) | TxConn::Oracle(_) => {
+            return execute_on_handle(conn, stmt).await.unwrap_or_else(|| Err("unsupported".into()));
         }
     }
 

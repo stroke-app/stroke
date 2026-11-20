@@ -193,6 +193,24 @@ fn for_each_row(
     Ok(())
 }
 
+/// A second connection to the same database, for a transaction: DuckDB's
+/// handle is one shared connection, and every other query would otherwise
+/// have run inside the transaction.
+pub async fn open_tx_conn(handle: &DuckdbHandle) -> Result<DuckdbHandle, String> {
+    run_blocking(handle.clone(), |conn| {
+        conn.try_clone()
+            .map(|c| std::sync::Arc::new(std::sync::Mutex::new(c)))
+            .map_err(|e| format!("DuckDB could not open a second connection: {e}"))
+    })
+    .await
+}
+
+/// One statement for its side effect (BEGIN, COMMIT, ROLLBACK).
+pub async fn batch(handle: &DuckdbHandle, sql: &str) -> Result<(), String> {
+    let sql = sql.to_string();
+    run_blocking(handle.clone(), move |conn| conn.execute_batch(&sql).map_err(|e| format!("DuckDB error: {e}"))).await
+}
+
 /// Whether `sql` reads (and so has rows to stream).
 pub(crate) fn reads(sql: &str) -> bool {
     is_read_query(sql)
@@ -904,6 +922,25 @@ fn json_to_i64(v: &Value) -> Option<i64> {
 
 #[cfg(test)]
 mod tests {
+
+    /// A transaction lives on its own connection: the shared one (grid,
+    /// sidebar) never sees uncommitted rows, and ROLLBACK throws them away.
+    #[tokio::test]
+    async fn tx_conn_isolates_and_rolls_back() {
+        let shared: DuckdbHandle = std::sync::Arc::new(std::sync::Mutex::new(duckdb::Connection::open_in_memory().unwrap()));
+        batch(&shared, "CREATE TABLE t (id INTEGER)").await.unwrap();
+        let tx = open_tx_conn(&shared).await.unwrap();
+        batch(&tx, "BEGIN TRANSACTION").await.unwrap();
+        batch(&tx, "INSERT INTO t VALUES (1)").await.unwrap();
+        let inside = execute_sql(&tx, "SELECT count(*) AS n FROM t").await.unwrap();
+        assert_eq!(inside.rows[0][0], serde_json::json!(1));
+        let outside = execute_sql(&shared, "SELECT count(*) AS n FROM t").await.unwrap();
+        assert_eq!(outside.rows[0][0], serde_json::json!(0));
+        batch(&tx, "ROLLBACK").await.unwrap();
+        let after = execute_sql(&shared, "SELECT count(*) AS n FROM t").await.unwrap();
+        assert_eq!(after.rows[0][0], serde_json::json!(0));
+    }
+
     use super::*;
     use std::sync::{Arc, Mutex};
 

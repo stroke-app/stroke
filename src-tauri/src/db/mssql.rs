@@ -41,6 +41,24 @@ pub async fn remember(handle: &MssqlHandle, cfg: &MssqlConfig) {
     }
 }
 
+/// A new client on the same server and login, for a transaction: on the
+/// shared client every other query would have run inside it.
+pub async fn open_tx_client(handle: &MssqlHandle) -> Result<MssqlHandle, String> {
+    let cfg = SESSIONS.lock().unwrap_or_else(|e| e.into_inner()).get(&key(handle)).map(|(c, _)| c.clone());
+    let cfg = cfg.ok_or("This SQL Server connection can't open a second session. Reconnect and try again.")?;
+    let client = connect(&cfg).await?;
+    let h = std::sync::Arc::new(tokio::sync::Mutex::new(client));
+    remember(&h, &cfg).await;
+    Ok(h)
+}
+
+/// One batch on the handle, for BEGIN / COMMIT / ROLLBACK.
+pub async fn batch(handle: &MssqlHandle, sql: &str) -> Result<(), String> {
+    let mut client = handle.lock().await;
+    client.simple_query(sql).await.map_err(|e| format!("MS SQL error: {e}"))?.into_results().await.map_err(|e| format!("MS SQL error: {e}"))?;
+    Ok(())
+}
+
 /// End the handle's running statement on the server. Best effort: KILL needs
 /// ALTER ANY CONNECTION, and without it `reset` closing the socket is what
 /// stops the work.

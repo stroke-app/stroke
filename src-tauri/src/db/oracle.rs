@@ -28,6 +28,8 @@ use std::time::Instant;
 pub struct OracleSession {
     conn: Connection,
     lock: Mutex<()>,
+    /// How this session was opened, so a transaction can open its own.
+    cfg: OracleConfig,
     /// What the grid needs to know about a table besides its rows, by
     /// (schema, table). The ALL_* dictionary views behind it are the slow part
     /// of a page fetch (seconds for a user who sees every schema), and none of
@@ -349,7 +351,7 @@ pub async fn connect(cfg: &OracleConfig) -> Result<OracleHandle, String> {
             .connect()
             .map_err(|e| explain_connect_error(&e.to_string()))?;
         conn.execute(SESSION_SETUP, &[]).map_err(|e| format!("Oracle session setup failed: {}", clean_err(&e.to_string())))?;
-        Ok(std::sync::Arc::new(OracleSession { conn, lock: Mutex::new(()), meta: Mutex::new(HashMap::new()) }))
+        Ok(std::sync::Arc::new(OracleSession { conn, lock: Mutex::new(()), meta: Mutex::new(HashMap::new()), cfg }))
     })
     .await
     .map_err(|e| format!("Oracle connect task failed: {e}"))?
@@ -944,6 +946,45 @@ fn run_commit(conn: &Connection, sql: &str, binds: &[Bind]) -> Result<SqlResult,
 }
 
 /// Run a script: each statement in turn, the last one's result returned.
+// ── Explicit transactions (db::tx) ───────────────────────────────────────────
+//
+// A transaction runs on a session of its own, opened beside the shared one:
+// on the shared session every grid page and sidebar query would have joined
+// it. Oracle opens a transaction with the first statement, so there is no
+// BEGIN; statements run without the commit execute_sql adds.
+
+/// A new session on the same server and login, for a transaction.
+pub async fn open_tx_session(handle: &OracleHandle) -> Result<OracleHandle, String> {
+    connect(&handle.cfg).await
+}
+
+/// Statements inside the open transaction: nothing commits until tx_commit.
+pub async fn execute_in_tx(handle: &OracleHandle, sql: &str) -> Result<SqlResult, String> {
+    let stmts = split_statements(sql);
+    if stmts.is_empty() {
+        return Err("Query is empty".into());
+    }
+    let original = sql.trim().to_string();
+    run_blocking(handle, move |conn| {
+        let mut last = None;
+        for s in &stmts {
+            last = Some(run_one(conn, s, &[])?);
+        }
+        let mut out = last.expect("non-empty");
+        out.sql = original;
+        Ok(out)
+    })
+    .await
+}
+
+pub async fn commit(handle: &OracleHandle) -> Result<(), String> {
+    run_blocking(handle, |conn| conn.commit().map_err(ora_err)).await
+}
+
+pub async fn rollback(handle: &OracleHandle) -> Result<(), String> {
+    run_blocking(handle, |conn| conn.rollback().map_err(ora_err)).await
+}
+
 pub async fn execute_sql(handle: &OracleHandle, sql: &str) -> Result<SqlResult, String> {
     let stmts = split_statements(sql);
     if stmts.is_empty() {
