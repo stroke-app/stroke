@@ -45,11 +45,11 @@ const adapters = {
       const prev = loadSavedConnections().find((c) => c.id === data.id)
       const conn = prev?.lastConnectedAt != null ? { ...data, lastConnectedAt: prev.lastConnectedAt } : data
       // Through the normal save path, so secrets go to the keychain.
-      upsertConnection(conn, { revive: true })
+      upsertConnection(conn, { revive: true, exact: true })
     },
     remove: (id) => void removeConnection(id),
     conflictCopy: (data) =>
-      upsertConnection({ ...data, id: newConnectionId(), name: `${data.name || 'Connection'} (conflicted copy)` }),
+      upsertConnection({ ...data, id: newConnectionId(), name: `${data.name || 'Connection'} (conflicted copy)` }, { exact: true }),
   },
   // One saved query per record (the editor's Saved list).
   query: {

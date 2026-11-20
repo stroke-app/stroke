@@ -1669,10 +1669,13 @@
       [c.name, c.type, c.host, c.database, /** @type {any} */ (c).filePath].some((v) => v && String(v).toLowerCase().includes(q)),
     )
   })
-  /** This workspace's connections: pinned first, then most recently used. */
+  /**
+   * This workspace's connections: pinned first, then most recently used. The
+   * same rows the connection dialog lists and the workspace switcher counts,
+   * so a Docker container or local server you connected to is here too.
+   */
   const wsConnections = $derived(
     inWorkspace(connections, $activeWorkspaceId, $workspaces)
-      .filter((c) => !(/** @type {any} */ (c).origin))
       .slice()
       .sort((a, b) => (Number(!!b.pinned) - Number(!!a.pinned)) || ((b.lastConnectedAt ?? 0) - (a.lastConnectedAt ?? 0))),
   )

@@ -313,6 +313,7 @@
     upsertConnection,
     engineFamily,
   } from '$lib/stores/connections.js'
+  import { workspaces, activeWorkspaceId, setActiveWorkspace, workspaceOf } from '$lib/stores/workspaces.js'
   import { hasPro, FREE_CONNECTION_LIMIT } from '$lib/stores/license.js'
   import { engineSupports, engineLabel, isKeyValue } from '$lib/db-capabilities.js'
   import * as Dialog from '$lib/components/ui/dialog/index.js'
@@ -7823,7 +7824,15 @@ let rowSearch = $state('')
     // Persist last-used ID and bump timestamp
     if (savedId) {
       setLastConnectionId(savedId)
-      upsertConnection({ ...conn, id: savedId, lastConnectedAt: Date.now() })
+      savedConnections = upsertConnection({ ...conn, id: savedId, lastConnectedAt: Date.now() })
+      // The workspace follows the database that is open. Connecting to one
+      // filed elsewhere (a provider's database saved under "Work" while on
+      // Personal) otherwise left the sidebar listing a workspace without it.
+      const row = savedConnections.find((c) => c.id === savedId)
+      if (row) {
+        const ws = workspaceOf(row, get(workspaces))
+        if (ws !== get(activeWorkspaceId)) setActiveWorkspace(ws)
+      }
     }
     tableFilter = ''
     error = ''
