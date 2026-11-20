@@ -1736,7 +1736,7 @@
       title="{o.label} ({keycaps('Mod+F').join(IS_MAC ? '' : '+')})"
       spellcheck="false"
       autocomplete="off"
-      class={cn('field-surface h-8 w-full min-w-0 pl-8 text-ui-sm text-foreground shadow-none outline-none placeholder:text-muted-foreground', value ? 'pr-7' : 'pr-2.5')}
+      class={cn('search-box no-field-frame h-8 w-full min-w-0 pl-8 text-ui-sm', value ? 'pr-7' : 'pr-2.5')}
     />
     {#if value}
       <button
@@ -1907,7 +1907,7 @@
               onkeydown={(e) => {
                 if (e.key === 'Enter' && pickQuery.trim()) { showOnlyMatches(); e.preventDefault() }
               }}
-              class= "field-surface h-8 w-full bg-input/30 pl-8 pr-2 text-ui-sm outline-none placeholder:text-muted-foreground"
+              class="search-box no-field-frame h-8 w-full pl-8 pr-2 text-ui-sm"
             />
           </div>
           <div class="flex items-center gap-1">

@@ -11,16 +11,20 @@ const MAX_PARKED: usize = 8;
 /// Set the open connection aside under `key`. Nothing open: nothing to do.
 #[tauri::command]
 pub fn park_connection(state: Db<'_>, key: String) -> Result<(), String> {
+    super::tx::connection_changed();
     let Some(conn) = state.conn.lock().map_err(|e| e.to_string())?.take() else {
         return Ok(());
     };
     *state.active_key.lock().map_err(|e| e.to_string())? = None;
+    // Its SSH tunnel, if any, goes aside with it.
+    super::ssh_tunnel::park_active(&key);
     let mut parked = state.parked.lock().map_err(|e| e.to_string())?;
     parked.retain(|(k, _)| k != &key);
     parked.push((key, conn));
     while parked.len() > MAX_PARKED {
-        let (_, old) = parked.remove(0);
+        let (old_key, old) = parked.remove(0);
         close_in_background(old);
+        super::ssh_tunnel::drop_parked(&[old_key]);
     }
     Ok(())
 }
@@ -34,6 +38,9 @@ pub fn resume_connection(state: Db<'_>, key: String) -> Result<bool, String> {
         parked.iter().position(|(k, _)| k == &key).map(|i| parked.remove(i).1)
     };
     let Some(conn) = found else { return Ok(false) };
+    super::tx::connection_changed();
+    // Its tunnel comes back with it (and whatever was in front closes).
+    super::ssh_tunnel::resume_parked(&key);
     let previous = state.conn.lock().map_err(|e| e.to_string())?.replace(conn);
     *state.active_key.lock().map_err(|e| e.to_string())? = Some(key);
     if let Some(prev) = previous {
@@ -59,9 +66,11 @@ pub fn close_parked(
         (None, None) => true,
     });
     *parked = kept;
+    let keys: Vec<String> = gone.iter().map(|(k, _)| k.clone()).collect();
     for (_, c) in gone {
         close_in_background(c);
     }
+    super::ssh_tunnel::drop_parked(&keys);
     Ok(())
 }
 

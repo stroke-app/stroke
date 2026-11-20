@@ -107,19 +107,110 @@ pub async fn fetch_foreign_keys(pool: &SqlitePool, table: &str) -> Result<Vec<Fo
 // ── execute_sql ───────────────────────────────────────────────────────────────
 
 pub async fn execute_sql(pool: &SqlitePool, sql: &str) -> Result<SqlResult, String> {
+    let mut conn = pool.acquire().await.map_err(|e| format!("{e}"))?;
+    run_sql(&mut conn, sql).await
+}
+
+extern "C" {
+    /// SQLite's own cancel: the statement running on `db` stops at its next
+    /// step with SQLITE_INTERRUPT. Safe to call from another thread. Linked
+    /// from the SQLite that sqlx already builds in.
+    fn sqlite3_interrupt(db: *mut std::ffi::c_void);
+}
+
+/// A connection's `sqlite3*`, sent to the Stop watcher's thread.
+struct RawDb(*mut std::ffi::c_void);
+// SAFETY: only ever passed to sqlite3_interrupt, which SQLite documents as
+// safe to call from any thread while the connection is open; `Arm` keeps the
+// call inside the window where this run holds the connection.
+unsafe impl Send for RawDb {}
+
+/// `execute_sql`, stoppable. Stop interrupts the statement inside SQLite, so
+/// it really ends: before, the future was dropped while the worker thread kept
+/// running it, holding the write lock for whatever came next.
+pub async fn execute_sql_cancellable(
+    pool: &SqlitePool,
+    sql: &str,
+    cancel: tokio::sync::oneshot::Receiver<()>,
+) -> Result<SqlResult, String> {
+    let mut conn = pool.acquire().await.map_err(|e| format!("{e}"))?;
+    let raw = RawDb(
+        conn.lock_handle().await.map_err(|e| format!("{e}"))?.as_raw_handle().as_ptr() as *mut std::ffi::c_void,
+    );
+    let arm = super::stop::Arm::new(cancel, move || {
+        let raw = raw;
+        // SAFETY: see RawDb. The connection is checked out by this run until
+        // `disarm` below, and Arm never calls this after disarm.
+        unsafe { sqlite3_interrupt(raw.0) }
+    });
+    let result = run_sql(&mut conn, sql).await;
+    let stopped = arm.disarm();
+    match result {
+        Err(_) if stopped => Err(super::query::QUERY_CANCELLED.into()),
+        other => other,
+    }
+}
+
+/// One row-returning statement streamed into the console's sink (and so into
+/// the result store) as it arrives, stoppable like `execute_sql_cancellable`.
+pub async fn stream_into(
+    pool: &SqlitePool,
+    sql: &str,
+    sink: &mut super::query::RowSink,
+    cancel: tokio::sync::oneshot::Receiver<()>,
+) -> Result<SqlResult, String> {
+    let t0 = Instant::now();
+    let mut conn = pool.acquire().await.map_err(|e| format!("{e}"))?;
+    let raw = RawDb(
+        conn.lock_handle().await.map_err(|e| format!("{e}"))?.as_raw_handle().as_ptr() as *mut std::ffi::c_void,
+    );
+    let arm = super::stop::Arm::new(cancel, move || {
+        let raw = raw;
+        // SAFETY: see RawDb and execute_sql_cancellable.
+        unsafe { sqlite3_interrupt(raw.0) }
+    });
+    let mut columns: Vec<ColumnInfo> = Vec::new();
+    let mut total = 0usize;
+    let streamed: Result<(), String> = async {
+        let mut stream = sqlx::query(sql).fetch(&mut *conn);
+        while let Some(row) = stream.try_next().await.map_err(|e| format!("{e}"))? {
+            if total == 0 {
+                columns = row.columns().iter().map(|c| ColumnInfo::new(c.name(), c.type_info().name().to_lowercase())).collect();
+                sink.start(columns.clone())?;
+            }
+            sink.push((0..columns.len()).map(|i| cell_to_json(&row, i)).collect())?;
+            total += 1;
+        }
+        Ok(())
+    }
+    .await;
+    let stopped = arm.disarm();
+    match streamed {
+        Err(_) if stopped => return Err(super::query::QUERY_CANCELLED.into()),
+        Err(e) => return Err(e),
+        Ok(()) => {}
+    }
+    if total > 0 {
+        sink.finish()?;
+    }
+    Ok(SqlResult { columns, rows: vec![], row_count: Some(total as i64), message: None, query_ms: t0.elapsed().as_millis() as u64, sql: sql.to_string() })
+}
+
+async fn run_sql(conn: &mut sqlx::SqliteConnection, sql: &str) -> Result<SqlResult, String> {
     let t0 = Instant::now();
     let sql = sql.trim();
 
     let head = super::sql_util::statement_head(sql);
 
     if matches!(head.as_str(), "select" | "with" | "pragma" | "explain" | "values") {
-        let mut stream = sqlx::query(sql).fetch(pool);
+        let mut stream = sqlx::query(sql).fetch(&mut *conn);
         // Convert each row to JSON as it streams in and drop the driver row
         // immediately - retaining the full Vec<SqliteRow> alongside the JSON
         // rows would double peak memory on a large result.
         let mut columns: Vec<ColumnInfo> = Vec::new();
         let mut data: Vec<Vec<Value>> = Vec::new();
         let mut capped = false;
+        let mut budget = super::query::CollectBudget::default();
 
         loop {
             match stream.try_next().await {
@@ -131,8 +222,10 @@ pub async fn execute_sql(pool: &SqlitePool, sql: &str) -> Result<SqlResult, Stri
                             .map(|c| ColumnInfo::new(c.name(), c.type_info().name().to_lowercase()))
                             .collect();
                     }
-                    data.push((0..columns.len()).map(|i| cell_to_json(&row, i)).collect());
-                    if data.len() >= EXECUTE_SQL_MAX_ROWS {
+                    let cells: Vec<Value> = (0..columns.len()).map(|i| cell_to_json(&row, i)).collect();
+                    let fits = budget.take(&cells);
+                    data.push(cells);
+                    if !fits || data.len() >= EXECUTE_SQL_MAX_ROWS {
                         capped = true;
                         break;
                     }
@@ -151,19 +244,13 @@ pub async fn execute_sql(pool: &SqlitePool, sql: &str) -> Result<SqlResult, Stri
             columns,
             rows: data,
             row_count: Some(n),
-            message: if capped {
-                Some(format!(
-                    "Result capped at {EXECUTE_SQL_MAX_ROWS} rows - add a LIMIT clause to fetch a specific range."
-                ))
-            } else {
-                None
-            },
+            message: if capped { Some(super::query::budget_message(n as usize)) } else { None },
             query_ms: t0.elapsed().as_millis() as u64,
             sql: sql.to_string(),
         })
     } else {
         let res = sqlx::query(sql)
-            .execute(pool)
+            .execute(&mut *conn)
             .await
             .map_err(|e| format!("{e}"))?;
 

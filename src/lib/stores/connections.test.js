@@ -122,6 +122,19 @@ describe('connection secrets in the keychain', () => {
     { id: 'lite', type: 'sqlite', name: 'lite', filePath: '/x.db' },
   ]
 
+  it('lists connections before the keychain answers, and fills passwords for a connect once it has', async () => {
+    vault = JSON.stringify({ pg: { password: 'hunter2' } })
+    diskPayload = JSON.stringify({ connections: [{ id: 'pg', type: 'postgres', name: 'pg', host: 'h' }] })
+    const store = await import('./connections.js')
+    // What startup does: the list is in, the keychain read keeps going.
+    await store.hydrateConnectionsFromDisk({ waitForSecrets: false })
+    expect(store.loadSavedConnections().map((c) => c.id)).toEqual(['pg'])
+    const ready = await store.withSecrets(store.loadSavedConnections()[0])
+    expect(ready.password).toBe('hunter2')
+    // A field the caller set wins over the stored one.
+    expect((await store.withSecrets({ id: 'pg', password: 'typed' })).password).toBe('typed')
+  })
+
   it('moves inline secrets to the keychain at startup and strips them from disk', async () => {
     localStorage.setItem('stroke:connections', JSON.stringify(legacy))
     const store = await import('./connections.js')

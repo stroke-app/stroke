@@ -3532,6 +3532,7 @@ pub async fn execute_sql(
         return Err("Query is empty".into());
     }
     let conn = require_conn(&state)?;
+    let tunnel = super::ssh_tunnel::RunWatch::start();
     let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
     // Keyed by the caller's id so several editor tabs can run at once and each
     // one's Cancel reaches its own query.
@@ -3547,45 +3548,13 @@ pub async fn execute_sql(
         // when the receiver fires.
         ActiveConnection::Postgres(pool) => execute_sql_pg(&pool, &sql_str, Some(cancel_rx)).await,
         ActiveConnection::Mysql(pool) => super::mysql::execute_sql(&pool, &sql_str, Some(cancel_rx)).await,
-        // Oracle interrupts the running call (OCIBreak); it then fails with
-        // ORA-01013, reported as a cancel.
-        ActiveConnection::Oracle(h) => {
-            let run = super::oracle::execute_sql(&h, &sql_str);
-            tokio::pin!(run);
-            tokio::select! {
-                r = &mut run => r,
-                _ = async { let _ = cancel_rx.await; } => {
-                    super::oracle::cancel(&h).await;
-                    let _ = run.await;
-                    Err(QUERY_CANCELLED.to_string())
-                }
-            }
-        }
-        // Engines without a server-side cancel primitive: abandon the future when
-        // cancelled so the UI unblocks (the statement then finishes or times out
-        // server-side). This preserves the previous behavior for these engines.
-        other => tokio::select! {
-            r = async move {
-                match other {
-                    ActiveConnection::Sqlite(pool) => super::sqlite::execute_sql(&pool, &sql_str).await,
-                    ActiveConnection::D1(cfg) => super::d1::query(&cfg, &sql_str, vec![]).await,
-                    ActiveConnection::LibSql(cfg) => super::libsql::query(&cfg, &sql_str, vec![]).await,
-                    ActiveConnection::Clickhouse(cfg) => super::clickhouse::query(&cfg, &sql_str).await,
-                    ActiveConnection::Posthog(cfg) => super::posthog::query(&cfg, &sql_str).await,
-                    ActiveConnection::Redis(cfg) => super::redis::query(&cfg, &sql_str).await,
-                    ActiveConnection::Dynamodb(cfg) => super::dynamodb::query(&cfg, &sql_str).await,
-                    ActiveConnection::Doc(d) => super::docdb::query(&d, &sql_str).await,
-                    ActiveConnection::Duckdb(h) => super::duckdb::execute_sql(&h, &sql_str).await,
-                    ActiveConnection::Mssql(h) => super::mssql::execute_sql(&h, &sql_str).await,
-                    ActiveConnection::Postgres(_) | ActiveConnection::Mysql(_) | ActiveConnection::Oracle(_) => unreachable!(),
-                }
-            } => r,
-            _ = async { let _ = cancel_rx.await; } => Err(QUERY_CANCELLED.to_string()),
-        },
+        // Everything else stops through its own driver (see run_one_cancellable).
+        other => run_one_cancellable(&other, &sql_str, &super::stop::Stop::from_rx(cancel_rx)).await,
     };
     super::connection::unregister_cancel(&state, &cancel_key);
-    if let Ok(r) = &mut result {
-        r.sql = sql_out;
+    match &mut result {
+        Ok(r) => r.sql = sql_out,
+        Err(e) => *e = tunnel.explain(std::mem::take(e), !is_row_returning_sql(&sql_out)),
     }
     result
 }
@@ -3597,6 +3566,8 @@ pub async fn execute_sql_on_conn(
     config: super::connection::AnyConnectionConfig,
     sql: &str,
 ) -> Result<SqlResult, String> {
+    // Its own connection, through the saved connection's SSH tunnel if any.
+    let (config, _tunnel) = super::connection::tunnel_any(config).await?;
     use super::connection::{open_mysql, open_pg, open_sqlite, AnyConnectionConfig};
     let sql = sql.trim();
     if sql.is_empty() {
@@ -3654,6 +3625,36 @@ pub async fn execute_sql_on_conn(
 /// only as a last-resort circuit breaker whose "add a LIMIT" message tells the
 /// user what happened.
 const EXECUTE_SQL_MAX_ROWS: usize = 1_000_000_000;
+
+/// How much a result collected in memory may hold, as JSON. The SQL console
+/// streams to disk and has no limit (RowSink); this guards every caller that
+/// still gets its rows in one reply (the MCP server, the AI chat, exports of
+/// a single statement), where a 2 GB result meant several GB in the backend,
+/// a JSON string as large again, and the window's heap after that. A row cap
+/// of a billion guarded nothing.
+pub(crate) const COLLECT_BYTE_BUDGET: usize = 512 << 20;
+
+/// Counts a collected result against COLLECT_BYTE_BUDGET.
+#[derive(Default)]
+pub(crate) struct CollectBudget {
+    bytes: usize,
+}
+
+impl CollectBudget {
+    /// Add a row; false once the result is over budget (stop reading).
+    pub(crate) fn take(&mut self, row: &[Value]) -> bool {
+        self.bytes += row.iter().map(approx_json_len).sum::<usize>() + row.len() + 1;
+        self.bytes < COLLECT_BYTE_BUDGET
+    }
+}
+
+/// What a result cut short by the budget says, in place of its rows' end.
+pub(crate) fn budget_message(rows: usize) -> String {
+    format!(
+        "Stopped after {rows} rows: the result passed {} MB, more than is safe to hold in memory here. The SQL console streams results of any size; elsewhere, add a LIMIT.",
+        COLLECT_BYTE_BUDGET >> 20
+    )
+}
 /// Statement timeout for ad-hoc queries (milliseconds). Generous enough for
 /// heavier scans (e.g. tables with large TOASTed JSON columns) to finish.
 pub(crate) const EXECUTE_SQL_TIMEOUT_MS: i64 = 60_000;
@@ -3662,8 +3663,14 @@ pub(crate) const EXECUTE_SQL_TIMEOUT_MS: i64 = 60_000;
 /// as stopped rather than failed.
 pub(crate) const QUERY_CANCELLED: &str = "Query cancelled";
 
+/// What a stopped run reports on an engine with no way to stop a statement
+/// (HTTP engines, document stores). Starts like QUERY_CANCELLED so the window
+/// shows it as stopped, then says the part that matters.
+pub(crate) const QUERY_ABANDONED: &str =
+    "Query cancelled here, but this database has no way to stop a running statement, so the server may still finish it.";
+
 /// Where Stop finds a run's backend.
-enum CancelTarget {
+pub(crate) enum CancelTarget {
     /// The run's own `application_name`, set in its BEGIN batch.
     Tag(String),
     /// A server that refused the tag: the backend pid, asked for up front.
@@ -3672,7 +3679,7 @@ enum CancelTarget {
 
 /// An `application_name` no other run has, in this app or in another one on
 /// the same database. Well under Postgres's 63-byte limit.
-fn run_tag() -> String {
+pub(crate) fn run_tag() -> String {
     static SEQ: AtomicU64 = AtomicU64::new(0);
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -3687,7 +3694,7 @@ fn run_tag() -> String {
 /// five round trips before the user's SQL was even sent. Measured at a 100ms
 /// round trip (`console_run_live`): `SELECT 1` took 8 round trips, now 4; a
 /// repeat took 5, now 3. A retry passes the same tag, so Stop still reaches it.
-async fn begin_console_tx(
+pub(crate) async fn begin_console_tx(
     pool: &sqlx::PgPool,
     tag: &str,
 ) -> Result<(sqlx::Transaction<'static, Postgres>, CancelTarget), String> {
@@ -3728,7 +3735,7 @@ async fn begin_console_tx(
 /// also exact: the tag ends with the transaction, so a late Stop matches nothing
 /// instead of whatever that connection runs next. If the run finishes first the
 /// sender is dropped, `rx.await` errors and the watcher exits.
-fn arm_pg_cancel(
+pub(crate) fn arm_pg_cancel(
     pool: &sqlx::PgPool,
     rx: Option<tokio::sync::oneshot::Receiver<()>>,
     cancelled: Arc<AtomicBool>,
@@ -3839,7 +3846,7 @@ impl RowSink {
     }
 
     /// A result starts (again, after a retry): its columns go with the first message.
-    fn start(&mut self, columns: Vec<ColumnInfo>) -> Result<(), String> {
+    pub(crate) fn start(&mut self, columns: Vec<ColumnInfo>) -> Result<(), String> {
         if let Some(spool) = self.spool.as_mut() {
             spool.start(columns.clone())?;
         }
@@ -3854,7 +3861,7 @@ impl RowSink {
         Ok(())
     }
 
-    fn push(&mut self, row: Vec<Value>) -> Result<(), String> {
+    pub(crate) fn push(&mut self, row: Vec<Value>) -> Result<(), String> {
         match self.spool.as_mut() {
             Some(spool) => {
                 self.bytes += spool.push(&row)?;
@@ -3915,7 +3922,7 @@ impl RowSink {
 }
 
 /// Roughly how many bytes a cell takes as JSON: enough to size a chunk.
-fn approx_json_len(v: &Value) -> usize {
+pub(crate) fn approx_json_len(v: &Value) -> usize {
     match v {
         Value::Null => 4,
         Value::Bool(_) => 5,
@@ -4483,6 +4490,16 @@ pub async fn execute_sql_multi(
     sql: String,
     query_id: Option<String>,
 ) -> Result<Vec<SqlResult>, String> {
+    let tunnel = super::ssh_tunnel::RunWatch::start();
+    let writes = split_sql_statements(&sql).iter().any(|s| !s.trim().is_empty() && !is_row_returning_sql(s));
+    execute_sql_multi_run(state, sql, query_id).await.map_err(|e| tunnel.explain(e, writes))
+}
+
+async fn execute_sql_multi_run(
+    state: Db<'_>,
+    sql: String,
+    query_id: Option<String>,
+) -> Result<Vec<SqlResult>, String> {
     let sql_str = sql.trim().to_string();
     if sql_str.is_empty() {
         return Err("Query is empty".into());
@@ -4505,36 +4522,30 @@ pub async fn execute_sql_multi(
         super::connection::unregister_cancel(&state, &cancel_key);
         return result;
     }
-    // Oracle's blocking call outlives the dropped future; interrupt it too.
-    let oracle_h = match &conn {
-        ActiveConnection::Oracle(h) => Some(h.clone()),
-        _ => None,
-    };
-    let result = tokio::select! {
-        r = async move {
-            // Other engines: execute sequentially, one result set per statement.
-            // Cancellation happens at the outer select! (the future is dropped),
-            // so per-statement executors get no cancel receiver - same as the
-            // other diff/multi callers.
-            let multi = stmts.len() > 1;
-            let mut results: Vec<SqlResult> = Vec::with_capacity(stmts.len());
-            for (idx, stmt) in stmts.iter().enumerate() {
-                let r = run_one_other(&conn, stmt).await;
-                match r {
-                    Ok(res) => results.push(res),
-                    Err(e) if multi => return Err(format!("Statement {} failed: {e}", idx + 1)),
-                    Err(e) => return Err(e),
-                }
+    // Other engines: execute sequentially, one result set per statement, each
+    // stoppable on the server (run_one_cancellable).
+    let stop = super::stop::Stop::from_rx(cancel_rx);
+    let multi = stmts.len() > 1;
+    let mut results: Vec<SqlResult> = Vec::with_capacity(stmts.len());
+    let mut result = Ok(());
+    for (idx, stmt) in stmts.iter().enumerate() {
+        match run_one_cancellable(&conn, stmt, &stop).await {
+            Ok(res) => results.push(res),
+            Err(e) if e.starts_with(QUERY_CANCELLED) => {
+                result = Err(e);
+                break;
             }
-            Ok(results)
-        } => r,
-        _ = async { let _ = cancel_rx.await; } => {
-            if let Some(h) = &oracle_h {
-                super::oracle::cancel(h).await;
+            Err(e) if multi => {
+                result = Err(format!("Statement {} failed: {e}", idx + 1));
+                break;
             }
-            Err(QUERY_CANCELLED.to_string())
+            Err(e) => {
+                result = Err(e);
+                break;
+            }
         }
-    };
+    }
+    let result = result.map(|()| results);
     super::connection::unregister_cancel(&state, &cancel_key);
     result
 }
@@ -4556,6 +4567,113 @@ async fn run_one_other(conn: &ActiveConnection, stmt: &str) -> Result<SqlResult,
         ActiveConnection::Mssql(h) => super::mssql::execute_sql(h, stmt).await,
         ActiveConnection::Oracle(h) => super::oracle::execute_sql(h, stmt).await,
     }
+}
+
+/// One statement on an engine other than Postgres, stoppable. Each engine
+/// stops in its own way, and each one really ends the statement on the server:
+/// before, every engine but MySQL and Oracle only dropped the future, so the
+/// window said "cancelled" while the server kept working (and SQLite's worker
+/// kept its write lock).
+pub(crate) async fn run_one_cancellable(
+    conn: &ActiveConnection,
+    stmt: &str,
+    stop: &super::stop::Stop,
+) -> Result<SqlResult, String> {
+    if stop.fired() {
+        return Err(QUERY_CANCELLED.into());
+    }
+    match conn {
+        ActiveConnection::Postgres(_) => unreachable!("Postgres runs through its own path"),
+        // KILL QUERY on the statement's connection id.
+        ActiveConnection::Mysql(pool) => super::mysql::execute_sql(pool, stmt, Some(stop.receiver())).await,
+        // sqlite3_interrupt / DuckDB's InterruptHandle on the running connection.
+        ActiveConnection::Sqlite(pool) => super::sqlite::execute_sql_cancellable(pool, stmt, stop.receiver()).await,
+        ActiveConnection::Duckdb(h) => super::duckdb::execute_sql_cancellable(h, stmt, stop.receiver()).await,
+        // KILL QUERY WHERE query_id.
+        ActiveConnection::Clickhouse(cfg) => super::clickhouse::query_cancellable(cfg, stmt, stop.receiver()).await,
+        // OCIBreak; the call then fails with ORA-01013.
+        ActiveConnection::Oracle(h) => {
+            let run = super::oracle::execute_sql(h, stmt);
+            tokio::pin!(run);
+            tokio::select! {
+                r = &mut run => r,
+                _ = stop.wait() => {
+                    super::oracle::cancel(h).await;
+                    let _ = run.await;
+                    Err(QUERY_CANCELLED.to_string())
+                }
+            }
+        }
+        // KILL the session from a second connection, then a fresh client:
+        // the dropped reply would otherwise be read by the next query.
+        ActiveConnection::Mssql(h) => {
+            let run = super::mssql::execute_sql(h, stmt);
+            tokio::pin!(run);
+            tokio::select! {
+                r = &mut run => r,
+                _ = stop.wait() => {
+                    super::mssql::cancel(h).await;
+                    // The killed batch fails at once; give it a moment, then
+                    // let go of the client either way.
+                    let finished = tokio::time::timeout(std::time::Duration::from_secs(5), &mut run).await;
+                    if let Ok(Ok(r)) = finished {
+                        // It completed before the KILL landed: that is the result.
+                        return Ok(r);
+                    }
+                    drop(run);
+                    match super::mssql::reset(h).await {
+                        Ok(()) => Err(QUERY_CANCELLED.to_string()),
+                        Err(e) => Err(format!("{QUERY_CANCELLED}. Reopening the connection afterwards failed: {e}")),
+                    }
+                }
+            }
+        }
+        // No server-side stop exists: stop waiting, and say the server may not.
+        other => tokio::select! {
+            r = run_one_other(other, stmt) => r,
+            _ = stop.wait() => Err(QUERY_ABANDONED.into()),
+        },
+    }
+}
+
+/// Stream one row-returning statement into `sink`, on the engines whose
+/// drivers read rows as they arrive. None: this engine or statement doesn't
+/// stream, so the caller runs it the ordinary way.
+async fn stream_one(
+    conn: &ActiveConnection,
+    stmt: &str,
+    sink: &mut RowSink,
+    stop: &super::stop::Stop,
+) -> Option<Result<SqlResult, String>> {
+    let reads = is_row_returning_sql(stmt);
+    Some(match conn {
+        ActiveConnection::Mysql(pool) if reads => super::mysql::stream_into(pool, stmt, sink, stop.receiver()).await,
+        ActiveConnection::Sqlite(pool) if reads || super::sql_util::statement_head(stmt) == "pragma" => {
+            super::sqlite::stream_into(pool, stmt, sink, stop.receiver()).await
+        }
+        ActiveConnection::Duckdb(h) if super::duckdb::reads(stmt) => super::duckdb::stream_into(h, stmt, sink, stop.receiver()).await,
+        ActiveConnection::Mssql(h) if super::mssql::reads(stmt) => {
+            let run = super::mssql::stream_into(h, stmt, sink);
+            tokio::pin!(run);
+            tokio::select! {
+                r = &mut run => r,
+                _ = stop.wait() => {
+                    super::mssql::cancel(h).await;
+                    let finished = tokio::time::timeout(std::time::Duration::from_secs(5), &mut run).await;
+                    if let Ok(Ok(r)) = finished {
+                        return Some(Ok(r));
+                    }
+                    drop(run);
+                    Err(match super::mssql::reset(h).await {
+                        Ok(()) => QUERY_CANCELLED.to_string(),
+                        Err(e) => format!("{QUERY_CANCELLED}. Reopening the connection afterwards failed: {e}"),
+                    })
+                }
+            }
+        }
+        ActiveConnection::Clickhouse(cfg) if super::clickhouse::reads(stmt) => super::clickhouse::stream_into(cfg, stmt, sink, stop).await,
+        _ => return None,
+    })
 }
 
 /// One statement of a console run: its result, or why it failed.
@@ -4609,14 +4727,23 @@ pub async fn execute_sql_script(
         return Err("Query is empty".into());
     }
     log::info!("console run: {} statement(s)", stmts.len());
+    let tunnel = super::ssh_tunnel::RunWatch::start();
     let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
     let cancel_key = query_id.unwrap_or_else(|| "default".to_string());
     super::connection::register_cancel(&state, &cancel_key, cancel_tx);
-    let outcomes = match &conn {
+    let mut outcomes = match &conn {
         ActiveConnection::Postgres(pool) => run_script_pg(pool, &stmts, cancel_rx, sink).await,
-        other => run_script_other(other, &stmts, cancel_rx).await,
+        other => run_script_other(other, &stmts, cancel_rx, sink).await,
     };
     super::connection::unregister_cancel(&state, &cancel_key);
+    // A script that failed because its tunnel went away: say whether it got
+    // as far as the server. Any write in the script makes the result unknown.
+    let writes = stmts.iter().any(|s| !is_row_returning_sql(s));
+    for o in &mut outcomes {
+        if let Some(e) = o.error.take() {
+            o.error = Some(tunnel.explain(e, writes));
+        }
+    }
     Ok(outcomes)
 }
 
@@ -4676,30 +4803,37 @@ async fn run_script_other(
     conn: &ActiveConnection,
     stmts: &[String],
     cancel_rx: tokio::sync::oneshot::Receiver<()>,
+    sink: Option<&mut RowSink>,
 ) -> Vec<StatementOutcome> {
-    // A Mutex for Send; never held across an await.
-    let out = std::sync::Mutex::new(Vec::with_capacity(stmts.len()));
-    let run = async {
-        for stmt in stmts {
-            let t = std::time::Instant::now();
-            let r = run_one_other(conn, stmt).await;
+    let stop = super::stop::Stop::from_rx(cancel_rx);
+    // One row-returning statement on an engine with a cursor streams into the
+    // sink (and the result store), as Postgres does, instead of arriving whole.
+    if let (Some(sink), [stmt]) = (sink, stmts) {
+        let t = std::time::Instant::now();
+        if let Some(r) = stream_one(conn, stmt, sink, &stop).await {
             let ms = t.elapsed().as_millis() as u64;
-            out.lock().unwrap().push(match r {
+            return vec![match r {
                 Ok(res) => StatementOutcome::ok(res),
                 Err(e) => StatementOutcome::failed(stmt, ms, e.into()),
-            });
-        }
-    };
-    tokio::select! {
-        _ = run => {}
-        _ = async { let _ = cancel_rx.await; } => {
-            if let ActiveConnection::Oracle(h) = conn {
-                super::oracle::cancel(h).await;
-            }
-            out.lock().unwrap().push(StatementOutcome::failed("", 0, QUERY_CANCELLED.into()));
+            }];
         }
     }
-    out.into_inner().unwrap_or_default()
+    let mut out = Vec::with_capacity(stmts.len());
+    for stmt in stmts {
+        let t = std::time::Instant::now();
+        let r = run_one_cancellable(conn, stmt, &stop).await;
+        let ms = t.elapsed().as_millis() as u64;
+        match r {
+            Ok(res) => out.push(StatementOutcome::ok(res)),
+            // Stopped: this statement says so, and nothing after it runs.
+            Err(e) if stop.fired() && e.starts_with(QUERY_CANCELLED) => {
+                out.push(StatementOutcome::failed(stmt, ms, e.into()));
+                break;
+            }
+            Err(e) => out.push(StatementOutcome::failed(stmt, ms, e.into())),
+        }
+    }
+    out
 }
 
 // ── D1 / LibSQL helpers (SQLite-over-HTTP) ────────────────────────────────────
@@ -5794,7 +5928,7 @@ mod nosql_console_live {
     #[ignore]
     async fn nosql_console_live() {
         // MongoDB
-        let m = crate::db::mongo::connect(&crate::db::mongo::MongoConfig { name: "t".into(), uri: "mongodb://localhost:27017".into(), database: Some("shop".into()) }).await.unwrap();
+        let m = crate::db::mongo::connect(&crate::db::mongo::MongoConfig { ssh: None, name: "t".into(), uri: "mongodb://localhost:27017".into(), database: Some("shop".into()) }).await.unwrap();
         let mc = ActiveConnection::Doc(DocConn::Mongo(m));
         let r = run(&mc, "db.users.find({}).limit(3)").await;
         assert_eq!(r.rows.len(), 3);
@@ -5812,13 +5946,13 @@ mod nosql_console_live {
         assert_eq!(r.rows.len(), 3);
 
         // Cassandra (CQL)
-        let s = crate::db::cassandra::connect(&crate::db::cassandra::CassandraConfig { name: "t".into(), hosts: "127.0.0.1".into(), user: None, password: None, keyspace: Some("shop".into()) }).await.unwrap();
+        let s = crate::db::cassandra::connect(&crate::db::cassandra::CassandraConfig { ssh: None, name: "t".into(), hosts: "127.0.0.1".into(), user: None, password: None, keyspace: Some("shop".into()) }).await.unwrap();
         let cc = ActiveConnection::Doc(DocConn::Cassandra(s));
         assert!(!run(&cc, "SELECT * FROM users LIMIT 5").await.rows.is_empty(), "unqualified name uses the keyspace");
         assert!(!run(&cc, "SELECT * FROM shop.orders_by_user LIMIT 5").await.columns.is_empty());
 
         // CouchDB (Mango shell syntax)
-        let couch = ActiveConnection::Doc(DocConn::Couch(crate::db::couchdb::CouchConfig { name: "t".into(), url: "http://localhost:5984".into(), user: Some("admin".into()), password: Some("admin".into()) }));
+        let couch = ActiveConnection::Doc(DocConn::Couch(crate::db::couchdb::CouchConfig { ssh: None, via: None, name: "t".into(), url: "http://localhost:5984".into(), user: Some("admin".into()), password: Some("admin".into()) }));
         assert_eq!(run(&couch, r#"products.find({"price": {"$gt": 50}})"#).await.rows.len(), 2);
 
         // Firestore (emulator)
@@ -5834,7 +5968,7 @@ mod nosql_console_live {
         assert!(run(&cc, r#"SELECT * FROM "shop"."users" LIMIT 2"#).await.rows.len() <= 2);
 
         // Redis
-        let rc = ActiveConnection::Redis(crate::db::connection::RedisConfig { name: "t".into(), host: "127.0.0.1".into(), port: 6391, password: None, db: 0, tls: false });
+        let rc = ActiveConnection::Redis(crate::db::connection::RedisConfig { ssh: None, via: None, name: "t".into(), host: "127.0.0.1".into(), port: 6391, password: None, db: 0, tls: false });
         assert!(!run(&rc, "DBSIZE").await.rows.is_empty());
     }
 }
@@ -6018,4 +6152,186 @@ pub async fn create_search_index(
         created.push(name);
     }
     Ok(created)
+}
+
+/// Big results on engines other than Postgres stream to the result store
+/// instead of arriving whole.
+#[cfg(test)]
+mod stream_tests {
+    use super::*;
+
+    fn rss_mb() -> u64 {
+        std::fs::read_to_string("/proc/self/status")
+            .ok()
+            .and_then(|s| s.lines().find(|l| l.starts_with("VmRSS")).map(|l| l.split_whitespace().nth(1).unwrap_or("0").parse::<u64>().unwrap_or(0) / 1024))
+            .unwrap_or(0)
+    }
+
+    fn sink_into(store: &super::super::result_store::ResultStore, id: &str) -> RowSink {
+        let channel = tauri::ipc::Channel::<RowChunk>::new(|_| Ok(()));
+        RowSink::with_spool(channel, Some(store.create(id).unwrap()))
+    }
+
+    const N: usize = 2_000_000;
+
+    async fn check(store: &super::super::result_store::ResultStore, id: &str, r: SqlResult, before: u64, limit_mb: u64) {
+        assert!(r.rows.is_empty(), "rows went to the store, not the reply");
+        assert_eq!(r.row_count, Some(N as i64));
+        let stored = store.get(id).unwrap();
+        assert_eq!(stored.len(), N);
+        assert!(stored.is_done());
+        let deep: Vec<Value> = serde_json::from_str(&stored.read_window(N - 3, 3).unwrap()).unwrap();
+        assert_eq!(deep[2][0], serde_json::json!(N as i64));
+        let grew = rss_mb().saturating_sub(before);
+        assert!(grew < limit_mb, "{id}: memory grew {grew} MB while streaming");
+    }
+
+    #[tokio::test]
+    async fn sqlite_streams_a_large_result_to_the_store() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();
+        let store = super::super::result_store::ResultStore::default();
+        let mut sink = sink_into(&store, "sqlite-big");
+        let before = rss_mb();
+        let sql = format!("WITH RECURSIVE g(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM g WHERE x < {N}) SELECT x AS id, hex(randomblob(32)) AS v FROM g");
+        let (_tx, rx) = tokio::sync::oneshot::channel();
+        let r = super::super::sqlite::stream_into(&pool, &sql, &mut sink, rx).await.unwrap();
+        // Collected, these rows are ~150 MB of JSON plus the values behind it.
+        check(&store, "sqlite-big", r, before, 120).await;
+    }
+
+    /// A fake ClickHouse HTTP endpoint answering in
+    /// JSONCompactEachRowWithNamesAndTypes, written in uneven chunks so lines
+    /// split across reads. `tail` is appended after the rows.
+    async fn fake_clickhouse(rows: usize, tail: &'static str) -> u16 {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = l.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let (mut s, _) = l.accept().await.unwrap();
+            let mut buf = vec![0u8; 65536];
+            let _ = s.read(&mut buf).await;
+            s.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n").await.unwrap();
+            let mut out = String::from("[\"id\",\"v\"]\n[\"UInt64\",\"Nullable(String)\"]\n");
+            for i in 1..=rows {
+                out.push_str(&format!("[{i},\"{:064x}\"]\n", i));
+                if out.len() > 7_919 {
+                    let cut = out.len() / 2 + 3;
+                    s.write_all(&out.as_bytes()[..cut]).await.unwrap();
+                    out = out[cut..].to_string();
+                }
+            }
+            out.push_str(tail);
+            s.write_all(out.as_bytes()).await.unwrap();
+        });
+        port
+    }
+
+    fn fake_clickhouse_cfg(port: u16) -> super::super::connection::ClickhouseConfig {
+        super::super::connection::ClickhouseConfig {
+            name: "t".into(), host: "127.0.0.1".into(), port, database: "default".into(),
+            user: "default".into(), password: String::new(), secure: false, ssh: None, via: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn clickhouse_streams_a_large_result_to_the_store() {
+        let port = fake_clickhouse(N, "").await;
+        let store = super::super::result_store::ResultStore::default();
+        let mut sink = sink_into(&store, "ch-big");
+        let before = rss_mb();
+        let (_tx, rx) = tokio::sync::oneshot::channel();
+        let stop = super::super::stop::Stop::from_rx(rx);
+        let r = super::super::clickhouse::stream_into(&fake_clickhouse_cfg(port), "SELECT id, v FROM t", &mut sink, &stop).await.unwrap();
+        assert_eq!(r.columns.len(), 2);
+        assert_eq!(r.columns[1].data_type, "String");
+        assert!(r.columns[1].nullable);
+        // Collected as one JSONCompact document this was the body text plus
+        // the parsed tree: several hundred MB.
+        check(&store, "ch-big", r, before, 120).await;
+    }
+
+    #[tokio::test]
+    async fn clickhouse_error_after_the_first_rows_is_reported() {
+        let port = fake_clickhouse(500, "Code: 241. DB::Exception: Memory limit exceeded\n").await;
+        let store = super::super::result_store::ResultStore::default();
+        let mut sink = sink_into(&store, "ch-err");
+        let (_tx, rx) = tokio::sync::oneshot::channel();
+        let stop = super::super::stop::Stop::from_rx(rx);
+        let e = super::super::clickhouse::stream_into(&fake_clickhouse_cfg(port), "SELECT 1", &mut sink, &stop).await.unwrap_err();
+        assert!(e.contains("Memory limit exceeded"), "{e}");
+    }
+
+    #[tokio::test]
+    async fn duckdb_streams_a_large_result_to_the_store() {
+        let cfg = super::super::connection::DuckdbConfig { name: "t".into(), file_path: ":memory:".into() };
+        let h = super::super::connection::open_duckdb(&cfg).await.unwrap();
+        let store = super::super::result_store::ResultStore::default();
+        let mut sink = sink_into(&store, "duck-big");
+        let before = rss_mb();
+        let sql = format!("SELECT range + 1 AS id, md5(range::varchar) || md5((range * 7)::varchar) AS v FROM range({N})");
+        let (_tx, rx) = tokio::sync::oneshot::channel();
+        let r = super::super::duckdb::stream_into(&h, &sql, &mut sink, rx).await.unwrap();
+        // duckdb-rs reads rows only from a materialized result (its streaming
+        // cursor is Arrow-only, and panics on a mid-stream error), so DuckDB
+        // holds the result natively: measured 214 MB here. This side holds one
+        // 1,000-row batch. Collected, the same result grew memory 931 MB
+        // (duckdb_collected_for_comparison), before the window's copy.
+        check(&store, "duck-big", r, before, 350).await;
+    }
+
+    // For the record: what the same DuckDB result costs collected.
+    #[tokio::test]
+    #[ignore]
+    async fn duckdb_collected_for_comparison() {
+        let cfg = super::super::connection::DuckdbConfig { name: "t".into(), file_path: ":memory:".into() };
+        let h = super::super::connection::open_duckdb(&cfg).await.unwrap();
+        let before = rss_mb();
+        let sql = format!("SELECT range + 1 AS id, md5(range::varchar) || md5((range * 7)::varchar) AS v FROM range({N})");
+        let r = super::super::duckdb::execute_sql(&h, &sql).await.unwrap();
+        let json = serde_json::to_string(&r).unwrap();
+        println!("collected: rows {} json {} MB, rss grew {} MB", r.rows.len(), json.len() >> 20, rss_mb().saturating_sub(before));
+    }
+
+    #[test]
+    fn budget_stops_a_collected_result() {
+        let mut b = CollectBudget::default();
+        let row = vec![Value::String("x".repeat(1 << 20))];
+        let taken = (0..1000).take_while(|_| b.take(&row)).count();
+        assert!((500..=512).contains(&taken), "{taken}");
+        assert!(budget_message(taken).contains("SQL console streams"));
+    }
+}
+
+#[cfg(test)]
+mod on_conn_tunnel_tests {
+    // Live: Data Diff's own connection goes through the saved connection's SSH
+    // tunnel. The throwaway sshd logs each login, so one more login is the
+    // proof it went through; the ssh is gone again afterwards.
+    //   STROKE_TEST_SSH=… STROKE_TEST_SSH_KEY=… STROKE_TEST_KNOWN_HOSTS=…
+    //   STROKE_TEST_PG_PORT=5433 STROKE_TEST_SSHD_LOG=/path/sshd.log
+    #[tokio::test]
+    async fn data_diff_goes_through_the_tunnel() {
+        let (Ok(target), Ok(key), Ok(pg_port), Ok(log)) = (
+            std::env::var("STROKE_TEST_SSH"),
+            std::env::var("STROKE_TEST_SSH_KEY"),
+            std::env::var("STROKE_TEST_PG_PORT"),
+            std::env::var("STROKE_TEST_SSHD_LOG"),
+        ) else {
+            return;
+        };
+        let logins = || std::fs::read_to_string(&log).unwrap_or_default().matches("Accepted publickey").count();
+        let (user, hostport) = target.split_once('@').unwrap();
+        let (host, port) = hostport.split_once(':').unwrap();
+        let cfg = serde_json::json!({
+            "type": "postgres", "name": "t", "host": "127.0.0.1", "port": pg_port.parse::<u16>().unwrap(),
+            "database": "postgres", "user": "postgres", "password": "", "ssl": false,
+            "ssh": { "host": host, "port": port.parse::<u16>().unwrap(), "username": user, "privateKeyPath": key, "keepalive": 30 }
+        });
+        let config: crate::db::connection::AnyConnectionConfig = serde_json::from_value(cfg).unwrap();
+        let before = logins();
+        let r = super::execute_sql_on_conn(config, "SELECT 7 AS n").await.unwrap();
+        assert_eq!(r.rows[0][0], serde_json::json!(7));
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        assert_eq!(logins(), before + 1, "the query went through one SSH login");
+    }
 }

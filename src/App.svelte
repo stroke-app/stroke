@@ -2,8 +2,9 @@
   import { toastPosition } from '$lib/stores/toast-position.js'
   import { onMount } from 'svelte'
   import { Toaster } from '$lib/components/ui/sonner/index.js'
+  import ZoomIndicator from '$lib/components/ZoomIndicator.svelte'
   import StudioShell from './lib/components/StudioShell.svelte'
-  import DashboardWindow from './lib/components/DashboardWindow.svelte'
+
 
   // A window opened for one dashboard (open_dashboard_window) shows only that.
   const params = typeof location !== 'undefined' ? new URLSearchParams(location.search) : new URLSearchParams()
@@ -88,6 +89,7 @@
 
 <!-- The corner is a setting (Appearance → Notifications). Top corners clear
      the titlebar, bottom ones the status bar. -->
+<ZoomIndicator />
 <Toaster
   position={$toastPosition}
   offset={{ top: '52px', bottom: '40px', left: '12px', right: '12px' }}
@@ -104,7 +106,7 @@
   <AppLockGate>
     <LicenseGate>
       {#if dashboardView}
-        <DashboardWindow dashboardId={dashboardView.dash} connectionId={dashboardView.conn} />
+        {#await import('./lib/components/DashboardWindow.svelte') then { default: DashboardWindow }}<DashboardWindow dashboardId={dashboardView.dash} connectionId={dashboardView.conn} />{/await}
       {:else if localServersFrom}
         {#await import('./lib/components/LocalServersWindow.svelte') then { default: LocalServersWindow }}
           <LocalServersWindow from={localServersFrom} />

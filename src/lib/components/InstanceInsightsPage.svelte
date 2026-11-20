@@ -824,7 +824,7 @@
                 bind:value={configSearch}
                 placeholder="Search {big(config.length)} settings, names or descriptions"
                 aria-label="Search settings"
-                class="field-surface h-9 w-full pl-9 pr-9 text-ui-sm text-foreground shadow-none outline-none placeholder:text-muted-foreground"
+                class="search-box no-field-frame h-9 w-full pl-9 pr-9 text-ui-sm"
                 onkeydown={(e) => { if (e.key === 'Escape' && configSearch) { e.preventDefault(); e.stopPropagation(); configSearch = '' } }}
               />
               {#if configSearch}

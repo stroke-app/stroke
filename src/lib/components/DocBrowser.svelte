@@ -826,7 +826,7 @@ GET products/_search
          the collection's field names to insert. -->
     <form class={cn('flex shrink-0 flex-col gap-1.5 border-b border-border/30 px-3 py-2', (view === 'indexes' || view === 'aggregate') && 'hidden')} onsubmit={(e) => { e.preventDefault(); find() }}>
       <div class="flex items-center gap-2">
-        <div class="field-surface flex h-8 min-w-0 flex-1 items-center gap-2 pl-3 pr-1 shadow-none transition-[border-color] focus-within:border-ring">
+        <div class="search-shell flex h-8 min-w-0 flex-1 items-center gap-2 pl-3 pr-1">
           <Filter class="size-3.5 shrink-0 text-muted-foreground" />
           <input
             bind:this={filterEl}

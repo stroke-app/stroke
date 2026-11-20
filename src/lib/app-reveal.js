@@ -47,6 +47,36 @@ export function revealApp() {
   // rather than a page fading in.
   document.documentElement.dataset.revealed = ''
   void showWindow()
+  recordBootTiming()
+}
+
+/**
+ * Where the last launch spent its time before the first screen, in ms from
+ * navigation start: the page parsed (`html`), every statically imported
+ * module evaluated (`main`), the app mounted (`mount`), the first screen was
+ * ready (`reveal`). Kept in
+ * localStorage as `stroke:last-boot`, so a slow start can be read back
+ * instead of guessed at. Marks only; nothing is sent anywhere.
+ */
+function recordBootTiming() {
+  try {
+    const at = (/** @type {string} */ name) => {
+      const m = performance.getEntriesByName(name, 'mark')[0]
+      return m ? Math.round(m.startTime) : null
+    }
+    const nav = /** @type {PerformanceNavigationTiming | undefined} */ (performance.getEntriesByType('navigation')[0])
+    const timing = {
+      html: nav ? Math.round(nav.domInteractive) : null,
+      main: at('stroke:main'),
+      settings: at('stroke:settings'),
+      connections: at('stroke:connections'),
+      mount: at('stroke:mount'),
+      lockReady: at('stroke:lock-ready'),
+      shell: at('stroke:shell'),
+      reveal: Math.round(performance.now()),
+    }
+    localStorage.setItem('stroke:last-boot', JSON.stringify(timing))
+  } catch { /* storage blocked: nothing to record */ }
 }
 
 /** Never leave a blank window: reveal regardless if no screen claimed it. */

@@ -191,13 +191,16 @@ export async function liveStop() {
 
 // ── PostgreSQL ────────────────────────────────────────────────────────────────
 
-/** @param {{ host: string, port?: number, username: string, privateKeyPath?: string }} ssh */
+/** @param {{ host: string, port?: number, username: string, privateKeyPath?: string, keepalive?: number }} ssh */
 function normalizeSshConfig(ssh) {
   return {
     host: String(ssh.host || '').trim(),
     port: Math.min(65535, Math.max(1, Number(ssh.port) || 22)),
     username: String(ssh.username || '').trim(),
     privateKeyPath: String(ssh.privateKeyPath || '').trim(),
+    // Seconds; 0 turns it off. Dropped here before, so the form's value never
+    // reached ssh and every tunnel ran at the default 30.
+    keepalive: Math.max(0, Math.min(3600, Number(ssh.keepalive ?? 30) || 0)),
   }
 }
 
@@ -418,7 +421,7 @@ export async function connectPosthog(config) {
 
 /** @param {{ name: string, host: string, port: number|string, database: string, user: string, password: string, secure?: boolean }} config */
 function normalizeClickhouse(config) {
-  return {
+  return withSsh({
     name: String(config.name || 'ClickHouse'),
     host: String(config.host || '127.0.0.1'),
     port: Math.min(65535, Math.max(1, Number(config.port) || 8123)),
@@ -426,7 +429,7 @@ function normalizeClickhouse(config) {
     user: String(config.user || 'default'),
     password: String(config.password || ''),
     secure: Boolean(config.secure),
-  }
+  }, config)
 }
 
 /** @param {{ name: string, host: string, port: number|string, database: string, user: string, password: string, secure?: boolean }} config */
@@ -443,7 +446,7 @@ export async function connectClickhouse(config) {
 
 /** @param {{ name: string, host: string, port: number|string, password?: string, db?: number|string, tls?: boolean }} config */
 function normalizeRedis(config) {
-  return {
+  return withSsh({
     type: 'redis',
     name: String(config.name || 'Redis'),
     host: String(config.host || '127.0.0.1'),
@@ -451,7 +454,7 @@ function normalizeRedis(config) {
     password: config.password || null,
     db: Number(config.db) || 0,
     tls: !!config.tls,
-  }
+  }, config)
 }
 
 /** @param {{ name: string, host: string, port: number|string, password?: string, db?: number|string, tls?: boolean }} config */
@@ -609,13 +612,13 @@ export async function dynamoRequest(op, body = {}) {
 
 /** @param {CouchConnConfig} config */
 function normalizeCouch(config) {
-  return {
+  return withSsh({
     type: 'couchdb',
     name: String(config.name || 'CouchDB'),
     url: String(config.url || 'http://localhost:5984').trim(),
     user: (config.user && String(config.user).trim()) || null,
     password: config.password || null,
-  }
+  }, config)
 }
 
 /** @param {CouchConnConfig} config */
@@ -646,7 +649,7 @@ export async function couchRequest(method, path, body) {
 /** @param {EsConnConfig} config */
 function normalizeEs(config) {
   const flavor = config.type === 'opensearch' ? 'opensearch' : 'elasticsearch'
-  return {
+  return withSsh({
     type: flavor,
     flavor,
     name: String(config.name || (flavor === 'opensearch' ? 'OpenSearch' : 'Elasticsearch')),
@@ -655,7 +658,7 @@ function normalizeEs(config) {
     password: config.password || null,
     apiKey: (config.apiKey && String(config.apiKey).trim()) || null,
     insecure: !!config.insecure,
-  }
+  }, config)
 }
 
 /**
@@ -702,12 +705,12 @@ export async function elasticImport(index, path, opts = {}) {
 
 /** @param {MongoConnConfig} config */
 function normalizeMongo(config) {
-  return {
+  return withSsh({
     type: 'mongodb',
     name: String(config.name || 'MongoDB'),
     uri: String(config.uri || 'mongodb://localhost:27017').trim(),
     database: (config.database && String(config.database).trim()) || null,
-  }
+  }, config)
 }
 
 /** @param {MongoConnConfig} config */
@@ -907,14 +910,14 @@ export async function firestoreRequest(method, path, body) {
 function normalizeCassandra(config) {
   /** @param {string | undefined} s */
   const opt = (s) => (s && String(s).trim()) || null
-  return {
+  return withSsh({
     type: 'cassandra',
     name: String(config.name || 'Cassandra'),
     hosts: String(config.hosts || '127.0.0.1').trim(),
     user: opt(config.user),
     password: config.password || null,
     keyspace: opt(config.keyspace),
-  }
+  }, config)
 }
 
 /** @param {CassandraConnConfig} config */
@@ -985,7 +988,7 @@ export async function connectDuckdb(config) {
 
 /** @param {{ name: string, host: string, port: number|string, database: string, user: string, password: string, encrypt?: boolean, trustCert?: boolean }} config */
 function normalizeMssql(config) {
-  return {
+  return withSsh({
     name: String(config.name || 'SQL Server'),
     host: String(config.host || '127.0.0.1'),
     port: Math.min(65535, Math.max(1, Number(config.port) || 1433)),
@@ -994,7 +997,7 @@ function normalizeMssql(config) {
     password: String(config.password || ''),
     encrypt: Boolean(config.encrypt),
     trustCert: Boolean(config.trustCert),
-  }
+  }, config)
 }
 
 /** @param {{ name: string, host: string, port: number|string, database: string, user: string, password: string, encrypt?: boolean, trustCert?: boolean }} config */
@@ -1016,7 +1019,7 @@ export async function connectMssql(config) {
 
 /** @param {OracleConnConfig} config */
 function normalizeOracle(config) {
-  return {
+  return withSsh({
     name: String(config.name || 'Oracle'),
     host: String(config.host || '127.0.0.1').trim(),
     port: Math.min(65535, Math.max(1, Number(config.port) || 1521)),
@@ -1026,7 +1029,7 @@ function normalizeOracle(config) {
     user: String(config.user ?? '').trim(),
     password: String(config.password ?? ''),
     clientLibDir: String(config.clientLibDir ?? '').trim(),
-  }
+  }, config)
 }
 
 /** @param {OracleConnConfig} config */
@@ -1690,10 +1693,11 @@ export async function instanceSetConfig(name, value) {
 /**
  * The query plan. `analyze` (Postgres) runs the statement for actual rows and
  * times, inside a transaction that is rolled back; off, only estimates.
- * @param {string} sql @param {{ analyze?: boolean }} [opts]
+ * `queryId` lets `cancelQuery` stop an ANALYZE on the server.
+ * @param {string} sql @param {{ analyze?: boolean, queryId?: string }} [opts]
  */
 export async function explainSql(sql, opts = {}) {
-  return inv('pg_explain_sql', { sql, analyze: opts.analyze ?? true })
+  return inv('pg_explain_sql', { sql, analyze: opts.analyze ?? true, queryId: opts.queryId ?? null })
 }
 
 /**
@@ -1966,6 +1970,7 @@ export async function backupCancel() {
  * @property {number} rowsAffected
  * @property {number} openMs how long the transaction has been held
  * @property {string|null} engine
+ * @property {number|null} [blocking] sessions waiting on a lock it holds (null: the engine can't say)
  */
 
 /**
@@ -2010,6 +2015,11 @@ export async function txRollback(sessionId) {
 /** @param {string} sessionId @returns {Promise<TxStatus>} */
 export async function txStatus(sessionId) {
   return inv('tx_status', { sessionId })
+}
+
+/** Ids of every open transaction session, for the quit guard. @returns {Promise<string[]>} */
+export async function txOpenSessions() {
+  return inv('tx_open_sessions', {})
 }
 
 /**

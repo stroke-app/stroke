@@ -2706,6 +2706,8 @@ pub async fn get_table_ddl(
 
 /// List schemas for an arbitrary saved connection without changing global state.
 pub async fn list_schemas_on_conn(config: AnyConnectionConfig) -> Result<Vec<String>, String> {
+    // Its own connection, through the saved connection's SSH tunnel if any.
+    let (config, _tunnel) = super::connection::tunnel_any(config).await?;
     use super::connection::{open_mysql, open_pg};
     match config {
         AnyConnectionConfig::Postgres(c) => {
@@ -2734,6 +2736,8 @@ pub async fn list_tables_on_conn(
     config: AnyConnectionConfig,
     schema: String,
 ) -> Result<Vec<String>, String> {
+    // Its own connection, through the saved connection's SSH tunnel if any.
+    let (config, _tunnel) = super::connection::tunnel_any(config).await?;
     use super::connection::{open_mysql, open_pg, open_sqlite};
     let to_names = |ts: Vec<TableInfo>| ts.into_iter().map(|t| t.name).collect::<Vec<_>>();
     match config {
@@ -2786,6 +2790,8 @@ pub async fn get_table_ddl_on_conn(
     schema: String,
     table: String,
 ) -> Result<String, String> {
+    // Its own connection, through the saved connection's SSH tunnel if any.
+    let (config, _tunnel) = super::connection::tunnel_any(config).await?;
     use super::connection::{open_mysql, open_pg, open_sqlite};
     if let AnyConnectionConfig::Oracle(c) = &config {
         let h = super::connection::open_oracle(c).await?;

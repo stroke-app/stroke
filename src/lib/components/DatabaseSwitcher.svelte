@@ -148,7 +148,7 @@
           <input
             type="text"
             placeholder="Filter…"
-            class= "field-surface h-6 w-full bg-background/40 pl-7 pr-2 font-mono text-ui-xs text-foreground outline-none placeholder:text-muted-foreground"
+            class="search-box no-field-frame h-7 w-full pl-7 pr-2 font-mono text-ui-xs"
             bind:value={search}
           />
         </div>

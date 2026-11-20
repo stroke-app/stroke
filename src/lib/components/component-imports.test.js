@@ -96,9 +96,12 @@ describe('rendered components are in scope', () => {
     expect(undeclared(parse(src, { modern: true }))).toEqual(['Icon'])
   })
 
+  // Parsing and walking a file takes time in proportion to its size, and
+  // StudioShell (12k lines) took ~4.9s of vitest's 5s default on its own:
+  // any edit to it timed the check out while it still passed.
   for (const f of files) {
     it(f.slice(process.cwd().length + 1), () => {
       expect(undeclared(parse(readFileSync(f, 'utf8'), { modern: true }))).toEqual([])
-    })
+    }, 20_000)
   }
 })

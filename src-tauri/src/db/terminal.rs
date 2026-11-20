@@ -480,6 +480,10 @@ async fn pg_launch(config: PgConfig) -> Result<Launch, String> {
         ("PGDATABASE", c.database.clone()),
         ("PGAPPNAME", "Stroke".to_string()),
     ];
+    // Through a tunnel: dial it, and keep PGHOST for TLS verification.
+    if let Some(via) = c.via {
+        env.push(("PGHOSTADDR", via.ip().to_string()));
+    }
     if !c.password.is_empty() {
         env.push(("PGPASSWORD", c.password.clone()));
     }
@@ -522,7 +526,9 @@ async fn pg_launch(config: PgConfig) -> Result<Launch, String> {
 async fn mysql_launch(config: MysqlConfig, mariadb: bool) -> Result<Launch, String> {
     let (c, tunnel) = resolve_mysql_ssh(config).await?;
     let mut args = vec![
-        format!("--host={}", c.host),
+        // The mysql client has no separate dial address: through a tunnel it
+        // connects to the tunnel by IP.
+        format!("--host={}", c.via.map(|v| v.ip().to_string()).unwrap_or_else(|| c.host.clone())),
         format!("--port={}", c.port),
         format!("--user={}", c.user),
         "--default-character-set=utf8mb4".to_string(),
@@ -1355,6 +1361,7 @@ mod tests {
     #[test]
     fn pg_password_and_ssl_travel_in_env_not_argv() {
         let config = PgConfig {
+            via: None,
             name: "t".into(),
             host: "db.example.com".into(),
             port: 5433,
@@ -1401,6 +1408,7 @@ mod tests {
     #[test]
     fn mariadb_gets_switches_instead_of_ssl_mode() {
         let config = |ssl_mode: &str| MysqlConfig {
+            via: None,
             name: "t".into(),
             host: "h".into(),
             port: 3306,

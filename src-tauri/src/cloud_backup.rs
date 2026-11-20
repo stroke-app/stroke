@@ -251,6 +251,8 @@ async fn dump_and_upload(
     };
 
     let result = async {
+        // Through the saved connection's SSH tunnel, held until the dump is done.
+        let (config, _tunnel) = crate::db::connection::tunnel_any(config).await?;
         let conn = open(config).await?;
         crate::db::backup::reset_cancel();
         let rep = crate::db::backup::Reporter::silent();

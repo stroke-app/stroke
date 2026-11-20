@@ -853,7 +853,7 @@
 
     {#if pickerTab === "queries"}
       <div class="flex shrink-0 flex-col gap-2 px-6 pb-2">
-        <label class="field-surface flex h-8 items-center gap-2 px-2.5">
+        <label class="search-shell flex h-8 items-center gap-2 px-2.5">
           <SearchIcon class="size-3.5 shrink-0 text-muted-foreground" />
           <input bind:value={pickerQuery} placeholder="Search saved queries" aria-label="Search saved queries" class="no-field-frame min-w-0 flex-1 bg-transparent text-ui-sm outline-none placeholder:text-muted-foreground" />
         </label>
@@ -919,7 +919,7 @@
       </div>
     {:else}
       <div class="flex shrink-0 flex-col gap-2 px-6 pb-2">
-        <label class="field-surface flex h-8 items-center gap-2 px-2.5">
+        <label class="search-shell flex h-8 items-center gap-2 px-2.5">
           <SearchIcon class="size-3.5 shrink-0 text-muted-foreground" />
           <input bind:value={pickerQuery} placeholder="Search charts" aria-label="Search charts" class="no-field-frame min-w-0 flex-1 bg-transparent text-ui-sm outline-none placeholder:text-muted-foreground" />
         </label>

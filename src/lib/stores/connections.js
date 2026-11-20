@@ -317,7 +317,46 @@ function mirrorToDisk() {
  * current localStorage list seeds it. Outside Tauri (browser dev) or with an
  * unreadable file, localStorage stays the source.
  */
-export async function hydrateConnectionsFromDisk() {
+/** The keychain read started by hydrateConnectionsFromDisk; see secretsReady. */
+let _secretsPromise = Promise.resolve()
+
+/**
+ * Resolves once saved passwords have been read from the OS keychain. Startup
+ * does not wait for it (see hydrateConnectionsFromDisk); anything that is
+ * about to connect does, through withSecrets.
+ * @returns {Promise<void>}
+ */
+export function secretsReady() {
+  return _secretsPromise
+}
+
+/**
+ * A connection with its saved secrets filled in, once the keychain has
+ * answered. A connection read from the list before then has none, and would
+ * fail its login. Fields the connection already carries win.
+ * @template {{ id?: string }} T
+ * @param {T} conn
+ * @returns {Promise<T>}
+ */
+export async function withSecrets(conn) {
+  await _secretsPromise
+  const sec = conn && typeof conn.id === 'string' ? _secretCache.get(conn.id) : undefined
+  return sec ? { ...sec, ...conn } : conn
+}
+
+/**
+ * Load the saved list from its on-disk copy, then read the passwords from the
+ * OS keychain.
+ *
+ * `waitForSecrets: false` returns once the list is in and leaves the keychain
+ * read running (secretsReady). Startup uses it: the keychain answers over
+ * D-Bus on Linux and through the system on macOS and Windows, and it was
+ * measured taking 119ms, 1179ms, and once never answering, while the whole
+ * window waited for it before mounting anything. The list needs only the
+ * file; only a connect needs the passwords.
+ * @param {{ waitForSecrets?: boolean }} [opts]
+ */
+export async function hydrateConnectionsFromDisk({ waitForSecrets = true } = {}) {
   let seedFile = false
   try {
     const json = /** @type {string | null} */ (await invoke('connections_store_read'))
@@ -333,8 +372,10 @@ export async function hydrateConnectionsFromDisk() {
   } catch (err) {
     console.warn('Saved connections: using browser storage only.', err)
   } finally {
-    await hydrateConnectionSecrets()
-    if (seedFile) mirrorToDisk()
+    _secretsPromise = hydrateConnectionSecrets().then(() => {
+      if (seedFile) mirrorToDisk()
+    })
+    if (waitForSecrets) await _secretsPromise
   }
 }
 

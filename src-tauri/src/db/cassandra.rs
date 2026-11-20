@@ -31,6 +31,10 @@ pub struct CassandraConfig {
     /// Default keyspace for unqualified table names in the console.
     #[serde(default)]
     pub keyspace: Option<String>,
+    /// Reach the server through an SSH tunnel (connection::tunnel_to and friends).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ssh: Option<super::ssh_tunnel::SshConfig>,
+
 }
 
 pub type CassandraHandle = Arc<Session>;
@@ -535,7 +539,7 @@ mod tests {
 
     #[test]
     fn contact_points_default_port() {
-        let cfg = CassandraConfig { name: "t".into(), hosts: "a, b:9142 ,,10.0.0.1".into(), user: None, password: None, keyspace: None };
+        let cfg = CassandraConfig { ssh: None, name: "t".into(), hosts: "a, b:9142 ,,10.0.0.1".into(), user: None, password: None, keyspace: None };
         assert_eq!(contact_points(&cfg), ["a:9042", "b:9142", "10.0.0.1:9042"]);
     }
 
@@ -553,7 +557,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn cassandra_live() {
-        let cfg = CassandraConfig { name: "t".into(), hosts: "127.0.0.1".into(), user: None, password: None, keyspace: None };
+        let cfg = CassandraConfig { ssh: None, name: "t".into(), hosts: "127.0.0.1".into(), user: None, password: None, keyspace: None };
         let s = connect(&cfg).await.unwrap();
         let tables = list_tables(&s).await.unwrap();
         assert!(tables.iter().any(|t| t.starts_with("shop.")), "{tables:?}");

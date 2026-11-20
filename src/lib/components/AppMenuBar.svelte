@@ -40,7 +40,7 @@
 
   const contentCls =
     "data-open:animate-in data-closed:animate-out data-closed:fade-out-0 data-open:fade-in-0 duration-75 " +
-    "border border-border/60 bg-popover text-popover-foreground min-w-60 max-w-(--menu-max-w) rounded-[10px] p-1 elevate-2-rim z-[60] outline-none";
+    "chrome-font border border-border/60 bg-popover text-popover-foreground min-w-60 max-w-(--menu-max-w) rounded-[10px] p-1 elevate-2-rim z-[60] outline-none";
 
   // A fixed h-7 row (the compact control height) instead of py-1: padding-based
   // rows grew with the font and zoom, and every menu came out a different

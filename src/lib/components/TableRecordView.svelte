@@ -429,7 +429,7 @@
         aria-label="Search fields"
         bind:value={fieldSearch}
         onkeydown={(e) => { if (e.key === 'Escape' && fieldSearch) { e.preventDefault(); e.stopPropagation(); fieldSearch = '' } }}
-        class="field-surface h-8 w-full min-w-0 pl-8 pr-7 text-ui-sm text-foreground shadow-none outline-none placeholder:text-muted-foreground"
+        class="search-box no-field-frame h-8 w-full min-w-0 pl-8 pr-7 text-ui-sm"
       />
       {#if fieldSearch}
         <button type="button" class="hit-area absolute right-1.5 inline-flex size-5 items-center justify-center rounded-sm text-muted-foreground hover:bg-accent hover:text-foreground" aria-label="Clear search" onclick={() => (fieldSearch = '')}>

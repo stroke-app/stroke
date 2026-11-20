@@ -437,7 +437,7 @@
                     aria-label="Search fields"
                     bind:value={fieldSearch}
                     onkeydown={(e) => { if (e.key === 'Escape' && fieldSearch) { e.preventDefault(); e.stopPropagation(); fieldSearch = '' } }}
-                    class="field-surface h-8 w-full min-w-0 pl-8 pr-2.5 text-ui-sm text-foreground shadow-none outline-none placeholder:text-muted-foreground"
+                    class="search-box no-field-frame h-8 w-full min-w-0 pl-8 pr-2.5 text-ui-sm"
                   />
                 </div>
               </div>
@@ -624,7 +624,7 @@
                 <img
                   src={cellPreviewHref}
                   alt=""
-                  class="max-w-full rounded border border-border object-contain shadow-sm"
+                  class="max-w-full rounded border border-border object-contain"
                   style="max-height: calc(100% - 2.5rem)"
                 />
               {:else if cellPreviewType === 'pdf'}

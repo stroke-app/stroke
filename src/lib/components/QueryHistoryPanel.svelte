@@ -232,7 +232,7 @@
         placeholder={view === 'history' ? 'Search history…' : view === 'saved' ? 'Search saved queries…' : 'Search saved charts…'}
         aria-label={view === 'history' ? 'Search history' : view === 'saved' ? 'Search saved queries' : 'Search saved charts'}
         aria-controls="query-list"
-        class="peer field-surface h-7 w-full min-w-0 bg-input/30 pl-7 pr-6 font-mono text-ui-xs outline-none placeholder:font-sans placeholder:text-muted-foreground [&::-webkit-search-cancel-button]:hidden"
+        class="peer search-box no-field-frame h-7 w-full min-w-0 pl-7 pr-6 font-mono text-ui-xs placeholder:font-sans"
       />
       <Kbd combo="/" class="pointer-events-none hidden peer-placeholder-shown:inline-flex peer-focus:hidden absolute top-1/2 right-2 -translate-y-1/2" aria-hidden="true" />
       {#if filter}

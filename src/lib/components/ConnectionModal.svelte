@@ -56,6 +56,7 @@
     setLastConnectionId,
     findDuplicateConnection,
     engineFamily,
+    withSecrets,
   } from "$lib/stores/connections.js";
   import { Input } from "$lib/components/ui/input/index.js";
   import SearchableMenu from "./SearchableMenu.svelte";
@@ -83,7 +84,7 @@
   import * as ContextMenu from "$lib/components/ui/context-menu/index.js";
   import { parseConnectionUri, detectConnectionUri, connectionUrl } from "$lib/connection-uri.js";
   import { PROVIDERS, providerBuildConnection, providerWarm, providerToSaved, AUTH_FAILURE } from "$lib/providers.js";
-  import { providerOf, engineLabel } from "$lib/connection-provider.js";
+  import { providerOf, engineLabel, engineId } from "$lib/connection-provider.js";
   import ConfirmDialog from "./ConfirmDialog.svelte";
   import { engineTint } from "$lib/engine-tint.js";
   // macOS: the dialog takes the whole window like the app's own layout - the
@@ -194,7 +195,8 @@
         { id: "couchdb", label: "CouchDB", desc: "JSON documents over HTTP, Mango queries" },
         { id: "elasticsearch", label: "Elasticsearch", desc: "Search and analytics, also Elastic Cloud" },
         { id: "opensearch", label: "OpenSearch", desc: "Search and analytics, also Amazon OpenSearch Service" },
-        { id: "cassandra", label: "Cassandra", desc: "Wide-column store, also ScyllaDB (CQL)" },
+        { id: "cassandra", label: "Cassandra", desc: "Wide-column store (CQL)" },
+        { id: "scylladb", label: "ScyllaDB", desc: "Cassandra-compatible wide-column store (CQL)" },
         { id: "firestore", label: "Firestore", desc: "Google Cloud document database" },
       ],
     },
@@ -294,6 +296,7 @@
     "elasticsearch",
     "opensearch",
     "cassandra",
+    "scylladb",
     "firestore",
   ];
   const driverItems = DRIVER_ORDER.map((id) =>
@@ -397,6 +400,8 @@
   let dbType = $state("postgres");
   // Valkey shares the Redis form and backend.
   const isRedisForm = $derived(dbType === "redis" || dbType === "valkey");
+  /** Cassandra and ScyllaDB share one form and one engine (CQL). */
+  const isCqlForm = $derived(dbType === "cassandra" || dbType === "scylladb");
   // Top-level entry mode: connect manually vs sign in with a hosting provider.
   let entryMode = $state(/** @type {'manual'|'provider'} */ ("manual"));
   // Advanced (SSL / SSH / read-only) disclosure - collapsed by default.
@@ -1003,6 +1008,7 @@
         user,
         password,
         secure,
+        ...(ssh && { ssh }),
       };
     if (dbType === "duckdb" || dbType === "duckdb-memory")
       return {
@@ -1021,6 +1027,7 @@
         password,
         encrypt,
         trustCert,
+        ...(ssh && { ssh }),
       };
     if (dbType === "oracle")
       return {
@@ -1034,9 +1041,10 @@
         user,
         password,
         clientLibDir: oraClientDir.trim(),
+        ...(ssh && { ssh }),
       };
     if (dbType === "mongodb")
-      return { type: "mongodb", name: nm, uri: mongoUri.trim(), database: mongoDb.trim() };
+      return { type: "mongodb", name: nm, uri: mongoUri.trim(), database: mongoDb.trim(), ...(ssh && { ssh }) };
     if (dbType === "firestore")
       return {
         type: "firestore",
@@ -1047,10 +1055,20 @@
         ...(fsAuth === "serviceAccount" && { keyFile: fsKeyFile.trim() }),
         ...(fsAuth === "emulator" && { emulatorHost: fsEmulator.trim() }),
       };
-    if (dbType === "cassandra")
-      return { type: "cassandra", name: nm, hosts: cqlHosts.trim(), user: user.trim(), password, keyspace: cqlKeyspace.trim() };
+    if (isCqlForm)
+      return {
+        type: "cassandra",
+        // ScyllaDB runs on the Cassandra engine; the flavor names it in lists.
+        ...(dbType === "scylladb" && { flavor: "scylladb" }),
+        name: nm,
+        hosts: cqlHosts.trim(),
+        user: user.trim(),
+        password,
+        keyspace: cqlKeyspace.trim(),
+        ...(ssh && { ssh }),
+      };
     if (dbType === "couchdb")
-      return { type: "couchdb", name: nm, url: couchUrl.trim(), user: user.trim(), password };
+      return { type: "couchdb", name: nm, url: couchUrl.trim(), user: user.trim(), password, ...(ssh && { ssh }) };
     if (dbType === "elasticsearch" || dbType === "opensearch")
       return {
         type: dbType,
@@ -1058,6 +1076,7 @@
         url: couchUrl.trim(),
         ...(esAuth === "apikey" ? { apiKey: esApiKey.trim(), user: "", password: "" } : { user: user.trim(), password, apiKey: "" }),
         insecure: esInsecure,
+        ...(ssh && { ssh }),
       };
     if (dbType === "dynamodb")
       return {
@@ -1078,6 +1097,7 @@
         password,
         db: Number(database) || 0,
         tls: secure,
+        ...(ssh && { ssh }),
       };
     return {
       type: "postgres",
@@ -1136,7 +1156,7 @@
         conn.filePath === ":memory:" &&
         (conn.type === "sqlite" || conn.type === "duckdb")
           ? `${conn.type}-memory`
-          : (conn.type ?? "postgres");
+          : engineId(conn) || "postgres";
       dbType = t;
       name = conn.name ?? "";
       host = conn.host ?? "127.0.0.1";
@@ -1411,6 +1431,7 @@
     elasticsearch: { database: "", user: "elastic" },
     opensearch:  { database: "", user: "admin" },
     cassandra:   { database: "", user: "" },
+    scylladb:    { database: "", user: "" },
     firestore:   { database: "", user: "" },
     mongodb:     { database: "", user: "" },
   };
@@ -1467,6 +1488,7 @@
     if (t === "redis" || t === "valkey") return "redis";
     if (t === "libsql") return "libsql";
     if (t === "couchdb" || t === "elasticsearch" || t === "opensearch") return "couchdb";
+    if (t === "cassandra" || t === "scylladb") return "cassandra";
     return "postgres";
   }
 
@@ -1881,6 +1903,8 @@
 
   /** Open `conn` with the driver its `type` calls for. */
   async function openConnection(conn) {
+    // Read from the list before the keychain answered, it has no password.
+    conn = await withSecrets(conn);
     // Every connect from this dialog is user-initiated, so it is exactly what
     // the "ask when connecting" PIN setting is about. A no-op when no PIN is set.
     if (!(await requireUnlock("Unlock to connect to a database"))) {
@@ -1931,10 +1955,11 @@
       await openConnection(conn);
       if (myOp !== opId) return; // cancelled by the user
       const updated = { ...conn, lastConnectedAt: Date.now() };
-      saved = upsertConnection(updated).sort(byLastConnected);
+      // Re-sorted by last use once the dialog is gone (see handOver): done now,
+      // the list reshuffled in the frames before it closed.
+      const nextSaved = upsertConnection(updated).sort(byLastConnected);
       setLastConnectionId(conn.id);
-      open = false;
-      await onconnected(updated, conn.id);
+      await handOver(updated, conn.id, () => (saved = nextSaved));
     } catch (e) {
       if (myOp !== opId) return;
       if (opts.onAuthFailure && AUTH_FAILURE.test(String(e))) {
@@ -1943,11 +1968,43 @@
       }
       failWith(friendlyError(e));
     } finally {
-      if (myOp === opId) {
+      // A connect that worked keeps its "Connecting" panel up while the dialog
+      // fades out (see handOver); it is cleared when the dialog opens again.
+      if (myOp === opId && open) {
         connecting = null;
         dialing = null;
       }
     }
+  }
+
+  /** Two frames: the next one painted, and the one after that free. */
+  const afterPaint = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+  /**
+   * Hand a working connection to the studio, then close. The studio's mount
+   * is one long synchronous render. Closing first ran the dialog's fade (and
+   * the "Connecting" panel's) on top of it: both froze half way, with the form
+   * showing through, and then jumped out. Now the studio mounts under the
+   * still-opaque panel, and the dialog closes once that render has painted,
+   * so its fade runs on a free main thread. The panel stays in the dialog
+   * until it is gone.
+   * @param {any} conn @param {string} id
+   */
+  async function handOver(conn, id, afterClose = () => {}) {
+    const landed = onconnected(conn, id);
+    await afterPaint();
+    open = false;
+    // Clear the panel once the dialog's 200ms fade is over, so a reopened
+    // dialog starts from the form; `afterClose` changes nothing on screen.
+    const op = opId;
+    setTimeout(() => {
+      afterClose();
+      if (!open && op === opId) {
+        connecting = null;
+        dialing = null;
+      }
+    }, 260);
+    await landed;
   }
 
   // ── Studios running on this machine ─────────────────────────────────────────
@@ -2220,7 +2277,7 @@
     return /** @type {LocalTarget} */ ({
       id: `docker:${d.name}`,
       container: d.name,
-      mark: d.engine,
+      mark: d.engine === "cassandra" && /scylla/i.test(d.image) ? "scylladb" : d.engine,
       trailingMark: null,
       title: d.name,
       badge: d.reason ? "" : `:${d.port}`,
@@ -2233,6 +2290,7 @@
         : {
             id: `docker:${d.name}`,
             type: d.engine,
+            ...(d.engine === "cassandra" && /scylla/i.test(d.image) && { flavor: "scylladb" }),
             name: d.name,
             origin: "docker",
             toolLabel: label,
@@ -2522,18 +2580,20 @@
       await openConnection(payload);
       if (myOp !== opId) return; // cancelled by the user
       const saved_conn = buildSavedConn(payload, id, Date.now());
+      /** @type {any[] | null} */
+      let nextSaved = null;
       if (save) {
-        saved = upsertConnection(saved_conn).sort(byLastConnected);
+        // Re-sorted once the dialog is gone (see handOver).
+        nextSaved = upsertConnection(saved_conn).sort(byLastConnected);
         editingId = id;
         setLastConnectionId(id);
       }
-      open = false;
       // The id is what files this as the last connection - and the shell writes
       // the payload back under it, so an unsaved EDIT must not travel with one
       // or "connect without saving" would save. An untouched saved row has
       // nothing to leak, so it keeps its id and still resumes on next launch.
       const handoverId = save || (editingId && !isDirty) ? id : "";
-      await onconnected(saved_conn, handoverId);
+      await handOver(saved_conn, handoverId, () => { if (nextSaved) saved = nextSaved; });
     } catch (e) {
       if (myOp === opId) failWith(friendlyError(e));
     } finally {
@@ -2629,7 +2689,7 @@
     if (dbType === "libsql") return uriHost(libsqlUrl.replace(/^libsql:/, "https:")) || libsqlUrl || "—";
     if (dbType === "d1") return databaseId ? `${databaseId.slice(0, 8)}…` : "—";
     if (dbType === "couchdb" || dbType === "elasticsearch" || dbType === "opensearch") return couchUrl || "—";
-    if (dbType === "cassandra") return cqlHosts || "—";
+    if (isCqlForm) return cqlHosts || "—";
     if (dbType === "firestore") return fsProject || "—";
     if (dbType === "mongodb") return uriHost(mongoUri) || "—";
     if (dbType === "dynamodb") return awsEndpoint || awsRegion || (awsAuth === "profile" ? awsProfile || "default profile" : "AWS");
@@ -2978,6 +3038,7 @@
     dbType === "mysql" ||
     dbType === "mariadb"}
   {@const isMy = dbType === "mysql" || dbType === "mariadb"}
+  {@const canSsh = isPgMy || ["mssql", "oracle", "clickhouse", "mongodb", "couchdb", "elasticsearch", "opensearch"].includes(dbType) || isRedisForm || isCqlForm}
   <!-- 12px between two bordered cards, not 10: the fields inside one card sit
        14px apart, and a gap between cards tighter than the gap within one makes
        the pair read as a single block. -->
@@ -3050,6 +3111,66 @@
       )}
 
       <!-- ── SSH tunnel ──────────────────────────────────────────────────── -->
+    {:else if dbType === "clickhouse"}
+      <label class="flex cursor-pointer select-none items-center gap-2">
+        <Checkbox
+          id="cn-ch-secure"
+          checked={secure}
+          onCheckedChange={(v) => {
+            secure = v === true;
+            if (secure && port === "8123") port = "8443";
+            else if (!secure && port === "8443") port = "8123";
+          }}
+        />
+        <span class="text-ui-xs text-foreground/75">Use HTTPS (TLS)</span>
+      </label>
+    {/if}
+
+    <!-- SQL Server carries its own TLS pair rather than a `sslmode`. A row of
+         the options group like the panels around it (it was a card inside the
+         group), and first, as TLS is for Postgres: then the tunnel. -->
+    {#if dbType === "mssql"}
+      <div class="flex flex-col gap-3 ps-3.5 pe-3.5 py-3">
+        <label class="flex cursor-pointer select-none items-start gap-2">
+          <Checkbox
+            id="cn-mssql-encrypt"
+            checked={encrypt}
+            onCheckedChange={(v) => (encrypt = v === true)}
+            class="mt-px"
+          />
+          <span class="flex flex-col">
+            <span class="text-ui-xs text-foreground/75">Encrypt connection (TLS)</span>
+            <span class="text-ui-3xs leading-snug text-muted-foreground"
+              >Encrypts traffic between Stroke and the server.</span
+            >
+          </span>
+        </label>
+        <label
+          class={cn(
+            "flex select-none items-start gap-2",
+            encrypt ? "cursor-pointer" : "cursor-not-allowed opacity-45",
+          )}
+        >
+          <Checkbox
+            id="cn-mssql-trust"
+            checked={trustCert}
+            disabled={!encrypt}
+            onCheckedChange={(v) => (trustCert = v === true)}
+            class="mt-px"
+          />
+          <span class="flex flex-col">
+            <span class="text-ui-xs text-foreground/75">Trust server certificate</span>
+            <span class="text-ui-3xs leading-snug text-muted-foreground"
+              >Accept self-signed or otherwise untrusted certificates. Needed for many local
+              and dev servers.</span
+            >
+          </span>
+        </label>
+      </div>
+    {/if}
+
+    <!-- Every engine reached by host and port can go through a tunnel. -->
+    {#if canSsh}
       {#snippet sshBody()}
         <!-- One note for the panel, rather than a line of helper text under two
              of the six fields: those hints set the row's height, wrapped at the
@@ -3168,60 +3289,6 @@
         () => (sshPanelOpen = !sshPanelOpen),
         sshBody,
       )}
-    {:else if dbType === "clickhouse"}
-      <label class="flex cursor-pointer select-none items-center gap-2">
-        <Checkbox
-          id="cn-ch-secure"
-          checked={secure}
-          onCheckedChange={(v) => {
-            secure = v === true;
-            if (secure && port === "8123") port = "8443";
-            else if (!secure && port === "8443") port = "8123";
-          }}
-        />
-        <span class="text-ui-xs text-foreground/75">Use HTTPS (TLS)</span>
-      </label>
-    {/if}
-
-    <!-- SQL Server carries its own TLS pair rather than a `sslmode`. -->
-    {#if dbType === "mssql"}
-      <div class="flex flex-col gap-3 rounded-xl border border-border/50 bg-card/30 p-3">
-        <label class="flex cursor-pointer select-none items-start gap-2">
-          <Checkbox
-            id="cn-mssql-encrypt"
-            checked={encrypt}
-            onCheckedChange={(v) => (encrypt = v === true)}
-            class="mt-px"
-          />
-          <span class="flex flex-col">
-            <span class="text-ui-xs text-foreground/75">Encrypt connection (TLS)</span>
-            <span class="text-ui-3xs leading-snug text-muted-foreground"
-              >Encrypts traffic between Stroke and the server.</span
-            >
-          </span>
-        </label>
-        <label
-          class={cn(
-            "flex select-none items-start gap-2",
-            encrypt ? "cursor-pointer" : "cursor-not-allowed opacity-45",
-          )}
-        >
-          <Checkbox
-            id="cn-mssql-trust"
-            checked={trustCert}
-            disabled={!encrypt}
-            onCheckedChange={(v) => (trustCert = v === true)}
-            class="mt-px"
-          />
-          <span class="flex flex-col">
-            <span class="text-ui-xs text-foreground/75">Trust server certificate</span>
-            <span class="text-ui-3xs leading-snug text-muted-foreground"
-              >Accept self-signed or otherwise untrusted certificates. Needed for many local
-              and dev servers.</span
-            >
-          </span>
-        </label>
-      </div>
     {/if}
 
     <!-- Read-only is a property of the session, not of the transport, so it sits
@@ -3399,7 +3466,7 @@
                     tabindex="-1"
                     autocomplete="off"
                     spellcheck="false"
-                    class="no-field-frame h-8 rounded-full border-transparent! bg-sidebar-accent/50! pl-8 pr-8 text-ui-xs shadow-none! focus-visible:bg-sidebar-accent!"
+                    class="search-box no-field-frame pl-8 pr-8 text-ui-xs shadow-none!"
                     oninput={() => (savedStagger = false)}
                     onkeydown={(e) => {
                       if (e.key === "Escape" && savedQuery) {
@@ -3482,7 +3549,7 @@
                         conn.filePath === ":memory:" &&
                         (conn.type === "sqlite" || conn.type === "duckdb")
                           ? `${conn.type}-memory`
-                          : conn.type}
+                          : engineId(conn)}
                       {@const prov = providerOf(conn)}
                       <!-- The provider's mark when there is one (it says where
                            the database lives), else the engine's. The engine is
@@ -3687,7 +3754,7 @@
               out:fade={{ duration: 100 }}
             >
               <ConnectOverlay
-                icon={providerOf(dialing.conn) ?? dialing.conn.type ?? ""}
+                icon={providerOf(dialing.conn) ?? engineId(dialing.conn)}
                 name={dialing.conn.name ?? ""}
                 detail={dialTarget(dialing.conn)}
                 delay={150}
@@ -3754,7 +3821,7 @@
                     {#each NEW_CONN_STACK as id, i (id)}
                       <span
                         class={cn(
-                          "grid size-5.5 place-items-center rounded-md bg-card ring-1 ring-border/70 shadow-xs transition-[margin,transform] duration-200 ease-out motion-reduce:transition-none",
+                          "grid size-5.5 place-items-center rounded-md bg-card ring-1 ring-border/70 transition-[margin,transform] duration-200 ease-out motion-reduce:transition-none",
                           i > 0 && "-ms-2 group-hover/new:ms-0.5",
                         )}
                         style="z-index:{NEW_CONN_STACK.length - i}"
@@ -4901,7 +4968,7 @@
                             {/if}
 
                             <!-- ── Cassandra ──────────────────────────────── -->
-                          {:else if dbType === "cassandra"}
+                          {:else if isCqlForm}
                             <div>
                               <label for="cn-cql-hosts" class={lbl}>Hosts</label>
                               <Input id="cn-cql-hosts" bind:value={cqlHosts} placeholder="10.0.0.1:9042, 10.0.0.2" spellcheck="false" autocomplete="off" class={cn(inp, "font-mono")} />

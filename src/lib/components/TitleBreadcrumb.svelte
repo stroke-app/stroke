@@ -1,4 +1,5 @@
 <script>
+  import { engineId } from '$lib/connection-provider.js'
   /**
    * The macOS title row's breadcrumb: workspace / connection / current page.
    * The leading crumbs are muted context; the last one is the page you are on.
@@ -19,7 +20,7 @@
 
   // `[engine icon] connection / page`, like T3's `[icon] project / thread`. The
   // workspace is not repeated here: the switcher on the right names it.
-  const engine = $derived(/** @type {any} */ (savedConnection)?.type ?? '')
+  const engine = $derived(engineId(/** @type {any} */ (savedConnection)))
 
   /** @type {{ key: string, label: string, icon: string }[]} */
   const crumbs = $derived(

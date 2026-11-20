@@ -22,6 +22,13 @@ pub struct CouchConfig {
     pub user: Option<String>,
     #[serde(default)]
     pub password: Option<String>,
+    /// Reach the server through an SSH tunnel (connection::tunnel_to and friends).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ssh: Option<super::ssh_tunnel::SshConfig>,
+    /// The tunnel's local end, when there is one: the URL keeps the server's
+    /// real name (TLS checks it) and the client resolves that name to here.
+    #[serde(skip)]
+    pub via: Option<std::net::SocketAddr>,
 }
 
 fn client() -> &'static reqwest::Client {
@@ -38,7 +45,9 @@ fn client() -> &'static reqwest::Client {
 fn base(cfg: &CouchConfig) -> Result<reqwest::Url, String> {
     let raw = cfg.url.trim().trim_end_matches('/');
     let raw = if raw.contains("://") { raw.to_string() } else { format!("http://{raw}") };
-    reqwest::Url::parse(&format!("{raw}/")).map_err(|e| format!("Invalid CouchDB URL \"{raw}\": {e}"))
+    reqwest::Url::parse(&format!("{raw}/"))
+        .map(|u| super::ssh_tunnel::url_via(u, cfg.via))
+        .map_err(|e| format!("Invalid CouchDB URL \"{raw}\": {e}"))
 }
 
 /// Requests the app may make. Server administration (`/_config`, `/_node`,
@@ -77,7 +86,10 @@ pub async fn request(cfg: &CouchConfig, method: &str, path: &str, body: Option<&
         .join(path.trim_start_matches('/'))
         .map_err(|e| format!("Invalid path \"{path}\": {e}"))?;
     let m = reqwest::Method::from_bytes(method.as_bytes()).map_err(|e| e.to_string())?;
-    let mut req = client().request(m, url.clone());
+    let host = url.host_str().unwrap_or_default().to_string();
+    let mut req = super::ssh_tunnel::http_client(&host, cfg.via, false)
+        .unwrap_or_else(|| client().clone())
+        .request(m, url.clone());
     if let Some(u) = cfg.user.as_deref().filter(|u| !u.is_empty()) {
         req = req.basic_auth(u, cfg.password.as_deref());
     }
@@ -396,7 +408,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn couch_live() {
-        let cfg = CouchConfig { name: "t".into(), url: "http://localhost:5984".into(), user: Some("admin".into()), password: Some("admin".into()) };
+        let cfg = CouchConfig { ssh: None, via: None, name: "t".into(), url: "http://localhost:5984".into(), user: Some("admin".into()), password: Some("admin".into()) };
         ping(&cfg).await.unwrap();
         let dbs = list_databases(&cfg).await.unwrap();
         assert!(dbs.contains(&"products".to_string()), "{dbs:?}");

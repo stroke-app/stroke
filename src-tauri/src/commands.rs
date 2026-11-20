@@ -417,7 +417,7 @@ use crate::db::{
     SqlResult, SqliteConfig, TableInfo, TableRowCount, TableRows, TriggerInfo, SequenceInfo,
     ColumnStructureRow, TableColumnStructure, IncomingForeignKey, InsertRowResult, TunnelState,
     apply_table_changes, ApplyChangesResult, RowUpdate,
-    explain_pg, explain_mysql, explain_sqlite, explain_from_text_lines, explain_from_sqlite_plan,
+    explain_mysql, explain_sqlite, explain_from_text_lines, explain_from_sqlite_plan,
 };
 use crate::db::connection::{require_conn, ClickhouseConfig, DuckdbConfig, MssqlConfig, MysqlConfig, OracleConfig, RedisConfig};
 use crate::db::ActiveConnection;
@@ -522,8 +522,8 @@ pub async fn test_clickhouse(config: ClickhouseConfig) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn connect_clickhouse_db(state: Db<'_>, config: ClickhouseConfig) -> Result<(), String> {
-    connect_clickhouse(state, config).await
+pub async fn connect_clickhouse_db(state: Db<'_>, tunnel_state: State<'_, TunnelState>, config: ClickhouseConfig) -> Result<(), String> {
+    connect_clickhouse(state, tunnel_state, config).await
 }
 
 // ── Redis ─────────────────────────────────────────────────────────────────────
@@ -534,8 +534,8 @@ pub async fn test_redis(config: RedisConfig) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn connect_redis_db(state: Db<'_>, config: RedisConfig) -> Result<(), String> {
-    connect_redis(state, config).await
+pub async fn connect_redis_db(state: Db<'_>, tunnel_state: State<'_, TunnelState>, config: RedisConfig) -> Result<(), String> {
+    connect_redis(state, tunnel_state, config).await
 }
 
 /// Non-blocking keyspace iteration for the active Redis connection. Returns one
@@ -675,12 +675,13 @@ pub async fn dynamodb_request(
 
 #[tauri::command]
 pub async fn test_couchdb(config: crate::db::couchdb::CouchConfig) -> Result<(), String> {
+    let (config, _tunnel) = crate::db::connection::resolve_couch_ssh(config).await?;
     crate::db::couchdb::ping(&config).await
 }
 
 #[tauri::command]
-pub async fn connect_couchdb_db(state: Db<'_>, config: crate::db::couchdb::CouchConfig) -> Result<(), String> {
-    crate::db::connection::connect_couchdb(state, config).await
+pub async fn connect_couchdb_db(state: Db<'_>, tunnel_state: State<'_, TunnelState>, config: crate::db::couchdb::CouchConfig) -> Result<(), String> {
+    crate::db::connection::connect_couchdb(state, tunnel_state, config).await
 }
 
 /// One CouchDB HTTP call (path allowlisted) on the active connection.
@@ -703,12 +704,13 @@ pub async fn couchdb_request(
 /// Connection test; answers which engine and version the server is.
 #[tauri::command]
 pub async fn test_elastic(config: crate::db::elastic::EsConfig) -> Result<crate::db::elastic::ServerInfo, String> {
+    let (config, _tunnel) = crate::db::connection::resolve_elastic_ssh(config).await?;
     crate::db::elastic::ping(&config).await
 }
 
 #[tauri::command]
-pub async fn connect_elastic_db(state: Db<'_>, config: crate::db::elastic::EsConfig) -> Result<(), String> {
-    crate::db::connection::connect_elastic(state, config).await
+pub async fn connect_elastic_db(state: Db<'_>, tunnel_state: State<'_, TunnelState>, config: crate::db::elastic::EsConfig) -> Result<(), String> {
+    crate::db::connection::connect_elastic(state, tunnel_state, config).await
 }
 
 /// One REST call (path allowlisted) on the active connection.
@@ -746,12 +748,13 @@ pub async fn elastic_import(
 
 #[tauri::command]
 pub async fn test_mongo(config: crate::db::mongo::MongoConfig) -> Result<(), String> {
+    let (config, _tunnel) = crate::db::connection::resolve_mongo_ssh(config).await?;
     crate::db::mongo::connect(&config).await.map(|_| ())
 }
 
 #[tauri::command]
-pub async fn connect_mongo_db(state: Db<'_>, config: crate::db::mongo::MongoConfig) -> Result<(), String> {
-    crate::db::connection::connect_mongo(state, config).await
+pub async fn connect_mongo_db(state: Db<'_>, tunnel_state: State<'_, TunnelState>, config: crate::db::mongo::MongoConfig) -> Result<(), String> {
+    crate::db::connection::connect_mongo(state, tunnel_state, config).await
 }
 
 fn require_mongo(state: &Db<'_>) -> Result<crate::db::mongo::MongoHandle, String> {
@@ -942,12 +945,13 @@ pub async fn firestore_request(
 
 #[tauri::command]
 pub async fn test_cassandra(config: crate::db::cassandra::CassandraConfig) -> Result<(), String> {
+    let (config, _tunnel) = crate::db::connection::resolve_cassandra_ssh(config).await?;
     crate::db::cassandra::connect(&config).await.map(|_| ())
 }
 
 #[tauri::command]
-pub async fn connect_cassandra_db(state: Db<'_>, config: crate::db::cassandra::CassandraConfig) -> Result<(), String> {
-    crate::db::connection::connect_cassandra(state, config).await
+pub async fn connect_cassandra_db(state: Db<'_>, tunnel_state: State<'_, TunnelState>, config: crate::db::cassandra::CassandraConfig) -> Result<(), String> {
+    crate::db::connection::connect_cassandra(state, tunnel_state, config).await
 }
 
 fn require_cassandra(state: &Db<'_>) -> Result<crate::db::cassandra::CassandraHandle, String> {
@@ -1018,8 +1022,8 @@ pub async fn test_mssql(config: MssqlConfig) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn connect_mssql_db(state: Db<'_>, config: MssqlConfig) -> Result<(), String> {
-    connect_mssql(state, config).await
+pub async fn connect_mssql_db(state: Db<'_>, tunnel_state: State<'_, TunnelState>, config: MssqlConfig) -> Result<(), String> {
+    connect_mssql(state, tunnel_state, config).await
 }
 
 // ── Oracle ──────────────────────────────────────────────────────────────────────
@@ -1030,8 +1034,8 @@ pub async fn test_oracle(config: OracleConfig) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn connect_oracle_db(state: Db<'_>, config: OracleConfig) -> Result<(), String> {
-    connect_oracle(state, config).await
+pub async fn connect_oracle_db(state: Db<'_>, tunnel_state: State<'_, TunnelState>, config: OracleConfig) -> Result<(), String> {
+    connect_oracle(state, tunnel_state, config).await
 }
 
 /// The Oracle container the active connection is in (FREEPDB1, CDB$ROOT).
@@ -1144,9 +1148,18 @@ pub async fn pg_explain_sql(
     state: Db<'_>,
     sql: String,
     analyze: Option<bool>,
+    // Names the run for `cancel_query`, like a console run's queryId.
+    query_id: Option<String>,
 ) -> Result<ExplainResult, String> {
     match require_conn(&state)? {
-        ActiveConnection::Postgres(pool) => explain_pg(&pool, &sql, analyze.unwrap_or(true)).await,
+        ActiveConnection::Postgres(pool) => {
+            let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+            let key = query_id.unwrap_or_else(|| "default".to_string());
+            crate::db::connection::register_cancel(&state, &key, tx);
+            let r = crate::db::explain::explain_pg_stoppable(&pool, &sql, analyze.unwrap_or(true), Some(rx)).await;
+            crate::db::connection::unregister_cancel(&state, &key);
+            r
+        }
         ActiveConnection::Mysql(pool) => explain_mysql(&pool, &sql).await,
         ActiveConnection::Sqlite(pool) => explain_sqlite(&pool, &sql).await,
         ActiveConnection::Duckdb(h) => {

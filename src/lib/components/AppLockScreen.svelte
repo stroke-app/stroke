@@ -79,7 +79,7 @@
     ></div>
 
     <div class="relative flex w-full max-w-[20rem] flex-col items-center text-center">
-      <div class="grid size-11 place-items-center rounded-lg border border-border/50 bg-card/40 shadow-sm">
+      <div class="grid size-11 place-items-center rounded-lg border border-border/50 bg-card/40">
         <Icon name="lock" class="size-5 shrink-0 text-muted-foreground" />
       </div>
 

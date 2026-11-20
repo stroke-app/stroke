@@ -877,7 +877,7 @@ mod admin_live {
     #[ignore]
     async fn clickhouse_copies_and_drops() {
         let port = std::env::var("STROKE_CH_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(58123);
-        let cfg = ClickhouseConfig {
+        let cfg = ClickhouseConfig { ssh: None, via: None,
             name: "test".into(),
             host: "127.0.0.1".into(),
             port,
@@ -928,7 +928,7 @@ mod admin_live {
     #[tokio::test]
     #[ignore]
     async fn mssql_copies_and_drops() {
-        let cfg = super::super::connection::MssqlConfig {
+        let cfg = super::super::connection::MssqlConfig { ssh: None, via: None,
             name: "test".into(),
             host: "127.0.0.1".into(),
             port: 51433,

@@ -11,10 +11,12 @@
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js'
   import {
     normalizePlan, annotatePlan, planInsights, describeNode, CONDITION_KEYS, conditionText, fmtMs, fmtCount, planText,
+    planOutline, foldLabel,
   } from '$lib/explain-plan.js'
 
   /** @typedef {{ plan: object, planningTime: number, executionTime: number, driver: string }} ExplainResult */
   /** @typedef {import('$lib/explain-plan.js').PlanNode} PlanNode */
+  /** @typedef {import('$lib/explain-plan.js').PlanFold} PlanFold */
 
   /**
    * @type {{
@@ -70,20 +72,37 @@
   }
   const ROW_H = $derived(Math.max(...a.nodes.map(cardH), 60) + ROW_GAP)
 
-  /** @typedef {{ n: PlanNode, col: number, row: number }} Placed */
+  // Wide steps (an Append over hundreds of partitions) draw the children that
+  // ran and fold the rest into one card; `expanded` holds the ones opened.
+  let expanded = $state(/** @type {Set<string>} */ (new Set()))
+  $effect(() => { void plan; untrack(() => { expanded = new Set() }) })
+  const outline = $derived(planOutline(a.root, expanded))
+  /** @param {string} parentId */
+  function toggleFold(parentId) {
+    const next = new Set(expanded)
+    if (next.has(parentId)) next.delete(parentId)
+    else next.add(parentId)
+    expanded = next
+  }
+  const FOLD_H = 32
+
+  /** @typedef {{ id: string, parentId: string | null, n: PlanNode | null, fold: PlanFold | null, col: number, row: number }} Placed */
   const layout = $derived.by(() => {
     /** @type {Map<string, Placed>} */
     const at = new Map()
     let leaf = 0
-    /** @param {PlanNode} n @returns {Placed} */
-    const lay = (n) => {
-      if (!n.children.length) {
-        const p = { n, col: 0, row: leaf++ }
-        at.set(n.id, p)
+    /** @param {PlanNode | PlanFold} item @returns {Placed} */
+    const lay = (item) => {
+      if ('kind' in item && item.kind === 'fold') {
+        const p = { id: item.id, parentId: item.parentId, n: null, fold: item, col: 0, row: leaf++ }
+        at.set(p.id, p)
         return p
       }
-      const kids = n.children.map(lay)
-      const p = { n, col: Math.max(...kids.map((k) => k.col)) + 1, row: (Math.min(...kids.map((k) => k.row)) + Math.max(...kids.map((k) => k.row))) / 2 }
+      const n = /** @type {PlanNode} */ (item)
+      const kids = (outline.childrenOf.get(n.id) ?? []).map(lay)
+      const p = kids.length
+        ? { id: n.id, parentId: n.parentId, n, fold: null, col: Math.max(...kids.map((k) => k.col)) + 1, row: (Math.min(...kids.map((k) => k.row)) + Math.max(...kids.map((k) => k.row))) / 2 }
+        : { id: n.id, parentId: n.parentId, n, fold: null, col: 0, row: leaf++ }
       at.set(n.id, p)
       return p
     }
@@ -91,11 +110,13 @@
     return at
   })
   const placed = $derived([...layout.values()])
+  const placedNodes = $derived(placed.filter((p) => p.n))
+  const placedFolds = $derived(placed.filter((p) => p.fold))
   const maxCol = $derived(placed.reduce((m, p) => Math.max(m, p.col), 0))
   const maxRow = $derived(placed.reduce((m, p) => Math.max(m, p.row), 0))
   const px = (/** @type {Placed} */ p) => PAD + p.col * (NODE_W + COL_GAP)
   const py = (/** @type {Placed} */ p) => PAD + p.row * ROW_H
-  const cy = (/** @type {Placed} */ p) => py(p) + cardH(p.n) / 2
+  const cy = (/** @type {Placed} */ p) => py(p) + (p.n ? cardH(p.n) : FOLD_H) / 2
   const qrX = $derived(PAD + (maxCol + 1) * (NODE_W + COL_GAP))
   const canvasW = $derived(qrX + QR_W + PAD)
   const canvasH = $derived(PAD * 2 + (maxRow + 1) * ROW_H)
@@ -104,7 +125,7 @@
     const r = n.actualRows ?? n.planRows ?? 1
     return Math.min(6, 1.25 + Math.log10(Math.max(1, r)) * 0.8)
   }
-  const edges = $derived(placed.filter((p) => p.n.parentId).map((p) => ({ from: p, to: /** @type {Placed} */ (layout.get(/** @type {string} */ (p.n.parentId))) })))
+  const edges = $derived(placed.filter((p) => p.parentId).map((p) => ({ from: p, to: /** @type {Placed} */ (layout.get(/** @type {string} */ (p.parentId))) })))
   /** @param {Placed} f @param {Placed} t */
   const edgeD = (f, t) => {
     const x1 = px(f) + NODE_W, y1 = cy(f), x2 = px(t), y2 = cy(t), mx = (x1 + x2) / 2
@@ -333,9 +354,10 @@
           <div class="pointer-events-none absolute inset-0 text-border/40" style="background-image: radial-gradient(circle, currentColor 1px, transparent 1px); background-size: {22 * scale}px {22 * scale}px; background-position: {panX}px {panY}px"></div>
           <div class="absolute top-0 left-0" style="width:{canvasW}px;height:{canvasH}px;transform:translate({panX}px,{panY}px) scale({scale});transform-origin:0 0">
             <svg class="pointer-events-none absolute inset-0 overflow-visible" width={canvasW} height={canvasH}>
-              {#each edges as e (e.from.n.id)}
-                <path d={edgeD(e.from, e.to)} fill="none" stroke="currentColor" stroke-linecap="round" stroke-width={edgeW(e.from.n)}
-                  class={cn('transition-colors', selectedId && (selectedId === e.from.n.id || selectedId === e.to.n.id) ? 'text-foreground/35' : 'text-border')} />
+              {#each edges as e (e.from.id)}
+                <path d={edgeD(e.from, e.to)} fill="none" stroke="currentColor" stroke-linecap="round" stroke-width={e.from.n ? edgeW(e.from.n) : 1}
+                  stroke-dasharray={e.from.fold ? '3 4' : undefined}
+                  class={cn('transition-colors', selectedId && (selectedId === e.from.id || selectedId === e.to.id) ? 'text-foreground/35' : 'text-border')} />
               {/each}
               {#if a.root && layout.get(a.root.id)}
                 {@const r = /** @type {Placed} */ (layout.get(a.root.id))}
@@ -343,14 +365,29 @@
               {/if}
             </svg>
 
-            {#each placed as p (p.n.id)}
-              {@const n = p.n}
+            {#each placedFolds as p (p.id)}
+              {@const f = /** @type {PlanFold} */ (p.fold)}
+              <button
+                type="button"
+                style="left:{px(p)}px;top:{py(p)}px;width:{NODE_W}px;height:{FOLD_H}px"
+                class="absolute flex items-center gap-1.5 rounded-lg border border-dashed border-border px-3 text-left text-ui-2xs text-muted-foreground transition-colors hover:border-foreground/25 hover:text-foreground"
+                onpointerdown={(e) => e.stopPropagation()}
+                onclick={() => toggleFold(f.parentId)}
+                aria-expanded={f.expanded}
+              >
+                <Icon name={f.expanded ? 'chevrons-down-up' : 'chevrons-up-down'} class="size-3 shrink-0" />
+                <span class="truncate">{foldLabel(f)}</span>
+              </button>
+            {/each}
+
+            {#each placedNodes as p (p.id)}
+              {@const n = /** @type {PlanNode} */ (p.n)}
               {@const sel = selectedId === n.id}
               <div
                 data-plan-node={n.id}
                 style="left:{px(p)}px;top:{py(p)}px;width:{NODE_W}px;height:{cardH(n)}px"
                 class={cn(
-                  'absolute flex cursor-pointer flex-col overflow-hidden rounded-lg border bg-card shadow-sm transition-[border-color,box-shadow] duration-150',
+                  'absolute flex cursor-pointer flex-col overflow-hidden rounded-lg border bg-card transition-[border-color,box-shadow] duration-150',
                   sel ? 'border-foreground/40 ring-1 ring-foreground/15' : 'border-border/70 hover:border-foreground/25',
                 )}
               >
@@ -416,7 +453,24 @@
               </tr>
             </thead>
             <tbody>
-              {#each a.nodes as n (n.id)}
+              {#each outline.entries as entry (entry.kind === 'fold' ? entry.id : entry.node.id)}
+                {#if entry.kind === 'fold'}
+                  <tr class="h-8 border-b border-border/30">
+                    <td colspan="5" class="px-3">
+                      <button
+                        type="button"
+                        class="flex items-center gap-1.5 rounded text-ui-2xs text-muted-foreground transition-colors hover:text-foreground"
+                        style="padding-left:{entry.depth * 16}px"
+                        onclick={() => toggleFold(entry.parentId)}
+                        aria-expanded={entry.expanded}
+                      >
+                        <Icon name={entry.expanded ? 'chevrons-down-up' : 'chevrons-up-down'} class="size-3 shrink-0" />
+                        {foldLabel(entry)}
+                      </button>
+                    </td>
+                  </tr>
+                {:else}
+                {@const n = entry.node}
                 <tr
                   class={cn('h-8 cursor-pointer border-b border-border/30 transition-colors', selectedId === n.id ? 'bg-muted/60' : 'hover:bg-muted/30')}
                   onclick={() => (selectedId = selectedId === n.id ? null : n.id)}
@@ -439,6 +493,7 @@
                     </div>
                   </td>
                 </tr>
+                {/if}
               {/each}
             </tbody>
           </table>

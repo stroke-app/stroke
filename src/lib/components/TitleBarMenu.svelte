@@ -53,7 +53,7 @@
     {/if}
   </DropdownMenu.Trigger>
 
-  <DropdownMenu.Content align="end" class="min-w-60">
+  <DropdownMenu.Content align="end" class="chrome-font min-w-60">
     <!-- Who you are -->
     {#if signedIn && user}
       <div class="flex items-center gap-2.5 px-2 py-1.5">

@@ -114,7 +114,7 @@
     ></div>
 
     <div class="relative flex w-full max-w-[22rem] flex-col items-center text-center">
-      <div class="grid size-11 place-items-center rounded-lg border border-border/60 bg-card shadow-sm">
+      <div class="grid size-11 place-items-center rounded-lg border border-border/60 bg-card">
         <Logo class="size-5" />
       </div>
 

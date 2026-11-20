@@ -112,7 +112,17 @@ fn strip_sql(sql: &str) -> &str {
 /// what gives actual rows and times), so it runs inside a transaction that is
 /// always rolled back: explaining a DELETE never deletes anything. Without it
 /// only the planner's estimates come back and nothing runs.
-pub async fn explain_pg(pool: &sqlx::PgPool, sql: &str, analyze: bool) -> Result<ExplainResult, String> {
+/// A Postgres plan that Stop can end. ANALYZE runs the statement for real, so a
+/// plan of a 20-minute query took 20 minutes with nothing to press: it now runs
+/// in the console's own transaction shape (the statement timeout, and a tag
+/// Stop finds the backend by), and Stop cancels it on the server.
+pub async fn explain_pg_stoppable(
+    pool: &sqlx::PgPool,
+    sql: &str,
+    analyze: bool,
+    cancel_rx: Option<tokio::sync::oneshot::Receiver<()>>,
+) -> Result<ExplainResult, String> {
+    use std::sync::atomic::{AtomicBool, Ordering};
     let stripped = strip_sql(sql);
     let q = if analyze {
         format!("EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT JSON) {stripped}")
@@ -121,14 +131,20 @@ pub async fn explain_pg(pool: &sqlx::PgPool, sql: &str, analyze: bool) -> Result
     };
 
     // PG returns [{Plan: {...}, "Planning Time": x, "Execution Time": y}]
+    let cancelled = std::sync::Arc::new(AtomicBool::new(false));
     let fetched = async {
-        let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+        let tag = super::query::run_tag();
+        let (mut tx, target) = super::query::begin_console_tx(pool, &tag).await?;
+        super::query::arm_pg_cancel(pool, cancel_rx, cancelled.clone(), target);
         let out = sqlx::query_as::<_, (serde_json::Value,)>(&q).fetch_one(&mut *tx).await;
         // Roll back whatever ANALYZE did, success or not.
         let _ = tx.rollback().await;
         out.map_err(|e| e.to_string())
     }
     .await;
+    if cancelled.load(Ordering::Relaxed) {
+        return Err(super::query::QUERY_CANCELLED.into());
+    }
     let arr = match fetched {
         Ok(row) => row.0,
         // CockroachDB speaks the PG wire protocol but rejects PG's EXPLAIN option
@@ -395,5 +411,33 @@ pub fn explain_from_sqlite_plan(res: &SqlResult, driver: &str) -> ExplainResult 
         planning_time: 0.0,
         execution_time: 0.0,
         driver: driver.into(),
+    }
+}
+
+#[cfg(test)]
+mod stop_tests {
+    //   STROKE_TEST_PG_URL=postgres://postgres@127.0.0.1:5433/postgres cargo test --lib explain::stop_tests
+    #[tokio::test]
+    async fn explain_analyze_stops_on_the_server() {
+        let Ok(url) = std::env::var("STROKE_TEST_PG_URL") else { return };
+        let pool = sqlx::postgres::PgPoolOptions::new().max_connections(3).connect(&url).await.unwrap();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            let _ = tx.send(());
+        });
+        let t = std::time::Instant::now();
+        let r = super::explain_pg_stoppable(&pool, "SELECT pg_sleep(30)", true, Some(rx)).await;
+        assert_eq!(r.unwrap_err(), crate::db::query::QUERY_CANCELLED);
+        assert!(t.elapsed() < std::time::Duration::from_secs(5), "took {:?}", t.elapsed());
+        // Nothing of it is still running on the server.
+        let left: i64 = sqlx::query_scalar("SELECT count(*) FROM pg_stat_activity WHERE query LIKE 'EXPLAIN (ANALYZE%pg_sleep(30)%' AND state = 'active'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(left, 0);
+        // And without Stop it still returns a plan.
+        let ok = super::explain_pg_stoppable(&pool, "SELECT 1", true, None).await.unwrap();
+        assert!(ok.plan.get("Node Type").is_some());
     }
 }
