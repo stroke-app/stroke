@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.1.1] - 2026-11-20
+
+### Changes
+- Real-server tests, streaming and server-side Stop for more engines, plans for document engines (#312)
+
+
 ## [3.1.0] - 2026-11-20
 
 ### Changes
