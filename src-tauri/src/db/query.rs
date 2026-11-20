@@ -4628,6 +4628,9 @@ pub(crate) async fn run_one_cancellable(
                 }
             }
         }
+        // Cancel by client_query_id / X-Opaque-Id on the server.
+        ActiveConnection::Posthog(cfg) => super::posthog::query_cancellable(cfg, stmt, stop).await,
+        ActiveConnection::Doc(super::docdb::DocConn::Elastic(cfg)) => super::elastic::query_cancellable(cfg, stmt, stop).await,
         // No server-side stop exists: stop waiting, and say the server may not.
         other => tokio::select! {
             r = run_one_other(other, stmt) => r,
@@ -6371,6 +6374,24 @@ mod stream_tests {
         assert_eq!(late[0].last().unwrap(), &serde_json::json!({ "late": "here" }));
         let grew = rss_mb().saturating_sub(before);
         assert!(grew < 120, "memory grew {grew} MB while streaming");
+        // Stop while the server is still working: the tagged operation is killed.
+        let slow = "db.big.aggregate([{$group: {_id: {$mod: [\"$n\", 7]}, s: {$sum: {$function: {body: 'function(n){var x=0; for (var i=0;i<20000;i++){x+=i;} return x;}', args: [\"$n\"], lang: 'js'}}}}}])";
+        assert!(super::super::mongo::streams(slow));
+        let mut sink = sink_into(&store, "mongo-stop");
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let stop = super::super::stop::Stop::from_rx(rx);
+        tokio::spawn(async move { tokio::time::sleep(std::time::Duration::from_millis(1500)).await; let _ = tx.send(()); });
+        let t0 = std::time::Instant::now();
+        let e = super::super::mongo::stream_into(&m, slow, &mut sink, &stop).await.unwrap_err();
+        assert_eq!(e, QUERY_CANCELLED);
+        assert!(t0.elapsed() < std::time::Duration::from_secs(15));
+        tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+        let admin = m.client.database("admin");
+        let left: Vec<mongodb::bson::Document> = futures::TryStreamExt::try_collect(admin.aggregate(vec![
+            doc! { "$currentOp": {} },
+            doc! { "$match": { "command.aggregate": "big" } },
+        ]).await.unwrap()).await.unwrap();
+        assert!(left.is_empty(), "the aggregate still runs on the server: {left:?}");
         let _ = c.drop().await;
     }
 

@@ -1465,15 +1465,45 @@ pub async fn stream_into(
     sink: &mut super::query::RowSink,
     stop: &super::stop::Stop,
 ) -> Result<super::query::SqlResult, String> {
-    let run = stream_rows(m, stmt, sink);
+    let tag = op_tag();
+    let run = stream_rows(m, stmt, sink, &tag);
     tokio::pin!(run);
     tokio::select! {
         r = &mut run => r,
-        _ = stop.wait() => Err(super::query::QUERY_CANCELLED.into()),
+        _ = stop.wait() => {
+            drop(run);
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(10), kill_tagged(m, &tag)).await;
+            Err(super::query::QUERY_CANCELLED.into())
+        }
     }
 }
 
-async fn stream_rows(m: &MongoConn, stmt: &str, sink: &mut super::query::RowSink) -> Result<super::query::SqlResult, String> {
+/// A comment to tag a run's operations with, so Stop can find them.
+fn op_tag() -> String {
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    format!("stroke-{:x}-{:x}", std::process::id(), SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+}
+
+/// killOp every operation carrying `tag` as its comment. Dropping the cursor
+/// only kills it once a batch has come back; a find still scanning for its
+/// first batch, or an aggregate's $group, runs on until then. Returns how many.
+pub async fn kill_tagged(m: &MongoConn, tag: &str) -> Result<usize, String> {
+    let admin = m.client.database("admin");
+    let pipeline = vec![
+        doc! { "$currentOp": { "allUsers": false, "idleCursors": false } },
+        doc! { "$match": { "$or": [ { "command.comment": tag }, { "cursor.originatingCommand.comment": tag } ] } },
+        doc! { "$project": { "opid": 1 } },
+    ];
+    let ops: Vec<Document> = admin.aggregate(pipeline).await.map_err(err)?.try_collect().await.map_err(err)?;
+    for op in &ops {
+        if let Some(id) = op.get("opid") {
+            let _ = admin.run_command(doc! { "killOp": 1, "op": id.clone() }).await;
+        }
+    }
+    Ok(ops.len())
+}
+
+async fn stream_rows(m: &MongoConn, stmt: &str, sink: &mut super::query::RowSink, tag: &str) -> Result<super::query::SqlResult, String> {
     use futures::StreamExt;
     const SAMPLE: usize = 1_000;
     let t0 = std::time::Instant::now();
@@ -1495,7 +1525,7 @@ async fn stream_rows(m: &MongoConn, stmt: &str, sink: &mut super::query::RowSink
     }
     let mut cursor = match head.name.as_str() {
         "find" => {
-            let mut q = c.find(arg_doc(&args, 0, "filter")?).batch_size(1_000);
+            let mut q = c.find(arg_doc(&args, 0, "filter")?).batch_size(1_000).comment(Bson::String(tag.to_string()));
             if let Some(p) = args.get(1).filter(|v| v.is_object()) {
                 q = q.projection(to_doc(p, None)?);
             }
@@ -1515,7 +1545,7 @@ async fn stream_rows(m: &MongoConn, stmt: &str, sink: &mut super::query::RowSink
                 Some(Value::Array(stages)) => stages.iter().map(|s| to_doc(s, None)).collect::<Result<Vec<_>, _>>()?,
                 _ => return Err("aggregate() takes an array of stages".into()),
             };
-            c.aggregate(pipeline).batch_size(1_000).await.map_err(err)?
+            c.aggregate(pipeline).batch_size(1_000).comment(Bson::String(tag.to_string())).await.map_err(err)?
         }
     };
 
