@@ -165,6 +165,7 @@
     txBegin,
     txExecute,
     txStatus,
+    txOpenSessions,
     txCommit,
     txRollback,
     inspectSql,
@@ -1619,21 +1620,77 @@
         await txRollback(session)
         toast.info('Rolled back — the database is unchanged')
       }
-      // Only forget the session once the backend has actually closed it;
-      // dropping it on failure would strand the held connection with no way
-      // left in the UI to reach it.
-      const next = new Map(sqlTxSessions)
-      next.delete(tabId)
-      sqlTxSessions = next
-      _txSqlByTab.delete(tabId)
-      setTxStatus(tabId, null)
+      forgetTxSession(tabId)
     } catch (e) {
+      // The backend ends the session either way: a failed commit or rollback
+      // rolls back what is left, or closes the connection so the server does.
+      forgetTxSession(tabId)
       toast.error(how === 'commit' ? 'Could not commit' : 'Could not roll back', {
         description: String(e),
       })
     } finally {
       sqlTxBusy = false
     }
+  }
+
+  /** @param {string} tabId */
+  function forgetTxSession(tabId) {
+    if (!sqlTxSessions.has(tabId)) return
+    const next = new Map(sqlTxSessions)
+    next.delete(tabId)
+    sqlTxSessions = next
+    _txSqlByTab.delete(tabId)
+    setTxStatus(tabId, null)
+  }
+
+  // The backend ends a session on its own when it sits idle past 30 minutes or
+  // the connection under it changes. Say so, and drop the tab's indicator.
+  onMount(() => {
+    let off = () => {}
+    ;(async () => {
+      try {
+        const { listen } = await import('@tauri-apps/api/event')
+        off = await listen('tx-ended', (e) => {
+          const { sessionId, reason, rolledBack } = /** @type {{ sessionId: string, reason: 'idle' | 'connectionChanged', rolledBack: boolean }} */ (e.payload)
+          const tabId = [...sqlTxSessions].find(([, sid]) => sid === sessionId)?.[0]
+          if (!tabId) return
+          forgetTxSession(tabId)
+          const why = reason === 'idle' ? 'It was idle for 30 minutes' : 'You switched to another connection'
+          toast.info('Transaction rolled back', {
+            description: `${why}, so it was rolled back${rolledBack ? '' : ' (the connection was closed)'}. Nothing it did was saved.`,
+          })
+        })
+      } catch { /* web preview: no backend events */ }
+    })()
+    return () => off()
+  })
+
+  // While a transaction is open, refresh its badge: how long it has been held
+  // and who is waiting on its locks change without any statement running.
+  $effect(() => {
+    if (sqlTxSessions.size === 0) return
+    const timer = setInterval(() => {
+      for (const [tabId, session] of sqlTxSessions) {
+        if (session.startsWith('undo-')) continue
+        txStatus(session).then((st) => {
+          if (st.open) setTxStatus(tabId, st)
+          else forgetTxSession(tabId)
+        }).catch(() => {})
+      }
+    }, 15_000)
+    return () => clearInterval(timer)
+  })
+
+  /**
+   * Quitting rolls back every open transaction (the backend closes their
+   * connections). Ask first when one has work in it. True: go ahead.
+   */
+  async function confirmQuitWithOpenTransactions() {
+    const open = await txOpenSessions().catch(() => /** @type {string[]} */ ([]))
+    const mine = open.filter((id) => !id.startsWith('undo-'))
+    if (!mine.length) return true
+    const label = mine.length === 1 ? 'A transaction is open' : `${mine.length} transactions are open`
+    return askConfirm(`${label}. Quitting rolls back everything in it that was not committed.`, 'Roll back & quit')
   }
   /** @type {ForeignKeyInfo[]} */
   let foreignKeys = $state([])
@@ -1753,6 +1810,7 @@
           const { flushSyncBeforeExit } = await import('$lib/sync/runtime.js')
           event.preventDefault()
           if (unsaved && !(await askConfirm('You have unsaved table changes. Discard them and quit?', 'Discard & quit'))) return
+          if (!(await confirmQuitWithOpenTransactions())) return
           await flushSyncBeforeExit()
           await win.destroy()
         })
@@ -1760,9 +1818,18 @@
         const { listen } = await import('@tauri-apps/api/event')
         const { invoke } = await import('@tauri-apps/api/core')
         const offQuit = await listen('app-quit-requested', async () => {
-          if (hasAnyUnsavedChanges() && !(await askConfirm('You have unsaved table changes. Discard them and quit?', 'Discard & quit'))) {
-            await invoke('cancel_quit').catch(() => {})
-            return
+          // The backend quits on its own if the page has not answered within a
+          // few seconds. A question waits on a person, so stop that timer
+          // first (cancel_quit only disarms it); quit_now still quits.
+          const hold = () => invoke('cancel_quit').catch(() => {})
+          if (hasAnyUnsavedChanges()) {
+            await hold()
+            if (!(await askConfirm('You have unsaved table changes. Discard them and quit?', 'Discard & quit'))) return
+          }
+          const openTx = (await txOpenSessions().catch(() => /** @type {string[]} */ ([]))).some((id) => !id.startsWith('undo-'))
+          if (openTx) {
+            await hold()
+            if (!(await confirmQuitWithOpenTransactions())) return
           }
           const { flushSyncBeforeExit } = await import('$lib/sync/runtime.js')
           await flushSyncBeforeExit()

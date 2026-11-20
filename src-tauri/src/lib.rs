@@ -498,6 +498,16 @@ pub fn run() {
         .manage(launch::LaunchState::default())
         .setup(move |app| {
             display_backend::watch(app.handle().clone());
+            // Explicit transactions: roll back the ones left idle, on a timer,
+            // so a forgotten tab does not hold its locks until someone looks.
+            db::tx::init(app.handle().clone());
+            tauri::async_runtime::spawn(async {
+                let mut tick = tokio::time::interval(db::tx::SWEEP_EVERY);
+                loop {
+                    tick.tick().await;
+                    db::tx::sweep_idle().await;
+                }
+            });
             // Local servers marked "Start with Stroke".
             local_servers::autostart(app.handle().clone());
             // Linux packages renamed the binary from `app` to `stroke` (2.5.6), and
@@ -904,6 +914,7 @@ pub fn run() {
             db::tx::tx_commit,
             db::tx::tx_rollback,
             db::tx::tx_status,
+            db::tx::tx_open_sessions,
             db::terminal::terminal_client,
             db::terminal::terminal_open,
             db::terminal::terminal_install_client,

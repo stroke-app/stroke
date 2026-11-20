@@ -11,6 +11,7 @@ const MAX_PARKED: usize = 8;
 /// Set the open connection aside under `key`. Nothing open: nothing to do.
 #[tauri::command]
 pub fn park_connection(state: Db<'_>, key: String) -> Result<(), String> {
+    super::tx::connection_changed();
     let Some(conn) = state.conn.lock().map_err(|e| e.to_string())?.take() else {
         return Ok(());
     };
@@ -34,6 +35,7 @@ pub fn resume_connection(state: Db<'_>, key: String) -> Result<bool, String> {
         parked.iter().position(|(k, _)| k == &key).map(|i| parked.remove(i).1)
     };
     let Some(conn) = found else { return Ok(false) };
+    super::tx::connection_changed();
     let previous = state.conn.lock().map_err(|e| e.to_string())?.replace(conn);
     *state.active_key.lock().map_err(|e| e.to_string())? = Some(key);
     if let Some(prev) = previous {

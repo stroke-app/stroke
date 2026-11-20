@@ -544,6 +544,8 @@ pub fn update_d1_token(token: &str) {
 }
 
 fn set_conn(state: &Db<'_>, conn: Option<ActiveConnection>) -> Result<(), String> {
+    // Open transactions belong to the connection being replaced.
+    super::tx::connection_changed();
     *state.conn.lock().map_err(|e| e.to_string())? = conn;
     // A fresh pool: the page names its key once it knows it (set_active_conn_key).
     *state.active_key.lock().map_err(|e| e.to_string())? = None;
@@ -551,6 +553,7 @@ fn set_conn(state: &Db<'_>, conn: Option<ActiveConnection>) -> Result<(), String
 }
 
 async fn close_existing(state: &Db<'_>) {
+    super::tx::connection_changed();
     let old = state.conn.lock().ok().and_then(|mut g| g.take());
     let Some(conn) = old else { return };
     close_in_background(conn);

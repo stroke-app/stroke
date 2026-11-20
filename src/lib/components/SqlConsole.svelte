@@ -240,6 +240,12 @@
     })
   })
 
+  /** "14m", "1h 5m": how long a transaction has held its locks. @param {number} ms */
+  function heldFor(ms) {
+    const m = Math.floor(ms / 60_000)
+    return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60}m`
+  }
+
   /** @param {string} name @param {import('$lib/sql-params.js').SqlParamValue} next */
   function setParam(name, next) {
     paramValues = { ...paramValues, [name]: next }
@@ -999,7 +1005,22 @@
         <span class="whitespace-nowrap font-mono text-ui-2xs tabular-nums text-muted-foreground">
           {txStatus.statements}<span class="ml-0.5">{txStatus.statements === 1 ? 'stmt' : 'stmts'}</span>
         </span>
+        <!-- How long its locks have been held, once that is worth a glance. -->
+        {#if txStatus.openMs >= 60_000}
+          <span class="whitespace-nowrap font-mono text-ui-2xs tabular-nums text-muted-foreground" title="Time since the transaction began">{heldFor(txStatus.openMs)}</span>
+        {/if}
       </div>
+      {#if txStatus.blocking}
+        <!-- Someone else is waiting on this transaction: the reason to finish
+             it now. Its own chip so the count can't be read as statements. -->
+        <span
+          class="flex h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded-md border border-destructive/30 bg-destructive/10 px-2 text-ui-2xs font-medium text-destructive"
+          title="Other sessions are waiting on a lock this transaction holds. Commit or roll back to let them through."
+        >
+          <span class="font-mono tabular-nums">{txStatus.blocking}</span>
+          {txStatus.blocking === 1 ? 'session waiting' : 'sessions waiting'}
+        </span>
+      {/if}
       <Button
         variant="outline"
         size="sm"

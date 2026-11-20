@@ -1966,6 +1966,7 @@ export async function backupCancel() {
  * @property {number} rowsAffected
  * @property {number} openMs how long the transaction has been held
  * @property {string|null} engine
+ * @property {number|null} [blocking] sessions waiting on a lock it holds (null: the engine can't say)
  */
 
 /**
@@ -2010,6 +2011,11 @@ export async function txRollback(sessionId) {
 /** @param {string} sessionId @returns {Promise<TxStatus>} */
 export async function txStatus(sessionId) {
   return inv('tx_status', { sessionId })
+}
+
+/** Ids of every open transaction session, for the quit guard. @returns {Promise<string[]>} */
+export async function txOpenSessions() {
+  return inv('tx_open_sessions', {})
 }
 
 /**
