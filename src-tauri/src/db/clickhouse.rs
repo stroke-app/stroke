@@ -130,13 +130,7 @@ pub async fn query_cancellable(
     sql: &str,
     cancel: tokio::sync::oneshot::Receiver<()>,
 ) -> Result<SqlResult, String> {
-    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let id = format!(
-        "stroke-{:x}-{:x}-{:x}",
-        std::process::id(),
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(0),
-        SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    );
+    let id = fresh_query_id();
     let run = query_in_full(config, &config.database, sql, false, Some(&id));
     tokio::pin!(run);
     tokio::select! {
@@ -147,6 +141,172 @@ pub async fn query_cancellable(
             let _ = tokio::time::timeout(std::time::Duration::from_secs(10), query_in_full(config, &config.database, &kill, false, None)).await;
             Err(super::query::QUERY_CANCELLED.into())
         }
+    }
+}
+
+fn fresh_query_id() -> String {
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    format!(
+        "stroke-{:x}-{:x}-{:x}",
+        std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(0),
+        SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    )
+}
+
+/// Whether `stream_into` takes this statement (it returns rows).
+pub(crate) fn reads(sql: &str) -> bool {
+    is_read_query(sql.trim().trim_end_matches(';'))
+}
+
+/// A read, streamed into `sink` row by row as the server sends it.
+///
+/// `FORMAT JSONCompact` is one JSON document, so a 2 GB result had to arrive
+/// whole (and be parsed whole) before the grid saw a row. The EachRow format
+/// sends one JSON array per line, after a line of names and one of types, so
+/// rows reach the grid (or the result store) while the server is still
+/// producing them and memory stays flat. Stop kills the query by id.
+pub async fn stream_into(
+    config: &ClickhouseConfig,
+    sql: &str,
+    sink: &mut super::query::RowSink,
+    stop: &super::stop::Stop,
+) -> Result<SqlResult, String> {
+    let id = fresh_query_id();
+    let run = stream_rows(config, sql, sink, &id);
+    tokio::pin!(run);
+    tokio::select! {
+        r = &mut run => r,
+        _ = stop.wait() => {
+            drop(run);
+            let kill = format!("KILL QUERY WHERE query_id = '{id}' SYNC");
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(10), query_in_full(config, &config.database, &kill, false, None)).await;
+            Err(super::query::QUERY_CANCELLED.into())
+        }
+    }
+}
+
+async fn stream_rows(
+    config: &ClickhouseConfig,
+    sql: &str,
+    sink: &mut super::query::RowSink,
+    query_id: &str,
+) -> Result<SqlResult, String> {
+    use futures::StreamExt;
+    let trimmed = sql.trim().trim_end_matches(';');
+    let url = format!(
+        "{}/?database={}&query_id={}",
+        config.base_url(),
+        urlencoding::encode(&config.database),
+        urlencoding::encode(query_id)
+    );
+    let t0 = Instant::now();
+    let res = client_for(config)
+        .post(&url)
+        .header("X-ClickHouse-User", &config.user)
+        .header("X-ClickHouse-Key", &config.password)
+        .header("Content-Type", "text/plain; charset=utf-8")
+        .body(format!("{trimmed}\nFORMAT JSONCompactEachRowWithNamesAndTypes"))
+        .send()
+        .await
+        .map_err(|e| format!("ClickHouse request failed: {e}"))?;
+    if !res.status().is_success() {
+        let msg = res.text().await.unwrap_or_default();
+        return Err(format!("ClickHouse error: {}", msg.trim().chars().take(500).collect::<String>()));
+    }
+
+    let mut lines = EachRowLines::default();
+    let mut body = res.bytes_stream();
+    while let Some(chunk) = body.next().await {
+        let chunk = chunk.map_err(|e| format!("ClickHouse response was cut off: {e}"))?;
+        for line in lines.feed(&chunk) {
+            lines.take(&line, sink)?;
+        }
+    }
+    if let Some(rest) = lines.rest() {
+        lines.take(&rest, sink)?;
+    }
+    if lines.rows > 0 {
+        sink.finish()?;
+    }
+    Ok(SqlResult {
+        columns: lines.columns(),
+        rows: vec![],
+        row_count: Some(lines.rows as i64),
+        message: None,
+        query_ms: t0.elapsed().as_millis() as u64,
+        sql: sql.to_string(),
+    })
+}
+
+/// The JSONCompactEachRowWithNamesAndTypes body, a line at a time: names,
+/// types, then one JSON array per row. A line that is not JSON is the
+/// server's own error text, which it writes into the body when a query fails
+/// after the first rows went out.
+#[derive(Default)]
+struct EachRowLines {
+    pending: Vec<u8>,
+    names: Option<Vec<String>>,
+    types: Option<Vec<String>>,
+    rows: usize,
+}
+
+impl EachRowLines {
+    fn feed(&mut self, chunk: &[u8]) -> Vec<Vec<u8>> {
+        self.pending.extend_from_slice(chunk);
+        let mut out = Vec::new();
+        let mut start = 0;
+        while let Some(i) = self.pending[start..].iter().position(|b| *b == b'\n') {
+            out.push(self.pending[start..start + i].to_vec());
+            start += i + 1;
+        }
+        self.pending.drain(..start);
+        out
+    }
+
+    fn rest(&mut self) -> Option<Vec<u8>> {
+        let rest = std::mem::take(&mut self.pending);
+        (!rest.iter().all(u8::is_ascii_whitespace)).then_some(rest)
+    }
+
+    fn columns(&self) -> Vec<ColumnInfo> {
+        let names = self.names.clone().unwrap_or_default();
+        let types = self.types.clone().unwrap_or_default();
+        names
+            .into_iter()
+            .enumerate()
+            .map(|(i, n)| {
+                let ty = types.get(i).cloned().unwrap_or_default();
+                let mut c = ColumnInfo::new(n, ch_type_label(&ty));
+                c.nullable = ty.starts_with("Nullable(");
+                c
+            })
+            .collect()
+    }
+
+    fn take(&mut self, line: &[u8], sink: &mut super::query::RowSink) -> Result<(), String> {
+        if line.iter().all(u8::is_ascii_whitespace) {
+            return Ok(());
+        }
+        let parsed: Result<Vec<Value>, _> = serde_json::from_slice(line);
+        let Ok(values) = parsed else {
+            let text = String::from_utf8_lossy(line);
+            return Err(format!("ClickHouse error: {}", text.trim().chars().take(500).collect::<String>()));
+        };
+        let strings = || values.iter().map(|v| v.as_str().unwrap_or_default().to_string()).collect::<Vec<_>>();
+        if self.names.is_none() {
+            self.names = Some(strings());
+            return Ok(());
+        }
+        if self.types.is_none() {
+            self.types = Some(strings());
+            return Ok(());
+        }
+        if self.rows == 0 {
+            sink.start(self.columns())?;
+        }
+        self.rows += 1;
+        sink.push(values.into_iter().map(|v| super::sql_util::cap_json_value("text", v)).collect())
     }
 }
 

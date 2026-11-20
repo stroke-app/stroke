@@ -4671,6 +4671,7 @@ async fn stream_one(
                 }
             }
         }
+        ActiveConnection::Clickhouse(cfg) if super::clickhouse::reads(stmt) => super::clickhouse::stream_into(cfg, stmt, sink, stop).await,
         _ => return None,
     })
 }
@@ -6196,6 +6197,68 @@ mod stream_tests {
         let r = super::super::sqlite::stream_into(&pool, &sql, &mut sink, rx).await.unwrap();
         // Collected, these rows are ~150 MB of JSON plus the values behind it.
         check(&store, "sqlite-big", r, before, 120).await;
+    }
+
+    /// A fake ClickHouse HTTP endpoint answering in
+    /// JSONCompactEachRowWithNamesAndTypes, written in uneven chunks so lines
+    /// split across reads. `tail` is appended after the rows.
+    async fn fake_clickhouse(rows: usize, tail: &'static str) -> u16 {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = l.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let (mut s, _) = l.accept().await.unwrap();
+            let mut buf = vec![0u8; 65536];
+            let _ = s.read(&mut buf).await;
+            s.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n").await.unwrap();
+            let mut out = String::from("[\"id\",\"v\"]\n[\"UInt64\",\"Nullable(String)\"]\n");
+            for i in 1..=rows {
+                out.push_str(&format!("[{i},\"{:064x}\"]\n", i));
+                if out.len() > 7_919 {
+                    let cut = out.len() / 2 + 3;
+                    s.write_all(&out.as_bytes()[..cut]).await.unwrap();
+                    out = out[cut..].to_string();
+                }
+            }
+            out.push_str(tail);
+            s.write_all(out.as_bytes()).await.unwrap();
+        });
+        port
+    }
+
+    fn fake_clickhouse_cfg(port: u16) -> super::super::connection::ClickhouseConfig {
+        super::super::connection::ClickhouseConfig {
+            name: "t".into(), host: "127.0.0.1".into(), port, database: "default".into(),
+            user: "default".into(), password: String::new(), secure: false, ssh: None, via: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn clickhouse_streams_a_large_result_to_the_store() {
+        let port = fake_clickhouse(N, "").await;
+        let store = super::super::result_store::ResultStore::default();
+        let mut sink = sink_into(&store, "ch-big");
+        let before = rss_mb();
+        let (_tx, rx) = tokio::sync::oneshot::channel();
+        let stop = super::super::stop::Stop::from_rx(rx);
+        let r = super::super::clickhouse::stream_into(&fake_clickhouse_cfg(port), "SELECT id, v FROM t", &mut sink, &stop).await.unwrap();
+        assert_eq!(r.columns.len(), 2);
+        assert_eq!(r.columns[1].data_type, "String");
+        assert!(r.columns[1].nullable);
+        // Collected as one JSONCompact document this was the body text plus
+        // the parsed tree: several hundred MB.
+        check(&store, "ch-big", r, before, 120).await;
+    }
+
+    #[tokio::test]
+    async fn clickhouse_error_after_the_first_rows_is_reported() {
+        let port = fake_clickhouse(500, "Code: 241. DB::Exception: Memory limit exceeded\n").await;
+        let store = super::super::result_store::ResultStore::default();
+        let mut sink = sink_into(&store, "ch-err");
+        let (_tx, rx) = tokio::sync::oneshot::channel();
+        let stop = super::super::stop::Stop::from_rx(rx);
+        let e = super::super::clickhouse::stream_into(&fake_clickhouse_cfg(port), "SELECT 1", &mut sink, &stop).await.unwrap_err();
+        assert!(e.contains("Memory limit exceeded"), "{e}");
     }
 
     #[tokio::test]
