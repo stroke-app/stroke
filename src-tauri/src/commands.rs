@@ -1234,7 +1234,32 @@ pub async fn pg_explain_sql(
             let lines = crate::db::oracle::explain_lines(&h, &sql).await?;
             Ok(explain_from_text_lines(lines, "oracle"))
         }
-        _ => Err("EXPLAIN isn't supported for this engine yet".into()),
+        ActiveConnection::LibSql(cfg) => {
+            // libSQL is SQLite: the same (id, parent, notused, detail) rows.
+            let res = crate::db::libsql::query(&cfg, &format!("EXPLAIN QUERY PLAN {sql}"), vec![]).await?;
+            Ok(explain_from_sqlite_plan(&res, "libsql"))
+        }
+        ActiveConnection::Doc(crate::db::docdb::DocConn::Mongo(m)) => Ok(ExplainResult {
+            plan: crate::db::mongo::explain_plan(&m, &sql).await?,
+            planning_time: 0.0,
+            execution_time: 0.0,
+            driver: "mongodb".into(),
+        }),
+        ActiveConnection::Doc(crate::db::docdb::DocConn::Elastic(cfg)) => Ok(ExplainResult {
+            plan: crate::db::elastic::explain_plan(&cfg, &sql).await?,
+            planning_time: 0.0,
+            execution_time: 0.0,
+            driver: "elasticsearch".into(),
+        }),
+        ActiveConnection::Doc(crate::db::docdb::DocConn::Couch(cfg)) => Ok(ExplainResult {
+            plan: crate::db::couchdb::explain_plan(&cfg, &sql).await?,
+            planning_time: 0.0,
+            execution_time: 0.0,
+            driver: "couchdb".into(),
+        }),
+        // Redis, DynamoDB, Firestore, Cassandra/ScyllaDB and PostHog's HogQL
+        // API expose no query plan.
+        _ => Err("This engine doesn't expose a query plan".into()),
     }
 }
 

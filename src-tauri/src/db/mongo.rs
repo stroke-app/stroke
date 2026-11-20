@@ -1431,6 +1431,147 @@ fn arg_doc(args: &[Value], i: usize, what: &str) -> Result<Document, String> {
     }
 }
 
+/// The command a console find/aggregate/count/distinct explains as.
+fn explain_cmd(coll: &str, head: &Call, args: &[Value], sort: Option<Document>, limit: Option<i64>, skip: Option<u64>) -> Result<Document, String> {
+    let cmd = match head.name.as_str() {
+        "find" => {
+            let mut f = doc! { "find": coll, "filter": arg_doc(&args, 0, "filter")? };
+            if let Some(p) = args.get(1).filter(|v| v.is_object()) {
+                f.insert("projection", to_doc(p, None)?);
+            }
+            if let Some(s) = sort {
+                f.insert("sort", s);
+            }
+            if let Some(l) = limit {
+                f.insert("limit", l);
+            }
+            if let Some(k) = skip {
+                f.insert("skip", k as i64);
+            }
+            f
+        }
+        "aggregate" => {
+            let pipeline = match args.first() {
+                Some(Value::Array(stages)) => stages.iter().map(|s| to_doc(s, None)).collect::<Result<Vec<_>, _>>()?,
+                _ => return Err("aggregate() takes an array of stages".into()),
+            };
+            doc! { "aggregate": coll, "pipeline": pipeline, "cursor": {} }
+        }
+        "countDocuments" => doc! { "count": coll, "query": arg_doc(&args, 0, "filter")? },
+        "distinct" => {
+            let field = args.first().and_then(|v| v.as_str()).ok_or("distinct() takes a field name")?;
+            doc! { "distinct": coll, "key": field, "query": arg_doc(&args, 1, "filter")? }
+        }
+        other => return Err(format!("{other}() can't be explained here; try find() or aggregate()")),
+    };
+    Ok(cmd)
+}
+
+
+/// A console statement's plan as the plan view's tree (the Postgres-shaped
+/// `{Node Type, Plans, Actual Rows, ...}` it draws for every engine): the
+/// executed stages with their counts and timings, aggregate stages stacked
+/// above the cursor's tree.
+pub async fn explain_plan(m: &MongoConn, stmt: &str) -> Result<Value, String> {
+    let db_name = m.current_db.lock().map(|g| g.clone()).unwrap_or_default();
+    let Stmt::Coll { coll, calls } = parse(stmt)? else {
+        return Err("Explain works on db.<collection>.find(...), aggregate(...), countDocuments(...) or distinct(...)".into());
+    };
+    let calls: Vec<Call> = calls.into_iter().filter(|c| c.name != "explain").collect();
+    let (head, mods) = calls.split_first().ok_or("Missing method")?;
+    let args = parse_args(&head.args)?;
+    let (mut sort, mut limit, mut skip) = (None, None, None);
+    for md in mods {
+        let a = parse_args(&md.args)?;
+        match md.name.as_str() {
+            "sort" => sort = Some(arg_doc(&a, 0, "sort")?),
+            "limit" => limit = a.first().and_then(|v| v.as_i64()),
+            "skip" => skip = a.first().and_then(|v| v.as_u64()),
+            _ => {}
+        }
+    }
+    let cmd = explain_cmd(&coll, head, &args, sort, limit, skip)?;
+    let raw = m.client.database(&db_name).run_command(doc! { "explain": cmd, "verbosity": "executionStats" }).await.map_err(err)?;
+    Ok(plan_tree(&doc_to_json(&raw), &coll))
+}
+
+/// Explain output → plan tree. Pure, so it is tested on recorded output.
+pub fn plan_tree(raw: &Value, coll: &str) -> Value {
+    fn stage_node(st: &Value, coll: &str) -> Value {
+        let name = st["stage"].as_str().unwrap_or("STAGE");
+        let mut n = serde_json::Map::new();
+        n.insert("Node Type".into(), json!(name));
+        if matches!(name, "COLLSCAN" | "IXSCAN" | "FETCH" | "IDHACK" | "EXPRESS_IXSCAN" | "CLUSTERED_IXSCAN") {
+            n.insert("Relation Name".into(), json!(coll));
+        }
+        if let Some(ix) = st["indexName"].as_str() {
+            n.insert("Index Name".into(), json!(ix));
+        }
+        let num = |k: &str| st[k].as_i64().or_else(|| st[k].as_f64().map(|f| f as i64)).or_else(|| st[k].as_str().and_then(|s| s.parse().ok()));
+        if let Some(r) = num("nReturned") {
+            n.insert("Actual Rows".into(), json!(r));
+        }
+        if let Some(ms) = num("executionTimeMillisEstimate") {
+            n.insert("Actual Total Time".into(), json!(ms));
+        }
+        if let Some(d) = num("docsExamined") {
+            n.insert("Docs Examined".into(), json!(d));
+            if let Some(r) = num("nReturned") {
+                if d > r && st.get("filter").is_some() {
+                    n.insert("Rows Removed by Filter".into(), json!(d - r));
+                }
+            }
+        }
+        if let Some(k) = num("keysExamined") {
+            n.insert("Keys Examined".into(), json!(k));
+        }
+        if let Some(f) = st.get("filter") {
+            n.insert("Filter".into(), json!(f.to_string()));
+        }
+        if let Some(kp) = st.get("keyPattern") {
+            n.insert("Index Cond".into(), json!(kp.to_string()));
+        }
+        let mut kids: Vec<Value> = vec![];
+        if let Some(c) = st.get("inputStage") {
+            kids.push(stage_node(c, coll));
+        }
+        if let Some(cs) = st["inputStages"].as_array() {
+            kids.extend(cs.iter().map(|c| stage_node(c, coll)));
+        }
+        if !kids.is_empty() {
+            n.insert("Plans".into(), Value::Array(kids));
+        }
+        Value::Object(n)
+    }
+    // aggregate: the find part sits in stages[0].$cursor, the rest above it.
+    let (base, later): (&Value, Vec<&Value>) = match raw["stages"].as_array() {
+        Some(st) if st.first().is_some_and(|s| s.get("$cursor").is_some()) => (&st[0]["$cursor"], st.iter().skip(1).collect()),
+        _ => (raw, vec![]),
+    };
+    let exec = &base["executionStats"]["executionStages"];
+    let mut tree = if exec.get("stage").is_some() {
+        stage_node(exec, coll)
+    } else {
+        let wp = &base["queryPlanner"]["winningPlan"];
+        // SBE plans nest the classic tree under queryPlan.
+        stage_node(if wp.get("queryPlan").is_some() { &wp["queryPlan"] } else { wp }, coll)
+    };
+    for st in later {
+        let Some((name, _)) = st.as_object().and_then(|o| o.iter().find(|(k, _)| k.starts_with('$'))) else { continue };
+        let mut n = serde_json::Map::new();
+        n.insert("Node Type".into(), json!(name));
+        if let Some(r) = st["nReturned"].as_i64() {
+            n.insert("Actual Rows".into(), json!(r));
+        }
+        if let Some(ms) = st["executionTimeMillisEstimate"].as_i64() {
+            n.insert("Actual Total Time".into(), json!(ms));
+        }
+        n.insert("Plans".into(), json!([tree]));
+        tree = Value::Object(n);
+    }
+    tree
+}
+
 const CONSOLE_CAP: i64 = 5_000;
 
 /// Fields the first batch did not have go here, as one object, so a later
@@ -1637,37 +1778,7 @@ pub async fn query(m: &MongoConn, stmt: &str) -> Result<super::query::SqlResult,
                 }
             }
             if explain {
-                let cmd = match head.name.as_str() {
-                    "find" => {
-                        let mut f = doc! { "find": coll.as_str(), "filter": arg_doc(&args, 0, "filter")? };
-                        if let Some(p) = args.get(1).filter(|v| v.is_object()) {
-                            f.insert("projection", to_doc(p, None)?);
-                        }
-                        if let Some(s) = sort {
-                            f.insert("sort", s);
-                        }
-                        if let Some(l) = limit {
-                            f.insert("limit", l);
-                        }
-                        if let Some(k) = skip {
-                            f.insert("skip", k as i64);
-                        }
-                        f
-                    }
-                    "aggregate" => {
-                        let pipeline = match args.first() {
-                            Some(Value::Array(stages)) => stages.iter().map(|s| to_doc(s, None)).collect::<Result<Vec<_>, _>>()?,
-                            _ => return Err("aggregate() takes an array of stages".into()),
-                        };
-                        doc! { "aggregate": coll.as_str(), "pipeline": pipeline, "cursor": {} }
-                    }
-                    "countDocuments" => doc! { "count": coll.as_str(), "query": arg_doc(&args, 0, "filter")? },
-                    "distinct" => {
-                        let field = args.first().and_then(|v| v.as_str()).ok_or("distinct() takes a field name")?;
-                        doc! { "distinct": coll.as_str(), "key": field, "query": arg_doc(&args, 1, "filter")? }
-                    }
-                    other => return Err(format!("{other}() can't be explained here; try find() or aggregate()")),
-                };
+                let cmd = explain_cmd(&coll, head, &args, sort, limit, skip)?;
                 let raw = m.client.database(&db_name).run_command(doc! { "explain": cmd, "verbosity": "executionStats" }).await.map_err(err)?;
                 let sum = summarize_explain(&raw);
                 let rows = sum

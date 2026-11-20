@@ -6395,6 +6395,63 @@ mod stream_tests {
         let _ = c.drop().await;
     }
 
+    /// Explain on the document engines, against real servers:
+    ///   STROKE_TEST_MONGO=mongodb://127.0.0.1:27018 STROKE_TEST_ES=http://127.0.0.1:19200
+    ///   STROKE_TEST_COUCH=http://admin:admin@127.0.0.1:15984 cargo test --lib live_doc_plans
+    #[tokio::test]
+    async fn live_doc_plans() {
+        fn types(n: &Value, out: &mut Vec<String>) {
+            out.push(n["Node Type"].as_str().unwrap_or("").to_string());
+            for k in n["Plans"].as_array().into_iter().flatten() {
+                types(k, out);
+            }
+        }
+        if let Ok(uri) = std::env::var("STROKE_TEST_MONGO") {
+            use mongodb::bson::doc;
+            let m = super::super::mongo::connect(&super::super::mongo::MongoConfig { ssh: None, name: "t".into(), uri, database: Some("stroke_plan".into()) }).await.unwrap();
+            let c = m.client.database("stroke_plan").collection::<mongodb::bson::Document>("t");
+            let _ = c.drop().await;
+            c.insert_many((0..2000).map(|i| doc! { "n": i, "k": i % 10 })).await.unwrap();
+            c.create_index(mongodb::IndexModel::builder().keys(doc! { "n": 1 }).build()).await.unwrap();
+            let p = super::super::mongo::explain_plan(&m, "db.t.find({n: {$gt: 1500}}).sort({n: 1})").await.unwrap();
+            let mut t = vec![];
+            types(&p, &mut t);
+            assert!(t.iter().any(|s| s == "IXSCAN"), "{p}");
+            assert!(p.to_string().contains("n_1"), "{p}");
+            let p = super::super::mongo::explain_plan(&m, "db.t.find({k: 3})").await.unwrap();
+            assert!(p.to_string().contains("COLLSCAN"), "{p}");
+            assert!(p.to_string().contains("Rows Removed by Filter"), "{p}");
+            let p = super::super::mongo::explain_plan(&m, "db.t.aggregate([{$match: {k: 3}}, {$group: {_id: null, s: {$sum: \"$n\"}}}])").await.unwrap();
+            assert!(p["Node Type"].is_string(), "{p}");
+            println!("mongo aggregate plan: {p}");
+            let _ = c.drop().await;
+        }
+        if let Ok(url) = std::env::var("STROKE_TEST_ES") {
+            let cfg = super::super::elastic::EsConfig { ssh: None, via: None, name: "t".into(), url, user: None, password: None, api_key: None, flavor: None, insecure: true };
+            let cfg = super::super::elastic::connect(cfg).await.unwrap();
+            super::super::elastic::request(&cfg, "PUT", "stroke_plan/_doc/1?refresh=wait_for", Some(&serde_json::json!({"level": "error", "ms": 12}))).await.unwrap();
+            let p = super::super::elastic::explain_plan(&cfg, r#"stroke_plan.search({"query": {"bool": {"must": [{"term": {"level.keyword": "error"}}], "filter": [{"range": {"ms": {"gte": 5}}}]}}})"#).await.unwrap();
+            let mut t = vec![];
+            types(&p, &mut t);
+            assert_eq!(t[0], "Search");
+            assert!(t.iter().any(|s| s == "Shard"), "{p}");
+            assert!(t.iter().any(|s| s == "BooleanQuery"), "{p}");
+            assert_eq!(p["Actual Rows"], serde_json::json!(1));
+            let p = super::super::elastic::explain_plan(&cfg, "GET stroke_plan/_search\n{\"query\": {\"match_all\": {}}}").await.unwrap();
+            assert!(p.to_string().contains("MatchAllDocsQuery"), "{p}");
+            let _ = super::super::elastic::request(&cfg, "DELETE", "stroke_plan", None).await;
+        }
+        if let Ok(url) = std::env::var("STROKE_TEST_COUCH") {
+            let cfg = super::super::couchdb::CouchConfig { ssh: None, via: None, name: "t".into(), url, user: Some("admin".into()), password: Some("admin".into()) };
+            // Set up outside (creating databases is refused here): stroke_plan
+            // with a "by-level" index on level.
+            let p = super::super::couchdb::explain_plan(&cfg, r#"stroke_plan.find({"other": 1})"#).await.unwrap();
+            assert!(p.to_string().contains("All documents scan"), "{p}");
+            let p = super::super::couchdb::explain_plan(&cfg, r#"stroke_plan.find({"level": "error"})"#).await.unwrap();
+            assert!(p.to_string().contains("by-level"), "{p}");
+        }
+    }
+
     #[tokio::test]
     async fn clickhouse_error_after_the_first_rows_is_reported() {
         let port = fake_clickhouse(500, "Code: 241. DB::Exception: Memory limit exceeded\n").await;

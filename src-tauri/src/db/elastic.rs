@@ -321,6 +321,78 @@ async fn send(cfg: &EsConfig, method: &str, path: &str, body: Option<Body<'_>>) 
     Ok(v)
 }
 
+/// A search's plan: the statement run once with `"profile": true`, and the
+/// profile drawn as the plan view's tree (search, then each shard, then its
+/// Lucene queries and aggregations with their times). Only searches have one.
+pub async fn explain_plan(cfg: &EsConfig, stmt: &str) -> Result<Value, String> {
+    let (index, mut body) = match parse(stmt)? {
+        Statement::Search { index, body } => (index, body),
+        Statement::Count { index, body } => (index, json!({ "query": body.get("query").cloned().unwrap_or(json!({"match_all": {}})), "size": 0 })),
+        Statement::Raw { method, path, body } if (method == "GET" || method == "POST") && path.trim_end_matches('/').ends_with("_search") => {
+            let index = path.trim_start_matches('/').split('/').next().unwrap_or("").to_string();
+            (index, body.unwrap_or(json!({})))
+        }
+        _ => return Err("Explain works on searches: GET index/_search, index.search({...}) or index.count({...})".into()),
+    };
+    if !body.is_object() {
+        body = json!({});
+    }
+    body["profile"] = json!(true);
+    let path = if index.is_empty() || index == "_search" { "_search".to_string() } else { format!("{}/_search", enc(&index)) };
+    let v = request(cfg, "POST", &path, Some(&body)).await?;
+    Ok(profile_tree(&v, &index))
+}
+
+/// A profiled search response → plan tree. Pure, so it is tested on recorded output.
+pub fn profile_tree(v: &Value, index: &str) -> Value {
+    fn ms(nanos: &Value) -> Value {
+        nanos.as_f64().map(|n| json!((n / 1e6 * 1000.0).round() / 1000.0)).unwrap_or(Value::Null)
+    }
+    fn part(q: &Value) -> Value {
+        let mut n = json!({
+            "Node Type": q["type"].as_str().unwrap_or("Query"),
+            "Filter": q["description"].as_str().unwrap_or(""),
+            "Actual Total Time": ms(&q["time_in_nanos"]),
+        });
+        if let Some(kids) = q["children"].as_array().filter(|k| !k.is_empty()) {
+            n["Plans"] = Value::Array(kids.iter().map(part).collect());
+        }
+        n
+    }
+    let shards: Vec<Value> = v["profile"]["shards"]
+        .as_array()
+        .map(|sh| {
+            sh.iter()
+                .map(|shard| {
+                    let mut plans: Vec<Value> = shard["searches"]
+                        .as_array()
+                        .map(|ss| ss.iter().flat_map(|s| s["query"].as_array().cloned().unwrap_or_default()).map(|q| part(&q)).collect())
+                        .unwrap_or_default();
+                    plans.extend(shard["aggregations"].as_array().map(|a| a.iter().map(part).collect::<Vec<_>>()).unwrap_or_default());
+                    let total: f64 = plans.iter().filter_map(|p| p["Actual Total Time"].as_f64()).sum();
+                    let id = shard["id"].as_str().unwrap_or("");
+                    // `[node][index][shard]`: the last two say which.
+                    let label = id.split(']').filter(|p| !p.is_empty()).map(|p| p.trim_start_matches('[')).skip(1).collect::<Vec<_>>().join(" shard ");
+                    json!({
+                        "Node Type": "Shard",
+                        "Relation Name": if label.is_empty() { id.to_string() } else { label },
+                        "Actual Total Time": (total * 1000.0).round() / 1000.0,
+                        "Plans": plans,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let hits = v["hits"]["total"]["value"].as_i64().or_else(|| v["hits"]["total"].as_i64());
+    json!({
+        "Node Type": "Search",
+        "Relation Name": index,
+        "Actual Rows": hits,
+        "Actual Total Time": v["took"].as_f64(),
+        "Plans": shards,
+    })
+}
+
 /// What `GET /` says about the server.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
