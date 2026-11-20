@@ -12,7 +12,7 @@
   import { bindingFor, withShortcut } from "$lib/stores/keybindings.js";
   import Icon from "./Icon.svelte";
   import SearchableMenu from "./SearchableMenu.svelte";
-  import FindReplacePanel from "./FindReplacePanel.svelte";
+
   import { listDatabases, canSwitchDatabase, currentDatabaseKey, isCurrentDatabase } from "$lib/databases.js";
   import { dbAdminKind, dbActionBlocker } from "$lib/database-admin.js";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
@@ -34,7 +34,7 @@
   import ResizeHandle from "./ResizeHandle.svelte";
   import ConnectionsSidebarPanel from "./ConnectionsSidebarPanel.svelte";
   import RedisSidebarNav from "./RedisSidebarNav.svelte";
-  import ExtensionsSidebarPanel from "./ExtensionsSidebarPanel.svelte";
+
   import { Button } from '$lib/components/ui/button/index.js'
   import { cn } from "$lib/utils.js";
   import { CRASH_WORD, isMagic, armCrash } from '$lib/games/easter-eggs.js'
@@ -562,8 +562,9 @@
   $effect(() => {
     openFindReplace = () => {
       sidebarTab = 'search'
-      // After the tab renders, or the field is not in the DOM yet.
-      tick().then(() => focusFindField())
+      // After the panel's code has loaded (it is lazy) and the tab renders,
+      // or the field is not in the DOM yet.
+      import('./FindReplacePanel.svelte').then(() => tick()).then(() => tick()).then(() => focusFindField())
     }
     showTablesTab = () => { sidebarTab = $appSidebarStyle === 'tree' ? 'tree' : 'tables' }
   })
@@ -2394,7 +2395,7 @@
         </div>
       {/if}
       {#if activePanel === 'search'}
-        <FindReplacePanel
+        {#await import('./FindReplacePanel.svelte') then { default: FindReplacePanel }}<FindReplacePanel
           bind:focusFind={focusFindField}
           bind:findText={frFind}
           bind:replaceText={frReplace}
@@ -2408,7 +2409,7 @@
           tableName={frEnabled ? frTableName : null}
           onapply={onfindreplaceapply}
           onreveal={onrevealcell}
-        />
+        />{/await}
       {/if}
       <!-- One mounted panel per list tab, each with its own scroller: a shared
            one re-rendered every row on each return to Tables. -->
@@ -3212,7 +3213,7 @@
         ondisconnect={ondisconnectconnection}
       />
     {:else if navSidebarPanel === "extensions"}
-      <ExtensionsSidebarPanel onopendetail={onopenextensiondetail} />
+      {#await import('./ExtensionsSidebarPanel.svelte') then { default: ExtensionsSidebarPanel }}<ExtensionsSidebarPanel onopendetail={onopenextensiondetail} />{/await}
     {/if}
 
     <!-- Footer, as in T3: app-wide controls as plain icons, one round action. -->

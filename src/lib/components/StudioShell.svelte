@@ -63,7 +63,6 @@
   import * as PaneTree from '$lib/pane-layout.js'
   import TabLoading from './TabLoading.svelte'
   import TableToolbar from './TableToolbar.svelte'
-  import RowDetailPanel from './RowDetailPanel.svelte'
   // TableJsonView / TableTextView are NOT imported here: both reach the CodeMirror
   // editor and its languages statically, which would drag them into the boot
   // chunk even though neither view is on screen until the user picks that data
@@ -94,10 +93,8 @@
   import { crashReportFields } from '$lib/crash-report.js'
   import UpdateDialog from './UpdateDialog.svelte'
   import StatusBar from './StatusBar.svelte'
-  import QueryLogConsole from './QueryLogConsole.svelte'
   import DisconnectDialog from './DisconnectDialog.svelte'
   import SwitchDatabaseDialog from './SwitchDatabaseDialog.svelte'
-  import DatabaseNameDialog from './DatabaseNameDialog.svelte'
   import DropDatabaseDialog from './DropDatabaseDialog.svelte'
   import DatabaseInfoDialog from './DatabaseInfoDialog.svelte'
   import { CatalogCache, catalogKey, connectionPrefix } from '$lib/catalog-cache.js'
@@ -10056,14 +10053,14 @@ let rowSearch = $state('')
   {/await}
 {/if}
 {#if dbNameDialog}
-  <DatabaseNameDialog
+  {#await import('./DatabaseNameDialog.svelte') then { default: DatabaseNameDialog }}<DatabaseNameDialog
     bind:open={dbNameDialogOpen}
     mode={dbNameDialog.mode}
     kind={dbAdmin ?? 'postgres'}
     source={dbNameDialog.source}
     existing={dbNameDialog.existing}
     onsubmit={runDbNameStatement}
-  />
+  />{/await}
 {/if}
 <DropDatabaseDialog
   bind:open={showDropDbDialog}
@@ -11851,7 +11848,7 @@ let rowSearch = $state('')
               {/if}
             </svelte:boundary>
             {#if dataViewMode === 'table'}
-              <RowDetailPanel
+              {#if inspectorTarget}{#await import('./RowDetailPanel.svelte') then { default: RowDetailPanel }}<RowDetailPanel
                 {columns}
                 {rows}
                 {primaryKey}
@@ -11859,7 +11856,7 @@ let rowSearch = $state('')
                 {dataVersion}
                 onclose={closeInspector}
                 onsave={handleSaveCell}
-              />
+              />{/await}{/if}
             {/if}
           </div>
           {/if}
@@ -12087,7 +12084,7 @@ let rowSearch = $state('')
   </div>
 
 {#if queryLogOpen && connection}
-  <QueryLogConsole {activeSchema} activeTable={activeTable ?? ''} onclose={() => { queryLogOpen = false }} />
+  {#await import('./QueryLogConsole.svelte') then { default: QueryLogConsole }}<QueryLogConsole {activeSchema} activeTable={activeTable ?? ''} onclose={() => { queryLogOpen = false }} />{/await}
 {/if}
 
 <!-- AI mode is its own full-height layout (chat list column + conversation), like the title row the status bar steps aside. -->
