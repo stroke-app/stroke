@@ -1433,6 +1433,133 @@ fn arg_doc(args: &[Value], i: usize, what: &str) -> Result<Document, String> {
 
 const CONSOLE_CAP: i64 = 5_000;
 
+/// Fields the first batch did not have go here, as one object, so a later
+/// document's extra keys are not lost from a streamed result.
+pub const OTHER_FIELDS: &str = "(other fields)";
+
+/// Whether `stream_into` takes this statement: a find or aggregate with no
+/// limit under the console's cap (those answer in the reply as before).
+pub(crate) fn streams(stmt: &str) -> bool {
+    let Ok(Stmt::Coll { calls, .. }) = parse(stmt) else { return false };
+    let Some(head) = calls.first() else { return false };
+    if head.name == "explain" || calls.iter().any(|c| c.name == "explain") {
+        return false;
+    }
+    if head.name != "find" && head.name != "aggregate" {
+        return false;
+    }
+    let limit = calls.iter().find(|c| c.name == "limit").and_then(|c| parse_args(&c.args).ok()).and_then(|a| a.first().and_then(|v| v.as_i64()));
+    limit.map_or(true, |l| l <= 0 || l > CONSOLE_CAP)
+}
+
+/// A find or aggregate, streamed into `sink` from the cursor.
+///
+/// The console collected at most 5,000 documents. Here the cursor's batches go
+/// straight to the grid or the result store. Columns come from the first
+/// 1,000 documents (`_id` first, as in the collected result); a later
+/// document's keys outside them land in `(other fields)`. Stop drops the
+/// cursor, which the driver kills on the server.
+pub async fn stream_into(
+    m: &MongoConn,
+    stmt: &str,
+    sink: &mut super::query::RowSink,
+    stop: &super::stop::Stop,
+) -> Result<super::query::SqlResult, String> {
+    let run = stream_rows(m, stmt, sink);
+    tokio::pin!(run);
+    tokio::select! {
+        r = &mut run => r,
+        _ = stop.wait() => Err(super::query::QUERY_CANCELLED.into()),
+    }
+}
+
+async fn stream_rows(m: &MongoConn, stmt: &str, sink: &mut super::query::RowSink) -> Result<super::query::SqlResult, String> {
+    use futures::StreamExt;
+    const SAMPLE: usize = 1_000;
+    let t0 = std::time::Instant::now();
+    let db_name = m.current_db.lock().map(|g| g.clone()).unwrap_or_default();
+    let Stmt::Coll { coll, calls } = parse(stmt)? else { return Err("Not a find or aggregate".into()) };
+    let c = m.client.database(&db_name).collection::<Document>(&coll);
+    let (head, mods) = calls.split_first().ok_or("Missing method")?;
+    let args = parse_args(&head.args)?;
+    let (mut sort, mut limit, mut skip) = (None, None, None);
+    for md in mods {
+        let a = parse_args(&md.args)?;
+        match md.name.as_str() {
+            "sort" => sort = Some(arg_doc(&a, 0, "sort")?),
+            "limit" => limit = a.first().and_then(|v| v.as_i64()).filter(|l| *l > 0),
+            "skip" => skip = a.first().and_then(|v| v.as_u64()),
+            "pretty" | "toArray" => {}
+            other => return Err(format!(".{other}() isn't supported here")),
+        }
+    }
+    let mut cursor = match head.name.as_str() {
+        "find" => {
+            let mut q = c.find(arg_doc(&args, 0, "filter")?).batch_size(1_000);
+            if let Some(p) = args.get(1).filter(|v| v.is_object()) {
+                q = q.projection(to_doc(p, None)?);
+            }
+            if let Some(s) = sort {
+                q = q.sort(s);
+            }
+            if let Some(k) = skip {
+                q = q.skip(k);
+            }
+            if let Some(l) = limit {
+                q = q.limit(l);
+            }
+            q.await.map_err(err)?
+        }
+        _ => {
+            let pipeline = match args.first() {
+                Some(Value::Array(stages)) => stages.iter().map(|s| to_doc(s, None)).collect::<Result<Vec<_>, _>>()?,
+                _ => return Err("aggregate() takes an array of stages".into()),
+            };
+            c.aggregate(pipeline).batch_size(1_000).await.map_err(err)?
+        }
+    };
+
+    let mut sample: Vec<Value> = Vec::with_capacity(SAMPLE);
+    while sample.len() < SAMPLE {
+        match cursor.next().await {
+            Some(d) => sample.push(doc_to_json(&d.map_err(err)?)),
+            None => break,
+        }
+    }
+    let exhausted = sample.len() < SAMPLE;
+    if exhausted {
+        // Small: the collected shape, exactly as before.
+        return Ok(super::couchdb::docs_result(sample, None, stmt, t0));
+    }
+    let shape = super::couchdb::docs_result(sample.clone(), None, stmt, t0);
+    let mut columns = shape.columns;
+    let names: Vec<String> = columns.iter().map(|c| c.name.clone()).collect();
+    let known: std::collections::HashSet<String> = names.iter().cloned().collect();
+    columns.push(super::query::ColumnInfo::new(OTHER_FIELDS, "object"));
+    sink.start(columns.clone())?;
+    let row_of = |d: &Value| -> Vec<Value> {
+        let mut row: Vec<Value> = names.iter().map(|n| super::couchdb::grid_cell(d.get(n).unwrap_or(&Value::Null)).0).collect();
+        let extra: serde_json::Map<String, Value> = d
+            .as_object()
+            .map(|o| o.iter().filter(|(k, _)| !known.contains(*k)).map(|(k, v)| (k.clone(), v.clone())).collect())
+            .unwrap_or_default();
+        row.push(if extra.is_empty() { Value::Null } else { Value::Object(extra) });
+        row
+    };
+    let mut total = 0usize;
+    for d in &sample {
+        sink.push(row_of(d))?;
+        total += 1;
+    }
+    drop(sample);
+    while let Some(d) = cursor.next().await {
+        sink.push(row_of(&doc_to_json(&d.map_err(err)?)))?;
+        total += 1;
+    }
+    sink.finish()?;
+    Ok(super::query::SqlResult { columns, rows: vec![], row_count: Some(total as i64), message: None, query_ms: t0.elapsed().as_millis() as u64, sql: stmt.to_string() })
+}
+
 pub async fn query(m: &MongoConn, stmt: &str) -> Result<super::query::SqlResult, String> {
     let t0 = std::time::Instant::now();
     let db_name = m.current_db.lock().map(|g| g.clone()).unwrap_or_default();

@@ -4671,6 +4671,8 @@ async fn stream_one(
                 }
             }
         }
+        ActiveConnection::Doc(super::docdb::DocConn::Mongo(m)) if super::mongo::streams(stmt) => super::mongo::stream_into(m, stmt, sink, stop).await,
+        ActiveConnection::Oracle(h) if super::oracle::reads(stmt) => super::oracle::stream_into(h, stmt, sink, stop).await,
         ActiveConnection::Clickhouse(cfg) if super::clickhouse::reads(stmt) => super::clickhouse::stream_into(cfg, stmt, sink, stop).await,
         _ => return None,
     })
@@ -6293,6 +6295,83 @@ mod stream_tests {
         assert!(t0.elapsed() < std::time::Duration::from_secs(15));
         let left = super::super::clickhouse::query(&cfg, &format!("SELECT count() FROM system.processes WHERE query LIKE '%{marker}%' AND query NOT LIKE '%system.processes%'")).await.unwrap();
         assert_eq!(left.rows[0][0].as_str().map(|s| s.to_string()).unwrap_or(left.rows[0][0].to_string()), "0", "query still running on the server");
+    }
+
+    //   STROKE_TEST_ORACLE=user/pw@//host:1521/FREEPDB1 STROKE_ORACLE_CLIENT_DIR=... cargo test --lib stream_tests::oracle_live
+    #[tokio::test]
+    async fn oracle_live_streams_and_stops() {
+        let Ok(url) = std::env::var("STROKE_TEST_ORACLE") else { return };
+        let (creds, cs) = url.split_once('@').unwrap();
+        let (user, password) = creds.split_once('/').unwrap();
+        let cfg = super::super::connection::OracleConfig {
+            ssh: None, name: "live".into(), host: String::new(), port: 1521, service_name: String::new(), sid: String::new(),
+            connect_string: cs.into(), user: user.into(), password: password.into(),
+            client_lib_dir: std::env::var("STROKE_ORACLE_CLIENT_DIR").unwrap_or_default(),
+        };
+        super::super::oracle::prepare_client(&cfg.client_lib_dir).await.unwrap();
+        let h = super::super::oracle::connect(&cfg).await.unwrap();
+        let store = super::super::result_store::ResultStore::default();
+        let mut sink = sink_into(&store, "ora-big");
+        let before = rss_mb();
+        let (_tx, rx) = tokio::sync::oneshot::channel();
+        let stop = super::super::stop::Stop::from_rx(rx);
+        let sql = format!("SELECT a.n * 1000 + b.n + 1 AS id, RPAD('v', 64, 'x') AS v FROM (SELECT level - 1 AS n FROM dual CONNECT BY level <= {}) a CROSS JOIN (SELECT level - 1 AS n FROM dual CONNECT BY level <= 1000) b ORDER BY 1", N / 1000);
+        let r = super::super::oracle::stream_into(&h, &sql, &mut sink, &stop).await.unwrap();
+        assert_eq!(r.columns[0].name, "ID");
+        assert_eq!(r.row_count, Some(N as i64));
+        let stored = store.get("ora-big").unwrap();
+        assert_eq!(stored.len(), N);
+        let grew = rss_mb().saturating_sub(before);
+        assert!(grew < 120, "memory grew {grew} MB while streaming");
+
+        // Stop mid-stream: the call breaks and the session stays usable.
+        let mut sink = sink_into(&store, "ora-stop");
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let stop = super::super::stop::Stop::from_rx(rx);
+        tokio::spawn(async move { tokio::time::sleep(std::time::Duration::from_millis(700)).await; let _ = tx.send(()); });
+        let slow = "SELECT COUNT(*) FROM (SELECT level n FROM dual CONNECT BY level <= 3000) a, (SELECT level n FROM dual CONNECT BY level <= 3000) b, (SELECT level n FROM dual CONNECT BY level <= 3000) c";
+        let t0 = std::time::Instant::now();
+        let e = super::super::oracle::stream_into(&h, slow, &mut sink, &stop).await.unwrap_err();
+        assert_eq!(e, QUERY_CANCELLED);
+        assert!(t0.elapsed() < std::time::Duration::from_secs(10));
+        super::super::oracle::ping(&h).await.unwrap();
+    }
+
+    //   STROKE_TEST_MONGO=mongodb://127.0.0.1:27018 cargo test --lib stream_tests::mongo_live
+    #[tokio::test]
+    async fn mongo_live_streams_past_the_console_cap() {
+        let Ok(uri) = std::env::var("STROKE_TEST_MONGO") else { return };
+        use mongodb::bson::doc;
+        const M: usize = 400_000;
+        let m = super::super::mongo::connect(&super::super::mongo::MongoConfig { ssh: None, name: "t".into(), uri, database: Some("stroke_stream".into()) }).await.unwrap();
+        let c = m.client.database("stroke_stream").collection::<mongodb::bson::Document>("big");
+        let _ = c.drop().await;
+        let mut batch = Vec::with_capacity(10_000);
+        for i in 0..M {
+            let mut d = doc! { "_id": i as i64 + 1, "n": i as i64, "v": format!("{:064x}", i) };
+            // A field the first 1,000 documents never had.
+            if i == 250_000 { d.insert("late", "here"); }
+            batch.push(d);
+            if batch.len() == 10_000 { c.insert_many(std::mem::take(&mut batch)).await.unwrap(); }
+        }
+        let store = super::super::result_store::ResultStore::default();
+        let mut sink = sink_into(&store, "mongo-big");
+        let before = rss_mb();
+        let (_tx, rx) = tokio::sync::oneshot::channel();
+        let stop = super::super::stop::Stop::from_rx(rx);
+        let stmt = "db.big.find({}).sort({_id: 1})";
+        assert!(super::super::mongo::streams(stmt));
+        assert!(!super::super::mongo::streams("db.big.find({}).limit(10)"));
+        let r = super::super::mongo::stream_into(&m, stmt, &mut sink, &stop).await.unwrap();
+        assert_eq!(r.row_count, Some(M as i64), "past the 5,000-document cap");
+        assert_eq!(r.columns.last().unwrap().name, super::super::mongo::OTHER_FIELDS);
+        let stored = store.get("mongo-big").unwrap();
+        assert_eq!(stored.len(), M);
+        let late: Vec<Vec<Value>> = serde_json::from_str(&stored.read_window(250_000, 1).unwrap()).unwrap();
+        assert_eq!(late[0].last().unwrap(), &serde_json::json!({ "late": "here" }));
+        let grew = rss_mb().saturating_sub(before);
+        assert!(grew < 120, "memory grew {grew} MB while streaming");
+        let _ = c.drop().await;
     }
 
     #[tokio::test]
