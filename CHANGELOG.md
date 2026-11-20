@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.1.0] - 2026-11-20
+
+### Changes
+- Handle big plans, clean cancel, 2 GB results, open transactions and lost tunnels on every engine (#311)
+
+
 ## [3.0.0] - 2026-11-19
 
 ### New Features
