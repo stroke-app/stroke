@@ -446,7 +446,7 @@
               aria-pressed={show === v}
               class={cn(
                 "inline-flex h-full items-center gap-1.5 rounded-sm px-2.5 text-ui-xs transition-colors",
-                show === v ? "bg-background text-foreground shadow-sm ring-1 ring-border/50" : "text-muted-foreground hover:text-foreground",
+                show === v ? "bg-background text-foreground ring-1 ring-border/50" : "text-muted-foreground hover:text-foreground",
               )}
               onclick={() => (show = /** @type {'all' | 'on'} */ (v))}
             >

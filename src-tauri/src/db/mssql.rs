@@ -10,6 +10,70 @@ use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
 
 pub type MssqlClient = Client<Compat<TcpStream>>;
 
+// ── Stop ─────────────────────────────────────────────────────────────────────
+//
+// tiberius has no way to send SQL Server's attention signal, and dropping a
+// query's future mid-stream leaves the TDS reply half read on the socket: the
+// next query on that client would read the rest of the old one. So Stop does
+// two things: `KILL`s the session from a second connection, which ends the
+// statement on the server, and then `reset` swaps in a fresh client.
+//
+// The handle does not carry its config, so it is kept here, keyed by the
+// handle's address, with the session id (`@@SPID`) to kill.
+
+static SESSIONS: std::sync::LazyLock<std::sync::Mutex<HashMap<usize, (MssqlConfig, i16)>>> =
+    std::sync::LazyLock::new(Default::default);
+
+fn key(handle: &MssqlHandle) -> usize {
+    std::sync::Arc::as_ptr(handle) as *const () as usize
+}
+
+async fn spid(client: &mut MssqlClient) -> Option<i16> {
+    let row = client.simple_query("SELECT CAST(@@SPID AS smallint)").await.ok()?.into_row().await.ok()??;
+    row.get::<i16, _>(0)
+}
+
+/// Remember how to reach a handle's session, so Stop can kill it.
+pub async fn remember(handle: &MssqlHandle, cfg: &MssqlConfig) {
+    let id = spid(&mut *handle.lock().await).await;
+    if let Some(id) = id {
+        SESSIONS.lock().unwrap_or_else(|e| e.into_inner()).insert(key(handle), (cfg.clone(), id));
+    }
+}
+
+/// End the handle's running statement on the server. Best effort: KILL needs
+/// ALTER ANY CONNECTION, and without it `reset` closing the socket is what
+/// stops the work.
+pub async fn cancel(handle: &MssqlHandle) {
+    let Some((cfg, id)) = SESSIONS.lock().unwrap_or_else(|e| e.into_inner()).get(&key(handle)).cloned() else { return };
+    let kill = async {
+        let mut other = connect(&cfg).await?;
+        other.simple_query(format!("KILL {id}")).await.map_err(|e| e.to_string())?.into_results().await.map_err(|e| e.to_string())?;
+        Ok::<(), String>(())
+    };
+    match tokio::time::timeout(std::time::Duration::from_secs(10), kill).await {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => log::info!("mssql stop: KILL {id} refused ({e}); closing the connection instead"),
+        Err(_) => log::info!("mssql stop: KILL {id} timed out; closing the connection instead"),
+    }
+}
+
+/// Replace the handle's client after a Stop: the old socket is closed (which
+/// also makes the server abandon anything still running) and the next query
+/// gets a clean protocol stream.
+pub async fn reset(handle: &MssqlHandle) -> Result<(), String> {
+    let Some((cfg, _)) = SESSIONS.lock().unwrap_or_else(|e| e.into_inner()).get(&key(handle)).cloned() else {
+        return Err("The connection was stopped and can't be reopened here. Reconnect to keep working.".into());
+    };
+    let mut fresh = connect(&cfg).await?;
+    let id = spid(&mut fresh).await;
+    *handle.lock().await = fresh;
+    if let Some(id) = id {
+        SESSIONS.lock().unwrap_or_else(|e| e.into_inner()).insert(key(handle), (cfg, id));
+    }
+    Ok(())
+}
+
 // ── Connect ──────────────────────────────────────────────────────────────────
 
 /// Open a tiberius client, following one Azure-style routing redirect if needed.
@@ -18,7 +82,10 @@ pub type MssqlClient = Client<Compat<TcpStream>>;
 /// bounds the whole attempt and reports which phase stalled.
 pub async fn connect(cfg: &MssqlConfig) -> Result<MssqlClient, String> {
     let config = build_config(cfg);
-    let addr = config.get_addr();
+    // Through an SSH tunnel the socket goes to the tunnel's local end while
+    // the config keeps the server's name, which TLS checks the certificate
+    // against.
+    let addr = cfg.via.map(|a| a.to_string()).unwrap_or_else(|| config.get_addr());
     let tcp = TcpStream::connect(&addr)
         .await
         .map_err(|e| format!("Can't reach {addr}: {e}"))?;
@@ -260,6 +327,57 @@ pub async fn execute_sql(handle: &MssqlHandle, sql: &str) -> Result<SqlResult, S
             sql: sql.to_string(),
         })
     }
+}
+
+/// A read query's first result set, streamed into the console's sink as the
+/// server sends it rather than collected. Later result sets are read and
+/// dropped, so the protocol stream ends clean. Stop is the caller's (it races
+/// this and resets the client, see query::run_one_cancellable).
+pub async fn stream_into(handle: &MssqlHandle, sql: &str, sink: &mut super::query::RowSink) -> Result<SqlResult, String> {
+    use futures::TryStreamExt;
+    let t0 = Instant::now();
+    let mut client = handle.lock().await;
+    let mut stream = client.simple_query(sql).await.map_err(|e| format!("MS SQL error: {e}"))?;
+    let mut columns: Vec<ColumnInfo> = Vec::new();
+    let mut total = 0usize;
+    let mut sink_err: Option<String> = None;
+    while let Some(item) = stream.try_next().await.map_err(|e| format!("MS SQL error: {e}"))? {
+        match item {
+            tiberius::QueryItem::Metadata(m) if m.result_index() == 0 => {
+                columns = m
+                    .columns()
+                    .iter()
+                    .map(|c| ColumnInfo::new(c.name().to_string(), format!("{:?}", c.column_type()).to_lowercase()))
+                    .collect();
+            }
+            tiberius::QueryItem::Row(r) if r.result_index() == 0 && sink_err.is_none() => {
+                if total == 0 {
+                    if let Err(e) = sink.start(columns.clone()) {
+                        sink_err = Some(e);
+                        continue;
+                    }
+                }
+                match sink.push((0..r.columns().len()).map(|i| cell_to_json(&r, i)).collect()) {
+                    Ok(()) => total += 1,
+                    Err(e) => sink_err = Some(e),
+                }
+            }
+            _ => {}
+        }
+    }
+    drop(stream);
+    if let Some(e) = sink_err {
+        return Err(e);
+    }
+    if total > 0 {
+        sink.finish()?;
+    }
+    Ok(SqlResult { columns, rows: vec![], row_count: Some(total as i64), message: None, query_ms: t0.elapsed().as_millis() as u64, sql: sql.to_string() })
+}
+
+/// Whether `sql` reads (and so has rows to stream).
+pub(crate) fn reads(sql: &str) -> bool {
+    is_read_query(sql)
 }
 
 /// Run a read query and return the first result set's rows (helper for introspection).
@@ -849,7 +967,7 @@ mod tests {
     use crate::db::connection::open_mssql;
 
     fn test_config() -> MssqlConfig {
-        MssqlConfig {
+        MssqlConfig { ssh: None, via: None,
             name: "test".into(),
             host: "127.0.0.1".into(),
             port: 1433,
@@ -919,5 +1037,35 @@ mod tests {
         assert_eq!(deleted, 1);
 
         execute_sql(&h, "DROP TABLE dbo.t_users").await.unwrap();
+    }
+}
+
+#[cfg(test)]
+mod via_tests {
+    // The socket goes to `via` while the config keeps the server's name. With
+    // a name that does not resolve and something listening at `via` that is
+    // not SQL Server, the connect must get as far as the handshake: failing on
+    // a lookup or "Can't reach" would mean the name was dialed.
+    //   STROKE_TEST_FAKE_RESP=127.0.0.1:16390 cargo test --lib mssql::via_tests
+    #[tokio::test]
+    async fn dials_the_tunnel_and_keeps_the_name() {
+        let Ok(addr) = std::env::var("STROKE_TEST_FAKE_RESP") else { return };
+        let cfg = super::MssqlConfig {
+            name: "t".into(),
+            host: "mssql.stroke.test".into(),
+            port: 1433,
+            database: "master".into(),
+            user: "sa".into(),
+            password: "x".into(),
+            encrypt: false,
+            trust_cert: false,
+            ssh: None,
+            via: Some(addr.parse().unwrap()),
+        };
+        let err = tokio::time::timeout(std::time::Duration::from_secs(5), super::connect(&cfg))
+            .await
+            .map(|r| r.err().unwrap_or_default())
+            .unwrap_or_else(|_| "handshake stalled (reached the listener)".into());
+        assert!(!err.contains("Can't reach") && !err.to_lowercase().contains("lookup"), "{err}");
     }
 }

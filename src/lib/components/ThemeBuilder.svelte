@@ -361,7 +361,7 @@
             aria-label={p.name}
             aria-pressed={on}
             class={cn(
-              'aspect-square w-full rounded-full border border-black/10 shadow-sm transition-[scale,box-shadow] duration-[120ms] ease-[var(--ease-out)] hover:scale-110 active:scale-[0.97]',
+              'aspect-square w-full rounded-full border border-black/10 transition-[scale,box-shadow] duration-[120ms] ease-[var(--ease-out)] hover:scale-110 active:scale-[0.97]',
               on && 'ring-2 ring-ring ring-offset-1 ring-offset-background',
             )}
             style="background: {p.surface === 'black' ? '#050505' : swatchCss(p)}"

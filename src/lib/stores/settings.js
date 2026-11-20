@@ -132,7 +132,9 @@ const DEFAULT_ZOOM = 1
  * follow the sans.
  * `reading` (optional) sets `--reading-font` for long prose (the AI chat);
  * without it prose follows the sans.
- * @type {Record<FontId, { label: string, description: string, sans: string, mono: string, heading?: string, reading?: string, keywords?: string[] }>}
+ * `chrome` (optional) sets `--font-chrome` for the window's chrome (title bar,
+ * menus, tabs, toolbars, status bar); without it the chrome follows the sans.
+ * @type {Record<FontId, { label: string, description: string, sans: string, mono: string, heading?: string, reading?: string, chrome?: string, keywords?: string[] }>}
  */
 const IS_MAC = typeof navigator !== 'undefined' && detectOs() === 'macos'
 const IS_WINDOWS = typeof navigator !== 'undefined' && detectOs() === 'windows'
@@ -188,9 +190,12 @@ export const FONT_PRESETS = {
     description: 'All-monospace terminal feel',
     sans: '"JetBrains Mono Variable", ui-monospace, monospace',
     mono: '"JetBrains Mono Variable", ui-monospace, monospace',
-    // Chrome and data stay monospace; paragraphs of chat prose read badly
-    // set that way, so they take a proportional face.
+    // Data and panels stay monospace. Paragraphs of chat prose read badly set
+    // that way, and so did the window's chrome: menus, tabs and the status bar
+    // in a terminal face made the app look unfinished. Both take a
+    // proportional face.
     reading: '"Inter Variable", ui-sans-serif, system-ui, sans-serif',
+    chrome: '"Inter Variable", ui-sans-serif, system-ui, sans-serif',
   },
   // The four below also ship with the app (fontsource imports in app.css).
   fira: {
@@ -1252,6 +1257,7 @@ function applySettingsNow(settings, root, theme, zoom, dark) {
   setStyleVar(root, '--font-mono', FONT_PRESETS[font].mono)
   setStyleVar(root, '--heading-font', FONT_PRESETS[font].heading ?? FONT_PRESETS[font].sans)
   setStyleVar(root, '--reading-font', FONT_PRESETS[font].reading ?? FONT_PRESETS[font].sans)
+  setStyleVar(root, '--font-chrome', FONT_PRESETS[font].chrome ?? FONT_PRESETS[font].sans)
   setStore(appFont, font)
 
   // AI/agent chat typography - consumed by the chat surfaces (AiMarkdown, code blocks).

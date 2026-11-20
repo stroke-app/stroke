@@ -2,6 +2,7 @@
   import Kbd from './Kbd.svelte'
   import { toggleLightDark, isCurrentThemeDark } from '$lib/stores/settings.js'
   import DbIcon from './DbIcon.svelte'
+  import { engineId } from '$lib/connection-provider.js'
   import { workspaces, activeWorkspaceId, inWorkspace } from '$lib/stores/workspaces.js'
 
   import { comboTitle } from '$lib/shortcuts.js'
@@ -2268,7 +2269,7 @@
                 if (first) { e.preventDefault(); kbdNav = true; focusRow(first) }
               }
             }}
-            class="peer no-field-frame h-8 w-full min-w-0 rounded-md bg-sidebar-accent/35 pl-[34px] pr-7 text-ui-sm text-foreground outline-none transition-colors duration-150 placeholder:text-muted-foreground hover:bg-sidebar-accent/50 focus-visible:bg-sidebar-accent/70 disabled:cursor-not-allowed disabled:opacity-40 [&::-webkit-search-cancel-button]:hidden"
+            class="peer search-box no-field-frame w-full min-w-0 pl-[34px] pr-8 text-ui-sm"
             aria-label="Filter {activeTabLabel.toLowerCase()}"
             aria-describedby="sidebar-filter-hint"
             data-sidebar-filter
@@ -3533,23 +3534,23 @@
       </button>
       {#if connsOpen}
         {#if wsConnections.length > 5}
-          <!-- Frameless search, T3-style: focus fills it, × clears it, Esc too. -->
-          <div class="mx-2 mb-1 flex h-8 shrink-0 items-center gap-2 rounded-md px-2 focus-within:bg-sidebar-accent/60">
-            <Icon name="search" class="size-3.5 shrink-0 text-muted-foreground" />
+          <!-- The shared search box (DESIGN_SYSTEM.md): × clears it, Esc too. -->
+          <div class="relative mx-2 mb-1 shrink-0">
+            <Icon name="search" class="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
             <input
               bind:this={connsSearchEl}
               bind:value={connsQuery}
               type="text"
               placeholder="Search connections"
               aria-label="Search connections"
-              class="no-field-frame h-full min-w-0 flex-1 bg-transparent text-ui-sm text-foreground outline-none placeholder:text-muted-foreground"
+              class="search-box no-field-frame w-full min-w-0 pl-8 pr-8 text-ui-sm"
               onkeydown={(e) => {
                 if (e.key === 'Escape') { connsQuery = ''; e.stopPropagation() }
                 else if (e.key === 'Enter' && connsShown.length === 1 && connsShown[0].id !== activeConnectionId) onswitchconnection(connsShown[0])
               }}
             />
             {#if connsQuery}
-              <button type="button" class="hit-area inline-flex size-5 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:text-foreground" aria-label="Clear search" onclick={() => (connsQuery = '')}>
+              <button type="button" class="hit-area absolute top-1/2 right-1.5 inline-flex size-5 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground hover:text-foreground" aria-label="Clear search" onclick={() => (connsQuery = '')}>
                 <Icon name="x" class="size-3 shrink-0" />
               </button>
             {/if}
@@ -3568,7 +3569,7 @@
               onpointerenter={(e) => showConnCard(c, e.currentTarget)}
               onpointerleave={hideConnCard}
             >
-              <DbIcon id={c.type} class="size-4 shrink-0" />
+              <DbIcon id={engineId(c)} class="size-4 shrink-0" />
               <span class="min-w-0 flex-1 truncate">{c.name || c.database || c.host || c.filePath || 'Connection'}</span>
               {#if c.pinned}<Icon name="pin" class="size-3 shrink-0 opacity-60" />{/if}
               <span class="shrink-0 font-mono text-ui-2xs tabular-nums text-muted-foreground/80">{ago(c.lastConnectedAt)}</span>
@@ -3601,7 +3602,7 @@
     >
       <p class="mb-1.5 font-medium text-foreground">{connHover.c.name || connHover.c.database || 'Connection'}</p>
       <div class="flex flex-col gap-1 text-muted-foreground">
-        <span class="flex items-center gap-2"><DbIcon id={connHover.c.type} class="size-3.5 shrink-0" /> {connHover.c.type}</span>
+        <span class="flex items-center gap-2"><DbIcon id={engineId(connHover.c)} class="size-3.5 shrink-0" /> {engineId(connHover.c)}</span>
         {#if connHover.c.host || connHover.c.filePath}
           <span class="flex items-center gap-2"><Icon name="server" class="size-3.5 shrink-0" /> <span class="truncate">{connHover.c.host ?? connHover.c.filePath}</span></span>
         {/if}

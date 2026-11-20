@@ -148,6 +148,24 @@ fn collect_rows(
     sql: &str,
     params: &[DuckValue],
 ) -> Result<(Vec<ColumnInfo>, Vec<Vec<Value>>), String> {
+    let mut columns = Vec::new();
+    let mut out: Vec<Vec<Value>> = Vec::new();
+    for_each_row(conn, sql, params, |c| columns = c, |r| {
+        out.push(r);
+        true
+    })?;
+    Ok((columns, out))
+}
+
+/// Run `sql` and hand each row to `on_row` as it is read, after the columns to
+/// `on_columns`. `on_row` returns false to stop reading.
+fn for_each_row(
+    conn: &::duckdb::Connection,
+    sql: &str,
+    params: &[DuckValue],
+    on_columns: impl FnOnce(Vec<ColumnInfo>),
+    mut on_row: impl FnMut(Vec<Value>) -> bool,
+) -> Result<(), String> {
     let mut stmt = conn.prepare(sql).map_err(|e| format!("DuckDB error: {e}"))?;
 
     // column_names()/column_count() panic before the statement is executed, so we
@@ -161,18 +179,23 @@ fn collect_rows(
         None => (Vec::new(), 0),
     };
 
-    let mut out: Vec<Vec<Value>> = Vec::new();
+    on_columns(col_names.into_iter().map(|n| ColumnInfo::new(n, "")).collect());
     while let Some(row) = rows.next().map_err(|e| format!("DuckDB row error: {e}"))? {
         let mut r = Vec::with_capacity(col_count);
         for i in 0..col_count {
             let vref = row.get_ref(i).map_err(|e| format!("DuckDB cell error: {e}"))?;
             r.push(valueref_to_json(vref));
         }
-        out.push(r);
+        if !on_row(r) {
+            break;
+        }
     }
+    Ok(())
+}
 
-    let columns = col_names.into_iter().map(|n| ColumnInfo::new(n, "")).collect();
-    Ok((columns, out))
+/// Whether `sql` reads (and so has rows to stream).
+pub(crate) fn reads(sql: &str) -> bool {
+    is_read_query(sql)
 }
 
 fn is_read_query(sql: &str) -> bool {
@@ -212,6 +235,187 @@ pub async fn execute_sql_readonly(handle: &DuckdbHandle, sql: &str) -> Result<Sq
         out
     })
     .await
+}
+
+/// `execute_sql`, stoppable through DuckDB's own interrupt. The interrupt
+/// handle is taken inside the run (the connection's lock is held for the whole
+/// statement), and a Stop that comes before the statement starts skips it.
+pub async fn execute_sql_cancellable(
+    handle: &DuckdbHandle,
+    sql: &str,
+    cancel: tokio::sync::oneshot::Receiver<()>,
+) -> Result<SqlResult, String> {
+    #[derive(Default)]
+    struct Slot {
+        stopped: bool,
+        interrupt: Option<std::sync::Arc<::duckdb::InterruptHandle>>,
+    }
+    let slot = std::sync::Arc::new(std::sync::Mutex::new(Slot::default()));
+    let s = slot.clone();
+    let arm = super::stop::Arm::new(cancel, move || {
+        let mut g = s.lock().unwrap_or_else(|e| e.into_inner());
+        g.stopped = true;
+        if let Some(h) = &g.interrupt {
+            h.interrupt();
+        }
+    });
+    let h = handle.clone();
+    let sql = sql.trim().to_string();
+    let t0 = Instant::now();
+    let read = is_read_query(&sql);
+    let result = run_blocking(h, move |conn| {
+        {
+            let mut g = slot.lock().unwrap_or_else(|e| e.into_inner());
+            if g.stopped {
+                return Err(super::query::QUERY_CANCELLED.into());
+            }
+            g.interrupt = Some(conn.interrupt_handle());
+        }
+        let out = run_on(conn, &sql, read, t0);
+        slot.lock().unwrap_or_else(|e| e.into_inner()).interrupt = None;
+        out
+    })
+    .await;
+    let stopped = arm.disarm();
+    match result {
+        Err(_) if stopped => Err(super::query::QUERY_CANCELLED.into()),
+        other => other,
+    }
+}
+
+fn run_on(conn: &::duckdb::Connection, sql: &str, read: bool, t0: Instant) -> Result<SqlResult, String> {
+    if read {
+        let mut columns = Vec::new();
+        let mut rows: Vec<Vec<Value>> = Vec::new();
+        let mut budget = super::query::CollectBudget::default();
+        let mut capped = false;
+        for_each_row(conn, sql, &[], |c| columns = c, |r| {
+            let fits = budget.take(&r);
+            rows.push(r);
+            capped = !fits;
+            fits
+        })?;
+        let row_count = Some(rows.len() as i64);
+        let message = capped.then(|| super::query::budget_message(rows.len()));
+        Ok(SqlResult { columns, rows, row_count, message, query_ms: t0.elapsed().as_millis() as u64, sql: sql.to_string() })
+    } else {
+        let affected = conn.execute(sql, []).map_err(|e| format!("DuckDB error: {e}"))?;
+        Ok(SqlResult {
+            columns: vec![],
+            rows: vec![],
+            row_count: Some(affected as i64),
+            message: Some(format!("{affected} row(s) affected")),
+            query_ms: t0.elapsed().as_millis() as u64,
+            sql: sql.to_string(),
+        })
+    }
+}
+
+/// One row-returning statement streamed into the console's sink as DuckDB
+/// produces it. The driver is synchronous: the blocking thread reads rows and
+/// sends them in batches over a small bounded channel, so it never runs far
+/// ahead of the window, and a sink that fails (the window went away) stops it.
+pub async fn stream_into(
+    handle: &DuckdbHandle,
+    sql: &str,
+    sink: &mut super::query::RowSink,
+    cancel: tokio::sync::oneshot::Receiver<()>,
+) -> Result<SqlResult, String> {
+    enum Msg {
+        Columns(Vec<ColumnInfo>),
+        Rows(Vec<Vec<Value>>),
+    }
+    const BATCH: usize = 1_000;
+    let slot = std::sync::Arc::new(std::sync::Mutex::new((false, None::<std::sync::Arc<::duckdb::InterruptHandle>>)));
+    let s = slot.clone();
+    let arm = super::stop::Arm::new(cancel, move || {
+        let mut g = s.lock().unwrap_or_else(|e| e.into_inner());
+        g.0 = true;
+        if let Some(h) = &g.1 {
+            h.interrupt();
+        }
+    });
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Msg>(8);
+    let h = handle.clone();
+    let sql_owned = sql.trim().to_string();
+    let reader = run_blocking(h, move |conn| {
+        {
+            let mut g = slot.lock().unwrap_or_else(|e| e.into_inner());
+            if g.0 {
+                return Err(super::query::QUERY_CANCELLED.into());
+            }
+            g.1 = Some(conn.interrupt_handle());
+        }
+        let mut batch = Vec::with_capacity(BATCH);
+        let out = for_each_row(
+            conn,
+            &sql_owned,
+            &[],
+            |c| {
+                let _ = tx.blocking_send(Msg::Columns(c));
+            },
+            |r| {
+                batch.push(r);
+                if batch.len() < BATCH {
+                    return true;
+                }
+                tx.blocking_send(Msg::Rows(std::mem::replace(&mut batch, Vec::with_capacity(BATCH)))).is_ok()
+            },
+        );
+        if out.is_ok() && !batch.is_empty() {
+            let _ = tx.blocking_send(Msg::Rows(batch));
+        }
+        slot.lock().unwrap_or_else(|e| e.into_inner()).1 = None;
+        out
+    });
+    tokio::pin!(reader);
+    let t0 = Instant::now();
+    let mut columns = Vec::new();
+    let mut total = 0usize;
+    let mut sink_err: Option<String> = None;
+    let mut reader_out: Option<Result<(), String>> = None;
+    loop {
+        tokio::select! {
+            msg = rx.recv() => match msg {
+                Some(Msg::Columns(c)) => columns = c,
+                Some(Msg::Rows(rows)) => {
+                    if sink_err.is_some() {
+                        continue;
+                    }
+                    for r in rows {
+                        if total == 0 {
+                            if let Err(e) = sink.start(columns.clone()) { sink_err = Some(e); break; }
+                        }
+                        if let Err(e) = sink.push(r) { sink_err = Some(e); break; }
+                        total += 1;
+                    }
+                    if sink_err.is_some() {
+                        // Stop reading: the reader's next send fails.
+                        rx.close();
+                    }
+                }
+                None => break,
+            },
+            out = &mut reader, if reader_out.is_none() => reader_out = Some(out),
+        }
+    }
+    let out = match reader_out {
+        Some(o) => o,
+        None => reader.await,
+    };
+    let stopped = arm.disarm();
+    if let Some(e) = sink_err {
+        return Err(e);
+    }
+    match out {
+        Err(_) if stopped => return Err(super::query::QUERY_CANCELLED.into()),
+        Err(e) => return Err(e),
+        Ok(()) => {}
+    }
+    if total > 0 {
+        sink.finish()?;
+    }
+    Ok(SqlResult { columns, rows: vec![], row_count: Some(total as i64), message: None, query_ms: t0.elapsed().as_millis() as u64, sql: sql.to_string() })
 }
 
 pub async fn execute_sql(handle: &DuckdbHandle, sql: &str) -> Result<SqlResult, String> {

@@ -72,14 +72,12 @@
   import TableRecordView from './TableRecordView.svelte'
   // AiChat / AiSidebar (large, pull in marked + shiki) are loaded lazily the first time
   // the AI panel is opened - see the {#await import()} blocks below.
-  import ConnectionModal from './ConnectionModal.svelte'
   import { terminalDockOpen as terminalDockStore } from '$lib/stores/redis-nav.js'
   import DbIcon from './DbIcon.svelte'
   import { requestShare, sharesPageRequest, chartTitle, shareRequest } from '$lib/share-flow.js'
   import MySharesDialog from './MySharesDialog.svelte'
   import Icon from './Icon.svelte'
   import CreateSchemaDialog from './CreateSchemaDialog.svelte'
-  import GenerateSqlDialog from './GenerateSqlDialog.svelte'
   import { genSelectStar } from '$lib/sql-generate.js'
   import { qualifiedTable } from '$lib/dml-preview.js'
   import { pluginState, pluginEnabledIn } from '$lib/stores/plugins.js'
@@ -89,21 +87,16 @@
   import { nextUntitledName } from '$lib/query-folders.js'
   import { buildBatchUpdateSql } from '$lib/sql-batch-update.js'
   import { buildSearchQuery, searchOptionsSupported, supportedSearchOptions } from '$lib/search-options.js'
-  import Onboarding from './Onboarding.svelte'
   import KeyboardShortcutsDialog from './KeyboardShortcutsDialog.svelte'
   import LeaderPanel from './LeaderPanel.svelte'
   import { requestChat } from '$lib/stores/ai-chat-bridge.js'
   import { aiChatKey, chatBelongsTo } from '$lib/ai-chat-key.js'
-  import InsiderDialog from './InsiderDialog.svelte'
-  import AboutDialog from './AboutDialog.svelte'
-  import ReportIssueDialog from './ReportIssueDialog.svelte'
   import { crashReportFields } from '$lib/crash-report.js'
   import UpdateDialog from './UpdateDialog.svelte'
   import StatusBar from './StatusBar.svelte'
   import QueryLogConsole from './QueryLogConsole.svelte'
   import DisconnectDialog from './DisconnectDialog.svelte'
   import SwitchDatabaseDialog from './SwitchDatabaseDialog.svelte'
-  import CreateDatabaseDialog from './CreateDatabaseDialog.svelte'
   import DatabaseNameDialog from './DatabaseNameDialog.svelte'
   import DropDatabaseDialog from './DropDatabaseDialog.svelte'
   import DatabaseInfoDialog from './DatabaseInfoDialog.svelte'
@@ -121,7 +114,6 @@
     databaseInfoSql,
     databaseInfoRows,
   } from '$lib/database-admin.js'
-  import McpPanel from './McpPanel.svelte'
   // NotebookEditor (pulls Monaco via SqlCell + marked via MarkdownCell) is lazy-loaded
   // at its render site so notebooks don't drag those into the startup bundle.
   //
@@ -302,6 +294,7 @@
   import { loadLayout, saveLayout, sidebarSideStore, setSidebarSide } from '$lib/stores/layout.js'
   import {
     getLastConnection,
+    withSecrets,
     getLastSchema,
     loadSavedConnections,
     newConnectionId,
@@ -316,6 +309,7 @@
   } from '$lib/stores/connections.js'
   import { hasPro, FREE_CONNECTION_LIMIT } from '$lib/stores/license.js'
   import { engineSupports, engineLabel, isKeyValue } from '$lib/db-capabilities.js'
+  import { engineId } from '$lib/connection-provider.js'
   import * as Dialog from '$lib/components/ui/dialog/index.js'
   import KeyRound from '@lucide/svelte/icons/key-round'
   import {
@@ -489,6 +483,22 @@
     if (revealOnTables && connection && !loadingTables) revealApp()
   })
 
+  // The launch overlay used to drop the moment `connection` was set, which is
+  // also the moment the whole studio mounts: one long render that froze the
+  // overlay's fade half way. It now stays opaque until the studio has painted
+  // (two frames after the connection lands), then fades over a ready screen.
+  const overlayWanted = $derived(autoConnecting && !connection)
+  let overlayHeld = $state(false)
+  $effect(() => {
+    if (overlayWanted) {
+      overlayHeld = true
+      return
+    }
+    if (!untrack(() => overlayHeld)) return
+    let raf = requestAnimationFrame(() => { raf = requestAnimationFrame(() => { overlayHeld = false }) })
+    return () => cancelAnimationFrame(raf)
+  })
+
   function beginConnectOverlay(name, verb = 'Connecting') {
     autoConnectName = name ?? ''
     autoConnectVerb = verb
@@ -628,7 +638,7 @@
     if (x.filePath) return x.filePath === ':memory:' ? 'in memory' : String(x.filePath).split(/[\\/]/).pop() ?? ''
     if (x.url) { try { return new URL(String(x.url).replace(/^libsql:/, 'https:')).host } catch { return '' } }
     if (x.host) return `${x.host}${x.port ? `:${x.port}` : ''}`
-    return engineLabel(c.type)
+    return engineLabel(engineId(c))
   }
   // Sync (src/lib/sync/runtime.js) changed the saved list from another device.
   $effect(() => {
@@ -704,8 +714,19 @@
     importData: () => import('./ImportDataDialog.svelte'),
     share: () => import('./ShareDialog.svelte'),
     docker: () => import('./DockerLaunchModal.svelte'),
+    // Boot: these were imported and mounted, closed, on every launch. The
+    // connection dialog alone is 5,700 lines, and none of them does anything
+    // until it opens (each one's effects wait on `open`).
+    connection: () => import('./ConnectionModal.svelte'),
+    onboarding: () => import('./Onboarding.svelte'),
+    createDb: () => import('./CreateDatabaseDialog.svelte'),
+    generateSql: () => import('./GenerateSqlDialog.svelte'),
+    mcp: () => import('./McpPanel.svelte'),
+    insider: () => import('./InsiderDialog.svelte'),
+    about: () => import('./AboutDialog.svelte'),
+    report: () => import('./ReportIssueDialog.svelte'),
   }
-  let dialogMounted = $state({ settings: false, aiSettings: false, palette: false, createTable: false, importData: false, share: false, docker: false })
+  let dialogMounted = $state({ settings: false, aiSettings: false, palette: false, createTable: false, importData: false, share: false, docker: false, connection: false, onboarding: false, createDb: false, generateSql: false, mcp: false, insider: false, about: false, report: false })
   // Mount on first open; never unmount (closing keeps its animation).
   $effect(() => {
     if (showSettingsModal) dialogMounted.settings = true
@@ -715,10 +736,18 @@
     if (importDataOpen) dialogMounted.importData = true
     if ($shareRequest) dialogMounted.share = true
     if (showDockerModal) dialogMounted.docker = true
+    if (showConnectionModal) dialogMounted.connection = true
+    if (showOnboarding) dialogMounted.onboarding = true
+    if (showCreateDbDialog) dialogMounted.createDb = true
+    if (generateSqlOpen) dialogMounted.generateSql = true
+    if (showMcpPanel) dialogMounted.mcp = true
+    if (showInsiderModal) dialogMounted.insider = true
+    if (showAboutModal) dialogMounted.about = true
+    if (showReportIssueDialog) dialogMounted.report = true
   })
   onMount(() => {
     // The palette and Settings first: they are the ones a shortcut opens.
-    const order = [loadDataTable, lazyDialogs.palette, lazyDialogs.settings, lazyDialogs.aiSettings, lazyDialogs.share, lazyDialogs.createTable, lazyDialogs.importData, lazyDialogs.docker]
+    const order = [loadDataTable, lazyDialogs.palette, lazyDialogs.connection, lazyDialogs.settings, lazyDialogs.aiSettings, lazyDialogs.share, lazyDialogs.createTable, lazyDialogs.importData, lazyDialogs.docker, lazyDialogs.createDb, lazyDialogs.generateSql, lazyDialogs.mcp, lazyDialogs.about, lazyDialogs.report]
     let i = 0
     let cancel = () => {}
     const pump = () => {
@@ -1155,7 +1184,7 @@
     if (c.filePath) where = c.filePath === ':memory:' ? 'in memory' : String(c.filePath).split(/[\\/]/).pop() ?? ''
     else if (c.url) { try { where = new URL(String(c.url).replace(/^libsql:/, 'https:')).host } catch { where = '' } }
     else if (c.host) where = `${c.host}${c.port ? `:${c.port}` : ''}`
-    return [engineLabel(c.type), where].filter(Boolean).join(' · ')
+    return [engineLabel(engineId(c)), where].filter(Boolean).join(' · ')
   })
   let insightsEverOpened = $state(false)
   let advisorEverOpened = $state(false)
@@ -1659,6 +1688,38 @@
           toast.info('Transaction rolled back', {
             description: `${why}, so it was rolled back${rolledBack ? '' : ' (the connection was closed)'}. Nothing it did was saved.`,
           })
+        })
+      } catch { /* web preview: no backend events */ }
+    })()
+    return () => off()
+  })
+
+  // An SSH tunnel that drops is rebuilt by the backend on the same local port.
+  // One toast per tunnel says so and follows it: down, still retrying, back.
+  onMount(() => {
+    let off = () => {}
+    /** @type {Map<string, number>} */
+    const shown = new Map()
+    ;(async () => {
+      try {
+        const { listen } = await import('@tauri-apps/api/event')
+        off = await listen('tunnel-status', (e) => {
+          const { via, state, message } = /** @type {{ via: string, state: 'down' | 'retrying' | 'up' | 'closed', message: string | null }} */ (e.payload)
+          const id = shown.get(via)
+          // Left the connection while its tunnel was down: nothing to wait for.
+          if (state === 'closed') {
+            if (id != null) toast.dismiss(id)
+            shown.delete(via)
+            return
+          }
+          if (state === 'up') {
+            if (id != null) toast.update(id, { type: 'success', title: 'SSH tunnel reconnected', description: `Through ${via}. Queries can run again.`, duration: 4500 })
+            shown.delete(via)
+            return
+          }
+          const description = `${message ?? 'The SSH connection closed.'} Reconnecting through ${via}.`
+          if (id == null) shown.set(via, toast.loading('SSH tunnel lost', { description, duration: Infinity }))
+          else toast.update(id, { type: 'loading', title: 'SSH tunnel lost', description })
         })
       } catch { /* web preview: no backend events */ }
     })()
@@ -8136,6 +8197,7 @@ let rowSearch = $state('')
   })
 
   onMount(async () => {
+    performance.mark('stroke:shell')
     // Resolve every saved host before the user can pick one. A cold DNS lookup
     // measured 4147ms here against 58ms warm, and the connect waits on it, so
     // this is the difference between a 4s connect and a 300ms one. Fire and
@@ -8186,6 +8248,8 @@ let rowSearch = $state('')
     // First-time user - show onboarding instead of bare connection modal
     try {
       if (!localStorage.getItem(ONBOARDING_KEY)) {
+        // Loaded before the reveal, so the first screen is the finished one.
+        await lazyDialogs.onboarding().catch(() => {})
         showOnboarding = true
         revealApp()
         return
@@ -8193,7 +8257,7 @@ let rowSearch = $state('')
     } catch {}
 
     const last = getLastConnection()
-    if (!last) { showConnectionModal = true; revealApp(); return }
+    if (!last) { await lazyDialogs.connection().catch(() => {}); showConnectionModal = true; revealApp(); return }
 
     // Disconnect is a decision, and it survives a restart. Coming back connected
     // to the database someone deliberately stepped away from - on a reload, or
@@ -8204,9 +8268,11 @@ let rowSearch = $state('')
 
     // Respect the "auto reconnect on startup" setting - if disabled, go straight
     // to the connection modal instead of re-connecting silently.
-    if (!loadSettings().autoReconnectOnStartup) { showConnectionModal = true; revealApp(); return }
+    if (!loadSettings().autoReconnectOnStartup) { await lazyDialogs.connection().catch(() => {}); showConnectionModal = true; revealApp(); return }
 
     beginConnectOverlay(last.name ?? '', 'Reconnecting')
+    // Its password comes from the keychain, which startup did not wait for.
+    Object.assign(last, await withSecrets(last))
     // A warm reconnect and its table list land in a few hundred ms. Revealing
     // on the overlay meant three screens in that time - "Reconnecting", an empty
     // shell with a skeleton sidebar, then the tables - which is the startup
@@ -8683,6 +8749,8 @@ let rowSearch = $state('')
    * @param {import('$lib/stores/connections.js').SavedConnection} conn
    */
   async function connectByType(conn) {
+    // Read from the list before the keychain answered, it has no password.
+    conn = await withSecrets(conn)
     // Which engines get used, never which servers. The event name is the whole
     // payload - there is no field here that could carry a host or a database.
     track(`connect_${conn.type === 'cockroachdb' ? 'cockroachdb' : conn.type}`)
@@ -9952,7 +10020,13 @@ let rowSearch = $state('')
   }
 </script>
 
+{#if dialogMounted.onboarding}
+  {#await lazyDialogs.onboarding() then { default: Onboarding }}
 <Onboarding bind:open={showOnboarding} onconnect={() => (showConnectionModal = true)} onsample={handleSampleConnect} />
+  {/await}
+{/if}
+{#if dialogMounted.connection}
+  {#await lazyDialogs.connection() then { default: ConnectionModal }}
 <ConnectionModal
   bind:open={showConnectionModal}
   bind:initialEngine={connectionModalEngine}
@@ -9964,17 +10038,23 @@ let rowSearch = $state('')
   ondisconnect={requestDisconnect}
   onremoved={handleConnectionRemoved}
 />
+  {/await}
+{/if}
 <SwitchDatabaseDialog
   bind:open={showSwitchDbDialog}
   databaseName={pendingDbSwitch?.label ?? ''}
   currentName={connection?.database ?? connection?.name ?? ''}
   onconfirm={commitDatabaseSwitch}
 />
+{#if dialogMounted.createDb}
+  {#await lazyDialogs.createDb() then { default: CreateDatabaseDialog }}
 <CreateDatabaseDialog
   bind:open={showCreateDbDialog}
   connType={dbAdmin ?? connection?.type ?? 'postgres'}
   oncreate={createDatabase}
 />
+  {/await}
+{/if}
 {#if dbNameDialog}
   <DatabaseNameDialog
     bind:open={dbNameDialogOpen}
@@ -10027,6 +10107,8 @@ let rowSearch = $state('')
     await handleSchemaChange(schemaName)
   }}
 />
+{#if dialogMounted.generateSql}
+  {#await lazyDialogs.generateSql() then { default: GenerateSqlDialog }}
 <GenerateSqlDialog
   bind:open={generateSqlOpen}
   schema={activeSchema}
@@ -10034,6 +10116,8 @@ let rowSearch = $state('')
   dialect={dbType}
   onopeninsql={(sql) => { if (aiMode) exitAiMode(); void openQueryInEditor(sql) }}
 />
+  {/await}
+{/if}
 
 {#if dialogMounted.docker}
   {#await lazyDialogs.docker() then { default: DockerLaunchModal }}
@@ -10045,7 +10129,11 @@ let rowSearch = $state('')
   {/await}
 {/if}
 
+{#if dialogMounted.mcp}
+  {#await lazyDialogs.mcp() then { default: McpPanel }}
 <McpPanel bind:open={showMcpPanel} connected={!!connection} />
+  {/await}
+{/if}
 
 {#if dialogMounted.settings}
   {#await lazyDialogs.settings() then { default: SettingsDialog }}
@@ -10083,9 +10171,19 @@ let rowSearch = $state('')
 <KeyboardShortcutsDialog bind:open={showShortcutsModal} />
 <LeaderPanel bind:open={leaderOpen} actions={leaderActions} />
 
+{#if dialogMounted.insider}
+  {#await lazyDialogs.insider() then { default: InsiderDialog }}
 <InsiderDialog bind:open={showInsiderModal} />
+  {/await}
+{/if}
 
+{#if dialogMounted.about}
+  {#await lazyDialogs.about() then { default: AboutDialog }}
 <AboutDialog bind:open={showAboutModal} onopenreport={() => (showReportIssueDialog = true)} />
+  {/await}
+{/if}
+{#if dialogMounted.report}
+  {#await lazyDialogs.report() then { default: ReportIssueDialog }}
 <ReportIssueDialog
   bind:open={showReportIssueDialog}
   initialType={crashReport ? 'crash' : 'bug'}
@@ -10095,6 +10193,8 @@ let rowSearch = $state('')
   heading={crashReport ? 'Stroke quit unexpectedly' : 'Report an issue'}
   lead={crashReport ? 'Stroke closed by itself last time. This report holds the error and where in Stroke it happened, nothing else; read it over before you send it.' : ''}
 />
+  {/await}
+{/if}
 <!-- Share links: one dialog for every kind, opened through requestShare(). -->
 {#if showStudioShare || studioShare}
   {#await import('./StudioShareDialog.svelte') then { default: StudioShareDialog }}
@@ -10254,7 +10354,7 @@ let rowSearch = $state('')
 <!-- Capture phase, deliberately - see onWindowKeydownCapture. -->
 <svelte:window onkeydowncapture={onWindowKeydownCapture} />
 
-{#if autoConnecting && !connection}
+{#if overlayWanted || overlayHeld}
   <!-- Only covers the actual connect handshake: onConnected sets `connection`
        the moment the backend confirms, which drops this overlay and lets the
        catalog (schemas/tables/counts) stream into the sidebar skeletons. -->
@@ -10547,7 +10647,7 @@ let rowSearch = $state('')
                       class="group flex h-9 w-full min-w-0 items-center gap-2.5 rounded-lg px-2.5 text-left transition-[background-color,scale] duration-150 ease-out hover:bg-accent/60 active:scale-[0.99] focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-ring"
                       onclick={() => void handleSwitchDatabase(conn)}
                     >
-                      <DbIcon id={conn.type} class="size-4 shrink-0" />
+                      <DbIcon id={engineId(conn)} class="size-4 shrink-0" />
                       <span class="min-w-0 shrink truncate text-ui-sm text-foreground">{conn.name}</span>
                       <span class="min-w-0 flex-1 truncate text-ui-xs text-muted-foreground">{welcomeTarget(conn)}</span>
                       <span class="shrink-0 text-ui-2xs tabular-nums text-muted-foreground group-hover:hidden group-focus-visible:hidden">{ago(conn.lastConnectedAt ?? 0)}</span>
@@ -11780,7 +11880,7 @@ let rowSearch = $state('')
         <!-- min-h, not h: a label that wraps to two lines in a narrow pane grows
              the tile instead of spilling out of it. min-w-0 + overflow-hidden
              keep a long word inside the border when the column is tight. -->
-        {@const cell = 'group relative flex min-h-[5.25rem] min-w-0 flex-col justify-between overflow-hidden rounded-lg border border-border/60 bg-card/50 p-2.5 text-left transition-[background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out)] hover:border-border hover:bg-accent/40 hover:shadow-sm active:scale-[0.98]'}
+        {@const cell = 'group relative flex min-h-[5.25rem] min-w-0 flex-col justify-between overflow-hidden rounded-lg border border-border/60 bg-card/50 p-2.5 text-left transition-[background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out)] hover:border-border hover:bg-accent/40 active:scale-[0.98]'}
         {@const proCell = 'group relative flex min-h-[5.25rem] min-w-0 cursor-not-allowed flex-col justify-between overflow-hidden rounded-lg border border-border/40 bg-card/30 p-2.5 text-left transition-[background-color,border-color] duration-150 hover:border-warning/30 hover:bg-warning/[0.04]'}
         {@const iconCls = 'size-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground'}
         {@const proIconCls = 'size-4 shrink-0 text-muted-foreground'}
@@ -11855,7 +11955,7 @@ let rowSearch = $state('')
                  shares the block's left edge with everything below it. -->
             <div class="flex min-w-0 items-center gap-3">
               <span class="flex size-10 shrink-0 items-center justify-center rounded-xl border border-border/60 bg-card">
-                <DbIcon id={connection.type ?? ''} class="size-5 shrink-0" />
+                <DbIcon id={engineId(connection)} class="size-5 shrink-0" />
               </span>
               <div class="flex min-w-0 flex-col gap-0.5">
                 <h1 class="truncate text-ui-xl font-semibold tracking-[-0.01em] text-foreground">{welcomeTitle}</h1>

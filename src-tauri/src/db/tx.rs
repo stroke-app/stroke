@@ -278,8 +278,16 @@ async fn blocker_for(conn: &mut TxConn, db: &ActiveConnection) -> Option<Blocker
 async fn blocking_count(blocker: &Blocker) -> Option<i64> {
     let ask = async {
         match blocker {
+            // Everyone held up by it, not only those waiting on it directly:
+            // a second UPDATE of the same row waits on the first waiter, which
+            // waits on this transaction (measured: pg_blocking_pids names only
+            // the next link of the chain).
             Blocker::Postgres(pool, pid) => sqlx::query_scalar::<_, i64>(
-                "SELECT count(*)::bigint FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))",
+                "WITH RECURSIVE held(pid) AS ( \
+                   SELECT pid FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid)) \
+                   UNION \
+                   SELECT a.pid FROM pg_stat_activity a JOIN held h ON h.pid = ANY(pg_blocking_pids(a.pid)) \
+                 ) SELECT count(*)::bigint FROM held",
             )
             .bind(pid)
             .fetch_one(pool)

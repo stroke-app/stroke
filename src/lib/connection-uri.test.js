@@ -273,6 +273,9 @@ describe('detectConnectionUri: everything people paste', () => {
     expect(d('couchdb://admin:pw@localhost:5984')).toMatchObject({ type: 'couchdb' })
     expect(parseConnectionUri('couchdb', 'http://admin:pw@localhost:5984')).toEqual({ couch: true, url: 'http://localhost:5984', user: 'admin', password: 'pw' })
     expect(d('cassandra://u:p@h1:9042,h2:9042/shop')).toMatchObject({ type: 'cassandra' })
+    // ScyllaDB's scheme opens the ScyllaDB entry, read by the same CQL parser.
+    expect(d('scylla://u:p@node1:9042/shop')).toMatchObject({ type: 'scylladb', uriType: 'cassandra' })
+    expect(d('scylladb://node1:9042')).toMatchObject({ type: 'scylladb' })
     expect(parseConnectionUri('cassandra', 'cassandra://u:p@h1:9042,h2:9042/shop')).toEqual({ cql: true, user: 'u', password: 'p', hosts: 'h1:9042,h2:9042', keyspace: 'shop' })
     expect(d('http://localhost:8123')).toMatchObject({ type: 'clickhouse' })
     expect(d('https://example.com')).toBeNull()
@@ -302,5 +305,14 @@ describe('connectionUrl: Copy URL, the reverse of paste', () => {
     expect(detectConnectionUri(connectionUrl({ type: 'oracle', host: 'h', port: '1521', serviceName: 'FREEPDB1', user: 'app', password: 'app' }))).toMatchObject({ type: 'oracle' })
     expect(connectionUrl({ type: 'sqlite', filePath: '/data/app.db' })).toBe('/data/app.db')
     expect(connectionUrl({ type: 'd1', databaseId: 'x' })).toBe('')
+  })
+})
+
+describe('ScyllaDB connections', () => {
+  it('copies a ScyllaDB connection as scylla://', async () => {
+    const { connectionUrl } = await import('./connection-uri.js')
+    const p = { type: 'cassandra', flavor: 'scylladb', user: 'u', password: 'p@ss', hosts: 'n1:9042,n2:9042', keyspace: 'shop' }
+    expect(connectionUrl(p)).toBe('scylla://u:p%40ss@n1:9042,n2:9042/shop')
+    expect(connectionUrl({ ...p, flavor: undefined })).toBe('cassandra://u:p%40ss@n1:9042,n2:9042/shop')
   })
 })

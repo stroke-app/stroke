@@ -417,7 +417,7 @@ use crate::db::{
     SqlResult, SqliteConfig, TableInfo, TableRowCount, TableRows, TriggerInfo, SequenceInfo,
     ColumnStructureRow, TableColumnStructure, IncomingForeignKey, InsertRowResult, TunnelState,
     apply_table_changes, ApplyChangesResult, RowUpdate,
-    explain_pg, explain_mysql, explain_sqlite, explain_from_text_lines, explain_from_sqlite_plan,
+    explain_mysql, explain_sqlite, explain_from_text_lines, explain_from_sqlite_plan,
 };
 use crate::db::connection::{require_conn, ClickhouseConfig, DuckdbConfig, MssqlConfig, MysqlConfig, OracleConfig, RedisConfig};
 use crate::db::ActiveConnection;
@@ -522,8 +522,8 @@ pub async fn test_clickhouse(config: ClickhouseConfig) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn connect_clickhouse_db(state: Db<'_>, config: ClickhouseConfig) -> Result<(), String> {
-    connect_clickhouse(state, config).await
+pub async fn connect_clickhouse_db(state: Db<'_>, tunnel_state: State<'_, TunnelState>, config: ClickhouseConfig) -> Result<(), String> {
+    connect_clickhouse(state, tunnel_state, config).await
 }
 
 // ── Redis ─────────────────────────────────────────────────────────────────────
@@ -534,8 +534,8 @@ pub async fn test_redis(config: RedisConfig) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn connect_redis_db(state: Db<'_>, config: RedisConfig) -> Result<(), String> {
-    connect_redis(state, config).await
+pub async fn connect_redis_db(state: Db<'_>, tunnel_state: State<'_, TunnelState>, config: RedisConfig) -> Result<(), String> {
+    connect_redis(state, tunnel_state, config).await
 }
 
 /// Non-blocking keyspace iteration for the active Redis connection. Returns one
@@ -1018,8 +1018,8 @@ pub async fn test_mssql(config: MssqlConfig) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn connect_mssql_db(state: Db<'_>, config: MssqlConfig) -> Result<(), String> {
-    connect_mssql(state, config).await
+pub async fn connect_mssql_db(state: Db<'_>, tunnel_state: State<'_, TunnelState>, config: MssqlConfig) -> Result<(), String> {
+    connect_mssql(state, tunnel_state, config).await
 }
 
 // ── Oracle ──────────────────────────────────────────────────────────────────────
@@ -1030,8 +1030,8 @@ pub async fn test_oracle(config: OracleConfig) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn connect_oracle_db(state: Db<'_>, config: OracleConfig) -> Result<(), String> {
-    connect_oracle(state, config).await
+pub async fn connect_oracle_db(state: Db<'_>, tunnel_state: State<'_, TunnelState>, config: OracleConfig) -> Result<(), String> {
+    connect_oracle(state, tunnel_state, config).await
 }
 
 /// The Oracle container the active connection is in (FREEPDB1, CDB$ROOT).
@@ -1144,9 +1144,18 @@ pub async fn pg_explain_sql(
     state: Db<'_>,
     sql: String,
     analyze: Option<bool>,
+    // Names the run for `cancel_query`, like a console run's queryId.
+    query_id: Option<String>,
 ) -> Result<ExplainResult, String> {
     match require_conn(&state)? {
-        ActiveConnection::Postgres(pool) => explain_pg(&pool, &sql, analyze.unwrap_or(true)).await,
+        ActiveConnection::Postgres(pool) => {
+            let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+            let key = query_id.unwrap_or_else(|| "default".to_string());
+            crate::db::connection::register_cancel(&state, &key, tx);
+            let r = crate::db::explain::explain_pg_stoppable(&pool, &sql, analyze.unwrap_or(true), Some(rx)).await;
+            crate::db::connection::unregister_cancel(&state, &key);
+            r
+        }
         ActiveConnection::Mysql(pool) => explain_mysql(&pool, &sql).await,
         ActiveConnection::Sqlite(pool) => explain_sqlite(&pool, &sql).await,
         ActiveConnection::Duckdb(h) => {

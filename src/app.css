@@ -97,7 +97,13 @@
      `.dark` block below (toggled for every dark theme via classList) swaps in
      stronger black + a dim rim, since a light drop-shadow is nearly invisible
      on a dark surface and depth there comes from the rim highlight instead. */
-  --elevate-1: 0 1px 2px oklch(0 0 0 / 0.05), 0 1px 1px oklch(0 0 0 / 0.04);
+  /* Level 1 is an outline, not a shadow: things that sit in the page (a
+     selected segment, a raised chip, a card) get a crisp 1px hairline. Small
+     soft shadows rendered as a grey smudge on Linux and Windows, and against
+     a dark surface they did not show at all. Only what floats (menus,
+     popovers, dialogs: levels 2 and 3) keeps a real shadow. Tailwind's
+     `shadow-xs` and `shadow-sm` resolve to this too (@theme below). */
+  --elevate-1: 0 0 0 1px oklch(0 0 0 / 0.09);
   --elevate-2: 0 2px 5px -1px oklch(0 0 0 / 0.07), 0 6px 16px -3px oklch(0 0 0 / 0.09);
   --elevate-3: 0 10px 22px -6px oklch(0 0 0 / 0.11), 0 22px 52px -12px oklch(0 0 0 / 0.16);
   /* Top rim highlight - a 1px inner catch-light that gives raised surfaces a
@@ -136,7 +142,7 @@
   --warning-foreground: oklch(0.20 0.04 78);
   --info:               oklch(0.71 0.13 245);
   --info-foreground:    oklch(0.16 0.03 245);
-  --elevate-1: 0 1px 2px oklch(0 0 0 / 0.4), 0 1px 3px oklch(0 0 0 / 0.3);
+  --elevate-1: 0 0 0 1px oklch(1 0 0 / 0.09);
   --elevate-2: 0 2px 5px -1px oklch(0 0 0 / 0.45), 0 8px 20px -4px oklch(0 0 0 / 0.5);
   --elevate-3: 0 12px 28px -8px oklch(0 0 0 / 0.55), 0 28px 60px -16px oklch(0 0 0 / 0.62);
   --rim: inset 0 1px 0 0 oklch(1 0 0 / 0.055);
@@ -424,6 +430,9 @@ html[data-os="linux"]   { --window-radius: 8px; }
 
 
 @theme inline {
+  /* In-page "shadows" are hairline outlines (see --elevate-1). */
+  --shadow-xs: var(--elevate-1);
+  --shadow-sm: var(--elevate-1);
   --radius-sm: calc(var(--radius) - 2px);
   --radius-md: var(--radius);
   --radius-lg: calc(var(--radius) + 2px);
@@ -490,6 +499,18 @@ html[data-os="linux"]   { --window-radius: 8px; }
     autocorrect: off;
     autocapitalize: off;
     spellcheck: false;
+  }
+
+  /* The window's chrome (title bar and its menus, tab strip, toolbars,
+     status bar) always reads in a proportional face, even when the app font
+     is all-monospace: the data keeps the chosen font, the frame around it
+     stays a desktop app's. In the base layer, so a `font-mono` utility inside
+     (a shortcut cap, a path) still wins. */
+  [data-studio-region="titlebar"],
+  [data-studio-region="statusbar"],
+  [data-studio-chrome],
+  .chrome-font {
+    font-family: var(--font-chrome, var(--font-sans));
   }
 
   html {
@@ -1327,6 +1348,34 @@ html[data-motion="reduced"] :is(*, *::before, *::after) {
 html[data-motion="reduced"] .animate-spin {
   animation-duration: 1.6s !important;
   animation-iteration-count: infinite !important;
+}
+
+/* ── Search fields ─────────────────────────────────────────────────────────
+   One look for every search box (DESIGN_SYSTEM.md, "Search fields"): an
+   outlined box over a faint fill, no shadow. A 1px outline reads as a field
+   on every platform; the fill alone vanished on light themes and drop shadows
+   rendered muddy on Linux and Windows. SearchField.svelte uses it, and so do
+   the hand-built filters that keep their own keyboard handling (the sidebar's).
+   In the components layer, so a size utility on one field still wins. */
+@layer components {
+  .search-box {
+    height: 2rem;
+    border-radius: var(--radius-lg);
+    border: 1px solid color-mix(in oklab, var(--border) 80%, transparent);
+    background-color: color-mix(in oklab, var(--muted) 30%, transparent);
+    color: var(--foreground);
+    outline: none;
+    transition: border-color 150ms ease-out, background-color 150ms ease-out, box-shadow 150ms ease-out;
+  }
+  .search-box::placeholder { color: var(--muted-foreground); }
+  .search-box:hover:not(:disabled) { border-color: color-mix(in oklab, var(--foreground) 20%, transparent); }
+  .search-box:focus {
+    border-color: color-mix(in oklab, var(--ring) 70%, transparent);
+    background-color: color-mix(in oklab, var(--muted) 45%, transparent);
+  }
+  .search-box:focus-visible { box-shadow: 0 0 0 2px color-mix(in oklab, var(--ring) 15%, transparent); }
+  .search-box:disabled { cursor: not-allowed; opacity: 0.4; }
+  .search-box::-webkit-search-cancel-button { display: none; }
 }
 
 /* ── Hover-revealed row actions stay reachable by keyboard ───────────────────

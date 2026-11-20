@@ -1,5 +1,6 @@
 import { customIsDark } from '$lib/stores/custom-theme.js'
-import { importedIsDark } from '$lib/stores/imported-themes.js'
+import { importedIsDark, importedThemes } from '$lib/stores/imported-themes.js'
+import { get } from 'svelte/store'
 
 /** @typedef {'light' | 'dark'} ThemeGroup */
 
@@ -326,12 +327,21 @@ export function shikiThemeId(id) {
 
 /** @returns {readonly { id: ThemeGroup, label: string, themes: ThemeDefinition[] }[]} */
 export function themesByGroup() {
+  // Custom and Imported take whatever mode they resolve to. Both were filed
+  // under Dark, so on a light system Custom ("auto") sat in the Dark list and
+  // its preview turned the whole app light. Imported is listed only when there
+  // is one: previewing it with none applied no colours, and the picker went
+  // see-through over the page.
+  const hasImported = get(importedThemes).length > 0
+  const groupOf = (/** @type {ThemeDefinition} */ t) =>
+    t.id === 'custom' || t.id === 'imported' ? (isDarkTheme(t.id) ? 'dark' : 'light') : t.group
+  const themes = visibleThemes().filter((t) => t.id !== 'imported' || hasImported)
   return THEME_GROUP_ORDER.map((id) => ({
     id,
     label: THEME_GROUP_LABELS[id],
     // visibleThemes(), not APP_THEMES: the easter egg stays out of the picker
     // until it has been found.
-    themes: visibleThemes().filter((t) => t.group === id),
+    themes: themes.filter((t) => groupOf(t) === id),
   })).filter((g) => g.themes.length > 0)
 }
 

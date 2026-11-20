@@ -1811,7 +1811,7 @@ mod live_tests {
         let url = std::env::var("STROKE_ORACLE_TEST").ok()?;
         let (creds, cs) = url.split_once('@')?;
         let (user, password) = creds.split_once('/')?;
-        Some(OracleConfig {
+        Some(OracleConfig { ssh: None,
             name: "live".into(),
             host: String::new(),
             port: 1521,
@@ -1863,7 +1863,7 @@ mod tests {
     use super::*;
 
     fn cfg() -> OracleConfig {
-        OracleConfig {
+        OracleConfig { ssh: None,
             name: "t".into(),
             host: "db.example.com".into(),
             port: 1521,
@@ -2050,7 +2050,7 @@ mod tests {
         let url = std::env::var("STROKE_ORACLE_TEST_URL").ok()?;
         let (creds, cs) = url.split_once('@')?;
         let (user, password) = creds.split_once('/')?;
-        Some(OracleConfig {
+        Some(OracleConfig { ssh: None,
             name: "live".into(),
             host: String::new(),
             port: 1521,

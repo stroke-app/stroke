@@ -82,12 +82,19 @@
 </div>
 
 <style>
+  /* Transform, not `left`: a layout property animates on the main thread, so
+     the line stopped dead whenever the app was busy, which is exactly when a
+     connection lands and the studio mounts. Percentages are of the segment
+     (a third of the track): -100% starts it just off the left, 300% ends it
+     just off the right. */
   .connect-sweep {
+    left: 0;
+    will-change: transform;
     animation: connect-sweep 1.1s cubic-bezier(0.65, 0, 0.35, 1) infinite;
   }
   @keyframes connect-sweep {
-    from { left: -33%; }
-    to { left: 100%; }
+    from { transform: translateX(-100%); }
+    to { transform: translateX(300%); }
   }
   @media (prefers-reduced-motion: reduce) {
     .connect-sweep { animation-duration: 2.4s; }

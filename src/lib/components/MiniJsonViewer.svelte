@@ -41,13 +41,13 @@
 
 <div
   class={cn(
-    "mini-json-viewer group/mini relative isolate w-full min-w-0 max-w-[50vw] overflow-hidden rounded-md border border-border/70 bg-[var(--editor-surface)] shadow-sm",
+    "mini-json-viewer group/mini relative isolate w-full min-w-0 max-w-[50vw] overflow-hidden rounded-md border border-border/70 bg-[var(--editor-surface)]",
     className,
   )}
 >
   <button
     type="button"
-    class="absolute top-1.5 left-1.5 z-10 inline-flex size-6 items-center justify-center rounded-md border border-transparent bg-background text-muted-foreground opacity-0 shadow-sm transition-opacity hover:border-border hover:text-foreground group-hover/mini:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    class="absolute top-1.5 left-1.5 z-10 inline-flex size-6 items-center justify-center rounded-md border border-transparent bg-background text-muted-foreground opacity-0 transition-opacity hover:border-border hover:text-foreground group-hover/mini:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     title="Copy JSON"
     onclick={copyJson}
   >

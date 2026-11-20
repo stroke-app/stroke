@@ -347,12 +347,13 @@ secondary line, if any, is `text-ui-2xs text-muted-foreground` in plain words
 (`Postgres · annapurna`), never a boxed chip; trailing count/timestamp
 `font-mono text-ui-2xs tabular-nums text-muted-foreground`.
 
-**Sidebar search row** (top of a sidebar): frameless - no field border - with
-a `Search size-3.5` icon at `left-2`, placeholder "Search", `text-ui-sm`, a
-`bg-sidebar-accent/60` fill only while focused, and a `size-5` clear (×)
-button at the right while it has text. Quiet `size-7` icon actions sit on the
-same row or the row above. In code: `no-field-frame` on a bare input, or
-`border-transparent! bg-transparent!` on the `Input` wrapper.
+**Search fields** (sidebar, dialogs, pages, pickers): one component,
+`SearchField.svelte`. An outlined box: `h-8 rounded-lg`, a 1px
+`border-border/80` outline over a faint `bg-muted/30` fill, no shadow, a
+`Search size-3.5` icon at `left-2.5`, and the `/` keycap at the right that
+focuses it (a `size-5` clear (×) button replaces the keycap while it has text).
+Focus moves the outline to `border-ring/70`. Do not hand-roll a search input;
+pass `rank={null}` for a field `/` should not focus.
 
 **Prominent pick lists** (provider DB lists, account lists):
 ```

@@ -12,6 +12,33 @@ use std::time::Instant;
 
 static CH_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
+/// The HTTP client for a config. Through an SSH tunnel it resolves the
+/// server's name to the tunnel's local end: the URL (and so TLS) keeps the real
+/// name, and only the TCP connection goes to the tunnel. One per tunnel, kept.
+fn client_for(config: &ClickhouseConfig) -> reqwest::Client {
+    static VIA: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<(String, std::net::SocketAddr), reqwest::Client>>> =
+        std::sync::LazyLock::new(Default::default);
+    let Some(via) = config.via else { return client().clone() };
+    let key = (config.host.clone(), via);
+    let mut map = VIA.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(c) = map.get(&key) {
+        return c.clone();
+    }
+    let c = builder().resolve(&config.host, via).build().unwrap_or_else(|_| client().clone());
+    map.insert(key, c.clone());
+    c
+}
+
+fn builder() -> reqwest::ClientBuilder {
+    reqwest::Client::builder()
+        .tcp_keepalive(std::time::Duration::from_secs(60))
+        .pool_max_idle_per_host(10)
+        .pool_idle_timeout(std::time::Duration::from_secs(90))
+        // Bounded, but generously: this carries queries, not just metadata.
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(120))
+}
+
 fn client() -> &'static reqwest::Client {
     CH_CLIENT.get_or_init(|| {
         reqwest::Client::builder()
@@ -95,11 +122,49 @@ pub async fn query_readonly(config: &ClickhouseConfig, sql: &str) -> Result<SqlR
     query_in_with(config, &config.database, sql, true).await
 }
 
+/// `query`, stoppable. The request carries a query_id, and Stop asks the
+/// server to `KILL QUERY` it: dropping the HTTP request alone leaves a write
+/// (or any query, unless the server cancels on disconnect) running.
+pub async fn query_cancellable(
+    config: &ClickhouseConfig,
+    sql: &str,
+    cancel: tokio::sync::oneshot::Receiver<()>,
+) -> Result<SqlResult, String> {
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let id = format!(
+        "stroke-{:x}-{:x}-{:x}",
+        std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(0),
+        SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
+    let run = query_in_full(config, &config.database, sql, false, Some(&id));
+    tokio::pin!(run);
+    tokio::select! {
+        r = &mut run => r,
+        _ = async { let _ = cancel.await; } => {
+            // Users may always kill their own queries. SYNC waits for it to end.
+            let kill = format!("KILL QUERY WHERE query_id = '{id}' SYNC");
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(10), query_in_full(config, &config.database, &kill, false, None)).await;
+            Err(super::query::QUERY_CANCELLED.into())
+        }
+    }
+}
+
 async fn query_in_with(
     config: &ClickhouseConfig,
     database: &str,
     sql: &str,
     readonly: bool,
+) -> Result<SqlResult, String> {
+    query_in_full(config, database, sql, readonly, None).await
+}
+
+async fn query_in_full(
+    config: &ClickhouseConfig,
+    database: &str,
+    sql: &str,
+    readonly: bool,
+    query_id: Option<&str>,
 ) -> Result<SqlResult, String> {
     let trimmed = sql.trim().trim_end_matches(';');
     let read = is_read_query(trimmed);
@@ -110,13 +175,14 @@ async fn query_in_with(
     };
 
     let url = format!(
-        "{}/?database={}{}",
+        "{}/?database={}{}{}",
         config.base_url(),
         urlencoding::encode(database),
-        if readonly { "&readonly=1" } else { "" }
+        if readonly { "&readonly=1" } else { "" },
+        query_id.map(|id| format!("&query_id={}", urlencoding::encode(id))).unwrap_or_default()
     );
     let t0 = Instant::now();
-    let res = client()
+    let res = client_for(config)
         .post(&url)
         .header("X-ClickHouse-User", &config.user)
         .header("X-ClickHouse-Key", &config.password)
@@ -557,5 +623,30 @@ mod tree_tests {
         assert!(idx[0].is_primary && idx[0].columns == "id");
         assert_eq!((idx[1].name.as_str(), idx[1].columns.as_str()), ("sorting key", "id, ts"));
         assert_eq!(idx[2].index_type, "bloom_filter");
+    }
+}
+
+#[cfg(test)]
+mod via_tests {
+    // As redis::via_tests: an unresolvable name, reached through `via`, and
+    // the server sees that name in the Host header (and so in TLS SNI).
+    //   STROKE_TEST_FAKE_HTTP=127.0.0.1:18123 cargo test --lib clickhouse::via_tests
+    #[tokio::test]
+    async fn dials_the_tunnel_and_keeps_the_name() {
+        let Ok(addr) = std::env::var("STROKE_TEST_FAKE_HTTP") else { return };
+        let via: std::net::SocketAddr = addr.parse().unwrap();
+        let cfg = crate::db::connection::ClickhouseConfig {
+            name: "t".into(),
+            host: "ch.stroke.test".into(),
+            port: 8443,
+            database: "default".into(),
+            user: "default".into(),
+            password: String::new(),
+            secure: false,
+            ssh: None,
+            via: Some(via),
+        };
+        let r = super::query(&cfg, "SELECT 1").await.expect("query through the tunnel address");
+        assert_eq!(r.rows[0][0], serde_json::json!(format!("ch.stroke.test:{}", via.port())));
     }
 }

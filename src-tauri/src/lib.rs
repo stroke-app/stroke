@@ -501,6 +501,8 @@ pub fn run() {
             // Explicit transactions: roll back the ones left idle, on a timer,
             // so a forgotten tab does not hold its locks until someone looks.
             db::tx::init(app.handle().clone());
+            // SSH tunnels report when they drop and when they are back.
+            db::ssh_tunnel::init(app.handle().clone());
             tauri::async_runtime::spawn(async {
                 let mut tick = tokio::time::interval(db::tx::SWEEP_EVERY);
                 loop {
@@ -1018,11 +1020,19 @@ fn install_open_links(app: &tauri::AppHandle) {
     let links = app.deep_link();
     // The installers register the scheme; a dev build or an AppImage has no
     // installer, so it registers itself (per-user, overwritten on each run).
+    // Off the main thread: on Linux it runs `update-desktop-database` and
+    // `xdg-mime`, and setup waited for both before the window could open.
+    // Measured with realistic 250ms tools: first screen at 1.52s instead of
+    // 1.07s. Nothing at startup needs the registration to have finished.
     #[cfg(any(target_os = "linux", all(debug_assertions, windows)))]
     {
-        if let Err(e) = links.register_all() {
-            log::warn!("Could not register stroke:// links: {e}");
-        }
+        let handle = app.clone();
+        std::thread::spawn(move || {
+            use tauri_plugin_deep_link::DeepLinkExt;
+            if let Err(e) = handle.deep_link().register_all() {
+                log::warn!("Could not register stroke:// links: {e}");
+            }
+        });
     }
     let cwd = std::env::current_dir().unwrap_or_default();
     let first = links

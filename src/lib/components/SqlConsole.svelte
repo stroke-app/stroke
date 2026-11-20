@@ -447,6 +447,8 @@
   /** @type {object | null} */
   let explainResult = $state(null)
   let explainLoading = $state(false)
+  /** Names the running plan so Stop reaches it. @type {string | null} */
+  let explainQueryId = $state(null)
   let explainError = $state('')
   let selected = $state(new Set())
 
@@ -594,13 +596,20 @@
     explainError = ''
     explainResult = null
     if (!outputVisible) outputVisible = true
+    const queryId = `explain-${crypto.randomUUID()}`
+    explainQueryId = queryId
     try {
-      explainResult = await explainSql(querySql, { analyze: explainAnalyze })
+      explainResult = await explainSql(querySql, { analyze: explainAnalyze, queryId })
     } catch (e) {
       explainError = String(e)
     } finally {
+      if (explainQueryId === queryId) explainQueryId = null
       explainLoading = false
     }
+  }
+
+  function stopExplain() {
+    if (explainQueryId) void cancelQuery(explainQueryId).catch(() => {})
   }
 
   let outputVisible = $state(
@@ -741,6 +750,8 @@
   // The backend reports a stopped run as an error string. It is the user's own
   // action, not a failure, so it gets its own quiet view instead of the red one.
   const stopped = $derived(/Query cancelled/i.test(shownError))
+  /** Stopped on an engine that can't stop a statement: the server may finish it. */
+  const serverMayFinish = $derived(stopped && /may still finish/i.test(shownError))
   // Tauri errors arrive as `Error: <message>`; the prefix repeats the header.
   const errorText = $derived(shownError.replace(/^Error:\s*/, ''))
 
@@ -1633,7 +1644,12 @@
                 </span>
                 <div class="flex flex-col gap-1">
                   <p class="text-ui-sm font-medium text-foreground">Query stopped</p>
-                  <p class="text-ui-xs text-muted-foreground">It was cancelled before the results came back.</p>
+                  <!-- HTTP engines and document stores have no way to stop a
+                       statement on the server: the app stopped waiting, the
+                       server did not necessarily stop working. -->
+                  <p class="max-w-sm text-ui-xs text-muted-foreground">{serverMayFinish
+                    ? 'Stroke stopped waiting, but this database cannot stop a running statement, so the server may still finish it.'
+                    : 'It was cancelled on the server before the results came back.'}</p>
                 </div>
                 <Button type="button" variant="outline" size="sm" disabled={!sql.trim()} onclick={() => handleRun(undefined)}>
                   <Play class="size-3.5 shrink-0" data-icon="inline-start" />
@@ -1671,10 +1687,26 @@
             {/if}
           {:else if outputView === 'explain'}
             {#if explainLoading}
-              <TableLoading />
+              <!-- Analyze runs the statement for real, so it can take as long
+                   as the query does: say so, and offer the way out. -->
+              <div class="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
+                <Loader2 class="size-5 shrink-0 animate-spin text-muted-foreground" />
+                <p class="text-ui-sm text-muted-foreground">{explainAnalyze ? 'Running the query to measure it' : 'Reading the plan'}</p>
+                {#if explainAnalyze}
+                  <Button type="button" variant="outline" size="sm" onclick={stopExplain}>
+                    <Square class="size-3 shrink-0 fill-current" data-icon="inline-start" />
+                    Stop
+                  </Button>
+                {/if}
+              </div>
             {:else if explainError}
               <div class="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
-                <p class="font-mono text-ui-xs text-destructive">{explainError}</p>
+                {#if /Query cancelled/i.test(explainError)}
+                  <p class="text-ui-sm font-medium text-foreground">Plan stopped</p>
+                  <p class="text-ui-xs text-muted-foreground">The query was cancelled on the server and rolled back. Nothing was changed.</p>
+                {:else}
+                  <p class="font-mono text-ui-xs text-destructive">{explainError}</p>
+                {/if}
               </div>
             {:else if explainResult}
               <ExplainPlan result={explainResult} sql={sql} analyze={explainAnalyze} onrerun={(on) => void handleExplain(on)} onaskai={onaskaiprompt} />

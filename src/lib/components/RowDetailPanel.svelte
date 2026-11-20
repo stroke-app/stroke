@@ -624,7 +624,7 @@
                 <img
                   src={cellPreviewHref}
                   alt=""
-                  class="max-w-full rounded border border-border object-contain shadow-sm"
+                  class="max-w-full rounded border border-border object-contain"
                   style="max-height: calc(100% - 2.5rem)"
                 />
               {:else if cellPreviewType === 'pdf'}

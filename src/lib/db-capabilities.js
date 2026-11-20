@@ -99,6 +99,7 @@ const ENGINE_LABEL = /** @type {Record<string, string>} */ ({
   elasticsearch: 'Elasticsearch',
   opensearch: 'OpenSearch',
   cassandra: 'Cassandra',
+  scylladb: 'ScyllaDB',
   firestore: 'Firestore',
   mongodb: 'MongoDB',
 })

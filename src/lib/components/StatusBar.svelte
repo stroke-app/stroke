@@ -1,5 +1,6 @@
 <script>
   import DbIcon from './DbIcon.svelte'
+  import { engineId } from '$lib/connection-provider.js'
   import { colorOf } from '$lib/stores/workspaces.js'
   import { comboTitle } from '$lib/shortcuts.js'
   import { withShortcut } from '$lib/stores/keybindings.js'
@@ -333,7 +334,7 @@
       : connection?.type === 'couchdb' ? 'CouchDB'
       : connection?.type === 'elasticsearch' ? 'Elasticsearch'
       : connection?.type === 'opensearch' ? 'OpenSearch'
-      : connection?.type === 'cassandra' ? 'Cassandra'
+      : connection?.type === 'cassandra' ? (engineId(connection) === 'scylladb' ? 'ScyllaDB' : 'Cassandra')
       : connection?.type === 'firestore' ? 'Firestore'
       : connection?.type === 'mongodb' ? 'MongoDB'
       : 'PostgreSQL',
@@ -494,7 +495,7 @@
       <!-- Connection switcher -->
       {#snippet connTriggerInner(/** @type {boolean} */ showChevron)}
         <span class="relative flex shrink-0">
-          <DbIcon id={connection?.type ?? ''} class="size-3.5 shrink-0" />
+          <DbIcon id={engineId(connection)} class="size-3.5 shrink-0" />
           <span class={cn('absolute -right-0.5 -bottom-0.5 size-1.5 rounded-full ring-2 ring-background', connectionLost ? 'bg-destructive' : 'bg-success')} aria-hidden="true"></span>
         </span>
         <span class={cn('max-w-[12rem] truncate', connectionLost ? 'text-destructive' : 'text-foreground/80')} title={connType}>{connLabel || connType}</span>

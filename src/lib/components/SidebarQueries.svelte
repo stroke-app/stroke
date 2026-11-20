@@ -310,7 +310,7 @@
         onkeydown={(e) => { if (e.key === 'Escape' && filter) { e.preventDefault(); e.stopPropagation(); filter = '' } }}
         placeholder="Filter queries…"
         aria-label="Filter saved queries"
-        class="field-surface h-7 w-full min-w-0 bg-background/40 pl-7 pr-2 text-ui-sm text-foreground shadow-none outline-none placeholder:text-muted-foreground"
+        class="search-box no-field-frame w-full min-w-0 pl-7 pr-2 text-ui-sm"
       />
     </div>
     <button

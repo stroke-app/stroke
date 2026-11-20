@@ -64,6 +64,9 @@ pub struct MySqlConnectOptions {
     pub(crate) host: String,
     pub(crate) port: u16,
     pub(crate) socket: Option<PathBuf>,
+    /// Stroke: where to open the TCP connection when it isn't `host`. `host`
+    /// still names the server for TLS. Used for SSH tunnels.
+    pub(crate) hostaddr: Option<String>,
     pub(crate) username: String,
     pub(crate) password: Option<String>,
     pub(crate) database: Option<String>,
@@ -95,6 +98,7 @@ impl MySqlConnectOptions {
             port: 3306,
             host: String::from("localhost"),
             socket: None,
+            hostaddr: None,
             username: String::from("root"),
             password: None,
             database: None,
@@ -120,6 +124,13 @@ impl MySqlConnectOptions {
     /// is to connect to localhost.
     pub fn host(mut self, host: &str) -> Self {
         host.clone_into(&mut self.host);
+        self
+    }
+
+    /// Stroke: open the TCP connection to `addr` instead of `host`. `host` is
+    /// still the name TLS verifies.
+    pub fn hostaddr(mut self, addr: &str) -> Self {
+        self.hostaddr = Some(addr.to_owned());
         self
     }
 

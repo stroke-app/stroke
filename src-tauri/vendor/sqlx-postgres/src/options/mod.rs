@@ -18,6 +18,9 @@ pub struct PgConnectOptions {
     pub(crate) host: String,
     pub(crate) port: u16,
     pub(crate) socket: Option<PathBuf>,
+    /// Stroke: where to open the TCP connection when it isn't `host` (libpq's
+    /// `hostaddr`). `host` still names the server for TLS. Used for SSH tunnels.
+    pub(crate) hostaddr: Option<String>,
     pub(crate) username: String,
     pub(crate) password: Option<String>,
     pub(crate) database: Option<String>,
@@ -72,6 +75,7 @@ impl PgConnectOptions {
             port,
             host,
             socket: None,
+            hostaddr: None,
             username,
             password: var("PGPASSWORD").ok(),
             database,
@@ -124,6 +128,13 @@ impl PgConnectOptions {
     /// ```
     pub fn host(mut self, host: &str) -> Self {
         host.clone_into(&mut self.host);
+        self
+    }
+
+    /// Stroke: open the TCP connection to `addr` instead of `host`, like
+    /// libpq's `hostaddr`. `host` is still the name TLS verifies.
+    pub fn hostaddr(mut self, addr: &str) -> Self {
+        self.hostaddr = Some(addr.to_owned());
         self
     }
 

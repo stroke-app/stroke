@@ -1,3 +1,6 @@
+// Boot timing (app-reveal.js). Imports are hoisted: this runs once every
+// statically imported module has loaded and evaluated.
+performance.mark('stroke:main')
 import { mount } from 'svelte'
 import './app.css'
 import App from './App.svelte'
@@ -99,12 +102,17 @@ document.addEventListener('click', async (e) => {
 // Saved connections are loaded from their on-disk copy before the app reads
 // them (see hydrateConnectionsFromDisk). A fresh-start run skips it, or the
 // file would put back everything it just cleared.
-if (import.meta.env.VITE_FRESH_START !== '1') await hydrateConnectionsFromDisk()
+performance.mark('stroke:settings')
+// The keychain read carries on in the background (secretsReady): only a
+// connect needs passwords, and every connect waits for them (withSecrets).
+if (import.meta.env.VITE_FRESH_START !== '1') await hydrateConnectionsFromDisk({ waitForSecrets: false })
+performance.mark('stroke:connections')
 
 installSelectAll()
 
 const app = mount(App, {
   target: document.getElementById('app'),
 })
+performance.mark('stroke:mount')
 
 export default app

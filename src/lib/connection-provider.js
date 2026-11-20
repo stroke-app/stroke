@@ -70,10 +70,24 @@ const ENGINE_SHORT = {
   elasticsearch: 'Elasticsearch',
   opensearch: 'OpenSearch',
   cassandra: 'Cassandra',
+  scylladb: 'ScyllaDB',
   firestore: 'Firestore',
   mongodb: 'MongoDB',
   d1: 'D1',
   posthog: 'HogQL',
+}
+
+/**
+ * The engine a saved connection shows as: its type, except a Cassandra
+ * connection made for ScyllaDB. ScyllaDB speaks CQL and runs on the Cassandra
+ * engine end to end, so the type stays `cassandra` and only the name and mark
+ * say ScyllaDB.
+ * @param {{ type?: string, flavor?: string } | null | undefined} c
+ * @returns {string}
+ */
+export function engineId(c) {
+  if (c?.type === 'cassandra' && c?.flavor === 'scylladb') return 'scylladb'
+  return c?.type ?? ''
 }
 
 /** Short engine name for the list chip ("Postgres", "Redis"). @param {string | undefined} type */

@@ -220,7 +220,7 @@
           class={cn(
             "inline-flex h-6 items-center rounded-md px-2 font-mono text-ui-2xs transition-colors",
             typeFilter === f.id
-              ? "bg-card text-foreground shadow-sm ring-1 ring-border/50"
+              ? "bg-card text-foreground ring-1 ring-border/50"
               : "text-muted-foreground hover:text-foreground",
           )}
           onclick={() => {

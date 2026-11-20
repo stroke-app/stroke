@@ -661,20 +661,7 @@ pub async fn execute_sql(
         .await
         .map_err(|e| format!("Failed to acquire connection: {e}"))?;
     if let Some(rx) = cancel_rx {
-        if let Ok(conn_id) = sqlx::query_scalar::<_, u64>("SELECT CONNECTION_ID()")
-            .fetch_one(&mut *conn)
-            .await
-        {
-            let cancel_pool = pool.clone();
-            tokio::spawn(async move {
-                if rx.await.is_ok() {
-                    // conn_id is a numeric id from the server; safe to inline.
-                    let _ = sqlx::query(&format!("KILL QUERY {conn_id}"))
-                        .execute(&cancel_pool)
-                        .await;
-                }
-            });
-        }
+        arm_kill(pool, &mut conn, rx).await;
     }
 
     // A script (`CREATE DATABASE x; USE x; CREATE TABLE …`) cannot go through
@@ -702,6 +689,73 @@ pub async fn execute_sql(
         restore_default_database(pool, &mut conn).await;
     }
     result
+}
+
+/// Arm Stop for a run on `conn`: `KILL QUERY` its connection id from another
+/// pooled connection when `rx` fires. The run's end drops the sender, which
+/// disarms it.
+async fn arm_kill(pool: &MySqlPool, conn: &mut sqlx::pool::PoolConnection<sqlx::MySql>, rx: tokio::sync::oneshot::Receiver<()>) {
+    if let Ok(conn_id) = sqlx::query_scalar::<_, u64>("SELECT CONNECTION_ID()").fetch_one(&mut **conn).await {
+        let cancel_pool = pool.clone();
+        tokio::spawn(async move {
+            if rx.await.is_ok() {
+                // conn_id is a numeric id from the server; safe to inline.
+                let _ = sqlx::query(&format!("KILL QUERY {conn_id}")).execute(&cancel_pool).await;
+            }
+        });
+    }
+}
+
+/// One row-returning statement, streamed into the console's sink as it
+/// arrives instead of collected: a 2 GB result no longer needs 2 GB here, a
+/// JSON reply as large, and the window's heap after that. Rows go to the
+/// result store when the sink has one. Stop is KILL QUERY, as in `execute_sql`.
+pub async fn stream_into(
+    pool: &MySqlPool,
+    sql: &str,
+    sink: &mut super::query::RowSink,
+    cancel_rx: tokio::sync::oneshot::Receiver<()>,
+) -> Result<SqlResult, String> {
+    let started = Instant::now();
+    let mut conn = pool.acquire().await.map_err(|e| format!("Failed to acquire connection: {e}"))?;
+    arm_kill(pool, &mut conn, cancel_rx).await;
+    let mut columns: Vec<ColumnInfo> = Vec::new();
+    let mut total = 0usize;
+    let mut text_protocol = false;
+    loop {
+        let mut stream = if text_protocol { sqlx::Executor::fetch(&mut *conn, sql) } else { sqlx::query(sql).fetch(&mut *conn) };
+        let outcome: Result<(), sqlx::Error> = async {
+            while let Some(row) = stream.try_next().await? {
+                if total == 0 {
+                    columns = row.columns().iter().map(|c| ColumnInfo::new(c.name(), c.type_info().name().to_lowercase())).collect();
+                    sink.start(columns.clone()).map_err(sqlx::Error::Protocol)?;
+                }
+                sink.push((0..row.len()).map(|i| cell_to_json(&row, i)).collect()).map_err(sqlx::Error::Protocol)?;
+                total += 1;
+            }
+            Ok(())
+        }
+        .await;
+        drop(stream);
+        match outcome {
+            // Some statements can't be prepared: run them again as text, once,
+            // if nothing has streamed yet.
+            Err(e) if total == 0 && !text_protocol && unsupported_in_prepared(&e) => text_protocol = true,
+            Err(e) => return Err(format!("Query failed: {e}")),
+            Ok(()) => break,
+        }
+    }
+    if total > 0 {
+        sink.finish()?;
+    }
+    Ok(SqlResult {
+        columns,
+        rows: vec![],
+        row_count: Some(total as i64),
+        message: None,
+        query_ms: started.elapsed().as_millis() as u64,
+        sql: sql.to_string(),
+    })
 }
 
 /// Put a connection that ran `USE` back on the pool's own database. Left as it
@@ -804,11 +858,7 @@ async fn run_one_on(conn: &mut sqlx::MySqlConnection, sql: &str) -> Result<SqlRe
             columns,
             rows: data,
             row_count: Some(row_count),
-            message: if capped {
-                Some(format!("Result capped at {EXECUTE_SQL_MAX_ROWS} rows - add a LIMIT clause to fetch a specific range."))
-            } else {
-                None
-            },
+            message: if capped { Some(super::query::budget_message(row_count as usize)) } else { None },
             query_ms: query_ms(),
             sql: sql.to_string(),
         });
@@ -849,6 +899,7 @@ async fn collect_result_rows(
 ) -> Result<(Vec<ColumnInfo>, Vec<Vec<Value>>, bool), sqlx::Error> {
     let mut columns: Vec<ColumnInfo> = Vec::new();
     let mut data: Vec<Vec<Value>> = Vec::new();
+    let mut budget = super::query::CollectBudget::default();
     while let Some(row) = stream.try_next().await? {
         if data.is_empty() {
             columns = row
@@ -857,8 +908,10 @@ async fn collect_result_rows(
                 .map(|c| ColumnInfo::new(c.name(), c.type_info().name().to_lowercase()))
                 .collect();
         }
-        data.push((0..row.len()).map(|i| cell_to_json(&row, i)).collect());
-        if data.len() >= EXECUTE_SQL_MAX_ROWS {
+        let cells: Vec<Value> = (0..row.len()).map(|i| cell_to_json(&row, i)).collect();
+        let fits = budget.take(&cells);
+        data.push(cells);
+        if !fits || data.len() >= EXECUTE_SQL_MAX_ROWS {
             return Ok((columns, data, true));
         }
     }
@@ -1296,6 +1349,7 @@ mod ai_tool_live {
         let spec = std::env::var("STROKE_AI_MYSQL").ok()?;
         let p: Vec<&str> = spec.splitn(5, ':').collect();
         Some(MysqlConfig {
+            via: None,
             name: "ai".into(),
             host: p[0].into(),
             port: p[1].parse().unwrap(),

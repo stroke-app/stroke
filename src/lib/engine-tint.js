@@ -33,6 +33,7 @@ export const ENGINE_TINT = {
   opensearch: "text-sky-600/80",
   mongodb: "text-green-600/80",
   cassandra: "text-sky-600/80",
+  scylladb: "text-cyan-500/80",
   firestore: "text-amber-500/80",
 };
 /** @param {string} id */

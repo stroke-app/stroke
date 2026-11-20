@@ -846,7 +846,7 @@
           {#if creating}
             <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
             <form
-              class="sticky top-7 z-10 flex flex-wrap items-center gap-1.5 border-b border-border bg-panel px-3 py-2 shadow-sm"
+              class="sticky top-7 z-10 flex flex-wrap items-center gap-1.5 border-b border-border bg-panel px-3 py-2"
               onsubmit={(e) => { e.preventDefault(); stageCreate() }}
               onkeydown={(e) => { if (e.key === 'Escape') { e.preventDefault(); creating = false } }}
             >

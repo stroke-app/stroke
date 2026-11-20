@@ -517,9 +517,11 @@ function detectByScheme(scheme, s, host, port) {
     case 'couchdbs':
       return { type: 'couchdb', uriType: 'couchdb', uri: (scheme === 'couchdbs' ? 'https' : 'http') + s.slice(scheme.length) }
     case 'cassandra':
-    case 'scylla':
     case 'cql':
       return { type: 'cassandra', uriType: 'cassandra' }
+    case 'scylla':
+    case 'scylladb':
+      return { type: 'scylladb', uriType: 'cassandra' }
     case 'http':
     case 'https':
     case 'ws':
@@ -712,7 +714,7 @@ export function connectionUrl(p) {
       return m ? `${m[1]}${auth(p.user, p.password)}${m[2]}` : p.url || ''
     }
     case 'cassandra':
-      return `cassandra://${auth(p.user, p.password)}${p.hosts || 'localhost:9042'}${p.keyspace ? `/${enc(p.keyspace)}` : ''}`
+      return `${p.flavor === 'scylladb' ? 'scylla' : 'cassandra'}://${auth(p.user, p.password)}${p.hosts || 'localhost:9042'}${p.keyspace ? `/${enc(p.keyspace)}` : ''}`
     case 'sqlite':
     case 'duckdb':
       return p.filePath || ''

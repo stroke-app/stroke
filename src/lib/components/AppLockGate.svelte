@@ -49,6 +49,7 @@
     // and says locked, the screen still comes up - just a beat later.
     const giveUp = setTimeout(() => (ready = true), 1500)
     initAppLock().finally(() => {
+      performance.mark('stroke:lock-ready')
       clearTimeout(giveUp)
       ready = true
       teardown = installAutoLock()

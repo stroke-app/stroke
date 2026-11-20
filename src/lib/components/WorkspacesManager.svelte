@@ -71,7 +71,7 @@
             aria-label="Search workspaces"
             spellcheck="false"
             autocomplete="off"
-            class="peer field-surface h-8 w-full rounded-lg bg-input/30 pl-8 pr-2 text-ui-sm text-foreground placeholder:text-muted-foreground"
+            class="peer search-box no-field-frame w-full pl-8 pr-8 text-ui-sm"
           />
           <Kbd combo="/" class="pointer-events-none hidden peer-placeholder-shown:inline-flex peer-focus:hidden absolute top-1/2 right-2 -translate-y-1/2" aria-hidden="true" />
         </div>
