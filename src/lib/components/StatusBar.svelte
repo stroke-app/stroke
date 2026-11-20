@@ -635,7 +635,7 @@
                  for any number of databases. -->
             <!-- The palette's header: a borderless search row over a hairline,
                  not a framed field inside a framed panel. -->
-            <div data-slot="menu-search" class="flex h-9 items-center gap-2 px-3">
+            <div data-slot="menu-search" class="search-shell m-1.5 flex h-8 items-center gap-2 px-2.5">
               <Icon name="search" class="size-3.5 shrink-0 text-muted-foreground" />
               <input
                 bind:this={dbInputEl}

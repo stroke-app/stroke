@@ -508,7 +508,7 @@
         style="top:{ddTop}px;left:{ddLeft}px"
         onpointerdown={(e) => e.stopPropagation()}
       >
-        <div class="flex items-center gap-2 border-b border-border/25 px-3 py-2">
+        <div data-slot="menu-search" class="search-shell m-1.5 flex h-8 items-center gap-2 px-2.5">
           <Search class="size-3 shrink-0 text-muted-foreground" />
           <input use:focusNode type="text" bind:value={dropdownSearch} placeholder="Search…"
             class="no-focus-ring flex-1 bg-transparent text-ui-xs outline-none placeholder:text-muted-foreground" />
@@ -554,7 +554,7 @@
         style="top:{ddTop}px;left:{ddLeft}px"
         onpointerdown={(e) => e.stopPropagation()}
       >
-        <div class="flex items-center gap-2 border-b border-border/25 px-3 py-2">
+        <div data-slot="menu-search" class="search-shell m-1.5 flex h-8 items-center gap-2 px-2.5">
           <Search class="size-3 shrink-0 text-muted-foreground" />
           <input use:focusNode type="text" bind:value={dropdownSearch} placeholder="Search connections…"
             class="no-focus-ring flex-1 bg-transparent text-ui-xs outline-none placeholder:text-muted-foreground" />
