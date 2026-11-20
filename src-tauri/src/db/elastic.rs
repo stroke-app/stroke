@@ -38,6 +38,13 @@ pub struct EsConfig {
     /// Accept a self-signed certificate (a local OpenSearch's demo TLS).
     #[serde(default)]
     pub insecure: bool,
+    /// Reach the server through an SSH tunnel (connection::tunnel_to and friends).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ssh: Option<super::ssh_tunnel::SshConfig>,
+    /// The tunnel's local end, when there is one: the URL keeps the server's
+    /// real name (TLS checks it) and the client resolves that name to here.
+    #[serde(skip)]
+    pub via: Option<std::net::SocketAddr>,
 }
 
 impl EsConfig {
@@ -66,7 +73,9 @@ fn client(insecure: bool) -> &'static reqwest::Client {
 fn base(cfg: &EsConfig) -> Result<reqwest::Url, String> {
     let raw = cfg.url.trim().trim_end_matches('/');
     let raw = if raw.contains("://") { raw.to_string() } else { format!("http://{raw}") };
-    reqwest::Url::parse(&format!("{raw}/")).map_err(|e| format!("Invalid {} URL \"{raw}\": {e}", cfg.label()))
+    reqwest::Url::parse(&format!("{raw}/"))
+        .map(|u| super::ssh_tunnel::url_via(u, cfg.via))
+        .map_err(|e| format!("Invalid {} URL \"{raw}\": {e}", cfg.label()))
 }
 
 /// Endpoints (`_name` path segments) that only read. The console may call
@@ -226,7 +235,10 @@ enum Body<'a> {
 async fn send(cfg: &EsConfig, method: &str, path: &str, body: Option<Body<'_>>) -> Result<Value, String> {
     let url = base(cfg)?.join(path.trim_start_matches('/')).map_err(|e| format!("Invalid path \"{path}\": {e}"))?;
     let m = reqwest::Method::from_bytes(method.as_bytes()).map_err(|e| e.to_string())?;
-    let mut req = client(cfg.insecure).request(m, url);
+    let host = url.host_str().unwrap_or_default().to_string();
+    let mut req = super::ssh_tunnel::http_client(&host, cfg.via, cfg.insecure)
+        .unwrap_or_else(|| client(cfg.insecure).clone())
+        .request(m, url);
     if let Some(k) = cfg.api_key.as_deref().map(str::trim).filter(|k| !k.is_empty()) {
         req = req.header("Authorization", format!("ApiKey {k}"));
     } else if let Some(u) = cfg.user.as_deref().filter(|u| !u.is_empty()) {
@@ -856,7 +868,7 @@ mod tests {
     #[ignore]
     async fn es_live() {
         let url = std::env::var("ES_URL").unwrap_or_else(|_| "http://localhost:9200".into());
-        let cfg = EsConfig { name: "t".into(), url, user: None, password: None, api_key: None, flavor: None, insecure: true };
+        let cfg = EsConfig { ssh: None, via: None, name: "t".into(), url, user: None, password: None, api_key: None, flavor: None, insecure: true };
         let cfg = connect(cfg).await.unwrap();
         request(&cfg, "PUT", "stroke_it/_doc/1?refresh=wait_for", Some(&json!({"level": "error", "ms": 12}))).await.unwrap();
         request(&cfg, "PUT", "stroke_it/_doc/2?refresh=wait_for", Some(&json!({"level": "info", "ms": 3}))).await.unwrap();

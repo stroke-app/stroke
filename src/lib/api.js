@@ -612,13 +612,13 @@ export async function dynamoRequest(op, body = {}) {
 
 /** @param {CouchConnConfig} config */
 function normalizeCouch(config) {
-  return {
+  return withSsh({
     type: 'couchdb',
     name: String(config.name || 'CouchDB'),
     url: String(config.url || 'http://localhost:5984').trim(),
     user: (config.user && String(config.user).trim()) || null,
     password: config.password || null,
-  }
+  }, config)
 }
 
 /** @param {CouchConnConfig} config */
@@ -649,7 +649,7 @@ export async function couchRequest(method, path, body) {
 /** @param {EsConnConfig} config */
 function normalizeEs(config) {
   const flavor = config.type === 'opensearch' ? 'opensearch' : 'elasticsearch'
-  return {
+  return withSsh({
     type: flavor,
     flavor,
     name: String(config.name || (flavor === 'opensearch' ? 'OpenSearch' : 'Elasticsearch')),
@@ -658,7 +658,7 @@ function normalizeEs(config) {
     password: config.password || null,
     apiKey: (config.apiKey && String(config.apiKey).trim()) || null,
     insecure: !!config.insecure,
-  }
+  }, config)
 }
 
 /**
@@ -705,12 +705,12 @@ export async function elasticImport(index, path, opts = {}) {
 
 /** @param {MongoConnConfig} config */
 function normalizeMongo(config) {
-  return {
+  return withSsh({
     type: 'mongodb',
     name: String(config.name || 'MongoDB'),
     uri: String(config.uri || 'mongodb://localhost:27017').trim(),
     database: (config.database && String(config.database).trim()) || null,
-  }
+  }, config)
 }
 
 /** @param {MongoConnConfig} config */
@@ -910,14 +910,14 @@ export async function firestoreRequest(method, path, body) {
 function normalizeCassandra(config) {
   /** @param {string | undefined} s */
   const opt = (s) => (s && String(s).trim()) || null
-  return {
+  return withSsh({
     type: 'cassandra',
     name: String(config.name || 'Cassandra'),
     hosts: String(config.hosts || '127.0.0.1').trim(),
     user: opt(config.user),
     password: config.password || null,
     keyspace: opt(config.keyspace),
-  }
+  }, config)
 }
 
 /** @param {CassandraConnConfig} config */

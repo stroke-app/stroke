@@ -32,6 +32,10 @@ pub struct MongoConfig {
     /// Database for `db.` in the console; the URI's, else the first one found.
     #[serde(default)]
     pub database: Option<String>,
+    /// Reach the server through an SSH tunnel (connection::tunnel_to and friends).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ssh: Option<super::ssh_tunnel::SshConfig>,
+
 }
 
 pub struct MongoConn {
@@ -1740,7 +1744,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn mongo_live() {
-        let m = connect(&MongoConfig { name: "t".into(), uri: "mongodb://localhost:27017".into(), database: Some("shop".into()) }).await.unwrap();
+        let m = connect(&MongoConfig { ssh: None, name: "t".into(), uri: "mongodb://localhost:27017".into(), database: Some("shop".into()) }).await.unwrap();
         let colls = list_collections(&m).await.unwrap();
         assert!(colls.contains(&"shop.users".to_string()), "{colls:?}");
         let info = describe(&m, "shop.orders").await.unwrap();

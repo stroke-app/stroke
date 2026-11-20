@@ -5927,7 +5927,7 @@ mod nosql_console_live {
     #[ignore]
     async fn nosql_console_live() {
         // MongoDB
-        let m = crate::db::mongo::connect(&crate::db::mongo::MongoConfig { name: "t".into(), uri: "mongodb://localhost:27017".into(), database: Some("shop".into()) }).await.unwrap();
+        let m = crate::db::mongo::connect(&crate::db::mongo::MongoConfig { ssh: None, name: "t".into(), uri: "mongodb://localhost:27017".into(), database: Some("shop".into()) }).await.unwrap();
         let mc = ActiveConnection::Doc(DocConn::Mongo(m));
         let r = run(&mc, "db.users.find({}).limit(3)").await;
         assert_eq!(r.rows.len(), 3);
@@ -5945,13 +5945,13 @@ mod nosql_console_live {
         assert_eq!(r.rows.len(), 3);
 
         // Cassandra (CQL)
-        let s = crate::db::cassandra::connect(&crate::db::cassandra::CassandraConfig { name: "t".into(), hosts: "127.0.0.1".into(), user: None, password: None, keyspace: Some("shop".into()) }).await.unwrap();
+        let s = crate::db::cassandra::connect(&crate::db::cassandra::CassandraConfig { ssh: None, name: "t".into(), hosts: "127.0.0.1".into(), user: None, password: None, keyspace: Some("shop".into()) }).await.unwrap();
         let cc = ActiveConnection::Doc(DocConn::Cassandra(s));
         assert!(!run(&cc, "SELECT * FROM users LIMIT 5").await.rows.is_empty(), "unqualified name uses the keyspace");
         assert!(!run(&cc, "SELECT * FROM shop.orders_by_user LIMIT 5").await.columns.is_empty());
 
         // CouchDB (Mango shell syntax)
-        let couch = ActiveConnection::Doc(DocConn::Couch(crate::db::couchdb::CouchConfig { name: "t".into(), url: "http://localhost:5984".into(), user: Some("admin".into()), password: Some("admin".into()) }));
+        let couch = ActiveConnection::Doc(DocConn::Couch(crate::db::couchdb::CouchConfig { ssh: None, via: None, name: "t".into(), url: "http://localhost:5984".into(), user: Some("admin".into()), password: Some("admin".into()) }));
         assert_eq!(run(&couch, r#"products.find({"price": {"$gt": 50}})"#).await.rows.len(), 2);
 
         // Firestore (emulator)

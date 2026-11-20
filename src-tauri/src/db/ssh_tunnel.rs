@@ -336,6 +336,105 @@ async fn supervise(
     }
 }
 
+// ── HTTP engines through a tunnel ─────────────────────────────────────────────
+
+/// A base URL pointed through `via`: the port becomes the tunnel's, and the
+/// host stays the server's name (TLS checks it; `http_client` resolves it to
+/// the tunnel). An IP address has no name to keep, so it becomes 127.0.0.1.
+pub fn url_via(mut url: reqwest::Url, via: Option<std::net::SocketAddr>) -> reqwest::Url {
+    let Some(via) = via else { return url };
+    let is_ip = url.host_str().map(|h| h.trim_matches(['[', ']'])).and_then(|h| h.parse::<std::net::IpAddr>().ok()).is_some();
+    if is_ip {
+        let _ = url.set_host(Some("127.0.0.1"));
+    }
+    let _ = url.set_port(Some(via.port()));
+    url
+}
+
+/// The HTTP client for a server reached through `via`: its name resolves to
+/// the tunnel. One per (name, tunnel), kept. None without a tunnel, so the
+/// caller keeps its shared client.
+pub fn http_client(host: &str, via: Option<std::net::SocketAddr>, insecure: bool) -> Option<reqwest::Client> {
+    static CLIENTS: std::sync::LazyLock<Mutex<std::collections::HashMap<(String, std::net::SocketAddr, bool), reqwest::Client>>> =
+        std::sync::LazyLock::new(Default::default);
+    let via = via?;
+    let key = (host.to_string(), via, insecure);
+    let mut map = CLIENTS.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(c) = map.get(&key) {
+        return Some(c.clone());
+    }
+    let c = reqwest::Client::builder()
+        .timeout(Duration::from_secs(60))
+        .connect_timeout(Duration::from_secs(10))
+        .danger_accept_invalid_certs(insecure)
+        .resolve(host, via)
+        .build()
+        .ok()?;
+    map.insert(key, c.clone());
+    Some(c)
+}
+
+/// Host and port of an HTTP(S) URL, the port defaulting by scheme.
+pub fn url_target(url: &str) -> Result<(String, u16), String> {
+    let raw = url.trim().trim_end_matches('/');
+    let raw = if raw.contains("://") { raw.to_string() } else { format!("http://{raw}") };
+    let u = reqwest::Url::parse(&raw).map_err(|e| format!("Invalid URL \"{raw}\": {e}"))?;
+    let host = u.host_str().ok_or_else(|| format!("No host in \"{raw}\""))?.trim_matches(['[', ']']).to_string();
+    let port = u.port_or_known_default().unwrap_or(80);
+    Ok((host, port))
+}
+
+/// A `mongodb://` URI pointed at `local`: the first host replaced by the
+/// tunnel and `directConnection=true`, since a replica set would otherwise
+/// hand back member names this machine can't reach. Refuses what a tunnel
+/// can't carry: `mongodb+srv://` (several hosts found by DNS) and TLS (the
+/// driver can't dial one address while verifying another name).
+pub fn mongo_uri_via(uri: &str, local: u16) -> Result<String, String> {
+    let uri = uri.trim();
+    if uri.starts_with("mongodb+srv://") {
+        return Err("An SSH tunnel needs a mongodb:// connection string with a host and port; mongodb+srv:// finds its hosts through DNS. Use the standard connection string from your provider.".into());
+    }
+    let rest = uri.strip_prefix("mongodb://").ok_or("The connection string starts with mongodb://")?;
+    let (auth, after_auth) = match rest.rfind('@') {
+        Some(i) if rest[..i].find('/').is_none() => (&rest[..=i], &rest[i + 1..]),
+        _ => ("", rest),
+    };
+    let end = after_auth.find(['/', '?']).unwrap_or(after_auth.len());
+    let tail = &after_auth[end..];
+    let query = tail.split_once('?').map(|(_, q)| q).unwrap_or("");
+    let tls = query.split('&').any(|kv| {
+        let (k, v) = kv.split_once('=').unwrap_or((kv, ""));
+        (k.eq_ignore_ascii_case("tls") || k.eq_ignore_ascii_case("ssl")) && v.eq_ignore_ascii_case("true")
+    });
+    if tls {
+        return Err("MongoDB with TLS can't go through an SSH tunnel here: the driver would check the certificate against 127.0.0.1. Turn TLS off for a server only reachable through the tunnel, or connect without SSH.".into());
+    }
+    let path = if tail.is_empty() { "/".to_string() } else if tail.starts_with('?') { format!("/{tail}") } else { tail.to_string() };
+    let sep = if path.contains('?') { "&" } else { "?" };
+    let direct = if query.to_ascii_lowercase().contains("directconnection=") { String::new() } else { format!("{sep}directConnection=true") };
+    Ok(format!("mongodb://{auth}127.0.0.1:{local}{path}{direct}"))
+}
+
+/// The first host of a `mongodb://` URI, port defaulting to 27017.
+pub fn mongo_first_host(uri: &str) -> Option<(String, u16)> {
+    let rest = uri.trim().strip_prefix("mongodb://")?;
+    let after_auth = match rest.rfind('@') {
+        Some(i) if rest[..i].find('/').is_none() => &rest[i + 1..],
+        _ => rest,
+    };
+    let hosts = &after_auth[..after_auth.find(['/', '?']).unwrap_or(after_auth.len())];
+    let first = hosts.split(',').next()?.trim();
+    if let Some(v6) = first.strip_prefix('[') {
+        let (h, rest) = v6.split_once(']')?;
+        let port = rest.strip_prefix(':').and_then(|p| p.parse().ok()).unwrap_or(27017);
+        return Some((h.to_string(), port));
+    }
+    match first.rsplit_once(':') {
+        Some((h, p)) => Some((h.to_string(), p.parse().ok()?)),
+        None => Some((first.to_string(), 27017)),
+    }
+}
+
 // ── TunnelState ───────────────────────────────────────────────────────────────
 
 /// The tunnel under the open connection, and the tunnels under connections
@@ -560,6 +659,34 @@ mod tests {
         let ssh = SshConfig { host: host.into(), port: port.parse().unwrap(), username: user.into(), private_key_path: key.clone(), keepalive: 30 };
         let err = SshTunnel::establish(&ssh, "127.0.0.1", 5433).await.err().expect("a wrong key must fail");
         assert!(err.contains(&format!("rejected the key {key}")), "{err}");
+    }
+
+    #[test]
+    fn points_a_mongo_uri_at_the_tunnel() {
+        assert_eq!(
+            mongo_uri_via("mongodb://u:p%40ss@db1:27018,db2:27019/shop?replicaSet=rs0", 40001).unwrap(),
+            "mongodb://u:p%40ss@127.0.0.1:40001/shop?replicaSet=rs0&directConnection=true"
+        );
+        assert_eq!(mongo_uri_via("mongodb://db1", 40001).unwrap(), "mongodb://127.0.0.1:40001/?directConnection=true");
+        assert_eq!(mongo_uri_via("mongodb://db1/?directConnection=false", 7).unwrap(), "mongodb://127.0.0.1:7/?directConnection=false");
+        assert!(mongo_uri_via("mongodb+srv://c.example.net/shop", 7).unwrap_err().contains("mongodb+srv"));
+        assert!(mongo_uri_via("mongodb://db1/?tls=true", 7).unwrap_err().contains("TLS"));
+        assert_eq!(mongo_first_host("mongodb://u:p@db1:27018,db2/shop"), Some(("db1".into(), 27018)));
+        assert_eq!(mongo_first_host("mongodb://db1"), Some(("db1".into(), 27017)));
+        assert_eq!(mongo_first_host("mongodb://[::1]:27020/x"), Some(("::1".into(), 27020)));
+    }
+
+    #[test]
+    fn points_an_http_url_at_the_tunnel() {
+        assert_eq!(url_target("https://es.example.com").unwrap(), ("es.example.com".into(), 443));
+        assert_eq!(url_target("couch.local:5984").unwrap(), ("couch.local".into(), 5984));
+        let via: std::net::SocketAddr = "127.0.0.1:41000".parse().unwrap();
+        let named = url_via(reqwest::Url::parse("https://es.example.com:9200/").unwrap(), Some(via));
+        assert_eq!(named.as_str(), "https://es.example.com:41000/", "the name stays for TLS");
+        let ip = url_via(reqwest::Url::parse("http://10.0.0.5:5984/").unwrap(), Some(via));
+        assert_eq!(ip.as_str(), "http://127.0.0.1:41000/");
+        let direct = url_via(reqwest::Url::parse("http://10.0.0.5:5984/").unwrap(), None);
+        assert_eq!(direct.as_str(), "http://10.0.0.5:5984/");
     }
 
     #[test]

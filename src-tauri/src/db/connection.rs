@@ -1478,6 +1478,45 @@ pub(crate) async fn resolve_oracle_ssh(mut c: OracleConfig) -> Result<(OracleCon
     Ok((c, t))
 }
 
+pub(crate) async fn resolve_mongo_ssh(mut c: crate::db::mongo::MongoConfig) -> Result<(crate::db::mongo::MongoConfig, Option<SshTunnel>), String> {
+    let Some(ssh) = c.ssh.clone() else { return Ok((c, None)) };
+    // Refuse what the tunnel can't carry before opening it.
+    crate::db::ssh_tunnel::mongo_uri_via(&c.uri, 0)?;
+    let (host, port) = crate::db::ssh_tunnel::mongo_first_host(&c.uri).ok_or("No host in the connection string")?;
+    let tunnel = SshTunnel::establish(&ssh, &host, port).await?;
+    c.uri = crate::db::ssh_tunnel::mongo_uri_via(&c.uri, tunnel.local_port)?;
+    Ok((c, Some(tunnel)))
+}
+
+pub(crate) async fn resolve_cassandra_ssh(mut c: crate::db::cassandra::CassandraConfig) -> Result<(crate::db::cassandra::CassandraConfig, Option<SshTunnel>), String> {
+    let Some(ssh) = c.ssh.clone() else { return Ok((c, None)) };
+    // One contact point is enough: the driver reaches every node through it.
+    let first = c.hosts.split(',').map(str::trim).find(|h| !h.is_empty()).ok_or("Enter at least one host")?.to_string();
+    let (host, port) = match first.rsplit_once(':') {
+        Some((h, p)) if p.parse::<u16>().is_ok() => (h.trim_matches(['[', ']']).to_string(), p.parse::<u16>().unwrap_or(9042)),
+        _ => (first.clone(), 9042),
+    };
+    let tunnel = SshTunnel::establish(&ssh, &host, port).await?;
+    c.hosts = format!("127.0.0.1:{}", tunnel.local_port);
+    Ok((c, Some(tunnel)))
+}
+
+pub(crate) async fn resolve_couch_ssh(mut c: crate::db::couchdb::CouchConfig) -> Result<(crate::db::couchdb::CouchConfig, Option<SshTunnel>), String> {
+    let Some(ssh) = c.ssh.clone() else { return Ok((c, None)) };
+    let (host, port) = crate::db::ssh_tunnel::url_target(&c.url)?;
+    let (via, t) = tunnel_via(&Some(ssh), &host, port).await?;
+    c.via = via;
+    Ok((c, t))
+}
+
+pub(crate) async fn resolve_elastic_ssh(mut c: crate::db::elastic::EsConfig) -> Result<(crate::db::elastic::EsConfig, Option<SshTunnel>), String> {
+    let Some(ssh) = c.ssh.clone() else { return Ok((c, None)) };
+    let (host, port) = crate::db::ssh_tunnel::url_target(&c.url)?;
+    let (via, t) = tunnel_via(&Some(ssh), &host, port).await?;
+    c.via = via;
+    Ok((c, t))
+}
+
 /// Open the SSH tunnel a saved connection asks for, whatever its engine, and
 /// return the config pointed through it. Hold the tunnel for as long as
 /// anything opened from the config is in use: dropping it closes ssh.
@@ -1511,6 +1550,18 @@ pub(crate) async fn tunnel_any(config: AnyConnectionConfig) -> Result<(AnyConnec
         AnyConnectionConfig::Redis(c) => {
             let (c, t) = resolve_redis_ssh(c).await?;
             (AnyConnectionConfig::Redis(c), t)
+        }
+        AnyConnectionConfig::Mongodb(c) => {
+            let (c, t) = resolve_mongo_ssh(c).await?;
+            (AnyConnectionConfig::Mongodb(c), t)
+        }
+        AnyConnectionConfig::Couchdb(c) => {
+            let (c, t) = resolve_couch_ssh(c).await?;
+            (AnyConnectionConfig::Couchdb(c), t)
+        }
+        AnyConnectionConfig::Elasticsearch(c) => {
+            let (c, t) = resolve_elastic_ssh(c).await?;
+            (AnyConnectionConfig::Elasticsearch(c), t)
         }
         other => (other, None),
     })
@@ -1789,14 +1840,22 @@ pub async fn connect_dynamodb(state: Db<'_>, config: crate::db::dynamodb::Dynamo
 
 // ── Document engines connect ──────────────────────────────────────────────────
 
-pub async fn connect_cassandra(state: Db<'_>, config: crate::db::cassandra::CassandraConfig) -> Result<(), String> {
+pub async fn connect_cassandra(state: Db<'_>, tunnel_state: State<'_, TunnelState>, config: crate::db::cassandra::CassandraConfig) -> Result<(), String> {
+    let (config, tunnel) = resolve_cassandra_ssh(config).await?;
     let session = crate::db::cassandra::connect(&config).await?;
-    set_conn(&state, Some(ActiveConnection::Doc(crate::db::docdb::DocConn::Cassandra(session))))
+    close_existing(&state).await;
+    set_conn(&state, Some(ActiveConnection::Doc(crate::db::docdb::DocConn::Cassandra(session))))?;
+    tunnel_state.set(tunnel);
+    Ok(())
 }
 
-pub async fn connect_mongo(state: Db<'_>, config: crate::db::mongo::MongoConfig) -> Result<(), String> {
+pub async fn connect_mongo(state: Db<'_>, tunnel_state: State<'_, TunnelState>, config: crate::db::mongo::MongoConfig) -> Result<(), String> {
+    let (config, tunnel) = resolve_mongo_ssh(config).await?;
     let handle = crate::db::mongo::connect(&config).await?;
-    set_conn(&state, Some(ActiveConnection::Doc(crate::db::docdb::DocConn::Mongo(handle))))
+    close_existing(&state).await;
+    set_conn(&state, Some(ActiveConnection::Doc(crate::db::docdb::DocConn::Mongo(handle))))?;
+    tunnel_state.set(tunnel);
+    Ok(())
 }
 
 pub async fn connect_firestore(state: Db<'_>, config: crate::db::firestore::FirestoreConfig) -> Result<(), String> {
@@ -1804,14 +1863,22 @@ pub async fn connect_firestore(state: Db<'_>, config: crate::db::firestore::Fire
     set_conn(&state, Some(ActiveConnection::Doc(crate::db::docdb::DocConn::Firestore(config))))
 }
 
-pub async fn connect_couchdb(state: Db<'_>, config: crate::db::couchdb::CouchConfig) -> Result<(), String> {
+pub async fn connect_couchdb(state: Db<'_>, tunnel_state: State<'_, TunnelState>, config: crate::db::couchdb::CouchConfig) -> Result<(), String> {
+    let (config, tunnel) = resolve_couch_ssh(config).await?;
     crate::db::couchdb::ping(&config).await?;
-    set_conn(&state, Some(ActiveConnection::Doc(crate::db::docdb::DocConn::Couch(config))))
+    close_existing(&state).await;
+    set_conn(&state, Some(ActiveConnection::Doc(crate::db::docdb::DocConn::Couch(config))))?;
+    tunnel_state.set(tunnel);
+    Ok(())
 }
 
-pub async fn connect_elastic(state: Db<'_>, config: crate::db::elastic::EsConfig) -> Result<(), String> {
+pub async fn connect_elastic(state: Db<'_>, tunnel_state: State<'_, TunnelState>, config: crate::db::elastic::EsConfig) -> Result<(), String> {
+    let (config, tunnel) = resolve_elastic_ssh(config).await?;
     let config = crate::db::elastic::connect(config).await?;
-    set_conn(&state, Some(ActiveConnection::Doc(crate::db::docdb::DocConn::Elastic(config))))
+    close_existing(&state).await;
+    set_conn(&state, Some(ActiveConnection::Doc(crate::db::docdb::DocConn::Elastic(config))))?;
+    tunnel_state.set(tunnel);
+    Ok(())
 }
 
 // ── Redis connect / test ──────────────────────────────────────────────────────

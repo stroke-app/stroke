@@ -1044,7 +1044,7 @@
         ...(ssh && { ssh }),
       };
     if (dbType === "mongodb")
-      return { type: "mongodb", name: nm, uri: mongoUri.trim(), database: mongoDb.trim() };
+      return { type: "mongodb", name: nm, uri: mongoUri.trim(), database: mongoDb.trim(), ...(ssh && { ssh }) };
     if (dbType === "firestore")
       return {
         type: "firestore",
@@ -1065,9 +1065,10 @@
         user: user.trim(),
         password,
         keyspace: cqlKeyspace.trim(),
+        ...(ssh && { ssh }),
       };
     if (dbType === "couchdb")
-      return { type: "couchdb", name: nm, url: couchUrl.trim(), user: user.trim(), password };
+      return { type: "couchdb", name: nm, url: couchUrl.trim(), user: user.trim(), password, ...(ssh && { ssh }) };
     if (dbType === "elasticsearch" || dbType === "opensearch")
       return {
         type: dbType,
@@ -1075,6 +1076,7 @@
         url: couchUrl.trim(),
         ...(esAuth === "apikey" ? { apiKey: esApiKey.trim(), user: "", password: "" } : { user: user.trim(), password, apiKey: "" }),
         insecure: esInsecure,
+        ...(ssh && { ssh }),
       };
     if (dbType === "dynamodb")
       return {
@@ -3036,7 +3038,7 @@
     dbType === "mysql" ||
     dbType === "mariadb"}
   {@const isMy = dbType === "mysql" || dbType === "mariadb"}
-  {@const canSsh = isPgMy || ["mssql", "oracle", "clickhouse"].includes(dbType) || isRedisForm}
+  {@const canSsh = isPgMy || ["mssql", "oracle", "clickhouse", "mongodb", "couchdb", "elasticsearch", "opensearch"].includes(dbType) || isRedisForm || isCqlForm}
   <!-- 12px between two bordered cards, not 10: the fields inside one card sit
        14px apart, and a gap between cards tighter than the gap within one makes
        the pair read as a single block. -->

@@ -675,12 +675,13 @@ pub async fn dynamodb_request(
 
 #[tauri::command]
 pub async fn test_couchdb(config: crate::db::couchdb::CouchConfig) -> Result<(), String> {
+    let (config, _tunnel) = crate::db::connection::resolve_couch_ssh(config).await?;
     crate::db::couchdb::ping(&config).await
 }
 
 #[tauri::command]
-pub async fn connect_couchdb_db(state: Db<'_>, config: crate::db::couchdb::CouchConfig) -> Result<(), String> {
-    crate::db::connection::connect_couchdb(state, config).await
+pub async fn connect_couchdb_db(state: Db<'_>, tunnel_state: State<'_, TunnelState>, config: crate::db::couchdb::CouchConfig) -> Result<(), String> {
+    crate::db::connection::connect_couchdb(state, tunnel_state, config).await
 }
 
 /// One CouchDB HTTP call (path allowlisted) on the active connection.
@@ -703,12 +704,13 @@ pub async fn couchdb_request(
 /// Connection test; answers which engine and version the server is.
 #[tauri::command]
 pub async fn test_elastic(config: crate::db::elastic::EsConfig) -> Result<crate::db::elastic::ServerInfo, String> {
+    let (config, _tunnel) = crate::db::connection::resolve_elastic_ssh(config).await?;
     crate::db::elastic::ping(&config).await
 }
 
 #[tauri::command]
-pub async fn connect_elastic_db(state: Db<'_>, config: crate::db::elastic::EsConfig) -> Result<(), String> {
-    crate::db::connection::connect_elastic(state, config).await
+pub async fn connect_elastic_db(state: Db<'_>, tunnel_state: State<'_, TunnelState>, config: crate::db::elastic::EsConfig) -> Result<(), String> {
+    crate::db::connection::connect_elastic(state, tunnel_state, config).await
 }
 
 /// One REST call (path allowlisted) on the active connection.
@@ -746,12 +748,13 @@ pub async fn elastic_import(
 
 #[tauri::command]
 pub async fn test_mongo(config: crate::db::mongo::MongoConfig) -> Result<(), String> {
+    let (config, _tunnel) = crate::db::connection::resolve_mongo_ssh(config).await?;
     crate::db::mongo::connect(&config).await.map(|_| ())
 }
 
 #[tauri::command]
-pub async fn connect_mongo_db(state: Db<'_>, config: crate::db::mongo::MongoConfig) -> Result<(), String> {
-    crate::db::connection::connect_mongo(state, config).await
+pub async fn connect_mongo_db(state: Db<'_>, tunnel_state: State<'_, TunnelState>, config: crate::db::mongo::MongoConfig) -> Result<(), String> {
+    crate::db::connection::connect_mongo(state, tunnel_state, config).await
 }
 
 fn require_mongo(state: &Db<'_>) -> Result<crate::db::mongo::MongoHandle, String> {
@@ -942,12 +945,13 @@ pub async fn firestore_request(
 
 #[tauri::command]
 pub async fn test_cassandra(config: crate::db::cassandra::CassandraConfig) -> Result<(), String> {
+    let (config, _tunnel) = crate::db::connection::resolve_cassandra_ssh(config).await?;
     crate::db::cassandra::connect(&config).await.map(|_| ())
 }
 
 #[tauri::command]
-pub async fn connect_cassandra_db(state: Db<'_>, config: crate::db::cassandra::CassandraConfig) -> Result<(), String> {
-    crate::db::connection::connect_cassandra(state, config).await
+pub async fn connect_cassandra_db(state: Db<'_>, tunnel_state: State<'_, TunnelState>, config: crate::db::cassandra::CassandraConfig) -> Result<(), String> {
+    crate::db::connection::connect_cassandra(state, tunnel_state, config).await
 }
 
 fn require_cassandra(state: &Db<'_>) -> Result<crate::db::cassandra::CassandraHandle, String> {
