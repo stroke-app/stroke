@@ -6473,12 +6473,26 @@ mod stream_tests {
         let sql = format!("SELECT range + 1 AS id, md5(range::varchar) || md5((range * 7)::varchar) AS v FROM range({N})");
         let (_tx, rx) = tokio::sync::oneshot::channel();
         let r = super::super::duckdb::stream_into(&h, &sql, &mut sink, rx).await.unwrap();
-        // duckdb-rs reads rows only from a materialized result (its streaming
-        // cursor is Arrow-only, and panics on a mid-stream error), so DuckDB
-        // holds the result natively: measured 214 MB here. This side holds one
-        // 1,000-row batch. Collected, the same result grew memory 931 MB
-        // (duckdb_collected_for_comparison), before the window's copy.
-        check(&store, "duck-big", r, before, 350).await;
+        // DuckDB executes in streaming mode (duckdb::for_each_row_streaming),
+        // so neither side holds the result: this side keeps one 1,000-row
+        // batch. Materialized, DuckDB alone held 214 MB of it; collected, the
+        // same result grew memory 931 MB (duckdb_collected_for_comparison).
+        check(&store, "duck-big", r, before, 120).await;
+    }
+
+    /// An error raised after rows have streamed comes back as an error. The
+    /// driver's own streaming iterator panics there, which with panic=abort
+    /// would close the app.
+    #[tokio::test]
+    async fn duckdb_mid_stream_error_is_an_error() {
+        let cfg = super::super::connection::DuckdbConfig { name: "t".into(), file_path: ":memory:".into() };
+        let h = super::super::connection::open_duckdb(&cfg).await.unwrap();
+        let store = super::super::result_store::ResultStore::default();
+        let mut sink = sink_into(&store, "duck-err");
+        let (_tx, rx) = tokio::sync::oneshot::channel();
+        let sql = "SELECT CASE WHEN range = 250000 THEN error('boom at 250000') ELSE range END AS v FROM range(400000)";
+        let e = super::super::duckdb::stream_into(&h, sql, &mut sink, rx).await.unwrap_err();
+        assert!(e.contains("boom at 250000"), "{e}");
     }
 
     // For the record: what the same DuckDB result costs collected.
