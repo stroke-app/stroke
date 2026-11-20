@@ -232,6 +232,48 @@ enum Body<'a> {
     Ndjson(String),
 }
 
+tokio::task_local! {
+    /// The console run's id, sent as X-Opaque-Id so Stop can find its tasks.
+    static OPAQUE_ID: String;
+}
+
+/// `query`, stoppable on the server. Every request the statement makes
+/// carries an X-Opaque-Id; Stop drops the request and cancels the tasks that
+/// carry that id. Searches already end when their connection closes, but
+/// `_sql`, `_delete_by_query`, `_update_by_query` and the like run on.
+pub async fn query_cancellable(cfg: &EsConfig, stmt: &str, stop: &super::stop::Stop) -> Result<super::query::SqlResult, String> {
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let id = format!("stroke-{:x}-{:x}", std::process::id(), SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+    let run = OPAQUE_ID.scope(id.clone(), query(cfg, stmt));
+    tokio::pin!(run);
+    tokio::select! {
+        r = &mut run => r,
+        _ = stop.wait() => {
+            drop(run);
+            let _ = tokio::time::timeout(Duration::from_secs(10), cancel_tasks(cfg, &id)).await;
+            Err(super::query::QUERY_CANCELLED.into())
+        }
+    }
+}
+
+/// Cancel every task whose X-Opaque-Id is `id`. Returns how many.
+pub async fn cancel_tasks(cfg: &EsConfig, id: &str) -> Result<usize, String> {
+    let v = send(cfg, "GET", "_tasks?detailed=true&group_by=none", None).await?;
+    let ids: Vec<String> = v["tasks"]
+        .as_array()
+        .map(|t| {
+            t.iter()
+                .filter(|t| t["headers"]["X-Opaque-Id"].as_str() == Some(id) && t["cancellable"].as_bool() != Some(false))
+                .filter_map(|t| Some(format!("{}:{}", t["node"].as_str()?, t["id"].as_i64()?)))
+                .collect()
+        })
+        .unwrap_or_default();
+    for t in &ids {
+        let _ = send(cfg, "POST", &format!("_tasks/{t}/_cancel"), None).await;
+    }
+    Ok(ids.len())
+}
+
 async fn send(cfg: &EsConfig, method: &str, path: &str, body: Option<Body<'_>>) -> Result<Value, String> {
     let url = base(cfg)?.join(path.trim_start_matches('/')).map_err(|e| format!("Invalid path \"{path}\": {e}"))?;
     let m = reqwest::Method::from_bytes(method.as_bytes()).map_err(|e| e.to_string())?;
@@ -243,6 +285,9 @@ async fn send(cfg: &EsConfig, method: &str, path: &str, body: Option<Body<'_>>) 
         req = req.header("Authorization", format!("ApiKey {k}"));
     } else if let Some(u) = cfg.user.as_deref().filter(|u| !u.is_empty()) {
         req = req.basic_auth(u, cfg.password.as_deref());
+    }
+    if let Ok(id) = OPAQUE_ID.try_with(Clone::clone) {
+        req = req.header("X-Opaque-Id", id);
     }
     match body {
         Some(Body::Json(b)) => req = req.json(b),
@@ -274,6 +319,78 @@ async fn send(cfg: &EsConfig, method: &str, path: &str, body: Option<Body<'_>>) 
         return Err(error_text(cfg, status, &v));
     }
     Ok(v)
+}
+
+/// A search's plan: the statement run once with `"profile": true`, and the
+/// profile drawn as the plan view's tree (search, then each shard, then its
+/// Lucene queries and aggregations with their times). Only searches have one.
+pub async fn explain_plan(cfg: &EsConfig, stmt: &str) -> Result<Value, String> {
+    let (index, mut body) = match parse(stmt)? {
+        Statement::Search { index, body } => (index, body),
+        Statement::Count { index, body } => (index, json!({ "query": body.get("query").cloned().unwrap_or(json!({"match_all": {}})), "size": 0 })),
+        Statement::Raw { method, path, body } if (method == "GET" || method == "POST") && path.trim_end_matches('/').ends_with("_search") => {
+            let index = path.trim_start_matches('/').split('/').next().unwrap_or("").to_string();
+            (index, body.unwrap_or(json!({})))
+        }
+        _ => return Err("Explain works on searches: GET index/_search, index.search({...}) or index.count({...})".into()),
+    };
+    if !body.is_object() {
+        body = json!({});
+    }
+    body["profile"] = json!(true);
+    let path = if index.is_empty() || index == "_search" { "_search".to_string() } else { format!("{}/_search", enc(&index)) };
+    let v = request(cfg, "POST", &path, Some(&body)).await?;
+    Ok(profile_tree(&v, &index))
+}
+
+/// A profiled search response → plan tree. Pure, so it is tested on recorded output.
+pub fn profile_tree(v: &Value, index: &str) -> Value {
+    fn ms(nanos: &Value) -> Value {
+        nanos.as_f64().map(|n| json!((n / 1e6 * 1000.0).round() / 1000.0)).unwrap_or(Value::Null)
+    }
+    fn part(q: &Value) -> Value {
+        let mut n = json!({
+            "Node Type": q["type"].as_str().unwrap_or("Query"),
+            "Filter": q["description"].as_str().unwrap_or(""),
+            "Actual Total Time": ms(&q["time_in_nanos"]),
+        });
+        if let Some(kids) = q["children"].as_array().filter(|k| !k.is_empty()) {
+            n["Plans"] = Value::Array(kids.iter().map(part).collect());
+        }
+        n
+    }
+    let shards: Vec<Value> = v["profile"]["shards"]
+        .as_array()
+        .map(|sh| {
+            sh.iter()
+                .map(|shard| {
+                    let mut plans: Vec<Value> = shard["searches"]
+                        .as_array()
+                        .map(|ss| ss.iter().flat_map(|s| s["query"].as_array().cloned().unwrap_or_default()).map(|q| part(&q)).collect())
+                        .unwrap_or_default();
+                    plans.extend(shard["aggregations"].as_array().map(|a| a.iter().map(part).collect::<Vec<_>>()).unwrap_or_default());
+                    let total: f64 = plans.iter().filter_map(|p| p["Actual Total Time"].as_f64()).sum();
+                    let id = shard["id"].as_str().unwrap_or("");
+                    // `[node][index][shard]`: the last two say which.
+                    let label = id.split(']').filter(|p| !p.is_empty()).map(|p| p.trim_start_matches('[')).skip(1).collect::<Vec<_>>().join(" shard ");
+                    json!({
+                        "Node Type": "Shard",
+                        "Relation Name": if label.is_empty() { id.to_string() } else { label },
+                        "Actual Total Time": (total * 1000.0).round() / 1000.0,
+                        "Plans": plans,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let hits = v["hits"]["total"]["value"].as_i64().or_else(|| v["hits"]["total"].as_i64());
+    json!({
+        "Node Type": "Search",
+        "Relation Name": index,
+        "Actual Rows": hits,
+        "Actual Total Time": v["took"].as_f64(),
+        "Plans": shards,
+    })
 }
 
 /// What `GET /` says about the server.
@@ -860,6 +977,45 @@ mod tests {
     fn encodes_ids_but_keeps_patterns() {
         assert_eq!(enc("logs-*,metrics"), "logs-*,metrics");
         assert_eq!(urlencoding::encode("a/b"), "a%2Fb");
+    }
+
+    /// Stop on a slow search: while it runs the server lists a task with our
+    /// X-Opaque-Id, and after Stop none is left.
+    //   STROKE_TEST_ES=http://127.0.0.1:19200 cargo test --lib elastic::tests::live_stop
+    #[tokio::test]
+    async fn live_stop_cancels_the_task() {
+        let Ok(url) = std::env::var("STROKE_TEST_ES") else { return };
+        let cfg = EsConfig { ssh: None, via: None, name: "t".into(), url, user: None, password: None, api_key: None, flavor: None, insecure: true };
+        let cfg = connect(cfg).await.unwrap();
+        let _ = send(&cfg, "DELETE", "stroke_slow", None).await;
+        let mut nd = String::new();
+        for i in 0..20_000 {
+            nd.push_str(&format!("{{\"index\":{{\"_index\":\"stroke_slow\"}}}}\n{{\"n\":{i}}}\n"));
+        }
+        send(&cfg, "POST", "_bulk?refresh=true", Some(Body::Ndjson(nd))).await.unwrap();
+        let ours = |v: &Value| -> usize {
+            v["tasks"].as_array().map(|t| t.iter().filter(|t| t["headers"]["X-Opaque-Id"].as_str().is_some_and(|h| h.starts_with("stroke-"))).count()).unwrap_or(0)
+        };
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let stop = super::super::stop::Stop::from_rx(rx);
+        let probe = cfg.clone();
+        let during = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(1500)).await;
+            let v = send(&probe, "GET", "_tasks?detailed=true&group_by=none", None).await.unwrap();
+            let n = ours(&v);
+            let _ = tx.send(());
+            n
+        });
+        let slow = "GET stroke_slow/_search\n{\"query\": {\"script\": {\"script\": \"long x = 0; for (int i = 0; i < 900000; i++) { x += i; } return x > 0;\"}}}";
+        let t0 = Instant::now();
+        let e = query_cancellable(&cfg, slow, &stop).await.unwrap_err();
+        assert_eq!(e, super::super::query::QUERY_CANCELLED);
+        assert!(during.await.unwrap() > 0, "the search carried our X-Opaque-Id");
+        assert!(t0.elapsed() < Duration::from_secs(20));
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        let v = send(&cfg, "GET", "_tasks?detailed=true&group_by=none", None).await.unwrap();
+        assert_eq!(ours(&v), 0, "a task is still running after Stop");
+        let _ = send(&cfg, "DELETE", "stroke_slow", None).await;
     }
 
     /// Against a local server: `cargo test --lib es_live -- --ignored`, with

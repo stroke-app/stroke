@@ -320,7 +320,7 @@
     </div>
 
     <div class="flex min-w-0 flex-1 flex-col">
-      <label data-slot="menu-search" class="flex h-10 shrink-0 items-center gap-2 px-3">
+      <label data-slot="menu-search" class="search-shell m-1.5 flex h-8 shrink-0 items-center gap-2 px-2.5">
         <Search class="size-3.5 shrink-0 text-muted-foreground" />
         <input
           bind:this={searchEl}

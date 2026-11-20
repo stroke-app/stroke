@@ -1583,7 +1583,7 @@
          at the editor's size psql's tables read like a document. -->
     {#if findOpen}
       <div
-        class="absolute top-2 right-3 z-30 flex h-8 items-center gap-0.5 rounded-lg border border-border/60 bg-popover ps-2.5 pe-1 shadow-md"
+        class="absolute top-2 right-3 z-30 flex h-8 items-center gap-0.5 rounded-lg border border-border/80 bg-popover ps-2.5 pe-1 transition-colors focus-within:border-ring/70"
         role="search"
       >
         <Search class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />

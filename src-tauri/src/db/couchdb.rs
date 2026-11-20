@@ -227,6 +227,45 @@ pub async fn query(cfg: &CouchConfig, stmt: &str) -> Result<super::query::SqlRes
     Ok(docs_result(docs, message, stmt, t0))
 }
 
+/// A Mango find's plan from `_explain`: which index CouchDB picked (or that
+/// it scans every document), with the selector and the fields it reads.
+pub async fn explain_plan(cfg: &CouchConfig, stmt: &str) -> Result<Value, String> {
+    let Statement::Find { db, selector, opts } = parse(stmt)? else {
+        return Err("Explain works on find queries: db.find({selector})".into());
+    };
+    let mut body = json!({ "selector": selector });
+    if let Some(o) = opts.as_object() {
+        for (k, v) in o {
+            body[k] = v.clone();
+        }
+    }
+    let out = request(cfg, "POST", &format!("{}/_explain", enc(&db)), Some(&body)).await?;
+    Ok(explain_tree(&out, &db))
+}
+
+/// `_explain` output → plan tree. Pure, so it is tested on recorded output.
+pub fn explain_tree(out: &Value, db: &str) -> Value {
+    let ix = &out["index"];
+    let kind = ix["type"].as_str().unwrap_or("");
+    let name = ix["name"].as_str().unwrap_or("");
+    let scan = match kind {
+        "special" => json!({ "Node Type": "All documents scan", "Relation Name": db }),
+        _ => json!({
+            "Node Type": format!("{} index scan", if kind.is_empty() { "Index" } else { kind }),
+            "Relation Name": db,
+            "Index Name": if name.is_empty() { ix["ddoc"].as_str().unwrap_or("") } else { name },
+            "Index Cond": ix["def"]["fields"].to_string(),
+        }),
+    };
+    json!({
+        "Node Type": "Find",
+        "Relation Name": db,
+        "Filter": out["selector"].to_string(),
+        "Plan Rows": out["limit"].as_i64(),
+        "Plans": [scan],
+    })
+}
+
 /// A result-grid cell: Extended JSON scalars (`{"$oid": ...}`, `{"$date": ...}`,
 /// `{"$numberLong": ...}`, `{"$numberDecimal": ...}`) as their plain value, and
 /// the type name for the column header.

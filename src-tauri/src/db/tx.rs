@@ -77,7 +77,10 @@ impl TxConn {
             // Their own connection: dropping it closes it, and the server
             // rolls back what it held.
             TxConn::Duckdb(h) => drop(h),
-            TxConn::Mssql(h) => drop(h),
+            TxConn::Mssql(h) => {
+                super::mssql::forget(&h);
+                drop(h)
+            }
             TxConn::Oracle(h) => drop(h),
         }
     }
@@ -685,6 +688,111 @@ async fn fetch_rows(conn: &mut TxConn, stmt: &str) -> Result<SqlResult, String> 
 #[cfg(test)]
 mod tests {
     use super::leading_keyword;
+
+    fn live_session(conn: super::TxConn) -> super::TxSession {
+        super::TxSession {
+            conn,
+            epoch: 0,
+            blocker: None,
+            statements: 0,
+            rows_affected: 0,
+            started: std::time::Instant::now(),
+            last_used: std::time::Instant::now(),
+        }
+    }
+
+    fn count_of(r: &super::SqlResult) -> i64 {
+        let v = &r.rows[0][0];
+        v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())).or_else(|| v.as_f64().map(|f| f as i64)).unwrap_or(-1)
+    }
+
+    /// One engine's transaction, end to end through tx.rs: BEGIN, a write
+    /// that only the transaction sees, ROLLBACK; then BEGIN, write, COMMIT;
+    /// then a transaction abandoned mid-way, which must roll back on release.
+    /// `outside` reads through the shared handle.
+    async fn tx_round_trip<F, Fut>(open: impl Fn() -> Fut, outside: F, table: &str)
+    where
+        Fut: std::future::Future<Output = super::TxConn>,
+        F: Fn(String) -> std::pin::Pin<Box<dyn std::future::Future<Output = i64>>>,
+    {
+        use super::{execute_in, release, run_statement};
+        let count = format!("SELECT COUNT(*) FROM {table}");
+        let insert = format!("INSERT INTO {table} (v) VALUES (1)");
+
+        let mut c = open().await;
+        run_statement(&mut c, "BEGIN").await.unwrap();
+        let w = execute_in(&mut c, &insert).await.unwrap();
+        assert!(w.message.unwrap_or_default().contains("not committed"));
+        assert_eq!(count_of(&execute_in(&mut c, &count).await.unwrap()), 1, "the transaction sees its own row");
+        run_statement(&mut c, "ROLLBACK").await.unwrap();
+        assert_eq!(outside(count.clone()).await, 0, "rolled back");
+
+        run_statement(&mut c, "BEGIN").await.unwrap();
+        execute_in(&mut c, &insert).await.unwrap();
+        run_statement(&mut c, "COMMIT").await.unwrap();
+        assert_eq!(outside(count.clone()).await, 1, "committed");
+
+        let mut c2 = open().await;
+        run_statement(&mut c2, "BEGIN").await.unwrap();
+        execute_in(&mut c2, &insert).await.unwrap();
+        release(live_session(c2)).await;
+        drop(c);
+        assert_eq!(outside(count.clone()).await, 1, "abandoned transaction rolled back");
+    }
+
+    //   STROKE_TEST_MSSQL=127.0.0.1:11433:sa:password cargo test --lib tx::tests::mssql_live
+    #[tokio::test]
+    async fn mssql_live_transaction() {
+        let Ok(spec) = std::env::var("STROKE_TEST_MSSQL") else { return };
+        let p: Vec<&str> = spec.splitn(4, ':').collect();
+        let cfg = super::super::connection::MssqlConfig {
+            name: "live".into(), host: p[0].into(), port: p[1].parse().unwrap(), database: "master".into(),
+            user: p[2].into(), password: p[3].into(), encrypt: false, trust_cert: true, ssh: None, via: None,
+        };
+        let shared = super::super::connection::open_mssql(&cfg).await.unwrap();
+        super::super::mssql::batch(&shared, "IF OBJECT_ID('stroke_tx_live') IS NOT NULL DROP TABLE stroke_tx_live; CREATE TABLE stroke_tx_live (v int)").await.unwrap();
+        let s2 = shared.clone();
+        tx_round_trip(
+            || { let s = shared.clone(); async move { super::TxConn::Mssql(super::super::mssql::open_tx_client(&s).await.unwrap()) } },
+            move |sql| { let s = s2.clone(); Box::pin(async move { count_of(&super::super::mssql::execute_sql(&s, &sql).await.unwrap()) }) },
+            "stroke_tx_live",
+        ).await;
+    }
+
+    //   STROKE_TEST_ORACLE=app/pw@//127.0.0.1:11521/FREEPDB1 STROKE_ORACLE_CLIENT_DIR=... cargo test --lib tx::tests::oracle_live
+    #[tokio::test]
+    async fn oracle_live_transaction() {
+        let Ok(url) = std::env::var("STROKE_TEST_ORACLE") else { return };
+        let (creds, cs) = url.split_once('@').unwrap();
+        let (user, password) = creds.split_once('/').unwrap();
+        let cfg = super::super::connection::OracleConfig {
+            ssh: None, name: "live".into(), host: String::new(), port: 1521, service_name: String::new(), sid: String::new(),
+            connect_string: cs.into(), user: user.into(), password: password.into(),
+            client_lib_dir: std::env::var("STROKE_ORACLE_CLIENT_DIR").unwrap_or_default(),
+        };
+        super::super::oracle::prepare_client(&cfg.client_lib_dir).await.unwrap();
+        let shared = super::super::oracle::connect(&cfg).await.unwrap();
+        let _ = super::super::oracle::execute_sql(&shared, "DROP TABLE stroke_tx_live").await;
+        super::super::oracle::execute_sql(&shared, "CREATE TABLE stroke_tx_live (v NUMBER)").await.unwrap();
+        let s2 = shared.clone();
+        tx_round_trip(
+            || { let s = shared.clone(); async move { super::TxConn::Oracle(super::super::oracle::open_tx_session(&s).await.unwrap()) } },
+            move |sql| { let s = s2.clone(); Box::pin(async move { count_of(&super::super::oracle::execute_sql(&s, &sql).await.unwrap()) }) },
+            "stroke_tx_live",
+        ).await;
+    }
+
+    #[tokio::test]
+    async fn duckdb_transaction_round_trip() {
+        let shared: super::super::connection::DuckdbHandle = std::sync::Arc::new(std::sync::Mutex::new(::duckdb::Connection::open_in_memory().unwrap()));
+        super::super::duckdb::batch(&shared, "CREATE TABLE stroke_tx_live (v INTEGER)").await.unwrap();
+        let s2 = shared.clone();
+        tx_round_trip(
+            || { let s = shared.clone(); async move { super::TxConn::Duckdb(super::super::duckdb::open_tx_conn(&s).await.unwrap()) } },
+            move |sql| { let s = s2.clone(); Box::pin(async move { count_of(&super::super::duckdb::execute_sql(&s, &sql).await.unwrap()) }) },
+            "stroke_tx_live",
+        ).await;
+    }
 
     // Live: a released session must give back a connection that is out of its
     // transaction. Before `release`, the idle sweep dropped the PoolConnection,

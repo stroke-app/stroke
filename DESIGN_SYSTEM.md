@@ -357,8 +357,10 @@ pass `rank={null}` for a field `/` should not focus.
 Where a field keeps its own keyboard handling or toolbar cluster, put
 `search-box no-field-frame` on the input (icon positioned over it), or
 `search-shell` on a wrapper row that holds icon, input and buttons. Both draw
-the same outline. Filter rows at the top of a menu or popover list
-(`data-slot="menu-search"`) stay frameless: the menu is already the box.
+the same outline. A filter row at the top of a menu or popover list
+(`data-slot="menu-search"`) is a `search-shell` inset with `m-1.5` (`h-8`),
+so it reads as the same field inside the menu. The command palette's title
+row is the one exception: the palette itself is the field.
 
 **Prominent pick lists** (provider DB lists, account lists):
 ```

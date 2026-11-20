@@ -247,7 +247,7 @@
         {/if}
       </PopoverTrigger>
       <PopoverContent align="start" sideOffset={4} class="w-64 p-1">
-        <div data-slot="menu-search" class="flex items-center gap-1.5 px-2 pb-1.5 pt-1">
+        <div data-slot="menu-search" class="search-shell mb-1 flex h-7 items-center gap-1.5 px-2">
           <Icon name="search" class="size-3.5 shrink-0 text-muted-foreground" />
           <input
             type="text"

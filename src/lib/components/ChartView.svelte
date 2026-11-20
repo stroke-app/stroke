@@ -407,7 +407,7 @@
             class="absolute left-0 top-full z-50 mt-1 w-[34rem] overflow-hidden rounded-[10px] border border-border/60 bg-popover elevate-2-rim"
           >
             <!-- Search -->
-            <div data-slot="menu-search" class="flex h-11 items-center gap-2 px-3">
+            <div data-slot="menu-search" class="search-shell m-1.5 flex h-8 items-center gap-2 px-2.5">
               <Search class="size-4 shrink-0 text-muted-foreground" />
               <input
                 type="text"

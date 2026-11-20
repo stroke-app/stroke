@@ -166,13 +166,44 @@ fn for_each_row(
     on_columns: impl FnOnce(Vec<ColumnInfo>),
     mut on_row: impl FnMut(Vec<Value>) -> bool,
 ) -> Result<(), String> {
+    for_each_row_in(conn, sql, params, false, on_columns, on_row)
+}
+
+/// `for_each_row` on DuckDB's streaming result: chunks are produced as they
+/// are read, so DuckDB never holds the whole result either. For reads only
+/// (streaming execution refuses DML that returns rows).
+fn for_each_row_streaming(
+    conn: &::duckdb::Connection,
+    sql: &str,
+    on_columns: impl FnOnce(Vec<ColumnInfo>),
+    on_row: impl FnMut(Vec<Value>) -> bool,
+) -> Result<(), String> {
+    for_each_row_in(conn, sql, &[], true, on_columns, on_row)
+}
+
+fn for_each_row_in(
+    conn: &::duckdb::Connection,
+    sql: &str,
+    params: &[DuckValue],
+    streaming: bool,
+    on_columns: impl FnOnce(Vec<ColumnInfo>),
+    mut on_row: impl FnMut(Vec<Value>) -> bool,
+) -> Result<(), String> {
     let mut stmt = conn.prepare(sql).map_err(|e| format!("DuckDB error: {e}"))?;
 
     // column_names()/column_count() panic before the statement is executed, so we
     // run query() first (it executes eagerly) and read metadata via rows.as_ref().
-    let mut rows = stmt
-        .query(::duckdb::params_from_iter(params.iter()))
-        .map_err(|e| format!("DuckDB error: {e}"))?;
+    //
+    // Streaming: stream_arrow executes in DuckDB's streaming mode, and
+    // raw_query reads that same result through the row API. Its own Arrow
+    // iterator panics on a mid-stream error (fatal with panic=abort); the
+    // row API returns the error instead.
+    let mut rows = if streaming {
+        drop(stmt.stream_arrow(::duckdb::params_from_iter(params.iter())).map_err(|e| format!("DuckDB error: {e}"))?);
+        stmt.raw_query()
+    } else {
+        stmt.query(::duckdb::params_from_iter(params.iter())).map_err(|e| format!("DuckDB error: {e}"))?
+    };
 
     let (col_names, col_count): (Vec<String>, usize) = match rows.as_ref() {
         Some(s) => (s.column_names(), s.column_count()),
@@ -365,10 +396,9 @@ pub async fn stream_into(
             g.1 = Some(conn.interrupt_handle());
         }
         let mut batch = Vec::with_capacity(BATCH);
-        let out = for_each_row(
+        let out = for_each_row_streaming(
             conn,
             &sql_owned,
-            &[],
             |c| {
                 let _ = tx.blocking_send(Msg::Columns(c));
             },

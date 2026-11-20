@@ -931,6 +931,111 @@ fn run_one(conn: &Connection, sql: &str, binds: &[Bind]) -> Result<SqlResult, St
     Ok(SqlResult { columns: vec![], rows: vec![], row_count, message, query_ms: t0.elapsed().as_millis() as u64, sql: sql.to_string() })
 }
 
+/// Whether `stream_into` takes this statement (a query with rows).
+pub(crate) fn reads(sql: &str) -> bool {
+    reads_only(sql) && !split_statements(sql).is_empty() && split_statements(sql).len() == 1
+}
+
+/// A query, streamed into `sink` a batch at a time while Oracle fetches it.
+///
+/// `run_one` collected every row before the grid saw one, so a large result
+/// stopped at the collect budget. Here the session's thread fetches 500 rows
+/// per round trip and hands them over in batches of 1,000, so memory stays
+/// flat whatever the size. Stop breaks the call on the server.
+pub async fn stream_into(
+    handle: &OracleHandle,
+    sql: &str,
+    sink: &mut super::query::RowSink,
+    stop: &super::stop::Stop,
+) -> Result<SqlResult, String> {
+    enum Msg {
+        Columns(Vec<ColumnInfo>),
+        Rows(Vec<Vec<Value>>),
+    }
+    const BATCH: usize = 1_000;
+    let stmt_sql = split_statements(sql).into_iter().next().unwrap_or_default();
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Msg>(8);
+    let reader = run_blocking(handle, move |conn| {
+        let mut stmt = conn.statement(&stmt_sql).fetch_array_size(500).build().map_err(ora_err)?;
+        let rs = stmt.query(&[]).map_err(ora_err)?;
+        let infos = rs.column_info().to_vec();
+        let columns: Vec<ColumnInfo> = infos
+            .iter()
+            .map(|c| {
+                let mut ci = ColumnInfo::new(c.name().to_string(), type_label(c.oracle_type()));
+                ci.nullable = c.nullable();
+                ci
+            })
+            .collect();
+        if tx.blocking_send(Msg::Columns(columns)).is_err() {
+            return Ok(());
+        }
+        let mut batch = Vec::with_capacity(BATCH);
+        for row in rs {
+            let row = row.map_err(ora_err)?;
+            batch.push(row.sql_values().iter().zip(infos.iter()).map(|(v, c)| cell_to_json(v, c.oracle_type())).collect());
+            if batch.len() >= BATCH && tx.blocking_send(Msg::Rows(std::mem::replace(&mut batch, Vec::with_capacity(BATCH)))).is_err() {
+                return Ok(());
+            }
+        }
+        if !batch.is_empty() {
+            let _ = tx.blocking_send(Msg::Rows(batch));
+        }
+        Ok(())
+    });
+    tokio::pin!(reader);
+    let t0 = Instant::now();
+    let mut columns = Vec::new();
+    let mut total = 0usize;
+    let mut sink_err: Option<String> = None;
+    let mut reader_out: Option<Result<(), String>> = None;
+    let mut stopped = false;
+    loop {
+        tokio::select! {
+            msg = rx.recv() => match msg {
+                Some(Msg::Columns(c)) => columns = c,
+                Some(Msg::Rows(rows)) => {
+                    if sink_err.is_some() || stopped {
+                        continue;
+                    }
+                    for r in rows {
+                        if total == 0 {
+                            if let Err(e) = sink.start(columns.clone()) { sink_err = Some(e); break; }
+                        }
+                        if let Err(e) = sink.push(r) { sink_err = Some(e); break; }
+                        total += 1;
+                    }
+                    if sink_err.is_some() {
+                        rx.close();
+                    }
+                }
+                None => break,
+            },
+            out = &mut reader, if reader_out.is_none() => reader_out = Some(out),
+            _ = stop.wait(), if !stopped => {
+                stopped = true;
+                rx.close();
+                cancel(handle).await;
+            }
+        }
+    }
+    let out = match reader_out {
+        Some(o) => o,
+        None => reader.await,
+    };
+    if stopped {
+        return Err(super::query::QUERY_CANCELLED.into());
+    }
+    if let Some(e) = sink_err {
+        return Err(e);
+    }
+    out?;
+    if total > 0 {
+        sink.finish()?;
+    }
+    Ok(SqlResult { columns, rows: vec![], row_count: Some(total as i64), message: None, query_ms: t0.elapsed().as_millis() as u64, sql: sql.to_string() })
+}
+
 /// `run_one`, committed when it wrote (a query has nothing to commit).
 fn run_commit(conn: &Connection, sql: &str, binds: &[Bind]) -> Result<SqlResult, String> {
     let r = run_one(conn, sql, binds);

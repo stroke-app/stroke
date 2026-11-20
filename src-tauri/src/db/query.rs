@@ -4628,6 +4628,9 @@ pub(crate) async fn run_one_cancellable(
                 }
             }
         }
+        // Cancel by client_query_id / X-Opaque-Id on the server.
+        ActiveConnection::Posthog(cfg) => super::posthog::query_cancellable(cfg, stmt, stop).await,
+        ActiveConnection::Doc(super::docdb::DocConn::Elastic(cfg)) => super::elastic::query_cancellable(cfg, stmt, stop).await,
         // No server-side stop exists: stop waiting, and say the server may not.
         other => tokio::select! {
             r = run_one_other(other, stmt) => r,
@@ -4671,6 +4674,8 @@ async fn stream_one(
                 }
             }
         }
+        ActiveConnection::Doc(super::docdb::DocConn::Mongo(m)) if super::mongo::streams(stmt) => super::mongo::stream_into(m, stmt, sink, stop).await,
+        ActiveConnection::Oracle(h) if super::oracle::reads(stmt) => super::oracle::stream_into(h, stmt, sink, stop).await,
         ActiveConnection::Clickhouse(cfg) if super::clickhouse::reads(stmt) => super::clickhouse::stream_into(cfg, stmt, sink, stop).await,
         _ => return None,
     })
@@ -6250,6 +6255,203 @@ mod stream_tests {
         check(&store, "ch-big", r, before, 120).await;
     }
 
+    //   STROKE_TEST_CH=18123:password cargo test --lib stream_tests::clickhouse_live
+    fn live_clickhouse() -> Option<super::super::connection::ClickhouseConfig> {
+        let spec = std::env::var("STROKE_TEST_CH").ok()?;
+        let (port, pw) = spec.split_once(':')?;
+        let mut cfg = fake_clickhouse_cfg(port.parse().ok()?);
+        cfg.password = pw.into();
+        Some(cfg)
+    }
+
+    #[tokio::test]
+    async fn clickhouse_live_streams_and_stops() {
+        let Some(cfg) = live_clickhouse() else { return };
+        let store = super::super::result_store::ResultStore::default();
+        let mut sink = sink_into(&store, "ch-live");
+        let before = rss_mb();
+        let (_tx, rx) = tokio::sync::oneshot::channel();
+        let stop = super::super::stop::Stop::from_rx(rx);
+        let sql = format!("SELECT number + 1 AS id, hex(MD5(toString(number))) AS v FROM numbers({N})");
+        let r = super::super::clickhouse::stream_into(&cfg, &sql, &mut sink, &stop).await.unwrap();
+        assert_eq!(r.columns[0].name, "id");
+        assert_eq!(r.row_count, Some(N as i64));
+        let stored = store.get("ch-live").unwrap();
+        assert_eq!(stored.len(), N);
+        // UInt64 arrives quoted (output_format_json_quote_64bit_integers), as
+        // it did collected: values past 2^53 stay exact in the grid.
+        let deep: Vec<Value> = serde_json::from_str(&stored.read_window(N - 1, 1).unwrap()).unwrap();
+        assert_eq!(deep[0][0], serde_json::json!(N.to_string()));
+        let grew = rss_mb().saturating_sub(before);
+        assert!(grew < 120, "memory grew {grew} MB while streaming");
+
+        // Stop: the server must not keep running the query.
+        let mut sink = sink_into(&store, "ch-stop");
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let stop = super::super::stop::Stop::from_rx(rx);
+        tokio::spawn(async move { tokio::time::sleep(std::time::Duration::from_millis(800)).await; let _ = tx.send(()); });
+        let marker = "stroke_live_stop_marker";
+        let long = format!("SELECT count() AS {marker} FROM numbers(100000000000) WHERE sipHash64(number) = 1");
+        let t0 = std::time::Instant::now();
+        let e = super::super::clickhouse::stream_into(&cfg, &long, &mut sink, &stop).await.unwrap_err();
+        assert_eq!(e, QUERY_CANCELLED);
+        assert!(t0.elapsed() < std::time::Duration::from_secs(15));
+        let left = super::super::clickhouse::query(&cfg, &format!("SELECT count() FROM system.processes WHERE query LIKE '%{marker}%' AND query NOT LIKE '%system.processes%'")).await.unwrap();
+        assert_eq!(left.rows[0][0].as_str().map(|s| s.to_string()).unwrap_or(left.rows[0][0].to_string()), "0", "query still running on the server");
+    }
+
+    //   STROKE_TEST_ORACLE=user/pw@//host:1521/FREEPDB1 STROKE_ORACLE_CLIENT_DIR=... cargo test --lib stream_tests::oracle_live
+    #[tokio::test]
+    async fn oracle_live_streams_and_stops() {
+        let Ok(url) = std::env::var("STROKE_TEST_ORACLE") else { return };
+        let (creds, cs) = url.split_once('@').unwrap();
+        let (user, password) = creds.split_once('/').unwrap();
+        let cfg = super::super::connection::OracleConfig {
+            ssh: None, name: "live".into(), host: String::new(), port: 1521, service_name: String::new(), sid: String::new(),
+            connect_string: cs.into(), user: user.into(), password: password.into(),
+            client_lib_dir: std::env::var("STROKE_ORACLE_CLIENT_DIR").unwrap_or_default(),
+        };
+        super::super::oracle::prepare_client(&cfg.client_lib_dir).await.unwrap();
+        let h = super::super::oracle::connect(&cfg).await.unwrap();
+        let store = super::super::result_store::ResultStore::default();
+        let mut sink = sink_into(&store, "ora-big");
+        let before = rss_mb();
+        let (_tx, rx) = tokio::sync::oneshot::channel();
+        let stop = super::super::stop::Stop::from_rx(rx);
+        let sql = format!("SELECT a.n * 1000 + b.n + 1 AS id, RPAD('v', 64, 'x') AS v FROM (SELECT level - 1 AS n FROM dual CONNECT BY level <= {}) a CROSS JOIN (SELECT level - 1 AS n FROM dual CONNECT BY level <= 1000) b ORDER BY 1", N / 1000);
+        let r = super::super::oracle::stream_into(&h, &sql, &mut sink, &stop).await.unwrap();
+        assert_eq!(r.columns[0].name, "ID");
+        assert_eq!(r.row_count, Some(N as i64));
+        let stored = store.get("ora-big").unwrap();
+        assert_eq!(stored.len(), N);
+        let grew = rss_mb().saturating_sub(before);
+        assert!(grew < 120, "memory grew {grew} MB while streaming");
+
+        // Stop mid-stream: the call breaks and the session stays usable.
+        let mut sink = sink_into(&store, "ora-stop");
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let stop = super::super::stop::Stop::from_rx(rx);
+        tokio::spawn(async move { tokio::time::sleep(std::time::Duration::from_millis(700)).await; let _ = tx.send(()); });
+        let slow = "SELECT COUNT(*) FROM (SELECT level n FROM dual CONNECT BY level <= 3000) a, (SELECT level n FROM dual CONNECT BY level <= 3000) b, (SELECT level n FROM dual CONNECT BY level <= 3000) c";
+        let t0 = std::time::Instant::now();
+        let e = super::super::oracle::stream_into(&h, slow, &mut sink, &stop).await.unwrap_err();
+        assert_eq!(e, QUERY_CANCELLED);
+        assert!(t0.elapsed() < std::time::Duration::from_secs(10));
+        super::super::oracle::ping(&h).await.unwrap();
+    }
+
+    //   STROKE_TEST_MONGO=mongodb://127.0.0.1:27018 cargo test --lib stream_tests::mongo_live
+    #[tokio::test]
+    async fn mongo_live_streams_past_the_console_cap() {
+        let Ok(uri) = std::env::var("STROKE_TEST_MONGO") else { return };
+        use mongodb::bson::doc;
+        const M: usize = 400_000;
+        let m = super::super::mongo::connect(&super::super::mongo::MongoConfig { ssh: None, name: "t".into(), uri, database: Some("stroke_stream".into()) }).await.unwrap();
+        let c = m.client.database("stroke_stream").collection::<mongodb::bson::Document>("big");
+        let _ = c.drop().await;
+        let mut batch = Vec::with_capacity(10_000);
+        for i in 0..M {
+            let mut d = doc! { "_id": i as i64 + 1, "n": i as i64, "v": format!("{:064x}", i) };
+            // A field the first 1,000 documents never had.
+            if i == 250_000 { d.insert("late", "here"); }
+            batch.push(d);
+            if batch.len() == 10_000 { c.insert_many(std::mem::take(&mut batch)).await.unwrap(); }
+        }
+        let store = super::super::result_store::ResultStore::default();
+        let mut sink = sink_into(&store, "mongo-big");
+        let before = rss_mb();
+        let (_tx, rx) = tokio::sync::oneshot::channel();
+        let stop = super::super::stop::Stop::from_rx(rx);
+        let stmt = "db.big.find({}).sort({_id: 1})";
+        assert!(super::super::mongo::streams(stmt));
+        assert!(!super::super::mongo::streams("db.big.find({}).limit(10)"));
+        let r = super::super::mongo::stream_into(&m, stmt, &mut sink, &stop).await.unwrap();
+        assert_eq!(r.row_count, Some(M as i64), "past the 5,000-document cap");
+        assert_eq!(r.columns.last().unwrap().name, super::super::mongo::OTHER_FIELDS);
+        let stored = store.get("mongo-big").unwrap();
+        assert_eq!(stored.len(), M);
+        let late: Vec<Vec<Value>> = serde_json::from_str(&stored.read_window(250_000, 1).unwrap()).unwrap();
+        assert_eq!(late[0].last().unwrap(), &serde_json::json!({ "late": "here" }));
+        let grew = rss_mb().saturating_sub(before);
+        assert!(grew < 120, "memory grew {grew} MB while streaming");
+        // Stop while the server is still working: the tagged operation is killed.
+        let slow = "db.big.aggregate([{$group: {_id: {$mod: [\"$n\", 7]}, s: {$sum: {$function: {body: 'function(n){var x=0; for (var i=0;i<20000;i++){x+=i;} return x;}', args: [\"$n\"], lang: 'js'}}}}}])";
+        assert!(super::super::mongo::streams(slow));
+        let mut sink = sink_into(&store, "mongo-stop");
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let stop = super::super::stop::Stop::from_rx(rx);
+        tokio::spawn(async move { tokio::time::sleep(std::time::Duration::from_millis(1500)).await; let _ = tx.send(()); });
+        let t0 = std::time::Instant::now();
+        let e = super::super::mongo::stream_into(&m, slow, &mut sink, &stop).await.unwrap_err();
+        assert_eq!(e, QUERY_CANCELLED);
+        assert!(t0.elapsed() < std::time::Duration::from_secs(15));
+        tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+        let admin = m.client.database("admin");
+        let left: Vec<mongodb::bson::Document> = futures::TryStreamExt::try_collect(admin.aggregate(vec![
+            doc! { "$currentOp": {} },
+            doc! { "$match": { "command.aggregate": "big" } },
+        ]).await.unwrap()).await.unwrap();
+        assert!(left.is_empty(), "the aggregate still runs on the server: {left:?}");
+        let _ = c.drop().await;
+    }
+
+    /// Explain on the document engines, against real servers:
+    ///   STROKE_TEST_MONGO=mongodb://127.0.0.1:27018 STROKE_TEST_ES=http://127.0.0.1:19200
+    ///   STROKE_TEST_COUCH=http://admin:admin@127.0.0.1:15984 cargo test --lib live_doc_plans
+    #[tokio::test]
+    async fn live_doc_plans() {
+        fn types(n: &Value, out: &mut Vec<String>) {
+            out.push(n["Node Type"].as_str().unwrap_or("").to_string());
+            for k in n["Plans"].as_array().into_iter().flatten() {
+                types(k, out);
+            }
+        }
+        if let Ok(uri) = std::env::var("STROKE_TEST_MONGO") {
+            use mongodb::bson::doc;
+            let m = super::super::mongo::connect(&super::super::mongo::MongoConfig { ssh: None, name: "t".into(), uri, database: Some("stroke_plan".into()) }).await.unwrap();
+            let c = m.client.database("stroke_plan").collection::<mongodb::bson::Document>("t");
+            let _ = c.drop().await;
+            c.insert_many((0..2000).map(|i| doc! { "n": i, "k": i % 10 })).await.unwrap();
+            c.create_index(mongodb::IndexModel::builder().keys(doc! { "n": 1 }).build()).await.unwrap();
+            let p = super::super::mongo::explain_plan(&m, "db.t.find({n: {$gt: 1500}}).sort({n: 1})").await.unwrap();
+            let mut t = vec![];
+            types(&p, &mut t);
+            assert!(t.iter().any(|s| s == "IXSCAN"), "{p}");
+            assert!(p.to_string().contains("n_1"), "{p}");
+            let p = super::super::mongo::explain_plan(&m, "db.t.find({k: 3})").await.unwrap();
+            assert!(p.to_string().contains("COLLSCAN"), "{p}");
+            assert!(p.to_string().contains("Rows Removed by Filter"), "{p}");
+            let p = super::super::mongo::explain_plan(&m, "db.t.aggregate([{$match: {k: 3}}, {$group: {_id: null, s: {$sum: \"$n\"}}}])").await.unwrap();
+            assert!(p["Node Type"].is_string(), "{p}");
+            println!("mongo aggregate plan: {p}");
+            let _ = c.drop().await;
+        }
+        if let Ok(url) = std::env::var("STROKE_TEST_ES") {
+            let cfg = super::super::elastic::EsConfig { ssh: None, via: None, name: "t".into(), url, user: None, password: None, api_key: None, flavor: None, insecure: true };
+            let cfg = super::super::elastic::connect(cfg).await.unwrap();
+            super::super::elastic::request(&cfg, "PUT", "stroke_plan/_doc/1?refresh=wait_for", Some(&serde_json::json!({"level": "error", "ms": 12}))).await.unwrap();
+            let p = super::super::elastic::explain_plan(&cfg, r#"stroke_plan.search({"query": {"bool": {"must": [{"term": {"level.keyword": "error"}}], "filter": [{"range": {"ms": {"gte": 5}}}]}}})"#).await.unwrap();
+            let mut t = vec![];
+            types(&p, &mut t);
+            assert_eq!(t[0], "Search");
+            assert!(t.iter().any(|s| s == "Shard"), "{p}");
+            assert!(t.iter().any(|s| s == "BooleanQuery"), "{p}");
+            assert_eq!(p["Actual Rows"], serde_json::json!(1));
+            let p = super::super::elastic::explain_plan(&cfg, "GET stroke_plan/_search\n{\"query\": {\"match_all\": {}}}").await.unwrap();
+            assert!(p.to_string().contains("MatchAllDocsQuery"), "{p}");
+            let _ = super::super::elastic::request(&cfg, "DELETE", "stroke_plan", None).await;
+        }
+        if let Ok(url) = std::env::var("STROKE_TEST_COUCH") {
+            let cfg = super::super::couchdb::CouchConfig { ssh: None, via: None, name: "t".into(), url, user: Some("admin".into()), password: Some("admin".into()) };
+            // Set up outside (creating databases is refused here): stroke_plan
+            // with a "by-level" index on level.
+            let p = super::super::couchdb::explain_plan(&cfg, r#"stroke_plan.find({"other": 1})"#).await.unwrap();
+            assert!(p.to_string().contains("All documents scan"), "{p}");
+            let p = super::super::couchdb::explain_plan(&cfg, r#"stroke_plan.find({"level": "error"})"#).await.unwrap();
+            assert!(p.to_string().contains("by-level"), "{p}");
+        }
+    }
+
     #[tokio::test]
     async fn clickhouse_error_after_the_first_rows_is_reported() {
         let port = fake_clickhouse(500, "Code: 241. DB::Exception: Memory limit exceeded\n").await;
@@ -6271,12 +6473,26 @@ mod stream_tests {
         let sql = format!("SELECT range + 1 AS id, md5(range::varchar) || md5((range * 7)::varchar) AS v FROM range({N})");
         let (_tx, rx) = tokio::sync::oneshot::channel();
         let r = super::super::duckdb::stream_into(&h, &sql, &mut sink, rx).await.unwrap();
-        // duckdb-rs reads rows only from a materialized result (its streaming
-        // cursor is Arrow-only, and panics on a mid-stream error), so DuckDB
-        // holds the result natively: measured 214 MB here. This side holds one
-        // 1,000-row batch. Collected, the same result grew memory 931 MB
-        // (duckdb_collected_for_comparison), before the window's copy.
-        check(&store, "duck-big", r, before, 350).await;
+        // DuckDB executes in streaming mode (duckdb::for_each_row_streaming),
+        // so neither side holds the result: this side keeps one 1,000-row
+        // batch. Materialized, DuckDB alone held 214 MB of it; collected, the
+        // same result grew memory 931 MB (duckdb_collected_for_comparison).
+        check(&store, "duck-big", r, before, 120).await;
+    }
+
+    /// An error raised after rows have streamed comes back as an error. The
+    /// driver's own streaming iterator panics there, which with panic=abort
+    /// would close the app.
+    #[tokio::test]
+    async fn duckdb_mid_stream_error_is_an_error() {
+        let cfg = super::super::connection::DuckdbConfig { name: "t".into(), file_path: ":memory:".into() };
+        let h = super::super::connection::open_duckdb(&cfg).await.unwrap();
+        let store = super::super::result_store::ResultStore::default();
+        let mut sink = sink_into(&store, "duck-err");
+        let (_tx, rx) = tokio::sync::oneshot::channel();
+        let sql = "SELECT CASE WHEN range = 250000 THEN error('boom at 250000') ELSE range END AS v FROM range(400000)";
+        let e = super::super::duckdb::stream_into(&h, sql, &mut sink, rx).await.unwrap_err();
+        assert!(e.contains("boom at 250000"), "{e}");
     }
 
     // For the record: what the same DuckDB result costs collected.

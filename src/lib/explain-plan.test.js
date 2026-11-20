@@ -129,3 +129,33 @@ describe('planOutline', () => {
     expect(entries.every((e) => e.kind === 'node')).toBe(true)
   })
 })
+
+describe('document engine plans', () => {
+  // Shape built by mongo::plan_tree from a real MongoDB 7 explain.
+  const mongo = {
+    'Node Type': '$group', 'Actual Rows': 1, 'Actual Total Time': 40,
+    Plans: [{
+      'Node Type': 'COLLSCAN', 'Relation Name': 'orders', 'Actual Rows': 2000, 'Actual Total Time': 38,
+      'Docs Examined': 200000, 'Rows Removed by Filter': 198000, Filter: '{"k":{"$eq":3}}',
+    }],
+  }
+
+  it('flags a MongoDB collection scan that throws away most documents', () => {
+    const a = annotatePlan(normalizePlan(mongo, 'mongodb'))
+    expect(a.root?.type).toBe('$group')
+    expect(a.nodes).toHaveLength(2)
+    const insights = planInsights(a)
+    expect(insights[0].title).toBe('Full scan on orders throws away most rows')
+  })
+
+  it('reads an Elasticsearch profile as a timed tree', () => {
+    const es = {
+      'Node Type': 'Search', 'Relation Name': 'logs', 'Actual Rows': 1, 'Actual Total Time': 3,
+      Plans: [{ 'Node Type': 'Shard', 'Relation Name': 'logs shard 0', 'Actual Total Time': 0.4,
+        Plans: [{ 'Node Type': 'BooleanQuery', Filter: '+level:error', 'Actual Total Time': 0.4 }] }],
+    }
+    const a = annotatePlan(normalizePlan(es, 'elasticsearch'))
+    expect(a.nodes.map((n) => n.type)).toEqual(['Search', 'Shard', 'BooleanQuery'])
+    expect(a.analyzed).toBe(true)
+  })
+})

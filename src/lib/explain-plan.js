@@ -290,7 +290,8 @@ export function foldLabel(f) {
 // ── Findings ─────────────────────────────────────────────────────────────────
 
 const fmt = (/** @type {number} */ n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e4 ? `${Math.round(n / 1e3)}k` : n.toLocaleString('en-US'))
-const isFullScan = (/** @type {string} */ t) => /^(Seq Scan|Full Table Scan|Parallel Seq Scan)$/i.test(t) || /^SCAN \w+$/i.test(t)
+// MongoDB's COLLSCAN and CouchDB's all-documents scan read everything too.
+const isFullScan = (/** @type {string} */ t) => /^(Seq Scan|Full Table Scan|Parallel Seq Scan|COLLSCAN|All documents scan)$/i.test(t) || /^SCAN \w+$/i.test(t)
 
 /**
  * What is worth fixing, worst first. Every node also gets its own warnings,
@@ -315,8 +316,8 @@ export function planInsights(a) {
       const filter = r.Filter ? ` filtered by ${String(r.Filter)}` : ''
       if (n.removed && n.removed > Math.max(1000, rows * 4)) {
         add(n, 'high', `Full scan${where} throws away most rows`, `Read every row and kept ${fmt(rows)}, discarding ${fmt(n.removed)}${filter}. An index on the filtered columns would let it read only the matches.`)
-      } else if (rows > 10000 || (num(r['Rows Examined']) ?? 0) > 10000) {
-        add(n, 'medium', `Full scan${where}`, `Reads all ${fmt(Math.max(rows, num(r['Rows Examined']) ?? 0))} rows${filter}. Fine for small tables or when most rows are needed; otherwise look at an index.`)
+      } else if (rows > 10000 || (num(r['Rows Examined'] ?? r['Docs Examined']) ?? 0) > 10000) {
+        add(n, 'medium', `Full scan${where}`, `Reads all ${fmt(Math.max(rows, num(r['Rows Examined'] ?? r['Docs Examined']) ?? 0))} rows${filter}. Fine for small tables or when most rows are needed; otherwise look at an index.`)
       }
     }
     if (n.misestimate != null && Math.abs(n.misestimate) >= 10 && Math.max(n.actualRows ?? 0, n.planRows ?? 0) >= 100) {
