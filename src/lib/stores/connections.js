@@ -1,6 +1,8 @@
 import { invoke } from '@tauri-apps/api/core'
 import { saveSqlDraft, saveSqlTabs } from '$lib/stores/sql-draft.js'
 import { notifyLocalChange, recordDeletion } from '$lib/sync/changes.js'
+import { activeWorkspaceId, DEFAULT_WORKSPACE_ID } from '$lib/stores/workspaces.js'
+import { get } from 'svelte/store'
 
 const STORAGE_KEY = 'stroke:connections'
 /**
@@ -337,12 +339,34 @@ export async function hydrateConnectionsFromDisk() {
 }
 
 /**
- * @param {SavedConnection} conn
- * @param {{ revive?: boolean }} [opts] `revive` lets an explicit re-add (the
- *   Sample Database button) bring back an id that was deleted. Everything else
- *   that writes an existing connection back is a no-op for a deleted one.
+ * Where a connection is filed and how it looks, set by the person rather than
+ * by whatever dialled it. The one-click paths (a provider's database, a Docker
+ * container, a local server, D1) build a fresh row on every connect, so writing
+ * that row over the saved one dropped these and sent the connection back to
+ * the default workspace. A caller that names one of them (the edit form always
+ * does, even to clear it) sets it; one that leaves it out keeps the saved value.
  */
-export function upsertConnection(conn, { revive = false } = {}) {
+const FILING_FIELDS = /** @type {const} */ (['workspaceId', 'color', 'group'])
+
+/**
+ * The workspace a brand-new row lands in: the one on screen, so connecting to
+ * a provider's database from the "Work" workspace files it under Work.
+ * @returns {string | undefined}
+ */
+function workspaceForNew() {
+  const id = get(activeWorkspaceId)
+  return id && id !== DEFAULT_WORKSPACE_ID ? id : undefined
+}
+
+/**
+ * @param {SavedConnection} conn
+ * @param {{ revive?: boolean, exact?: boolean }} [opts] `revive` lets an
+ *   explicit re-add (the Sample Database button) bring back an id that was
+ *   deleted. Everything else that writes an existing connection back is a
+ *   no-op for a deleted one. `exact` stores the row as given, with no filing
+ *   kept or added: sync, whose record is the truth from another device.
+ */
+export function upsertConnection(conn, { revive = false, exact = false } = {}) {
   const deleted = loadDeletedIds()
   if (deleted.has(conn.id)) {
     if (!revive) {
@@ -359,8 +383,20 @@ export function upsertConnection(conn, { revive = false } = {}) {
     // A pin is set only through setConnectionMeta; a live copy written back
     // here (connect, database switch, edit) must not drop or revive it.
     const { pinned: _stale, ...rest } = conn
-    list[idx] = list[idx].pinned ? { ...rest, pinned: true } : rest
-  } else list.push(conn)
+    /** @type {SavedConnection} */
+    const next = list[idx].pinned ? { ...rest, pinned: true } : rest
+    if (!exact) {
+      const prev = /** @type {Record<string, any>} */ (list[idx])
+      for (const f of FILING_FIELDS) {
+        if (!(f in conn) && prev[f] != null) /** @type {Record<string, any>} */ (next)[f] = prev[f]
+      }
+    }
+    list[idx] = next
+  } else if (exact || 'workspaceId' in conn) list.push(conn)
+  else {
+    const ws = workspaceForNew()
+    list.push(ws ? { ...conn, workspaceId: ws } : conn)
+  }
   _persistFailed = !saveConnections(list)
   return list
 }

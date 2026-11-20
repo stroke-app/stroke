@@ -30,6 +30,9 @@
   let managerOpen = $state(false)
   let editing = $state(/** @type {import('$lib/stores/workspaces.js').Workspace | null} */ (null))
 
+  /** "1 connection", "40 connections". @param {number} n */
+  const countLabel = (n) => `${n} connection${n === 1 ? '' : 's'}`
+
   /** @param {import('$lib/stores/workspaces.js').Workspace | null} w */
   function openDialog(w) {
     editing = w
@@ -41,11 +44,18 @@
 <DropdownMenu.Root>
   <DropdownMenu.Trigger
     class={cn(
-      cn('group flex min-w-0 items-center rounded-md text-left', !compact && 'hover:bg-accent/60 data-[state=open]:bg-accent/60'),
-      compact ? 'size-[calc(28px*var(--app-scale))] justify-center rounded-md outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring' : 'h-8 gap-2 px-1.5',
+      'group flex min-w-0 items-center rounded-md text-left outline-none focus-visible:outline-2 focus-visible:outline-ring',
+      // Full size it heads a sidebar list, so it takes the list's tokens, and a
+      // hairline frame: the same height and radius as the rows under it, it
+      // otherwise read as the first connection rather than the picker that
+      // decides which connections are listed.
+      compact
+        ? 'size-[calc(28px*var(--app-scale))] justify-center focus-visible:outline-offset-1'
+        : 'h-8 gap-2 border border-sidebar-border px-1.5 transition-colors duration-150 hover:bg-sidebar-accent/60 focus-visible:outline-offset-2 data-[state=open]:bg-sidebar-accent',
       className,
     )}
-    title={`Workspace: ${active?.name ?? ""}`}
+    title={`Workspace: ${active?.name ?? ""} · ${countLabel(count)}`}
+    aria-label={`Workspace: ${active?.name ?? ""}, ${countLabel(count)}. Switch workspace`}
   >
     <!-- The workspace's mark (its colour and initial), here and in the menu, so
          the same tile means the same workspace everywhere. -->
@@ -57,7 +67,7 @@
       class={compact ? 'transition-[scale,filter] duration-150 ease-out group-hover:brightness-110 group-hover:ring-2 group-hover:ring-foreground/15 group-active:scale-90 group-data-[state=open]:ring-2 group-data-[state=open]:ring-ring/50' : ''}
     />
     {#if !compact}<span class="min-w-0 flex-1 truncate text-ui-sm font-medium text-foreground">{active?.name}</span>{/if}
-    {#if !compact}<span class="shrink-0 text-ui-2xs tabular-nums text-muted-foreground">{count}</span>{/if}
+    {#if !compact}<span class="shrink-0 font-mono text-ui-2xs tabular-nums text-muted-foreground" aria-hidden="true">{count}</span>{/if}
     {#if !compact}<ChevronsUpDown class="size-3.5 shrink-0 text-muted-foreground/70 group-hover:text-muted-foreground" />{/if}
   </DropdownMenu.Trigger>
   <DropdownMenu.Content align="start" class="min-w-60">
@@ -67,7 +77,7 @@
         <WorkspaceMark workspace={w} size="xs" />
         <span data-slot="menu-label" class={cn('min-w-0 flex-1 truncate', on && 'text-foreground')}>{w.name}</span>
         <span data-slot="command-trailing" class="ml-auto flex shrink-0 items-center gap-1.5 pl-3">
-          <span class="text-ui-2xs tabular-nums text-muted-foreground">{inWorkspace(connections, w.id, $workspaces).length}</span>
+          <span class="font-mono text-ui-2xs tabular-nums text-muted-foreground" title={countLabel(inWorkspace(connections, w.id, $workspaces).length)}>{inWorkspace(connections, w.id, $workspaces).length}</span>
           <Check class={cn('size-3.5 shrink-0', on ? 'text-foreground' : 'invisible')} />
         </span>
       </DropdownMenu.Item>
