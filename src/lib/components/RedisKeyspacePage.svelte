@@ -22,6 +22,7 @@
   import {
     CREATABLE_TYPES, stage, unstage, stagedFor, toOps, createOps, ttlOps, toPattern,
     humanBytes, ttlLabel, commandLine,
+    withPendingCreates,
   } from '$lib/redis-staging.js'
   import { tick } from 'svelte'
   import Search from '@lucide/svelte/icons/search'
@@ -427,13 +428,7 @@
         return (typeof x === 'string' ? x.localeCompare(String(y), undefined, { numeric: true }) : Number(x) - Number(y)) * dir
       })
     }
-    if (!creates.length) return list
-    // Apply reads the new keys back into `rows` before it clears them from the
-    // staged list, so for that moment a key was in both, and the keyed list
-    // stopped the view with each_key_duplicate. The loaded row wins.
-    const present = new Set(list.map((r) => r.key))
-    const pending = creates.filter((c) => !present.has(c.key))
-    return pending.length ? [...pending, ...list] : list
+    return withPendingCreates(list, creates)
   })
 
   // ── Selection ─────────────────────────────────────────────────────────────
