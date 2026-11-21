@@ -728,7 +728,7 @@
         type="text"
         bind:value={filterInput}
         oninput={onFilterInput}
-        placeholder="Filter keys, e.g. user:* or session"
+        placeholder="Filter keys, e.g. user:*"
         aria-label="Filter keys"
         spellcheck="false"
         autocapitalize="off"
