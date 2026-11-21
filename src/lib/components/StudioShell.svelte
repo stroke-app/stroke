@@ -1,6 +1,7 @@
 <script>
   import { formatApiCall } from '$lib/dynamo-json.js'
   import { sqlFamily, SQL_SNIPPETS } from '$lib/sql-complete-data.js'
+  import { spannerIsPg } from '$lib/sql-ident.js'
   import ArrowLeft from '@lucide/svelte/icons/arrow-left'
   import { onMount, onDestroy, untrack, tick } from 'svelte'
   import { panelMotionOff, slidePanel } from '$lib/panel-motion.js'
@@ -4805,6 +4806,16 @@ let rowSearch = $state('')
     if (fam === 'mssql' || fam === 'clickhouse') {
       const s = SQL_SNIPPETS.find((x) => x.name === 'CREATE TABLE' && x.only?.includes(fam))
       if (s) { openObjectSql({ text: '', title: 'New table', snippet: s.body }); return }
+    }
+    // GoogleSQL: Spanner keys the table after the column list, and BigQuery
+    // names the dataset. Both checked against their emulators.
+    if (dbType === 'spanner' && !spannerIsPg()) {
+      openObjectSql({ text: '', title: 'New table', snippet: 'CREATE TABLE ${1:name} (\n  id INT64 NOT NULL,\n  ${2:column} ${3:STRING(MAX)},\n  created_at TIMESTAMP NOT NULL OPTIONS (allow_commit_timestamp = true)\n) PRIMARY KEY (id)' })
+      return
+    }
+    if (dbType === 'bigquery') {
+      openObjectSql({ text: '', title: 'New table', snippet: `CREATE TABLE ${activeSchema ? activeSchema + '.' : ''}\${1:name} (\n  id INT64 NOT NULL,\n  \${2:column} \${3:STRING},\n  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP()\n)` })
+      return
     }
     showCreateTableDialog = true
   }
