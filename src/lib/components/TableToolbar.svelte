@@ -1671,8 +1671,8 @@
       <button
         type="button"
         class={cn(iconBtn, "shrink-0 @max-[30rem]/tb:hidden")}
-        title={dataViewMode === "chart" ? "Share this chart as a link" : "Share these rows as a link"}
-        aria-label={dataViewMode === "chart" ? "Share chart" : "Share rows"}
+        title={dataViewMode === "chart" ? "Share this chart as a link" : dataViewMode === "json" ? "Share this JSON as a link" : "Share these rows as a link"}
+        aria-label={dataViewMode === "chart" ? "Share chart" : dataViewMode === "json" ? "Share JSON" : "Share rows"}
         disabled={loading || total === 0 || tableViewMode === "structure"}
         onclick={() => onshare(dataViewMode)}
       >
@@ -1796,7 +1796,7 @@
           {#if onshare}
             <DropdownMenu.Item disabled={total === 0} onSelect={() => onshare(dataViewMode)}>
               <Icon name="share-2" class="size-3.5 shrink-0" />
-              <span data-slot="menu-label">{dataViewMode === 'chart' ? 'Share chart…' : 'Share rows…'}</span>
+              <span data-slot="menu-label">{dataViewMode === 'chart' ? 'Share chart…' : dataViewMode === 'json' ? 'Share JSON…' : 'Share rows…'}</span>
             </DropdownMenu.Item>
           {/if}
           <DropdownMenu.Item disabled={readonly} onSelect={() => onimport()}>

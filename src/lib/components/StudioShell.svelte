@@ -73,7 +73,7 @@
   // the AI panel is opened - see the {#await import()} blocks below.
   import { terminalDockOpen as terminalDockStore } from '$lib/stores/redis-nav.js'
   import DbIcon from './DbIcon.svelte'
-  import { requestShare, sharesPageRequest, chartTitle, shareRequest } from '$lib/share-flow.js'
+  import { requestShare, sharesPageRequest, chartTitle, shareRequest, rowsToJson as rowsToJsonValue } from '$lib/share-flow.js'
   import MySharesDialog from './MySharesDialog.svelte'
   import Icon from './Icon.svelte'
   import CreateSchemaDialog from './CreateSchemaDialog.svelte'
@@ -7496,6 +7496,11 @@ let rowSearch = $state('')
     const source = connection?.name ? `${connection.name} · ${activeSchema ? activeSchema + '.' : ''}${activeTable}` : String(activeTable ?? '')
     if (mode === 'chart' && chartPane?.shareSpec) {
       requestShare({ kind: 'chart', title: chartTitle(chartPane.shareSpec()), source, chart: chartPane.shareSpec(), columns: dataViewColumns.map((c) => ({ name: c.name, type: c.dataType ?? c.data_type })), rows: dataViewRows })
+      return
+    }
+    if (mode === 'json') {
+      // The JSON view's rows, one object per row, as the view shows them.
+      requestShare({ kind: 'json', title: String(activeTable ?? 'Rows'), source, value: rowsToJsonValue(cols, cells) })
       return
     }
     requestShare({ kind: 'table', title: String(activeTable ?? 'Rows'), source, columns: cols, rows: cells, totalRows: Math.max(total || 0, cells.length) })

@@ -8,6 +8,8 @@
   import ResizeHandle from './ResizeHandle.svelte'
   import { loadLayout, saveLayout } from '$lib/stores/layout.js'
   import Copy from '@lucide/svelte/icons/copy'
+  import Share2 from '@lucide/svelte/icons/share-2'
+  import { requestShare } from '$lib/share-flow.js'
   import CheckCheck from '@lucide/svelte/icons/check-check'
   import Braces from '@lucide/svelte/icons/braces'
   import Wand2 from '@lucide/svelte/icons/wand-2'
@@ -152,6 +154,13 @@
       if (copiedTimer) clearTimeout(copiedTimer)
       copiedTimer = setTimeout(() => { copied = false }, 2000)
     })
+  }
+
+  /** Share the query's result when there is one, else the whole document. */
+  function handleShare() {
+    const p = jsonPath.trim()
+    if (pathResult?.ok) requestShare({ kind: 'json', title: `JSON ${p}`, value: pathResult.value })
+    else if (parsedJson !== null) requestShare({ kind: 'json', title: 'JSON', value: parsedJson })
   }
 
   function handleCopyInput() {
@@ -299,6 +308,14 @@
         {:else}
           <Copy class="size-3 shrink-0" />Copy result
         {/if}
+      </button>
+      <button type="button"
+        class="inline-flex items-center gap-1 rounded-md px-2 py-0.5 font-mono text-ui-2xs transition-colors {parsedJson !== null ? 'text-muted-foreground hover:bg-muted hover:text-foreground' : 'cursor-default text-muted-foreground'}"
+        disabled={parsedJson === null}
+        title="Share as an encrypted link: the result, or the whole document"
+        onclick={handleShare}
+      >
+        <Share2 class="size-3 shrink-0" />Share
       </button>
     </div>
   </div>

@@ -300,10 +300,10 @@ textarea:not(.no-focus-ring):not(.no-field-frame):focus-visible {
 
 /* The search row at the top of a dropdown: borderless, with the hairline under
    it turning accent while you type in it. */
-[data-slot="menu-search"] {
+[data-slot="menu-search"]:not(.search-shell):not(:has(.search-box)) {
   border-bottom: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
 }
-[data-slot="menu-search"]:focus-within {
+[data-slot="menu-search"]:not(.search-shell):not(:has(.search-box)):focus-within {
   border-bottom-color: var(--ring);
 }
 
@@ -1368,12 +1368,14 @@ html[data-motion="reduced"] .animate-spin {
     transition: border-color 150ms ease-out, background-color 150ms ease-out, box-shadow 150ms ease-out;
   }
   .search-box::placeholder { color: var(--muted-foreground); }
-  .search-box:hover:not(:disabled) { border-color: color-mix(in oklab, var(--foreground) 20%, transparent); }
+  .search-box:hover:not(:disabled):not(:focus) { border-color: color-mix(in oklab, var(--foreground) 20%, transparent); }
+  /* Focus is one crisp accent edge, hovered or not: no halo outside it. A
+     halo beside a hover-gray border read as two outlines. */
   .search-box:focus {
-    border-color: color-mix(in oklab, var(--ring) 70%, transparent);
+    border-color: var(--ring);
     background-color: color-mix(in oklab, var(--muted) 45%, transparent);
+    box-shadow: none;
   }
-  .search-box:focus-visible { box-shadow: 0 0 0 2px color-mix(in oklab, var(--ring) 15%, transparent); }
   .search-box:disabled { cursor: not-allowed; opacity: 0.4; }
   .search-box::-webkit-search-cancel-button { display: none; }
   /* The same box for a search built as a wrapper (icon, input, buttons in one
@@ -1385,12 +1387,11 @@ html[data-motion="reduced"] .animate-spin {
     color: var(--foreground);
     transition: border-color 150ms ease-out, background-color 150ms ease-out, box-shadow 150ms ease-out;
   }
-  .search-shell:hover { border-color: color-mix(in oklab, var(--foreground) 20%, transparent); }
+  .search-shell:hover:not(:focus-within) { border-color: color-mix(in oklab, var(--foreground) 20%, transparent); }
   .search-shell:focus-within {
-    border-color: color-mix(in oklab, var(--ring) 70%, transparent);
+    border-color: var(--ring);
     background-color: color-mix(in oklab, var(--muted) 45%, transparent);
   }
-  .search-shell:has(:focus-visible) { box-shadow: 0 0 0 2px color-mix(in oklab, var(--ring) 15%, transparent); }
   .search-shell input { background: transparent; color: inherit; }
   .search-shell input::placeholder { color: var(--muted-foreground); }
 }
