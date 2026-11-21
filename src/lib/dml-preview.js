@@ -21,12 +21,13 @@
  * }} DmlContext
  */
 
-import { odbcQuote, odbcFlat } from './sql-ident.js'
+import { odbcQuote, odbcFlat, spannerIsPg } from './sql-ident.js'
 
 /** Engine families that don't qualify grid writes with a schema. */
 const NO_SCHEMA = new Set(['sqlite', 'd1', 'libsql', 'duckdb'])
-/** Spanner and BigQuery speak GoogleSQL: backticked names, backslash escapes. */
-const GOOGLE_SQL = new Set(['spanner', 'bigquery'])
+/** Spanner and BigQuery speak GoogleSQL: backticked names, backslash escapes.
+ *  A PostgreSQL-dialect Spanner database speaks PostgreSQL instead. */
+const isGoogleSql = (/** @type {string} */ dialect) => dialect === 'bigquery' || (dialect === 'spanner' && !spannerIsPg())
 
 /**
  * Quote an identifier for the given dialect.
@@ -37,7 +38,7 @@ export function quoteIdent(name, dialect) {
   if (dialect === 'mysql') return '`' + s.replace(/`/g, '``') + '`'
   // GoogleSQL: backticks, escaped with a backslash. A double-quoted name is a
   // string there, so the review showed SQL that would not run if applied.
-  if (GOOGLE_SQL.has(dialect)) return '`' + s.replace(/\\/g, '\\\\').replace(/`/g, '\\`') + '`'
+  if (isGoogleSql(dialect)) return '`' + s.replace(/\\/g, '\\\\').replace(/`/g, '\\`') + '`'
   // ODBC: the quote the driver reported on connect (a MySQL driver wants backticks).
   if (dialect === 'odbc') {
     const q = odbcQuote()
@@ -55,6 +56,8 @@ export function qualifiedTable(ctx) {
   const t = quoteIdent(ctx.table, ctx.dialect)
   // Spanner's default schema has no name: "default" is only the app's label for it.
   if (ctx.dialect === 'spanner' && ctx.schema === 'default') return t
+  // PostgreSQL-dialect Spanner keeps its tables in "public", the default schema.
+  if (ctx.dialect === 'spanner' && spannerIsPg() && ctx.schema === 'public') return t
   if (ctx.dialect === 'odbc' && odbcFlat()) return t
   if (ctx.schema && !NO_SCHEMA.has(ctx.dialect)) {
     return quoteIdent(ctx.schema, ctx.dialect) + '.' + t
@@ -64,7 +67,7 @@ export function qualifiedTable(ctx) {
 
 /** Single-quote a string literal, doubling embedded quotes (backslash-escaping in GoogleSQL). */
 function quoteString(/** @type {string} */ s, /** @type {string} */ dialect = '') {
-  if (GOOGLE_SQL.has(dialect)) return "'" + s.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n') + "'"
+  if (isGoogleSql(dialect)) return "'" + s.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n') + "'"
   return "'" + s.replace(/'/g, "''") + "'"
 }
 

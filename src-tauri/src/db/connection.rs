@@ -1897,10 +1897,17 @@ pub async fn connect_mongo(state: Db<'_>, tunnel_state: State<'_, TunnelState>, 
 
 /// Google Cloud Spanner (beta): checks the database, learns its dialect and
 /// opens a session before it becomes the active connection.
-pub async fn connect_spanner(state: Db<'_>, config: crate::db::spanner::SpannerConfig) -> Result<(), String> {
+/// Returns the database's dialect ("googlesql" or "postgresql"): the
+/// frontend writes its review and generated SQL in it.
+pub async fn connect_spanner(state: Db<'_>, config: crate::db::spanner::SpannerConfig) -> Result<String, String> {
     let h = crate::db::spanner::connect(&config).await?;
+    let dialect = match h.dialect {
+        crate::db::spanner::Dialect::Postgres => "postgresql",
+        crate::db::spanner::Dialect::GoogleSql => "googlesql",
+    };
     close_existing(&state).await;
-    set_conn(&state, Some(ActiveConnection::Spanner(h)))
+    set_conn(&state, Some(ActiveConnection::Spanner(h)))?;
+    Ok(dialect.to_string())
 }
 
 /// Google BigQuery (beta): the project answers before it becomes the active

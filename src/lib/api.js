@@ -6,7 +6,7 @@ import { assertWritable } from '$lib/stores/read-only.js'
 import { getLastConnection } from '$lib/stores/connections.js'
 import { isWriteSql } from '$lib/sql-write.js'
 import { odbcConfigOf } from '$lib/odbc-presets.js'
-import { setOdbcDialect } from '$lib/sql-ident.js'
+import { setOdbcDialect, setSpannerDialect } from '$lib/sql-ident.js'
 
 /** @typedef {{ name: string, host: string, port: number, database: string, user: string, password: string, ssl: boolean }} PgConnectionConfig */
 /** @typedef {{ name: string, filePath: string }} SqliteConnectionConfig */
@@ -1054,7 +1054,9 @@ export async function testSpanner(config) {
 
 /** @param {SpannerConnConfig} config */
 export async function connectSpanner(config) {
-  return connectInv('connect_spanner_db', { config: normalizeSpanner(config) })
+  const dialect = await connectInv('connect_spanner_db', { config: normalizeSpanner(config) })
+  setSpannerDialect(/** @type {string} */ (dialect))
+  return dialect
 }
 
 // ── BigQuery (beta) ──────────────────────────────────────────────────────────
