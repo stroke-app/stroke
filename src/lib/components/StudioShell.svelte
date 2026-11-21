@@ -2318,6 +2318,8 @@ let rowSearch = $state('')
   const _activeColsTyped = $derived(columns.map((c) => ({ name: c.name, type: c.dataType ?? c.data_type ?? '' })))
   const _sqlColNames = $derived(sqlColumns.map((c) => c.name))
   const _tableNames = $derived(tables.map((t) => t.name))
+  /** Views among them, for labels that count tables (the AI's "public · 2 tables"). */
+  const _viewCount = $derived(tables.filter((t) => /view/i.test(t.kind ?? '')).length)
 
   // ── Async SQL-completion hints (enums + user functions) ──────────────────────
   // Loaded lazily when the SQL tab becomes active. Stored as reactive state so
@@ -2852,7 +2854,7 @@ let rowSearch = $state('')
       return {
         schemas, activeSchema, tables: _tableNames,
         activeTable, columns: [], primaryKey: [], foreignKeys: [],
-        allTableColumns: {}, dbType: engineFamily(connection?.type),
+        allTableColumns: {}, dbType: engineFamily(connection?.type), viewCount: _viewCount,
         environment: connection?.environment ?? null,
         database: connection?.database || connection?.name || '',
       }
@@ -2868,6 +2870,7 @@ let rowSearch = $state('')
       allTableColumns: _allTableColumns,
       /** @type {import('$lib/stores/connections.js').DbType} */
       dbType: engineFamily(connection?.type),
+      viewCount: _viewCount,
       environment: connection?.environment ?? null,
       database: connection?.database || connection?.name || '',
     }
@@ -4082,7 +4085,16 @@ let rowSearch = $state('')
     closeInspector()
   })
 
-  createCommandHotkey('table.deleteRows', (e) => {
+  createCommandHotkey('table.deleteRows', (e) => deleteRowsHotkey(e))
+  // Ctrl+Delete too, while the command keeps its default: on a PC keyboard
+  // Delete is the key for it, and the grid already leaves the modified Delete
+  // to this handler (a bare Delete clears the cell).
+  createHotkey('Mod+Delete', (e) => deleteRowsHotkey(e), () => ({
+    conflictBehavior: 'allow',
+    enabled: bindingFor('table.deleteRows') === 'Mod+Backspace',
+  }))
+  /** @param {KeyboardEvent} e */
+  function deleteRowsHotkey(e) {
     if (commandOpen || showConnectionModal || showSettingsModal) return
     // Ctrl+Backspace is the word-delete shortcut in inputs/textareas - don't steal it
     const el = document.activeElement
@@ -4096,7 +4108,7 @@ let rowSearch = $state('')
     // the focused row, which is the row the menu offers this chord on.
     e.preventDefault()
     stageDeleteSelectedRows()
-  })
+  }
 
   createCommandHotkey('view.refresh', (e) => {
     if (!connection) return

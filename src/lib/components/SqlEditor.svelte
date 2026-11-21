@@ -19,7 +19,7 @@
   import { EditorView, Decoration, ViewPlugin, GutterMarker, WidgetType, gutter, hoverTooltip, keymap, drawSelection, highlightWhitespace } from '@codemirror/view'
   import { indentUnit, foldable, foldEffect, unfoldEffect, foldedRanges, syntaxTree } from '@codemirror/language'
   import { insertNewlineKeepIndent } from '@codemirror/commands'
-  import { snippet, completionStatus, hasNextSnippetField, hasPrevSnippetField } from '@codemirror/autocomplete'
+  import { snippet, completionStatus, hasNextSnippetField, hasPrevSnippetField, closeCompletion } from '@codemirror/autocomplete'
   import { wantsTerminator } from '$lib/sql-terminator.js'
   import { IS_MAC } from '$lib/shortcuts.js'
   import CodeEditor from './CodeEditor.svelte'
@@ -1457,6 +1457,10 @@
 
   /** Spinner in the glyph gutter while statement(s) run. @param {string | null} [ranStatement] */
   export function markRunning(ranStatement = null) {
+    // A run started from the keyboard left the completion list open over the
+    // statement it ran; it belongs to the typing, and the typing is done.
+    const v = editorRef?.getView?.()
+    if (v) closeCompletion(v)
     markRun('running', ranStatement)
   }
 

@@ -9041,7 +9041,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
                         type="text"
                         disabled={insertSaving}
                         placeholder={dt.toLowerCase().includes('int') || dt.toLowerCase().includes('serial')
-                          ? 'auto-increment'
+                          ? 'auto'
                           : 'generated'}
                         title="The database fills this in. Type a value only to override it."
                         class="w-full min-w-0 bg-transparent font-mono text-[length:inherit] text-foreground outline-none placeholder:italic placeholder:text-muted-foreground disabled:opacity-50"

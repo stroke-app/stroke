@@ -750,6 +750,13 @@
     }
     if (wordStart(v)) return 0.7
     if (v.includes(s) || label.includes(s)) return 0.5
+    // Several words in any order, each the start of a word: "ai chat" finds
+    // Ask AI ("ask ai assistant chat query"), which as one phrase it never did.
+    const tokens = s.split(/\s+/).filter(Boolean)
+    if (tokens.length > 1) {
+      const all = `${label} ${v}`.split(/[^a-z0-9]+/).filter(Boolean)
+      if (tokens.every((t) => all.some((w) => w.startsWith(t)))) return 0.4
+    }
     // Separator-insensitive fallback so "newtable"/"new-table" match "new table",
     // anchored at a word start: unanchored, "map" matched "schema public"
     // through "sche(ma p)ublic".
