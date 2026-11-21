@@ -40,6 +40,8 @@
     connectFirestore,
     testSpanner,
     connectSpanner,
+    testBigquery,
+    connectBigquery,
     testMongo,
     connectMongo,
     dynamoProfiles,
@@ -186,6 +188,7 @@
       drivers: [
         { id: "d1", label: "Cloudflare D1", desc: "Edge SQLite via REST API" },
         { id: "spanner", label: "Spanner", desc: "Google Cloud Spanner, GoogleSQL or PostgreSQL", beta: true },
+        { id: "bigquery", label: "BigQuery", desc: "Google Cloud data warehouse", beta: true },
       ],
     },
     {
@@ -292,6 +295,7 @@
     "posthog",
     "d1",
     "spanner",
+    "bigquery",
     "redis",
     "valkey",
     "dynamodb",
@@ -469,6 +473,11 @@
   let spInstance = $state("");
   let spDatabase = $state("");
   let spEmulator = $state("localhost:9020");
+  // BigQuery: the project above, plus the dataset bare table names mean and
+  // where jobs run (both optional).
+  let bqDataset = $state("");
+  let bqLocation = $state("");
+  let bqEmulator = $state("localhost:9050");
   // Oracle: a service name (in the shared `database` field), a SID, or a whole
   // connect string; and where Instant Client lives when the app can't find it.
   /** Copy URL just copied: the button says so for a moment. */
@@ -1077,6 +1086,17 @@
         ...(fsAuth === "serviceAccount" && { keyFile: fsKeyFile.trim() }),
         ...(fsAuth === "emulator" && { emulatorHost: spEmulator.trim() }),
       };
+    if (dbType === "bigquery")
+      return {
+        type: "bigquery",
+        name: nm,
+        projectId: fsProject.trim(),
+        dataset: bqDataset.trim(),
+        location: bqLocation.trim(),
+        auth: fsAuth,
+        ...(fsAuth === "serviceAccount" && { keyFile: fsKeyFile.trim() }),
+        ...(fsAuth === "emulator" && { emulatorHost: bqEmulator.trim() }),
+      };
     if (isCqlForm)
       return {
         type: "cassandra",
@@ -1210,6 +1230,9 @@
       spInstance = conn.instanceId ?? "";
       spDatabase = conn.databaseId ?? "";
       spEmulator = conn.emulatorHost ?? "localhost:9020";
+      bqDataset = conn.type === "bigquery" ? (conn.dataset ?? "") : "";
+      bqLocation = conn.location ?? "";
+      bqEmulator = conn.emulatorHost ?? "localhost:9050";
       cqlHosts = conn.hosts ?? "127.0.0.1:9042";
       cqlKeyspace = conn.keyspace ?? "";
       if (conn.type === "oracle") {
@@ -1291,6 +1314,9 @@
       spInstance = "";
       spDatabase = "";
       spEmulator = "localhost:9020";
+      bqDataset = "";
+      bqLocation = "";
+      bqEmulator = "localhost:9050";
       fsEmulator = "localhost:8080";
       awsAuth = "profile";
       awsProfile = awsProfileList.includes("default") ? "default" : (awsProfileList[0] ?? "");
@@ -1462,6 +1488,7 @@
     scylladb:    { database: "", user: "" },
     firestore:   { database: "", user: "" },
     spanner:     { database: "", user: "" },
+    bigquery:    { database: "", user: "" },
     mongodb:     { database: "", user: "" },
   };
 
@@ -1654,6 +1681,7 @@
     if (dbType === "d1") return "Cloudflare D1";
     // Google's engines have no host field: name them after the database.
     if (dbType === "spanner") return spDatabase.trim() || fsProject.trim() || "Spanner";
+    if (dbType === "bigquery") return [fsProject.trim(), bqDataset.trim()].filter(Boolean).join(".") || "BigQuery";
     if (dbType === "firestore") return fsProject.trim() || "Firestore";
     // DynamoDB has no host field of its own: the form's leftover 127.0.0.1
     // named an AWS connection after localhost. Name it after where it goes.
@@ -1851,6 +1879,7 @@
     if (engineFamily(conn.type) === "redis") return conn.host ? `${conn.host}${conn.port ? `:${conn.port}` : ""}` : "—";
     if (conn.type === "couchdb" || conn.type === "elasticsearch" || conn.type === "opensearch") return conn.url || "—";
     if (conn.type === "mongodb") return conn.uri ? uriHost(conn.uri) : "—";
+    if (conn.type === "bigquery") return [[conn.projectId, conn.dataset].filter(Boolean).join("."), conn.auth === "emulator" ? "emulator" : null].filter(Boolean).join(" · ") || "—";
     if (conn.type === "spanner") return [conn.instanceId && conn.databaseId ? `${conn.instanceId}/${conn.databaseId}` : conn.projectId, conn.auth === "emulator" ? "emulator" : null].filter(Boolean).join(" · ") || "—";
     if (conn.type === "firestore") return [conn.projectId, conn.auth === "emulator" ? "emulator" : null].filter(Boolean).join(" · ") || "—";
     if (conn.type === "cassandra") return [conn.hosts, conn.keyspace].filter(Boolean).join(" · ") || "—";
@@ -1960,6 +1989,7 @@
     if (conn.type === "cassandra") return connectCassandra(conn);
     if (conn.type === "firestore") return connectFirestore(conn);
     if (conn.type === "spanner") return connectSpanner(conn);
+    if (conn.type === "bigquery") return connectBigquery(conn);
     if (conn.type === "mongodb") return connectMongo(conn);
     return connectPostgres(conn);
   }
@@ -2496,6 +2526,7 @@
       else if (p.type === "cassandra") await testCassandra(p);
       else if (p.type === "firestore") await testFirestore(p);
       else if (p.type === "spanner") await testSpanner(p);
+      else if (p.type === "bigquery") await testBigquery(p);
       else if (p.type === "mongodb") await testMongo(p);
       else await testPostgresConnection(p);
       if (myOp !== opId) return; // cancelled by the user
@@ -2727,6 +2758,7 @@
     if (isCqlForm) return cqlHosts || "—";
     if (dbType === "firestore") return fsProject || "—";
     if (dbType === "spanner") return [fsProject, spInstance, spDatabase].filter(Boolean).join("/") || "—";
+    if (dbType === "bigquery") return [fsProject, bqDataset].filter(Boolean).join(".") || "—";
     if (dbType === "mongodb") return uriHost(mongoUri) || "—";
     if (dbType === "dynamodb") return awsEndpoint || awsRegion || (awsAuth === "profile" ? awsProfile || "default profile" : "AWS");
     if (dbType === "oracle" && oraMode === "connect") return oraConnect || "—";
@@ -4960,8 +4992,24 @@
                             </div>
 
                             <!-- ── Firestore ──────────────────────────────── -->
-                          {:else if dbType === "firestore" || dbType === "spanner"}
-                            {#if dbType === "spanner"}
+                          {:else if dbType === "firestore" || dbType === "spanner" || dbType === "bigquery"}
+                            {#if dbType === "bigquery"}
+                            <div>
+                              <label for="cn-fs-project" class={lbl}>Project ID</label>
+                              <Input id="cn-fs-project" bind:value={fsProject} placeholder="my-project" spellcheck="false" autocomplete="off" class={cn(inp, "font-mono")} />
+                              <p class="mt-1 text-ui-3xs text-muted-foreground">Queries run and are billed in this project. Its datasets are the schemas.</p>
+                            </div>
+                            <div class="grid grid-cols-2 gap-2">
+                              <div>
+                                <label for="cn-bq-dataset" class={lbl}>Default dataset <span class="normal-case font-normal opacity-50">(optional)</span></label>
+                                <Input id="cn-bq-dataset" bind:value={bqDataset} placeholder="analytics" spellcheck="false" autocomplete="off" class={cn(inp, "font-mono")} />
+                              </div>
+                              <div>
+                                <label for="cn-bq-location" class={lbl}>Location <span class="normal-case font-normal opacity-50">(optional)</span></label>
+                                <Input id="cn-bq-location" bind:value={bqLocation} placeholder="US, EU, europe-west2" spellcheck="false" autocomplete="off" class={cn(inp, "font-mono")} />
+                              </div>
+                            </div>
+                            {:else if dbType === "spanner"}
                             <div>
                               <label for="cn-fs-project" class={lbl}>Project ID</label>
                               <Input id="cn-fs-project" bind:value={fsProject} placeholder="my-project" spellcheck="false" autocomplete="off" class={cn(inp, "font-mono")} />
@@ -5012,7 +5060,7 @@
                                   <Button type="button" variant="outline" onclick={pickFirestoreKey}>Browse…</Button>
                                 </div>
                                 <p class="mt-1 text-ui-3xs text-muted-foreground">
-                                  A JSON key with {dbType === "spanner" ? "Cloud Spanner" : "Cloud Datastore"} access. It stays on this machine and is used to sign in to Google.
+                                  A JSON key with {dbType === "spanner" ? "Cloud Spanner" : dbType === "bigquery" ? "BigQuery" : "Cloud Datastore"} access. It stays on this machine and is used to sign in to Google.
                                 </p>
                               </div>
                             {:else if fsAuth === "gcloud"}
@@ -5022,7 +5070,10 @@
                             {:else}
                               <div>
                                 <label for="cn-fs-emu" class={lbl}>Emulator host</label>
-                                {#if dbType === "spanner"}
+                                {#if dbType === "bigquery"}
+                                  <Input id="cn-fs-emu" bind:value={bqEmulator} placeholder="localhost:9050" spellcheck="false" autocomplete="off" class={cn(inp, "font-mono")} />
+                                  <p class="mt-1 text-ui-3xs text-muted-foreground">The emulator's REST port, 9050 by default.</p>
+                                {:else if dbType === "spanner"}
                                   <Input id="cn-fs-emu" bind:value={spEmulator} placeholder="localhost:9020" spellcheck="false" autocomplete="off" class={cn(inp, "font-mono")} />
                                   <p class="mt-1 text-ui-3xs text-muted-foreground">The emulator's REST port, 9020 by default.</p>
                                 {:else}

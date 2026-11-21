@@ -934,6 +934,38 @@ export async function connectSpanner(config) {
   return connectInv('connect_spanner_db', { config: normalizeSpanner(config) })
 }
 
+// ── BigQuery (beta) ──────────────────────────────────────────────────────────
+
+/**
+ * @typedef {{ name?: string, projectId?: string, dataset?: string, location?: string,
+ *   auth?: 'emulator' | 'serviceAccount' | 'gcloud', keyFile?: string, emulatorHost?: string }} BigqueryConnConfig
+ */
+
+/** @param {BigqueryConnConfig} config */
+function normalizeBigquery(config) {
+  /** @param {string | undefined} s */
+  const opt = (s) => (s && String(s).trim()) || null
+  return {
+    name: String(config.name || 'BigQuery'),
+    projectId: String(config.projectId || '').trim(),
+    dataset: opt(config.dataset),
+    location: opt(config.location),
+    auth: config.auth || 'gcloud',
+    keyFile: opt(config.keyFile),
+    emulatorHost: opt(config.emulatorHost),
+  }
+}
+
+/** @param {BigqueryConnConfig} config */
+export async function testBigquery(config) {
+  return inv('test_bigquery', { config: normalizeBigquery(config) })
+}
+
+/** @param {BigqueryConnConfig} config */
+export async function connectBigquery(config) {
+  return connectInv('connect_bigquery_db', { config: normalizeBigquery(config) })
+}
+
 // ── Cassandra ─────────────────────────────────────────────────────────────────
 
 /** @typedef {{ name?: string, hosts?: string, user?: string, password?: string, keyspace?: string }} CassandraConnConfig */

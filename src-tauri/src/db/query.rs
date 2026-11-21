@@ -1933,7 +1933,7 @@ pub(crate) fn raw_filter_dialect(conn: &ActiveConnection) -> super::sql_util::Ra
         ActiveConnection::Sqlite(_) | ActiveConnection::D1(_) | ActiveConnection::LibSql(_) => D::Sqlite,
         ActiveConnection::Duckdb(_) => D::Duckdb,
         ActiveConnection::Oracle(_) => D::Oracle,
-        ActiveConnection::Mssql(_) | ActiveConnection::Clickhouse(_) | ActiveConnection::Posthog(_) | ActiveConnection::Redis(_) | ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) | ActiveConnection::Spanner(_) => D::Literal,
+        ActiveConnection::Mssql(_) | ActiveConnection::Clickhouse(_) | ActiveConnection::Posthog(_) | ActiveConnection::Redis(_) | ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) | ActiveConnection::Spanner(_) | ActiveConnection::Bigquery(_) => D::Literal,
     }
 }
 
@@ -2037,6 +2037,9 @@ pub async fn get_table_rows(
         }
         ActiveConnection::Spanner(h) => {
             return super::spanner::get_table_rows(&h, &schema, &table, limit, offset, search, sort_column, sort_direction, filters).await;
+        }
+        ActiveConnection::Bigquery(h) => {
+            return super::bigquery::get_table_rows(&h, &schema, &table, limit, offset, search, sort_column, sort_direction, filters).await;
         }
         ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => {
             return Err("DynamoDB tables open in the DynamoDB page".into());
@@ -2719,6 +2722,9 @@ pub async fn update_table_cell(
         ActiveConnection::Spanner(h) => {
             return super::spanner::update_table_cell(&h, &schema, &table, primary_key, &column, &value).await;
         }
+        ActiveConnection::Bigquery(h) => {
+            return super::bigquery::update_table_cell(&h, &schema, &table, primary_key, &column, &value).await;
+        }
         ActiveConnection::Redis(_) => {
             return Err("Editing is not supported on Redis".into());
         }
@@ -2948,6 +2954,10 @@ pub async fn insert_table_row(
             let row = super::spanner::insert_table_row(&h, &schema, &table, values).await?;
             return Ok(InsertRowResult { row });
         }
+        ActiveConnection::Bigquery(h) => {
+            let row = super::bigquery::insert_table_row(&h, &schema, &table, values).await?;
+            return Ok(InsertRowResult { row });
+        }
         ActiveConnection::Redis(_) => {
             return Err("Editing is not supported on Redis".into());
         }
@@ -3081,6 +3091,9 @@ pub async fn delete_table_rows(
         ActiveConnection::Posthog(_) => return Err("PostHog is read-only: its data comes from HogQL queries.".into()),
         ActiveConnection::Spanner(h) => {
             return super::spanner::delete_table_rows(&h, &schema, &table, primary_keys).await;
+        }
+        ActiveConnection::Bigquery(h) => {
+            return super::bigquery::delete_table_rows(&h, &schema, &table, primary_keys).await;
         }
         ActiveConnection::Redis(_) => {
             return Err("Editing is not supported on Redis".into());
@@ -4574,6 +4587,7 @@ async fn run_one_other(conn: &ActiveConnection, stmt: &str) -> Result<SqlResult,
         ActiveConnection::Clickhouse(cfg) => super::clickhouse::query(cfg, stmt).await,
         ActiveConnection::Posthog(cfg) => super::posthog::query(cfg, stmt).await,
         ActiveConnection::Spanner(h) => super::spanner::query(h, stmt).await,
+        ActiveConnection::Bigquery(h) => super::bigquery::query(h, stmt).await,
         ActiveConnection::Redis(cfg) => super::redis::query(cfg, stmt).await,
         ActiveConnection::Dynamodb(cfg) => super::dynamodb::query(cfg, stmt).await,
         ActiveConnection::Doc(d) => super::docdb::query(d, stmt).await,
@@ -4645,6 +4659,8 @@ pub(crate) async fn run_one_cancellable(
         // Cancel by client_query_id / X-Opaque-Id on the server.
         ActiveConnection::Posthog(cfg) => super::posthog::query_cancellable(cfg, stmt, stop).await,
         ActiveConnection::Doc(super::docdb::DocConn::Elastic(cfg)) => super::elastic::query_cancellable(cfg, stmt, stop).await,
+        // jobs.cancel on the query's job.
+        ActiveConnection::Bigquery(h) => super::bigquery::query_cancellable(h, stmt, stop).await,
         // No server-side stop exists: stop waiting, and say the server may not.
         other => tokio::select! {
             r = run_one_other(other, stmt) => r,
@@ -4691,6 +4707,7 @@ async fn stream_one(
         ActiveConnection::Doc(super::docdb::DocConn::Mongo(m)) if super::mongo::streams(stmt) => super::mongo::stream_into(m, stmt, sink, stop).await,
         ActiveConnection::Oracle(h) if super::oracle::reads(stmt) => super::oracle::stream_into(h, stmt, sink, stop).await,
         ActiveConnection::Clickhouse(cfg) if super::clickhouse::reads(stmt) => super::clickhouse::stream_into(cfg, stmt, sink, stop).await,
+        ActiveConnection::Bigquery(h) if super::bigquery::reads(stmt) => super::bigquery::stream_into(h, stmt, sink, stop).await,
         _ => return None,
     })
 }
@@ -5599,6 +5616,7 @@ async fn dispatch_stats_sql(conn: &ActiveConnection, sql: &str) -> Result<SqlRes
         ActiveConnection::Clickhouse(cfg) => super::clickhouse::query(cfg, sql).await,
         ActiveConnection::Posthog(cfg) => super::posthog::query(cfg, sql).await,
         ActiveConnection::Spanner(h) => super::spanner::query(h, sql).await,
+        ActiveConnection::Bigquery(h) => super::bigquery::query(h, sql).await,
         ActiveConnection::Redis(_) => Err("Column statistics are not supported on Redis".into()),
         ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => Err("Column statistics are not supported on DynamoDB".into()),
         ActiveConnection::Duckdb(h) => super::duckdb::execute_sql(h, sql).await,
@@ -5621,7 +5639,7 @@ pub async fn ping_connection(state: Db<'_>) -> Result<(), String> {
         }
         ActiveConnection::Mysql(pool) => super::connection::keepalive_idle(&pool).await,
         // HTTP-based: stateless, no persistent TCP connection to validate
-        ActiveConnection::D1(_) | ActiveConnection::LibSql(_) | ActiveConnection::Clickhouse(_) | ActiveConnection::Redis(_) | ActiveConnection::Posthog(_) | ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) | ActiveConnection::Spanner(_) => Ok(()),
+        ActiveConnection::D1(_) | ActiveConnection::LibSql(_) | ActiveConnection::Clickhouse(_) | ActiveConnection::Redis(_) | ActiveConnection::Posthog(_) | ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) | ActiveConnection::Spanner(_) | ActiveConnection::Bigquery(_) => Ok(()),
         ActiveConnection::Duckdb(h) => super::duckdb::execute_sql(&h, "SELECT 1").await.map(|_| ()),
         ActiveConnection::Mssql(h) => super::mssql::execute_sql(&h, "SELECT 1").await.map(|_| ()),
         ActiveConnection::Oracle(h) => super::oracle::ping(&h).await,

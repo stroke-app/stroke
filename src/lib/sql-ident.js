@@ -96,7 +96,7 @@ function reservedFor(engine) {
 
 /** @param {string | null | undefined} engine */
 function quoteChars(engine) {
-  if (engine === 'mysql' || engine === 'mariadb' || engine === 'spanner') return ['`', '`']
+  if (engine === 'mysql' || engine === 'mariadb' || engine === 'spanner' || engine === 'bigquery') return ['`', '`']
   if (engine === 'mssql') return ['[', ']']
   return ['"', '"']
 }

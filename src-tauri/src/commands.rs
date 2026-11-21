@@ -938,6 +938,18 @@ pub async fn connect_spanner_db(state: Db<'_>, config: crate::db::spanner::Spann
     crate::db::connection::connect_spanner(state, config).await
 }
 
+/// Google BigQuery (beta): the project answers, with these credentials.
+#[tauri::command]
+pub async fn test_bigquery(config: crate::db::bigquery::BigQueryConfig) -> Result<(), String> {
+    let h = crate::db::bigquery::connect(&config).await?;
+    crate::db::bigquery::ping(&h).await
+}
+
+#[tauri::command]
+pub async fn connect_bigquery_db(state: Db<'_>, config: crate::db::bigquery::BigQueryConfig) -> Result<(), String> {
+    crate::db::connection::connect_bigquery(state, config).await
+}
+
 /// One Firestore REST call (document paths of this database only).
 #[tauri::command]
 pub async fn firestore_request(
@@ -1276,6 +1288,12 @@ pub async fn pg_explain_sql(
             planning_time: 0.0,
             execution_time: 0.0,
             driver: "spanner".into(),
+        }),
+        ActiveConnection::Bigquery(h) => Ok(ExplainResult {
+            plan: crate::db::bigquery::explain_plan(&h, &sql).await?,
+            planning_time: 0.0,
+            execution_time: 0.0,
+            driver: "bigquery".into(),
         }),
         _ => Err("This engine doesn't expose a query plan".into()),
     }

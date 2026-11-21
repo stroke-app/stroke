@@ -775,6 +775,8 @@ pub fn run() {
             commands::connect_firestore_db,
             commands::test_spanner,
             commands::connect_spanner_db,
+            commands::test_bigquery,
+            commands::connect_bigquery_db,
             commands::firestore_request,
             commands::test_mongo,
             commands::connect_mongo_db,

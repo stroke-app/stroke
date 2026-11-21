@@ -420,6 +420,8 @@ pub enum ActiveConnection {
     Posthog(PosthogConfig),
     /// Google Cloud Spanner (beta), over its REST API.
     Spanner(crate::db::spanner::SpannerHandle),
+    /// Google BigQuery (beta), over its REST API.
+    Bigquery(crate::db::bigquery::BigQueryHandle),
 }
 
 impl ActiveConnection {
@@ -439,6 +441,7 @@ impl ActiveConnection {
             Self::Oracle(_) => "oracle",
             Self::Posthog(_) => "posthog",
             Self::Spanner(_) => "spanner",
+            Self::Bigquery(_) => "bigquery",
         }
     }
 }
@@ -1867,6 +1870,14 @@ pub async fn connect_spanner(state: Db<'_>, config: crate::db::spanner::SpannerC
     let h = crate::db::spanner::connect(&config).await?;
     close_existing(&state).await;
     set_conn(&state, Some(ActiveConnection::Spanner(h)))
+}
+
+/// Google BigQuery (beta): the project answers before it becomes the active
+/// connection.
+pub async fn connect_bigquery(state: Db<'_>, config: crate::db::bigquery::BigQueryConfig) -> Result<(), String> {
+    let h = crate::db::bigquery::connect(&config).await?;
+    close_existing(&state).await;
+    set_conn(&state, Some(ActiveConnection::Bigquery(h)))
 }
 
 pub async fn connect_firestore(state: Db<'_>, config: crate::db::firestore::FirestoreConfig) -> Result<(), String> {
