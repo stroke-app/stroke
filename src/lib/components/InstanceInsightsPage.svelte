@@ -183,7 +183,7 @@
       const reads = d('blksRead'), hits = d('blksHit')
       out.push({
         t: b.t, commits: d('commits'), rollbacks: d('rollbacks'), tps: d('commits') + d('rollbacks'),
-        tupUpdated: d('tupUpdated'), tupDeleted: d('tupDeleted'),
+        tupInserted: d('tupInserted'), tupUpdated: d('tupUpdated'), tupDeleted: d('tupDeleted'),
         reads, hits, hitRatio: (hits + reads) > 0 ? (hits / (hits + reads)) * 100 : 100,
       })
     }
@@ -556,7 +556,10 @@
   const ACRONYMS = new Set(['id', 'ids', 'pid', 'pids', 'db', 'ip', 'addr', 'xid', 'lsn', 'wal', 'gid', 'sql', 'os', 'tcp', 'io'])
   /** `blocking_pids` → `Blocking PIDs`. Raw catalog column names are not labels. */
   const humanize = (/** @type {string} */ k) => String(k).replace(/[_-]+/g, ' ').trim().split(' ')
-    .map((w) => (ACRONYMS.has(w.toLowerCase()) ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1)))
+    // A plural acronym keeps its s small: "PIDs", not "PIDS".
+    .map((w) => (ACRONYMS.has(w.toLowerCase())
+      ? (/^(ids|pids)$/i.test(w) ? w.slice(0, -1).toUpperCase() + 's' : w.toUpperCase())
+      : w.charAt(0).toUpperCase() + w.slice(1)))
     .join(' ')
 
   /** Session state is the one column worth reading at a glance. */
@@ -712,13 +715,14 @@
           })}
           {@render stat({
             label: 'Row writes',
-            help: 'Rows updated and deleted per second across every database on this instance.',
-            value: cur ? num(cur.tupUpdated + cur.tupDeleted) : '—',
+            help: 'Rows inserted, updated and deleted per second across every database on this instance.',
+            value: cur ? num(cur.tupInserted + cur.tupUpdated + cur.tupDeleted) : '—',
             unit: '/s',
             hint: '',
             tone: 'plain',
-            series: rateHistory.map((r) => r.tupUpdated + r.tupDeleted),
+            series: rateHistory.map((r) => r.tupInserted + r.tupUpdated + r.tupDeleted),
             rows: [
+              { k: 'Inserts/s', v: cur ? num(cur.tupInserted) : '—' },
               { k: 'Updates/s', v: cur ? num(cur.tupUpdated) : '—' },
               { k: 'Deletes/s', v: cur ? num(cur.tupDeleted) : '—' },
               { k: 'Fetched total', v: activity ? compact(activity.counters.tupFetched) : '—' },

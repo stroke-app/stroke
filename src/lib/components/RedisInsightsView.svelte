@@ -198,6 +198,9 @@ return out`
         messages = [{ id: ++msgSeq, ...m }, ...messages].slice(0, MSG_CAP)
       })
       subTargets = names
+      // The list beside it said "No channel has a subscriber" while this very
+      // view was subscribed: it was only read when the page opened.
+      void loadPubsub().catch(() => {})
     } catch (e) {
       toast.error('Subscribe failed', { description: msg(e) })
     } finally {
@@ -208,7 +211,10 @@ return out`
     const s = stopSub
     stopSub = null
     subTargets = []
-    if (s) await s()
+    if (s) {
+      await s()
+      if (view === 'pubsub' && active) void loadPubsub().catch(() => {})
+    }
   }
   // Leaving Pub/Sub (or the page) ends the subscription.
   $effect(() => {

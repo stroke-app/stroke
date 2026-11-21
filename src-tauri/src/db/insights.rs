@@ -334,6 +334,7 @@ pub struct SessionCounts {
 pub struct ActivityCounters {
     pub commits: i64,
     pub rollbacks: i64,
+    pub tup_inserted: i64,
     pub tup_updated: i64,
     pub tup_deleted: i64,
     pub tup_fetched: i64,
@@ -412,6 +413,7 @@ async fn pg_activity(pool: &PgPool) -> InstanceActivity {
     let counters = match sqlx::query(
         "SELECT COALESCE(sum(xact_commit),0)::bigint   AS commits,
                 COALESCE(sum(xact_rollback),0)::bigint AS rollbacks,
+                COALESCE(sum(tup_inserted),0)::bigint  AS tup_inserted,
                 COALESCE(sum(tup_updated),0)::bigint   AS tup_updated,
                 COALESCE(sum(tup_deleted),0)::bigint   AS tup_deleted,
                 COALESCE(sum(tup_fetched),0)::bigint   AS tup_fetched,
@@ -426,6 +428,7 @@ async fn pg_activity(pool: &PgPool) -> InstanceActivity {
         Ok(r) => ActivityCounters {
             commits: r.try_get("commits").unwrap_or(0),
             rollbacks: r.try_get("rollbacks").unwrap_or(0),
+            tup_inserted: r.try_get("tup_inserted").unwrap_or(0),
             tup_updated: r.try_get("tup_updated").unwrap_or(0),
             tup_deleted: r.try_get("tup_deleted").unwrap_or(0),
             tup_fetched: r.try_get("tup_fetched").unwrap_or(0),
@@ -509,6 +512,7 @@ async fn mysql_activity(pool: &MySqlPool) -> InstanceActivity {
     let counters = ActivityCounters {
         commits: g("Com_commit"),
         rollbacks: g("Com_rollback"),
+        tup_inserted: first(&["Innodb_rows_inserted", "Handler_write"]),
         tup_updated: first(&["Innodb_rows_updated", "Handler_update"]),
         tup_deleted: first(&["Innodb_rows_deleted", "Handler_delete"]),
         tup_fetched: first(&["Innodb_rows_read", "Rows_read"]),
@@ -530,6 +534,7 @@ fn zero_counters() -> ActivityCounters {
     ActivityCounters {
         commits: 0,
         rollbacks: 0,
+        tup_inserted: 0,
         tup_updated: 0,
         tup_deleted: 0,
         tup_fetched: 0,
@@ -579,8 +584,10 @@ pub async fn instance_state(state: Db<'_>) -> Result<InstanceState, String> {
         ActiveConnection::Postgres(pool) => {
             let sessions = pg_query_objects(
                 &pool,
+                // Background workers have no user; their type (checkpointer,
+                // autovacuum launcher) says what they are where a dash said nothing.
                 "SELECT pid,
-                        usename          AS \"user\",
+                        COALESCE(usename::text, backend_type) AS \"user\",
                         application_name AS application,
                         client_addr::text AS client,
                         state,
