@@ -582,7 +582,7 @@ fn schema_key(h: &SpannerConn, schema: &str) -> String {
     }
 }
 
-fn table_ref(h: &SpannerConn, schema: &str, table: &str) -> String {
+pub(crate) fn table_ref(h: &SpannerConn, schema: &str, table: &str) -> String {
     let key = schema_key(h, schema);
     if key.is_empty() || (h.dialect == Dialect::Postgres && key == "public") {
         quote_ident(h, table)

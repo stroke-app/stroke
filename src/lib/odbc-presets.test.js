@@ -79,5 +79,10 @@ describe('ODBC presets', () => {
     const dbx = odbcConfigOf({ type: 'odbc', preset: 'databricks', host: 'h', odbcFields: { httpPath: '/p' }, user: 'me', password: 'dapi1' })
     expect(dbx.user).toBeNull()
     expect(dbx.password).toBe('dapi1')
+    // Through SSH: the target host and port go along for the tunnel.
+    const ssh = { host: 'bastion', port: 22, username: 'me' }
+    const viaSsh = odbcConfigOf({ type: 'odbc', preset: 'db2', host: 'db.internal', port: '50000', database: 'S', ssh })
+    expect(viaSsh).toMatchObject({ ssh, targetHost: 'db.internal', targetPort: 50000 })
+    expect(odbcConfigOf({ type: 'odbc', preset: 'generic', odbcMode: 'dsn', dsn: 'X', ssh }).ssh).toBeUndefined()
   })
 })

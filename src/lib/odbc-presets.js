@@ -285,7 +285,11 @@ export function odbcConfigOf(c) {
   if (mode === 'fields' && preset) {
     const fields = { host: c.host ?? '', port: c.port != null ? String(c.port) : '', database: c.database ?? '', user: c.user ?? '', ...(c.odbcFields ?? {}) }
     const user = preset.auth === 'token' ? null : base.user
-    return { ...base, user, dsn: null, connectionString: presetConnectionString(preset, c.odbcDriver || '', fields) }
+    // Through SSH: the backend opens the tunnel to this host and port and
+    // points the string at its local end.
+    const port = Number(c.port)
+    const ssh = c.ssh && fields.host && port ? { ssh: c.ssh, targetHost: fields.host, targetPort: port } : {}
+    return { ...base, user, dsn: null, connectionString: presetConnectionString(preset, c.odbcDriver || '', fields), ...ssh }
   }
   return { ...base, dsn: null, connectionString: String(c.connectionString || '').trim() }
 }

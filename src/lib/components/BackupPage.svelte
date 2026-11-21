@@ -82,7 +82,8 @@
   /** @type {'backup'|'restore'|'schedule'} */
   let activeTab = $state('backup')
 
-  const supportsSchemaFilter = $derived(dbType === 'postgres' || dbType === 'mysql')
+  // Engines whose dump covers one schema (or dataset) at a time.
+  const supportsSchemaFilter = $derived(['postgres', 'mysql', 'spanner', 'bigquery', 'snowflake', 'odbc'].includes(dbType ?? ''))
   const isPostgres = $derived(dbType === 'postgres')
   const isSqliteFamily = $derived(dbType === 'sqlite' || dbType === 'd1' || dbType === 'libsql')
   const dbLabel = $derived(
@@ -94,6 +95,10 @@
       libsql: 'libSQL / Turso',
       duckdb: 'DuckDB',
       mssql: 'SQL Server',
+      spanner: 'Spanner',
+      bigquery: 'BigQuery',
+      snowflake: 'Snowflake',
+      odbc: 'ODBC',
     })[dbType ?? ''] ?? 'Database',
   )
   const cliName = $derived(isPostgres ? 'psql' : dbType === 'mysql' ? 'mysql' : isSqliteFamily ? 'sqlite3' : '')
@@ -491,6 +496,7 @@
       dbType === 'postgres' ? e.includes('postgres')
       : dbType === 'mysql' ? e.includes('mysql') || e.includes('maria')
       : dbType === 'sqlite' || dbType === 'd1' || dbType === 'libsql' ? e.includes('sqlite') || e.includes('d1') || e.includes('libsql')
+      : dbType === 'spanner' || dbType === 'bigquery' || dbType === 'snowflake' || dbType === 'odbc' ? e.includes(dbType)
       : true
     return ok ? null : importInfo?.engine ?? null
   })

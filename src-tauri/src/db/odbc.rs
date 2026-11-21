@@ -50,6 +50,15 @@ pub struct OdbcConfig {
     pub user: Option<String>,
     #[serde(default)]
     pub password: Option<String>,
+    /// An SSH tunnel to the database's host and port. Only a preset's fields
+    /// say where that is (`target_host`, `target_port`); the string is
+    /// pointed at the tunnel's local end.
+    #[serde(default)]
+    pub ssh: Option<super::ssh_tunnel::SshConfig>,
+    #[serde(default)]
+    pub target_host: Option<String>,
+    #[serde(default)]
+    pub target_port: Option<u16>,
 }
 
 /// How the database names what the app calls a schema.
@@ -119,6 +128,9 @@ impl OdbcInfo {
 
 pub struct OdbcConn {
     pub info: OdbcInfo,
+    /// The connection string, to open a transaction's own connection beside
+    /// this one. Held in memory only.
+    cs: String,
     conn: Mutex<Connection<'static>>,
 }
 
@@ -387,6 +399,48 @@ pub fn connection_string(cfg: &OdbcConfig) -> Result<String, String> {
     Ok(s)
 }
 
+/// Point a connection string's host and port at a tunnel's local end:
+/// `host:port` and `host/port` inside a value, and values that are exactly
+/// the host or the port. Values are compared, never substrings of other words.
+pub fn retarget(cs: &str, host: &str, port: u16, local_port: u16) -> String {
+    let (host, port_s, local) = (host.trim(), port.to_string(), local_port.to_string());
+    let mut out = Vec::new();
+    // Split on ';' outside braces.
+    let mut part = String::new();
+    let mut depth = 0;
+    let mut parts = Vec::new();
+    for c in cs.chars() {
+        match c {
+            '{' => { depth += 1; part.push(c) }
+            '}' => { depth -= 1; part.push(c) }
+            ';' if depth <= 0 => parts.push(std::mem::take(&mut part)),
+            c => part.push(c),
+        }
+    }
+    if !part.is_empty() {
+        parts.push(part);
+    }
+    for p in parts {
+        let Some((k, v)) = p.split_once('=') else {
+            out.push(p);
+            continue;
+        };
+        let v = if v == host {
+            "127.0.0.1".to_string()
+        } else if v == port_s {
+            local.clone()
+        } else {
+            v.replace(&format!("{host}:{port_s}"), &format!("127.0.0.1:{local}")).replace(&format!("{host}/{port_s}"), &format!("127.0.0.1/{local}"))
+        };
+        out.push(format!("{k}={v}"));
+    }
+    let mut s = out.join(";");
+    if cs.ends_with(';') {
+        s.push(';');
+    }
+    s
+}
+
 /// Driver errors arrive as diagnostics records; keep the message, drop the
 /// state codes unless that is all there is.
 fn odbc_err(e: odbc_api::Error) -> String {
@@ -419,7 +473,10 @@ fn paging_for(dbms: &str) -> Paging {
 }
 
 pub async fn connect(cfg: &OdbcConfig) -> Result<OdbcHandle, String> {
-    let cs = connection_string(cfg)?;
+    connect_string(connection_string(cfg)?).await
+}
+
+async fn connect_string(cs: String) -> Result<OdbcHandle, String> {
     tokio::task::spawn_blocking(move || {
         let env = environment()?;
         let options = ConnectionOptions { login_timeout_sec: Some(20), ..Default::default() };
@@ -442,7 +499,11 @@ pub async fn connect(cfg: &OdbcConfig) -> Result<OdbcHandle, String> {
         if guess == Namespace::Schema && schema_names(&conn, &info).is_empty() {
             info.namespace = if catalog_len > 0 { Namespace::Catalog } else { Namespace::Flat };
         }
-        Ok(Arc::new(OdbcConn { info, conn: Mutex::new(conn) }))
+        // The same for catalogs: SQLite's driver reports them and has none.
+        if info.namespace == Namespace::Catalog && catalog_names(&conn).is_empty() {
+            info.namespace = Namespace::Flat;
+        }
+        Ok(Arc::new(OdbcConn { info, cs, conn: Mutex::new(conn) }))
     })
     .await
     .map_err(|e| format!("ODBC task failed: {e}"))?
@@ -461,6 +522,22 @@ where
     })
     .await
     .map_err(|e| format!("ODBC task failed: {e}"))?
+}
+
+/// A connection of its own for an explicit transaction, autocommit off: on
+/// the shared one, every grid page and sidebar query would run inside it.
+pub async fn open_tx(h: &OdbcHandle) -> Result<OdbcHandle, String> {
+    let tx = connect_string(h.cs.clone()).await?;
+    run(&tx, |conn, _| conn.set_autocommit(false).map_err(odbc_err)).await?;
+    Ok(tx)
+}
+
+pub async fn commit(h: &OdbcHandle) -> Result<(), String> {
+    run(h, |conn, _| conn.commit().map_err(odbc_err)).await
+}
+
+pub async fn rollback(h: &OdbcHandle) -> Result<(), String> {
+    run(h, |conn, _| conn.rollback().map_err(odbc_err)).await
 }
 
 pub async fn ping(h: &OdbcHandle) -> Result<(), String> {
@@ -878,7 +955,7 @@ pub fn quote(info: &OdbcInfo, ident: &str) -> String {
 }
 
 /// `schema.table`, `catalog.table` or `table`, by how the database names things.
-fn table_ref(info: &OdbcInfo, schema: &str, table: &str) -> String {
+pub(crate) fn table_ref(info: &OdbcInfo, schema: &str, table: &str) -> String {
     let t = quote(info, table);
     if schema.is_empty() || schema == FLAT_SCHEMA && info.namespace == Namespace::Flat {
         return t;
@@ -951,17 +1028,19 @@ fn schema_names(conn: &Connection<'static>, info: &OdbcInfo) -> Vec<String> {
     names
 }
 
+/// Every catalog name: SQL_ALL_CATALOGS (catalog "%", schema "", table "").
+fn catalog_names(conn: &Connection<'static>) -> Vec<String> {
+    let Ok(mut stmt) = conn.preallocate() else { return vec![] };
+    let Ok(mut cur) = stmt.tables_cursor("%", "", "", "") else { return vec![] };
+    catalog_rows(&mut cur, &[1]).unwrap_or_default().into_iter().filter_map(|r| r[0].clone()).filter(|s| !s.is_empty()).collect()
+}
+
 pub async fn list_schemas(h: &OdbcHandle) -> Result<Vec<String>, String> {
     run(h, |conn, info| {
         let mut names: Vec<String> = match info.namespace {
             Namespace::Flat => return Ok(vec![FLAT_SCHEMA.to_string()]),
             Namespace::Schema => schema_names(conn, info),
-            Namespace::Catalog => {
-                // SQL_ALL_CATALOGS: catalog "%", schema "", table "".
-                let mut stmt = conn.preallocate().map_err(odbc_err)?;
-                let mut cur = stmt.tables_cursor("%", "", "", "").map_err(odbc_err)?;
-                catalog_rows(&mut cur, &[1])?.into_iter().filter_map(|r| r[0].clone()).collect()
-            }
+            Namespace::Catalog => catalog_names(conn),
         };
         names.sort();
         names.dedup();
@@ -1092,7 +1171,11 @@ fn columns_on(conn: &Connection<'static>, info: &OdbcInfo, schema: &str, table: 
             let size = s(&r[3]);
             let digits = s(&r[4]);
             let code: i32 = s(&r[1]).parse().unwrap_or(0);
-            let shows_size = matches!(code, 1 | 12 | -8 | -9 | -2 | -3) && !size.is_empty() && size != "0" && !ty.contains('(');
+            // Only a character or binary type takes a length: some drivers
+            // report other types as text (psqlODBC's bool arrives as VARCHAR
+            // of 5), and `bool(5)` is not a type.
+            let sized_name = { let t = ty.to_ascii_lowercase(); t.contains("char") || t.contains("binary") || t.contains("string") };
+            let shows_size = matches!(code, 1 | 12 | -8 | -9 | -2 | -3) && sized_name && !size.is_empty() && size != "0" && !ty.contains('(');
             let shows_scale = matches!(code, 2 | 3) && !size.is_empty() && !ty.contains('(');
             let data_type = if shows_size {
                 format!("{ty}({size})")
@@ -1554,6 +1637,9 @@ mod tests {
             connection_string: cs.map(String::from),
             user: user.map(String::from),
             password: pw.map(String::from),
+            ssh: None,
+            target_host: None,
+            target_port: None,
         }
     }
 
@@ -1567,6 +1653,40 @@ mod tests {
         // A string that already says who: left alone.
         assert_eq!(connection_string(&cfg(Some("DSN=x;UID=a;PWD=b;"), None, Some("me"), Some("pw"))).unwrap(), "DSN=x;UID=a;PWD=b;");
         assert!(connection_string(&cfg(None, None, None, None)).is_err());
+    }
+
+    /// Through a real SSH server (STROKE_TEST_ODBC_SSH = key|ssh port|db host|db port|connection string).
+    #[tokio::test]
+    async fn live_through_ssh() {
+        let Ok(spec) = std::env::var("STROKE_TEST_ODBC_SSH") else { return };
+        let p: Vec<&str> = spec.splitn(5, '|').collect();
+        let mut c = cfg(Some(p[4]), None, None, None);
+        c.ssh = Some(super::super::ssh_tunnel::SshConfig {
+            host: "127.0.0.1".into(),
+            port: p[1].parse().unwrap(),
+            username: "tester".into(),
+            private_key_path: p[0].into(),
+            keepalive: 0,
+        });
+        c.target_host = Some(p[2].into());
+        c.target_port = Some(p[3].parse().unwrap());
+        let (c, tunnel) = crate::db::connection::resolve_odbc_ssh(c).await.unwrap();
+        let tunnel = tunnel.expect("a tunnel");
+        let cs = c.connection_string.clone().unwrap();
+        assert!(cs.contains("127.0.0.1") && cs.contains(&tunnel.local_port.to_string()) && !cs.contains(p[2]), "{cs}");
+        let h = connect(&c).await.unwrap();
+        assert_eq!(query(&h, "SELECT 41 + 1").await.unwrap().rows[0][0], json!(42));
+    }
+
+    #[test]
+    fn tunnels_retarget_host_and_port_only() {
+        let db2 = "Driver={IBM DB2 ODBC DRIVER};Database=SAMPLE;Hostname=db.internal;Port=50000;Protocol=TCPIP;";
+        assert_eq!(retarget(db2, "db.internal", 50000, 41234), "Driver={IBM DB2 ODBC DRIVER};Database=SAMPLE;Hostname=127.0.0.1;Port=41234;Protocol=TCPIP;");
+        assert_eq!(retarget("Driver={HDBODBC};ServerNode=hana.internal:30015;", "hana.internal", 30015, 5000), "Driver={HDBODBC};ServerNode=127.0.0.1:5000;");
+        assert_eq!(retarget("DBQ=//ora:1521/FREEPDB1;", "ora", 1521, 7000), "DBQ=//127.0.0.1:7000/FREEPDB1;");
+        assert_eq!(retarget("Dbname=fb/3050:/data/x.fdb;", "fb", 3050, 7001), "Dbname=127.0.0.1/7001:/data/x.fdb;");
+        // A database named like the port, or a driver brace with ';', stays.
+        assert_eq!(retarget("Driver={A;B};Database=50000x;Port=50000", "h", 50000, 1), "Driver={A;B};Database=50000x;Port=1");
     }
 
     #[test]
