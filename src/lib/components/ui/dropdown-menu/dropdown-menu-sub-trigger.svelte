@@ -17,7 +17,7 @@
 	data-slot="dropdown-menu-sub-trigger"
 	data-inset={inset}
 	class={cn(
-		"focus:bg-accent focus:text-foreground data-open:bg-accent data-open:text-foreground not-data-[variant=destructive]:focus:**:text-foreground gap-1.5 rounded-sm px-1.5 py-1 text-ui-2xs data-inset:pl-7 [&_svg:not([class*='size-'])]:size-3.5 flex min-w-0 cursor-default items-center outline-hidden select-none [&>[data-slot=menu-label]]:min-w-0 [&>[data-slot=menu-label]]:truncate [&_svg]:pointer-events-none [&_svg]:shrink-0",
+		"focus:bg-accent focus:text-foreground data-open:bg-accent data-open:text-foreground not-data-[variant=destructive]:focus:**:text-foreground min-h-7 gap-2 rounded-sm px-2 py-1 text-ui-xs data-inset:pl-7 [&_svg:not([class*='size-'])]:size-3.5 flex min-w-0 cursor-default items-center outline-hidden select-none [&>[data-slot=menu-label]]:min-w-0 [&>[data-slot=menu-label]]:truncate [&_svg]:pointer-events-none [&_svg]:shrink-0",
 		className
 	)}
 	{...restProps}

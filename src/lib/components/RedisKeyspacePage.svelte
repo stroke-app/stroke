@@ -1,4 +1,5 @@
 <script>
+  import { comboTitle } from '$lib/shortcuts.js'
   // Redis keys as an editable table. One row per key (type, TTL, size, length,
   // value preview), loaded a page at a time with SCAN. Edits to values, TTLs
   // and names, new keys and deletes are staged and sent together in one
@@ -679,7 +680,13 @@
     { col: 'length', label: 'Length', align: 'justify-end' },
   ]
   const GRID_COLS = 'grid-cols-[32px_minmax(200px,1.4fr)_84px_88px_76px_76px_minmax(240px,2fr)]'
-  const pendingTitle = $derived(readOnly ? READ_ONLY_HINT : 'Apply staged changes in one transaction (⌘S)')
+  // With a key open, its value is in the panel beside the list, in full. The
+  // Value column repeated it and pushed the list to 55rem, so beside the panel
+  // it scrolled sideways and cut Length off; it steps aside while one is open.
+  const GRID_COLS_PANEL = 'grid-cols-[32px_minmax(140px,1fr)_84px_88px_76px_76px]'
+  const panelOpen = $derived(!!selectedRow && !selectedRow.isNew)
+  const gridCols = $derived(panelOpen ? GRID_COLS_PANEL : GRID_COLS)
+  const pendingTitle = $derived(readOnly ? READ_ONLY_HINT : `Apply staged changes in one transaction (${comboTitle('Mod+S')})`)
   const loadedLabel = $derived(
     dbSize == null ? `${rows.length.toLocaleString()} ${plural(rows.length, "key")}`
     : filterInput.trim() || typeFilter ? `${rows.length.toLocaleString()} matching${done ? '' : '+'}`
@@ -787,7 +794,7 @@
     <Button variant="ghost" size="icon-sm" onclick={reload} title="Reload keys" aria-label="Reload keys">
       <RefreshCw class={cn(loading && 'animate-spin')} />
     </Button>
-    <Button variant="ghost" size="icon-sm" onclick={toggleTerminalDock} aria-pressed={$terminalDockOpen} title="redis-cli (⌘J)" aria-label="Toggle redis-cli" class={cn($terminalDockOpen && 'bg-accent text-foreground')}>
+    <Button variant="ghost" size="icon-sm" onclick={toggleTerminalDock} aria-pressed={$terminalDockOpen} title={`redis-cli (${comboTitle('Mod+J')})`} aria-label="Toggle redis-cli" class={cn($terminalDockOpen && 'bg-accent text-foreground')}>
       <TerminalIcon />
     </Button>
     <Button variant="outline" size="sm" onclick={openCreate} disabled={readOnly} title={readOnly ? READ_ONLY_HINT : 'New key'}>
@@ -830,9 +837,9 @@
         onscroll={onScroll}
         onkeydown={onGridKey}
       >
-        <div class="min-w-[55rem]">
+        <div class={panelOpen ? 'min-w-[31rem]' : 'min-w-[55rem]'}>
           <!-- Header -->
-          <div bind:this={headerEl} role="row" class={cn('sticky top-0 z-20 grid h-7 items-center border-b border-border bg-panel text-ui-2xs font-medium text-muted-foreground', GRID_COLS)}>
+          <div bind:this={headerEl} role="row" class={cn('sticky top-0 z-20 grid h-7 items-center border-b border-border bg-panel text-ui-2xs font-medium text-muted-foreground', gridCols)}>
             <span class="flex justify-center" role="columnheader">
               <Checkbox checked={allChecked} onCheckedChange={toggleAll} aria-label="Select all loaded keys" />
             </span>
@@ -844,7 +851,7 @@
                 {/if}
               </button>
             {/each}
-            <span class="px-2" role="columnheader">Value</span>
+            {#if !panelOpen}<span class="px-2" role="columnheader">Value</span>{/if}
           </div>
 
           {#if creating}
@@ -889,7 +896,7 @@
                 aria-selected={selectedKey === r.key}
                 class={cn(
                   'absolute inset-x-0 grid items-center border-b border-border/40 font-mono text-ui-xs',
-                  GRID_COLS,
+                  gridCols,
                   del ? 'bg-destructive/5 text-destructive' : r.isNew ? 'bg-success/10' : selectedKey === r.key ? 'bg-accent' : 'hover:bg-accent/40',
                 )}
                 style:top="{(first + i) * rowH}px"
@@ -934,6 +941,7 @@
                 <span role="gridcell" class="px-2 text-right tabular-nums text-muted-foreground">{r.length?.toLocaleString() ?? ''}</span>
 
                 <!-- Value -->
+                {#if !panelOpen}
                 <!-- svelte-ignore a11y_no_static_element_interactions -->
                 <span role="gridcell" tabindex="-1" class={cn('flex h-full min-w-0 items-center px-2', (sVal || entryEdits) && 'bg-warning/10')} ondblclick={() => startEdit(r, 'value')}>
                   {#if editing?.key === r.key && editing.col === 'value'}
@@ -942,6 +950,7 @@
                     <span class={cn('truncate', del ? 'line-through' : 'text-foreground/80')} title={sVal?.display ?? r.preview}>{sVal?.display ?? r.preview}</span>
                   {/if}
                 </span>
+                {/if}
               </div>
             {/each}
           </div>

@@ -10566,6 +10566,7 @@ let rowSearch = $state('')
   onopenshortcuts={() => openShortcuts()}
   onopenmyshares={() => openSharesTab()}
   onopenkeybindings={() => { settingsSection = 'keybindings'; showSettingsModal = true }}
+  onopenappearance={() => { settingsSection = 'appearance'; showSettingsModal = true }}
   onopenabout={() => (showAboutModal = true)}
   onopenreport={() => (showReportIssueDialog = true)}
   oncheckupdate={() => void updateDialog?.checkNow()}

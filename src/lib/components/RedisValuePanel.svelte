@@ -1,4 +1,5 @@
 <script>
+  import { comboTitle } from '$lib/shortcuts.js'
   // Side panel for the selected Redis key: its value, paged, with edits staged
   // into the page's pending list (applied together with the table's edits).
   import { redisKeyValue } from '$lib/api.js'
@@ -340,9 +341,9 @@
         {#if textDraft != null}
           <!-- Editing: the actions sit under the text, where the eye already is. -->
           <div class="flex h-12 shrink-0 items-center gap-2 border-t border-border/30 px-4">
-            <span class="min-w-0 flex-1 truncate text-ui-2xs text-muted-foreground">Staged changes apply with Apply (⌘S)</span>
+            <span class="min-w-0 flex-1 truncate text-ui-2xs text-muted-foreground">Then Apply ({comboTitle('Mod+S')})</span>
             <Button variant="ghost" size="sm" class="rounded-md" onclick={() => (textDraft = null)}>Cancel</Button>
-            <Button size="sm" class="rounded-md" onclick={stageText} title="Stage this change (⌘↵)">Stage change</Button>
+            <Button size="sm" class="rounded-md" onclick={stageText} title={`Stage this change (${comboTitle('Mod+Enter')})`}>Stage change</Button>
           </div>
         {/if}
       </div>

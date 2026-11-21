@@ -523,7 +523,7 @@
           <button type="button" onclick={() => { const c = addCell(notebook.cells.length - 1, 'markdown'); focusCell(c.id) }} class="flex h-7 items-center gap-1.5 rounded-md border border-border/60 px-3 text-ui-xs text-muted-foreground hover:bg-muted hover:text-foreground"><Plus class="size-3.5 shrink-0" />Text</button>
         </div>
         <p class="pb-16 text-center text-ui-3xs text-muted-foreground">
-          {comboTitle('Mod+Enter')} run · ⇧↵ run and next · {comboTitle('Mod+Shift+Enter')} run all · write <span class="font-mono">{'{{name}}'}</span> in a query for a variable
+          {comboTitle('Mod+Enter')} run · {comboTitle('Shift+Enter')} run and next · {comboTitle('Mod+Shift+Enter')} run all · write <span class="font-mono">{'{{name}}'}</span> in a query for a variable
         </p>
       </div>
     {/if}

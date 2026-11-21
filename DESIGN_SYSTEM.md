@@ -310,8 +310,9 @@ overrides — if a menu looks off, the primitive is wrong; fix it there.
 | Part | Recipe |
 |---|---|
 | Panel | `rounded-[10px] border border-border/60 bg-popover p-1 elevate-2-rim` |
-| Item | `gap-1.5 rounded-sm px-1.5 py-1 text-ui-2xs` (a 25px row) · focus/highlight `bg-accent text-foreground` · disabled `opacity-40` · icons `size-3.5 shrink-0` · **no `transition-colors`** — a colour fade on hover makes highlight tracking feel laggy in a long menu |
-| Checkbox/radio/select item | same, with `pl-1.5 pr-7` and the indicator at `right-1.5` |
+| Item (dropdown, select) | `min-h-7 gap-2 rounded-sm px-2 py-1 text-ui-xs`: the compact control height, so a menu row matches the button that opened it · focus/highlight `bg-accent text-foreground` · disabled `opacity-40` · icons `size-3.5 shrink-0` · **no `transition-colors`** (a colour fade on hover makes highlight tracking feel laggy in a long menu) |
+| Checkbox/radio item, submenu trigger | same, with `pl-2 pr-7` and the indicator at `right-1.5`: one menu often mixes all of them, so they must line up |
+| Context menu item | `gap-1.5 rounded-sm px-1.5 py-1 text-ui-2xs` (a 25px row) for the long, dense grid menus |
 | Group label | `px-1.5 py-1 text-ui-3xs font-medium text-muted-foreground` — **plain case**, never uppercase (uppercase micro-labels are for page/sidebar sections only, §10) |
 | Separator | `bg-border/60 -mx-1 my-1 h-px` |
 | Shortcut / trailing hint | `ml-auto shrink-0 pl-3 text-ui-3xs tracking-widest text-muted-foreground` |
