@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.3.1] - 2026-11-21
+
+### Changes
+- Fix Shift+scroll sticking to one axis; zoom-proof layouts; provider re-auth (#334)
+
+
 ## [3.3.0] - 2026-11-21
 
 ### Changes
