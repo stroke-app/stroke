@@ -353,7 +353,7 @@
             </div>
             <SelectMenu
               ariaLabel="Expires"
-              triggerClass="h-8 w-32"
+              triggerClass="h-8 w-52"
               contentClass="w-[var(--bits-popover-anchor-width)] min-w-[9rem]"
               align="end"
               value={expiry === null ? 'never' : String(expiry)}
@@ -376,7 +376,7 @@
             </div>
             <SelectMenu
               ariaLabel="Views"
-              triggerClass="h-8 w-44"
+              triggerClass="h-8 w-52"
               contentClass="w-[var(--bits-popover-anchor-width)] min-w-[12rem]"
               align="end"
               value={access}
