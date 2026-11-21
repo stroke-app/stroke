@@ -524,7 +524,7 @@
             {#if refs}
               <span
                 class="pointer-events-none absolute right-2 top-1.5 rounded-sm bg-info/15 px-1 font-mono text-ui-3xs leading-4 tabular-nums text-info"
-                title="{refs} tables point at {t.name}; their lines are hidden"
+                title="{refs} {refs === 1 ? 'table points' : 'tables point'} at {t.name}; {refs === 1 ? 'its line is' : 'their lines are'} hidden"
               >← {refs}</span>
             {/if}
           </button>

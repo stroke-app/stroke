@@ -307,7 +307,7 @@ return out`
               {#each dbs as d (d.db)}
                 <span class="inline-flex h-7 items-center gap-2 rounded-md bg-muted/40 px-3 text-ui-xs">
                   <span class="text-foreground">{d.db}</span>
-                  <span class="tabular-nums text-muted-foreground">{d.keys.toLocaleString()} keys · {d.expires.toLocaleString()} TTL</span>
+                  <span class="tabular-nums text-muted-foreground">{d.keys.toLocaleString()} {d.keys === 1 ? 'key' : 'keys'} · {d.expires.toLocaleString()} with a TTL</span>
                 </span>
               {/each}
             </div>
