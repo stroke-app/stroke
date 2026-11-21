@@ -587,6 +587,7 @@
           {loading}
           primaryKey={[]}
           foreignKeys={[]}
+          emptyText="The query returned no rows"
         />
         <!-- JSON toggle overlay, top right, matching JsonViewer toolbar style -->
         <div
