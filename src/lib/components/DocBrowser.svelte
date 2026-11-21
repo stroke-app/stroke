@@ -311,7 +311,7 @@ GET products/_search
    *  table keeps its layout across a refresh instead of rebuilding it. */
   let _gridCols = /** @type {any[]} */ ([])
   const grid = $derived.by(() => {
-    const g = docGrid(docs, keys)
+    const g = docGrid(docs, keys, adapter.timeColumns ?? [])
     const same = g.columns.length === _gridCols.length && g.columns.every((c, i) => c.name === _gridCols[i]?.name && c.dataType === _gridCols[i]?.dataType)
     if (same) g.columns = _gridCols
     else _gridCols = g.columns

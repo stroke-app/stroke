@@ -8,6 +8,7 @@
  * @typedef {{
  *   engine: string,
  *   readOnly?: boolean,
+ *   timeColumns?: string[],
  *   noun: { collection: string, collections: string, item: string, items: string },
  *   consoleLabel: string,
  *   filterPlaceholder: string,
@@ -260,6 +261,8 @@ export function influxAdapter(api, version) {
   return {
     engine: 'influxdb',
     readOnly: true,
+    // The series time arrives as an RFC 3339 string; it is a timestamp.
+    timeColumns: ['time', '_time'],
     noun: { collection: 'Measurement', collections: 'Measurements', item: 'Point', items: 'points' },
     consoleLabel: sql ? 'SQL' : 'InfluxQL / Flux',
     filterPlaceholder: sql ? "host = 'a' AND time > now() - INTERVAL '1 hour'" : "host = 'a' AND time > now() - 1h",
@@ -804,9 +807,10 @@ export function docField(v) {
  * Documents as the data grid's columns and rows: key fields first, a column
  * per field, each typed by its values (`mixed` when they disagree).
  * @param {Record<string, any>[]} docs @param {string[]} keys
+ * @param {string[]} [timeColumns] the engine's own time columns, typed as timestamps
  * @returns {{ columns: { name: string, data_type: string, nullable: boolean }[], rows: any[][] }}
  */
-export function docGrid(docs, keys) {
+export function docGrid(docs, keys, timeColumns = []) {
   const names = docColumns(docs, keys)
   const types = names.map(() => '')
   const rows = docs.map((d) =>
@@ -819,5 +823,9 @@ export function docGrid(docs, keys) {
       return f.value
     }),
   )
-  return { columns: names.map((name, i) => ({ name, data_type: types[i] || 'null', nullable: true })), rows }
+  const times = new Set(timeColumns)
+  return {
+    columns: names.map((name, i) => ({ name, data_type: times.has(name) && types[i] === 'string' ? 'timestamp' : types[i] || 'null', nullable: true })),
+    rows,
+  }
 }

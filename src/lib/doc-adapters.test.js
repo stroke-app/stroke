@@ -331,3 +331,12 @@ describe('influx adapter', () => {
     expect(influxAdapter(api, '3').consoleLabel).toBe('SQL')
   })
 })
+
+describe('docGrid time columns', () => {
+  it("types an engine's named time column as a timestamp, and only that", async () => {
+    const { docGrid } = await import('./doc-adapters.js')
+    const docs = [{ time: '2026-11-21T11:04:44Z', at: '2026-11-21T11:04:44Z', v: 1 }]
+    const g = docGrid(docs, [], ['time'])
+    expect(g.columns.map((c) => c.data_type)).toEqual(['timestamp', 'string', 'int'])
+  })
+})
