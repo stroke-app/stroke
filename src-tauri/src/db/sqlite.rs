@@ -192,8 +192,20 @@ pub async fn stream_into(
     }
     if total > 0 {
         sink.finish()?;
+    } else {
+        // No row to read the columns off: an empty SELECT showed no headers.
+        columns = describe_columns(&mut conn, sql).await;
     }
     Ok(SqlResult { columns, rows: vec![], row_count: Some(total as i64), message: None, query_ms: t0.elapsed().as_millis() as u64, sql: sql.to_string() })
+}
+
+/// A statement's result columns without running it again: what an empty
+/// result reports, since they are otherwise read off its first row.
+async fn describe_columns(conn: &mut sqlx::SqliteConnection, sql: &str) -> Vec<ColumnInfo> {
+    match sqlx::Executor::describe(conn, sql).await {
+        Ok(d) => d.columns().iter().map(|c| ColumnInfo::new(c.name(), c.type_info().name().to_lowercase())).collect(),
+        Err(_) => Vec::new(),
+    }
 }
 
 async fn run_sql(conn: &mut sqlx::SqliteConnection, sql: &str) -> Result<SqlResult, String> {
@@ -238,6 +250,9 @@ async fn run_sql(conn: &mut sqlx::SqliteConnection, sql: &str) -> Result<SqlResu
             }
         }
         drop(stream);
+        if columns.is_empty() {
+            columns = describe_columns(&mut *conn, sql).await;
+        }
 
         let n = data.len() as i64;
         Ok(SqlResult {
@@ -932,5 +947,20 @@ fn bind_value_typed<'a>(
             q.bind(s.clone())
         }
         other => q.bind(other.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod empty_result_tests {
+    use sqlx::Connection;
+
+    /// A SELECT that matches nothing still names its columns.
+    #[tokio::test]
+    async fn empty_select_keeps_its_columns() {
+        let mut conn = sqlx::SqliteConnection::connect("sqlite::memory:").await.unwrap();
+        sqlx::query("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)").execute(&mut conn).await.unwrap();
+        let r = super::run_sql(&mut conn, "SELECT id, name FROM t WHERE id < 0").await.unwrap();
+        assert!(r.rows.is_empty());
+        assert_eq!(r.columns.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), ["id", "name"]);
     }
 }
