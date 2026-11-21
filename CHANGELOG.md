@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.2.4] - 2026-11-21
+
+### Changes
+- YugabyteDB and AlloyDB (beta) (#327)
+
+
 ## [3.2.3] - 2026-11-21
 
 ### Changes
