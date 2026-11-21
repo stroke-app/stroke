@@ -10523,6 +10523,8 @@ let rowSearch = $state('')
 <CommandPalette
   bind:open={commandOpen}
   bind:page={commandPage}
+  onexporttable={activeTab?.kind === 'table' && activeTable && !aiMode && total > 0 ? (/** @type {string} */ f) => void handleExport(f) : null}
+  exportTableName={activeTable ?? ''}
   connected={!!connection}
   {schemas}
   {tables}

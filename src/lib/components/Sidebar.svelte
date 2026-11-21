@@ -1691,11 +1691,20 @@
    * same rows the connection dialog lists and the workspace switcher counts,
    * so a Docker container or local server you connected to is here too.
    */
-  const wsConnections = $derived(
-    inWorkspace(connections, $activeWorkspaceId, $workspaces)
+  const wsConnections = $derived.by(() => {
+    const list = inWorkspace(connections, $activeWorkspaceId, $workspaces)
       .slice()
-      .sort((a, b) => (Number(!!b.pinned) - Number(!!a.pinned)) || ((b.lastConnectedAt ?? 0) - (a.lastConnectedAt ?? 0))),
-  )
+      .sort((a, b) => (Number(!!b.pinned) - Number(!!a.pinned)) || ((b.lastConnectedAt ?? 0) - (a.lastConnectedAt ?? 0)))
+    // While the pointer is on the list, rows keep their places: clicking one
+    // made it the most recent, it jumped to the top, and the next row slid
+    // under the pointer for a second click to open. New rows go last.
+    const frozen = connsFrozenOrder
+    if (!frozen) return list
+    const at = (/** @type {string} */ id) => { const i = frozen.indexOf(id); return i < 0 ? frozen.length : i }
+    return list.sort((a, b) => at(a.id) - at(b.id))
+  })
+  /** Row order kept while the pointer is over the list. @type {string[] | null} */
+  let connsFrozenOrder = $state(null)
   /** "3m", "2h", "1d", "5w": the T3 style. @param {number | null | undefined} ts */
   function ago(ts) {
     if (!ts) return ''
@@ -3580,7 +3589,12 @@
             {/if}
           </div>
         {/if}
-        <div class="app-scroll min-h-0 overflow-y-auto px-2 pb-2">
+        <div
+          class="app-scroll min-h-0 overflow-y-auto px-2 pb-2"
+          role="presentation"
+          onpointerenter={() => (connsFrozenOrder = wsConnections.map((c) => c.id))}
+          onpointerleave={() => (connsFrozenOrder = null)}
+        >
           {#each connsShown as c (c.id)}
             {@const current = c.id === activeConnectionId}
             <!-- Right-click: what the Connections panel offers, here too. It

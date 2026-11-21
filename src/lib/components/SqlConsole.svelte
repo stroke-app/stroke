@@ -1540,7 +1540,7 @@
           class={cn('flex h-7 items-center gap-1 rounded-md px-1.5 transition-colors', showMap ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground')}
         >
           <MapIcon class="size-3.5 shrink-0" />
-          <span class="text-ui-xs">Map</span>
+          <span class="text-ui-xs @max-[40rem]/out:sr-only">Map</span>
         </button>
       {/if}
       {#if resultShown && currentDisplay.rows.length > 0}
@@ -1818,7 +1818,12 @@
                 oncharttypechange={(t) => (chartType = t)}
               />
             {:else}
-              <div class="flex h-full min-h-0 min-w-0">
+              <!-- A size container: in a narrow pane (results beside the editor)
+                   the map beside the grid left the grid one clipped column, so
+                   under 40rem the map goes under the grid instead. The query
+                   is on a wrapper: an element can't match its own container. -->
+              <div class="@container/rs h-full min-h-0 min-w-0">
+              <div class="flex h-full min-h-0 min-w-0 @max-[40rem]/rs:flex-col">
               <!-- A flex column: the grid's root is `flex-1`, which a block
                    parent ignores, so the grid grew to all its rows (14,086px
                    for 500) and neither the wheel nor a map click could scroll it. -->
@@ -1841,6 +1846,7 @@
               />
               </div>
               {#if showMap}
+                <div class="contents @max-[40rem]/rs:hidden">
                 <ResizeHandle
                   axis="x"
                   edge="start"
@@ -1848,7 +1854,8 @@
                   onresize={(dx) => (mapWidth = Math.min(Math.max(260, mapStartWidth + dx), 1200))}
                   onresizeend={() => { try { localStorage.setItem(MAP_WIDTH_KEY, String(mapWidth)) } catch { /* only the width is lost */ } }}
                 />
-                <div class="min-h-0 shrink-0" style="width:{mapWidth}px; max-width:70%">
+                </div>
+                <div class="min-h-0 w-(--map-w) max-w-[70%] shrink-0 @max-[40rem]/rs:h-1/2 @max-[40rem]/rs:w-full @max-[40rem]/rs:max-w-none @max-[40rem]/rs:border-t @max-[40rem]/rs:border-border/40" style="--map-w:{mapWidth}px">
                   <ResultMap
                     columns={currentDisplay.columns}
                     rows={mapRows}
@@ -1860,6 +1867,7 @@
                   />
                 </div>
               {/if}
+              </div>
               </div>
             {/if}
           {:else if loading}

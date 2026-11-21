@@ -1492,7 +1492,9 @@ export function buildOption({ type, columns, rows, xCol, yCol, zCol, groupCol, i
     xAxis: categoryXAxis(isDark, xData),
     yAxis: valueYAxis(isDark),
     series,
-    ...(needsZoom ? { grid: { ...base.grid, bottom: 44 } } : {}),
+    // Labels above the bars need room: the tallest bar reaches the axis max,
+    // and its label sat above the plot, cut off at the top edge.
+    grid: { ...base.grid, ...(series[0]?.label?.show ? { top: titleOpt(title ?? '').title ? 44 : 28 } : {}), ...(needsZoom ? { bottom: 44 } : {}) },
     ...(needsZoom ? { dataZoom } : {}),
     ...titleOpt(title ?? ''),
   }

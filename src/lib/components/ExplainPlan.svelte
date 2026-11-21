@@ -142,11 +142,18 @@
   let cw = $state(0)
   let ch = $state(0)
 
-  function fit() {
+  /** The smallest first view whose step text still reads. */
+  const MIN_FIT = 0.75
+  /** @param {boolean} [whole] the Fit button: the whole plan, however small */
+  function fit(whole = false) {
     if (!cw || !ch) return
     const s = Math.min(1, (cw - 16) / canvasW, (ch - 16) / canvasH)
-    scale = Math.max(0.2, s)
-    panX = (cw - canvasW * scale) / 2
+    // A plan wider than the pane used to shrink until it fit: four steps in
+    // the results-beside pane came out at 27%, text a few pixels tall. Below
+    // the floor, open readable at the leaves (the left, where the plan
+    // starts) and let the pane pan; zoom out still shows the whole of it.
+    scale = Math.max(whole ? 0.2 : MIN_FIT, s)
+    panX = canvasW * scale <= cw ? (cw - canvasW * scale) / 2 : 8
     panY = Math.max(8, (ch - canvasH * scale) / 2)
   }
   /** @param {number} next @param {number} [ox] @param {number} [oy] */
@@ -161,7 +168,7 @@
     const p = plan, w = cw, h = ch, v = view
     if (!p || !w || !h || v !== 'diagram' || p === fittedFor) return
     fittedFor = p
-    untrack(fit)
+    untrack(() => fit())
   })
 
   /** @param {PointerEvent} e */
@@ -262,8 +269,11 @@
 
 <div class="flex h-full min-h-0 w-full flex-col">
   <!-- Summary -->
-  <div class="flex h-10 shrink-0 items-center gap-3 border-b border-border/50 px-3">
-    <div class="flex min-w-0 flex-1 items-center gap-3 overflow-hidden text-ui-xs text-muted-foreground">
+  <!-- A size container: in the results-beside pane the controls on the right
+       squeezed the summary until "Measured" read "Measur". Narrow, the stats
+       and Ask AI's label give way first. -->
+  <div class="@container/xp flex h-10 shrink-0 items-center gap-3 border-b border-border/50 px-3">
+    <div class="flex min-w-0 flex-1 items-center gap-3 overflow-hidden text-ui-xs text-muted-foreground [&>*:not(:first-child)]:@max-[34rem]/xp:hidden">
       <span class="shrink-0 font-medium text-foreground">{a.analyzed ? 'Measured' : 'Estimated'}</span>
       <span class="h-3 w-px shrink-0 bg-border"></span>
       {#if result?.executionTime > 0}
@@ -308,7 +318,7 @@
       </DropdownMenu.Root>
       {#if onaskai}
         <button type="button" class="inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-ui-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" onclick={askAi}>
-          <Icon name="sparkles" class="size-3.5 shrink-0" />Ask AI
+          <Icon name="sparkles" class="size-3.5 shrink-0" /><span class="@max-[34rem]/xp:sr-only">Ask AI</span>
         </button>
       {/if}
     </div>
@@ -439,7 +449,7 @@
 
         <div class="absolute right-3 bottom-3 flex items-center gap-0.5 rounded-lg border border-border/60 bg-popover p-0.5">
           <button type="button" class="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" aria-label="Zoom out" onclick={() => zoomTo(scale / 1.2)}><Icon name="minus" class="size-3.5 shrink-0" /></button>
-          <button type="button" class="h-7 min-w-11 rounded-md px-1 text-ui-2xs tabular-nums text-muted-foreground hover:bg-accent hover:text-foreground" title="Fit" onclick={fit}>{Math.round(scale * 100)}%</button>
+          <button type="button" class="h-7 min-w-11 rounded-md px-1 text-ui-2xs tabular-nums text-muted-foreground hover:bg-accent hover:text-foreground" title="Fit the whole plan" onclick={() => fit(true)}>{Math.round(scale * 100)}%</button>
           <button type="button" class="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" aria-label="Zoom in" onclick={() => zoomTo(scale * 1.2)}><Icon name="plus" class="size-3.5 shrink-0" /></button>
         </div>
       {:else}
