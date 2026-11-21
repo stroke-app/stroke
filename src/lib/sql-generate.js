@@ -114,7 +114,13 @@ export function genUpsert(ctx) {
     const sets = updatable.map((c) => `  ${q(c.name)} = VALUES(${q(c.name)})`).join(',\n')
     return `INSERT INTO ${tbl} (\n${cols}\n) VALUES (\n${vals}\n)\nON DUPLICATE KEY UPDATE\n${sets};`
   }
-  if (ctx.dialect === 'mssql' || ctx.dialect === 'clickhouse' || ctx.dialect === 'oracle') return null
+  // Spanner's own upsert: INSERT OR UPDATE writes the whole row by its key.
+  if (/** @type {string} */ (ctx.dialect) === 'spanner') {
+    return `INSERT OR UPDATE INTO ${tbl} (\n${cols}\n) VALUES (\n${vals}\n);`
+  }
+  // No single-statement upsert in this shape: MERGE on SQL Server, Oracle and
+  // BigQuery takes a source table, and ODBC's depends on the database behind it.
+  if (['mssql', 'clickhouse', 'oracle', 'bigquery', 'odbc'].includes(/** @type {string} */ (ctx.dialect))) return null
 
   // Postgres / SQLite family (sqlite, d1, libsql, duckdb)
   const conflict = ctx.primaryKey.map(q).join(', ')
