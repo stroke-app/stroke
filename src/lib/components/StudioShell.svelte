@@ -6487,6 +6487,26 @@ let rowSearch = $state('')
     }
   }
 
+  /**
+   * Move the open table's sidebar count by rows the grid itself added or
+   * removed. An insert or delete left the count as it was ("notes 2" over three
+   * rows); the delta is known, so no COUNT(*) is needed.
+   * @param {number} delta
+   */
+  function bumpActiveTableCount(delta) {
+    const name = activeTable
+    if (!name || !delta) return
+    let changed = false
+    tables = tables.map((t) => {
+      if (t.name !== name || typeof t.rowCount !== 'number') return t
+      changed = true
+      return { ...t, rowCount: Math.max(0, t.rowCount + delta) }
+    })
+    if (!changed) return
+    const key = catalogKey(persistConnectionId, 'tables', activeSchema)
+    if (_catalog.has(key)) _catalog.set(key, tables)
+  }
+
   async function reloadTableFromQuery(resetPage = true) {
     if (resetPage) { page = 1; rawOffset = null; _keysetCursor = null }
     await loadRows()
@@ -9794,6 +9814,7 @@ let rowSearch = $state('')
         throw new Error('No rows deleted (they may have changed)')
       }
       recordActivity({ type: 'row_delete', title: `Deleted ${deleted} row${deleted === 1 ? '' : 's'} from ${activeTable}`, schema: activeSchema, table: activeTable, rowCount: deleted, durationMs: Date.now() - _deleteStart, success: true })
+      bumpActiveTableCount(-deleted)
 
       const removedSet = new Set(removed)
       rows = rows.filter((_, i) => !removedSet.has(i))
@@ -9924,6 +9945,7 @@ let rowSearch = $state('')
     try {
       const { row } = await insertTableRow(activeSchema, activeTable, values)
       recordActivity({ type: 'row_insert', title: `Inserted row into ${activeTable}`, schema: activeSchema, table: activeTable, durationMs: Date.now() - _insertStart, success: true })
+      bumpActiveTableCount(1)
 
       const hasActiveFilters =
         rowSearch.trim() !== '' || activeFilters(rowFilters).length > 0
