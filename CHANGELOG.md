@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.3.0] - 2026-11-21
+
+### Changes
+- Rank the palette by label, and bring readable text to contrast (#333)
+
+
 ## [3.2.9] - 2026-11-21
 
 ### Changes
