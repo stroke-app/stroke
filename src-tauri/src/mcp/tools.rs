@@ -641,6 +641,13 @@ async fn execute_sql(
             let result = crate::db::spanner::query(h, sql).await?;
             Ok(truncated_result_json(&result, max_rows))
         }
+        ActiveConnection::Bigquery(h) => {
+            if read_only && !crate::db::bigquery::reads(sql) {
+                return Err("This connection is read-only: only SELECT statements run".into());
+            }
+            let result = crate::db::bigquery::query(h, sql).await?;
+            Ok(truncated_result_json(&result, max_rows))
+        }
         ActiveConnection::Redis(cfg) => {
             let result = crate::db::redis::query(cfg, sql).await?;
             Ok(truncated_result_json(&result, max_rows))
@@ -799,6 +806,10 @@ async fn list_tables(conn: &ActiveConnection, schema: &str) -> Result<String, St
             let tables = crate::db::spanner::list_tables(h, schema).await?;
             Ok(json!({"tables":tables.iter().map(|t|&t.name).collect::<Vec<_>>()}).to_string())
         }
+        ActiveConnection::Bigquery(h) => {
+            let tables = crate::db::bigquery::list_tables(h, schema).await?;
+            Ok(json!({"tables":tables.iter().map(|t|&t.name).collect::<Vec<_>>()}).to_string())
+        }
         ActiveConnection::Redis(cfg) => {
             let tables = crate::db::redis::list_tables(cfg).await?;
             Ok(json!({"tables":tables.iter().map(|t|&t.name).collect::<Vec<_>>()}).to_string())
@@ -939,6 +950,14 @@ async fn describe_table(
                 "default": c.column_default, "primary_key": c.is_primary_key, "references": c.foreign_key,
             })).collect();
             Ok(json!({"table":table,"columns":columns,"note":"Spanner GoogleSQL: quote names with backticks"}).to_string())
+        }
+        ActiveConnection::Bigquery(h) => {
+            let cols = crate::db::bigquery::get_column_structure(h, schema, table).await?;
+            let columns: Vec<_> = cols.iter().map(|c| json!({
+                "name": c.name, "type": c.data_type, "nullable": c.is_nullable,
+                "default": c.column_default, "primary_key": c.is_primary_key, "references": c.foreign_key,
+            })).collect();
+            Ok(json!({"table":table,"columns":columns,"note":"BigQuery GoogleSQL: write `dataset.table` with backticks. Queries are billed by bytes scanned: select only the columns you need"}).to_string())
         }
         ActiveConnection::Clickhouse(cfg) => {
             let cols = crate::db::clickhouse::get_column_structure(cfg, schema, table).await?;
@@ -1256,6 +1275,7 @@ async fn check_migrations(conn: &ActiveConnection, schema: &str) -> Result<Strin
         ActiveConnection::Clickhouse(_) => Ok(json!({"migrations":[],"note":"Migration detection not supported for ClickHouse"}).to_string()),
         ActiveConnection::Posthog(_) => Ok(json!({"migrations":[],"note":"Migration detection not supported for PostHog"}).to_string()),
         ActiveConnection::Spanner(_) => Ok(json!({"migrations":[],"note":"Migration detection not supported for Spanner"}).to_string()),
+        ActiveConnection::Bigquery(_) => Ok(json!({"migrations":[],"note":"Migration detection not supported for BigQuery"}).to_string()),
         ActiveConnection::Redis(_) => Ok(json!({"migrations":[],"note":"Migration detection not supported for Redis"}).to_string()),
         ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => Ok(json!({"migrations":[],"note":"Migration detection not supported for DynamoDB"}).to_string()),
         ActiveConnection::Duckdb(_) => Ok(json!({"migrations":[],"note":"Migration detection not supported for DuckDB"}).to_string()),
@@ -1473,6 +1493,10 @@ async fn explain_query(conn: &ActiveConnection, sql: &str) -> Result<String, Str
             let plan = crate::db::spanner::explain_plan(h, sql).await?;
             Ok(json!({"plan":plan,"database":"spanner"}).to_string())
         }
+        ActiveConnection::Bigquery(h) => {
+            let plan = crate::db::bigquery::explain_plan(h, sql).await?;
+            Ok(json!({"plan":plan,"database":"bigquery"}).to_string())
+        }
         ActiveConnection::Duckdb(h) => {
             let r = crate::db::duckdb::execute_sql(h, &format!("EXPLAIN {sql}")).await?;
             Ok(json!({"plan":r.rows,"database":"duckdb"}).to_string())
@@ -1568,6 +1592,10 @@ async fn get_database_stats(conn: &ActiveConnection, schema: &str) -> Result<Str
             let tables = crate::db::spanner::list_tables(h, schema).await?;
             let dialect = if h.dialect == crate::db::spanner::Dialect::Postgres { "PostgreSQL" } else { "GoogleSQL" };
             Ok(json!({"database":"spanner","dialect":dialect,"table_count":tables.len()}).to_string())
+        }
+        ActiveConnection::Bigquery(h) => {
+            let tables = crate::db::bigquery::list_tables(h, schema).await?;
+            Ok(json!({"database":"bigquery","dialect":"GoogleSQL","project":h.project_id,"dataset":schema,"table_count":tables.len()}).to_string())
         }
         ActiveConnection::Redis(cfg) => {
             let tables = crate::db::redis::list_tables(cfg).await?;

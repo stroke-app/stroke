@@ -28,6 +28,7 @@ const SQL_DIALECTS = /** @type {Record<string, SQLDialect>} */ ({
   mssql: narrowed(MSSQL),
   oracle: narrowed(PLSQL),
   spanner: MY,
+  bigquery: MY,
 })
 
 /** The highlighting dialect for an app Dialect id. @param {string} id */

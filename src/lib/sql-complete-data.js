@@ -81,8 +81,8 @@ export const DIALECT_KEYWORDS = /** @type {Record<string, string[]>} */ ({
  */
 export function sqlFamily(dialect) {
   switch (dialect) {
-    // Spanner's GoogleSQL quotes with backticks too.
-    case 'mysql': case 'mariadb': case 'spanner': return 'mysql'
+    // GoogleSQL (Spanner, BigQuery) quotes with backticks too.
+    case 'mysql': case 'mariadb': case 'spanner': case 'bigquery': return 'mysql'
     case 'sqlite': case 'd1': case 'libsql': return 'sqlite'
     case 'mssql': return 'mssql'
     case 'clickhouse': case 'posthog': return 'clickhouse'

@@ -73,6 +73,7 @@ const ENGINE_SHORT = {
   scylladb: 'ScyllaDB',
   firestore: 'Firestore',
   spanner: 'Spanner',
+  bigquery: 'BigQuery',
   mongodb: 'MongoDB',
   d1: 'D1',
   posthog: 'HogQL',

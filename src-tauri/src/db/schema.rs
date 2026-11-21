@@ -296,6 +296,17 @@ pub async fn table_row_counts(
             }
             Ok(counts)
         }
+        ActiveConnection::Bigquery(h) => {
+            let mut counts = Vec::with_capacity(tables.len());
+            for name in tables {
+                let row_count = super::bigquery::count_rows(&h, &schema, &name).await.unwrap_or_else(|e| {
+                    eprintln!("[row count] {schema}.{name}: {e}");
+                    -1
+                });
+                counts.push(TableRowCount { name, row_count });
+            }
+            Ok(counts)
+        }
         _ => Ok(Vec::new()),
     }
 }
@@ -1156,6 +1167,7 @@ pub async fn list_schemas(state: Db<'_>) -> Result<Vec<String>, String> {
         ActiveConnection::Clickhouse(cfg) => super::clickhouse::list_schemas(&cfg).await,
         ActiveConnection::Posthog(cfg) => super::posthog::list_schemas(&cfg).await,
         ActiveConnection::Spanner(h) => super::spanner::list_schemas(&h).await,
+        ActiveConnection::Bigquery(h) => super::bigquery::list_schemas(&h).await,
         ActiveConnection::Redis(_) => Ok(vec![]),
         ActiveConnection::Dynamodb(_) => Ok(vec![super::docdb::FLAT_SCHEMA.to_string()]),
         ActiveConnection::Doc(d) => super::docdb::list_schemas(&d).await,
@@ -1189,6 +1201,7 @@ pub async fn list_tables(state: Db<'_>, schema: String) -> Result<Vec<TableInfo>
         ActiveConnection::Clickhouse(cfg) => super::clickhouse::list_tables(&cfg, &schema).await,
         ActiveConnection::Posthog(cfg) => super::posthog::list_tables(&cfg).await,
         ActiveConnection::Spanner(h) => super::spanner::list_tables(&h, &schema).await,
+        ActiveConnection::Bigquery(h) => super::bigquery::list_tables(&h, &schema).await,
         ActiveConnection::Redis(cfg) => super::redis::list_tables(&cfg).await,
         ActiveConnection::Dynamodb(cfg) => super::dynamodb::list_tables(&cfg).await,
         ActiveConnection::Doc(d) => super::docdb::list_tables_in(&d, &schema).await,
@@ -1227,6 +1240,8 @@ pub async fn list_indexes_for(
         ActiveConnection::Clickhouse(cfg) => super::clickhouse::list_indexes(&cfg, &schema).await,
         ActiveConnection::Posthog(cfg) => super::posthog::list_indexes(&cfg).await,
         ActiveConnection::Spanner(h) => super::spanner::list_indexes(&h, &schema).await,
+        // BigQuery has no indexes to browse (search indexes aside).
+        ActiveConnection::Bigquery(_) => Ok(vec![]),
         ActiveConnection::Redis(cfg) => super::redis::list_indexes(&cfg).await,
         ActiveConnection::Dynamodb(cfg) => match table {
             Some(t) => Ok(super::dynamodb::describe_shape(&cfg, &t).await?.1),
@@ -1412,6 +1427,7 @@ pub async fn get_table_column_structure(
         }
         ActiveConnection::Posthog(cfg) => super::posthog::get_column_structure(&cfg, &table).await,
         ActiveConnection::Spanner(h) => super::spanner::get_column_structure(&h, &schema, &table).await,
+        ActiveConnection::Bigquery(h) => super::bigquery::get_column_structure(&h, &schema, &table).await,
         ActiveConnection::Redis(cfg) => {
             super::redis::get_column_structure(&cfg, &table).await
         }
@@ -1744,6 +1760,7 @@ pub async fn get_schema_column_structure(
         ActiveConnection::Oracle(h) => return super::oracle::schema_column_structure(&h, &schema).await,
         // Spanner's schemas are '' and 'default', which the identifier check refuses.
         ActiveConnection::Spanner(h) => return super::spanner::schema_column_structure(&h, &schema).await,
+        ActiveConnection::Bigquery(h) => return super::bigquery::schema_column_structure(&h, &schema).await,
         _ => {}
     }
     validate_ident(&schema)?;
@@ -2529,6 +2546,9 @@ pub async fn get_incoming_foreign_keys(
     if let ActiveConnection::Spanner(h) = require_conn(&state)? {
         return super::spanner::incoming_foreign_keys(&h, &schema, &table).await;
     }
+    if let ActiveConnection::Bigquery(h) = require_conn(&state)? {
+        return super::bigquery::incoming_foreign_keys(&h, &schema, &table).await;
+    }
     validate_ident(&schema)?;
     validate_ident(&table)?;
     match require_conn(&state)? {
@@ -2715,6 +2735,7 @@ pub async fn get_table_ddl(
         ActiveConnection::Clickhouse(cfg) => super::clickhouse::get_ddl(&cfg, &schema, &table).await,
         ActiveConnection::Posthog(cfg) => super::posthog::get_ddl(&cfg, &table).await,
         ActiveConnection::Spanner(h) => super::spanner::get_ddl(&h, &schema, &table).await,
+        ActiveConnection::Bigquery(h) => super::bigquery::get_ddl(&h, &schema, &table).await,
         ActiveConnection::Redis(cfg) => super::redis::get_ddl(&cfg, &table).await,
         ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => Ok(String::new()),
         ActiveConnection::Duckdb(h) => super::duckdb::get_ddl(&h, &table).await,

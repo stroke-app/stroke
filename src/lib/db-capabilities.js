@@ -8,7 +8,7 @@
  * no triggers." These flags let the UI say *why* a section is empty ("Triggers
  * require PostgreSQL") and let callers skip pointless round-trips entirely.
  *
- * @typedef {'postgres'|'mysql'|'sqlite'|'d1'|'libsql'|'clickhouse'|'duckdb'|'mssql'|'oracle'|'spanner'|'redis'|'dynamodb'|'couchdb'|'elasticsearch'|'opensearch'|'cassandra'|'firestore'|'mongodb'|'posthog'} Engine
+ * @typedef {'postgres'|'mysql'|'sqlite'|'d1'|'libsql'|'clickhouse'|'duckdb'|'mssql'|'oracle'|'spanner'|'bigquery'|'redis'|'dynamodb'|'couchdb'|'elasticsearch'|'opensearch'|'cassandra'|'firestore'|'mongodb'|'posthog'} Engine
  */
 
 /**
@@ -20,7 +20,7 @@ const SUPPORT = {
   // Index introspection has a backend branch for every engine.
   indexes:   new Set(['postgres', 'mysql', 'sqlite', 'd1', 'libsql', 'clickhouse', 'duckdb', 'mssql', 'oracle', 'spanner']),
   // Views are derived from table `kind`, available wherever tables are listed.
-  views:     new Set(['postgres', 'mysql', 'sqlite', 'd1', 'libsql', 'clickhouse', 'duckdb', 'mssql', 'oracle', 'spanner', 'posthog']),
+  views:     new Set(['postgres', 'mysql', 'sqlite', 'd1', 'libsql', 'clickhouse', 'duckdb', 'mssql', 'oracle', 'spanner', 'bigquery', 'posthog']),
   // PostgreSQL-only introspection (pg_catalog / pg_proc / pg_policy …).
   triggers:  new Set(['postgres']),
   sequences: new Set(['postgres']),
@@ -102,6 +102,7 @@ const ENGINE_LABEL = /** @type {Record<string, string>} */ ({
   scylladb: 'ScyllaDB',
   firestore: 'Firestore',
   spanner: 'Spanner',
+  bigquery: 'BigQuery',
   mongodb: 'MongoDB',
 })
 
