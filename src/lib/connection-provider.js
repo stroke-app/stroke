@@ -55,6 +55,8 @@ import { ODBC_PRESETS, odbcDriverId } from '$lib/odbc-presets.js'
 const ENGINE_SHORT = {
   postgres: 'Postgres',
   cockroachdb: 'CockroachDB',
+  yugabytedb: 'YugabyteDB',
+  alloydb: 'AlloyDB',
   mysql: 'MySQL',
   mariadb: 'MariaDB',
   mssql: 'SQL Server',

@@ -680,7 +680,9 @@ export function connectionUrl(p) {
   const hp = (/** @type {string} */ h, /** @type {any} */ port) => `${h || 'localhost'}${port ? `:${port}` : ''}`
   switch (p.type) {
     case 'postgres':
-    case 'cockroachdb': {
+    case 'cockroachdb':
+    case 'yugabytedb':
+    case 'alloydb': {
       const q = p.ssl ? `?sslmode=${p.sslMode || 'require'}` : ''
       return `postgresql://${auth(p.user, p.password)}${hp(p.host, p.port)}/${enc(p.database ?? '')}${q}`
     }

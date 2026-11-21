@@ -57,6 +57,8 @@ const SUPPORT = {
 const ENGINE_ALIAS = {
   mariadb: 'mysql',
   cockroachdb: 'postgres',
+  yugabytedb: 'postgres',
+  alloydb: 'postgres',
 }
 
 /** @param {string | null | undefined} engine */
@@ -92,6 +94,8 @@ const ENGINE_LABEL = /** @type {Record<string, string>} */ ({
   oracle: 'Oracle',
   mariadb: 'MariaDB',
   cockroachdb: 'CockroachDB',
+  yugabytedb: 'YugabyteDB',
+  alloydb: 'AlloyDB',
   redis: 'Redis',
   valkey: 'Valkey',
   dynamodb: 'DynamoDB',

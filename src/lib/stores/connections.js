@@ -19,7 +19,7 @@ const LAST_ID_KEY  = 'stroke:last-connection-id'
 const DISCONNECTED_KEY = 'stroke:disconnected'
 
 /**
- * @typedef {'postgres' | 'sqlite' | 'd1' | 'mysql' | 'mariadb' | 'cockroachdb' | 'libsql' | 'clickhouse' | 'duckdb' | 'mssql' | 'oracle' | 'spanner' | 'bigquery' | 'snowflake' | 'odbc' | 'redis' | 'valkey' | 'dynamodb' | 'couchdb' | 'elasticsearch' | 'opensearch' | 'cassandra' | 'firestore' | 'mongodb' | 'posthog'} DbType
+ * @typedef {'postgres' | 'sqlite' | 'd1' | 'mysql' | 'mariadb' | 'cockroachdb' | 'yugabytedb' | 'alloydb' | 'libsql' | 'clickhouse' | 'duckdb' | 'mssql' | 'oracle' | 'spanner' | 'bigquery' | 'snowflake' | 'odbc' | 'redis' | 'valkey' | 'dynamodb' | 'couchdb' | 'elasticsearch' | 'opensearch' | 'cassandra' | 'firestore' | 'mongodb' | 'posthog'} DbType
  *
  * @typedef {{ host: string, port?: number, username: string, privateKeyPath?: string }} SshConfig
  *
@@ -82,7 +82,7 @@ export function newConnectionId() {
  */
 export function engineFamily(type) {
   if (type === 'mariadb') return 'mysql'
-  if (type === 'cockroachdb') return 'postgres'
+  if (type === 'cockroachdb' || type === 'yugabytedb' || type === 'alloydb') return 'postgres'
   if (type === 'valkey') return 'redis'
   if (type?.startsWith('odbc-')) return 'odbc'
   return /** @type {DbType} */ (type ?? 'postgres')

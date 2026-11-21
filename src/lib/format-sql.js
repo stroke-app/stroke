@@ -11,7 +11,7 @@ import { normalizeSqlFormat, sqlFormatOptions } from '$lib/sql-format-options.js
 
 /** sql-formatter's dialect for each engine. Parsing MySQL as PostgreSQL threw on every backtick. */
 const LANGUAGE = /** @type {Record<string, import('sql-formatter').SqlLanguage>} */ ({
-  postgres: 'postgresql', cockroachdb: 'postgresql',
+  postgres: 'postgresql', cockroachdb: 'postgresql', yugabytedb: 'postgresql', alloydb: 'postgresql',
   mysql: 'mysql', mariadb: 'mariadb', tidb: 'tidb',
   sqlite: 'sqlite', d1: 'sqlite', libsql: 'sqlite',
   mssql: 'transactsql', duckdb: 'duckdb', clickhouse: 'clickhouse', oracle: 'plsql', spanner: 'bigquery', bigquery: 'bigquery', snowflake: 'snowflake',

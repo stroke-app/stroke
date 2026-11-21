@@ -2,6 +2,8 @@
 export const ENGINE_TINT = {
   postgres: "text-sky-500/80",
   cockroachdb: "text-teal-500/80",
+  yugabytedb: "text-orange-500/80",
+  alloydb: "text-blue-500/80",
   mysql: "text-cyan-500/80", // the dolphin is teal, not amber
   mariadb: "text-orange-500/80",
   sqlite: "text-blue-500/80",
