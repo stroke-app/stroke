@@ -272,9 +272,19 @@ export function buildSelectSql({ schema, table, columns = [], filters = [], sear
   /** quote identifier, per Settings → SQL editor → Quote object names */
   const q = (/** @type {string} */ id) => quoteName(id, engine, quote)
   /** quote a string literal: GoogleSQL escapes with a backslash, the rest double the quote */
+  // MySQL and ClickHouse read a backslash in a string as an escape too, so it
+  // is doubled there: an equals filter on C:\new looked for "C:" and a newline.
+  const backslashEscapes = fam === 'mysql' || fam === 'clickhouse'
   const lit = (/** @type {string} */ v) => google
     ? `'${String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`
-    : `'${String(v).replace(/'/g, "''")}'`
+    : backslashEscapes
+      ? `'${String(v).replace(/\\/g, '\\\\').replace(/'/g, "''")}'`
+      // SQL Server: N'...' keeps non-ASCII text Unicode (see dml-preview's quoteString).
+      : `${fam === 'mssql' && /[^\x00-\x7f]/.test(String(v)) ? 'N' : ''}'${String(v).replace(/'/g, "''")}'`
+  /** A LIKE pattern's text: in MySQL and ClickHouse the backslash is also LIKE's
+   *  own escape, so a literal one is doubled once for the pattern, then again
+   *  for the string. @param {string} v */
+  const likeText = (v) => (backslashEscapes ? v.replace(/\\/g, '\\\\') : v)
   // ILIKE is Postgres's alone (DuckDB has it too). Everywhere else LIKE, which
   // is case-insensitive under MySQL's and SQL Server's usual collations.
   const like = fam === 'postgres' || fam === 'duckdb' ? 'ILIKE' : 'LIKE'
@@ -305,10 +315,10 @@ export function buildSelectSql({ schema, table, columns = [], filters = [], sear
       case 'gte': return `${col} >= ${lit(v)}`
       case 'lt': return `${col} < ${lit(v)}`
       case 'lte': return `${col} <= ${lit(v)}`
-      case 'contains': return `${asText(col)} ${like} ${lit('%' + v + '%')}`
-      case 'not_contains': return `${asText(col)} NOT ${like} ${lit('%' + v + '%')}`
-      case 'starts_with': return `${asText(col)} ${like} ${lit(v + '%')}`
-      case 'ends_with': return `${asText(col)} ${like} ${lit('%' + v)}`
+      case 'contains': return `${asText(col)} ${like} ${lit('%' + likeText(v) + '%')}`
+      case 'not_contains': return `${asText(col)} NOT ${like} ${lit('%' + likeText(v) + '%')}`
+      case 'starts_with': return `${asText(col)} ${like} ${lit(likeText(v) + '%')}`
+      case 'ends_with': return `${asText(col)} ${like} ${lit('%' + likeText(v))}`
       case 'sql': return `(${v})`
       case 'is_null': return `${col} IS NULL`
       case 'is_not_null': return `${col} IS NOT NULL`
@@ -326,7 +336,7 @@ export function buildSelectSql({ schema, table, columns = [], filters = [], sear
   // Cross-column search (only when we know the columns)
   const s = search.trim()
   if (s && columns.length) {
-    const ors = columns.map((c) => `${asText(q(c.name))} ${like} ${lit('%' + s + '%')}`)
+    const ors = columns.map((c) => `${asText(q(c.name))} ${like} ${lit('%' + likeText(s) + '%')}`)
     where.push(`(${ors.join(' OR ')})`)
   }
 

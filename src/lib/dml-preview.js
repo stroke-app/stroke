@@ -68,6 +68,14 @@ export function qualifiedTable(ctx) {
 /** Single-quote a string literal, doubling embedded quotes (backslash-escaping in GoogleSQL). */
 function quoteString(/** @type {string} */ s, /** @type {string} */ dialect = '') {
   if (isGoogleSql(dialect)) return "'" + s.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n') + "'"
+  // MySQL (under its default sql_mode) and ClickHouse read a backslash in a
+  // string as an escape: 'C:\new' arrived as "C:" and a newline. Doubled, it
+  // stays a backslash.
+  if (dialect === 'mysql' || dialect === 'clickhouse') return "'" + s.replace(/\\/g, '\\\\').replace(/'/g, "''") + "'"
+  // SQL Server converts a plain '...' to the database's code page, so Chinese or
+  // Cyrillic text in a generated INSERT came out as ????. N'...' keeps it as
+  // Unicode; plain ASCII stays unprefixed.
+  if (dialect === 'mssql' && /[^\x00-\x7f]/.test(s)) return "N'" + s.replace(/'/g, "''") + "'"
   return "'" + s.replace(/'/g, "''") + "'"
 }
 
@@ -232,4 +240,27 @@ export function buildInsertStatements(values, ctx) {
   const cols = names.map((n) => quoteIdent(n, ctx.dialect)).join(', ')
   const vals = names.map((n) => sqlLiteral(values[n], ctx.dialect)).join(', ')
   return [`INSERT INTO ${tbl} (${cols}) VALUES (${vals});`]
+}
+
+/**
+ * Values as a SQL list to paste after `IN`: `('a', 'b')`, distinct, in the
+ * order given, each quoted for the dialect. NULLs are left out, because
+ * `x IN (NULL)` never matches, and counted so the caller can say so.
+ * @param {unknown[]} values
+ * @param {Dialect} dialect
+ * @returns {{ text: string, count: number, nulls: number }}
+ */
+export function sqlInList(values, dialect) {
+  const seen = new Set()
+  /** @type {string[]} */
+  const items = []
+  let nulls = 0
+  for (const v of values) {
+    if (v === null || v === undefined) { nulls++; continue }
+    const lit = sqlLiteral(v, dialect)
+    if (seen.has(lit)) continue
+    seen.add(lit)
+    items.push(lit)
+  }
+  return { text: items.length ? `(${items.join(', ')})` : '', count: items.length, nulls }
 }

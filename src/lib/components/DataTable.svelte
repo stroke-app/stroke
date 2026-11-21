@@ -35,6 +35,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   import Copy from "@lucide/svelte/icons/copy";
   import MoveHorizontal from "@lucide/svelte/icons/move-horizontal";
   import Type from "@lucide/svelte/icons/type";
+  import Parentheses from "@lucide/svelte/icons/parentheses";
   import CopyPlus from "@lucide/svelte/icons/copy-plus";
   import ArrowUpFromLine from "@lucide/svelte/icons/arrow-up-from-line";
   import ArrowDownFromLine from "@lucide/svelte/icons/arrow-down-from-line";
@@ -109,6 +110,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     qualifiedTable as dmlQualifiedTable,
     quoteIdent as dmlQuoteIdent,
     sqlLiteral as dmlSqlLiteral,
+    sqlInList,
   } from "$lib/dml-preview.js";
   import * as Dialog from "$lib/components/ui/dialog/index.js";
   import * as Select from "$lib/components/ui/select/index.js";
@@ -2839,6 +2841,30 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     if (await writeClipboard(text)) {
       toast.success(`Copied ${idx.length.toLocaleString()} ${idx.length === 1 ? 'value' : 'values'}`, {
         description: colName,
+      })
+    } else {
+      toast.error('Could not copy to clipboard')
+    }
+  }
+
+  /**
+   * The column's distinct values as a SQL list, `('a', 'b')`, quoted for this
+   * engine, to paste after `IN`. NULLs are left out: `IN (NULL)` matches
+   * nothing, and the toast says so rather than dropping them silently.
+   * @param {string} colName
+   */
+  async function copyColumnAsInList(colName) {
+    const ai = _nameToActualIdx.get(colName) ?? -1
+    if (ai < 0) return
+    const idx = selected.size > 0 ? [...selected].sort((a, b) => a - b) : rows.map((_, i) => i)
+    const { text, count, nulls } = sqlInList(idx.map((r) => {
+      const v = rows[r]?.[ai]
+      return v !== null && typeof v === 'object' ? cellJsonString(v) : v
+    }), dialect)
+    if (!count) { toast.info('No values to copy', { description: `${colName} is NULL in every row` }); return }
+    if (await writeClipboard(text)) {
+      toast.success(`Copied ${count.toLocaleString()} distinct ${count === 1 ? 'value' : 'values'} as an IN list`, {
+        description: nulls ? `${colName} · NULL left out (IN never matches it)` : colName,
       })
     } else {
       toast.error('Could not copy to clipboard')
@@ -9775,6 +9801,10 @@ import FilterX from "@lucide/svelte/icons/filter-x";
               <span class="ml-auto text-ui-3xs tabular-nums text-muted-foreground">
                 {(selected.size > 0 ? selected.size : rows.length).toLocaleString()}
               </span>
+            </ContextMenu.Item>
+            <ContextMenu.Item onSelect={() => runMenuAction(() => void copyColumnAsInList(hcol))}>
+              <Parentheses />
+              As SQL IN list
             </ContextMenu.Item>
             <ContextMenu.Item onSelect={() => runMenuAction(() => void writeClipboard(hcol))}>
               <Type />

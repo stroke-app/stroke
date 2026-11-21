@@ -95,3 +95,23 @@ describe('PostgreSQL-dialect Spanner previews', () => {
     ])
   })
 })
+
+describe('sqlInList', () => {
+  it('quotes per dialect, keeps first-seen order, drops duplicates and NULLs', async () => {
+    const { sqlInList } = await import('./dml-preview.js')
+    expect(sqlInList(["O'Neil", 'b', "O'Neil", null, 'a'], 'postgres')).toEqual({ text: "('O''Neil', 'b', 'a')", count: 3, nulls: 1 })
+    expect(sqlInList([3, 1, 3, 2], 'mysql')).toEqual({ text: '(3, 1, 2)', count: 3, nulls: 0 })
+    expect(sqlInList(['a\\b'], 'mysql').text).toBe("('a\\\\b')")
+    expect(sqlInList([null, undefined], 'sqlite')).toEqual({ text: '', count: 0, nulls: 2 })
+  })
+})
+
+describe('SQL Server Unicode strings', () => {
+  it('prefixes N only when the text is not ASCII', async () => {
+    const { sqlLiteral } = await import('./dml-preview.js')
+    expect(sqlLiteral('Zoë', 'mssql')).toBe("N'Zoë'")
+    expect(sqlLiteral('東京', 'mssql')).toBe("N'東京'")
+    expect(sqlLiteral("O'Neil", 'mssql')).toBe("'O''Neil'")
+    expect(sqlLiteral('東京', 'postgres')).toBe("'東京'")
+  })
+})

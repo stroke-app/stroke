@@ -9,7 +9,7 @@
  * cleanup that must run after the entry edits (list deletes).
  * @typedef {{ id: number, key: string, binary: boolean, cell: string, label: string,
  *   display?: string, deleted?: boolean, ops: string[][], error?: string,
- *   create?: { type: string, preview: string } }} Staged
+ *   create?: { type: string, preview: string, ttlSeconds?: number | null } }} Staged
  */
 
 /** Placeholder a deleted list element is set to before one LREM removes them all. */

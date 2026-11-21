@@ -907,9 +907,18 @@ fn sql_literal(v: &Value) -> String {
         Value::Null => "NULL".to_string(),
         Value::Bool(b) => if *b { "1".to_string() } else { "0".to_string() },
         Value::Number(n) => n.to_string(),
-        Value::String(s) => format!("'{}'", esc_literal(s)),
-        other => format!("'{}'", esc_literal(&other.to_string())),
+        Value::String(s) => str_literal(s),
+        other => str_literal(&other.to_string()),
     }
+}
+
+/// A T-SQL string. Non-ASCII text is written N'...': a plain literal is
+/// converted to the database's code page first, so an edit to Chinese or
+/// Cyrillic text was stored as question marks. ASCII stays plain, which keeps
+/// a lookup on a varchar key from converting the whole index to nvarchar.
+fn str_literal(s: &str) -> String {
+    let n = if s.is_ascii() { "" } else { "N" };
+    format!("{n}'{}'", esc_literal(s))
 }
 
 fn pk_where(pk: &HashMap<String, Value>) -> String {
@@ -984,6 +993,17 @@ pub async fn delete_table_rows(
         deleted += res.row_count.unwrap_or(0).max(0) as u64;
     }
     Ok(deleted)
+}
+
+#[cfg(test)]
+mod literal_tests {
+    use serde_json::json;
+    #[test]
+    fn unicode_strings_get_the_n_prefix() {
+        assert_eq!(super::sql_literal(&json!("東京")), "N'東京'");
+        assert_eq!(super::sql_literal(&json!("O'Neil")), "'O''Neil'");
+        assert_eq!(super::sql_literal(&json!(7)), "7");
+    }
 }
 
 #[cfg(test)]
