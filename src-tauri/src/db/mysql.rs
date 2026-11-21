@@ -885,7 +885,7 @@ async fn run_script_on(
         columns: vec![],
         rows: vec![],
         row_count: Some(affected),
-        message: Some(format!("{n} statements ran, {affected} row(s) affected")),
+        message: Some(format!("{n} statements ran, {}", super::query::affected_message("", affected))),
         query_ms,
         sql: joined,
     })
@@ -937,7 +937,7 @@ async fn run_one_on(conn: &mut sqlx::MySqlConnection, sql: &str) -> Result<SqlRe
         columns: vec![],
         rows: vec![],
         row_count: Some(affected),
-        message: Some(format!("{affected} row(s) affected")),
+        message: Some(super::query::affected_message(sql, affected)),
         query_ms: query_ms(),
         sql: sql.to_string(),
     })

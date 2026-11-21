@@ -8098,7 +8098,7 @@ let rowSearch = $state('')
       // The reply is camelCase (`SqlResult` in query.rs); `row_count` was never sent.
       const affected = data.rowCount ?? data.row_count
       if (!msg && affected != null && cols.length === 0) {
-        msg = `${formatCompactCount(affected)} row(s) affected`
+        msg = `${formatCompactCount(affected)} ${affected === 1 ? 'row' : 'rows'} affected`
       }
       const stored = runTabId ? _sqlViewsByTab.has(runTabId) : false
       patchSqlTab(runTabId, { sqlColumns: cols, sqlRows: stored ? [] : rws, sqlQueryMs: ranMs, sqlMessage: msg, sqlError: '' })

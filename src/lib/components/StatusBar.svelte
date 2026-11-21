@@ -233,7 +233,9 @@
   const currentDb = $derived(
     connection?.type === 'libsql'
       ? (connection?.url ?? '').replace(/^(libsql|https?):\/\//, '').split('/')[0]
-      : (connection?.database ?? connection?.filePath ?? '')
+      // A file database by its file name: the whole path cut off after its
+      // first folder ("/tmp/claude-100…"), the part that names nothing.
+      : (connection?.database ?? (connection?.filePath ? String(connection.filePath).split(/[\\/]/).pop() || connection.filePath : ''))
   )
   const isRedis = $derived(engineFamily(connection?.type) === 'redis')
   const isPostgres = $derived(!isRedis && (engineFamily(connection?.type) === 'postgres' || engineFamily(connection?.type) === 'mysql'))
@@ -618,7 +620,7 @@
             disabled={!canSwitchDb}
             title={oracleInRoot
               ? 'Connected to the root container, which holds only Oracle\'s own schemas. Set the service name to a pluggable database such as FREEPDB1.'
-              : canSwitchDb ? withShortcut('Switch database', 'database.switch') : currentDbLabel}
+              : canSwitchDb ? withShortcut('Switch database', 'database.switch') : (connection?.filePath || currentDbLabel)}
           >
             {#if connection?.type === 'sqlite'}
               <Icon name="hard-drive" class="size-3.5 shrink-0" />

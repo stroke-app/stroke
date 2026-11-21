@@ -518,6 +518,18 @@
    * login, database and TLS - Neon's `options=endpoint%3D...` included.
    */
   let pgParams = $state("");
+  // A file path filled in for you (pasted, browsed, a saved connection) shows
+  // its end, the file's name, not "/home/me/projects/..." with the name cut
+  // off. While you edit the field it is yours to scroll.
+  $effect(() => {
+    void filePath;
+    void tick().then(() => {
+      for (const id of ["cn-path", "cn-duck-path"]) {
+        const el = /** @type {HTMLInputElement | null} */ (document.getElementById(id));
+        if (el && el !== document.activeElement) el.scrollLeft = el.scrollWidth;
+      }
+    });
+  });
   const pgWire = $derived(dbType === "postgres" || dbType === "cockroachdb" || dbType === "yugabytedb" || dbType === "alloydb");
   let secure = $state(false);
   let encrypt = $state(false);
