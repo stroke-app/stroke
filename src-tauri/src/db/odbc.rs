@@ -241,10 +241,14 @@ pub mod registry {
         lib_dirs().into_iter().map(|d| d.join(name)).find(|p| p.is_file()).map(|p| p.to_string_lossy().into_owned())
     }
 
-    /// Write the merged registry and point the driver manager at it. Called
-    /// once, before the ODBC environment is made.
+    /// Write the merged registry and point the driver manager at it. Runs
+    /// before every driver list, data source list and connect, so a driver
+    /// installed while the app is open shows up without a restart: unixODBC
+    /// reads the files again when they change.
     pub fn install() {
-        let user_sysini = std::env::var_os("ODBCSYSINI").map(PathBuf::from);
+        // The user's own ODBCSYSINI, as it was before this app replaced it.
+        static USER_SYSINI: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+        let user_sysini = USER_SYSINI.get_or_init(|| std::env::var_os("ODBCSYSINI").map(PathBuf::from)).clone();
         let read = |file: &str| -> Vec<String> {
             sources(file, user_sysini.as_deref()).iter().filter_map(|p| std::fs::read_to_string(p).ok()).collect()
         };
@@ -269,20 +273,22 @@ pub mod registry {
             }
             ok
         };
-        if write("odbcinst.ini", &drivers) && write("odbc.ini", &dsns) {
-            // Before any ODBC call and before other threads read the
-            // environment for ODBC; nothing else in the app reads this var.
+        if write("odbcinst.ini", &drivers) && write("odbc.ini", &dsns) && std::env::var_os("ODBCSYSINI").as_deref() != Some(dir.as_os_str()) {
+            // Set once, before the first ODBC call; nothing else in the app
+            // reads this variable.
             std::env::set_var("ODBCSYSINI", &dir);
         }
     }
 }
 
 fn environment() -> Result<&'static odbc_api::Environment, String> {
-    static INSTALLED: std::sync::Once = std::sync::Once::new();
-    INSTALLED.call_once(|| {
+    // Serialised: two refreshes at once would write the same files together.
+    static REFRESH: Mutex<()> = Mutex::new(());
+    {
+        let _g = REFRESH.lock().unwrap_or_else(|e| e.into_inner());
         #[cfg(not(windows))]
         registry::install();
-    });
+    }
     odbc_api::environment().map_err(|e| format!("The ODBC driver manager could not start: {e}"))
 }
 
