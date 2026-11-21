@@ -10,6 +10,7 @@
   import CodeTextView from './CodeTextView.svelte'
   import Icon from './Icon.svelte'
   import DbIcon from './DbIcon.svelte'
+  import { Button } from '$lib/components/ui/button/index.js'
   import TabLoading from './TabLoading.svelte'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
   import { getSchemaColumnStructure, listIndexes, listEnums, listTables, listSchemas, saveExportAs } from '$lib/api.js'
@@ -37,7 +38,10 @@
     { id: 'sql',     label: 'SQL',     engines: SQL_ENGINES,     ext: 'sql',    file: 'schema.sql' },
   ]
 
-  let target = $state(/** @type {'prisma'|'drizzle'|'sql'} */ ('prisma'))
+  // Opens on the first target that can describe this engine: on DuckDB that
+  // is Drizzle, where Prisma only had "doesn't support this engine" to say.
+  // svelte-ignore state_referenced_locally
+  let target = $state(/** @type {'prisma'|'drizzle'|'sql'} */ (TARGETS.find((t) => t.engines.includes(dbType))?.id ?? 'prisma'))
   /** 'schema' = the schema in the sidebar; 'database' = every schema, one script.
    *  Only offered for the SQL target: DDL names are schema-qualified, so two
    *  schemas owning a `users` table produce two statements rather than a clash,
@@ -364,10 +368,15 @@
         <p class="mt-2 text-ui-sm text-foreground">{active.label} doesn't support this engine</p>
         <p class="mt-1 text-ui-xs text-muted-foreground">
           {active.label} has no {dbType} driver, so there's no schema to write.
-          {#if TARGETS.some((t) => t.id !== active.id && t.engines.includes(dbType))}
-            Switch to {TARGETS.find((t) => t.id !== active.id)?.label} above.
-          {/if}
         </p>
+        <!-- The suggestion was text ("Switch to Drizzle above"), and it named the
+             next target whether or not that one supports the engine either. -->
+        {#if TARGETS.find((t) => t.id !== active.id && t.engines.includes(dbType))}
+          {@const alt = TARGETS.find((t) => t.id !== active.id && t.engines.includes(dbType))}
+          <Button variant="outline" size="sm" class="mt-3" onclick={() => (target = /** @type {'prisma'|'drizzle'|'sql'} */ (alt?.id))}>
+            Show the {alt?.label} schema
+          </Button>
+        {/if}
       </div>
     </div>
   {:else if effectiveScope === 'database' ? (dbLoading && !dbModels.length) : (loading && !model)}
