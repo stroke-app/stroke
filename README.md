@@ -129,7 +129,7 @@ Or download an installer from [Releases](https://github.com/stroke-app/stroke/re
 | Fedora 41+, RHEL 10 | `.rpm` |
 | Arch and any distro with glibc 2.35+ | `.AppImage` |
 
-Every feature is free for 17 days. After that, [Stroke Pro](https://stroke.click/pricing) is $9.99 once, with every update included.
+Every feature is free for 30 days. After that, [Stroke Pro](https://stroke.click/pricing) is $9.99 once, with every update included.
 
 <details>
 <summary><b>Stroke Nightly</b>: try what's coming</summary>
