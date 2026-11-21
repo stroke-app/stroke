@@ -372,6 +372,9 @@
   function toggleRowNumbers() {
     settings = updateSettings({ showRowNumbers: !settings.showRowNumbers });
   }
+  function toggleRelationColumns() {
+    settings = updateSettings({ showRelationColumns: settings.showRelationColumns === false });
+  }
 
   function toggleMenuBar() {
     settings = updateSettings({ showMenuBar: !settings.showMenuBar });
@@ -1827,6 +1830,14 @@
       'Number rows in the gutter, counting from the first row of the page.',
       settings.showRowNumbers,
       toggleRowNumbers,
+    )}
+  {/if}
+  {#if show('Referenced-by columns', 'Columns linking to rows in tables whose foreign keys point here')}
+    {@render switchRow(
+      'Referenced-by columns',
+      'A column for each table whose foreign key points at this one, linking to the rows that reference the row. Off, they are not loaded or drawn.',
+      settings.showRelationColumns !== false,
+      toggleRelationColumns,
     )}
   {/if}
   {#if show('Cell alignment', 'Which side grid cell text sits on')}

@@ -7987,6 +7987,12 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     const el = tableContainer
     if (!el) return
     const easedScroll = !$appNativeScroll
+    // macOS WebKit locks a trackpad gesture to the axis it starts on (its
+    // "predominant axis" filter), so a diagonal swipe in a wide grid moved one
+    // way only. Natively scrolled there, the grid takes plain wheel events
+    // itself and applies both axes 1:1, momentum included, as a spreadsheet
+    // does. The rest of the time (and everywhere else) the OS scrolls.
+    const freeAxes = !easedScroll && typeof document !== 'undefined' && document.documentElement.dataset.os === 'macos'
     // Accumulates pinch/ctrl-wheel delta so many small gesture ticks map to whole
     // app-zoom steps instead of one step per event.
     let _zoomAccum = 0
@@ -8126,6 +8132,20 @@ import FilterX from "@lucide/svelte/icons/filter-x";
         else el.scrollLeft += delta
         return
       }
+      if (!scroller && freeAxes) {
+        if (inner && inner !== el) return
+        const { dx, dy } = wheelPixels(e, el.clientHeight)
+        const canY = dy < 0 ? el.scrollTop > 0 : el.scrollTop + el.clientHeight < el.scrollHeight - 1
+        const canX = dx < 0 ? el.scrollLeft > 0 : el.scrollLeft + el.clientWidth < el.scrollWidth - 1
+        const moveY = !!dy && canY
+        const moveX = !!dx && canX
+        // At the edges the tick goes on to whatever is around the grid.
+        if (!moveY && !moveX) return
+        e.preventDefault()
+        if (moveY) el.scrollTop += dy
+        if (moveX) el.scrollLeft += dx
+        return
+      }
       if (!scroller) return
       // Plain wheel, eased: animate the offset ourselves. The rAF redraw loop
       // still runs off the resulting `scroll` events, so nothing else changes.
@@ -8177,7 +8197,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     let _detachTimer = 0
     const onKey = (e) => {
       noteShift(e)
-      if (easedScroll) return
+      if (easedScroll || freeAxes) return
       clearTimeout(_detachTimer)
       if (e.ctrlKey || e.shiftKey || e.altKey) { attach(); return }
       // Shift came up mid-gesture: stay attached until the coast ends, or the
@@ -8193,13 +8213,14 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     // another window has focus never reaches us. Under eased scrolling the
     // listener is not modifier-gated and must survive - detaching it there would
     // leave the grid unable to scroll until the component remounted.
-    const onBlur = () => { if (!easedScroll) detach() }
+    const onBlur = () => { if (!easedScroll && !freeAxes) detach() }
 
     // A press interrupts coasting - grabbing the scrollbar, or clicking a cell
     // while the tail of an ease is still running, takes effect now.
     const onInterrupt = () => { scroller?.stop(); scroller?.sync() }
 
     el.addEventListener('wheel', onWheelPassive, { passive: true })
+    if (freeAxes) attach()
     if (easedScroll) {
       attach()
       el.addEventListener('scroll', onScrollSync, { passive: true })

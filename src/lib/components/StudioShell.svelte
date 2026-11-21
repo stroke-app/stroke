@@ -45,7 +45,7 @@
   import { isTypingTarget } from '$lib/focus-search.js'
   import { slashFocusTarget } from '$lib/slash-focus.js'
   import QuitHint from './QuitHint.svelte'
-  import { appFkAutoExpandJson, cycleTheme, restorePreviousTheme, isCurrentThemeDark, loadSettings, appPaginationMode, appVimMode, appAutoSaveQueries, appStreamResults, appSqlUndo, appSqlEditor, appAiInTab, increaseZoom, decreaseZoom, resetZoom, updateSettings } from '$lib/stores/settings.js'
+  import { appRelationColumns, appFkAutoExpandJson, cycleTheme, restorePreviousTheme, isCurrentThemeDark, loadSettings, appPaginationMode, appVimMode, appAutoSaveQueries, appStreamResults, appSqlUndo, appSqlEditor, appAiInTab, increaseZoom, decreaseZoom, resetZoom, updateSettings } from '$lib/stores/settings.js'
   import { requireUnlock } from '$lib/stores/app-lock.js'
   import { isTextEntryTarget, setVimSubMode } from '$lib/vim/vim.js'
   import { normalizeColumn, columnType } from '$lib/column.js'
@@ -1762,8 +1762,12 @@
   /** Cache of incoming (reverse) FKs, keyed by "schema.table". Loaded once per table open. */
   let incomingFkCache = $state(/** @type {Map<string,any[]>} */ (new Map()))
   /** Incoming FKs for the active table, read from cache. */
+  // Turned back on in Settings with a table open: load its columns now.
+  $effect(() => {
+    if ($appRelationColumns && activeSchema && activeTable) void loadIncomingForeignKeys(activeSchema, activeTable)
+  })
   const incomingForeignKeys = $derived(
-    (activeSchema && activeTable) ? (incomingFkCache.get(`${activeSchema}.${activeTable}`) ?? []) : []
+    $appRelationColumns && activeSchema && activeTable ? (incomingFkCache.get(`${activeSchema}.${activeTable}`) ?? []) : []
   )
   /** Virtual rel column labels for the toolbar columns dropdown.
    *  Must enumerate ALL incoming FK tables - no cap - so every rel column
@@ -5651,8 +5655,9 @@ let rowSearch = $state('')
     }
     // Fire the fetch in background - caller can open more tabs without waiting
     void startTabFetch(tab.id)
-    // Load reverse FKs once per table (cached - not re-fetched on page/sort changes)
-    void loadIncomingForeignKeys(schema, table)
+    // Load reverse FKs once per table (cached - not re-fetched on page/sort
+    // changes), unless their columns are turned off in Settings.
+    if ($appRelationColumns) void loadIncomingForeignKeys(schema, table)
   }
 
   /** Cap on the incoming-FK cache so long sessions across many tables don't grow it unbounded. */
