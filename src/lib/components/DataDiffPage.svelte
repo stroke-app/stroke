@@ -1,4 +1,5 @@
 <script>
+  import { comboTitle } from '$lib/shortcuts.js'
   import { Button } from '$lib/components/ui/button/index.js'
   import GitCompare from '@lucide/svelte/icons/git-compare'
   import { getAppScale } from '$lib/app-zoom.js'
@@ -287,7 +288,6 @@
 
   /** True while either side is re-listing, so the button can show it. */
   let refreshing = $state(false)
-  const modKey = typeof navigator !== 'undefined' && /mac/i.test(navigator.platform) ? '\u2318' : 'Ctrl+'
 
   /**
    * Re-list databases, schemas and tables for both sides from scratch.
@@ -692,7 +692,7 @@
         type="button"
         onclick={() => void refresh()}
         disabled={refreshing}
-        title="Reload databases, schemas and tables ({modKey}R)"
+        title="Reload databases, schemas and tables ({comboTitle('Mod+R')})"
         aria-label="Reload source and target lists"
         class="flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-border/40 px-2.5 text-ui-xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
       >

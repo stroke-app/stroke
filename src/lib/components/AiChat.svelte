@@ -1,4 +1,5 @@
 <script>
+  import { comboTitle } from '$lib/shortcuts.js'
   import { errorText } from '$lib/utils.js'
   import Share2 from '@lucide/svelte/icons/share-2'
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js'
@@ -4526,7 +4527,7 @@
         <button
           type="button"
           class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          title="Hide chats ({modKey}B)"
+          title="Hide chats ({comboTitle('Mod+B')})"
           onclick={toggleAiSidebar}
         >
           <PanelLeft class="size-3.5 shrink-0" />
@@ -4740,7 +4741,7 @@
           {#if onopenshortcuts}
             <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title="Keyboard shortcuts" aria-label="Keyboard shortcuts" onclick={onopenshortcuts}><Icon name="keyboard" class="size-4 shrink-0" /></button>
           {/if}
-          <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title="Hide chats ({modKey}B)" aria-label="Hide chats" onclick={toggleAiSidebar}><PanelLeft class="size-4 shrink-0" /></button>
+          <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title="Hide chats ({comboTitle('Mod+B')})" aria-label="Hide chats" onclick={toggleAiSidebar}><PanelLeft class="size-4 shrink-0" /></button>
           <button
             type="button"
             class="ml-auto inline-flex size-8 items-center justify-center rounded-full text-muted-foreground outline-none hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
@@ -4929,7 +4930,7 @@
       <button
         type="button"
         class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-        title={sidebarVisible ? `Hide chats (${modKey}B)` : `Show chats (${modKey}B)`}
+        title={sidebarVisible ? `Hide chats (${comboTitle('Mod+B')})` : `Show chats (${comboTitle('Mod+B')})`}
         aria-label={sidebarVisible ? "Hide chats" : "Show chats"}
         onclick={toggleAiSidebar}
       >
@@ -6315,7 +6316,7 @@
             </button>
 
             <p class="text-center text-ui-3xs text-muted-foreground">
-              Shared with AI sidebar · <kbd class="font-mono">{modKey}I</kbd>
+              Shared with AI sidebar · <kbd class="font-mono">{comboTitle('Mod+I')}</kbd>
             </p>
           </div>
 

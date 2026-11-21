@@ -1,5 +1,5 @@
 <script>
-  import { IS_MAC } from '$lib/shortcuts.js'
+  import { IS_MAC, comboTitle } from '$lib/shortcuts.js'
   import { rowsToCsv, rowsToJson, rowsToSql, rowsToTsv, rowsToMarkdown, rowsToJsonl, rowsToObjects, saveExportFile, buildExportFilename, exportRows, EXPORT_FORMATS } from '$lib/export.js'
   import Play from "@lucide/svelte/icons/play";
   import PanelBottom from "@lucide/svelte/icons/panel-bottom";
@@ -982,7 +982,7 @@
           onclick={() => handleRun(undefined)}
           title={tipText(
             'Run query',
-            `Runs every statement, each gets its own result tab. ${mod}R runs only the statement under the cursor, ${mod}L selects it.`,
+            `Runs every statement, each gets its own result tab. ${comboTitle('Mod+R')} runs only the statement under the cursor, ${comboTitle('Mod+L')} selects it.`,
             [mod, '↵'],
           )}
         >
@@ -1886,8 +1886,8 @@
       <Dialog.Title class="text-ui-sm font-semibold">{savedQueryName ? 'Save as a new query' : 'Save query'}</Dialog.Title>
       <Dialog.Description class="text-ui-xs text-muted-foreground">
         {savedQueryName
-          ? `A copy of "${savedQueryName}". This tab moves to the copy; ${mod}S then saves into it.`
-          : `Saved queries are kept per connection, under Saved in the results pane. After this, ${mod}S saves this tab into it.`}
+          ? `A copy of "${savedQueryName}". This tab moves to the copy; ${comboTitle('Mod+S')} then saves into it.`
+          : `Saved queries are kept per connection, under Saved in the results pane. After this, ${comboTitle('Mod+S')} saves this tab into it.`}
       </Dialog.Description>
     </Dialog.Header>
     <div class="flex flex-col gap-2">
