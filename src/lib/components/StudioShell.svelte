@@ -2552,15 +2552,28 @@ let rowSearch = $state('')
   const aiChatMatch = $derived((/** @type {string} */ k) => chatBelongsTo(k, connection))
 
   // ID of the currently-active saved connection (for highlighting in the palette)
-  const activeConnectionId = $derived(
-    connection
-      ? (savedConnections.find((c) => {
-          if (c.type === 'sqlite') return c.filePath === connection.filePath
-          if (c.type === 'd1') return c.databaseId === connection.databaseId && c.accountId === connection.accountId
-          return c.host === connection.host && c.database === connection.database && c.user === connection.user
-        })?.id ?? '')
-      : '',
-  )
+  /** The saved connection last connected from, as onConnected was told it. */
+  let connectedSavedId = $state('')
+
+  const activeConnectionId = $derived.by(() => {
+    if (!connection) return ''
+    // Equal where both say: a port or type left out matches as it always did.
+    const agree = (/** @type {any} */ a, /** @type {any} */ b) => a == null || b == null || a === '' || b === '' || String(a) === String(b)
+    /** @param {any} c */
+    const matches = (c) => {
+      if (c.type === 'sqlite') return c.filePath === connection.filePath
+      if (c.type === 'd1') return c.databaseId === connection.databaseId && c.accountId === connection.accountId
+      // The port and engine too: two local servers on one host, each with a
+      // "postgres" database and user, read as one connection and shared their
+      // drafts, history and tabs.
+      return c.host === connection.host && c.database === connection.database && c.user === connection.user
+        && agree(c.port, connection.port) && agree(c.type, connection.type)
+    }
+    // The saved connection it was opened with, while it still describes it.
+    const opened = connectedSavedId ? savedConnections.find((c) => c.id === connectedSavedId) : undefined
+    if (opened && matches(opened)) return opened.id
+    return savedConnections.find(matches)?.id ?? ''
+  })
 
   const persistConnectionId = $derived(activeConnectionId || connectionId)
 
@@ -2597,8 +2610,6 @@ let rowSearch = $state('')
     return 'Stroke'
   })
 
-  /** The saved connection last connected from, as onConnected was told it. */
-  let connectedSavedId = $state('')
   /**
    * The saved connection the AI tools should call active. activeConnectionId
    * matches on host, database and user, which misses after switching database
