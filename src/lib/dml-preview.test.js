@@ -105,3 +105,13 @@ describe('sqlInList', () => {
     expect(sqlInList([null, undefined], 'sqlite')).toEqual({ text: '', count: 0, nulls: 2 })
   })
 })
+
+describe('SQL Server Unicode strings', () => {
+  it('prefixes N only when the text is not ASCII', async () => {
+    const { sqlLiteral } = await import('./dml-preview.js')
+    expect(sqlLiteral('Zoë', 'mssql')).toBe("N'Zoë'")
+    expect(sqlLiteral('東京', 'mssql')).toBe("N'東京'")
+    expect(sqlLiteral("O'Neil", 'mssql')).toBe("'O''Neil'")
+    expect(sqlLiteral('東京', 'postgres')).toBe("'東京'")
+  })
+})

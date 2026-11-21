@@ -72,6 +72,10 @@ function quoteString(/** @type {string} */ s, /** @type {string} */ dialect = ''
   // string as an escape: 'C:\new' arrived as "C:" and a newline. Doubled, it
   // stays a backslash.
   if (dialect === 'mysql' || dialect === 'clickhouse') return "'" + s.replace(/\\/g, '\\\\').replace(/'/g, "''") + "'"
+  // SQL Server converts a plain '...' to the database's code page, so Chinese or
+  // Cyrillic text in a generated INSERT came out as ????. N'...' keeps it as
+  // Unicode; plain ASCII stays unprefixed.
+  if (dialect === 'mssql' && /[^\x00-\x7f]/.test(s)) return "N'" + s.replace(/'/g, "''") + "'"
   return "'" + s.replace(/'/g, "''") + "'"
 }
 
