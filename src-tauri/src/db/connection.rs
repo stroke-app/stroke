@@ -1888,12 +1888,31 @@ pub async fn connect_bigquery(state: Db<'_>, config: crate::db::bigquery::BigQue
 
 /// A database through its ODBC driver (beta): connects and reads what the
 /// driver says about naming and paging before it becomes active.
-pub async fn connect_odbc(state: Db<'_>, config: crate::db::odbc::OdbcConfig) -> Result<crate::db::odbc::OdbcSummary, String> {
+pub async fn connect_odbc(state: Db<'_>, tunnel_state: State<'_, TunnelState>, config: crate::db::odbc::OdbcConfig) -> Result<crate::db::odbc::OdbcSummary, String> {
+    let (config, tunnel) = resolve_odbc_ssh(config).await?;
     let h = crate::db::odbc::connect(&config).await?;
     let summary = h.info.summary();
     close_existing(&state).await;
     set_conn(&state, Some(ActiveConnection::Odbc(h)))?;
+    tunnel_state.set(tunnel);
     Ok(summary)
+}
+
+/// An ODBC connection through SSH: the tunnel to the preset's host and port,
+/// and the connection string pointed at its local end.
+pub(crate) async fn resolve_odbc_ssh(mut c: crate::db::odbc::OdbcConfig) -> Result<(crate::db::odbc::OdbcConfig, Option<SshTunnel>), String> {
+    let Some(ssh) = c.ssh.clone() else { return Ok((c, None)) };
+    let (Some(host), Some(port)) = (c.target_host.clone().filter(|h| !h.trim().is_empty()), c.target_port) else {
+        return Err("An SSH tunnel needs the database's host and port: fill them in on the Fields tab".into());
+    };
+    let tunnel = SshTunnel::establish(&ssh, host.trim(), port).await?;
+    let cs = crate::db::odbc::connection_string(&c)?;
+    c.connection_string = Some(crate::db::odbc::retarget(&cs, &host, port, tunnel.local_port));
+    c.dsn = None;
+    // The credentials are in the retargeted string already.
+    c.user = None;
+    c.password = None;
+    Ok((c, Some(tunnel)))
 }
 
 /// Snowflake (beta): signs in and runs SELECT 1 before it becomes active.

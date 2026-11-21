@@ -64,6 +64,7 @@ enum TxConn {
     Duckdb(super::connection::DuckdbHandle),
     Mssql(super::connection::MssqlHandle),
     Oracle(super::connection::OracleHandle),
+    Odbc(super::odbc::OdbcHandle),
 }
 
 impl TxConn {
@@ -82,6 +83,7 @@ impl TxConn {
                 drop(h)
             }
             TxConn::Oracle(h) => drop(h),
+            TxConn::Odbc(h) => drop(h),
         }
     }
 
@@ -93,6 +95,7 @@ impl TxConn {
             TxConn::Duckdb(_) => "duckdb",
             TxConn::Mssql(_) => "mssql",
             TxConn::Oracle(_) => "oracle",
+            TxConn::Odbc(_) => "odbc",
         }
     }
 }
@@ -360,7 +363,7 @@ pub async fn tx_begin(db: Db<'_>, session_id: String) -> Result<TxStatus, String
         ActiveConnection::Spanner(_) => return Err("Explicit transactions are not supported for Spanner yet; each statement commits on its own".into()),
         ActiveConnection::Bigquery(_) => return Err("Explicit transactions are not supported for BigQuery yet; each statement commits on its own".into()),
         ActiveConnection::Snowflake(_) => return Err("Explicit transactions are not supported for Snowflake yet; each statement commits on its own".into()),
-        ActiveConnection::Odbc(_) => return Err("Explicit transactions are not supported for ODBC yet; each statement commits on its own".into()),
+        ActiveConnection::Odbc(h) => TxConn::Odbc(super::odbc::open_tx(h).await.map_err(|e| format!("Could not open a transaction: {e}"))?),
         ActiveConnection::Redis(_) => return Err("Redis does not support SQL transactions".into()),
         ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => return Err("DynamoDB does not support SQL transactions here".into()),
     };
@@ -541,6 +544,16 @@ async fn run_statement(conn: &mut TxConn, sql: &str) -> Result<u64, String> {
             };
             return super::mssql::batch(h, stmt).await.map(|_| 0);
         }
+        TxConn::Odbc(h) => {
+            return match sql {
+                // Autocommit is off on this connection: the first statement
+                // opens the transaction.
+                "BEGIN" => Ok(0),
+                "COMMIT" => super::odbc::commit(h).await.map(|_| 0),
+                "ROLLBACK" => super::odbc::rollback(h).await.map(|_| 0),
+                other => super::odbc::query(h, other).await.map(|r| r.row_count.unwrap_or(0).max(0) as u64),
+            };
+        }
         TxConn::Oracle(h) => {
             return match sql {
                 // Oracle starts a transaction with its first statement.
@@ -561,6 +574,7 @@ async fn execute_on_handle(conn: &TxConn, stmt: &str) -> Option<Result<SqlResult
         TxConn::Duckdb(h) => super::duckdb::execute_sql(h, stmt).await,
         TxConn::Mssql(h) => super::mssql::execute_sql(h, stmt).await,
         TxConn::Oracle(h) => super::oracle::execute_in_tx(h, stmt).await,
+        TxConn::Odbc(h) => super::odbc::query(h, stmt).await,
         _ => return None,
     })
 }
@@ -578,7 +592,7 @@ async fn execute_in(conn: &mut TxConn, sql: &str) -> Result<SqlResult, String> {
     let last = stmts.len() - 1;
     let mut affected: u64 = 0;
 
-    if matches!(conn, TxConn::Duckdb(_) | TxConn::Mssql(_) | TxConn::Oracle(_)) {
+    if matches!(conn, TxConn::Duckdb(_) | TxConn::Mssql(_) | TxConn::Oracle(_) | TxConn::Odbc(_)) {
         let mut out = None;
         for stmt in &stmts {
             let r = execute_on_handle(conn, stmt).await.expect("single-connection engine").map_err(|e| format!("Query failed: {e}"))?;
@@ -673,7 +687,7 @@ async fn fetch_rows(conn: &mut TxConn, stmt: &str) -> Result<SqlResult, String> 
                 );
             }
         }
-        TxConn::Duckdb(_) | TxConn::Mssql(_) | TxConn::Oracle(_) => {
+        TxConn::Duckdb(_) | TxConn::Mssql(_) | TxConn::Oracle(_) | TxConn::Odbc(_) => {
             return execute_on_handle(conn, stmt).await.unwrap_or_else(|| Err("unsupported".into()));
         }
     }
@@ -692,6 +706,40 @@ async fn fetch_rows(conn: &mut TxConn, stmt: &str) -> Result<SqlResult, String> 
 #[cfg(test)]
 mod tests {
     use super::leading_keyword;
+
+    /// An ODBC transaction on its own connection (STROKE_TEST_ODBC): a
+    /// rollback leaves nothing behind, uncommitted rows stay out of the
+    /// shared connection's sight, and a commit lands them.
+    #[tokio::test]
+    async fn live_odbc_transaction() {
+        let Ok(cs) = std::env::var("STROKE_TEST_ODBC") else { return };
+        let cfg = super::super::odbc::OdbcConfig { name: "t".into(), preset: None, dsn: None, connection_string: Some(cs), user: None, password: None, ssh: None, target_host: None, target_port: None };
+        let shared = super::super::odbc::connect(&cfg).await.unwrap();
+        let t = format!("stroke_tx_{}", std::process::id());
+        super::super::odbc::query(&shared, &format!("CREATE TABLE {t} (id INTEGER PRIMARY KEY)")).await.unwrap();
+        let count = |h: super::super::odbc::OdbcHandle, t: String| async move {
+            super::super::odbc::query(&h, &format!("SELECT COUNT(*) FROM {t}")).await.unwrap().rows[0][0].as_i64().unwrap()
+        };
+
+        let mut tx = super::TxConn::Odbc(super::super::odbc::open_tx(&shared).await.unwrap());
+        super::run_statement(&mut tx, "BEGIN").await.unwrap();
+        assert_eq!(super::run_statement(&mut tx, &format!("INSERT INTO {t} VALUES (1)")).await.unwrap(), 1);
+        super::run_statement(&mut tx, "ROLLBACK").await.unwrap();
+        assert_eq!(count(shared.clone(), t.clone()).await, 0, "a rolled-back insert is gone");
+
+        super::run_statement(&mut tx, &format!("INSERT INTO {t} VALUES (2)")).await.unwrap();
+        let inside = super::execute_in(&mut tx, &format!("SELECT COUNT(*) FROM {t}")).await.unwrap();
+        assert_eq!(inside.rows[0][0].as_i64(), Some(1), "the transaction sees its own row");
+        // SQLite locks the file for a writer; elsewhere the shared connection
+        // simply doesn't see the uncommitted row.
+        if !shared.info.dbms.to_ascii_lowercase().contains("sqlite") {
+            assert_eq!(count(shared.clone(), t.clone()).await, 0, "uncommitted rows are not visible outside");
+        }
+        super::run_statement(&mut tx, "COMMIT").await.unwrap();
+        assert_eq!(count(shared.clone(), t.clone()).await, 1, "a commit lands the row");
+        drop(tx);
+        super::super::odbc::query(&shared, &format!("DROP TABLE {t}")).await.unwrap();
+    }
 
     fn live_session(conn: super::TxConn) -> super::TxSession {
         super::TxSession {

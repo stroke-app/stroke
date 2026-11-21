@@ -954,14 +954,15 @@ pub async fn connect_bigquery_db(state: Db<'_>, config: crate::db::bigquery::Big
 /// Returns what the driver reports itself as (`DB2/LINUXX8664`, `HDB`, ...).
 #[tauri::command]
 pub async fn test_odbc(config: crate::db::odbc::OdbcConfig) -> Result<String, String> {
+    let (config, _tunnel) = crate::db::connection::resolve_odbc_ssh(config).await?;
     let h = crate::db::odbc::connect(&config).await?;
     crate::db::odbc::ping(&h).await?;
     Ok(h.info.dbms.clone())
 }
 
 #[tauri::command]
-pub async fn connect_odbc_db(state: Db<'_>, config: crate::db::odbc::OdbcConfig) -> Result<crate::db::odbc::OdbcSummary, String> {
-    crate::db::connection::connect_odbc(state, config).await
+pub async fn connect_odbc_db(state: Db<'_>, tunnel_state: State<'_, TunnelState>, config: crate::db::odbc::OdbcConfig) -> Result<crate::db::odbc::OdbcSummary, String> {
+    crate::db::connection::connect_odbc(state, tunnel_state, config).await
 }
 
 /// The ODBC drivers installed on this machine.

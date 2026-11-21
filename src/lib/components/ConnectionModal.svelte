@@ -1191,6 +1191,8 @@
         connectionString: odbcString.trim(),
         user: user.trim(),
         password,
+        // A tunnel needs the host and port, which only the Fields tab knows.
+        ...(ssh && odbcMode === "fields" && { ssh }),
       };
     if (dbType === "snowflake")
       return {
@@ -3292,7 +3294,7 @@
     dbType === "mysql" ||
     dbType === "mariadb"}
   {@const isMy = dbType === "mysql" || dbType === "mariadb"}
-  {@const canSsh = isPgMy || ["mssql", "oracle", "clickhouse", "mongodb", "couchdb", "elasticsearch", "opensearch"].includes(dbType) || isRedisForm || isCqlForm}
+  {@const canSsh = isPgMy || ["mssql", "oracle", "clickhouse", "mongodb", "couchdb", "elasticsearch", "opensearch"].includes(dbType) || isRedisForm || isCqlForm || (isOdbcForm && odbcMode === "fields" && !!odbcCur?.fields.some((f) => f.key === "port"))}
   <!-- 12px between two bordered cards, not 10: the fields inside one card sit
        14px apart, and a gap between cards tighter than the gap within one makes
        the pair read as a single block. -->
