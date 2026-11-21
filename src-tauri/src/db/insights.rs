@@ -584,8 +584,10 @@ pub async fn instance_state(state: Db<'_>) -> Result<InstanceState, String> {
         ActiveConnection::Postgres(pool) => {
             let sessions = pg_query_objects(
                 &pool,
+                // Background workers have no user; their type (checkpointer,
+                // autovacuum launcher) says what they are where a dash said nothing.
                 "SELECT pid,
-                        usename          AS \"user\",
+                        COALESCE(usename::text, backend_type) AS \"user\",
                         application_name AS application,
                         client_addr::text AS client,
                         state,

@@ -556,7 +556,10 @@
   const ACRONYMS = new Set(['id', 'ids', 'pid', 'pids', 'db', 'ip', 'addr', 'xid', 'lsn', 'wal', 'gid', 'sql', 'os', 'tcp', 'io'])
   /** `blocking_pids` → `Blocking PIDs`. Raw catalog column names are not labels. */
   const humanize = (/** @type {string} */ k) => String(k).replace(/[_-]+/g, ' ').trim().split(' ')
-    .map((w) => (ACRONYMS.has(w.toLowerCase()) ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1)))
+    // A plural acronym keeps its s small: "PIDs", not "PIDS".
+    .map((w) => (ACRONYMS.has(w.toLowerCase())
+      ? (/^(ids|pids)$/i.test(w) ? w.slice(0, -1).toUpperCase() + 's' : w.toUpperCase())
+      : w.charAt(0).toUpperCase() + w.slice(1)))
     .join(' ')
 
   /** Session state is the one column worth reading at a glance. */
