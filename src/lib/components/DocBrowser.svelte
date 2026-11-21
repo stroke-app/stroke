@@ -63,7 +63,8 @@
    */
   let { active = false, connection = null, adapter, collection = '', where = '', onopensql = () => {}, live = false } = $props()
 
-  const readOnly = $derived($readOnlyMode)
+  // InfluxDB's adapter only reads, whatever the connection's mode.
+  const readOnly = $derived($readOnlyMode || !!adapter.readOnly)
   const noun = $derived(adapter.noun)
   /** "an index", "a collection". @param {string} w */
   const article = (w) => (/^[aeiou]/i.test(w) ? 'an' : 'a')

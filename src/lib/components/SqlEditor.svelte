@@ -285,7 +285,7 @@
 
   // Query languages that aren't SQL: the SQL lint and formatter would mark
   // valid statements as errors (db.users.find(...)) or rewrite them.
-  const NOT_SQL = new Set(['redis', 'valkey', 'mongodb', 'couchdb', 'elasticsearch', 'opensearch', 'firestore', 'neo4j'])
+  const NOT_SQL = new Set(['redis', 'valkey', 'mongodb', 'couchdb', 'elasticsearch', 'opensearch', 'firestore', 'neo4j', 'influxdb'])
   const isSql = $derived(!NOT_SQL.has(dialect))
 
   /** @param {import('@codemirror/state').EditorState} state */

@@ -24,6 +24,7 @@ pub mod elastic;
 pub mod cassandra;
 pub mod firestore;
 pub mod neo4j;
+pub mod influx;
 pub mod google_auth;
 pub mod spanner;
 pub mod bigquery;

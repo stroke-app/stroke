@@ -38,6 +38,8 @@
     connectCassandra,
     testNeo4j,
     connectNeo4j,
+    testInflux,
+    connectInflux,
     testFirestore,
     connectFirestore,
     testSpanner,
@@ -225,6 +227,7 @@
         { id: "scylladb", label: "ScyllaDB", desc: "Cassandra-compatible wide-column store (CQL)" },
         { id: "firestore", label: "Firestore", desc: "Google Cloud document database" },
         { id: "neo4j", label: "Neo4j", desc: "Graph database, also Aura (over HTTP)", beta: true },
+        { id: "influxdb", label: "InfluxDB", desc: "Time series, 1.x, 2.x and 3.x (read-only)", beta: true },
       ],
     },
     {
@@ -328,6 +331,7 @@
     "mongodb",
     "couchdb",
     "neo4j",
+    "influxdb",
     "elasticsearch",
     "opensearch",
     "cassandra",
@@ -473,6 +477,11 @@
   // custom endpoint (DynamoDB Local) are optional.
   // CouchDB: the server URL; user and password reuse the shared fields.
   let couchUrl = $state("http://localhost:5984");
+  // InfluxDB: the major version picks the fields and the query language.
+  // Address and bucket/database use the shared URL and database fields.
+  let ifxVersion = $state(/** @type {'1'|'2'|'3'} */ ("2"));
+  let ifxOrg = $state("");
+  let ifxToken = $state("");
   // Elasticsearch / OpenSearch: the server URL (shared with CouchDB's field),
   // a login or an API key, and whether to accept a self-signed certificate.
   let esAuth = $state(/** @type {'basic' | 'apikey'} */ ("basic"));
@@ -1241,6 +1250,16 @@
       };
     if (dbType === "couchdb")
       return { type: "couchdb", name: nm, url: couchUrl.trim(), user: user.trim(), password, ...(ssh && { ssh }) };
+    if (dbType === "influxdb")
+      return {
+        type: "influxdb",
+        name: nm,
+        url: couchUrl.trim(),
+        version: ifxVersion,
+        database: database.trim(),
+        ...(ifxVersion === "2" && { org: ifxOrg.trim() }),
+        ...(ifxVersion === "1" ? { user: user.trim(), password } : { token: ifxToken }),
+      };
     if (dbType === "neo4j")
       return { type: "neo4j", name: nm, url: couchUrl.trim(), database: database.trim(), user: user.trim(), password };
     if (dbType === "elasticsearch" || dbType === "opensearch")
@@ -1396,7 +1415,11 @@
         conn.type === "couchdb" ? (conn.url ?? "http://localhost:5984")
         : conn.type === "elasticsearch" || conn.type === "opensearch" ? (conn.url ?? "http://localhost:9200")
         : conn.type === "neo4j" ? (conn.url ?? "http://localhost:7474")
+        : conn.type === "influxdb" ? (conn.url ?? "http://localhost:8086")
         : "http://localhost:5984";
+      ifxVersion = conn.type === "influxdb" ? (conn.version ?? "2") : "2";
+      ifxOrg = conn.org ?? "";
+      ifxToken = conn.type === "influxdb" ? (conn.token ?? "") : "";
       esAuth = conn.apiKey ? "apikey" : "basic";
       esApiKey = conn.apiKey ?? "";
       esInsecure = !!conn.insecure;
@@ -1446,6 +1469,9 @@
       libsqlUrl = "";
       libsqlToken = "";
       couchUrl = "http://localhost:5984";
+      ifxVersion = "2";
+      ifxOrg = "";
+      ifxToken = "";
       connColor = null;
       connWorkspace = getStore(activeWorkspaceId);
       cqlHosts = "127.0.0.1:9042";
@@ -1654,6 +1680,7 @@
     dynamodb:    { database: "", user: "" },
     couchdb:     { database: "", user: "admin" },
     neo4j:       { database: "neo4j", user: "neo4j" },
+    influxdb:    { database: "", user: "" },
     elasticsearch: { database: "", user: "elastic" },
     opensearch:  { database: "", user: "admin" },
     cassandra:   { database: "", user: "" },
@@ -1691,7 +1718,7 @@
     if (id === "duckdb") filePath = "";
     // The HTTP engines share one URL field; move it to the new engine's port
     // while it still holds the previous one's local default.
-    const HTTP_DEFAULT = /** @type {Record<string, string>} */ ({ couchdb: "http://localhost:5984", elasticsearch: "http://localhost:9200", opensearch: "http://localhost:9200", neo4j: "http://localhost:7474" });
+    const HTTP_DEFAULT = /** @type {Record<string, string>} */ ({ couchdb: "http://localhost:5984", elasticsearch: "http://localhost:9200", opensearch: "http://localhost:9200", neo4j: "http://localhost:7474", influxdb: "http://localhost:8086" });
     if (HTTP_DEFAULT[id] && (!couchUrl.trim() || Object.values(HTTP_DEFAULT).includes(couchUrl.trim()))) couchUrl = HTTP_DEFAULT[id];
     esServer = "";
     if (id === "odbc" || id.startsWith("odbc-")) {
@@ -1879,6 +1906,7 @@
       return where && odbcMode === "fields" ? `${activeDriver.label} · ${where}` : activeDriver.label;
     }
     if (dbType === "firestore") return fsProject.trim() || "Firestore";
+    if (dbType === "influxdb") return database.trim() ? `${database.trim()} · InfluxDB` : "InfluxDB";
     if (dbType === "neo4j") {
       const at = couchUrl.trim().replace(/^\w+:\/\//, "").split(/[/:]/)[0];
       return at ? `Neo4j@${at}` : "Neo4j";
@@ -2080,6 +2108,7 @@
     // Redis has no database name worth showing; where it lives is the useful bit.
     if (engineFamily(conn.type) === "redis") return conn.host ? `${conn.host}${conn.port ? `:${conn.port}` : ""}` : "—";
     if (conn.type === "couchdb" || conn.type === "elasticsearch" || conn.type === "opensearch" || conn.type === "neo4j") return conn.url || "—";
+    if (conn.type === "influxdb") return [conn.url, conn.database].filter(Boolean).join(" · ") || "—";
     if (conn.type === "mongodb") return conn.uri ? uriHost(conn.uri) : "—";
     if (conn.type === "odbc") return conn.odbcMode === "dsn" || (!conn.odbcMode && conn.dsn) ? `DSN ${conn.dsn}` : [conn.host, conn.database].filter(Boolean).join(" · ") || "ODBC";
     if (conn.type === "snowflake") return [conn.account, conn.database].filter(Boolean).join(" · ") || "—";
@@ -2190,6 +2219,7 @@
     if (conn.type === "dynamodb") return connectDynamo(conn);
     if (conn.type === "couchdb") return connectCouch(conn);
     if (conn.type === "neo4j") return connectNeo4j(conn);
+    if (conn.type === "influxdb") return connectInflux(conn);
     if (conn.type === "elasticsearch" || conn.type === "opensearch") return connectElastic(conn);
     if (conn.type === "cassandra") return connectCassandra(conn);
     if (conn.type === "firestore") return connectFirestore(conn);
@@ -2725,6 +2755,7 @@
       else if (p.type === "dynamodb") await testDynamo(p);
       else if (p.type === "couchdb") await testCouch(p);
       else if (p.type === "neo4j") await testNeo4j(p);
+      else if (p.type === "influxdb") await testInflux(p);
       else if (p.type === "elasticsearch" || p.type === "opensearch") {
         const info = await testElastic(p);
         esServer = `${info.flavor === "opensearch" ? "OpenSearch" : "Elasticsearch"} ${info.version}`.trim();
@@ -2965,6 +2996,7 @@
     if (dbType === "libsql") return uriHost(libsqlUrl.replace(/^libsql:/, "https:")) || libsqlUrl || "—";
     if (dbType === "d1") return databaseId ? `${databaseId.slice(0, 8)}…` : "—";
     if (dbType === "couchdb" || dbType === "elasticsearch" || dbType === "opensearch" || dbType === "neo4j") return couchUrl || "—";
+    if (dbType === "influxdb") return [couchUrl, database].filter(Boolean).join(" · ") || "—";
     if (isCqlForm) return cqlHosts || "—";
     if (dbType === "firestore") return fsProject || "—";
     if (dbType === "spanner") return [fsProject, spInstance, spDatabase].filter(Boolean).join("/") || "—";
@@ -5530,6 +5562,63 @@
                             <p class="-mt-1 text-ui-3xs text-muted-foreground">
                               Leave the user blank for a server without a login (admin party).
                             </p>
+
+                            <!-- ── InfluxDB ───────────────────────────────── -->
+                          {:else if dbType === "influxdb"}
+                            <div>
+                              <span class={lbl} id="cn-ifx-ver-label">Version</span>
+                              <div class="flex h-8 items-center gap-0.5 rounded-[var(--radius-field)] bg-muted/40 p-0.5" role="group" aria-labelledby="cn-ifx-ver-label">
+                                {#each [{ v: "3", l: "3.x (SQL)" }, { v: "2", l: "2.x (Flux)" }, { v: "1", l: "1.x (InfluxQL)" }] as m (m.v)}
+                                  <button
+                                    type="button"
+                                    aria-pressed={ifxVersion === m.v}
+                                    class={cn(
+                                      "inline-flex h-7 flex-1 items-center justify-center rounded-md text-ui-xs font-medium transition-colors",
+                                      ifxVersion === m.v ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+                                    )}
+                                    onclick={() => {
+                                      const was = ifxVersion === "3" ? "http://localhost:8181" : "http://localhost:8086";
+                                      ifxVersion = /** @type {'1'|'2'|'3'} */ (m.v);
+                                      if (!couchUrl.trim() || couchUrl.trim() === was) couchUrl = m.v === "3" ? "http://localhost:8181" : "http://localhost:8086";
+                                    }}
+                                  >{m.l}</button>
+                                {/each}
+                              </div>
+                            </div>
+                            <div>
+                              <label for="cn-ifx-url" class={lbl}>Server URL</label>
+                              <Input id="cn-ifx-url" bind:value={couchUrl} placeholder={ifxVersion === "3" ? "http://localhost:8181" : "http://localhost:8086"} spellcheck="false" autocomplete="off" class={cn(inp, "font-mono")} />
+                            </div>
+                            <div class={ifxVersion === "2" ? "grid grid-cols-2 gap-2" : ""}>
+                              {#if ifxVersion === "2"}
+                                <div>
+                                  <label for="cn-ifx-org" class={lbl}>Organization</label>
+                                  <Input id="cn-ifx-org" bind:value={ifxOrg} spellcheck="false" autocomplete="off" class={inp} />
+                                </div>
+                              {/if}
+                              <div>
+                                <label for="cn-ifx-db" class={lbl}>{ifxVersion === "2" ? "Bucket" : "Database"}</label>
+                                <Input id="cn-ifx-db" bind:value={database} spellcheck="false" autocomplete="off" class={inp} />
+                              </div>
+                            </div>
+                            {#if ifxVersion === "1"}
+                              <div class="grid grid-cols-2 gap-2">
+                                <div>
+                                  <label for="cn-ifx-user" class={lbl}>User</label>
+                                  <Input id="cn-ifx-user" bind:value={user} autocomplete="username" spellcheck="false" class={inp} />
+                                </div>
+                                <div>
+                                  <label for="cn-ifx-pass" class={lbl}>Password</label>
+                                  <PasswordInput id="cn-ifx-pass" bind:value={password} autocomplete="current-password" class={inp} />
+                                </div>
+                              </div>
+                            {:else}
+                              <div>
+                                <label for="cn-ifx-token" class={lbl}>API token</label>
+                                <PasswordInput id="cn-ifx-token" bind:value={ifxToken} autocomplete="off" class={inp} />
+                                <p class="mt-1 text-ui-3xs text-muted-foreground">Kept in your OS keychain. A read token is enough: Stroke only reads InfluxDB for now.</p>
+                              </div>
+                            {/if}
 
                             <!-- ── Neo4j ──────────────────────────────────── -->
                           {:else if dbType === "neo4j"}

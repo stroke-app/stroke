@@ -34,7 +34,7 @@ pub enum Dialect {
     Mongo,
     /// One raw Redis command.
     Redis,
-    /// CouchDB and Firestore: their consoles only read.
+    /// CouchDB, Firestore and InfluxDB: their consoles only read.
     ReadOnlyDoc,
     /// Elasticsearch and OpenSearch: Dev Tools requests, by method and path.
     Elastic,
@@ -53,7 +53,7 @@ impl Dialect {
             "mongodb" => Self::Mongo,
             "redis" => Self::Redis,
             "elasticsearch" | "opensearch" => Self::Elastic,
-            "couchdb" | "firestore" => Self::ReadOnlyDoc,
+            "couchdb" | "firestore" | "influxdb" => Self::ReadOnlyDoc,
             "dynamodb" => Self::Dynamo,
             "neo4j" => Self::Cypher,
             _ => Self::Sql,

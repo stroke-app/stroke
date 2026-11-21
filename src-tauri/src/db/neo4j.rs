@@ -251,10 +251,6 @@ pub fn cypher_level(stmt: &str) -> u8 {
     }
 }
 
-pub fn reads(stmt: &str) -> bool {
-    cypher_level(stmt) == 0
-}
-
 // ── The document browser ──────────────────────────────────────────────────────
 
 fn label_ident(label: &str) -> String {

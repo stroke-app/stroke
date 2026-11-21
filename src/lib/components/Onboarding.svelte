@@ -29,7 +29,7 @@
     ['postgres', 'Postgres'], ['mysql', 'MySQL'], ['mariadb', 'MariaDB'], ['sqlite', 'SQLite'], ['mssql', 'SQL Server'], ['oracle', 'Oracle'],
     ['cockroachdb', 'CockroachDB'], ['duckdb', 'DuckDB'], ['clickhouse', 'ClickHouse'],
     ['mongodb', 'MongoDB'], ['redis', 'Redis'], ['valkey', 'Valkey'], ['dynamodb', 'DynamoDB'], ['couchdb', 'CouchDB'], ['elasticsearch', 'Elasticsearch'], ['opensearch', 'OpenSearch'],
-    ['cassandra', 'Cassandra'], ['firestore', 'Firestore'], ['neo4j', 'Neo4j'],
+    ['cassandra', 'Cassandra'], ['firestore', 'Firestore'], ['neo4j', 'Neo4j'], ['influxdb', 'InfluxDB'],
     ['d1', 'Cloudflare D1'], ['supabase', 'Supabase'], ['neon', 'Neon'], ['planetscale', 'PlanetScale'], ['turso', 'Turso'],
     ['prisma', 'Prisma Postgres'], ['tidb', 'TiDB Cloud'], ['upstash', 'Upstash'], ['railway', 'Railway'],
   ]

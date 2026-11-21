@@ -893,6 +893,55 @@ export async function connectFirestore(config) {
   return connectInv('connect_firestore_db', { config: normalizeFirestore(config) })
 }
 
+// ── InfluxDB (beta, read-only) ────────────────────────────────────────────────
+
+/**
+ * @typedef {{ name?: string, url?: string, version?: '1'|'2'|'3', database?: string, org?: string,
+ *   token?: string, user?: string, password?: string }} InfluxConnConfig
+ */
+
+/** @param {InfluxConnConfig} config */
+function normalizeInflux(config) {
+  /** @param {string | undefined} s */
+  const opt = (s) => (s && String(s).trim()) || null
+  const version = config.version || '2'
+  return {
+    type: 'influxdb',
+    name: String(config.name || 'InfluxDB'),
+    url: String(config.url || '').trim(),
+    version,
+    database: String(config.database || '').trim(),
+    org: version === '2' ? opt(config.org) : null,
+    token: version === '1' ? null : (config.token || null),
+    user: version === '1' ? opt(config.user) : null,
+    password: version === '1' ? (config.password || null) : null,
+  }
+}
+
+/** @param {InfluxConnConfig} config */
+export async function testInflux(config) {
+  return inv('test_influx', { config: normalizeInflux(config) })
+}
+
+/** @param {InfluxConnConfig} config */
+export async function connectInflux(config) {
+  return connectInv('connect_influx_db', { config: normalizeInflux(config) })
+}
+
+export async function influxMeasurements() {
+  return inv('influx_measurements')
+}
+
+/** @param {string} measurement */
+export async function influxDescribe(measurement) {
+  return inv('influx_describe', { measurement })
+}
+
+/** @param {string} measurement @param {string} filter @param {number} skip @param {number} limit */
+export async function influxPage(measurement, filter, skip, limit) {
+  return inv('influx_page', { measurement, filter: filter || null, skip, limit })
+}
+
 // ── Neo4j (beta) ──────────────────────────────────────────────────────────────
 
 /** @typedef {{ name?: string, url?: string, database?: string, user?: string, password?: string }} Neo4jConnConfig */

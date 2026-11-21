@@ -64,6 +64,16 @@ export const QUERY_LANGUAGES = {
 - Range filters on one field plus orderBy on another need a composite index in Firestore.
   The editor is read-only for Firestore: changes are made in the Browse page.`,
   },
+  influxdb: {
+    name: 'InfluxDB queries (SQL, InfluxQL or Flux)',
+    fence: 'sql',
+    collectionNoun: 'measurement',
+    guide: `The connection is read-only: only queries run. The language depends on the server version (the connection's version field):
+- InfluxDB 3.x: SQL. SELECT host, avg(usage) FROM cpu WHERE time > now() - INTERVAL '1 hour' GROUP BY host. Tags and fields are columns, the timestamp is "time". date_bin(INTERVAL '5 minutes', time) buckets time. Prefix a statement with "influxql:" to run InfluxQL instead.
+- InfluxDB 2.x: Flux or InfluxQL. Flux: from(bucket: "b") |> range(start: -1h) |> filter(fn: (r) => r._measurement == "cpu" and r._field == "usage") |> aggregateWindow(every: 5m, fn: mean). Always start Flux with range().
+- InfluxDB 1.x and 2.x InfluxQL: SELECT mean("usage") FROM "cpu" WHERE time > now() - 1h GROUP BY time(5m), "host". SHOW MEASUREMENTS, SHOW TAG KEYS FROM "cpu", SHOW FIELD KEYS FROM "cpu".
+- Always bound time and add LIMIT; tables can hold billions of points.`,
+  },
   neo4j: {
     name: 'Cypher (Neo4j)',
     fence: 'cypher',
@@ -169,6 +179,8 @@ export function sampleQuery(engine, schema, coll, n) {
       return `GET ${coll}/_search\n{"size": ${n}}`
     case 'firestore':
       return `${coll}.limit(${n})`
+    case 'influxdb':
+      return `SELECT * FROM "${coll.replace(/"/g, '\\"')}" ORDER BY time DESC LIMIT ${n}`
     case 'neo4j':
       return `MATCH (n:${/^[A-Za-z_]\w*$/.test(coll) ? coll : `\`${coll.replace(/`/g, '``')}\``}) RETURN n LIMIT ${n}`
     case 'cassandra':
@@ -206,6 +218,6 @@ export function describeFromSample(coll, result) {
 export function runnableFences(engine) {
   const lang = queryLanguageFor(engine)
   if (!lang) return null
-  const extra = { mongodb: ['javascript', 'js', 'mongodb', 'mongo'], couchdb: ['javascript', 'js', 'json'], elasticsearch: ['json', 'http', 'text', 'sql'], opensearch: ['json', 'http', 'text', 'sql'], firestore: ['javascript', 'js'], neo4j: ['cypher', 'sql', 'text'], cassandra: ['sql', 'cql'], dynamodb: ['sql', 'partiql'], redis: ['redis', 'text', 'bash'], valkey: ['redis', 'text', 'bash'] }
+  const extra = { mongodb: ['javascript', 'js', 'mongodb', 'mongo'], couchdb: ['javascript', 'js', 'json'], elasticsearch: ['json', 'http', 'text', 'sql'], opensearch: ['json', 'http', 'text', 'sql'], firestore: ['javascript', 'js'], neo4j: ['cypher', 'sql', 'text'], influxdb: ['sql', 'influxql', 'flux', 'text'], cassandra: ['sql', 'cql'], dynamodb: ['sql', 'partiql'], redis: ['redis', 'text', 'bash'], valkey: ['redis', 'text', 'bash'] }
   return new Set([lang.fence, ...(/** @type {Record<string, string[]>} */ (extra)[/** @type {string} */ (engine)] ?? [])])
 }

@@ -1033,6 +1033,40 @@ pub async fn neo4j_delete(state: Db<'_>, id: String) -> Result<(), String> {
     crate::db::neo4j::remove(&require_neo4j(&state)?, &id).await
 }
 
+// ── InfluxDB (beta) ───────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn test_influx(config: crate::db::influx::InfluxConfig) -> Result<(), String> {
+    crate::db::influx::connect(&config).await.map(|_| ())
+}
+
+#[tauri::command]
+pub async fn connect_influx_db(state: Db<'_>, config: crate::db::influx::InfluxConfig) -> Result<(), String> {
+    crate::db::connection::connect_influx(state, config).await
+}
+
+fn require_influx(state: &Db<'_>) -> Result<crate::db::influx::InfluxConfig, String> {
+    match require_conn(state)? {
+        ActiveConnection::Doc(crate::db::docdb::DocConn::Influx(cfg)) => Ok(cfg),
+        _ => Err("Not connected to InfluxDB".into()),
+    }
+}
+
+#[tauri::command]
+pub async fn influx_measurements(state: Db<'_>) -> Result<Vec<String>, String> {
+    crate::db::influx::measurements(&require_influx(&state)?).await
+}
+
+#[tauri::command]
+pub async fn influx_describe(state: Db<'_>, measurement: String) -> Result<serde_json::Value, String> {
+    crate::db::influx::describe(&require_influx(&state)?, &measurement).await
+}
+
+#[tauri::command]
+pub async fn influx_page(state: Db<'_>, measurement: String, filter: Option<String>, skip: i64, limit: i64) -> Result<serde_json::Value, String> {
+    crate::db::influx::page(&require_influx(&state)?, &measurement, filter.as_deref().unwrap_or(""), skip, limit).await
+}
+
 /// One Firestore REST call (document paths of this database only).
 #[tauri::command]
 pub async fn firestore_request(

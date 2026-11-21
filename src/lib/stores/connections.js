@@ -19,7 +19,7 @@ const LAST_ID_KEY  = 'stroke:last-connection-id'
 const DISCONNECTED_KEY = 'stroke:disconnected'
 
 /**
- * @typedef {'postgres' | 'sqlite' | 'd1' | 'mysql' | 'mariadb' | 'cockroachdb' | 'yugabytedb' | 'alloydb' | 'libsql' | 'clickhouse' | 'duckdb' | 'mssql' | 'oracle' | 'spanner' | 'bigquery' | 'snowflake' | 'odbc' | 'redis' | 'valkey' | 'dynamodb' | 'couchdb' | 'elasticsearch' | 'opensearch' | 'cassandra' | 'firestore' | 'neo4j' | 'mongodb' | 'posthog'} DbType
+ * @typedef {'postgres' | 'sqlite' | 'd1' | 'mysql' | 'mariadb' | 'cockroachdb' | 'yugabytedb' | 'alloydb' | 'libsql' | 'clickhouse' | 'duckdb' | 'mssql' | 'oracle' | 'spanner' | 'bigquery' | 'snowflake' | 'odbc' | 'redis' | 'valkey' | 'dynamodb' | 'couchdb' | 'elasticsearch' | 'opensearch' | 'cassandra' | 'firestore' | 'neo4j' | 'influxdb' | 'mongodb' | 'posthog'} DbType
  *
  * @typedef {{ host: string, port?: number, username: string, privateKeyPath?: string }} SshConfig
  *
@@ -206,7 +206,7 @@ function saveDeletedIds(ids) {
 // as before: a failed keychain write can never lose a password.
 
 /** Fields that hold credentials. MongoDB's `uri` and an ODBC connection string can carry a password. */
-export const SECRET_FIELDS = ['password', 'apiToken', 'apiKey', 'authToken', 'secretAccessKey', 'sessionToken', 'uri', 'connectionString']
+export const SECRET_FIELDS = ['password', 'token', 'apiToken', 'apiKey', 'authToken', 'secretAccessKey', 'sessionToken', 'uri', 'connectionString']
 
 /** @type {Map<string, Record<string, string>>} */
 let _secretCache = new Map()
