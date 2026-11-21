@@ -26,3 +26,14 @@ describe('connectionErrorKind', () => {
     expect(isNetworkError(undefined)).toBe(false)
   })
 })
+
+describe('errorText', () => {
+  it('reads an error as its message, without the class name', async () => {
+    const { errorText } = await import('./utils.js')
+    expect(errorText(new Error("Can't reach 127.0.0.1:15433"))).toBe("Can't reach 127.0.0.1:15433")
+    expect(errorText('Error: boom')).toBe('boom')
+    expect(errorText('Login failed')).toBe('Login failed')
+    expect(errorText({ message: 'from an object' })).toBe('from an object')
+    expect(errorText(42)).toBe('42')
+  })
+})

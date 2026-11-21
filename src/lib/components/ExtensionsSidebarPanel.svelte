@@ -1,4 +1,5 @@
 <script>
+  import { errorText } from '$lib/utils.js'
   // Extensions sidebar panel - VSCode-style switchable panel listing the
   // built-in extensions with an inline Install / Installed toggle, plus whatever
   // has been installed from a folder. For a built-in there is no install step:
@@ -75,7 +76,7 @@
       const installed = await installExternalPlugin(picked);
       toast.success(`Installed ${installed.name}`, { description: "Turn it on to start using it." });
     } catch (e) {
-      toast.error("Could not install that folder", { description: String(e) });
+      toast.error("Could not install that folder", { description: errorText(e) });
     } finally {
       installing = false;
     }
@@ -94,7 +95,7 @@
       await uninstallExternalPlugin(p.id);
       toast.success(`Removed ${p.name}`);
     } catch (e) {
-      toast.error(`Could not remove ${p.name}`, { description: String(e) });
+      toast.error(`Could not remove ${p.name}`, { description: errorText(e) });
     }
   }
 

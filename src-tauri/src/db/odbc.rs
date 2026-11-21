@@ -473,7 +473,26 @@ fn paging_for(dbms: &str) -> Paging {
 }
 
 pub async fn connect(cfg: &OdbcConfig) -> Result<OdbcHandle, String> {
-    connect_string(connection_string(cfg)?).await
+    connect_string(connection_string(cfg)?).await.map_err(|e| explain_connect(cfg, e))
+}
+
+/// The driver manager's IM002 ("Data source name not found and no default
+/// driver specified") says neither what is missing nor where it goes.
+fn explain_connect(cfg: &OdbcConfig, e: String) -> String {
+    if !e.contains("Data source name not found") {
+        return e;
+    }
+    let where_dsns = if cfg!(windows) {
+        "the ODBC Data Source Administrator"
+    } else if cfg!(target_os = "macos") {
+        "~/Library/ODBC/odbc.ini or ~/.odbc.ini"
+    } else {
+        "~/.odbc.ini or /etc/odbc.ini"
+    };
+    match trimmed(&cfg.dsn) {
+        Some(dsn) => format!("No ODBC data source named \"{dsn}\" on this computer. Add it in {where_dsns}, or connect with a connection string instead."),
+        None => "The connection string names no DSN or driver that ODBC knows. Start it with Driver={...}, using a driver name from odbcinst.ini.".into(),
+    }
 }
 
 async fn connect_string(cs: String) -> Result<OdbcHandle, String> {
@@ -1641,6 +1660,16 @@ mod tests {
             target_host: None,
             target_port: None,
         }
+    }
+
+    #[test]
+    fn a_missing_dsn_says_which_and_where() {
+        let im002 = "[unixODBC][Driver Manager]Data source name not found and no default driver specified".to_string();
+        let e = explain_connect(&cfg(None, Some("ShopPG"), None, None), im002.clone());
+        assert!(e.contains("\"ShopPG\"") && e.contains("odbc.ini"), "{e}");
+        let e = explain_connect(&cfg(Some("Server=x"), None, None, None), im002);
+        assert!(e.contains("Driver={"), "{e}");
+        assert_eq!(explain_connect(&cfg(None, Some("X"), None, None), "Login failed".into()), "Login failed");
     }
 
     #[test]

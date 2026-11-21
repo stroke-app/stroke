@@ -58,7 +58,7 @@
   import { separateCards, wrapTallRanks } from '$lib/erd-layout.js'
   import { layoutWithElk } from '$lib/erd-elk.js'
   import { visibleTables, visibleRels, relatedTo, linkedTables, mergeParallelEdges, hubTables } from '$lib/erd-filter.js'
-  import { cn, plural } from '$lib/utils.js'
+  import { cn, plural, errorText } from '$lib/utils.js'
 
   let {
     schema = 'public',
@@ -1223,7 +1223,7 @@
       if (_copiedTimer) clearTimeout(_copiedTimer)
       _copiedTimer = setTimeout(() => { copiedDdl = '' }, 1800)
     } catch (e) {
-      toast.error('Could not copy DDL', { description: String(e) })
+      toast.error('Could not copy DDL', { description: errorText(e) })
     }
   }
 
@@ -1632,7 +1632,7 @@
         { name: 'Markdown', extensions: ['md'] }, 'Mermaid markdown',
       )
     } catch (e) {
-      toast.error('Export failed', { description: String(e) })
+      toast.error('Export failed', { description: errorText(e) })
     }
   }
 
@@ -1645,7 +1645,7 @@
         { name: 'SVG image', extensions: ['svg'] }, 'diagram as SVG',
       )
     } catch (e) {
-      toast.error('Export failed', { description: String(e) })
+      toast.error('Export failed', { description: errorText(e) })
     }
   }
 
@@ -1688,7 +1688,7 @@
       await copyPngToClipboard(blob)
       toast.success('Diagram copied as PNG')
     } catch (e) {
-      toast.error(sink === 'clipboard' ? 'Copy failed' : 'Export failed', { description: String(e) })
+      toast.error(sink === 'clipboard' ? 'Copy failed' : 'Export failed', { description: errorText(e) })
     } finally {
       exporting = false
     }

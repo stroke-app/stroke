@@ -60,8 +60,9 @@ pub async fn query_cancellable(config: &PosthogConfig, sql: &str, stop: &super::
         SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     );
     let t0 = Instant::now();
-    let run = post_query_as(config, json!({ "kind": "HogQLQuery", "query": trimmed }), Some(&id));
-    tokio::pin!(run);
+    // Boxed, so `drop(run)` below really ends the future and lets go of
+    // what it holds (a connection, a stream); a stack pin outlived it.
+    let mut run = Box::pin(post_query_as(config, json!({ "kind": "HogQLQuery", "query": trimmed }), Some(&id)));
     tokio::select! {
         r = &mut run => Ok(to_sql_result(&r?, sql, t0.elapsed().as_millis() as u64)),
         _ = stop.wait() => {

@@ -1,4 +1,5 @@
 <script>
+  import { errorText } from '$lib/utils.js'
   import { tick, untrack } from "svelte";
   import { toastPosition, TOAST_POSITIONS } from '$lib/stores/toast-position.js'
   import ThemeBuilder from './ThemeBuilder.svelte';
@@ -201,7 +202,7 @@
     try {
       await setLockPrefs(prefs);
     } catch (e) {
-      toast.error('Could not save the lock setting', { description: String(e) });
+      toast.error('Could not save the lock setting', { description: errorText(e) });
     }
   }
 

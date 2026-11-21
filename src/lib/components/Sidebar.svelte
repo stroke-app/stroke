@@ -189,6 +189,9 @@
     /** False for NoSQL engines: hides the SQL-only table actions (DDL, structure,
      *  export as SQL, generate SQL, new table/schema, ...). */
     sqlTables = true,
+    /** What the engine calls its tables (Labels, Measurements, Collections...);
+     *  empty for the SQL engines, which use the translated "Tables". */
+    tablesLabel = '',
     // ── Find & replace panel ────────────────────────────────────────────────
     // The panel works on the rows the grid has loaded, so the data comes from
     // the shell rather than being fetched again here.
@@ -240,8 +243,11 @@
    * unless something is attached, so there it shows only past one schema.
    */
   const SINGLE_FILE_ENGINES = new Set(["sqlite", "d1", "libsql", "duckdb"])
+  // No namespaces at all: the backend lists one placeholder schema, "main"
+  // (docdb::FLAT_SCHEMA), so a picker would offer a choice of one made-up name.
+  const FLAT_ENGINES = new Set(["couchdb", "firestore", "elasticsearch", "opensearch", "neo4j", "influxdb", "dynamodb"])
   const showSchemaPicker = $derived(
-    schemas.length > 1 || (schemas.length === 1 && !SINGLE_FILE_ENGINES.has(connection?.type ?? "")),
+    schemas.length > 1 || (schemas.length === 1 && !SINGLE_FILE_ENGINES.has(connection?.type ?? "") && !FLAT_ENGINES.has(connection?.type ?? "")),
   )
 
   let localFilter = $state(untrack(() => tableFilter));
@@ -1096,7 +1102,7 @@
   );
 
   /** Name of the open list, for the filter's accessible name and its live region. */
-  const activeTabLabel = $derived(SIDEBAR_TABS.find((t) => t.id === sidebarTab)?.label ?? 'items')
+  const activeTabLabel = $derived((sidebarTab === 'tables' && tablesLabel) || (SIDEBAR_TABS.find((t) => t.id === sidebarTab)?.label ?? 'items'))
 
   /** Everything the filter rule counts, in the shape `sidebar-filter.js` wants. */
   const filterLists = $derived({
@@ -2958,7 +2964,7 @@
                    filtering it out - counting against `regularTables` would read
                    as "one table went missing" every time one is pinned. -->
               <div class="flex w-full items-center gap-1 px-2.5 pt-2 pb-1">
-                <span class="text-ui-xs font-medium text-muted-foreground">{$t('sidebar.tables')}</span>
+                <span class="text-ui-xs font-medium text-muted-foreground">{tablesLabel || $t('sidebar.tables')}</span>
                 {#if regularTablesUnpinned.length > 0}
                   {@render countBadge(filteredRegularTables.length, regularTablesUnpinned.length)}
                 {/if}

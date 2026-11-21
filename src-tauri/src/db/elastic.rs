@@ -244,8 +244,9 @@ tokio::task_local! {
 pub async fn query_cancellable(cfg: &EsConfig, stmt: &str, stop: &super::stop::Stop) -> Result<super::query::SqlResult, String> {
     static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let id = format!("stroke-{:x}-{:x}", std::process::id(), SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
-    let run = OPAQUE_ID.scope(id.clone(), query(cfg, stmt));
-    tokio::pin!(run);
+    // Boxed, so `drop(run)` below really ends the future and lets go of
+    // what it holds (a connection, a stream); a stack pin outlived it.
+    let mut run = Box::pin(OPAQUE_ID.scope(id.clone(), query(cfg, stmt)));
     tokio::select! {
         r = &mut run => r,
         _ = stop.wait() => {

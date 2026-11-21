@@ -181,6 +181,32 @@ fn for_each_row_streaming(
     for_each_row_in(conn, sql, &[], true, on_columns, on_row)
 }
 
+fn is_spurious_interrupt(e: &str) -> bool {
+    e.contains("INTERRUPT Error")
+}
+
+/// DuckDB race: when a worker thread fails, `Executor::PushError` sets the
+/// context's `interrupted` flag, and a streaming fetch that checks the flag
+/// first throws "Interrupted!" instead of the stored error
+/// (`SimpleBufferedData::ExecuteTaskInternal`). The run's rows are already
+/// spent, so the only way to the real message is to read the query again,
+/// discarding its rows. Streamed queries are reads, so this repeats nothing
+/// but the work. It gives up after two tries, or once Stop is pressed.
+fn real_error(conn: &::duckdb::Connection, sql: &str, first: String, stop_pressed: impl Fn() -> bool) -> String {
+    for _ in 0..2 {
+        if stop_pressed() {
+            break;
+        }
+        match for_each_row_streaming(conn, sql, |_| {}, |_| true) {
+            Err(e) if is_spurious_interrupt(&e) => continue,
+            Err(e) => return e,
+            // Not reproducible (the error depended on timing or randomness).
+            Ok(()) => break,
+        }
+    }
+    first
+}
+
 fn for_each_row_in(
     conn: &::duckdb::Connection,
     sql: &str,
@@ -413,6 +439,11 @@ pub async fn stream_into(
         if out.is_ok() && !batch.is_empty() {
             let _ = tx.blocking_send(Msg::Rows(batch));
         }
+        let stop_pressed = || slot.lock().unwrap_or_else(|e| e.into_inner()).0;
+        let out = match out {
+            Err(e) if is_spurious_interrupt(&e) && !stop_pressed() => Err(real_error(conn, &sql_owned, e, stop_pressed)),
+            other => other,
+        };
         slot.lock().unwrap_or_else(|e| e.into_inner()).1 = None;
         out
     });

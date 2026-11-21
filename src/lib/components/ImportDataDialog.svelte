@@ -1,4 +1,5 @@
 <script>
+  import { errorText } from '$lib/utils.js'
   import SelectMenu from "./SelectMenu.svelte";
   import { onDestroy } from "svelte";
   import { listen } from "@tauri-apps/api/event";
@@ -171,7 +172,7 @@
       result = null;
       phase = "idle";
     } catch (e) {
-      toast.error("Could not read the file", { description: String(e) });
+      toast.error("Could not read the file", { description: errorText(e) });
     }
   }
 

@@ -56,7 +56,7 @@
     childId, ancestorIds, makeNode, filterTree, flattenTree, rowIndex,
     treeKeyAction, typeAheadIndex, stickyIndices, stickyTops, branchRange, tableSections,
   } from '$lib/sidebar-tree.js'
-  import { cn } from '$lib/utils.js'
+  import { cn, errorText } from '$lib/utils.js'
 
   /** @typedef {import('$lib/sidebar-tree.js').TreeNode} TreeNode */
   /** @typedef {import('$lib/sidebar-tree.js').ChildEntry} ChildEntry */
@@ -1220,7 +1220,7 @@
       await navigator.clipboard.writeText(text)
       toast.success('Copied')
     } catch (e) {
-      toast.error('Copy failed', { description: String(e) })
+      toast.error('Copy failed', { description: errorText(e) })
     }
   }
 

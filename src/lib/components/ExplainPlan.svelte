@@ -136,7 +136,9 @@
   let panX = $state(0)
   let panY = $state(0)
   let panning = $state(false)
-  let start = { x: 0, y: 0, px: 0, py: 0, moved: false }
+  // State: the grabbing cursor reads `start.moved`, and as a plain object it
+  // never switched while the plan was dragged.
+  let start = $state({ x: 0, y: 0, px: 0, py: 0, moved: false })
   let cw = $state(0)
   let ch = $state(0)
 

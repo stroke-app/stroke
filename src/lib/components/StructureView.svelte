@@ -1,4 +1,5 @@
 <script>
+  import { errorText } from '$lib/utils.js'
   import FieldSelect from './FieldSelect.svelte';
   import { tick } from 'svelte'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
@@ -245,7 +246,7 @@
       ? `COMMENT ON COLUMN ${tbl()}."${col}" IS NULL`
       : `COMMENT ON COLUMN ${tbl()}."${col}" IS '${esc}'`
     executeSql(sql).then(() => { toast.success('Comment updated'); onrefresh() })
-      .catch(e => toast.error('Could not update comment', { description: String(e) }))
+      .catch(e => toast.error('Could not update comment', { description: errorText(e) }))
   }
 
   // ── Apply / Reset ─────────────────────────────────────────────────────────
@@ -404,7 +405,7 @@
     if (!guardEdit()) return
     const sql = c.trim() === '' ? `COMMENT ON INDEX "${name}" IS NULL` : `COMMENT ON INDEX "${name}" IS '${c.replace(/'/g, "''")}'`
     executeSql(sql).then(() => { toast.success('Comment updated'); onrefresh() })
-      .catch(e => toast.error('Could not update comment', { description: String(e) }))
+      .catch(e => toast.error('Could not update comment', { description: errorText(e) }))
   }
 
   // ── Filtered data ─────────────────────────────────────────────────────────

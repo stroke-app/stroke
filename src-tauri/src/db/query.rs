@@ -4663,8 +4663,9 @@ pub(crate) async fn run_one_cancellable(
         // KILL the session from a second connection, then a fresh client:
         // the dropped reply would otherwise be read by the next query.
         ActiveConnection::Mssql(h) => {
-            let run = super::mssql::execute_sql(h, stmt);
-            tokio::pin!(run);
+            // Boxed, so `drop(run)` below really ends the future and lets go of
+            // what it holds (a connection, a stream); a stack pin outlived it.
+            let mut run = Box::pin(super::mssql::execute_sql(h, stmt));
             tokio::select! {
                 r = &mut run => r,
                 _ = stop.wait() => {
@@ -4717,8 +4718,9 @@ async fn stream_one(
         }
         ActiveConnection::Duckdb(h) if super::duckdb::reads(stmt) => super::duckdb::stream_into(h, stmt, sink, stop.receiver()).await,
         ActiveConnection::Mssql(h) if super::mssql::reads(stmt) => {
-            let run = super::mssql::stream_into(h, stmt, sink);
-            tokio::pin!(run);
+            // Boxed, so `drop(run)` below really ends the future and lets go of
+            // what it holds (a connection, a stream); a stack pin outlived it.
+            let mut run = Box::pin(super::mssql::stream_into(h, stmt, sink));
             tokio::select! {
                 r = &mut run => r,
                 _ = stop.wait() => {
@@ -6561,6 +6563,26 @@ mod stream_tests {
         let sql = "SELECT CASE WHEN range = 250000 THEN error('boom at 250000') ELSE range END AS v FROM range(400000)";
         let e = super::super::duckdb::stream_into(&h, sql, &mut sink, rx).await.unwrap_err();
         assert!(e.contains("boom at 250000"), "{e}");
+    }
+
+    /// Stop on a streamed DuckDB query reads as a cancel, and the retry that
+    /// recovers errors from DuckDB's spurious interrupts never reruns it.
+    #[tokio::test]
+    async fn duckdb_stop_on_a_stream_cancels_it() {
+        let cfg = super::super::connection::DuckdbConfig { name: "t".into(), file_path: ":memory:".into() };
+        let h = super::super::connection::open_duckdb(&cfg).await.unwrap();
+        let store = super::super::result_store::ResultStore::default();
+        let mut sink = sink_into(&store, "duck-stop");
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let sql = "SELECT a.range * b.range AS v FROM range(100000) a, range(100000) b";
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            let _ = tx.send(());
+        });
+        let t0 = std::time::Instant::now();
+        let e = super::super::duckdb::stream_into(&h, sql, &mut sink, rx).await.unwrap_err();
+        assert_eq!(e, QUERY_CANCELLED);
+        assert!(t0.elapsed() < std::time::Duration::from_secs(10), "{:?}", t0.elapsed());
     }
 
     // For the record: what the same DuckDB result costs collected.

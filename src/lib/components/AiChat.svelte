@@ -1,4 +1,5 @@
 <script>
+  import { errorText } from '$lib/utils.js'
   import Share2 from '@lucide/svelte/icons/share-2'
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js'
   import { buildPayload, publishShare } from '$lib/share-flow.js'
@@ -343,7 +344,7 @@
       if (!path) return; // save dialog cancelled
       toast.success("Chart saved", { description: `Saved to ${path}` });
     } catch (e) {
-      toast.error("Could not save the chart", { description: String(e) });
+      toast.error("Could not save the chart", { description: errorText(e) });
     }
   }
 
@@ -824,7 +825,7 @@
       await updateConversation(id, { title });
     } catch (e) {
       convList = before;
-      toast.error("Couldn't rename the chat", { description: String(e) });
+      toast.error("Couldn't rename the chat", { description: errorText(e) });
     }
   }
 
@@ -1656,7 +1657,7 @@
       if (!path) return; // save dialog cancelled
       toast.success("SVG exported", { description: `Saved to ${path}` });
     } catch (e) {
-      toast.error("Could not export the SVG", { description: String(e) });
+      toast.error("Could not export the SVG", { description: errorText(e) });
     }
   }
 

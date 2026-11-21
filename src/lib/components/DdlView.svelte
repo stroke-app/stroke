@@ -1,4 +1,5 @@
 <script>
+  import { errorText } from '$lib/utils.js'
   // Read-only DDL tab: a bare code editor and nothing else.
   //
   // DDL used to open in a full SQL console, which meant a Run button, the query
@@ -34,7 +35,7 @@
       clearTimeout(copyTimer)
       copyTimer = setTimeout(() => (copied = false), 1600)
     } catch (e) {
-      toast.error('Could not copy', { description: String(e) })
+      toast.error('Could not copy', { description: errorText(e) })
     }
   }
 
@@ -45,7 +46,7 @@
       if (!path) return  // dialog cancelled
       toast.success('Exported DDL', { description: `Saved to ${path}` })
     } catch (e) {
-      toast.error('Export failed', { description: String(e) })
+      toast.error('Export failed', { description: errorText(e) })
     }
   }
 </script>

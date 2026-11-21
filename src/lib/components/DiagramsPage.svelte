@@ -23,7 +23,7 @@
   import Search from '@lucide/svelte/icons/search'
   import PanelLeftClose from '@lucide/svelte/icons/panel-left-close'
   import PanelLeftOpen from '@lucide/svelte/icons/panel-left-open'
-  import { cn } from '$lib/utils.js'
+  import { cn, errorText } from '$lib/utils.js'
   import { focusTrap } from '$lib/actions/focus-trap.js'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
 
@@ -41,7 +41,7 @@
         description: path ? `Saved to ${path}` : `${filename} saved to your downloads`,
       })
     } catch (e) {
-      toast.error('Export failed', { description: String(e) })
+      toast.error('Export failed', { description: errorText(e) })
     }
   }
 
@@ -52,7 +52,7 @@
       if (!ok) return  // nothing rendered yet
       toast.success('Diagram copied as PNG')
     } catch (e) {
-      toast.error('Copy failed', { description: String(e) })
+      toast.error('Copy failed', { description: errorText(e) })
     }
   }
 

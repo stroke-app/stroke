@@ -1,4 +1,5 @@
 <script>
+  import { errorText } from '$lib/utils.js'
   import SelectMenu from "./SelectMenu.svelte";
   import SearchField from './SearchField.svelte'
   import { untrack } from "svelte";
@@ -138,7 +139,7 @@
       const installed = await installExternalPlugin(picked);
       toast.success(`Installed ${installed.name}`, { description: "Turn it on to start using it." });
     } catch (e) {
-      toast.error("Could not install that folder", { description: String(e) });
+      toast.error("Could not install that folder", { description: errorText(e) });
     } finally {
       installing = false;
     }
@@ -157,7 +158,7 @@
       await uninstallExternalPlugin(p.id);
       toast.success(`Removed ${p.name}`);
     } catch (e) {
-      toast.error(`Could not remove ${p.name}`, { description: String(e) });
+      toast.error(`Could not remove ${p.name}`, { description: errorText(e) });
     }
   }
 

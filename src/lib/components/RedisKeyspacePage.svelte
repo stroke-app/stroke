@@ -16,7 +16,7 @@
   import { readOnlyMode, guardWrite, READ_ONLY_HINT } from '$lib/stores/read-only.js'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
   import { getAppScale } from '$lib/app-zoom.js'
-  import { cn, plural } from '$lib/utils.js'
+  import { cn, plural, errorText } from '$lib/utils.js'
   import { Checkbox } from '$lib/components/ui/checkbox/index.js'
   import {
     CREATABLE_TYPES, stage, unstage, stagedFor, toOps, createOps, ttlOps, toPattern,
@@ -339,7 +339,7 @@
         reviewOpen = false
       }
     } catch (e) {
-      toast.error('Nothing was applied', { description: String(e).replace(/^Error:\s*/, '') })
+      toast.error('Nothing was applied', { description: errorText(e).replace(/^Error:\s*/, '') })
     } finally {
       applying = false
     }

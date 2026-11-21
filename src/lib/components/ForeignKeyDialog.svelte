@@ -1,4 +1,5 @@
 <script>
+  import { errorText } from '$lib/utils.js'
   import FieldSelect from './FieldSelect.svelte';
   import * as Dialog from '$lib/components/ui/dialog/index.js'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
@@ -65,7 +66,7 @@
       open = false
       onrefresh()
     } catch (e) {
-      toast.error('Could not save foreign key', { description: String(e) })
+      toast.error('Could not save foreign key', { description: errorText(e) })
     } finally {
       saving = false
     }
@@ -82,7 +83,7 @@
       open = false
       onrefresh()
     } catch (e) {
-      toast.error('Could not remove foreign key', { description: String(e) })
+      toast.error('Could not remove foreign key', { description: errorText(e) })
     } finally {
       deleting = false
     }

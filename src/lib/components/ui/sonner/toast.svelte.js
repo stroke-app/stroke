@@ -13,6 +13,7 @@
  *   toast.dismiss(id?)        - dismiss one, or all when id is omitted
  *   toast.getActiveToasts()   - current toasts (reactive read)
  */
+import { errorDuration } from '$lib/toast-durations.js'
 
 let counter = 0
 const DEFAULT_DURATION = 4500
@@ -49,7 +50,8 @@ class ToastStore {
   #add(type, title, opts = {}) {
     const id = ++counter
     // A loading toast stays until it is updated to its outcome.
-    const duration = opts.duration ?? (type === 'loading' ? Infinity : DEFAULT_DURATION)
+    // An error stays long enough to read (errorDuration).
+    const duration = opts.duration ?? (type === 'loading' ? Infinity : type === 'error' ? errorDuration(title, opts) : DEFAULT_DURATION)
     /** @type {Toast} */
     const entry = { id, type, title: String(title ?? ''), description: opts.description ?? '' }
     if (opts.action) entry.action = opts.action
@@ -90,7 +92,7 @@ class ToastStore {
     if (prev.type === 'loading' && next.type !== 'loading') {
       const old = this.#timers.get(id)
       if (old) { clearTimeout(old.handle); this.#timers.delete(id) }
-      this.#schedule(id, duration ?? DEFAULT_DURATION)
+      this.#schedule(id, duration ?? (next.type === 'error' ? errorDuration(next.title, next) : DEFAULT_DURATION))
     }
     return true
   }

@@ -14,7 +14,7 @@
     parseGeometry, projectGeometry, geoShapeOf, sridLabel, lonLatOf, formatLonLat, shortCoord,
   } from '$lib/geometry-cell.js'
   import GeoMiniMap from './GeoMiniMap.svelte'
-  import { cn } from '$lib/utils.js'
+  import { cn, errorText } from '$lib/utils.js'
 
   let {
     open = $bindable(false),
@@ -134,7 +134,7 @@
       await navigator.clipboard.writeText(String(value ?? ''))
       toast.success('Copied geometry')
     } catch (e) {
-      toast.error('Could not copy', { description: String(e) })
+      toast.error('Could not copy', { description: errorText(e) })
     }
   }
 

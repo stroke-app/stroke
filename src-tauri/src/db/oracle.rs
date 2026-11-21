@@ -1050,7 +1050,6 @@ fn run_commit(conn: &Connection, sql: &str, binds: &[Bind]) -> Result<SqlResult,
     r
 }
 
-/// Run a script: each statement in turn, the last one's result returned.
 // ── Explicit transactions (db::tx) ───────────────────────────────────────────
 //
 // A transaction runs on a session of its own, opened beside the shared one:
@@ -1090,6 +1089,7 @@ pub async fn rollback(handle: &OracleHandle) -> Result<(), String> {
     run_blocking(handle, |conn| conn.rollback().map_err(ora_err)).await
 }
 
+/// Run a script: each statement in turn, the last one's result returned.
 pub async fn execute_sql(handle: &OracleHandle, sql: &str) -> Result<SqlResult, String> {
     let stmts = split_statements(sql);
     if stmts.is_empty() {

@@ -267,8 +267,10 @@
    * keystroke would cut the character just typed off the far edge.
    */
   let windowDraft = $state('')
-  let windowStart = 0
-  let windowLen = 0
+  // State, not plain variables: rawWindowEnd and the editor's "characters X to
+  // Y" label derive from them, and stayed at the first window when paging.
+  let windowStart = $state(0)
+  let windowLen = $state(0)
   $effect(() => {
     void seedToken
     const at = rawOffset
