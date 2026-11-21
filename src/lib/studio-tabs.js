@@ -242,7 +242,7 @@ const SINGLETON_TAB_TITLES = {
 }
 
 /** @param {StudioTabKind} kind */
-function createKindTab(kind) {
+export function createKindTab(kind) {
   return /** @type {StudioTab} */ ({
     id: nextTabId(),
     kind,

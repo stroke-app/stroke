@@ -82,6 +82,7 @@
   import { pluginState, pluginEnabledIn } from '$lib/stores/plugins.js'
   import { loadTableViews, saveTableViews } from '$lib/stores/table-views.js'
   import { loadSqlDraft, saveSqlDraft, loadSqlTabs, saveSqlTabs } from '$lib/stores/sql-draft.js'
+  import { tabsToStore, loadOpenTabs, saveOpenTabs, PAGE_KINDS } from '$lib/stores/open-tabs.js'
   import { planSave, savedQueryFor, sqlTabsToStore } from '$lib/sql-saving.js'
   import { nextUntitledName } from '$lib/query-folders.js'
   import { buildBatchUpdateSql } from '$lib/sql-batch-update.js'
@@ -174,6 +175,7 @@
   import { StoredResultView } from '$lib/stored-result-view.js'
   import {
     createTableTab,
+    createKindTab,
     createSqlTab,
     createDdlTab,
     createWelcomeTab,
@@ -2550,15 +2552,28 @@ let rowSearch = $state('')
   const aiChatMatch = $derived((/** @type {string} */ k) => chatBelongsTo(k, connection))
 
   // ID of the currently-active saved connection (for highlighting in the palette)
-  const activeConnectionId = $derived(
-    connection
-      ? (savedConnections.find((c) => {
-          if (c.type === 'sqlite') return c.filePath === connection.filePath
-          if (c.type === 'd1') return c.databaseId === connection.databaseId && c.accountId === connection.accountId
-          return c.host === connection.host && c.database === connection.database && c.user === connection.user
-        })?.id ?? '')
-      : '',
-  )
+  /** The saved connection last connected from, as onConnected was told it. */
+  let connectedSavedId = $state('')
+
+  const activeConnectionId = $derived.by(() => {
+    if (!connection) return ''
+    // Equal where both say: a port or type left out matches as it always did.
+    const agree = (/** @type {any} */ a, /** @type {any} */ b) => a == null || b == null || a === '' || b === '' || String(a) === String(b)
+    /** @param {any} c */
+    const matches = (c) => {
+      if (c.type === 'sqlite') return c.filePath === connection.filePath
+      if (c.type === 'd1') return c.databaseId === connection.databaseId && c.accountId === connection.accountId
+      // The port and engine too: two local servers on one host, each with a
+      // "postgres" database and user, read as one connection and shared their
+      // drafts, history and tabs.
+      return c.host === connection.host && c.database === connection.database && c.user === connection.user
+        && agree(c.port, connection.port) && agree(c.type, connection.type)
+    }
+    // The saved connection it was opened with, while it still describes it.
+    const opened = connectedSavedId ? savedConnections.find((c) => c.id === connectedSavedId) : undefined
+    if (opened && matches(opened)) return opened.id
+    return savedConnections.find(matches)?.id ?? ''
+  })
 
   const persistConnectionId = $derived(activeConnectionId || connectionId)
 
@@ -2595,8 +2610,6 @@ let rowSearch = $state('')
     return 'Stroke'
   })
 
-  /** The saved connection last connected from, as onConnected was told it. */
-  let connectedSavedId = $state('')
   /**
    * The saved connection the AI tools should call active. activeConnectionId
    * matches on host, database and user, which misses after switching database
@@ -2671,6 +2684,95 @@ let rowSearch = $state('')
     window.addEventListener('beforeunload', flushSqlTabs)
     return () => window.removeEventListener('beforeunload', flushSqlTabs)
   })
+
+  // The open tabs of each database, so connecting again opens them again
+  // (open-tabs.js). A database's list is written only once its tabs from last
+  // time have been put back: a connect starts from no tabs, and writing that
+  // would wipe the list it is about to restore.
+  /** @type {Set<string>} */
+  const _openTabsReady = new Set()
+  /** @type {ReturnType<typeof setTimeout> | null} */
+  let _openTabsTimer = null
+  /** @type {(() => void) | null} */
+  let _openTabsWrite = null
+  let _openTabsQueued = ''
+  function flushOpenTabs() {
+    if (_openTabsTimer) clearTimeout(_openTabsTimer)
+    _openTabsTimer = null
+    const write = _openTabsWrite
+    _openTabsWrite = null
+    write?.()
+  }
+  /** Stop writing this database's list until its tabs are restored again. @param {string} key */
+  function holdOpenTabs(key) {
+    flushOpenTabs()
+    _openTabsReady.delete(key)
+  }
+  $effect(() => {
+    const key = sqlDraftKey
+    const list = tabsToStore(tabs, activeTabId)
+    if (!key || !_openTabsReady.has(key)) return
+    const queued = `${key}\n${JSON.stringify(list)}`
+    if (queued === _openTabsQueued) return
+    _openTabsQueued = queued
+    if (_openTabsTimer) clearTimeout(_openTabsTimer)
+    _openTabsWrite = () => saveOpenTabs(key, list)
+    _openTabsTimer = setTimeout(flushOpenTabs, 400)
+  })
+  onMount(() => {
+    window.addEventListener('beforeunload', flushOpenTabs)
+    return () => window.removeEventListener('beforeunload', flushOpenTabs)
+  })
+
+  /**
+   * Put back the tabs this database had open last time, in their order, with
+   * the one that was in front in front again. Skipped when the user has opened
+   * something of their own while the catalog loaded.
+   * @param {string} key the database's sqlDraftKey
+   */
+  async function restoreOpenTabs(key) {
+    if (!key || key !== sqlDraftKey || loadSettings().reopenTabs === false) return
+    const kept = loadOpenTabs(key)
+    if (!kept.length) return
+    // What a connect opens by itself: anything else is the user's.
+    const automatic = (/** @type {any} */ t) => t.kind === 'welcome' || t.kind === 'redis' || t.kind === 'dynamodb' || (t.kind === 'docs' && !t.collection)
+    if (!tabs.every(automatic)) return
+    const pro = $hasPro
+    const listed = new Set(tables.map((t) => t.name))
+    const sqlTabs = kept.some((k) => k.kind === 'sql') ? restoreSqlTabs() : []
+    let si = 0
+    /** @type {{ tab: any, active: boolean }[]} */
+    const built = []
+    for (const k of kept) {
+      /** @type {any} */
+      let tab = null
+      if (k.kind === 'table' && k.table) {
+        // A table dropped since is left out; one in another schema is checked when it loads.
+        if (k.schema === activeSchema && listed.size && !listed.has(k.table)) continue
+        tab = createTableTab(k.schema ?? activeSchema, k.table, /** @type {any} */ (k.tableKind ?? 'table'))
+        if (k.view) tab = { ...tab, state: { ...tab.state, ...k.view } }
+      } else if (k.kind === 'sql') {
+        tab = sqlTabs[si++] ?? null
+      } else if (k.kind === 'docs') {
+        const name = k.collection ?? ''
+        tab = { ...createDocsTab(), collection: name, title: name ? name.slice(name.lastIndexOf('.') + 1) : 'Browse' }
+      } else if (PAGE_KINDS.has(k.kind)) {
+        // Pages behind Pro open only with it, as they do from the palette.
+        if (!pro && k.kind !== 'redis' && k.kind !== 'dynamodb') continue
+        tab = createKindTab(/** @type {any} */ (k.kind))
+      }
+      if (!tab) continue
+      if (k.pinned) tab = { ...tab, pinned: true }
+      built.push({ tab, active: !!k.active })
+    }
+    // Editor tabs kept beyond the placeholders (written by an older version) go last.
+    for (; si < sqlTabs.length; si++) built.push({ tab: sqlTabs[si], active: false })
+    if (!built.length) return
+    tabs = built.map((b) => b.tab)
+    const front = (built.find((b) => b.active) ?? built[0]).tab
+    activeTabId = null
+    await activateTab(front.id)
+  }
 
   /** @type {import('$lib/stores/query-history.js').QueryHistoryEntry[]} */
   let queryHistory = $state([])
@@ -4526,6 +4628,7 @@ let rowSearch = $state('')
     // restores its own when its editor opens.
     flushSqlTabs()
     _sqlTabsRestoredFor = ''
+    holdOpenTabs(sqlDraftKey)
     tabs = []
     activeTabId = null
     // Every tab id in the map/MRU/stack just died with the tab list - drop them
@@ -8066,6 +8169,8 @@ let rowSearch = $state('')
     // tab list over the kept one.
     flushSqlTabs()
     _sqlTabsRestoredFor = ''
+    const tabsKey = sqlDraftKey
+    holdOpenTabs(tabsKey)
     tabs = []
     // Labs: the tabs kept for the other open databases keep their rows and
     // results. Wiping them handed a resumed grid the proxied copy of its rows
@@ -8130,6 +8235,12 @@ let rowSearch = $state('')
       } catch { /* ignore */ }
     })()
     await storesReady
+    // Last time's tabs, now that the catalog says which tables still exist.
+    try {
+      await restoreOpenTabs(tabsKey)
+    } finally {
+      _openTabsReady.add(tabsKey)
+    }
   }
 
   onMount(() => installInputShortcuts())
