@@ -926,6 +926,18 @@ pub async fn connect_firestore_db(state: Db<'_>, config: crate::db::firestore::F
     crate::db::connection::connect_firestore(state, config).await
 }
 
+/// Google Cloud Spanner (beta): the database answers, with these credentials.
+#[tauri::command]
+pub async fn test_spanner(config: crate::db::spanner::SpannerConfig) -> Result<(), String> {
+    let h = crate::db::spanner::connect(&config).await?;
+    crate::db::spanner::ping(&h).await
+}
+
+#[tauri::command]
+pub async fn connect_spanner_db(state: Db<'_>, config: crate::db::spanner::SpannerConfig) -> Result<(), String> {
+    crate::db::connection::connect_spanner(state, config).await
+}
+
 /// One Firestore REST call (document paths of this database only).
 #[tauri::command]
 pub async fn firestore_request(
@@ -1259,6 +1271,12 @@ pub async fn pg_explain_sql(
         }),
         // Redis, DynamoDB, Firestore, Cassandra/ScyllaDB and PostHog's HogQL
         // API expose no query plan.
+        ActiveConnection::Spanner(h) => Ok(ExplainResult {
+            plan: crate::db::spanner::explain_plan(&h, &sql).await?,
+            planning_time: 0.0,
+            execution_time: 0.0,
+            driver: "spanner".into(),
+        }),
         _ => Err("This engine doesn't expose a query plan".into()),
     }
 }

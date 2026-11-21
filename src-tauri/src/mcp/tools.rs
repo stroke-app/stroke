@@ -633,6 +633,14 @@ async fn execute_sql(
             let result = crate::db::posthog::query(cfg, sql).await?;
             Ok(truncated_result_json(&result, max_rows))
         }
+        // Spanner runs reads as read-only transactions, so a read can't write.
+        ActiveConnection::Spanner(h) => {
+            if read_only && !crate::db::spanner::reads(sql) {
+                return Err("This connection is read-only: only SELECT statements run".into());
+            }
+            let result = crate::db::spanner::query(h, sql).await?;
+            Ok(truncated_result_json(&result, max_rows))
+        }
         ActiveConnection::Redis(cfg) => {
             let result = crate::db::redis::query(cfg, sql).await?;
             Ok(truncated_result_json(&result, max_rows))
@@ -787,6 +795,10 @@ async fn list_tables(conn: &ActiveConnection, schema: &str) -> Result<String, St
             let tables = crate::db::posthog::list_tables(cfg).await?;
             Ok(json!({"tables":tables.iter().map(|t|&t.name).collect::<Vec<_>>()}).to_string())
         }
+        ActiveConnection::Spanner(h) => {
+            let tables = crate::db::spanner::list_tables(h, schema).await?;
+            Ok(json!({"tables":tables.iter().map(|t|&t.name).collect::<Vec<_>>()}).to_string())
+        }
         ActiveConnection::Redis(cfg) => {
             let tables = crate::db::redis::list_tables(cfg).await?;
             Ok(json!({"tables":tables.iter().map(|t|&t.name).collect::<Vec<_>>()}).to_string())
@@ -919,6 +931,14 @@ async fn describe_table(
             let cols = crate::db::posthog::get_column_structure(cfg, table).await?;
             let columns: Vec<_> = cols.iter().map(|c| json!({ "name": c.name, "type": c.data_type, "nullable": c.is_nullable })).collect();
             Ok(json!({"table":table,"columns":columns,"note":"PostHog table, query it with HogQL"}).to_string())
+        }
+        ActiveConnection::Spanner(h) => {
+            let cols = crate::db::spanner::get_column_structure(h, schema, table).await?;
+            let columns: Vec<_> = cols.iter().map(|c| json!({
+                "name": c.name, "type": c.data_type, "nullable": c.is_nullable,
+                "default": c.column_default, "primary_key": c.is_primary_key, "references": c.foreign_key,
+            })).collect();
+            Ok(json!({"table":table,"columns":columns,"note":"Spanner GoogleSQL: quote names with backticks"}).to_string())
         }
         ActiveConnection::Clickhouse(cfg) => {
             let cols = crate::db::clickhouse::get_column_structure(cfg, schema, table).await?;
@@ -1235,6 +1255,7 @@ async fn check_migrations(conn: &ActiveConnection, schema: &str) -> Result<Strin
         ActiveConnection::Mysql(pool) => check_migrations_mysql(pool, schema).await,
         ActiveConnection::Clickhouse(_) => Ok(json!({"migrations":[],"note":"Migration detection not supported for ClickHouse"}).to_string()),
         ActiveConnection::Posthog(_) => Ok(json!({"migrations":[],"note":"Migration detection not supported for PostHog"}).to_string()),
+        ActiveConnection::Spanner(_) => Ok(json!({"migrations":[],"note":"Migration detection not supported for Spanner"}).to_string()),
         ActiveConnection::Redis(_) => Ok(json!({"migrations":[],"note":"Migration detection not supported for Redis"}).to_string()),
         ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => Ok(json!({"migrations":[],"note":"Migration detection not supported for DynamoDB"}).to_string()),
         ActiveConnection::Duckdb(_) => Ok(json!({"migrations":[],"note":"Migration detection not supported for DuckDB"}).to_string()),
@@ -1448,6 +1469,10 @@ async fn explain_query(conn: &ActiveConnection, sql: &str) -> Result<String, Str
         ActiveConnection::Redis(_) => Ok(json!({"plan":[],"database":"redis","note":"EXPLAIN is not supported on Redis"}).to_string()),
         ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => Ok(json!({"plan":[],"database":"dynamodb","note":"EXPLAIN is not supported on DynamoDB"}).to_string()),
         ActiveConnection::Posthog(_) => Ok(json!({"plan":[],"database":"posthog","note":"EXPLAIN is not available through PostHog's query API"}).to_string()),
+        ActiveConnection::Spanner(h) => {
+            let plan = crate::db::spanner::explain_plan(h, sql).await?;
+            Ok(json!({"plan":plan,"database":"spanner"}).to_string())
+        }
         ActiveConnection::Duckdb(h) => {
             let r = crate::db::duckdb::execute_sql(h, &format!("EXPLAIN {sql}")).await?;
             Ok(json!({"plan":r.rows,"database":"duckdb"}).to_string())
@@ -1538,6 +1563,11 @@ async fn get_database_stats(conn: &ActiveConnection, schema: &str) -> Result<Str
         ActiveConnection::Posthog(cfg) => {
             let tables = crate::db::posthog::list_tables(cfg).await?;
             Ok(json!({"database":"posthog","dialect":"HogQL","table_count":tables.len()}).to_string())
+        }
+        ActiveConnection::Spanner(h) => {
+            let tables = crate::db::spanner::list_tables(h, schema).await?;
+            let dialect = if h.dialect == crate::db::spanner::Dialect::Postgres { "PostgreSQL" } else { "GoogleSQL" };
+            Ok(json!({"database":"spanner","dialect":dialect,"table_count":tables.len()}).to_string())
         }
         ActiveConnection::Redis(cfg) => {
             let tables = crate::db::redis::list_tables(cfg).await?;

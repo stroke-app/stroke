@@ -164,7 +164,7 @@ fn for_each_row(
     sql: &str,
     params: &[DuckValue],
     on_columns: impl FnOnce(Vec<ColumnInfo>),
-    mut on_row: impl FnMut(Vec<Value>) -> bool,
+    on_row: impl FnMut(Vec<Value>) -> bool,
 ) -> Result<(), String> {
     for_each_row_in(conn, sql, params, false, on_columns, on_row)
 }

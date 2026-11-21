@@ -96,7 +96,7 @@ function reservedFor(engine) {
 
 /** @param {string | null | undefined} engine */
 function quoteChars(engine) {
-  if (engine === 'mysql' || engine === 'mariadb') return ['`', '`']
+  if (engine === 'mysql' || engine === 'mariadb' || engine === 'spanner') return ['`', '`']
   if (engine === 'mssql') return ['[', ']']
   return ['"', '"']
 }
@@ -138,7 +138,9 @@ const DEFAULT_SCHEMA = /** @type {Record<string, string>} */ ({
  */
 export function tableRef({ schema, table, engine, mode = 'always', qualify = true }) {
   const t = quoteName(table, engine, mode)
-  if (!schema) return t
+  // Spanner's GoogleSQL tables outside a named schema sit in a schema with
+  // no name, which the catalog lists as `default`.
+  if (!schema || (engine === 'spanner' && schema === 'default')) return t
   const e = String(engine ?? 'postgres')
   if (!qualify && DEFAULT_SCHEMA[e] === schema) return t
   return `${quoteName(schema, engine, mode)}.${t}`

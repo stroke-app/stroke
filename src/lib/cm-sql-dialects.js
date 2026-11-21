@@ -27,6 +27,7 @@ const SQL_DIALECTS = /** @type {Record<string, SQLDialect>} */ ({
   sqlite: LITE, d1: LITE, libsql: LITE,
   mssql: narrowed(MSSQL),
   oracle: narrowed(PLSQL),
+  spanner: MY,
 })
 
 /** The highlighting dialect for an app Dialect id. @param {string} id */
