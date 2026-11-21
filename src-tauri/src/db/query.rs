@@ -380,14 +380,11 @@ pub struct SqlResult {
     pub sql: String,
 }
 
+/// A result column's type as the grid shows it. A result carries no length, so
+/// `varchar` stays `varchar`: it used to read `varchar(...)`, which the header
+/// font draws as a ligature that looks like `varchar(.)`.
 pub(crate) fn pg_type_label(type_name: &str) -> String {
-    let name = type_name;
-    match name {
-        "VARCHAR" | "CHAR" | "BPCHAR" => {
-            format!("{}(...)", name.to_lowercase())
-        }
-        _ => name.to_lowercase(),
-    }
+    type_name.to_lowercase()
 }
 
 /// Render a Postgres interval the way Postgres does: "1 year 2 mons 3 days 04:05:06".
@@ -5701,6 +5698,16 @@ pub(crate) fn affected_message(sql: &str, n: i64) -> String {
         grouped.push(ch);
     }
     format!("{grouped} {} affected", if n == 1 { "row" } else { "rows" })
+}
+
+#[cfg(test)]
+mod pg_type_label_tests {
+    #[test]
+    fn labels_carry_no_placeholder_length() {
+        assert_eq!(super::pg_type_label("VARCHAR"), "varchar");
+        assert_eq!(super::pg_type_label("BPCHAR"), "bpchar");
+        assert_eq!(super::pg_type_label("INT4"), "int4");
+    }
 }
 
 #[cfg(test)]
