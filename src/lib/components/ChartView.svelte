@@ -317,7 +317,8 @@
   /** A fresh form each time the popover opens. @param {boolean} open */
   function onSaveOpenChange(open) {
     if (!open) return
-    saveName = ''; saveGroup = $chartGroups[0] ?? 'Default'
+    // Named for what it plots, selected, so typing replaces it.
+    saveName = yCol && xCol ? `${yCol} by ${xCol}` : ''; saveGroup = $chartGroups[0] ?? 'Default'
     newGroupMode = false; newGroupName = ''
   }
 
@@ -553,6 +554,7 @@
                   placeholder="Chart name…"
                   bind:value={saveName}
                   autofocus
+                  onfocus={(e) => e.currentTarget.select()}
                   class="no-field-frame h-8 w-full rounded-md border-0 bg-sidebar-accent/50 px-2.5 text-ui-sm text-foreground outline-none placeholder:text-muted-foreground focus:bg-sidebar-accent"
                 />
               </label>
