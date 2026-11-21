@@ -671,18 +671,24 @@ async fn execute_sql(
     match conn {
         ActiveConnection::Postgres(pool) if read_only => {
             let mut tx = pool.begin_with("BEGIN READ ONLY").await.map_err(|e| format!("SQL error: {e}"))?;
-            let out = execute_sql_pg(&mut *tx, sql, max_rows).await;
+            let out = execute_sql_pg(&mut tx, sql, max_rows).await;
             let _ = tx.rollback().await;
             out
         }
-        ActiveConnection::Postgres(pool) => execute_sql_pg(pool, sql, max_rows).await,
+        ActiveConnection::Postgres(pool) => {
+            let mut c = pool.acquire().await.map_err(|e| format!("SQL error: {e}"))?;
+            execute_sql_pg(&mut c, sql, max_rows).await
+        }
         ActiveConnection::Sqlite(pool) if read_only => {
             let mut tx = pool.begin().await.map_err(|e| format!("SQL error: {e}"))?;
-            let out = execute_sql_sqlite(&mut *tx, sql, max_rows).await;
+            let out = execute_sql_sqlite(&mut tx, sql, max_rows).await;
             let _ = tx.rollback().await;
             out
         }
-        ActiveConnection::Sqlite(pool) => execute_sql_sqlite(pool, sql, max_rows).await,
+        ActiveConnection::Sqlite(pool) => {
+            let mut c = pool.acquire().await.map_err(|e| format!("SQL error: {e}"))?;
+            execute_sql_sqlite(&mut c, sql, max_rows).await
+        }
         ActiveConnection::D1(cfg) => execute_sql_d1(cfg, sql, max_rows).await,
         // Read only: the engine enforces it, not just the classifier.
         ActiveConnection::LibSql(cfg) if read_only => {
@@ -698,11 +704,14 @@ async fn execute_sql(
                 .begin_with("START TRANSACTION READ ONLY")
                 .await
                 .map_err(|e| format!("SQL error: {e}"))?;
-            let out = execute_sql_mysql(&mut *tx, sql, max_rows).await;
+            let out = execute_sql_mysql(&mut tx, sql, max_rows).await;
             let _ = tx.rollback().await;
             out
         }
-        ActiveConnection::Mysql(pool) => execute_sql_mysql(pool, sql, max_rows).await,
+        ActiveConnection::Mysql(pool) => {
+            let mut c = pool.acquire().await.map_err(|e| format!("SQL error: {e}"))?;
+            execute_sql_mysql(&mut c, sql, max_rows).await
+        }
         ActiveConnection::Clickhouse(cfg) if read_only => {
             let result = crate::db::clickhouse::query_readonly(cfg, sql).await?;
             Ok(truncated_result_json(&result, max_rows))
@@ -783,12 +792,9 @@ async fn execute_sql(
     }
 }
 
-async fn execute_sql_mysql<'c, E>(ex: E, sql: &'c str, max_rows: usize) -> Result<String, String>
-where
-    E: sqlx::Executor<'c, Database = sqlx::MySql>,
-{
+async fn execute_sql_mysql(conn: &mut sqlx::MySqlConnection, sql: &str, max_rows: usize) -> Result<String, String> {
     // Stream rows instead of fetch_all - caps memory at max_rows regardless of result size.
-    let mut stream = sqlx::query(sql).fetch(ex);
+    let mut stream = sqlx::query(sql).fetch(&mut *conn);
     let mut columns: Vec<String> = Vec::new();
     let mut data: Vec<Vec<serde_json::Value>> = Vec::with_capacity(max_rows.min(256));
     let mut total = 0usize;
@@ -803,6 +809,15 @@ where
         }
     }
 
+    drop(stream);
+    // An empty result has no row to read the columns off; an agent got
+    // `"columns": []` for a SELECT that matched nothing.
+    if total == 0 {
+        if let Ok(d) = sqlx::Executor::describe(&mut *conn, sql).await {
+            columns = d.columns().iter().map(|c| c.name().to_string()).collect();
+        }
+    }
+
     Ok(json!({
         "columns": columns,
         "rows": data,
@@ -811,12 +826,9 @@ where
     }).to_string())
 }
 
-async fn execute_sql_pg<'c, E>(ex: E, sql: &'c str, max_rows: usize) -> Result<String, String>
-where
-    E: sqlx::Executor<'c, Database = sqlx::Postgres>,
-{
+async fn execute_sql_pg(conn: &mut sqlx::PgConnection, sql: &str, max_rows: usize) -> Result<String, String> {
     // Stream rows - never materialises more than max_rows rows in memory.
-    let mut stream = sqlx::query(sql).fetch(ex);
+    let mut stream = sqlx::query(sql).fetch(&mut *conn);
     let mut columns: Vec<String> = Vec::new();
     let mut data: Vec<Vec<Value>> = Vec::with_capacity(max_rows.min(256));
     let mut total = 0usize;
@@ -831,6 +843,15 @@ where
         }
     }
 
+    drop(stream);
+    // An empty result has no row to read the columns off; an agent got
+    // `"columns": []` for a SELECT that matched nothing.
+    if total == 0 {
+        if let Ok(d) = sqlx::Executor::describe(&mut *conn, sql).await {
+            columns = d.columns().iter().map(|c| c.name().to_string()).collect();
+        }
+    }
+
     Ok(json!({
         "columns": columns,
         "rows": data,
@@ -840,12 +861,9 @@ where
     .to_string())
 }
 
-async fn execute_sql_sqlite<'c, E>(ex: E, sql: &'c str, max_rows: usize) -> Result<String, String>
-where
-    E: sqlx::Executor<'c, Database = sqlx::Sqlite>,
-{
+async fn execute_sql_sqlite(conn: &mut sqlx::SqliteConnection, sql: &str, max_rows: usize) -> Result<String, String> {
     // Stream rows - never materialises more than max_rows rows in memory.
-    let mut stream = sqlx::query(sql).fetch(ex);
+    let mut stream = sqlx::query(sql).fetch(&mut *conn);
     let mut columns: Vec<String> = Vec::new();
     let mut data: Vec<Vec<Value>> = Vec::with_capacity(max_rows.min(256));
     let mut total = 0usize;
@@ -857,6 +875,15 @@ where
         total += 1;
         if data.len() < max_rows {
             data.push((0..columns.len()).map(|i| crate::db::sqlite::cell_to_json(&row, i)).collect());
+        }
+    }
+
+    drop(stream);
+    // An empty result has no row to read the columns off; an agent got
+    // `"columns": []` for a SELECT that matched nothing.
+    if total == 0 {
+        if let Ok(d) = sqlx::Executor::describe(&mut *conn, sql).await {
+            columns = d.columns().iter().map(|c| c.name().to_string()).collect();
         }
     }
 
