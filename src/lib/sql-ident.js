@@ -34,7 +34,7 @@ export function odbcQuote() {
 }
 
 /** Engines that fold unquoted names to lower case. */
-const FOLDS_LOWER = new Set(['postgres', 'cockroachdb', 'redshift'])
+const FOLDS_LOWER = new Set(['postgres', 'cockroachdb', 'yugabytedb', 'alloydb', 'redshift'])
 /** Engines that fold unquoted names to upper case: `emp` means `EMP`. */
 const FOLDS_UPPER = new Set(['oracle', 'snowflake'])
 
@@ -107,7 +107,7 @@ const ANY_RESERVED = new Set([...PG_RESERVED, ...MYSQL_RESERVED, ...MSSQL_RESERV
 /** @param {string | null | undefined} engine */
 function reservedFor(engine) {
   switch (engine) {
-    case 'postgres': case 'cockroachdb': case 'redshift': case 'duckdb': return PG_RESERVED
+    case 'postgres': case 'cockroachdb': case 'yugabytedb': case 'alloydb': case 'redshift': case 'duckdb': return PG_RESERVED
     case 'mysql': case 'mariadb': return MYSQL_RESERVED
     case 'mssql': return MSSQL_RESERVED
     case 'sqlite': case 'd1': case 'libsql': return SQLITE_RESERVED
@@ -150,7 +150,7 @@ export function quoteName(name, engine, mode = 'always') {
  * a MySQL database other than the connection's) would read a different table.
  */
 const DEFAULT_SCHEMA = /** @type {Record<string, string>} */ ({
-  postgres: 'public', cockroachdb: 'public', snowflake: 'PUBLIC', mssql: 'dbo', duckdb: 'main', sqlite: 'main', d1: 'main', libsql: 'main',
+  postgres: 'public', cockroachdb: 'public', yugabytedb: 'public', alloydb: 'public', snowflake: 'PUBLIC', mssql: 'dbo', duckdb: 'main', sqlite: 'main', d1: 'main', libsql: 'main',
 })
 
 /**

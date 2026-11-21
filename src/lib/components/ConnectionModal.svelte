@@ -151,6 +151,8 @@
           label: "CockroachDB",
           desc: "Distributed Postgres-compatible SQL",
         },
+        { id: "yugabytedb", label: "YugabyteDB", desc: "Distributed PostgreSQL (YSQL)", beta: true },
+        { id: "alloydb", label: "AlloyDB", desc: "Google Cloud's PostgreSQL-compatible database, or AlloyDB Omni", beta: true },
         { id: "mssql", label: "SQL Server", desc: "Microsoft SQL Server" },
         { id: "oracle", label: "Oracle", desc: "Oracle Database (uses Oracle Instant Client)" },
       ],
@@ -292,6 +294,8 @@
     "mysql",
     "mariadb",
     "cockroachdb",
+    "yugabytedb",
+    "alloydb",
     "mssql",
     "oracle",
     "clickhouse",
@@ -1000,7 +1004,7 @@
    * path per form and one on the front page, rather than four.
    */
   const URI_TOGGLE_ENGINES = [
-    "postgres", "cockroachdb", "mysql", "mariadb", "clickhouse", "mssql",
+    "postgres", "cockroachdb", "yugabytedb", "alloydb", "mysql", "mariadb", "clickhouse", "mssql",
     // Every dialect that has a URL form, not just the SQL ones: a Redis or
     // Turso string is the same paste, and refusing it here sent people to fill
     // four fields by hand from a string they already had.
@@ -1095,9 +1099,10 @@
         ...sslPayload("mysql"),
         ...(ssh && { ssh }),
       };
-    if (dbType === "cockroachdb")
+    // PostgreSQL wire engines with a name of their own.
+    if (dbType === "cockroachdb" || dbType === "yugabytedb" || dbType === "alloydb")
       return {
-        type: "cockroachdb",
+        type: dbType,
         name: nm,
         host,
         port,
@@ -1606,6 +1611,8 @@
     mysql: 3306,
     mariadb: 3306,
     cockroachdb: 26257,
+    yugabytedb: 5433,
+    alloydb: 5432,
     clickhouse: 8123,
     mssql: 1433,
     oracle: 1521,
@@ -1628,6 +1635,8 @@
   const ENGINE_DEFAULTS = {
     postgres:    { database: "postgres", user: "postgres" },
     cockroachdb: { database: "defaultdb", user: "root" },
+    yugabytedb:  { database: "yugabyte", user: "yugabyte" },
+    alloydb:     { database: "postgres", user: "postgres" },
     mysql:       { database: "", user: "root" },
     mariadb:     { database: "", user: "root" },
     clickhouse:  { database: "default", user: "default" },
@@ -1880,6 +1889,8 @@
     mysql: "mysql://user:pass@host:3306/db",
     mariadb: "mysql://user:pass@host:3306/db",
     cockroachdb: "postgresql://user:pass@host:26257/defaultdb",
+    yugabytedb: "postgresql://yugabyte@host:5433/yugabyte",
+    alloydb: "postgresql://postgres:pass@10.0.0.5:5432/postgres",
     clickhouse: "clickhouse://user:pass@host:8123/db",
     mssql: "sqlserver://user:pass@host:1433;database=db",
     oracle: "oracle://user:pass@host:1521/FREEPDB1",
@@ -3291,6 +3302,8 @@
   {@const isPgMy =
     dbType === "postgres" ||
     dbType === "cockroachdb" ||
+    dbType === "yugabytedb" ||
+    dbType === "alloydb" ||
     dbType === "mysql" ||
     dbType === "mariadb"}
   {@const isMy = dbType === "mysql" || dbType === "mariadb"}
@@ -4563,7 +4576,7 @@
                       {#key dbType}
                         <div class="flex flex-col gap-3.5">
                           <!-- ── PostgreSQL / CockroachDB / MySQL / MariaDB ── -->
-                          {#if dbType === "postgres" || dbType === "cockroachdb" || dbType === "mysql" || dbType === "mariadb"}
+                          {#if dbType === "postgres" || dbType === "cockroachdb" || dbType === "yugabytedb" || dbType === "alloydb" || dbType === "mysql" || dbType === "mariadb"}
                             <!-- Host, port, database, user and password are one
               address, so they share one row where the panel is wide enough and
               break 3+2 where it is not. -->

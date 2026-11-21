@@ -322,6 +322,8 @@
       : connection?.type === 'mysql' ? 'MySQL'
       : connection?.type === 'mariadb' ? 'MariaDB'
       : connection?.type === 'cockroachdb' ? 'CockroachDB'
+      : connection?.type === 'yugabytedb' ? 'YugabyteDB'
+      : connection?.type === 'alloydb' ? 'AlloyDB'
       : connection?.type === 'clickhouse' ? 'ClickHouse'
       : connection?.type === 'posthog' ? 'PostHog'
       : connection?.type === 'duckdb' ? 'DuckDB'

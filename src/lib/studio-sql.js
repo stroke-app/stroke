@@ -12,7 +12,7 @@ import { odbcQuote } from '$lib/sql-ident.js'
  */
 export function studioEngine(/** @type {string} */ type) {
   const t = String(type || '').toLowerCase()
-  if (['postgres', 'postgresql', 'cockroach', 'cockroachdb', 'supabase', 'neon', 'timescale', 'yugabyte'].includes(t)) return 'postgres'
+  if (['postgres', 'postgresql', 'cockroach', 'cockroachdb', 'yugabytedb', 'alloydb', 'supabase', 'neon', 'timescale', 'yugabyte'].includes(t)) return 'postgres'
   if (['mysql', 'mariadb', 'tidb', 'planetscale'].includes(t)) return 'mysql'
   if (['sqlite', 'd1', 'libsql'].includes(t)) return 'sqlite'
   if (['mssql', 'oracle', 'duckdb', 'clickhouse', 'spanner', 'bigquery', 'snowflake', 'odbc'].includes(t)) return t
