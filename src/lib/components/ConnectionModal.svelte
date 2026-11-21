@@ -42,6 +42,10 @@
     connectSpanner,
     testBigquery,
     connectBigquery,
+    testOdbc,
+    connectOdbc,
+    odbcDrivers,
+    odbcDataSources,
     testMongo,
     connectMongo,
     dynamoProfiles,
@@ -91,6 +95,8 @@
   import { providerOf, engineLabel, engineId } from "$lib/connection-provider.js";
   import ConfirmDialog from "./ConfirmDialog.svelte";
   import { engineTint } from "$lib/engine-tint.js";
+  import { Textarea } from "$lib/components/ui/textarea/index.js";
+  import { ODBC_PRESETS, GENERIC_ODBC, odbcPreset, presetOfDriverId, pickDriver, presetConnectionString } from "$lib/odbc-presets.js";
   // macOS: the dialog takes the whole window like the app's own layout - the
   // rail runs to the top with the traffic lights inside its title row.
   const isMacChrome = typeof document !== "undefined" && document.documentElement.dataset.os === "macos";
@@ -189,6 +195,13 @@
         { id: "d1", label: "Cloudflare D1", desc: "Edge SQLite via REST API" },
         { id: "spanner", label: "Spanner", desc: "Google Cloud Spanner, GoogleSQL or PostgreSQL", beta: true },
         { id: "bigquery", label: "BigQuery", desc: "Google Cloud data warehouse", beta: true },
+      ],
+    },
+    {
+      label: "Through ODBC",
+      drivers: [
+        { id: "odbc", label: "ODBC", desc: GENERIC_ODBC.desc, beta: true },
+        ...ODBC_PRESETS.map((p) => ({ id: `odbc-${p.id}`, label: p.label, desc: p.desc, beta: true })),
       ],
     },
     {
@@ -296,6 +309,8 @@
     "d1",
     "spanner",
     "bigquery",
+    "odbc",
+    ...ODBC_PRESETS.map((p) => `odbc-${p.id}`),
     "redis",
     "valkey",
     "dynamodb",
@@ -478,6 +493,56 @@
   let bqDataset = $state("");
   let bqLocation = $state("");
   let bqEmulator = $state("localhost:9050");
+  // ODBC: a preset's fields, a data source name, or a whole connection string.
+  // Host, port, database, user and password are the form's shared fields;
+  // anything else a preset asks for lives in `odbcFields`.
+  const isOdbcForm = $derived(dbType === "odbc" || dbType.startsWith("odbc-"));
+  const odbcCur = $derived(odbcPreset(presetOfDriverId(dbType)));
+  let odbcMode = $state(/** @type {'fields'|'dsn'|'string'} */ ("fields"));
+  let odbcDriver = $state("");
+  let odbcFields = $state(/** @type {Record<string, string>} */ ({}));
+  let odbcDsn = $state("");
+  let odbcString = $state("");
+  let odbcInstalled = $state(/** @type {string[]} */ ([]));
+  let odbcDsns = $state(/** @type {{ name: string, driver: string }[]} */ ([]));
+  /** What the driver called the database on the last Test. */
+  let odbcServer = $state("");
+  let odbcListed = false;
+  $effect(() => {
+    if (!isOdbcForm || odbcListed) return;
+    odbcListed = true;
+    odbcDrivers().then((d) => (odbcInstalled = d.map((x) => x.name))).catch(() => {});
+    odbcDataSources().then((d) => (odbcDsns = d)).catch(() => {});
+  });
+  // A preset takes the matching installed driver once the list is in.
+  $effect(() => {
+    if (!odbcCur || odbcDriver) return;
+    const hit = pickDriver(odbcCur, odbcInstalled);
+    if (hit) odbcDriver = hit;
+  });
+  const odbcDriverInstalled = $derived(odbcInstalled.includes(odbcDriver.trim()));
+  const odbcPreview = $derived(
+    odbcCur
+      ? presetConnectionString(odbcCur, odbcDriver.trim(), { host, port, database, user, ...odbcFields })
+      : "",
+  );
+  async function openLink(/** @type {string} */ url) {
+    try {
+      const { openUrl } = await import("@tauri-apps/plugin-opener");
+      await openUrl(url);
+    } catch {
+      window.open(url, "_blank", "noopener");
+    }
+  }
+  async function pickOdbcFile(/** @type {string} */ key) {
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const path = await open({ title: "Select a file" });
+      if (typeof path === "string" && path) odbcFields[key] = path;
+    } catch {
+      /* browser/non-Tauri env - the field is still typeable */
+    }
+  }
   // Oracle: a service name (in the shared `database` field), a SID, or a whole
   // connect string; and where Instant Client lives when the app can't find it.
   /** Copy URL just copied: the button says so for a moment. */
@@ -1086,6 +1151,22 @@
         ...(fsAuth === "serviceAccount" && { keyFile: fsKeyFile.trim() }),
         ...(fsAuth === "emulator" && { emulatorHost: spEmulator.trim() }),
       };
+    if (isOdbcForm)
+      return {
+        type: "odbc",
+        name: nm,
+        preset: odbcCur ? odbcCur.id : "generic",
+        odbcMode: !odbcCur && odbcMode === "fields" ? "dsn" : odbcMode,
+        odbcDriver: odbcDriver.trim(),
+        host: host.trim(),
+        port: port.trim(),
+        database: database.trim(),
+        odbcFields: { ...odbcFields },
+        dsn: odbcDsn.trim(),
+        connectionString: odbcString.trim(),
+        user: user.trim(),
+        password,
+      };
     if (dbType === "bigquery")
       return {
         type: "bigquery",
@@ -1233,6 +1314,14 @@
       bqDataset = conn.type === "bigquery" ? (conn.dataset ?? "") : "";
       bqLocation = conn.location ?? "";
       bqEmulator = conn.emulatorHost ?? "localhost:9050";
+      if (conn.type === "odbc") {
+        odbcMode = conn.odbcMode ?? (conn.preset && conn.preset !== "generic" ? "fields" : conn.dsn ? "dsn" : "string");
+        odbcDriver = conn.odbcDriver ?? "";
+        odbcFields = { ...(conn.odbcFields ?? {}) };
+        odbcDsn = conn.dsn ?? "";
+        odbcString = conn.connectionString ?? "";
+        odbcServer = "";
+      }
       cqlHosts = conn.hosts ?? "127.0.0.1:9042";
       cqlKeyspace = conn.keyspace ?? "";
       if (conn.type === "oracle") {
@@ -1317,6 +1406,12 @@
       bqDataset = "";
       bqLocation = "";
       bqEmulator = "localhost:9050";
+      odbcMode = "fields";
+      odbcDriver = "";
+      odbcFields = {};
+      odbcDsn = "";
+      odbcString = "";
+      odbcServer = "";
       fsEmulator = "localhost:8080";
       awsAuth = "profile";
       awsProfile = awsProfileList.includes("default") ? "default" : (awsProfileList[0] ?? "");
@@ -1447,6 +1542,12 @@
    * purpose: `undefined` is what clears the field.
    */
   const DEFAULT_PORTS = {
+    ...Object.fromEntries(
+      ODBC_PRESETS.flatMap((p) => {
+        const f = p.fields.find((x) => x.key === "port");
+        return f?.default ? [[`odbc-${p.id}`, Number(f.default)]] : [];
+      }),
+    ),
     postgres: 5432,
     mysql: 3306,
     mariadb: 3306,
@@ -1489,6 +1590,10 @@
     firestore:   { database: "", user: "" },
     spanner:     { database: "", user: "" },
     bigquery:    { database: "", user: "" },
+    odbc:        { database: "", user: "" },
+    ...Object.fromEntries(
+      ODBC_PRESETS.map((p) => [`odbc-${p.id}`, { database: p.fields.find((f) => f.key === "database")?.default ?? "", user: "" }]),
+    ),
     mongodb:     { database: "", user: "" },
   };
 
@@ -1517,6 +1622,18 @@
     const HTTP_DEFAULT = /** @type {Record<string, string>} */ ({ couchdb: "http://localhost:5984", elasticsearch: "http://localhost:9200", opensearch: "http://localhost:9200" });
     if (HTTP_DEFAULT[id] && (!couchUrl.trim() || Object.values(HTTP_DEFAULT).includes(couchUrl.trim()))) couchUrl = HTTP_DEFAULT[id];
     esServer = "";
+    if (id === "odbc" || id.startsWith("odbc-")) {
+      // A new preset: its driver, its own extra fields, and its default mode.
+      const preset = odbcPreset(presetOfDriverId(id));
+      odbcDriver = preset ? pickDriver(preset, odbcInstalled) : "";
+      odbcFields = Object.fromEntries(
+        (preset?.fields ?? [])
+          .filter((f) => !["host", "port", "database"].includes(f.key))
+          .map((f) => [f.key, f.default ?? ""]),
+      );
+      odbcMode = preset ? "fields" : odbcDsns.length ? "dsn" : "string";
+      odbcServer = "";
+    }
     error = "";
     testOk = false;
     connectionUri = "";
@@ -1682,6 +1799,11 @@
     // Google's engines have no host field: name them after the database.
     if (dbType === "spanner") return spDatabase.trim() || fsProject.trim() || "Spanner";
     if (dbType === "bigquery") return [fsProject.trim(), bqDataset.trim()].filter(Boolean).join(".") || "BigQuery";
+    if (isOdbcForm) {
+      if (odbcMode === "dsn" && odbcDsn.trim()) return odbcDsn.trim();
+      const where = host.trim() || database.trim();
+      return where && odbcMode === "fields" ? `${activeDriver.label} · ${where}` : activeDriver.label;
+    }
     if (dbType === "firestore") return fsProject.trim() || "Firestore";
     // DynamoDB has no host field of its own: the form's leftover 127.0.0.1
     // named an AWS connection after localhost. Name it after where it goes.
@@ -1879,6 +2001,7 @@
     if (engineFamily(conn.type) === "redis") return conn.host ? `${conn.host}${conn.port ? `:${conn.port}` : ""}` : "—";
     if (conn.type === "couchdb" || conn.type === "elasticsearch" || conn.type === "opensearch") return conn.url || "—";
     if (conn.type === "mongodb") return conn.uri ? uriHost(conn.uri) : "—";
+    if (conn.type === "odbc") return conn.odbcMode === "dsn" || (!conn.odbcMode && conn.dsn) ? `DSN ${conn.dsn}` : [conn.host, conn.database].filter(Boolean).join(" · ") || "ODBC";
     if (conn.type === "bigquery") return [[conn.projectId, conn.dataset].filter(Boolean).join("."), conn.auth === "emulator" ? "emulator" : null].filter(Boolean).join(" · ") || "—";
     if (conn.type === "spanner") return [conn.instanceId && conn.databaseId ? `${conn.instanceId}/${conn.databaseId}` : conn.projectId, conn.auth === "emulator" ? "emulator" : null].filter(Boolean).join(" · ") || "—";
     if (conn.type === "firestore") return [conn.projectId, conn.auth === "emulator" ? "emulator" : null].filter(Boolean).join(" · ") || "—";
@@ -1990,6 +2113,7 @@
     if (conn.type === "firestore") return connectFirestore(conn);
     if (conn.type === "spanner") return connectSpanner(conn);
     if (conn.type === "bigquery") return connectBigquery(conn);
+    if (conn.type === "odbc") return connectOdbc(conn);
     if (conn.type === "mongodb") return connectMongo(conn);
     return connectPostgres(conn);
   }
@@ -2527,6 +2651,7 @@
       else if (p.type === "firestore") await testFirestore(p);
       else if (p.type === "spanner") await testSpanner(p);
       else if (p.type === "bigquery") await testBigquery(p);
+      else if (p.type === "odbc") odbcServer = await testOdbc(p);
       else if (p.type === "mongodb") await testMongo(p);
       else await testPostgresConnection(p);
       if (myOp !== opId) return; // cancelled by the user
@@ -2759,6 +2884,8 @@
     if (dbType === "firestore") return fsProject || "—";
     if (dbType === "spanner") return [fsProject, spInstance, spDatabase].filter(Boolean).join("/") || "—";
     if (dbType === "bigquery") return [fsProject, bqDataset].filter(Boolean).join(".") || "—";
+    if (isOdbcForm)
+      return odbcMode === "dsn" ? odbcDsn || "—" : odbcMode === "string" ? "connection string" : [host, database].filter(Boolean).join(" · ") || "—";
     if (dbType === "mongodb") return uriHost(mongoUri) || "—";
     if (dbType === "dynamodb") return awsEndpoint || awsRegion || (awsAuth === "profile" ? awsProfile || "default profile" : "AWS");
     if (dbType === "oracle" && oraMode === "connect") return oraConnect || "—";
@@ -4976,6 +5103,130 @@
                                 >Use TLS</span
                               >
                             </label>
+
+                            <!-- ── ODBC ───────────────────────────────────── -->
+                          {:else if isOdbcForm}
+                            {@const modes = (odbcCur ? [{ v: "fields", l: "Fields" }] : []).concat([{ v: "dsn", l: "Data source" }, { v: "string", l: "Connection string" }])}
+                            <div>
+                              <span class={lbl} id="cn-odbc-mode-label">Connect with</span>
+                              <div class="flex h-8 items-center gap-0.5 rounded-[var(--radius-field)] bg-muted/40 p-0.5" role="group" aria-labelledby="cn-odbc-mode-label">
+                                {#each modes as m (m.v)}
+                                  <button
+                                    type="button"
+                                    aria-pressed={odbcMode === m.v}
+                                    class={cn(
+                                      "inline-flex h-7 flex-1 items-center justify-center rounded-md text-ui-xs font-medium transition-colors",
+                                      odbcMode === m.v ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+                                    )}
+                                    onclick={() => (odbcMode = /** @type {'fields'|'dsn'|'string'} */ (m.v))}
+                                  >{m.l}</button>
+                                {/each}
+                              </div>
+                            </div>
+
+                            {#if odbcMode === "fields" && odbcCur}
+                              {@const hasHost = odbcCur.fields.some((f) => f.key === "host")}
+                              {@const hasPort = odbcCur.fields.some((f) => f.key === "port")}
+                              <div>
+                                <label for="cn-odbc-driver" class={lbl}>Driver</label>
+                                <Input id="cn-odbc-driver" bind:value={odbcDriver} placeholder={odbcCur.driverName} list="cn-odbc-drivers" spellcheck="false" autocomplete="off" class={cn(inp, "font-mono")} />
+                                <datalist id="cn-odbc-drivers">
+                                  {#each odbcInstalled as d (d)}<option value={d}></option>{/each}
+                                </datalist>
+                                {#if odbcDriverInstalled}
+                                  <p class="mt-1 text-ui-3xs text-muted-foreground">Installed on this machine.</p>
+                                {:else}
+                                  <p class="mt-1 text-ui-3xs text-muted-foreground">
+                                    {odbcInstalled.length ? `No ${odbcCur.label} driver is registered on this machine.` : "No ODBC drivers are registered on this machine."}
+                                    Install it, then open this form again.
+                                    <button type="button" class="font-medium text-primary hover:underline" onclick={() => openLink(odbcCur.install)}>Get the driver</button>
+                                  </p>
+                                {/if}
+                              </div>
+                              {#if hasHost}
+                                <div class={cn("grid gap-2", hasPort ? "grid-cols-[1fr_110px]" : "grid-cols-1")}>
+                                  <div>
+                                    <label for="cn-odbc-host" class={lbl}>Host</label>
+                                    <Input id="cn-odbc-host" bind:value={host} placeholder={odbcCur.fields.find((f) => f.key === "host")?.placeholder} spellcheck="false" autocomplete="off" class={inp} />
+                                  </div>
+                                  {#if hasPort}
+                                    <div>
+                                      <label for="cn-odbc-port" class={lbl}>Port</label>
+                                      <Input id="cn-odbc-port" bind:value={port} type="text" inputmode="numeric" class={inpNum} />
+                                    </div>
+                                  {/if}
+                                </div>
+                              {/if}
+                              {#each odbcCur.fields.filter((f) => f.key !== "host" && f.key !== "port") as f (f.key)}
+                                <div>
+                                  <label for={`cn-odbc-${f.key}`} class={lbl}>
+                                    {f.label}{#if f.optional}{" "}<span class="normal-case font-normal opacity-50">(optional)</span>{/if}
+                                  </label>
+                                  {#if f.key === "database"}
+                                    <Input id={`cn-odbc-${f.key}`} bind:value={database} placeholder={f.placeholder} spellcheck="false" autocomplete="off" class={cn(inp, f.mono && "font-mono")} />
+                                  {:else if f.file}
+                                    <div class="flex gap-2">
+                                      <Input id={`cn-odbc-${f.key}`} bind:value={odbcFields[f.key]} placeholder={f.placeholder} spellcheck="false" autocomplete="off" class={cn(inp, "min-w-0 flex-1 font-mono")} />
+                                      <Button type="button" variant="outline" onclick={() => pickOdbcFile(f.key)}>Browse…</Button>
+                                    </div>
+                                  {:else}
+                                    <Input id={`cn-odbc-${f.key}`} bind:value={odbcFields[f.key]} placeholder={f.placeholder} spellcheck="false" autocomplete="off" class={cn(inp, f.mono && "font-mono")} />
+                                  {/if}
+                                </div>
+                              {/each}
+                            {:else if odbcMode === "dsn"}
+                              <div>
+                                <label for="cn-odbc-dsn" class={lbl}>Data source</label>
+                                {#if odbcDsns.length}
+                                  <FieldSelect id="cn-odbc-dsn" bind:value={odbcDsn} options={odbcDsns.map((d) => ({ value: d.name, label: `${d.name} · ${d.driver}` }))} placeholder="Choose a data source" class="w-full" />
+                                {:else}
+                                  <Input id="cn-odbc-dsn" bind:value={odbcDsn} placeholder="SalesDW" spellcheck="false" autocomplete="off" class={inp} />
+                                  <p class="mt-1 text-ui-3xs text-muted-foreground">
+                                    No data sources are set up on this machine. Add one in odbc.ini or the ODBC Data Source Administrator, or use a connection string.
+                                  </p>
+                                {/if}
+                              </div>
+                            {:else}
+                              <div>
+                                <label for="cn-odbc-string" class={lbl}>Connection string</label>
+                                <Textarea id="cn-odbc-string" bind:value={odbcString} rows={3} spellcheck="false" autocomplete="off" placeholder={"Driver={...};Server=...;Database=...;"} class="font-mono" />
+                                <p class="mt-1 text-ui-3xs text-muted-foreground">
+                                  Kept in the OS keychain, since it can hold a password. UID and PWD come from the fields below when the string has none.
+                                </p>
+                              </div>
+                            {/if}
+
+                            {#if odbcMode === "fields" && odbcCur?.auth === "token"}
+                              <div>
+                                <label for="cn-odbc-pass" class={lbl}>Access token</label>
+                                <PasswordInput id="cn-odbc-pass" bind:value={password} autocomplete="off" class={inp} />
+                              </div>
+                            {:else if !(odbcMode === "fields" && odbcCur?.auth === "none")}
+                              <div class="grid grid-cols-2 gap-2">
+                                <div>
+                                  <label for="cn-odbc-user" class={lbl}>Username{#if odbcMode !== "fields"}{" "}<span class="normal-case font-normal opacity-50">(optional)</span>{/if}</label>
+                                  <Input id="cn-odbc-user" bind:value={user} autocomplete="username" class={inp} />
+                                </div>
+                                <div>
+                                  <label for="cn-odbc-pass" class={lbl}>Password{#if odbcMode !== "fields"}{" "}<span class="normal-case font-normal opacity-50">(optional)</span>{/if}</label>
+                                  <PasswordInput id="cn-odbc-pass" bind:value={password} autocomplete="current-password" class={inp} />
+                                </div>
+                              </div>
+                            {/if}
+
+                            {#if odbcMode === "fields" && odbcCur}
+                              <div class="rounded-[var(--radius-field)] bg-muted/40 px-3 py-2">
+                                <div class="flex items-center justify-between gap-2">
+                                  <span class="text-ui-3xs font-medium text-muted-foreground">Connection string</span>
+                                  <button type="button" class="text-ui-3xs font-medium text-primary hover:underline" onclick={() => { odbcString = odbcPreview; odbcMode = "string"; }}>Edit as text</button>
+                                </div>
+                                <p class="mt-1 font-mono text-ui-3xs break-all text-foreground/80">{odbcPreview}</p>
+                              </div>
+                            {/if}
+                            <p class="text-ui-3xs text-muted-foreground">
+                              {#if odbcServer}The driver reports <span class="font-mono">{odbcServer}</span>.{" "}{/if}
+                              ODBC is in beta{#if odbcCur && odbcMode === "fields"}, and this preset follows {odbcCur.label}'s driver documentation without having been run against a {odbcCur.label} server yet{/if}.
+                            </p>
 
                             <!-- ── MongoDB ────────────────────────────────── -->
                           {:else if dbType === "mongodb"}

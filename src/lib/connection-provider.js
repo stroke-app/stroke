@@ -49,6 +49,8 @@ export function providerOf(conn) {
   return null
 }
 
+import { ODBC_PRESETS, odbcDriverId } from '$lib/odbc-presets.js'
+
 /** @type {Record<string, string>} */
 const ENGINE_SHORT = {
   postgres: 'Postgres',
@@ -74,6 +76,8 @@ const ENGINE_SHORT = {
   firestore: 'Firestore',
   spanner: 'Spanner',
   bigquery: 'BigQuery',
+  odbc: 'ODBC',
+  ...Object.fromEntries(ODBC_PRESETS.map((p) => [`odbc-${p.id}`, p.label])),
   mongodb: 'MongoDB',
   d1: 'D1',
   posthog: 'HogQL',
@@ -89,6 +93,8 @@ const ENGINE_SHORT = {
  */
 export function engineId(c) {
   if (c?.type === 'cassandra' && c?.flavor === 'scylladb') return 'scylladb'
+  // ODBC connections show as the engine they reach: `odbc-db2`, `odbc-hana`.
+  if (c?.type === 'odbc') return odbcDriverId(/** @type {any} */ (c).preset)
   return c?.type ?? ''
 }
 

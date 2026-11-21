@@ -195,6 +195,7 @@ dependencies = [
  "objc2-app-kit",
  "objc2-quartz-core",
  "objc2-web-kit",
+ "odbc-api",
  "oracle",
  "portable-pty",
  "redis",
@@ -367,7 +368,7 @@ dependencies = [
  "arrow-ord",
  "arrow-schema",
  "arrow-select",
- "atoi",
+ "atoi 2.0.0",
  "base64 0.22.1",
  "chrono",
  "comfy-table",
@@ -628,6 +629,15 @@ name = "atoi"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f28d99ec8bfea296261ca1af174f24225171fea9664ba9003cbebee704810528"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
+name = "atoi"
+version = "3.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d12c37257553c19e9aee6cba77814fdc9e07844abfc8b3a2c377cd920ee5a993"
 dependencies = [
  "num-traits",
 ]
@@ -3776,9 +3786,9 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.29"
+version = "0.4.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
+checksum = "5d15f86d12da44cd8d4ec3c73984537eb7f4cadcb9776a575a0a8a05ca11005c"
 dependencies = [
  "value-bag",
 ]
@@ -4569,6 +4579,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2e5a6c098c7a3b6547378093f5cc30bc54fd361ce711e05293a5cc589562739b"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "odbc-api"
+version = "30.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "07df20ae00dc7fc31c9ae32451bb0d83fb9d18ddb970e066b26e43d6a76cd9a0"
+dependencies = [
+ "atoi 3.1.1",
+ "log",
+ "odbc-sys",
+ "thiserror 2.0.18",
+ "widestring",
+]
+
+[[package]]
+name = "odbc-sys"
+version = "0.31.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "19e3a0f2c6531470f498c7cc5054f6b2a5922b5e82a5151065a257c1eb5ee1cd"
+dependencies = [
+ "unix-odbc",
 ]
 
 [[package]]
@@ -6708,7 +6740,7 @@ dependencies = [
 name = "sqlx-mysql"
 version = "0.8.6"
 dependencies = [
- "atoi",
+ "atoi 2.0.0",
  "base64 0.22.1",
  "bitflags 2.11.1",
  "byteorder",
@@ -6751,7 +6783,7 @@ dependencies = [
 name = "sqlx-postgres"
 version = "0.8.6"
 dependencies = [
- "atoi",
+ "atoi 2.0.0",
  "base64 0.22.1",
  "bitflags 2.11.1",
  "byteorder",
@@ -6791,7 +6823,7 @@ version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2d12fe70b2c1b4401038055f90f151b78208de1f9f89a7dbfd41587a10c3eea"
 dependencies = [
- "atoi",
+ "atoi 2.0.0",
  "chrono",
  "flume",
  "futures-channel",
@@ -8163,6 +8195,15 @@ checksum = "fc1de2c688dc15305988b563c3854064043356019f97a4b46276fe734c4f07ea"
 dependencies = [
  "crypto-common 0.1.7",
  "subtle",
+]
+
+[[package]]
+name = "unix-odbc"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "26bdaf2156eebadc0dbabec5b2c2a6f92bff5cface28f3f0a367d2ee9aeca0e2"
+dependencies = [
+ "cc",
 ]
 
 [[package]]

@@ -950,6 +950,32 @@ pub async fn connect_bigquery_db(state: Db<'_>, config: crate::db::bigquery::Big
     crate::db::connection::connect_bigquery(state, config).await
 }
 
+/// A database through ODBC (beta): the driver connects and the link is alive.
+/// Returns what the driver reports itself as (`DB2/LINUXX8664`, `HDB`, ...).
+#[tauri::command]
+pub async fn test_odbc(config: crate::db::odbc::OdbcConfig) -> Result<String, String> {
+    let h = crate::db::odbc::connect(&config).await?;
+    crate::db::odbc::ping(&h).await?;
+    Ok(h.info.dbms.clone())
+}
+
+#[tauri::command]
+pub async fn connect_odbc_db(state: Db<'_>, config: crate::db::odbc::OdbcConfig) -> Result<crate::db::odbc::OdbcSummary, String> {
+    crate::db::connection::connect_odbc(state, config).await
+}
+
+/// The ODBC drivers installed on this machine.
+#[tauri::command]
+pub async fn odbc_drivers() -> Result<Vec<crate::db::odbc::OdbcDriver>, String> {
+    crate::db::odbc::drivers().await
+}
+
+/// The ODBC data sources (DSNs) configured on this machine.
+#[tauri::command]
+pub async fn odbc_data_sources() -> Result<Vec<crate::db::odbc::OdbcDataSource>, String> {
+    crate::db::odbc::data_sources().await
+}
+
 /// One Firestore REST call (document paths of this database only).
 #[tauri::command]
 pub async fn firestore_request(

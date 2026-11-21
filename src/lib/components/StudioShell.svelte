@@ -335,6 +335,7 @@
     connectFirestore,
     connectSpanner,
     connectBigquery,
+    connectOdbc,
     connectMongo,
     mongoCollections,
     mongoCount,
@@ -8344,6 +8345,7 @@ let rowSearch = $state('')
       else if (last.type === 'firestore') await withTimeout(connectFirestore(last))
       else if (last.type === 'spanner') await withTimeout(connectSpanner(last))
       else if (last.type === 'bigquery') await withTimeout(connectBigquery(last))
+      else if (last.type === 'odbc') await withTimeout(connectOdbc(last))
       else if (last.type === 'mongodb') await withTimeout(connectMongo(last))
       else await withTimeout(connectPostgres(last))
       // onConnected already refreshes the query stores (concurrently with the
@@ -8806,6 +8808,7 @@ let rowSearch = $state('')
     else if (conn.type === 'firestore') await connectFirestore(conn)
     else if (conn.type === 'spanner') await connectSpanner(conn)
     else if (conn.type === 'bigquery') await connectBigquery(conn)
+    else if (conn.type === 'odbc') await connectOdbc(conn)
     else if (conn.type === 'mongodb') await connectMongo(conn)
     else await connectPostgres(conn)
   }

@@ -26,6 +26,7 @@ pub mod firestore;
 pub mod google_auth;
 pub mod spanner;
 pub mod bigquery;
+pub mod odbc;
 pub mod mongo;
 pub mod docdb;
 #[cfg(test)]

@@ -12,6 +12,22 @@
 
 /** @typedef {'auto' | 'always' | 'never'} QuoteMode */
 
+/**
+ * The active ODBC connection's identifier quote and naming, as its driver
+ * reported them on connect. One connection is active at a time, so one value.
+ */
+let odbc = { quote: '"', flat: false }
+
+/** @param {{ quote?: string | null, namespace?: string } | null | undefined} info */
+export function setOdbcDialect(info) {
+  odbc = { quote: info?.quote || '"', flat: info?.namespace === 'flat' }
+}
+
+/** The quote the active ODBC driver uses: `"`, `` ` `` or `[`. */
+export function odbcQuote() {
+  return odbc.quote
+}
+
 /** Engines that fold unquoted names to lower case. */
 const FOLDS_LOWER = new Set(['postgres', 'cockroachdb', 'redshift'])
 /** Engines that fold unquoted names to upper case: `emp` means `EMP`. */
@@ -98,6 +114,7 @@ function reservedFor(engine) {
 function quoteChars(engine) {
   if (engine === 'mysql' || engine === 'mariadb' || engine === 'spanner' || engine === 'bigquery') return ['`', '`']
   if (engine === 'mssql') return ['[', ']']
+  if (engine === 'odbc') return odbc.quote === '[' ? ['[', ']'] : [odbc.quote, odbc.quote]
   return ['"', '"']
 }
 
@@ -140,7 +157,7 @@ export function tableRef({ schema, table, engine, mode = 'always', qualify = tru
   const t = quoteName(table, engine, mode)
   // Spanner's GoogleSQL tables outside a named schema sit in a schema with
   // no name, which the catalog lists as `default`.
-  if (!schema || (engine === 'spanner' && schema === 'default')) return t
+  if (!schema || (engine === 'spanner' && schema === 'default') || (engine === 'odbc' && odbc.flat)) return t
   const e = String(engine ?? 'postgres')
   if (!qualify && DEFAULT_SCHEMA[e] === schema) return t
   return `${quoteName(schema, engine, mode)}.${t}`

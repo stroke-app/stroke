@@ -76,6 +76,11 @@ tiberius = { version = "0.13.0", default-features = false, features = ["rustls",
 # time); the Oracle Client library (Instant Client) is loaded at runtime on the
 # first Oracle connect, so it is only needed by users who connect to Oracle.
 oracle = "0.6.3"
+# ODBC bridge (src/db/odbc.rs). Windows has its own driver manager (odbc32);
+# elsewhere unixODBC is built from source into the app (see the target table
+# below), so the app starts without it and only the database's own driver has
+# to be installed.
+odbc-api = { version = "30", default-features = false, features = ["odbc_version_3_80"] }
 # Pinned as a direct dependency only to pick the TLS crypto provider at
 # startup (see `run`): tiberius 0.13 enables aws-lc-rs next to the ring the
 # other drivers use, and rustls then has no default of its own.
@@ -110,6 +115,9 @@ objc2-web-kit = { version = "0.3", features = ["WKWebView"] }
 [target.'cfg(target_os = "windows")'.dependencies]
 webview2-com = "0.39"
 windows-core = "0.62"
+
+[target.'cfg(not(windows))'.dependencies]
+odbc-api = { version = "30", default-features = false, features = ["odbc_version_3_80", "vendored-unix-odbc"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = { version = "=2.0.2", features = ["v2_38"] }
