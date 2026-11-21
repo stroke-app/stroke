@@ -72,7 +72,7 @@ pub struct GeoFeatures {
     /// "clusters" - grid-collapsed points carrying a `count`. The viewport held
     /// more rows than could be drawn.
     pub mode: String,
-    pub features: Vec<Value>,
+    pub features: Vec<MapFeature>,
     /// Rows matching the filter inside the viewport.
     pub matched: i64,
     pub returned: i64,
@@ -86,6 +86,17 @@ pub struct GeoFeatures {
     pub columns: Vec<String>,
     pub query_ms: u64,
     pub sql: String,
+}
+
+/// One GeoJSON feature. The geometry is PostGIS's own `ST_AsGeoJSON` text,
+/// passed through as is: parsing it into a JSON tree only to print it again
+/// was most of the serialization time for a few thousand polygons.
+#[derive(Serialize)]
+pub struct MapFeature {
+    #[serde(rename = "type")]
+    pub kind: &'static str,
+    pub geometry: Box<serde_json::value::RawValue>,
+    pub properties: Value,
 }
 
 /// PostGIS puts its own tables in these schemas; they are plumbing, not data.
@@ -391,6 +402,27 @@ pub async fn geo_features(
     let Some(pool) = pg_pool(&state)? else {
         return Err("The map view is only available on PostgreSQL with PostGIS".into());
     };
+    features_on(&pool, schema, table, column, kind, srid, geom_type, bbox, limit, simplify, cluster_cell, filters, include_extent).await
+}
+
+/// `geo_features` on a pool, for the command and the tests.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn features_on(
+    pool: &PgPool,
+    schema: String,
+    table: String,
+    column: String,
+    kind: String,
+    srid: i32,
+    geom_type: String,
+    bbox: Option<GeoBbox>,
+    limit: i64,
+    simplify: f64,
+    cluster_cell: f64,
+    filters: Option<Vec<RowFilter>>,
+    include_extent: bool,
+) -> Result<GeoFeatures, String> {
+    let pool = pool.clone();
     let started = std::time::Instant::now();
 
     super::schema::validate_ident(&schema)?;
@@ -440,15 +472,19 @@ pub async fn geo_features(
     let connector = if where_clause.sql.is_empty() && bbox.is_none() { " WHERE" } else { " AND" };
     let scope = format!("{}{viewport}{connector} {quoted} IS NOT NULL", where_clause.sql);
 
-    let count_sql = format!("SELECT COUNT(*)::bigint FROM {table_ref}{scope}");
-    let matched: i64 = bind_scope(&count_sql, &where_clause.binds, bbox)
+    // Only whether the viewport holds more than `limit` rows decides the mode,
+    // so the count stops at limit + 1. Counting a whole viewport on a big table
+    // was a full index scan on every pan, before any feature was fetched. The
+    // exact number, when it's larger, comes from the clusters' own counts.
+    let count_sql = format!("SELECT COUNT(*)::bigint FROM (SELECT 1 FROM {table_ref}{scope} LIMIT {}) capped", limit + 1);
+    let capped: i64 = bind_scope(&count_sql, &where_clause.binds, bbox)
         .fetch_one(&pool)
         .await
         .and_then(|r| r.try_get::<i64, _>(0))
         .map_err(|e| format!("Failed to count features: {e}"))?;
 
     let safe = geojson_expr(&wgs84_expr(&quoted, &kind, srid), &geom_type);
-    let cluster = matched > limit;
+    let cluster = capped > limit;
 
     let data_sql = if cluster {
         // One weighted point per grid cell. Snapping the centroid rather than the
@@ -470,7 +506,8 @@ pub async fn geo_features(
         let cell_merc = cell.to_radians();
         format!(
             "SELECT ST_AsGeoJSON(ST_SetSRID(ST_MakePoint(avg(x), avg(y)), 4326), 6) AS geometry, \
-                    COUNT(*)::bigint AS n \
+                    COUNT(*)::bigint AS n, \
+                    (SUM(COUNT(*)) OVER ())::bigint AS total \
              FROM (SELECT x, y, \
                           ST_SnapToGrid(ST_MakePoint(x, ln(tan(pi()/4 + radians(y)/2))), \
                                         {cell}, {cell_merc}) AS cell \
@@ -515,17 +552,24 @@ pub async fn geo_features(
         .await
         .map_err(|e| format!("Failed to fetch map features: {e}"))?;
 
-    let features: Vec<Value> = rows
+    // Clustered, every row carries the viewport's total (a window over the
+    // groups, before LIMIT); otherwise the rows are all there is.
+    let matched = if cluster {
+        rows.first().and_then(|r| r.try_get::<i64, _>(2).ok()).unwrap_or(capped)
+    } else {
+        rows.len() as i64
+    };
+    let features: Vec<MapFeature> = rows
         .iter()
         .filter_map(|r| {
             let raw: String = r.try_get(0).ok()?;
-            let geometry: Value = serde_json::from_str(&raw).ok()?;
+            let geometry = serde_json::value::RawValue::from_string(raw).ok()?;
             let properties = if cluster {
                 json!({ "count": r.try_get::<i64, _>(1).unwrap_or(0) })
             } else {
                 r.try_get::<Value, _>(1).unwrap_or_else(|_| json!({}))
             };
-            Some(json!({ "type": "Feature", "geometry": geometry, "properties": properties }))
+            Some(MapFeature { kind: "Feature", geometry, properties })
         })
         .collect();
 
@@ -548,4 +592,47 @@ pub async fn geo_features(
         query_ms: started.elapsed().as_millis() as u64,
         sql: format!("{data_sql}\n{count_sql}"),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Against PostGIS: STROKE_TEST_POSTGIS = a postgres:// URL with the
+    /// `public.pings` (100,000 points) and `schools.areas` tables.
+    #[tokio::test]
+    async fn live_features() {
+        let Ok(url) = std::env::var("STROKE_TEST_POSTGIS") else { return };
+        let pool = PgPool::connect(&url).await.unwrap();
+        let fetch = |table: &str, schema: &str, column: &str, bbox: Option<GeoBbox>, limit: i64| {
+            features_on(&pool, schema.into(), table.into(), column.into(), "geometry".into(), 4326, "POINT".into(), bbox, limit, 0.0, 0.05, None, false)
+        };
+        // More rows than the budget: clusters, with the exact total.
+        let all = fetch("pings", "public", "geom", None, 8000).await.unwrap();
+        assert_eq!(all.mode, "clusters");
+        assert_eq!(all.matched, 100_000);
+        assert_eq!(all.features.iter().map(|f| f.properties["count"].as_i64().unwrap()).sum::<i64>(), 100_000);
+        // A small window: every row, as features with their columns.
+        let small = GeoBbox { min_x: -0.5, min_y: 51.2, max_x: -0.49, max_y: 51.21 };
+        let few = fetch("pings", "public", "geom", Some(small), 8000).await.unwrap();
+        assert_eq!(few.mode, "features");
+        assert_eq!(few.matched, few.returned);
+        assert!(few.matched > 0 && few.matched < 8000, "{}", few.matched);
+        // The geometry is passed through as GeoJSON text.
+        let json = serde_json::to_value(&few.features[0]).unwrap();
+        assert_eq!(json["type"], "Feature");
+        assert_eq!(json["geometry"]["type"], "Point");
+        assert!(json["properties"]["device"].is_string());
+        // Exactly at the budget is still features.
+        let at = fetch("pings", "public", "geom", Some(small), few.matched).await.unwrap();
+        assert_eq!(at.mode, "features");
+        let over = fetch("pings", "public", "geom", Some(small), few.matched - 1).await.unwrap();
+        assert_eq!(over.mode, "clusters");
+        assert_eq!(over.matched, few.matched);
+        // Polygons.
+        let areas = features_on(&pool, "schools".into(), "areas".into(), "boundary".into(), "geometry".into(), 4326, "POLYGON".into(), None, 8000, 0.0, 0.05, None, true).await.unwrap();
+        assert_eq!(areas.mode, "features");
+        assert_eq!(serde_json::to_value(&areas.features[0]).unwrap()["geometry"]["type"], "Polygon");
+        assert!(areas.extent.is_some());
+    }
 }
