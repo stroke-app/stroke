@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.4.8] - 2026-11-21
+
+### Changes
+- Data diff across engines, steady connection list, narrow-pane map and plans, palette export (#351)
+
+
 ## [3.4.7] - 2026-11-21
 
 ### Changes
