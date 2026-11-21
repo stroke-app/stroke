@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.1.2] - 2026-11-21
+
+### Changes
+- Share JSON as a link; one focus edge on search fields (#313)
+
+
 ## [3.1.1] - 2026-11-20
 
 ### Changes
