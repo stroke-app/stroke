@@ -657,7 +657,9 @@
   });
   // Content that changes the row's natural width without resizing it.
   $effect(() => {
-    void [total, counting, from, to, page, pageSize, savedViews.length, filterCount, hiddenCount, previewColumns.length, tableViewMode, readonly, searchExpanded, showSearchOpts];
+    void [total, counting, from, to, page, pageSize, savedViews.length, filterCount, hiddenCount, previewColumns.length, tableViewMode, readonly, searchExpanded, showSearchOpts,
+      // Switching to Record or Chart, or a view that can be reset, adds a button.
+      dataViewMode, canResetView];
     untrack(() => void fitToolbar());
   });
 
