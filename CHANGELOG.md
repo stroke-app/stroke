@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.2.7] - 2026-11-21
+
+### Changes
+- Map spatial query results beside the grid (#330)
+
+
 ## [3.2.6] - 2026-11-21
 
 ### Changes
