@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.3.6] - 2026-11-21
+
+### Changes
+- Fix console scrolling, stuck icons, and more from a second sweep (#339)
+
+
 ## [3.3.5] - 2026-11-21
 
 ### Changes
