@@ -1,4 +1,5 @@
 <script>
+  import { comboTitle } from '$lib/shortcuts.js'
   import { executeSql } from '$lib/api.js'
   import { cn } from '$lib/utils.js'
   import Boxes from '@lucide/svelte/icons/boxes'
@@ -389,7 +390,7 @@
     <button
       type="button"
       class="mr-1 inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground"
-      title="Refresh (⌘R)"
+      title={`Refresh (${comboTitle('Mod+R')})`}
       onclick={refresh}
     >
       <RefreshCw class={cn('size-3.5', isLoading && 'animate-spin')} />

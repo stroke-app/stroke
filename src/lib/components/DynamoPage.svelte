@@ -1,4 +1,5 @@
 <script>
+  import { comboTitle } from '$lib/shortcuts.js'
   // DynamoDB tables: a table list, a grid of items loaded a page at a time by
   // Scan or Query (on the table or an index), and a side panel to edit, add or
   // delete one item as JSON. A PartiQL panel docks underneath for anything the
@@ -702,7 +703,7 @@
             {/if}
             <span class="flex-1"></span>
             <Button variant="ghost" size="sm" onclick={closePanel}>Cancel</Button>
-            <Button size="sm" onclick={() => void save()} disabled={saving || readOnly} title={readOnly ? READ_ONLY_HINT : 'Save (⌘S)'}>
+            <Button size="sm" onclick={() => void save()} disabled={saving || readOnly} title={readOnly ? READ_ONLY_HINT : `Save (${comboTitle('Mod+S')})`}>
               {#if saving}<LoaderCircle class="animate-spin" />{:else}<Check />{/if}
               {creating ? 'Add' : 'Save'}
             </Button>

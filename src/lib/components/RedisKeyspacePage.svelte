@@ -1,4 +1,5 @@
 <script>
+  import { comboTitle } from '$lib/shortcuts.js'
   // Redis keys as an editable table. One row per key (type, TTL, size, length,
   // value preview), loaded a page at a time with SCAN. Edits to values, TTLs
   // and names, new keys and deletes are staged and sent together in one
@@ -679,7 +680,7 @@
     { col: 'length', label: 'Length', align: 'justify-end' },
   ]
   const GRID_COLS = 'grid-cols-[32px_minmax(200px,1.4fr)_84px_88px_76px_76px_minmax(240px,2fr)]'
-  const pendingTitle = $derived(readOnly ? READ_ONLY_HINT : 'Apply staged changes in one transaction (⌘S)')
+  const pendingTitle = $derived(readOnly ? READ_ONLY_HINT : `Apply staged changes in one transaction (${comboTitle('Mod+S')})`)
   const loadedLabel = $derived(
     dbSize == null ? `${rows.length.toLocaleString()} ${plural(rows.length, "key")}`
     : filterInput.trim() || typeFilter ? `${rows.length.toLocaleString()} matching${done ? '' : '+'}`
@@ -787,7 +788,7 @@
     <Button variant="ghost" size="icon-sm" onclick={reload} title="Reload keys" aria-label="Reload keys">
       <RefreshCw class={cn(loading && 'animate-spin')} />
     </Button>
-    <Button variant="ghost" size="icon-sm" onclick={toggleTerminalDock} aria-pressed={$terminalDockOpen} title="redis-cli (⌘J)" aria-label="Toggle redis-cli" class={cn($terminalDockOpen && 'bg-accent text-foreground')}>
+    <Button variant="ghost" size="icon-sm" onclick={toggleTerminalDock} aria-pressed={$terminalDockOpen} title={`redis-cli (${comboTitle('Mod+J')})`} aria-label="Toggle redis-cli" class={cn($terminalDockOpen && 'bg-accent text-foreground')}>
       <TerminalIcon />
     </Button>
     <Button variant="outline" size="sm" onclick={openCreate} disabled={readOnly} title={readOnly ? READ_ONLY_HINT : 'New key'}>

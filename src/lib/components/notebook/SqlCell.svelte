@@ -1,4 +1,5 @@
 <script>
+  import { comboTitle } from '$lib/shortcuts.js'
   /**
    * One SQL cell: a header (run counter, the {{variables}} it uses, status,
    * actions), the editor sized to its query, and the result.
@@ -168,7 +169,7 @@
         type="button"
         onclick={onrun}
         disabled={running || !content.trim()}
-        title="Run (⌘↵) · run and go to the next cell (⇧↵)"
+        title={`Run (${comboTitle('Mod+Enter')}) · run and go to the next cell (${comboTitle('Shift+Enter')})`}
         class="inline-flex h-6 items-center gap-1 rounded-md bg-primary/90 px-2 text-ui-2xs font-medium text-primary-foreground transition-colors hover:bg-primary disabled:pointer-events-none disabled:opacity-40"
       >
         <Play class="size-3 shrink-0" />Run

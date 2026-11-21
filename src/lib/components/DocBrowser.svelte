@@ -1,4 +1,5 @@
 <script>
+  import { comboTitle } from '$lib/shortcuts.js'
   import SelectMenu from './SelectMenu.svelte'
   // One page for document and wide-column databases (MongoDB, CouchDB,
   // Cassandra, Firestore). The collection comes from the app sidebar. Layout
@@ -1071,7 +1072,7 @@ GET products/_search
             {/if}
             <span class="flex-1"></span>
             <Button variant="ghost" size="sm" onclick={closePanel}>Cancel</Button>
-            <Button size="sm" onclick={() => void save()} disabled={saving || readOnly} title={readOnly ? READ_ONLY_HINT : 'Save (⌘S)'}>
+            <Button size="sm" onclick={() => void save()} disabled={saving || readOnly} title={readOnly ? READ_ONLY_HINT : `Save (${comboTitle('Mod+S')})`}>
               {#if saving}<LoaderCircle class="animate-spin" />{:else}<Check />{/if}
               {creating ? 'Add' : 'Save'}
             </Button>

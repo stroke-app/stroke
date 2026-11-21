@@ -1,4 +1,5 @@
 <script>
+  import { comboTitle } from '$lib/shortcuts.js'
   import { Button } from '$lib/components/ui/button/index.js'
   import { onMount } from 'svelte'
   import { completionStatus } from '@codemirror/autocomplete'
@@ -75,7 +76,7 @@
     <!-- Footer -->
     <div class="flex shrink-0 items-center justify-between border-t border-border/50 px-4 py-2.5">
       <p class="font-mono text-ui-2xs text-muted-foreground">
-        <kbd>⌘↵</kbd> to run
+        <kbd>{comboTitle('Mod+Enter')}</kbd> to run
         &nbsp;·&nbsp;
         <kbd>Esc</kbd> to close
       </p>

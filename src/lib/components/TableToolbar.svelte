@@ -1534,7 +1534,7 @@
         class={cn(iconBtn, "w-6 rounded-r-none")}
         disabled={loading}
         onclick={onrefresh}
-        title={autoRefreshMs > 0 ? `Refresh data (⌘R) · auto every ${autoRefreshLabel}` : "Refresh data (⌘R)"}
+        title={autoRefreshMs > 0 ? `Refresh data (${comboTitle('Mod+R')}) · auto every ${autoRefreshLabel}` : `Refresh data (${comboTitle('Mod+R')})`}
         aria-label="Refresh data"
       >
         <Icon name="refresh-cw" class={cn("size-3.5", loading && "animate-spin")} />
