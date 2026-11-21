@@ -23,6 +23,11 @@ export function setOdbcDialect(info) {
   odbc = { quote: info?.quote || '"', flat: info?.namespace === 'flat' }
 }
 
+/** Whether the active ODBC database has no schemas (bare table names). */
+export function odbcFlat() {
+  return odbc.flat
+}
+
 /** The quote the active ODBC driver uses: `"`, `` ` `` or `[`. */
 export function odbcQuote() {
   return odbc.quote
