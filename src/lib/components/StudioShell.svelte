@@ -3238,7 +3238,17 @@ let rowSearch = $state('')
     menuActions.theme?.()
   })
 
+  /**
+   * A dialog is up (Settings, Share, a confirm...). The palette opened over it,
+   * two modals deep, with Escape closing the wrong one. One dialog at a time:
+   * the palette's shortcuts wait until it is closed.
+   */
+  function anotherDialogOpen() {
+    return !commandOpen && !!document.querySelector('[data-slot="dialog-content"][data-state="open"]')
+  }
+
   createCommandHotkey('palette.open', (e) => {
+    if (anotherDialogOpen()) return
     e.preventDefault()
     commandPage = 'root'
     commandOpen = true
@@ -3256,7 +3266,7 @@ let rowSearch = $state('')
         e.stopPropagation()
         // Only open+set page mode from a closed state - never yank the page mode
         // if the palette is already open mid-interaction.
-        if (commandOpen) return
+        if (commandOpen || anotherDialogOpen()) return
         commandPage = 'tables'
         commandOpen = true
       }
@@ -3879,6 +3889,7 @@ let rowSearch = $state('')
 
   // Page navigator - the VS Code chord, one modifier off ⌘P's table search.
   createCommandHotkey('palette.pages', (e) => {
+    if (anotherDialogOpen()) return
     e.preventDefault()
     commandPage = 'pages'
     commandOpen = true
@@ -10542,6 +10553,7 @@ let rowSearch = $state('')
   onopenSchema={() => { if (aiMode) exitAiMode(); openSchemaTab() }}
   onopensecurity={() => { if (aiMode) exitAiMode(); openSecurityTab() }}
   onopenlogs={() => { if (aiMode) exitAiMode(); openLogsTab() }}
+  onopenqueries={() => { if (aiMode) exitAiMode(); openQueriesTab('history') }}
   onopenterminal={() => { if (aiMode) exitAiMode(); if (!terminalDockOpen) toggleTerminalDock() }}
   onnewterminal={() => { commandOpen = false; if (aiMode) exitAiMode(); openNewTerminalTab() }}
   onopenwhatsnew={() => { commandOpen = false; void updateDialog?.showWhatsNew?.() }}

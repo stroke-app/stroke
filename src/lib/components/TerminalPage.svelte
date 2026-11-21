@@ -114,6 +114,16 @@
   let client = $state(/** @type {import('$lib/api.js').TerminalClient | null} */ (null))
   /** Engines with no interactive CLI get the app's own SQL prompt instead. */
   const BUILTIN_REPL = new Set(['d1', 'dynamodb'])
+  /**
+   * The engines the backend knows a terminal client for (AnyConnectionConfig).
+   * Any other type failed to deserialize there, so the dock showed "invalid
+   * args config for command terminal_client: unknown variant influxdb". The
+   * rest have no CLI to look for: their console language runs in the built-in
+   * prompt (InfluxQL, Cypher, CQL, Spanner and BigQuery SQL, ...).
+   */
+  const CLI_TYPES = new Set(['postgres', 'sqlite', 'd1', 'mysql', 'libsql', 'clickhouse', 'redis', 'valkey', 'dynamodb', 'couchdb', 'elasticsearch', 'opensearch', 'duckdb', 'mssql', 'oracle', 'posthog', 'mongodb'])
+  /** No query language to type: nothing for a prompt to run. */
+  const NO_PROMPT = new Set(['firestore'])
   /** Engines whose CLI is not SQL: no SQL prompt to fall back to. */
   const NON_SQL = new Set(['redis', 'valkey', 'keydb', 'dragonfly', 'mongodb', 'couchdb', 'elasticsearch', 'opensearch', 'cassandra', 'firestore', 'neo4j', 'influxdb'])
 
@@ -128,6 +138,10 @@
   /** `.tables` / `.schema` for engines that are not SQLite-shaped. */
   function catalogFor(/** @type {string} */ type) {
     if (type === 'dynamodb') return { language: 'PartiQL', listTables: dynamoTables, describe: dynamoDescribe }
+    // The console's own language, named in the prompt's banner: it said "SQL"
+    // over Cypher and CQL.
+    if (type === 'neo4j') return { language: 'Cypher' }
+    if (type === 'cassandra') return { language: 'CQL' }
     if (type === 'mysql' || type === 'mariadb') return {
       listTables: () => sqlRows('SHOW TABLES'),
       describe: (/** @type {string} */ t) => sqlRows(`DESCRIBE \`${t.replace(/`/g, '``')}\``),
@@ -392,6 +406,11 @@
     if (sameConnection && !docked) term.write('\r\n')
     else term.reset()
     if (BUILTIN_REPL.has(dbType)) { startBuiltinPrompt(); return }
+    if (!CLI_TYPES.has(dbType)) {
+      if (NO_PROMPT.has(dbType)) { phase = 'unsupported'; return }
+      startBuiltinPrompt()
+      return
+    }
     let info
     try {
       info = await terminalClient(config)

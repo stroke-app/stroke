@@ -4194,7 +4194,7 @@
     try {
       const saved = await exportRows(format, item.columns.map((c) => ({ name: c?.name ?? String(c) })), item.rows, "query");
       if (saved)
-        toast.success(`Exported ${formatCompactCount(item.rows.length)} rows`, {
+        toast.success(`Exported ${formatCompactCount(item.rows.length)} ${item.rows.length === 1 ? 'row' : 'rows'}`, {
           description: buildExportFilename("query", format),
         });
     } catch (e) {

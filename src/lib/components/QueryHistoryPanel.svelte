@@ -243,9 +243,13 @@
         ><X class="size-3 shrink-0" /></button>
       {/if}
     </div>
-    <span class="whitespace-nowrap font-mono text-ui-2xs tabular-nums text-muted-foreground">
-      {filter ? `${rows.length} of ${total}` : total}
-    </span>
+    <!-- A count with its noun ("12 queries"); a bare "0" sat beside an empty
+         list that already says it is empty. -->
+    {#if filter || total > 0}
+      <span class="whitespace-nowrap font-mono text-ui-2xs tabular-nums text-muted-foreground">
+        {filter ? `${rows.length} of ${total}` : `${total} ${view === 'charts' ? (total === 1 ? 'chart' : 'charts') : total === 1 ? 'query' : 'queries'}`}
+      </span>
+    {/if}
     {#if view === 'history' && history.some((e) => !e.favorite)}
       <button
         type="button"

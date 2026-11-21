@@ -1948,3 +1948,12 @@ html[data-os="linux"]:has([role="dialog"][data-state="open"], [role="alertdialog
      white knob. */
   background: var(--primary-foreground);
 }
+
+/* A dialog is h-fit (fixed, inset-0, m-auto). WebKit sizes a flex-1 child of
+   it from its 0% basis, to nothing: Import data showed a sliver of its drop
+   zone. Chrome reads that basis as the content. Starting from the content
+   gives both the same dialog, and min-h-0 still lets the body shrink and
+   scroll once the dialog reaches its max height. */
+[data-slot="dialog-content"] > .flex-1 {
+  flex-basis: auto;
+}

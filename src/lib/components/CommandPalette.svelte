@@ -65,6 +65,8 @@
     geoAvailable = false,
     onopenredis = () => {},
     onopenlogs = () => {},
+    /** The Queries page: history, saved queries and charts. */
+    onopenqueries = () => {},
     onopenterminal = () => {},
     onnewterminal = () => {},
     /** What's new in this version, any time. */
@@ -274,6 +276,7 @@
     { icon: 'table-2',         label: 'Database objects',              action: onopenobjects,    show: connected && !isKeyValue, value: 'open database objects overview tables views functions routines triggers sizes rows stats' },
     { icon: 'code-2',          label: 'Codegen',                       action: onopenormschema,  show: connected && !isKeyValue, value: 'codegen open schema as code prisma drizzle orm model relations types generate dml psl' },
     { icon: 'history',         label: 'Activity log',                  action: onopenlogs,       show: connected, value: 'open activity log events history operations' },
+    { icon: 'history',         label: 'Query history',                 action: onopenqueries,    show: connected, value: 'queries query history saved queries past runs charts' },
     { icon: 'terminal',        label: 'Query log console', keys: '⌘⇧K', action: ontogglequerylog, show: connected && !isKeyValue, value: 'toggle query log console sql executed statements bottom panel' },
     { icon: 'globe',           label: 'Map',                           action: onopenmap, show: connected && geoAvailable, value: 'open map geo postgis spatial geometry geography world plot points' },
     { icon: 'blocks',          label: 'Extensions',                    action: onopenextensions, show: connected && !isKeyValue, value: 'open extensions plugins formatters generators transforms better time uuid' },
