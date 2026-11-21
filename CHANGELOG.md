@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.3.3] - 2026-11-21
+
+### Changes
+- Stop the grid bouncing; open objects in one click; no flash after Redis apply (#336)
+
+
 ## [3.3.2] - 2026-11-21
 
 ### Changes
