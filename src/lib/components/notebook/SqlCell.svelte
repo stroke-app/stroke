@@ -244,7 +244,7 @@
                   <tr class={cn('border-b border-border/10 hover:bg-muted/20', ri % 2 === 1 && 'bg-muted/[0.04]')}>
                     <td class="border-r border-border/20 px-3 py-1 text-right font-mono text-ui-3xs text-muted-foreground select-none">{ri + 1}</td>
                     {#each row as cell, ci (ci)}
-                      <td class="max-w-[320px] border-r border-border/10 px-4 py-1 font-mono">
+                      <td class="max-w-[20rem] border-r border-border/10 px-4 py-1 font-mono">
                         {#if cell === null || cell === undefined}
                           <span class="text-muted-foreground italic">NULL</span>
                         {:else}

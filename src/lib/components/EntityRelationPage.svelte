@@ -2325,7 +2325,7 @@
               ><PanelLeftOpen class="size-3.5 shrink-0" /></button>
             </div>
           {:else}
-          <div class="flex w-[42%] min-w-[280px] shrink-0 flex-col border-r border-border/60 bg-panel" style={mermaidCodeW ? `width:${mermaidCodeW}px` : ''}>
+          <div class="flex w-[42%] min-w-[17.5rem] shrink-0 flex-col border-r border-border/60 bg-panel" style={mermaidCodeW ? `width:${mermaidCodeW}px` : ''}>
             <div class="flex h-9 shrink-0 items-center gap-2 border-b border-border/40 px-2.5">
               <button
                 type="button"

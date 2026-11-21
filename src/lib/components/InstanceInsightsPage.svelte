@@ -843,7 +843,7 @@
               items={[{ value: 'all', label: 'All categories' }, ...configGroups.map((g) => ({ value: g.id, label: g.id }))]}
               placeholder="Filter categories…"
               empty="No matching category"
-              contentClass="min-w-[260px]"
+              contentClass="min-w-[16.25rem]"
               onselect={(it) => (configGroup = it.value)}
             >
               {#snippet trigger(props)}
@@ -870,7 +870,7 @@
             <SearchableMenu
               items={statusOptions.map((o) => ({ value: o.id, label: o.label }))}
               placeholder="Status…"
-              contentClass="min-w-[220px]"
+              contentClass="min-w-[13.75rem]"
               onselect={(it) => (configStatus = /** @type {any} */ (it.value))}
             >
               {#snippet trigger(props)}
@@ -1328,7 +1328,7 @@
                 {@const text = cell(raw)}
                 <td
                   class={cn(
-                    'max-w-[280px] truncate border-b border-border/15 px-3 py-2 font-mono text-foreground/85',
+                    'max-w-[17.5rem] truncate border-b border-border/15 px-3 py-2 font-mono text-foreground/85',
                     numeric.has(k) && 'text-right tabular-nums',
                   )}
                   title={text.length > 32 ? text : undefined}

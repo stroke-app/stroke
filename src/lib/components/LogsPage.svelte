@@ -322,7 +322,7 @@
 
             <!-- Time -->
             <span
-              class="w-[58px] shrink-0 text-right font-mono text-ui-2xs tabular-nums text-muted-foreground"
+              class="w-[3.625rem] shrink-0 text-right font-mono text-ui-2xs tabular-nums text-muted-foreground"
               >{fmtTime(entry.timestamp)}</span
             >
 

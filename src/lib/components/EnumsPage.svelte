@@ -51,7 +51,7 @@
       <table class="w-full text-ui-xs">
         <thead class="studio-chrome sticky top-0 z-10 bg-panel text-left">
           <tr class="border-b border-border/50">
-            <th class="w-[200px] px-3 py-2 font-mono font-normal text-muted-foreground">Name</th>
+            <th class="w-[12.5rem] px-3 py-2 font-mono font-normal text-muted-foreground">Name</th>
             <th class="px-3 py-2 font-mono font-normal text-muted-foreground">Values</th>
             <th class="w-52 px-3 py-2 font-mono font-normal text-muted-foreground">Used by</th>
             <th class="w-10 px-3 py-2 text-right font-mono font-normal text-muted-foreground">n</th>

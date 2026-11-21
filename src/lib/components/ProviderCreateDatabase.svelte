@@ -201,7 +201,7 @@
     placeholder="Search {p.items.length} {p.noun}s…"
     empty="No matching {p.noun}"
     searchThreshold={6}
-    contentClass="z-[120] w-[var(--bits-popover-anchor-width)] min-w-[260px]"
+    contentClass="z-[120] w-[var(--bits-popover-anchor-width)] min-w-[16.25rem]"
     align="start"
     onselect={(it) => p.onpick(it.value)}
   >

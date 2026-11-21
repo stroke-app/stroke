@@ -280,7 +280,7 @@
           <div class="flex size-12 items-center justify-center rounded-lg border border-border/30 bg-muted/20">
             <Server class="size-5 shrink-0 text-muted-foreground" />
           </div>
-          <p class="max-w-[220px] text-ui-sm text-muted-foreground">
+          <p class="max-w-[13.75rem] text-ui-sm text-muted-foreground">
             Connect to a database first, then start the MCP server.
           </p>
         </div>

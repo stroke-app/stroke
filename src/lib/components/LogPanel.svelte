@@ -167,7 +167,7 @@
           )}
           title={entry.detail || entry.error || entry.title}
         >
-          <span class="w-[52px] shrink-0 select-none text-ui-3xs tabular-nums text-muted-foreground">
+          <span class="w-[3.25rem] shrink-0 select-none text-ui-3xs tabular-nums text-muted-foreground">
             {hms(entry.timestamp)}
           </span>
           <span class={cn('w-7 shrink-0 select-none text-ui-3xs font-semibold uppercase tracking-[0.06em]', color)}>

@@ -98,6 +98,7 @@
   import * as ContextMenu from "$lib/components/ui/context-menu/index.js";
   import { parseConnectionUri, detectConnectionUri, connectionUrl } from "$lib/connection-uri.js";
   import { PROVIDERS, providerBuildConnection, providerWarm, providerToSaved, AUTH_FAILURE } from "$lib/providers.js";
+  import { appBoringConnectionBar } from "$lib/stores/settings.js";
   import { providerOf, engineLabel, engineId } from "$lib/connection-provider.js";
   import ConfirmDialog from "./ConfirmDialog.svelte";
   import { engineTint } from "$lib/engine-tint.js";
@@ -379,6 +380,50 @@
   });
   /** What Enter in the filter acts on - same target the eye is already on. */
   const firstSavedMatch = $derived(savedMatches[0] ?? null);
+
+  // Labs, "Boring connection bar": one folder per database kind. Folders keep
+  // the kinds in order of their most recent use; a filter opens every folder
+  // that has a match. Which folders are closed is remembered per app.
+  const FOLDERS_KEY = "stroke:conn-folders-closed";
+  let closedFolders = $state(
+    /** @type {Set<string>} */ ((() => { try { return new Set(JSON.parse(localStorage.getItem(FOLDERS_KEY) ?? "[]")); } catch { return new Set(); } })()),
+  );
+  /** @param {string} kind */
+  function toggleFolder(kind) {
+    const next = new Set(closedFolders);
+    if (next.has(kind)) next.delete(kind);
+    else next.add(kind);
+    closedFolders = next;
+    try { localStorage.setItem(FOLDERS_KEY, JSON.stringify([...next])); } catch { /* only the preference is lost */ }
+  }
+  /** @param {any} conn */
+  const kindOf = (conn) =>
+    engineLabel(conn.filePath === ":memory:" && (conn.type === "sqlite" || conn.type === "duckdb") ? `${conn.type}-memory` : engineId(conn));
+  /**
+   * The rail's rows: connections, with a folder header before each kind when
+   * grouping is on.
+   * @type {Array<{ key: string, header: true, kind: string, mark: string, count: number, open: boolean } | { key: string, header: false, conn: any }>}
+   */
+  const railItems = $derived.by(() => {
+    if (!$appBoringConnectionBar) return savedMatches.map((conn) => ({ key: conn.id, header: /** @type {false} */ (false), conn }));
+    /** @type {Map<string, any[]>} */
+    const byKind = new Map();
+    for (const c of savedMatches) {
+      const k = kindOf(c);
+      if (!byKind.has(k)) byKind.set(k, []);
+      byKind.get(k)?.push(c);
+    }
+    /** @type {any[]} */
+    const out = [];
+    for (const [kind, conns] of byKind) {
+      const open = !!savedQuery.trim() || !closedFolders.has(kind);
+      const first = conns[0];
+      const mark = first.filePath === ":memory:" && (first.type === "sqlite" || first.type === "duckdb") ? `${first.type}-memory` : engineId(first);
+      out.push({ key: `folder:${kind}`, header: true, kind, mark, count: conns.length, open });
+      if (open) for (const conn of conns) out.push({ key: conn.id, header: false, conn });
+    }
+    return out;
+  });
 
   /**
    * The rail is one tab stop, not one per row: Tab from the filter lands on the
@@ -2240,9 +2285,10 @@
 
   /**
    * @param {any} conn
-   * @param {{ onAuthFailure?: () => Promise<void> }} [opts] run instead of the
-   *   error toast when the credentials are rejected (reused provider credentials
-   *   that were revoked: mint fresh ones and try once more).
+   * @param {{ onAuthFailure?: () => Promise<void>, retried?: boolean, via?: string }} [opts] onAuthFailure runs
+   *   instead of the error toast when the credentials are rejected (reused
+   *   provider credentials that were revoked: mint fresh ones and try once
+   *   more). `retried` marks that second try, so it never loops.
    */
   async function connectWith(conn, opts = {}) {
     lastAttempt = conn;
@@ -2265,6 +2311,33 @@
       if (myOp !== opId) return;
       if (opts.onAuthFailure && AUTH_FAILURE.test(String(e))) {
         await opts.onAuthFailure();
+        return;
+      }
+      // A saved provider connection (opened from the rail) whose credentials
+      // were rotated or revoked since it was saved: mint fresh ones once, as
+      // the provider picker and the studio's auto-connect already do. Without
+      // this, a Prisma connection from a few days ago just failed.
+      if (!opts.retried && conn.provider && AUTH_FAILURE.test(String(e))) {
+        if (conn.providerRef) {
+          try {
+            const fresh = await providerBuildConnection(conn.provider, conn.providerRef);
+            if (myOp !== opId) return;
+            if (!fresh.needs_password) {
+              const next = {
+                ...providerToSaved({ ...fresh, providerRef: conn.providerRef }, { provider: conn.provider, saved: [conn], readOnly: conn.readOnly, newId: newConnectionId }),
+                id: conn.id,
+                name: conn.name,
+                color: conn.color,
+                workspaceId: conn.workspaceId,
+              };
+              await connectWith(next, { retried: true });
+              return;
+            }
+          } catch {
+            /* fall through to the error below */
+          }
+        }
+        failWith(`The saved credentials for ${conn.name ?? "this connection"} were rejected, and new ones could not be fetched. Open ${conn.provider} under New connection and pick the database again.`);
         return;
       }
       failWith(friendlyError(e));
@@ -3287,8 +3360,8 @@
         id="{id}-body"
         inert={!enabled || undefined}
         class={cn(
-          // ps-[42px] = header ps-3.5 + the 16px icon + gap-3: the title's edge.
-          "flex flex-col gap-3 pb-4 pt-0.5 ps-[42px] pe-3.5 transition-opacity duration-150 ease-out",
+          // ps-[2.625rem] = header ps-3.5 + the size-4 icon + gap-3: the title's edge, in rem so it holds when the app is zoomed.
+          "flex flex-col gap-3 pb-4 pt-0.5 ps-[2.625rem] pe-3.5 transition-opacity duration-150 ease-out",
           !enabled && "opacity-45",
         )}
       >
@@ -3857,7 +3930,21 @@
               {:else if saved.length > 0}
                 <ScrollArea type="auto" class="h-full scroll-smooth">
                   <div class="px-2 pb-2 flex flex-col gap-px">
-                    {#each savedMatches as conn, i (conn.id)}
+                    {#each railItems as item, i (item.key)}
+                      {#if item.header}
+                        <button
+                          type="button"
+                          class="mt-1.5 flex h-7 w-full items-center gap-2 rounded-md px-2 text-left text-ui-2xs font-medium text-muted-foreground transition-colors first:mt-0 hover:bg-sidebar-accent/60 hover:text-foreground"
+                          aria-expanded={item.open}
+                          onclick={() => toggleFolder(item.kind)}
+                        >
+                          <Icon name="chevron-right" class={cn("size-3.5 shrink-0 transition-transform duration-150", item.open && "rotate-90")} />
+                          <DbIcon id={item.mark} class={cn("size-3.5 shrink-0", engineTint(item.mark))} />
+                          <span class="min-w-0 flex-1 truncate">{item.kind}</span>
+                          <span class="shrink-0 tabular-nums">{item.count}</span>
+                        </button>
+                      {:else}
+                      {@const conn = item.conn}
                       {@const isSel = conn.id === editingId}
                       {@const busy2 = connecting === conn.id}
                       {@const cid =
@@ -3994,6 +4081,7 @@
                           }}><Icon name="trash-2" class="size-3.5 shrink-0" /></button
                         >
                       </div>
+                      {/if}
                     {/each}
                   </div>
                 </ScrollArea>
@@ -4087,14 +4175,16 @@
           <!-- The same top inset on both steps, so going from the list to the
                form doesn't nudge the page up (it was pt-4, then pt-2). -->
           <div
-            class="mx-auto w-full max-w-6xl shrink-0 px-10 pt-3"
+            class="mx-auto w-full max-w-6xl shrink-0 px-6 pt-3 md:px-10"
           >
             {#if step === "pick"}
               <!-- pe-6 keeps the rescan button clear of the dialog's own close
                  button, which floats at right-8 top-5 over this same corner. -->
-              <div class="flex items-center gap-3">
+              <!-- Wraps instead of squeezing: in a small window at a large zoom
+                   the title broke one word per line beside the controls. -->
+              <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
                 <h2
-                  class="text-ui-xl font-semibold tracking-tight text-foreground"
+                  class="shrink-0 text-ui-xl font-semibold tracking-tight text-foreground"
                 >
                   Connect a database
                 </h2>
@@ -4291,7 +4381,7 @@
                    on the right. -->
               <!-- Full width: the grids below are four columns, so a wide window
                    buys wider tiles and fewer truncated names, not empty margin. -->
-              <div class="@container mx-auto flex w-full max-w-6xl flex-col gap-7 px-10 py-6">
+              <div class="@container mx-auto flex w-full max-w-6xl flex-col gap-7 px-6 py-6 md:px-10">
                   <!-- ── Paste a connection string ─────────────────────────
                        The fastest path there is, and the one a developer already
                        has in a clipboard from their provider dashboard or a
@@ -4586,7 +4676,7 @@
                    same layout roomier - and the panel already runs the header,
                    the footer and the URL bar edge to edge, so a capped form in
                    the middle of them was the odd one out. -->
-              <div class="mx-auto flex w-full max-w-6xl items-start gap-10 px-10 py-6">
+              <div class="mx-auto flex w-full max-w-6xl items-start gap-10 px-6 py-6 md:px-10">
                 <!-- Enter connects, from any field - filling a form and having to go
                  find the button is the one interaction nobody expects here. The
                  paste bar's own Enter handler runs first and marks the event
@@ -6003,7 +6093,7 @@
                  px-10, padding inside the width): with the padding outside, the
                  bar ran 80px past the tiles, plain to see once the rail is
                  collapsed and the window is wide. -->
-            <div class="mx-auto flex min-h-8 w-full max-w-6xl flex-col justify-center px-10">
+            <div class="mx-auto flex min-h-8 w-full max-w-6xl flex-col justify-center px-6 md:px-10">
               <!-- The alert itself is a toast (see failWith). What stays here is the
                  one-line record of it, so the driver's own words are still
                  readable after the toast has gone - without a panel that shoves
@@ -6019,7 +6109,8 @@
                   aria-live="polite"
                 >
                   {#if step === "pick"}
-                    <span class="text-ui-2xs text-muted-foreground">
+                    <!-- One line: wrapped, it ran into the buttons beside it. -->
+                    <span class="min-w-0 truncate text-ui-2xs text-muted-foreground">
                       {saved.length === 0
                         ? "Everything stays on this machine"
                         : railOpen
@@ -6098,7 +6189,7 @@
                   {#if activeConnectionName}
                     <Button
                       variant="ghost"
-                      class="max-w-[220px] text-muted-foreground hover:text-destructive"
+                      class="max-w-[13.75rem] text-muted-foreground hover:text-destructive"
                       disabled={isBusy}
                       title="Disconnect {activeConnectionName}"
                       onclick={() => {
@@ -6113,7 +6204,7 @@
                     {@const lastConn = saved.find((c) => c.id === lastId)}
                     <Button
                       variant="ghost"
-                      class="max-w-[200px] text-muted-foreground"
+                      class="max-w-[12.5rem] text-muted-foreground"
                       disabled={isBusy}
                       title={`Resume ${lastConn.name} (${comboTitle('Mod+Shift+Enter')})`}
                       aria-keyshortcuts="Control+Shift+Enter Meta+Shift+Enter"

@@ -875,7 +875,7 @@
           items={dbItems}
           placeholder="Search {databases.length} databases…"
           empty="No matching database"
-          contentClass="w-[var(--bits-popover-anchor-width)] min-w-[280px]"
+          contentClass="w-[var(--bits-popover-anchor-width)] min-w-[17.5rem]"
           align="start"
           onselect={(it) => { clearTimeout(hoverTimer); pick(it.value) }}
           onhover={(it) => hoverRow(it.value)}

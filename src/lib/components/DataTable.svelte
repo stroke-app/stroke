@@ -8056,41 +8056,14 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       scroller?.sync()
     }
 
-    // The axis is decided once per gesture. A trackpad keeps sending wheel events
-    // for a second or more after the fingers lift (momentum), and reading Shift
-    // per event turned that coast sideways the moment Shift went down, or back
-    // to vertical when it came up. A gap of more than GESTURE_GAP ms between
-    // events starts a new gesture, which reads Shift afresh.
-    //
-    // Shift pressed during a scroll, or just after it seemed to stop, holds the
-    // scroll vertical until the wheel has been quiet for COAST_QUIET ms. A
-    // trackpad's coast thins out at its tail, and a busy frame (a focused cell
-    // redraws more) stretched the gap past GESTURE_GAP, so the rest of the
-    // coast was read as a new Shift gesture and the grid slid sideways.
-    // Gaps are timed from the events' own timestamps, which a stalled main
-    // thread does not stretch.
-    const GESTURE_GAP = 100
-    const COAST_QUIET = 350
-    let _gestureAt = -Infinity
-    let _gestureShift = false
-    let _coastHold = false
-    /** @param {WheelEvent} e @returns {boolean} the gesture scrolls sideways */
-    const gestureShift = (e) => {
-      const now = e.timeStamp || performance.now()
-      const gap = now - _gestureAt
-      if (gap > (_coastHold ? COAST_QUIET : GESTURE_GAP)) {
-        _coastHold = false
-        _gestureShift = e.shiftKey
-      }
-      _gestureAt = now
-      return _gestureShift
-    }
-    const gestureLive = () => performance.now() - _gestureAt <= (_coastHold ? COAST_QUIET : GESTURE_GAP)
-    /** Shift went down: during or right after a vertical scroll, keep it vertical. @param {KeyboardEvent} e */
-    const noteShift = (e) => {
-      if (e.type !== 'keydown' || e.key !== 'Shift' || e.repeat) return
-      if (!_gestureShift && performance.now() - _gestureAt <= COAST_QUIET) _coastHold = true
-    }
+    // Shift is read on every wheel event, as browsers and native apps do. It
+    // used to be latched once per gesture, where a gesture lasted as long as
+    // events kept coming within 100ms: a mouse wheel or a steady trackpad
+    // scroll never paused that long, so pressing Shift mid-scroll kept going
+    // vertical, and letting go of it kept going sideways, until the user
+    // stopped scrolling for a moment.
+    /** @param {WheelEvent} e @returns {boolean} this event scrolls sideways */
+    const gestureShift = (e) => e.shiftKey
 
     // Non-passive: live for every tick under eased scrolling, otherwise only while
     // a modifier that needs preventDefault is down.
@@ -8109,18 +8082,6 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       const inner = e.target instanceof Element
         ? e.target.closest('[data-fk-subview-scroll]')
         : null
-      if (e.shiftKey && !sideways) {
-        // Shift went down during a vertical coast: keep it vertical. macOS may
-        // already have swapped the deltas onto X for Shift, so take either.
-        if (inner && inner !== el) return
-        const { dx, dy } = wheelPixels(e, el.clientHeight)
-        const delta = dy || dx
-        if (!delta) return
-        e.preventDefault()
-        if (scroller) scroller.push(0, delta)
-        else el.scrollTop += delta
-        return
-      }
       if (sideways) {
         // Normalize FIRST. A mouse that reports deltaMode 1 (lines) sends ±1..3,
         // and treating that as pixels moved the grid by three pixels a notch -
@@ -8208,15 +8169,12 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     /** @param {KeyboardEvent} e */
     let _detachTimer = 0
     const onKey = (e) => {
-      noteShift(e)
       if (easedScroll || freeAxes) return
       clearTimeout(_detachTimer)
       if (e.ctrlKey || e.shiftKey || e.altKey) { attach(); return }
-      // Shift came up mid-gesture: stay attached until the coast ends, or the
-      // rest of a sideways swipe would fall to the browser and go vertical.
-      if (!gestureLive()) { detach(); return }
-      const later = () => { if (gestureLive()) _detachTimer = window.setTimeout(later, GESTURE_GAP); else detach() }
-      _detachTimer = window.setTimeout(later, GESTURE_GAP)
+      // Modifiers up: hand plain scrolling back to the browser, which scrolls
+      // vertically from the next event on.
+      detach()
     }
     // A keyboard scroll, scrollIntoView, or a scrollbar drag moved the element
     // without us: adopt the new position so the next wheel tick eases from there.

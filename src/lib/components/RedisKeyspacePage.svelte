@@ -826,7 +826,7 @@
         onscroll={onScroll}
         onkeydown={onGridKey}
       >
-        <div class="min-w-[880px]">
+        <div class="min-w-[55rem]">
           <!-- Header -->
           <div bind:this={headerEl} role="row" class={cn('sticky top-0 z-20 grid h-7 items-center border-b border-border bg-panel text-ui-2xs font-medium text-muted-foreground', GRID_COLS)}>
             <span class="flex justify-center" role="columnheader">

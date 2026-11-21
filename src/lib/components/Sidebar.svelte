@@ -2273,7 +2273,7 @@
                 if (first) { e.preventDefault(); kbdNav = true; focusRow(first) }
               }
             }}
-            class="peer search-box no-field-frame w-full min-w-0 pl-[34px] pr-8 text-ui-sm"
+            class="peer search-box no-field-frame w-full min-w-0 pl-[2.125rem] pr-8 text-ui-sm"
             aria-label="Filter {activeTabLabel.toLowerCase()}"
             aria-describedby="sidebar-filter-hint"
             data-sidebar-filter

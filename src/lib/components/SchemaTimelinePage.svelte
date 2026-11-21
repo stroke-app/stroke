@@ -729,7 +729,7 @@
     role="presentation"
     onclick={(e) => { if (e.target === e.currentTarget) captureOpen = false }}
   >
-    <div class="flex w-[460px] flex-col overflow-hidden rounded-2xl border border-border/60 bg-popover elevate-3-rim">
+    <div class="flex w-[28.75rem] flex-col overflow-hidden rounded-2xl border border-border/60 bg-popover elevate-3-rim">
 
       <!-- Modal header -->
       <div class="flex shrink-0 items-center gap-2.5 px-5 pt-5 pb-4">

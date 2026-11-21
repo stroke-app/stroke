@@ -688,7 +688,9 @@
       <!-- ── Left: search + category nav ─────────────────────────── -->
       <aside class="flex min-h-0 flex-col gap-3 border-r border-border/40 bg-muted/[0.015] p-3">
         <SearchField bind:value={query} placeholder="Search" label="Search settings" rank={30} />
-        <nav class="flex flex-col gap-0.5">
+        <!-- Scrolls when zoomed: at 150% in a small window the last sections
+             (Labs, About) sat below the dialog with no way to reach them. -->
+        <nav class="app-scroll -mx-1 flex min-h-0 flex-col gap-0.5 overflow-y-auto overscroll-contain px-1">
           {#each CATEGORIES as c (c.id)}
             <button
               type="button"
@@ -818,6 +820,14 @@
       'Switching to another database folds the tree to that database: its default schema (public, main) open on its tables, everything else closed.',
       settings.treeFocusOnSwitch === true,
       () => { settings = updateSettings({ treeFocusOnSwitch: settings.treeFocusOnSwitch !== true }) },
+    )}
+  {/if}
+  {#if show('Boring connection bar', 'Labs, group saved connections into a folder per database kind')}
+    {@render switchRow(
+      'Boring connection bar',
+      'Saved connections sit in one folder per database kind (PostgreSQL, MySQL, Redis, ...) in the connections list, instead of one long list by last use.',
+      settings.boringConnectionBar === true,
+      () => { settings = updateSettings({ boringConnectionBar: settings.boringConnectionBar !== true }) },
     )}
   {/if}
   {#if show('Live mode', 'Labs, auto-refresh the active table when its data changes')}
