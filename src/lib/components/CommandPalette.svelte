@@ -1,4 +1,5 @@
 <script>
+  import { EXPORT_FORMATS } from '$lib/export.js'
   import Kbd from './Kbd.svelte'
   import Icon from './Icon.svelte'
   import { cn } from '$lib/utils.js'
@@ -17,6 +18,11 @@
   import ThemeSwatchStrip from './ThemeSwatchStrip.svelte'
 
   let {
+    /** Export the open table in a format, or null when no table tab is open.
+     *  @type {((format: string) => void) | null} */
+    onexporttable = null,
+    /** The open table's name, for the export rows' labels. */
+    exportTableName = '',
     open = $bindable(false),
     /** @type {'root' | 'docker' | 'connections' | 'tables' | 'pages' | 'ask' | 'theme'} */
     page = $bindable('root'),
@@ -1067,6 +1073,20 @@
               </Command.Group>
             {/if}
 
+            {#if onexporttable && paletteSearch.trim()}
+              <!-- Export was only in the table toolbar's menu: "export" here
+                   found Backup & restore and nothing else. Only while searching,
+                   so eight format rows don't sit in the root list. -->
+              <Command.Group heading="Export">
+                {#each EXPORT_FORMATS as fmt (fmt.id)}
+                  <Command.Item value={`export download save table rows ${fmt.label} ${fmt.id} ${fmt.hint}`} keywords={[`Export as ${fmt.label}`]} onSelect={() => run(() => onexporttable?.(fmt.id))}>
+                    <Icon name="file-down" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                    <span data-slot="command-label" class="truncate">Export {exportTableName || 'table'} as {fmt.label}</span>
+                    <span data-slot="command-trailing" class="shrink-0 text-ui-xs text-muted-foreground">{fmt.hint}</span>
+                  </Command.Item>
+                {/each}
+              </Command.Group>
+            {/if}
             <Command.Group heading="Actions">
               <Command.Item value="refresh schema tables" onSelect={() => run(onrefresh)}>
                 <Icon name="refresh-cw" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
