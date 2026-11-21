@@ -771,7 +771,7 @@
   /** The connection the share answers for; a switch away pauses it (isLive). */
   let studioShareConnId = ''
   const studioShareUnsupported = $derived(
-    connection && !studioEngineOf(connection) ? 'The web studio speaks PostgreSQL, MySQL and SQLite. Share a connection to one of those.' : '',
+    connection && !studioEngineOf(connection) ? 'The web studio shares SQL databases. Share a connection to one of those.' : '',
   )
   /** @param {any} c */
   function studioEngineOf(c) {
@@ -785,11 +785,13 @@
     if (!c || !engine) return
     studioShareConnId = activeConnectionId ?? ''
     const { startShare } = await import('$lib/studio-share.js')
+    const { engineLabel: shareLabel } = await import('$lib/connection-provider.js')
     studioShare = await startShare({
       engine,
+      label: shareLabel(engineId(c)),
       name: c.name || c.database || 'Database',
-      database: c.database || c.filePath?.split(/[\\/]/).pop() || c.name || '',
-      host: c.host || (engine === 'sqlite' ? 'local file' : ''),
+      database: c.database || c.databaseId || c.dataset || c.filePath?.split(/[\\/]/).pop() || c.name || '',
+      host: c.host || c.account || c.projectId || (c.dsn ? `DSN ${c.dsn}` : '') || (engine === 'sqlite' ? 'local file' : ''),
       write,
       isLive: () => !!connection && (activeConnectionId ?? '') === studioShareConnId,
       onStatus: (st) => (studioShareStatus = st),
