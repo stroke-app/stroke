@@ -1,3 +1,4 @@
+import { quoteIdent as dmlQuoteIdent, sqlLiteral as dmlLiteral } from './dml-preview.js'
 /**
  * Convert columns + rows to a CSV string.
  * Values are quoted when they contain commas, quotes, or newlines.
@@ -202,9 +203,15 @@ export async function rowsToJsonAsync(columns, rows, opts = {}) {
  * @param {string} [tableName]
  * @returns {string}
  */
-export function rowsToSql(columns, rows, tableName = 'exported_table') {
-  const ident = (/** @type {string} */ n) => `"${String(n).replace(/"/g, '""')}"`
+export function rowsToSql(columns, rows, tableName = 'exported_table', dialect = '') {
+  // With the engine known (a table's export, beside its own DDL), its names
+  // and literals: MySQL read the double-quoted names as strings and the file
+  // failed to load. Without it, portable ANSI SQL.
+  const ident = dialect
+    ? (/** @type {string} */ n) => dmlQuoteIdent(n, /** @type {any} */ (dialect))
+    : (/** @type {string} */ n) => `"${String(n).replace(/"/g, '""')}"`
   const lit = (/** @type {unknown} */ v) => {
+    if (dialect) return dmlLiteral(typeof v === 'bigint' ? v : v, /** @type {any} */ (dialect))
     if (v === null || v === undefined) return 'NULL'
     if (typeof v === 'number' && Number.isFinite(v)) return String(v)
     if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE'

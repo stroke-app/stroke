@@ -77,8 +77,9 @@ export function sqlLiteral(value, dialect) {
   if (typeof value === 'number') return Number.isFinite(value) ? String(value) : 'NULL'
   if (typeof value === 'bigint') return String(value)
   if (typeof value === 'boolean') {
-    // SQLite/D1/libsql/MySQL have no boolean literal - they store 1/0.
-    if (dialect === 'sqlite' || dialect === 'd1' || dialect === 'libsql' || dialect === 'mysql') {
+    // SQLite/D1/libsql/MySQL have no boolean literal - they store 1/0. SQL
+    // Server's BIT takes 1/0 too, and Oracle before 23c has no BOOLEAN column.
+    if (dialect === 'sqlite' || dialect === 'd1' || dialect === 'libsql' || dialect === 'mysql' || dialect === 'mssql' || dialect === 'oracle') {
       return value ? '1' : '0'
     }
     return value ? 'TRUE' : 'FALSE'
