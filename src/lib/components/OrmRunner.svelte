@@ -587,6 +587,7 @@
           {loading}
           primaryKey={[]}
           foreignKeys={[]}
+          emptyText="The query returned no rows"
         />
         <!-- JSON toggle overlay, top right, matching JsonViewer toolbar style -->
         <div
@@ -642,10 +643,10 @@
         <p class="text-ui-sm text-muted-foreground">
           Run a query to see results
         </p>
+        <!-- The starter for this database: the hint named a "users" table
+             that most databases don't have. -->
         <p class="font-mono text-ui-xs text-muted-foreground">
-          {mode === "drizzle"
-            ? `db.select().from(users).limit(10)`
-            : `prisma.users.findMany({ take: 10 })`}
+          {defaultCode()}
         </p>
       </div>
     {/if}

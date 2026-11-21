@@ -138,6 +138,42 @@ describe('dialogs', () => {
   })
 })
 
+describe('pages changed overnight', () => {
+  it('Data diff: Compare waits until both sides name a table', async () => {
+    const { default: DataDiffPage } = await import('./DataDiffPage.svelte')
+    render(DataDiffPage, {
+      schemas: ['public'], tables: [{ name: 'users' }], activeSchema: 'public',
+      connections: [{ id: 'c1', name: 'local', type: 'postgres' }], currentConnectionId: 'c1',
+    })
+    await settle()
+    expect(document.body.textContent).toContain('Compare any two data sources')
+    const compare = [...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Compare')
+    expect(compare?.hasAttribute('disabled')).toBe(true)
+  })
+
+  it('Tab bar with many tabs', async () => {
+    const { default: TabBar } = await import('./TabBar.svelte')
+    const tabs = Array.from({ length: 30 }, (_, i) => ({ id: `t${i}`, kind: 'table', title: `table_${i}` }))
+    const el = render(TabBar, { tabs, activeTabId: 't29' })
+    await settle()
+    expect(el.querySelectorAll('[role="tab"]').length).toBe(30)
+  })
+
+  it('Query plan from a Postgres EXPLAIN', async () => {
+    const { default: ExplainPlan } = await import('./ExplainPlan.svelte')
+    const plan = [{ Plan: { 'Node Type': 'Limit', 'Total Cost': 2.5, 'Plan Rows': 5, Plans: [{ 'Node Type': 'Seq Scan', 'Relation Name': 'pings', 'Total Cost': 2, 'Plan Rows': 100 }] } }]
+    render(ExplainPlan, { result: { plan, driver: 'postgres' }, analyze: false })
+    await settle()
+    expect(document.body.textContent).toContain('Estimated')
+  })
+
+  it('Dashboard with nothing on it', async () => {
+    const { default: DashboardPage } = await import('./DashboardPage.svelte')
+    render(DashboardPage, { connection: { id: 'c1', name: 'local', type: 'postgres' }, active: true })
+    await settle()
+  })
+})
+
 describe('updates', () => {
   const releases = [
     { version: '2.10.8', date: '2026-11-15', sections: [{ title: 'New Features', group: 'New Features', type: 'feature', items: ['Smoke tests gate Nightly'] }] },

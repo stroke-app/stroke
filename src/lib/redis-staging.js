@@ -189,3 +189,20 @@ export function quoteArg(s) {
 export function commandLine(args) {
   return args.map((a, i) => (i === 0 ? a : quoteArg(a))).join(' ')
 }
+
+/**
+ * The key list with staged new keys on top. Apply reads new keys back into the
+ * list before it clears them from the staged changes, so for a moment a key is
+ * in both; the keyed list then stopped the view with each_key_duplicate. A
+ * loaded row wins over the staged one with the same key.
+ * @template {{ key: string }} R
+ * @param {R[]} rows loaded keys, in display order
+ * @param {R[]} creates staged new keys
+ * @returns {R[]}
+ */
+export function withPendingCreates(rows, creates) {
+  if (!creates.length) return rows
+  const present = new Set(rows.map((r) => r.key))
+  const pending = creates.filter((c) => !present.has(c.key))
+  return pending.length ? [...pending, ...rows] : rows
+}

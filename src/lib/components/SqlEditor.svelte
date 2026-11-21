@@ -1246,8 +1246,11 @@
       zIndex: '1',
     },
     // After a statement that ran: its time and what came back.
+    // One unit when the line wraps: "573ms · 0" stayed on the line and "rows"
+    // went to the next.
     '.cm-sql-run-info': {
       marginLeft: '1.5ch',
+      whiteSpace: 'nowrap',
       fontFamily: 'var(--font-sans)',
       fontSize: 'var(--fs-xs)',
       color: 'var(--success)',
