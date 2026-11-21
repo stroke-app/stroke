@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.3.5] - 2026-11-21
+
+### Changes
+- Fix issues found in an app-wide sweep (#338)
+
+
 ## [3.3.4] - 2026-11-21
 
 ### Changes
