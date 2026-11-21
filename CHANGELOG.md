@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.4.2] - 2026-11-21
+
+### Changes
+- Write review SQL per dialect, MySQL enum picker, MariaDB insights (#345)
+
+
 ## [3.4.1] - 2026-11-21
 
 ### Changes
