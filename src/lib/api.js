@@ -5,6 +5,8 @@ import { recordQuery } from '$lib/stores/query-log.js'
 import { assertWritable } from '$lib/stores/read-only.js'
 import { getLastConnection } from '$lib/stores/connections.js'
 import { isWriteSql } from '$lib/sql-write.js'
+import { odbcConfigOf } from '$lib/odbc-presets.js'
+import { setOdbcDialect } from '$lib/sql-ident.js'
 
 /** @typedef {{ name: string, host: string, port: number, database: string, user: string, password: string, ssl: boolean }} PgConnectionConfig */
 /** @typedef {{ name: string, filePath: string }} SqliteConnectionConfig */
@@ -964,6 +966,34 @@ export async function testBigquery(config) {
 /** @param {BigqueryConnConfig} config */
 export async function connectBigquery(config) {
   return connectInv('connect_bigquery_db', { config: normalizeBigquery(config) })
+}
+
+// ── ODBC (beta) ──────────────────────────────────────────────────────────────
+
+/**
+ * Test an ODBC connection; resolves to what the driver says it is
+ * (`DB2/LINUXX8664`, `HDB`, ...).
+ * @param {any} config a saved-connection shaped ODBC config
+ */
+export async function testOdbc(config) {
+  return /** @type {Promise<string>} */ (inv('test_odbc', { config: odbcConfigOf(config) }))
+}
+
+/** @param {any} config */
+export async function connectOdbc(config) {
+  const info = await connectInv('connect_odbc_db', { config: odbcConfigOf(config) })
+  setOdbcDialect(info)
+  return info
+}
+
+/** The ODBC drivers installed here. @returns {Promise<{ name: string, path?: string }[]>} */
+export async function odbcDrivers() {
+  return inv('odbc_drivers')
+}
+
+/** The ODBC data sources (DSNs) set up here. @returns {Promise<{ name: string, driver: string }[]>} */
+export async function odbcDataSources() {
+  return inv('odbc_data_sources')
 }
 
 // ── Cassandra ─────────────────────────────────────────────────────────────────

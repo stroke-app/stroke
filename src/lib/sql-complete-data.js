@@ -1,3 +1,5 @@
+import { odbcQuote } from '$lib/sql-ident.js'
+
 /**
  * The SQL completion vocabulary and query analysis, editor-agnostic.
  *
@@ -85,6 +87,8 @@ export function sqlFamily(dialect) {
     case 'mysql': case 'mariadb': case 'spanner': case 'bigquery': return 'mysql'
     case 'sqlite': case 'd1': case 'libsql': return 'sqlite'
     case 'mssql': return 'mssql'
+    // Through ODBC: the family whose quoting the driver uses.
+    case 'odbc': return odbcQuote() === '`' ? 'mysql' : odbcQuote() === '[' ? 'mssql' : 'postgres'
     case 'clickhouse': case 'posthog': return 'clickhouse'
     case 'duckdb': return 'duckdb'
     default: return 'postgres'

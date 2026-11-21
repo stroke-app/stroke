@@ -422,6 +422,8 @@ pub enum ActiveConnection {
     Spanner(crate::db::spanner::SpannerHandle),
     /// Google BigQuery (beta), over its REST API.
     Bigquery(crate::db::bigquery::BigQueryHandle),
+    /// Any database through its ODBC driver (beta).
+    Odbc(crate::db::odbc::OdbcHandle),
 }
 
 impl ActiveConnection {
@@ -442,6 +444,7 @@ impl ActiveConnection {
             Self::Posthog(_) => "posthog",
             Self::Spanner(_) => "spanner",
             Self::Bigquery(_) => "bigquery",
+            Self::Odbc(_) => "odbc",
         }
     }
 }
@@ -1878,6 +1881,16 @@ pub async fn connect_bigquery(state: Db<'_>, config: crate::db::bigquery::BigQue
     let h = crate::db::bigquery::connect(&config).await?;
     close_existing(&state).await;
     set_conn(&state, Some(ActiveConnection::Bigquery(h)))
+}
+
+/// A database through its ODBC driver (beta): connects and reads what the
+/// driver says about naming and paging before it becomes active.
+pub async fn connect_odbc(state: Db<'_>, config: crate::db::odbc::OdbcConfig) -> Result<crate::db::odbc::OdbcSummary, String> {
+    let h = crate::db::odbc::connect(&config).await?;
+    let summary = h.info.summary();
+    close_existing(&state).await;
+    set_conn(&state, Some(ActiveConnection::Odbc(h)))?;
+    Ok(summary)
 }
 
 pub async fn connect_firestore(state: Db<'_>, config: crate::db::firestore::FirestoreConfig) -> Result<(), String> {
