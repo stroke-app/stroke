@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.2.1] - 2026-11-21
+
+### Changes
+- Sharp text on external displays, and palette subtitles for hostless engines (#324)
+
+
 ## [3.2.0] - 2026-11-21
 
 ### Changes
