@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.1.9] - 2026-11-21
+
+### Changes
+- Snowflake support (beta) (#322)
+
+
 ## [3.1.8] - 2026-11-21
 
 ### Changes
