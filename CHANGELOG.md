@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.5.2] - 2026-11-21
+
+### Changes
+- Step over completed function parens, empty-result columns for MCP, insights inserts (#355)
+
+
 ## [3.5.1] - 2026-11-21
 
 ### Changes
