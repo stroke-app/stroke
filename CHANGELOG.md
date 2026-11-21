@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.1.6] - 2026-11-21
+
+### Changes
+- ODBC bridge with engine presets (beta) (#319)
+
+
 ## [3.1.5] - 2026-11-21
 
 ### Changes
