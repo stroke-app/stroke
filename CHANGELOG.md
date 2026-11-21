@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.1.3] - 2026-11-21
+
+### Changes
+- Queries tab, steady zoom pill, one switch geometry, access changes reach agents (#315)
+
+
 ## [3.1.2] - 2026-11-21
 
 ### Changes
