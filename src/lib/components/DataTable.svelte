@@ -3,7 +3,7 @@
   import { tick, onDestroy, untrack } from "svelte";
   import {
     pgArrayElem, pgArrayText, isSqlArrayType, isVectorType, foldLines, valuesEqual,
-    cellJsonString, csvCell, cellSqlLiteral, mdCell, isOversizeValue,
+    cellJsonString, csvCell, mdCell, isOversizeValue,
   } from "$lib/cell-format.js";
   import { zoomState } from '$lib/stores/canvas-zoom.svelte.js'
   // Zoom is driven through the app-level settings so the canvas scales together
@@ -106,6 +106,9 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     buildRowUpdateStatements,
     buildRowDeleteStatements,
     buildInsertStatements,
+    qualifiedTable as dmlQualifiedTable,
+    quoteIdent as dmlQuoteIdent,
+    sqlLiteral as dmlSqlLiteral,
   } from "$lib/dml-preview.js";
   import * as Dialog from "$lib/components/ui/dialog/index.js";
   import * as Select from "$lib/components/ui/select/index.js";
@@ -2901,10 +2904,14 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       const header = colNames.map(mdCell).join(' | ');
       text = `| ${header} |\n| ${sep} |\n${dataRows.map((r) => `| ${r.map(mdCell).join(' | ')} |`).join('\n')}`;
     } else if (format === 'insert') {
-      const tbl = schema ? `"${schema}"."${tableName || 'table'}"` : `"${tableName || 'table'}"`;
-      const insertCols = columns.map((c) => `"${c.name}"`).join(', ');
+      // In this engine's SQL, as the grid's own writes are: the names were
+      // always double-quoted (MySQL read them as strings) and never escaped.
+      const tbl = dmlQualifiedTable({ dialect, schema, table: tableName || 'table', columns: [], primaryKey: [] });
+      const insertCols = columns.map((c) => dmlQuoteIdent(c.name, dialect)).join(', ');
+      /** @param {unknown} v */
+      const lit = (v) => (v !== null && typeof v === 'object' ? dmlSqlLiteral(cellJsonString(v), dialect) : dmlSqlLiteral(v, dialect));
       text = allRows
-        .map((r) => `INSERT INTO ${tbl} (${insertCols}) VALUES (${r.map(cellSqlLiteral).join(', ')});`)
+        .map((r) => `INSERT INTO ${tbl} (${insertCols}) VALUES (${r.map(lit).join(', ')});`)
         .join('\n');
     }
 

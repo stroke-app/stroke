@@ -1959,7 +1959,11 @@
       );
     if (dbType === "libsql")
       return (
-        libsqlUrl.replace(/^\w+:\/\//, "").split(".")[0] || activeDriver.label
+        // A Turso host's first label is the database (mydb-org.turso.io); an
+        // IP or localhost keeps its port, or every local server was "127".
+        ((h) => (/^(\d+\.){3}\d+(:\d+)?$|^localhost(:\d+)?$|^\[/.test(h) ? h : h.split(".")[0]))(
+          libsqlUrl.replace(/^\w+:\/\//, "").split(/[/?]/)[0],
+        ) || activeDriver.label
       );
     if (dbType === "d1") return "Cloudflare D1";
     // Google's engines have no host field: name them after the database.
