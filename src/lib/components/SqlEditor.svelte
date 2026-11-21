@@ -23,6 +23,7 @@
   import { wantsTerminator } from '$lib/sql-terminator.js'
   import { IS_MAC } from '$lib/shortcuts.js'
   import CodeEditor from './CodeEditor.svelte'
+  import { stepOverParen } from '$lib/cm-step-over-paren.js'
   import { AlertCircleIcon, Alert02Icon, ArrowDown01Icon, ArrowRight01Icon } from '@hugeicons/core-free-icons'
   import { hugeSvg } from '$lib/cm-huge-icon.js'
   import { formatSql } from '$lib/format-sql.js'
@@ -954,6 +955,8 @@
       // a finished statement in by a level, which read as a stray indent.
       ...(o.smartIndent ? [] : [Prec.high(keymap.of([{ key: 'Enter', run: insertNewlineKeepIndent, shift: insertNewlineKeepIndent }]))]),
       ...(o.autoClose ? [] : [Prec.high(noAutoClose)]),
+      // A completed function call's ) is stepped over, not doubled (see the module).
+      stepOverParen,
       ...(o.activeLine ? [] : [noActiveLine]),
       ...(o.whitespace ? [highlightWhitespace()] : []),
       // drawSelection takes the lowest blink rate it is given: 0 holds it still.
