@@ -359,6 +359,17 @@
     "h-7 w-[12rem] justify-between gap-2 border-border/70 bg-background px-2.5 text-ui-xs font-normal shadow-none";
   const ruleInput =
 "field-surface h-7 min-w-0 bg-background px-2.5 font-mono text-ui-xs text-foreground outline-none";
+
+  /** The plugin API guide: docs/PLUGIN_API.md on GitHub, since an install has no docs folder. */
+  async function openPluginGuide() {
+    const url = 'https://github.com/stroke-app/stroke/blob/nightly/docs/PLUGIN_API.md'
+    try {
+      const { openUrl } = await import('@tauri-apps/plugin-opener')
+      await openUrl(url)
+    } catch {
+      window.open(url, '_blank', 'noopener,noreferrer')
+    }
+  }
 </script>
 
 <!-- Compact Linear/Resend-style toggle -->
@@ -462,8 +473,8 @@
           {#if $externalPlugins.length === 0}
             <div class="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg bg-muted/25 px-4 py-3">
               <p class="min-w-0 flex-1 text-ui-xs text-muted-foreground text-pretty">
-                No plugins yet. A plugin is a folder with a <code class="font-mono text-foreground/80">manifest.json</code> and one script; see
-                <code class="font-mono text-foreground/80">docs/PLUGIN_API.md</code>.
+                No plugins yet. A plugin is a folder with a <code class="font-mono text-foreground/80">manifest.json</code> and one script; see the
+                <button type="button" class="text-foreground underline decoration-border underline-offset-2 transition-colors hover:decoration-foreground" onclick={() => void openPluginGuide()}>plugin guide</button>.
               </p>
               {#if pluginsDir}
                 <button
