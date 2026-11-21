@@ -104,6 +104,31 @@ describe('dialogs', () => {
     expect(document.querySelector('[aria-label="Column 2 length"]')).toBeTruthy()
   })
 
+  it('Import data: choosing a file parses it without a state write in a derived', async () => {
+    // The parse ran in a $derived that also assigned parseError; Svelte stops
+    // the whole UI on that (state_unsafe_mutation) as soon as a file is chosen.
+    const bridge = /** @type {any} */ (globalThis).__TAURI_INTERNALS__
+    const invoke = bridge.invoke
+    bridge.invoke = async (/** @type {string} */ cmd) => {
+      if (cmd === 'plugin:dialog|open') return '/data/people.csv'
+      if (cmd === 'read_file') return 'id,name\n1,"Lovelace, Ada"\n2,Zoë\n'
+      return null
+    }
+    try {
+      const { default: ImportDataDialog } = await import('./ImportDataDialog.svelte')
+      render(ImportDataDialog, { open: true, schema: 'public', table: 'people', columns: [{ name: 'id', dataType: 'int4' }, { name: 'name', dataType: 'text' }], primaryKey: ['id'] })
+      await settle()
+      const choose = [...document.querySelectorAll('button')].find((b) => b.textContent?.includes('Choose a file'))
+      expect(choose).toBeTruthy();
+      /** @type {HTMLElement} */ (choose).click()
+      await settle()
+      expect(document.body.textContent).toContain('people.csv')
+      expect(document.body.textContent).toContain('Import 2 rows')
+    } finally {
+      bridge.invoke = invoke
+    }
+  })
+
   it('Settings, and a search that matches nothing', async () => {
     const { default: SettingsDialog } = await import('./SettingsDialog.svelte')
     render(SettingsDialog, { open: true })
