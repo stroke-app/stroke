@@ -336,6 +336,7 @@
     connectSpanner,
     connectBigquery,
     connectOdbc,
+    connectSnowflake,
     connectMongo,
     mongoCollections,
     mongoCount,
@@ -8346,6 +8347,7 @@ let rowSearch = $state('')
       else if (last.type === 'spanner') await withTimeout(connectSpanner(last))
       else if (last.type === 'bigquery') await withTimeout(connectBigquery(last))
       else if (last.type === 'odbc') await withTimeout(connectOdbc(last))
+      else if (last.type === 'snowflake') await withTimeout(connectSnowflake(last))
       else if (last.type === 'mongodb') await withTimeout(connectMongo(last))
       else await withTimeout(connectPostgres(last))
       // onConnected already refreshes the query stores (concurrently with the
@@ -8809,6 +8811,7 @@ let rowSearch = $state('')
     else if (conn.type === 'spanner') await connectSpanner(conn)
     else if (conn.type === 'bigquery') await connectBigquery(conn)
     else if (conn.type === 'odbc') await connectOdbc(conn)
+    else if (conn.type === 'snowflake') await connectSnowflake(conn)
     else if (conn.type === 'mongodb') await connectMongo(conn)
     else await connectPostgres(conn)
   }

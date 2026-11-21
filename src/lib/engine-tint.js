@@ -37,6 +37,7 @@ export const ENGINE_TINT = {
   firestore: "text-amber-500/80",
   spanner: "text-blue-500/80",
   bigquery: "text-blue-500/80",
+  snowflake: "text-sky-500/80",
   odbc: "text-muted-foreground",
   "odbc-db2": "text-blue-600/80",
   "odbc-informix": "text-blue-600/80",

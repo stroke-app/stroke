@@ -27,6 +27,7 @@ pub mod google_auth;
 pub mod spanner;
 pub mod bigquery;
 pub mod odbc;
+pub mod snowflake;
 pub mod mongo;
 pub mod docdb;
 #[cfg(test)]

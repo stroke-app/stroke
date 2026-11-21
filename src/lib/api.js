@@ -968,6 +968,37 @@ export async function connectBigquery(config) {
   return connectInv('connect_bigquery_db', { config: normalizeBigquery(config) })
 }
 
+// ── Snowflake (beta) ─────────────────────────────────────────────────────────
+
+/** @param {any} c a saved-connection shaped Snowflake config */
+function normalizeSnowflake(c) {
+  /** @param {string | undefined} s */
+  const opt = (s) => (s && String(s).trim()) || null
+  return {
+    name: String(c.name || 'Snowflake'),
+    account: String(c.account || '').trim(),
+    user: String(c.user || '').trim(),
+    auth: c.auth === 'token' ? 'token' : 'keypair',
+    privateKeyFile: opt(c.privateKeyFile),
+    password: c.auth === 'token' ? c.password || null : null,
+    warehouse: opt(c.warehouse),
+    database: String(c.database || '').trim(),
+    schema: opt(c.schema),
+    role: opt(c.role),
+    host: opt(c.host),
+  }
+}
+
+/** @param {any} config */
+export async function testSnowflake(config) {
+  return inv('test_snowflake', { config: normalizeSnowflake(config) })
+}
+
+/** @param {any} config */
+export async function connectSnowflake(config) {
+  return connectInv('connect_snowflake_db', { config: normalizeSnowflake(config) })
+}
+
 // ── ODBC (beta) ──────────────────────────────────────────────────────────────
 
 /**

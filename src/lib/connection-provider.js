@@ -76,6 +76,7 @@ const ENGINE_SHORT = {
   firestore: 'Firestore',
   spanner: 'Spanner',
   bigquery: 'BigQuery',
+  snowflake: 'Snowflake',
   odbc: 'ODBC',
   ...Object.fromEntries(ODBC_PRESETS.map((p) => [`odbc-${p.id}`, p.label])),
   mongodb: 'MongoDB',

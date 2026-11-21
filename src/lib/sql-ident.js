@@ -31,7 +31,7 @@ export function odbcQuote() {
 /** Engines that fold unquoted names to lower case. */
 const FOLDS_LOWER = new Set(['postgres', 'cockroachdb', 'redshift'])
 /** Engines that fold unquoted names to upper case: `emp` means `EMP`. */
-const FOLDS_UPPER = new Set(['oracle'])
+const FOLDS_UPPER = new Set(['oracle', 'snowflake'])
 
 /** @param {string} list */
 const words = (list) => new Set(list.trim().split(/\s+/))
@@ -145,7 +145,7 @@ export function quoteName(name, engine, mode = 'always') {
  * a MySQL database other than the connection's) would read a different table.
  */
 const DEFAULT_SCHEMA = /** @type {Record<string, string>} */ ({
-  postgres: 'public', cockroachdb: 'public', mssql: 'dbo', duckdb: 'main', sqlite: 'main', d1: 'main', libsql: 'main',
+  postgres: 'public', cockroachdb: 'public', snowflake: 'PUBLIC', mssql: 'dbo', duckdb: 'main', sqlite: 'main', d1: 'main', libsql: 'main',
 })
 
 /**
