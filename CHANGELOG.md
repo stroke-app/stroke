@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.4.5] - 2026-11-21
+
+### Changes
+- Hide SQLite's own tables, name file databases by file, clearer write messages (#348)
+
+
 ## [3.4.4] - 2026-11-21
 
 ### Changes
