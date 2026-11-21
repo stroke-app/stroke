@@ -1873,6 +1873,13 @@
             {/if}
           {:else if loading}
             <TableLoading />
+          {:else if resultSets.length > 1 || currentDisplay.message || currentDisplay.queryMs > 0}
+            <!-- A run with no columns to show (a write, or a query the engine
+                 returned no shape for): it said "Run a query" right after one. -->
+            <div class="flex h-full flex-col items-center justify-center gap-1 text-center">
+              <p class="text-ui-sm text-foreground">{currentDisplay.message || 'The query returned no rows'}</p>
+              {#if currentDisplay.queryMs > 0}<p class="text-ui-xs tabular-nums text-muted-foreground">{currentDisplay.queryMs} ms</p>{/if}
+            </div>
           {:else}
             <!-- T3-style empty state: one light line, one quiet hint. -->
             <div class="flex h-full flex-col items-center justify-center gap-1.5 text-center">

@@ -8159,7 +8159,9 @@ let rowSearch = $state('')
       let msg = data.message ?? ''
       // The reply is camelCase (`SqlResult` in query.rs); `row_count` was never sent.
       const affected = data.rowCount ?? data.row_count
-      if (!msg && affected != null && cols.length === 0) {
+      // Writes only: a read the engine returned no shape for (InfluxDB with
+      // nothing matched) said "0 rows affected", as if it had been an UPDATE.
+      if (!msg && affected != null && cols.length === 0 && isWriteSql(data.sql || sqlRan)) {
         msg = `${formatCompactCount(affected)} ${affected === 1 ? 'row' : 'rows'} affected`
       }
       const stored = runTabId ? _sqlViewsByTab.has(runTabId) : false
