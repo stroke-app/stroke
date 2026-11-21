@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.3.9] - 2026-11-21
+
+### Changes
+- Fix platform shortcut hints, menu row sizes, toolbar overflow and more (#342)
+
+
 ## [3.3.8] - 2026-11-21
 
 ### Changes
