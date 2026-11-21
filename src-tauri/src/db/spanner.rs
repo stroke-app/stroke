@@ -754,7 +754,8 @@ async fn foreign_keys_in(h: &SpannerConn, schema: &str) -> Result<Vec<(String, S
          WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = {s}"
     );
     let r = catalog(h, &sql, p).await?;
-    Ok(r.rows
+    let mut out: Vec<(String, String, String, String, String)> = r
+        .rows
         .iter()
         .map(|row| {
             (
@@ -765,7 +766,54 @@ async fn foreign_keys_in(h: &SpannerConn, schema: &str) -> Result<Vec<(String, S
                 text_of(&r, row, "constraint_name"),
             )
         })
-        .collect())
+        .collect();
+    out.extend(interleave_links(h, schema).await.unwrap_or_default());
+    Ok(out)
+}
+
+/// Interleaved tables as relations. Spanner keeps a child's rows inside its
+/// parent's (`INTERLEAVE IN PARENT`) instead of declaring a foreign key, so a
+/// schema built that way, the usual Spanner design, showed no relations at
+/// all. A child's primary key starts with its parent's key columns under the
+/// same names, which makes each of them a link to the parent.
+async fn interleave_links(h: &SpannerConn, schema: &str) -> Result<Vec<(String, String, String, String, String)>, String> {
+    let mut p = Params::new(h.dialect);
+    let s = p.string(&schema_key(h, schema));
+    let parents = catalog(
+        h,
+        &format!("SELECT table_name, parent_table_name FROM information_schema.tables WHERE table_schema = {s} AND parent_table_name IS NOT NULL"),
+        p,
+    )
+    .await?;
+    if parents.rows.is_empty() {
+        return Ok(vec![]);
+    }
+    let mut p = Params::new(h.dialect);
+    let s = p.string(&schema_key(h, schema));
+    let keys = catalog(
+        h,
+        &format!("SELECT table_name, column_name, ordinal_position FROM information_schema.index_columns WHERE table_schema = {s} AND index_type = 'PRIMARY_KEY' ORDER BY table_name, ordinal_position"),
+        p,
+    )
+    .await?;
+    let key_of = |t: &str| -> Vec<String> {
+        keys.rows.iter().filter(|r| text_of(&keys, r, "table_name") == t).map(|r| text_of(&keys, r, "column_name")).collect()
+    };
+    let mut out = Vec::new();
+    for row in &parents.rows {
+        let child = text_of(&parents, row, "table_name");
+        let parent = text_of(&parents, row, "parent_table_name");
+        if child.is_empty() || parent.is_empty() {
+            continue;
+        }
+        let child_key = key_of(&child);
+        for col in key_of(&parent) {
+            if child_key.contains(&col) {
+                out.push((child.clone(), col.clone(), parent.clone(), col, format!("INTERLEAVE_{child}")));
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// Foreign keys in this schema that point at `table`, for the grid's
@@ -1165,6 +1213,36 @@ mod tests {
         assert_eq!(t["Plans"][0]["Node Type"], "Scan (TableScan)");
         assert_eq!(t["Plans"][0]["Relation Name"], "users");
         assert_eq!(t["Plans"][0]["Filter"], "Condition: ($id > 1)");
+    }
+
+    /// Interleaved tables show as relations (STROKE_TEST_SPANNER).
+    #[tokio::test]
+    async fn live_interleaved_relations() {
+        let Ok(spec) = std::env::var("STROKE_TEST_SPANNER") else { return };
+        let mut parts = spec.splitn(4, '/');
+        let (host, project, instance, database) =
+            (parts.next().unwrap(), parts.next().unwrap(), parts.next().unwrap(), parts.next().unwrap());
+        let cfg = SpannerConfig {
+            name: "t".into(),
+            project_id: project.into(),
+            instance_id: instance.into(),
+            database_id: database.into(),
+            auth: "emulator".into(),
+            key_file: None,
+            emulator_host: Some(host.into()),
+        };
+        let h = connect(&cfg).await.unwrap();
+        let _ = query(&h, "DROP TABLE StrokeOrders").await;
+        let _ = query(&h, "DROP TABLE StrokeCustomers").await;
+        query(&h, "CREATE TABLE StrokeCustomers (CustomerId STRING(36) NOT NULL, Name STRING(100)) PRIMARY KEY (CustomerId)").await.unwrap();
+        query(&h, "CREATE TABLE StrokeOrders (CustomerId STRING(36) NOT NULL, OrderId STRING(36) NOT NULL, Status STRING(20)) PRIMARY KEY (CustomerId, OrderId), INTERLEAVE IN PARENT StrokeCustomers ON DELETE CASCADE").await.unwrap();
+        let cols = get_column_structure(&h, DEFAULT_SCHEMA, "StrokeOrders").await.unwrap();
+        assert_eq!(cols.iter().find(|c| c.name == "CustomerId").unwrap().foreign_key.as_deref(), Some("StrokeCustomers.CustomerId"));
+        assert!(cols.iter().find(|c| c.name == "OrderId").unwrap().foreign_key.is_none());
+        let inc = incoming_foreign_keys(&h, DEFAULT_SCHEMA, "StrokeCustomers").await.unwrap();
+        assert!(inc.iter().any(|f| f.from_table == "StrokeOrders" && f.from_columns == vec!["CustomerId".to_string()]), "{inc:?}");
+        query(&h, "DROP TABLE StrokeOrders").await.unwrap();
+        query(&h, "DROP TABLE StrokeCustomers").await.unwrap();
     }
 
     /// Against the Spanner emulator:

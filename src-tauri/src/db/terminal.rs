@@ -920,6 +920,19 @@ pub async fn terminal_close(state: State<'_, TerminalState>, id: String) -> Resu
 
 /// Make the Turso CLI config folder Stroke points its shell at: autoupdate off.
 /// Returns None when it can't be written, and the CLI keeps its own.
+/// The address `turso db shell` gets. Its `.dump` is an HTTP GET to
+/// `<url>/dump`, so a `libsql://` (or `wss://`) address failed with
+/// "unsupported protocol scheme"; the shell itself takes https just as well.
+fn turso_shell_url(url: &str) -> String {
+    let u = url.trim();
+    for (from, to) in [("libsql://", "https://"), ("wss://", "https://"), ("ws://", "http://")] {
+        if let Some(rest) = u.strip_prefix(from) {
+            return format!("{to}{rest}");
+        }
+    }
+    u.to_string()
+}
+
 fn quiet_turso_config(dir: &Path) -> Option<PathBuf> {
     std::fs::create_dir_all(dir).ok()?;
     let file = dir.join("settings.json");
@@ -929,21 +942,14 @@ fn quiet_turso_config(dir: &Path) -> Option<PathBuf> {
     Some(dir.to_path_buf())
 }
 
-async fn open_session(
-    state: &TerminalState,
+/// The command line, environment and tunnel a client is started with: the
+/// same for the terminal tab and the live client tests.
+async fn launch_for(
     config: AnyConnectionConfig,
-    cols: u16,
-    rows: u16,
+    binary: &Path,
     turso_token: Option<String>,
     turso_config: Option<PathBuf>,
-) -> Result<TerminalSession, String> {
-    reap_unattached(state);
-    let t0 = Instant::now();
-    let client = client_for(&config)?;
-    let binary = find_binary(client.binaries)
-        .await
-        .ok_or_else(|| format!("{} is not installed. {}", client.name, install_hint(&client)))?;
-    let t_find = t0.elapsed();
+) -> Result<Launch, String> {
     let launch = match config {
         AnyConnectionConfig::Postgres(c) => pg_launch(c).await?,
         AnyConnectionConfig::Mysql(c) => {
@@ -977,7 +983,7 @@ async fn open_session(
             if via_wsl {
                 args.extend(["-e".into(), "turso".into()]);
             }
-            args.extend(["db".into(), "shell".into(), c.url.trim().to_string()]);
+            args.extend(["db".into(), "shell".into(), turso_shell_url(&c.url)]);
             let mut env = Vec::new();
             if let Some(token) = turso_token {
                 env.push(("TURSO_API_TOKEN", token));
@@ -996,6 +1002,25 @@ async fn open_session(
         }
         _ => return Err("This connection has no terminal client.".into()),
     };
+    Ok(launch)
+}
+
+async fn open_session(
+    state: &TerminalState,
+    config: AnyConnectionConfig,
+    cols: u16,
+    rows: u16,
+    turso_token: Option<String>,
+    turso_config: Option<PathBuf>,
+) -> Result<TerminalSession, String> {
+    reap_unattached(state);
+    let t0 = Instant::now();
+    let client = client_for(&config)?;
+    let binary = find_binary(client.binaries)
+        .await
+        .ok_or_else(|| format!("{} is not installed. {}", client.name, install_hint(&client)))?;
+    let t_find = t0.elapsed();
+    let launch = launch_for(config, &binary, turso_token, turso_config).await?;
     let shared = state.shared();
     let port = *state.port.get_or_try_init(|| serve(shared)).await?;
 
@@ -1522,5 +1547,88 @@ mod tests {
             );
             assert!(*latencies.last().unwrap() < Duration::from_millis(100));
         });
+    }
+}
+
+#[cfg(test)]
+mod turso_url_tests {
+    use super::turso_shell_url;
+
+    #[test]
+    fn turso_shell_gets_an_http_address() {
+        assert_eq!(turso_shell_url("libsql://movie-x.aws-us-east-1.turso.io"), "https://movie-x.aws-us-east-1.turso.io");
+        assert_eq!(turso_shell_url(" wss://db.example.io "), "https://db.example.io");
+        assert_eq!(turso_shell_url("ws://127.0.0.1:8080"), "http://127.0.0.1:8080");
+        assert_eq!(turso_shell_url("http://127.0.0.1:8080"), "http://127.0.0.1:8080");
+    }
+}
+
+#[cfg(test)]
+mod live_clients {
+    //! Every terminal client the machine has, started with the app's own
+    //! arguments and environment against a real database, given one command,
+    //! and checked for the answer. STROKE_TEST_CLIENTS=1 turns it on; each
+    //! client also needs its database's variable below.
+    use super::*;
+    use serde_json::json;
+    use std::process::Stdio;
+    use tokio::io::AsyncWriteExt;
+
+    async fn run(config: serde_json::Value, input: &str, expect: &str) -> Result<(), String> {
+        let cfg: AnyConnectionConfig = serde_json::from_value(config.clone()).map_err(|e| e.to_string())?;
+        let client = client_for(&cfg)?;
+        let Some(binary) = find_binary(client.binaries).await else {
+            println!("skip {}: not installed", client.name);
+            return Ok(());
+        };
+        let turso_config = std::env::var("STROKE_TEST_TURSO_CONFIG").ok().map(PathBuf::from);
+        let launch = launch_for(cfg, &binary, None, turso_config).await?;
+        let mut cmd = tokio::process::Command::new(&binary);
+        cmd.args(&launch.args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        for k in launch.unset {
+            cmd.env_remove(k);
+        }
+        for (k, v) in &launch.env {
+            cmd.env(k, v);
+        }
+        let mut child = cmd.spawn().map_err(|e| format!("{}: {e}", client.name))?;
+        child.stdin.take().unwrap().write_all(input.as_bytes()).await.map_err(|e| e.to_string())?;
+        let out = tokio::time::timeout(Duration::from_secs(30), child.wait_with_output()).await.map_err(|_| format!("{} timed out", client.name))?.map_err(|e| e.to_string())?;
+        let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        println!("== {} ({})\n{}", client.name, binary.display(), text.trim());
+        if text.contains(expect) { Ok(()) } else { Err(format!("{}: expected {expect:?} in output:\n{text}", client.name)) }
+    }
+
+    #[tokio::test]
+    async fn clients_answer() {
+        if std::env::var("STROKE_TEST_CLIENTS").is_err() {
+            return;
+        }
+        let mut failures = Vec::new();
+        // psql: postgres://user:pw@host:port/db
+        if let Ok(spec) = std::env::var("STROKE_TEST_PSQL") {
+            let p: Vec<&str> = spec.split('|').collect();
+            let cfg = json!({ "type": "postgres", "name": "t", "host": p[0], "port": p[1].parse::<u16>().unwrap(), "user": p[2], "password": p[3], "database": p[4], "ssl": false });
+            if let Err(e) = run(cfg, "select 40 + 2 as answer;\n\\q\n", "42").await { failures.push(e) }
+        }
+        if let Ok(spec) = std::env::var("STROKE_TEST_MYSQL_CLI") {
+            let p: Vec<&str> = spec.split('|').collect();
+            let cfg = json!({ "type": "mysql", "name": "t", "host": p[0], "port": p[1].parse::<u16>().unwrap(), "user": p[2], "password": p[3], "database": p[4], "ssl": false });
+            if let Err(e) = run(cfg, "select 40 + 2 as answer;\nexit\n", "42").await { failures.push(e) }
+        }
+        if let Ok(path) = std::env::var("STROKE_TEST_SQLITE_FILE") {
+            let cfg = json!({ "type": "sqlite", "name": "t", "filePath": path });
+            if let Err(e) = run(cfg, ".tables\n.quit\n", "pets").await { failures.push(e) }
+        }
+        if let Ok(spec) = std::env::var("STROKE_TEST_REDIS_CLI") {
+            let p: Vec<&str> = spec.split('|').collect();
+            let cfg = json!({ "type": "redis", "name": "t", "host": p[0], "port": p[1].parse::<u16>().unwrap(), "db": 0, "tls": false });
+            if let Err(e) = run(cfg, "PING\n", "PONG").await { failures.push(e) }
+        }
+        if let Ok(url) = std::env::var("STROKE_TEST_TURSO_URL") {
+            let cfg = json!({ "type": "libsql", "name": "t", "url": url });
+            if let Err(e) = run(cfg, ".dump\n", "CREATE TABLE").await { failures.push(e) }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n\n"));
     }
 }

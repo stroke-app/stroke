@@ -66,7 +66,7 @@ pub use query::{
     fetch_cell_value, CellValueResult, get_column_stats, get_table_rows, count_table_rows, search_index_status, create_search_index, SearchIndexStatus, insert_table_row, update_table_cell, ping_connection,
     ColumnStats, InsertRowResult, KeysetCursor, apply_table_changes, ApplyChangesResult, RowUpdate, RowChunk, RowFilter, RowSink, SortSpec, SqlResult, TableRows,
 };
-pub use schema::{
+pub use schema::{schemas_of, 
     list_schemas, list_tables, list_schemas_on_conn, list_tables_on_conn,
     list_indexes_for, list_enums, list_functions, list_triggers, list_sequences,
     table_row_counts, truncate_table, drop_table, get_table_column_structure, get_schema_column_structure, get_incoming_foreign_keys,

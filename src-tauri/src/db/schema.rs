@@ -1172,7 +1172,12 @@ async fn list_sequences_pg(pool: &PgPool, schema: &str) -> Result<Vec<SequenceIn
 // ── Public dispatch ───────────────────────────────────────────────────────────
 
 pub async fn list_schemas(state: Db<'_>) -> Result<Vec<String>, String> {
-    match require_conn(&state)? {
+    schemas_of(&require_conn(&state)?).await
+}
+
+/// The schemas of a connection, its own first where the engine knows it.
+pub async fn schemas_of(conn: &ActiveConnection) -> Result<Vec<String>, String> {
+    match conn.clone() {
         ActiveConnection::Postgres(pool) => list_schemas_pg(&pool).await,
         ActiveConnection::Mysql(pool) => list_schemas_mysql(&pool).await,
         ActiveConnection::Clickhouse(cfg) => super::clickhouse::list_schemas(&cfg).await,
