@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.5.3] - 2026-11-21
+
+### Changes
+- Quote ORM runner SQL, keep sidebar counts current, Codegen targets, screenful paging (#356)
+
+
 ## [3.5.2] - 2026-11-21
 
 ### Changes
