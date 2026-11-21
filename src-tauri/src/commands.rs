@@ -988,6 +988,51 @@ pub async fn connect_snowflake_db(state: Db<'_>, config: crate::db::snowflake::S
     crate::db::connection::connect_snowflake(state, config).await
 }
 
+// ── Neo4j (beta) ──────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn test_neo4j(config: crate::db::neo4j::Neo4jConfig) -> Result<(), String> {
+    crate::db::neo4j::connect(&config).await.map(|_| ())
+}
+
+#[tauri::command]
+pub async fn connect_neo4j_db(state: Db<'_>, config: crate::db::neo4j::Neo4jConfig) -> Result<(), String> {
+    crate::db::connection::connect_neo4j(state, config).await
+}
+
+fn require_neo4j(state: &Db<'_>) -> Result<crate::db::neo4j::Neo4jConfig, String> {
+    match require_conn(state)? {
+        ActiveConnection::Doc(crate::db::docdb::DocConn::Neo4j(cfg)) => Ok(cfg),
+        _ => Err("Not connected to Neo4j".into()),
+    }
+}
+
+/// Node labels with their node counts.
+#[tauri::command]
+pub async fn neo4j_labels(state: Db<'_>) -> Result<Vec<(String, i64)>, String> {
+    crate::db::neo4j::labels(&require_neo4j(&state)?).await
+}
+
+#[tauri::command]
+pub async fn neo4j_describe(state: Db<'_>, label: String) -> Result<serde_json::Value, String> {
+    crate::db::neo4j::describe(&require_neo4j(&state)?, &label).await
+}
+
+#[tauri::command]
+pub async fn neo4j_page(state: Db<'_>, label: String, filter: Option<String>, skip: i64, limit: i64) -> Result<serde_json::Value, String> {
+    crate::db::neo4j::page(&require_neo4j(&state)?, &label, filter.as_deref().unwrap_or(""), skip, limit).await
+}
+
+#[tauri::command]
+pub async fn neo4j_save(state: Db<'_>, label: String, doc: serde_json::Value) -> Result<serde_json::Value, String> {
+    crate::db::neo4j::save(&require_neo4j(&state)?, &label, &doc).await
+}
+
+#[tauri::command]
+pub async fn neo4j_delete(state: Db<'_>, id: String) -> Result<(), String> {
+    crate::db::neo4j::remove(&require_neo4j(&state)?, &id).await
+}
+
 /// One Firestore REST call (document paths of this database only).
 #[tauri::command]
 pub async fn firestore_request(
@@ -1318,6 +1363,12 @@ pub async fn pg_explain_sql(
             planning_time: 0.0,
             execution_time: 0.0,
             driver: "couchdb".into(),
+        }),
+        ActiveConnection::Doc(crate::db::docdb::DocConn::Neo4j(cfg)) => Ok(ExplainResult {
+            plan: crate::db::neo4j::explain_plan(&cfg, &sql).await?,
+            planning_time: 0.0,
+            execution_time: 0.0,
+            driver: "neo4j".into(),
         }),
         // Redis, DynamoDB, Firestore, Cassandra/ScyllaDB and PostHog's HogQL
         // API expose no query plan.

@@ -5,7 +5,7 @@
   import { panelMotionOff, slidePanel } from '$lib/panel-motion.js'
   import { fade } from 'svelte/transition'
   import { traceInteraction } from '$lib/perf.js'
-  import { couchAdapter, cassandraAdapter, elasticAdapter, firestoreAdapter, mongoAdapter, uriHost } from '$lib/doc-adapters.js'
+  import { couchAdapter, cassandraAdapter, elasticAdapter, firestoreAdapter, mongoAdapter, neo4jAdapter, uriHost } from '$lib/doc-adapters.js'
   import { queryLanguageFor } from '$lib/ai-query-languages.js'
   import { setQueryEngine } from '$lib/ai.js'
   import { revealApp, isRevealed } from '$lib/app-reveal.js'
@@ -332,6 +332,12 @@
     elasticImport,
     couchRequest,
     connectCassandra,
+    connectNeo4j,
+    neo4jLabels,
+    neo4jDescribe,
+    neo4jPage,
+    neo4jSave,
+    neo4jDelete,
     connectFirestore,
     connectSpanner,
     connectBigquery,
@@ -833,7 +839,7 @@
   const isRedis = $derived(dbType === 'redis')
   const isDynamo = $derived(dbType === 'dynamodb')
   /** Document / wide-column engines browsed with DocBrowser. */
-  const isDoc = $derived(dbType === 'couchdb' || dbType === 'cassandra' || dbType === 'firestore' || dbType === 'mongodb' || dbType === 'elasticsearch' || dbType === 'opensearch')
+  const isDoc = $derived(dbType === 'couchdb' || dbType === 'cassandra' || dbType === 'firestore' || dbType === 'mongodb' || dbType === 'elasticsearch' || dbType === 'opensearch' || dbType === 'neo4j')
   /** Key-value and document engines have their own page and none of the relational UI. */
   const isKV = $derived(isRedis || isDynamo || isDoc)
   // AI replies on a NoSQL connection get Run buttons on blocks in its own language.
@@ -847,6 +853,7 @@
     : dbType === 'mongodb' ? mongoAdapter({ collections: mongoCollections, describe: mongoDescribe, find: mongoFind, count: mongoCount, save: mongoSave, remove: mongoDelete, explain: mongoExplain, schema: mongoSchema, indexes: { list: mongoIndexes, create: mongoCreateIndex, drop: mongoDropIndex }, updateField: mongoUpdateField, aggregate: mongoAggregate, import: { pick: pickImportFile, preview: mongoImportPreview, run: mongoImport } })
     : dbType === 'firestore' ? firestoreAdapter(firestoreRequest, { projectId: connection?.projectId ?? '', database: connection?.database ?? '' })
     : dbType === 'cassandra' ? cassandraAdapter({ tables: cassandraTables, describe: cassandraDescribe, page: cassandraPage, save: cassandraSave, remove: cassandraDelete })
+    : dbType === 'neo4j' ? neo4jAdapter({ labels: neo4jLabels, describe: neo4jDescribe, page: neo4jPage, save: neo4jSave, remove: neo4jDelete })
     : null,
   )
   /** Where a document connection points, for the page footer. */
@@ -8032,7 +8039,7 @@ let rowSearch = $state('')
     // open the keyspace workspace instead of the welcome tab + tables sidebar.
     const fam = engineFamily(conn.type)
     const connIsDynamo = fam === 'dynamodb'
-    const connIsDoc = fam === 'couchdb' || fam === 'cassandra' || fam === 'firestore' || fam === 'mongodb' || fam === 'elasticsearch' || fam === 'opensearch'
+    const connIsDoc = fam === 'couchdb' || fam === 'cassandra' || fam === 'firestore' || fam === 'mongodb' || fam === 'elasticsearch' || fam === 'opensearch' || fam === 'neo4j'
     const connIsRedis = fam === 'redis'
     dynamoTable = ''
     if (connIsDoc) {
@@ -8350,6 +8357,7 @@ let rowSearch = $state('')
       else if (last.type === 'couchdb') await withTimeout(connectCouch(last))
       else if (last.type === 'elasticsearch' || last.type === 'opensearch') await withTimeout(connectElastic(last))
       else if (last.type === 'cassandra') await withTimeout(connectCassandra(last))
+      else if (last.type === 'neo4j') await withTimeout(connectNeo4j(last))
       else if (last.type === 'firestore') await withTimeout(connectFirestore(last))
       else if (last.type === 'spanner') await withTimeout(connectSpanner(last))
       else if (last.type === 'bigquery') await withTimeout(connectBigquery(last))
@@ -8814,6 +8822,7 @@ let rowSearch = $state('')
     else if (conn.type === 'couchdb') await connectCouch(conn)
     else if (conn.type === 'elasticsearch' || conn.type === 'opensearch') await connectElastic(conn)
     else if (conn.type === 'cassandra') await connectCassandra(conn)
+    else if (conn.type === 'neo4j') await connectNeo4j(conn)
     else if (conn.type === 'firestore') await connectFirestore(conn)
     else if (conn.type === 'spanner') await connectSpanner(conn)
     else if (conn.type === 'bigquery') await connectBigquery(conn)

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isWriteSql, sqlRunEffects, stripSqlComments } from './sql-write.js'
+import { isWriteFor, isWriteSql, sqlRunEffects, stripSqlComments } from './sql-write.js'
 
 describe('isWriteSql', () => {
   it('allows plain reads', () => {
@@ -222,5 +222,19 @@ describe('MongoDB shell writes', () => {
     expect(isWriteSql('db.users.find({note: "insertOne("})')).toBe(false)
     expect(isWriteSql('db.users.find({}).sort({a: 1})')).toBe(false)
     expect(isWriteSql('db.orders.aggregate([{$match: {}}])')).toBe(false)
+  })
+})
+
+describe('isWriteFor neo4j', () => {
+  const w = (/** @type {string} */ s) => isWriteFor(s, 'neo4j')
+  it('reads Cypher by its clauses', () => {
+    expect(w('MATCH (n:Person) RETURN n LIMIT 10')).toBe(false)
+    expect(w("MATCH (n) WHERE n.note = 'CREATE me' RETURN n")).toBe(false)
+    expect(w('MATCH (n:`DELETE`) RETURN n')).toBe(false)
+    expect(w('CALL db.labels()')).toBe(false)
+    expect(w('MATCH (n) WITH n DETACH DELETE n')).toBe(true)
+    expect(w("MERGE (a:A {id: 1}) ON CREATE SET a.t = timestamp()")).toBe(true)
+    expect(w("CALL apoc.create.node(['X'], {})")).toBe(true)
+    expect(w('DROP INDEX person_name')).toBe(true)
   })
 })

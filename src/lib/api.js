@@ -893,6 +893,61 @@ export async function connectFirestore(config) {
   return connectInv('connect_firestore_db', { config: normalizeFirestore(config) })
 }
 
+// ── Neo4j (beta) ──────────────────────────────────────────────────────────────
+
+/** @typedef {{ name?: string, url?: string, database?: string, user?: string, password?: string }} Neo4jConnConfig */
+
+/** @param {Neo4jConnConfig} config */
+function normalizeNeo4j(config) {
+  /** @param {string | undefined} s */
+  const opt = (s) => (s && String(s).trim()) || null
+  return {
+    type: 'neo4j',
+    name: String(config.name || 'Neo4j'),
+    url: String(config.url || '').trim(),
+    database: opt(config.database),
+    user: opt(config.user),
+    password: config.password || null,
+  }
+}
+
+/** @param {Neo4jConnConfig} config */
+export async function testNeo4j(config) {
+  return inv('test_neo4j', { config: normalizeNeo4j(config) })
+}
+
+/** @param {Neo4jConnConfig} config */
+export async function connectNeo4j(config) {
+  return connectInv('connect_neo4j_db', { config: normalizeNeo4j(config) })
+}
+
+/** Node labels with their node counts. @returns {Promise<[string, number][]>} */
+export async function neo4jLabels() {
+  return inv('neo4j_labels')
+}
+
+/** @param {string} label */
+export async function neo4jDescribe(label) {
+  return inv('neo4j_describe', { label })
+}
+
+/** @param {string} label @param {string} filter @param {number} skip @param {number} limit */
+export async function neo4jPage(label, filter, skip, limit) {
+  return inv('neo4j_page', { label, filter: filter || null, skip, limit })
+}
+
+/** @param {string} label @param {Record<string, any>} doc */
+export async function neo4jSave(label, doc) {
+  assertWritable('change nodes')
+  return inv('neo4j_save', { label, doc })
+}
+
+/** @param {string} id */
+export async function neo4jDelete(id) {
+  assertWritable('delete nodes')
+  return inv('neo4j_delete', { id })
+}
+
 /**
  * One Firestore REST call on the active connection; `path` starts with
  * `projects/...`. Only this database's documents are reachable.

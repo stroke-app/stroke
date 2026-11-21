@@ -40,6 +40,8 @@ pub enum Dialect {
     Elastic,
     /// DynamoDB: PartiQL, or a JSON API call such as CreateTable.
     Dynamo,
+    /// Neo4j: Cypher, read by its clauses (see `db::neo4j::cypher_level`).
+    Cypher,
 }
 
 impl Dialect {
@@ -53,6 +55,7 @@ impl Dialect {
             "elasticsearch" | "opensearch" => Self::Elastic,
             "couchdb" | "firestore" => Self::ReadOnlyDoc,
             "dynamodb" => Self::Dynamo,
+            "neo4j" => Self::Cypher,
             _ => Self::Sql,
         }
     }
@@ -73,6 +76,7 @@ pub fn script_level_in(dialect: Dialect, sql: &str) -> u8 {
         Dialect::Redis => redis_level(sql),
         Dialect::Dynamo => dynamo_level(sql),
         Dialect::ReadOnlyDoc => READ,
+        Dialect::Cypher => crate::db::neo4j::cypher_level(sql),
         Dialect::Elastic => match crate::db::elastic::parse(sql) {
             Ok(crate::db::elastic::Statement::Raw { method, path, .. }) => crate::db::elastic::request_level(&method, &path),
             // SQL, index.search/get/count: reads. Anything unparsable is refused by the console itself.
@@ -686,6 +690,9 @@ mod tests {
         assert_eq!(d(r#"{"operation": "DeleteTable", "input": {"TableName": "t"}}"#), DANGEROUS);
         assert_eq!(d(r#"{"operation": "Nope"}"#), DANGEROUS);
         assert_eq!(Dialect::for_driver("dynamodb"), Dialect::Dynamo);
+        assert_eq!(Dialect::for_driver("neo4j"), Dialect::Cypher);
+        assert_eq!(script_level_in(Dialect::Cypher, "MATCH (n) WITH n DETACH DELETE n"), WRITE);
+        assert_eq!(script_level_in(Dialect::Cypher, "MATCH (n) RETURN n"), READ);
         let m = |s: &str| script_level_in(Dialect::Mongo, s);
         assert_eq!(m(r#"db.createCollection("shop")"#), MODIFY);
         assert_eq!(m("db.users.createIndex({email: 1}, {unique: true})"), MODIFY);

@@ -1,5 +1,5 @@
 // Per-engine adapters for DocBrowser.svelte: the one page that browses and
-// edits CouchDB, Cassandra, Firestore, MongoDB and Elasticsearch/OpenSearch. Each adapter turns that engine's API
+// edits CouchDB, Cassandra, Firestore, MongoDB, Elasticsearch/OpenSearch and Neo4j. Each adapter turns that engine's API
 // into the same few verbs (list collections, load a page, save, delete). The
 // API calls are injected so the logic is unit-tested without Tauri.
 
@@ -191,6 +191,51 @@ export function cassandraAdapter(api) {
     template: (_t, meta) => Object.fromEntries((meta?.keys ?? []).map((/** @type {string} */ k) => [k, null])),
     keyChangeWarning: 'The primary key changed. This writes a new row and deletes the old one in one batch. Continue?',
     querySeed: (table) => `SELECT * FROM ${table} LIMIT 100`,
+  }
+}
+
+// ── Neo4j ───────────────────────────────────────────────────────────────────
+
+/**
+ * Neo4j (beta): labels are the collections, nodes the documents. `_id` is the
+ * node's element id and `_labels` its labels; both are read-only here.
+ * @param {{
+ *   labels: () => Promise<[string, number][]>,
+ *   describe: (label: string) => Promise<{ keys: string[], count: number }>,
+ *   page: (label: string, filter: string, skip: number, limit: number) => Promise<{ docs: Record<string, any>[], next: number | null }>,
+ *   save: (label: string, doc: Record<string, any>) => Promise<Record<string, any>>,
+ *   remove: (id: string) => Promise<void>,
+ * }} api
+ * @returns {DocAdapter}
+ */
+export function neo4jAdapter(api) {
+  /** @param {string} label */
+  const ident = (label) => (/^[A-Za-z_][A-Za-z0-9_]*$/.test(label) ? label : `\`${label.replace(/`/g, '``')}\``)
+  return {
+    engine: 'neo4j',
+    noun: { collection: 'Label', collections: 'Labels', item: 'Node', items: 'nodes' },
+    consoleLabel: 'Cypher',
+    filterPlaceholder: "n.born > 1900 AND n.name STARTS WITH 'A'",
+    filterHint: 'A Cypher WHERE condition on the node n',
+    listCollections: async () => (await api.labels()).map(([name]) => name),
+    async describe(label) {
+      const d = await api.describe(label)
+      // Properties aren't keys: a node is found by its element id (`_id`).
+      return { keys: [], meta: d, summary: [`${d.count ?? '?'} nodes`, `${d.keys.length} properties`] }
+    },
+    async load(label, { cursor, filter, size = PAGE_SIZE }) {
+      const p = await api.page(label, filter, Number(cursor) || 0, size)
+      return { docs: p.docs, cursor: p.next }
+    },
+    idOf: (doc) => String(doc._id ?? ''),
+    // The node to change is the one opened, whatever the editor did to `_id`.
+    save: (label, next, prev) => api.save(label, { ...next, _id: prev?._id ?? null }),
+    async remove(_label, doc) {
+      await api.remove(String(doc._id))
+    },
+    template: () => ({ name: '' }),
+    keyChangeWarning: 'A node keeps its element id: this saves the properties to the node you opened. Continue?',
+    querySeed: (label) => `MATCH (n:${ident(label)}) RETURN n LIMIT 100`,
   }
 }
 

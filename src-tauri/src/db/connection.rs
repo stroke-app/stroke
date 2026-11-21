@@ -1922,6 +1922,12 @@ pub async fn connect_snowflake(state: Db<'_>, config: crate::db::snowflake::Snow
     set_conn(&state, Some(ActiveConnection::Snowflake(h)))
 }
 
+/// Neo4j (beta): over its HTTP API.
+pub async fn connect_neo4j(state: Db<'_>, config: crate::db::neo4j::Neo4jConfig) -> Result<(), String> {
+    let config = crate::db::neo4j::connect(&config).await?;
+    set_conn(&state, Some(ActiveConnection::Doc(crate::db::docdb::DocConn::Neo4j(config))))
+}
+
 pub async fn connect_firestore(state: Db<'_>, config: crate::db::firestore::FirestoreConfig) -> Result<(), String> {
     crate::db::firestore::ping(&config).await?;
     set_conn(&state, Some(ActiveConnection::Doc(crate::db::docdb::DocConn::Firestore(config))))
