@@ -1216,9 +1216,15 @@ mod tests {
     }
 
     /// Interleaved tables show as relations (STROKE_TEST_SPANNER).
+    /// The emulator takes one schema change at a time: the live tests, run in
+    /// parallel, rejected each other's DDL ("concurrent schema change") and left
+    /// tables behind for the next run to trip on.
+    static EMULATOR: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
     #[tokio::test]
     async fn live_interleaved_relations() {
         let Ok(spec) = std::env::var("STROKE_TEST_SPANNER") else { return };
+        let _one_at_a_time = EMULATOR.lock().await;
         let mut parts = spec.splitn(4, '/');
         let (host, project, instance, database) =
             (parts.next().unwrap(), parts.next().unwrap(), parts.next().unwrap(), parts.next().unwrap());
@@ -1251,6 +1257,7 @@ mod tests {
     #[tokio::test]
     async fn live_emulator_round_trip() {
         let Ok(spec) = std::env::var("STROKE_TEST_SPANNER") else { return };
+        let _one_at_a_time = EMULATOR.lock().await;
         let mut parts = spec.splitn(4, '/');
         let (host, project, instance, database) =
             (parts.next().unwrap(), parts.next().unwrap(), parts.next().unwrap(), parts.next().unwrap());
@@ -1318,6 +1325,7 @@ mod tests {
     #[tokio::test]
     async fn live_emulator_postgres_dialect() {
         let Ok(spec) = std::env::var("STROKE_TEST_SPANNER_PG") else { return };
+        let _one_at_a_time = EMULATOR.lock().await;
         let mut parts = spec.splitn(4, '/');
         let (host, project, instance, database) =
             (parts.next().unwrap(), parts.next().unwrap(), parts.next().unwrap(), parts.next().unwrap());
