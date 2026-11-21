@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.2.5] - 2026-11-21
+
+### Changes
+- Add Neo4j (beta) (#328)
+
+
 ## [3.2.4] - 2026-11-21
 
 ### Changes
