@@ -1395,7 +1395,7 @@ fn build_where(info: &OdbcInfo, cols: &[ColumnStructureRow], search: Option<&str
 }
 
 /// The page query for a paging style, and how many leading rows to skip here.
-fn page_sql(paging: Paging, from: &str, order: &str, limit: i64, offset: i64) -> (String, i64) {
+pub(crate) fn page_sql(paging: Paging, from: &str, order: &str, limit: i64, offset: i64) -> (String, i64) {
     match paging {
         Paging::LimitOffset => (format!("SELECT * FROM {from}{order} LIMIT {limit} OFFSET {offset}"), 0),
         Paging::OffsetLimit => (format!("SELECT * FROM {from}{order} OFFSET {offset} LIMIT {limit}"), 0),

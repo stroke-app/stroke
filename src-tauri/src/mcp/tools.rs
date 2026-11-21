@@ -161,6 +161,64 @@ fn safe_ident(s: &str) -> bool {
 }
 
 /// `SELECT * … LIMIT n` for one table, quoted for the engine.
+/// Engines whose default schema is not `public`: an agent that leaves the
+/// schema out (or says `public` out of habit) gets the connection's own.
+fn moves_default_schema(conn: &ActiveConnection) -> bool {
+    matches!(
+        conn,
+        ActiveConnection::Spanner(_)
+            | ActiveConnection::Bigquery(_)
+            | ActiveConnection::Snowflake(_)
+            | ActiveConnection::Odbc(_)
+            | ActiveConnection::Mssql(_)
+            | ActiveConnection::Oracle(_)
+            | ActiveConnection::Doc(_)
+    )
+}
+
+/// The schema a tool works in. Every tool used to default to `public`, so on
+/// Spanner, BigQuery, Snowflake, ODBC, SQL Server and Oracle an agent that
+/// left it out listed an empty schema and was told its tables had no columns.
+/// A name given in another case (Snowflake's `PUBLIC`) becomes the real one.
+async fn resolve_schema(conn: &ActiveConnection, raw: Option<&str>) -> String {
+    let asked = raw.map(str::trim).filter(|s| !s.is_empty());
+    if !moves_default_schema(conn) {
+        return asked.unwrap_or("public").to_string();
+    }
+    let schemas = crate::db::schemas_of(conn).await.unwrap_or_default();
+    if let Some(a) = asked {
+        if let Some(real) = schemas.iter().find(|s| s.eq_ignore_ascii_case(a)) {
+            return real.clone();
+        }
+        // `public` is the Postgres habit; anything else is the agent's choice.
+        if !a.eq_ignore_ascii_case("public") || schemas.is_empty() {
+            return a.to_string();
+        }
+    }
+    if matches!(conn, ActiveConnection::Mssql(_)) && schemas.iter().any(|s| s == "dbo") {
+        return "dbo".to_string();
+    }
+    schemas.into_iter().next().unwrap_or_default()
+}
+
+/// A table's name as this engine writes it in SQL, schema included.
+fn table_ref_for(conn: &ActiveConnection, schema: &str, table: &str) -> Option<String> {
+    if let Some(e) = crate::db::backup::SqlEngine::of(conn) {
+        return Some(e.table_ref(schema, table));
+    }
+    let dq = |s: &str| format!("\"{}\"", s.replace('"', "\"\""));
+    Some(match conn {
+        ActiveConnection::Postgres(_) | ActiveConnection::Clickhouse(_) => format!("{}.{}", dq(schema), dq(table)),
+        ActiveConnection::Mysql(_) if schema.is_empty() => format!("`{table}`"),
+        ActiveConnection::Mysql(_) => format!("`{schema}`.`{table}`"),
+        ActiveConnection::Mssql(_) => format!("[{schema}].[{table}]"),
+        ActiveConnection::Oracle(_) if schema.is_empty() => dq(table),
+        ActiveConnection::Oracle(_) => format!("{}.{}", dq(schema), dq(table)),
+        ActiveConnection::Sqlite(_) | ActiveConnection::D1(_) | ActiveConnection::LibSql(_) | ActiveConnection::Duckdb(_) => dq(table),
+        _ => return None,
+    })
+}
+
 fn sample_sql(conn: &ActiveConnection, schema: &str, table: &str, n: usize) -> Result<String, String> {
     if !safe_ident(table) || (!schema.is_empty() && !safe_ident(schema)) {
         return Err("Invalid table or schema name.".to_string());
@@ -176,6 +234,25 @@ fn sample_sql(conn: &ActiveConnection, schema: &str, table: &str, n: usize) -> R
         ActiveConnection::Sqlite(_) | ActiveConnection::D1(_) | ActiveConnection::LibSql(_) | ActiveConnection::Duckdb(_) => {
             format!("SELECT * FROM {} LIMIT {n}", dq(table))
         }
+        ActiveConnection::Spanner(_) | ActiveConnection::Bigquery(_) | ActiveConnection::Snowflake(_) => {
+            format!("SELECT * FROM {} LIMIT {n}", table_ref_for(conn, schema, table).unwrap_or_default())
+        }
+        ActiveConnection::Odbc(h) => {
+            let from = crate::db::odbc::table_ref(&h.info, schema, table);
+            crate::db::odbc::page_sql(h.info.paging, &from, "", n as i64, 0).0
+        }
+        // The document and graph engines, each in its own language (the
+        // query console's, which execute_sql runs).
+        ActiveConnection::Doc(d) => match d.driver() {
+            "neo4j" => format!("MATCH (n:`{table}`) RETURN n LIMIT {n}"),
+            "influxdb" => format!("SELECT * FROM \"{table}\" ORDER BY time DESC LIMIT {n}"),
+            "mongodb" => format!("db.getCollection(\"{table}\").find({{}}).limit({n})"),
+            "couchdb" => format!("{table}.find({{}}, {{\"limit\": {n}}})"),
+            "elasticsearch" | "opensearch" => format!("GET {table}/_search\n{{\"size\": {n}}}"),
+            "firestore" => format!("{table}.limit({n})"),
+            "cassandra" => format!("SELECT * FROM {}.{} LIMIT {n}", dq(schema), dq(table)),
+            other => return Err(format!("sample_rows is not available for {other}. Use execute_sql.")),
+        },
         _ => return Err("sample_rows is for SQL engines. Use execute_sql with this engine's own query language.".to_string()),
     })
 }
@@ -301,25 +378,25 @@ pub async fn call_tool(
             execute_sql(conn, sql, max_rows, read_only).await
         }
         "list_tables" => {
-            let schema = args["schema"].as_str().unwrap_or("public");
-            list_tables(conn, schema).await
+            let schema = resolve_schema(conn, args["schema"].as_str()).await;
+            list_tables(conn, &schema).await
         }
         "describe_table" => {
             let table = args["table"].as_str().ok_or("Missing table argument")?;
-            let schema = args["schema"].as_str().unwrap_or("public");
-            describe_table(conn, schema, table).await
+            let schema = resolve_schema(conn, args["schema"].as_str()).await;
+            describe_table(conn, &schema, table).await
         }
         "check_migrations" => {
-            let schema = args["schema"].as_str().unwrap_or("public");
-            check_migrations(conn, schema).await
+            let schema = resolve_schema(conn, args["schema"].as_str()).await;
+            check_migrations(conn, &schema).await
         }
         "explain_query" => {
             let sql = args["sql"].as_str().ok_or("Missing sql argument")?;
             explain_query(conn, sql).await
         }
         "get_database_stats" => {
-            let schema = args["schema"].as_str().unwrap_or("public");
-            get_database_stats(conn, schema).await
+            let schema = resolve_schema(conn, args["schema"].as_str()).await;
+            get_database_stats(conn, &schema).await
         }
         "export_query" => {
             let sql = args["sql"].as_str().ok_or("Missing sql argument")?;
@@ -337,7 +414,12 @@ pub async fn call_tool(
         }
         "sample_rows" => {
             let table = args["table"].as_str().ok_or("Missing table argument")?;
-            let schema = args["schema"].as_str().unwrap_or(if matches!(conn, ActiveConnection::Mysql(_) | ActiveConnection::Clickhouse(_) | ActiveConnection::Oracle(_)) { "" } else { "public" });
+            let resolved = resolve_schema(conn, args["schema"].as_str()).await;
+            let schema = if moves_default_schema(conn) {
+                resolved.as_str()
+            } else {
+                args["schema"].as_str().unwrap_or(if matches!(conn, ActiveConnection::Mysql(_) | ActiveConnection::Clickhouse(_)) { "" } else { "public" })
+            };
             let schema = if schema.is_empty() {
                 match conn {
                     ActiveConnection::Mssql(_) => "dbo",
@@ -1027,11 +1109,32 @@ async fn describe_table(
                 "note": "DynamoDB is schemaless: only key attributes are declared. Query with PartiQL.",
             }).to_string())
         }
-        ActiveConnection::Doc(d) => Ok(json!({
-            "table": table,
-            "engine": d.driver(),
-            "note": "Schemaless or wide-column: inspect documents with the query tool instead of a column list.",
-        }).to_string()),
+        ActiveConnection::Doc(d) => {
+            use crate::db::docdb::DocConn;
+            match d {
+                // A label's property keys, from a sample of its nodes.
+                DocConn::Neo4j(c) => {
+                    let info = crate::db::neo4j::describe(c, table).await?;
+                    Ok(json!({"table":table,"engine":"neo4j","node_count":info["count"],"properties":info["keys"],"note":"A node label: properties seen on up to 200 of its nodes. Query with Cypher, e.g. MATCH (n:Label) RETURN n LIMIT 25"}).to_string())
+                }
+                // A measurement's tags and fields.
+                DocConn::Influx(c) => {
+                    let info = crate::db::influx::describe(c, table).await?;
+                    Ok(json!({"table":table,"engine":"influxdb","tags":info["tags"],"fields":info["fields"],"note":"Read-only. Tags are indexed strings, fields hold the values, `time` is the timestamp. Always bound time and add LIMIT."}).to_string())
+                }
+                // Typed columns where the engine keeps them (CQL, index mappings).
+                DocConn::Cassandra(_) | DocConn::Elastic(_) => {
+                    let cols = crate::db::docdb::columns_in(d, schema, table).await?;
+                    let columns: Vec<_> = cols.iter().map(|c| json!({ "name": c.name, "type": c.data_type, "nullable": c.is_nullable, "primary_key": c.is_primary_key })).collect();
+                    Ok(json!({"table":table,"engine":d.driver(),"columns":columns}).to_string())
+                }
+                _ => Ok(json!({
+                    "table": table,
+                    "engine": d.driver(),
+                    "note": "Schemaless: inspect documents with sample_rows instead of a column list.",
+                }).to_string()),
+            }
+        }
         ActiveConnection::Duckdb(h) => {
             let cols = crate::db::duckdb::get_column_structure(h, table).await?;
             let columns: Vec<_> = cols.iter().map(|c| json!({
@@ -1308,20 +1411,52 @@ async fn check_migrations(conn: &ActiveConnection, schema: &str) -> Result<Strin
         ActiveConnection::Postgres(pool) => check_migrations_pg(pool, schema).await,
         ActiveConnection::Sqlite(pool) => check_migrations_sqlite(pool).await,
         ActiveConnection::D1(cfg) => check_migrations_d1(cfg).await,
-        ActiveConnection::LibSql(_) => Ok(json!({"migrations":[],"note":"Migration detection not yet supported for LibSQL"}).to_string()),
+        ActiveConnection::LibSql(_) => check_migrations_generic(conn, schema).await,
         ActiveConnection::Mysql(pool) => check_migrations_mysql(pool, schema).await,
-        ActiveConnection::Clickhouse(_) => Ok(json!({"migrations":[],"note":"Migration detection not supported for ClickHouse"}).to_string()),
+        ActiveConnection::Clickhouse(_) => check_migrations_generic(conn, schema).await,
         ActiveConnection::Posthog(_) => Ok(json!({"migrations":[],"note":"Migration detection not supported for PostHog"}).to_string()),
-        ActiveConnection::Spanner(_) => Ok(json!({"migrations":[],"note":"Migration detection not supported for Spanner"}).to_string()),
-        ActiveConnection::Bigquery(_) => Ok(json!({"migrations":[],"note":"Migration detection not supported for BigQuery"}).to_string()),
-        ActiveConnection::Snowflake(_) => Ok(json!({"migrations":[],"note":"Migration detection not supported for Snowflake"}).to_string()),
-        ActiveConnection::Odbc(_) => Ok(json!({"migrations":[],"note":"Migration detection not supported for ODBC"}).to_string()),
+        ActiveConnection::Spanner(_) => check_migrations_generic(conn, schema).await,
+        ActiveConnection::Bigquery(_) => check_migrations_generic(conn, schema).await,
+        ActiveConnection::Snowflake(_) => check_migrations_generic(conn, schema).await,
+        ActiveConnection::Odbc(_) => check_migrations_generic(conn, schema).await,
         ActiveConnection::Redis(_) => Ok(json!({"migrations":[],"note":"Migration detection not supported for Redis"}).to_string()),
-        ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => Ok(json!({"migrations":[],"note":"Migration detection not supported for DynamoDB"}).to_string()),
-        ActiveConnection::Duckdb(_) => Ok(json!({"migrations":[],"note":"Migration detection not supported for DuckDB"}).to_string()),
-        ActiveConnection::Mssql(_) => Ok(json!({"migrations":[],"note":"Migration detection not supported for MS SQL Server"}).to_string()),
-        ActiveConnection::Oracle(_) => Ok(json!({"migrations":[],"note":"Migration detection not supported for Oracle"}).to_string()),
+        ActiveConnection::Dynamodb(_) => Ok(json!({"migrations":[],"note":"Migration detection not supported for DynamoDB"}).to_string()),
+        ActiveConnection::Doc(d) => Ok(json!({"migrations":[],"note":format!("Migration detection not supported for {}", d.driver())}).to_string()),
+        ActiveConnection::Duckdb(_) => check_migrations_generic(conn, schema).await,
+        ActiveConnection::Mssql(_) => check_migrations_generic(conn, schema).await,
+        ActiveConnection::Oracle(_) => check_migrations_generic(conn, schema).await,
     }
+}
+
+/// The migration tables of the common tools, found by name in the schema's
+/// table list (any case: Snowflake folds to upper), with their row count and
+/// a few rows. For the engines without a dedicated check.
+async fn check_migrations_generic(conn: &ActiveConnection, schema: &str) -> Result<String, String> {
+    let listed: Value = serde_json::from_str(&list_tables(conn, schema).await?).unwrap_or(Value::Null);
+    let existing: Vec<String> = listed["tables"].as_array().into_iter().flatten().filter_map(|t| t.as_str().map(String::from)).collect();
+    let mut found = Vec::new();
+    let mut not_found = Vec::new();
+    for (tbl, framework, _, _) in MIGRATION_TABLES {
+        let Some(real) = existing.iter().find(|t| t.eq_ignore_ascii_case(tbl)) else {
+            not_found.push(json!({ "table": tbl, "framework": framework, "found": false }));
+            continue;
+        };
+        let count = match table_ref_for(conn, schema, real) {
+            Some(r) => execute_sql(conn, &format!("SELECT COUNT(*) AS n FROM {r}"), 1, true)
+                .await
+                .ok()
+                .and_then(|out| serde_json::from_str::<Value>(&out).ok())
+                .and_then(|v| v["rows"][0][0].as_i64().or_else(|| v["rows"][0][0].as_str()?.parse().ok())),
+            None => None,
+        };
+        let recent = match sample_sql(conn, schema, real, 5) {
+            Ok(q) => execute_sql(conn, &q, 5, true).await.ok().and_then(|out| serde_json::from_str::<Value>(&out).ok()).unwrap_or(Value::Null),
+            Err(_) => Value::Null,
+        };
+        found.push(json!({ "table": real, "framework": framework, "found": true, "total_migrations": count, "sample": recent }));
+    }
+    let all: Vec<Value> = found.into_iter().chain(not_found).collect();
+    Ok(json!({ "schema": schema, "migration_tables": all }).to_string())
 }
 
 async fn check_migrations_mysql(pool: &sqlx::MySqlPool, schema: &str) -> Result<String, String> {
@@ -1527,7 +1662,23 @@ async fn explain_query(conn: &ActiveConnection, sql: &str) -> Result<String, Str
             Ok(json!({"plan":r.rows,"database":"clickhouse"}).to_string())
         }
         ActiveConnection::Redis(_) => Ok(json!({"plan":[],"database":"redis","note":"EXPLAIN is not supported on Redis"}).to_string()),
-        ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => Ok(json!({"plan":[],"database":"dynamodb","note":"EXPLAIN is not supported on DynamoDB"}).to_string()),
+        ActiveConnection::Dynamodb(_) => Ok(json!({"plan":[],"database":"dynamodb","note":"EXPLAIN is not supported on DynamoDB"}).to_string()),
+        // The same plans the app's Explain shows, where the engine has one.
+        ActiveConnection::Doc(d) => {
+            use crate::db::docdb::DocConn;
+            let plan = match d {
+                DocConn::Neo4j(c) => crate::db::neo4j::explain_plan(c, sql).await?,
+                DocConn::Mongo(m) => crate::db::mongo::explain_plan(m, sql).await?,
+                DocConn::Couch(c) => crate::db::couchdb::explain_plan(c, sql).await?,
+                DocConn::Elastic(c) => crate::db::elastic::explain_plan(c, sql).await?,
+                DocConn::Influx(c) => {
+                    let r = crate::db::influx::query(c, &format!("EXPLAIN {}", sql.trim().trim_end_matches(';'))).await?;
+                    json!(r.rows)
+                }
+                other => return Ok(json!({"plan":[],"database":other.driver(),"note":format!("{} has no query plan", other.driver())}).to_string()),
+            };
+            Ok(json!({"plan":plan,"database":d.driver()}).to_string())
+        }
         ActiveConnection::Posthog(_) => Ok(json!({"plan":[],"database":"posthog","note":"EXPLAIN is not available through PostHog's query API"}).to_string()),
         ActiveConnection::Spanner(h) => {
             let plan = crate::db::spanner::explain_plan(h, sql).await?;
@@ -1541,7 +1692,20 @@ async fn explain_query(conn: &ActiveConnection, sql: &str) -> Result<String, Str
             let plan = crate::db::snowflake::explain_plan(h, sql).await?;
             Ok(json!({"plan":plan,"database":"snowflake"}).to_string())
         }
-        ActiveConnection::Odbc(h) => Ok(json!({"plan":[],"database":"odbc","dbms":h.info.dbms,"note":"ODBC has no standard query plan; run the database's own EXPLAIN through execute_query"}).to_string()),
+        ActiveConnection::Odbc(h) => {
+            // ODBC has no plan API; the databases that answer a plain EXPLAIN do here.
+            let dbms = h.info.dbms.to_ascii_lowercase();
+            let explains = ["postgres", "mysql", "mariadb", "sqlite", "duckdb", "trino", "presto", "hive", "spark", "databricks", "vertica", "redshift", "exasol", "clickhouse", "teradata", "dremio"]
+                .iter()
+                .any(|k| dbms.contains(k));
+            if explains {
+                match crate::db::odbc::query(h, &format!("EXPLAIN {}", sql.trim().trim_end_matches(';'))).await {
+                    Ok(r) => return Ok(json!({"plan":r.rows,"columns":r.columns.iter().map(|c| &c.name).collect::<Vec<_>>(),"database":"odbc","dbms":h.info.dbms}).to_string()),
+                    Err(e) => return Ok(json!({"plan":[],"database":"odbc","dbms":h.info.dbms,"note":format!("EXPLAIN failed: {e}")}).to_string()),
+                }
+            }
+            Ok(json!({"plan":[],"database":"odbc","dbms":h.info.dbms,"note":"This database has no plain EXPLAIN over ODBC; use its own plan command through execute_sql"}).to_string())
+        }
         ActiveConnection::Duckdb(h) => {
             let r = crate::db::duckdb::execute_sql(h, &format!("EXPLAIN {sql}")).await?;
             Ok(json!({"plan":r.rows,"database":"duckdb"}).to_string())
@@ -1967,4 +2131,101 @@ fn pg_cell(row: &sqlx::postgres::PgRow, idx: usize) -> Value {
         }
     }
     Value::Null
+}
+
+#[cfg(test)]
+mod live_tools {
+    //! The agent tools on the newer engines, called the way an agent calls
+    //! them: no schema named. STROKE_TEST_TOOLS=1 with each engine's own
+    //! variable (see the engines' live tests).
+    use super::*;
+    use crate::db::connection::ActiveConnection;
+    use serde_json::json;
+
+    async fn tool(conn: &ActiveConnection, name: &str, args: Value) -> Value {
+        let out = call_tool(conn, name, &args, true).await.unwrap_or_else(|e| panic!("{name}: {e}"));
+        serde_json::from_str(&out).unwrap_or(json!({ "text": out }))
+    }
+
+    /// list_tables, describe_table on the first table, stats, sample_rows,
+    /// explain and check_migrations; returns problems instead of stopping.
+    async fn exercise(label: &str, conn: &ActiveConnection, explain_sql: impl Fn(&str) -> String) -> Vec<String> {
+        let mut bad = Vec::new();
+        let tables = tool(conn, "list_tables", json!({})).await;
+        let names: Vec<String> = tables["tables"].as_array().into_iter().flatten().filter_map(|t| t.as_str().map(String::from)).collect();
+        println!("{label} list_tables: {names:?}");
+        let Some(first) = names.iter().find(|n| !n.starts_with("stroke_odbc_")).cloned().or(names.first().cloned()) else {
+            return vec![format!("{label}: list_tables returned nothing")];
+        };
+        let d = tool(conn, "describe_table", json!({ "table": first })).await;
+        let cols = d["columns"].as_array().map(|c| c.len()).unwrap_or(0);
+        println!("{label} describe {first}: {cols} columns {}", d.to_string().chars().take(160).collect::<String>());
+        let shape = cols > 0 || d["properties"].as_array().is_some_and(|a| !a.is_empty()) || d["tags"].as_array().is_some_and(|a| !a.is_empty()) || d["fields"].as_array().is_some_and(|a| !a.is_empty());
+        if !shape {
+            bad.push(format!("{label}: describe_table({first}) has no columns"));
+        }
+        let st = tool(conn, "get_database_stats", json!({})).await;
+        println!("{label} stats: {st}");
+        if st["table_count"].as_u64().unwrap_or(0) == 0 {
+            bad.push(format!("{label}: stats table_count 0"));
+        }
+        match call_tool(conn, "sample_rows", &json!({ "table": first, "limit": 2 }), true).await {
+            Ok(s) => println!("{label} sample_rows: {}", s.chars().take(160).collect::<String>()),
+            Err(e) => bad.push(format!("{label}: sample_rows: {e}")),
+        }
+        match call_tool(conn, "explain_query", &json!({ "sql": explain_sql(&first) }), true).await {
+            Ok(s) => {
+                println!("{label} explain: {}", s.chars().take(160).collect::<String>());
+                let v: Value = serde_json::from_str(&s).unwrap_or(Value::Null);
+                if v["plan"].is_null() || v["plan"].as_array().is_some_and(|a| a.is_empty()) {
+                    bad.push(format!("{label}: explain returned no plan: {s}"));
+                }
+            }
+            Err(e) => bad.push(format!("{label}: explain: {e}")),
+        }
+        match call_tool(conn, "check_migrations", &json!({}), true).await {
+            Ok(s) => println!("{label} migrations: {}", s.chars().take(120).collect::<String>()),
+            Err(e) => bad.push(format!("{label}: check_migrations: {e}")),
+        }
+        bad
+    }
+
+    #[tokio::test]
+    async fn tools_on_every_engine() {
+        if std::env::var("STROKE_TEST_TOOLS").is_err() {
+            return;
+        }
+        let mut bad = Vec::new();
+        if let Ok(spec) = std::env::var("STROKE_TEST_SPANNER") {
+            let p: Vec<&str> = spec.splitn(4, '/').collect();
+            let cfg: crate::db::spanner::SpannerConfig = serde_json::from_value(json!({ "name": "t", "projectId": p[1], "instanceId": p[2], "databaseId": p[3], "auth": "emulator", "emulatorHost": p[0] })).unwrap();
+            let conn = ActiveConnection::Spanner(crate::db::spanner::connect(&cfg).await.unwrap());
+            bad.extend(exercise("spanner", &conn, |t| format!("SELECT * FROM `{t}`")).await);
+        }
+        if let Ok(spec) = std::env::var("STROKE_TEST_BIGQUERY") {
+            let p: Vec<&str> = spec.splitn(3, '/').collect();
+            let cfg: crate::db::bigquery::BigQueryConfig = serde_json::from_value(json!({ "name": "t", "projectId": p[1], "dataset": p[2], "auth": "emulator", "emulatorHost": p[0] })).unwrap();
+            let conn = ActiveConnection::Bigquery(crate::db::bigquery::connect(&cfg).await.unwrap());
+            let ds = p[2].to_string();
+            bad.extend(exercise("bigquery", &conn, move |t| format!("SELECT * FROM `{ds}.{t}`")).await);
+        }
+        if let Ok(cs) = std::env::var("STROKE_TEST_ODBC") {
+            let cfg: crate::db::odbc::OdbcConfig = serde_json::from_value(json!({ "name": "t", "connectionString": cs })).unwrap();
+            let conn = ActiveConnection::Odbc(crate::db::odbc::connect(&cfg).await.unwrap());
+            bad.extend(exercise("odbc", &conn, |t| format!("SELECT * FROM \"{t}\"")).await);
+        }
+        if let Ok(spec) = std::env::var("STROKE_TEST_NEO4J") {
+            let p: Vec<&str> = spec.splitn(3, '|').collect();
+            let cfg: crate::db::neo4j::Neo4jConfig = serde_json::from_value(json!({ "name": "t", "url": p[0], "user": p[1], "password": p[2] })).unwrap();
+            let conn = ActiveConnection::Doc(crate::db::docdb::DocConn::Neo4j(crate::db::neo4j::connect(&cfg).await.unwrap()));
+            bad.extend(exercise("neo4j", &conn, |t| format!("MATCH (n:`{t}`) RETURN n LIMIT 5")).await);
+        }
+        if let Ok(spec) = std::env::var("STROKE_TEST_INFLUX3") {
+            let p: Vec<&str> = spec.split('|').collect();
+            let cfg: crate::db::influx::InfluxConfig = serde_json::from_value(json!({ "name": "t", "url": p[0], "version": "3", "database": p[1] })).unwrap();
+            let conn = ActiveConnection::Doc(crate::db::docdb::DocConn::Influx(crate::db::influx::connect(&cfg).await.unwrap()));
+            bad.extend(exercise("influx3", &conn, |t| format!("SELECT * FROM \"{t}\"")).await);
+        }
+        assert!(bad.is_empty(), "\n{}", bad.join("\n"));
+    }
 }

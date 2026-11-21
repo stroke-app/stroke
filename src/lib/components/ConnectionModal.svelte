@@ -3731,6 +3731,14 @@
       data-connection-modal
       style={modalInset}
       class="fixed inset-x-0 z-50 flex bg-background text-foreground outline-none data-open:animate-in data-closed:animate-out data-open:fade-in-0 data-closed:fade-out-0 data-open:zoom-in-[0.98] data-closed:zoom-out-[0.98] ease-out duration-200"
+      onOpenAutoFocus={(e) => {
+        // Start in the connection filter. Left to the dialog, focus went to
+        // its first button, the rail's Hide toggle, and opened from the
+        // keyboard it drew a focus box around that icon in the header.
+        if (!savedSearchEl) return;
+        e.preventDefault();
+        savedSearchEl.focus();
+      }}
       onEscapeKeydown={(e) => {
         if (isDirty && !isBusy) {
           e.preventDefault();
@@ -3806,7 +3814,7 @@
               >
                 <Icon name="panel-left-close" class="size-4 shrink-0" />
               </button>
-              <h2 class="text-ui-sm font-medium text-foreground" data-tauri-drag-region>Connections</h2>
+              <h2 class="text-ui-sm font-medium leading-none text-foreground" data-tauri-drag-region>Connections</h2>
               <!-- The workspace row below already shows the count; here it only
                    appears while filtering, as matches. -->
               {#if savedQuery}
