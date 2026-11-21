@@ -602,6 +602,21 @@
   let resultTableRef = $state(null)
   const spatialCols = $derived(currentDisplay.columns.length && foundRows.length ? spatialColumns(currentDisplay.columns, foundRows) : [])
   const showMap = $derived(mapOpen && spatialCols.length > 0 && outputView === 'table')
+  // A windowed result holds only the rows near the viewport, so its map showed
+  // 200 of a 500-row result. Up to MAP_ALL_ROWS the map reads every row from
+  // the store; past that it keeps the loaded rows and says so. The sparse array
+  // is replaced when the result grows or is sorted, so it keys the read.
+  const MAP_ALL_ROWS = 50_000
+  /** @type {{ of: any[], rows: any[][] } | null} */
+  let mapAll = $state.raw(null)
+  $effect(() => {
+    const of = currentDisplay.rows
+    if (!showMap || !windowed || of.length > MAP_ALL_ROWS || mapAll?.of === of) return
+    let live = true
+    onloadallrows().then((rows) => { if (live) mapAll = { of, rows } }, () => {})
+    return () => { live = false }
+  })
+  const mapRows = $derived(windowed && mapAll?.of === currentDisplay.rows ? mapAll.rows : foundRows)
   /** @param {boolean} open */
   function setMapOpen(open) {
     mapOpen = open
@@ -1802,7 +1817,10 @@
               />
             {:else}
               <div class="flex h-full min-h-0 min-w-0">
-              <div class="min-h-0 min-w-0 flex-1">
+              <!-- A flex column: the grid's root is `flex-1`, which a block
+                   parent ignores, so the grid grew to all its rows (14,086px
+                   for 500) and neither the wheel nor a map click could scroll it. -->
+              <div class="flex min-h-0 min-w-0 flex-1 flex-col">
               <DataTable
                 bind:this={resultTableRef}
                 columns={currentDisplay.columns}
@@ -1831,12 +1849,12 @@
                 <div class="min-h-0 shrink-0" style="width:{mapWidth}px; max-width:70%">
                   <ResultMap
                     columns={currentDisplay.columns}
-                    rows={foundRows}
+                    rows={mapRows}
                     spatial={spatialCols}
                     {selected}
                     onselect={selectFromMap}
                     onclose={() => setMapOpen(false)}
-                    partial={windowed && foundRows.filter(Boolean).length < foundRows.length}
+                    partial={windowed && mapRows.filter(Boolean).length < mapRows.length}
                   />
                 </div>
               {/if}
