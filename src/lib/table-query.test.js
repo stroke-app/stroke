@@ -355,3 +355,14 @@ describe('pageWithInsertedRow', () => {
     expect(pageWithInsertedRow(page, [4], 50, 50)).toEqual([[4], [1], [2], [3]])
   })
 })
+
+describe('buildSelectSql backslashes', () => {
+  it('doubles them for MySQL equals, and twice over in a LIKE', () => {
+    const eq = buildSelectSql({ schema: 'shop', table: 't', engine: 'mysql', filters: [{ id: 'a', column: 'p', op: 'eq', value: 'C:\\new' }] })
+    expect(eq).toContain("`p` = 'C:\\\\new'")
+    const like = buildSelectSql({ schema: 'shop', table: 't', engine: 'mysql', filters: [{ id: 'a', column: 'p', op: 'contains', value: 'C:\\new' }] })
+    expect(like).toContain("LIKE '%C:\\\\\\\\new%'")
+    const pg = buildSelectSql({ schema: 'public', table: 't', engine: 'postgres', filters: [{ id: 'a', column: 'p', op: 'eq', value: 'C:\\new' }] })
+    expect(pg).toContain(`"p" = 'C:\\new'`)
+  })
+})
