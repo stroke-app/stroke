@@ -141,7 +141,7 @@
   /** @param {any} d */
   const arrow = (d) => (d === 1 ? '↑' : d === -1 ? '↓' : String(d))
   const listId = $derived(`idx-fields-${coll.replace(/\W/g, '_')}`)
-  const field = 'field-surface h-7 min-w-0 px-2.5 font-mono text-ui-xs text-foreground shadow-none outline-none placeholder:text-muted-foreground/60'
+  const field = 'field-surface h-7 min-w-0 px-2.5 font-mono text-ui-xs text-foreground shadow-none outline-none placeholder:text-muted-foreground'
 </script>
 
 <div class="flex min-h-0 flex-1 flex-col">

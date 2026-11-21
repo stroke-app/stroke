@@ -323,7 +323,7 @@
           <span class={cn('size-1.5 shrink-0 rounded-full', sevTone[ins.severity])}></span>
           <span class="shrink-0 text-ui-xs text-foreground">{ins.title}</span>
           <span class="min-w-0 flex-1 truncate text-ui-xs text-muted-foreground">{ins.detail}</span>
-          {#if ins.nodeId}<Icon name="chevron-right" class="size-3.5 shrink-0 text-muted-foreground/60" />{/if}
+          {#if ins.nodeId}<Icon name="chevron-right" class="size-3.5 shrink-0 text-muted-foreground" />{/if}
         </button>
       {/each}
       {#if insights.length > 3}

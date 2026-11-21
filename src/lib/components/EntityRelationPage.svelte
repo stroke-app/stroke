@@ -2616,7 +2616,7 @@
       <div class="app-scroll min-h-0 flex-1 overflow-y-auto pb-2">
         <div class="mx-1.5 mt-2 mb-0.5 flex items-center gap-2 px-1.5 py-1">
           <h4 class="text-ui-xs text-muted-foreground">Columns</h4>
-          <span class="text-ui-xs tabular-nums text-muted-foreground/70">{selMeta.columns.length}</span>
+          <span class="text-ui-xs tabular-nums text-muted-foreground">{selMeta.columns.length}</span>
           <span class="ml-1 h-px flex-1 bg-border/50" aria-hidden="true"></span>
         </div>
         {#each selMeta.columns as col (col.name)}
@@ -2627,14 +2627,14 @@
             {:else if isFk}<Link class="size-3.5 shrink-0" style="color:{ink.fk}" />
             {:else}<span class="size-1 shrink-0 translate-x-1.5 rounded-full bg-muted-foreground/40"></span><span class="w-1.5 shrink-0"></span>{/if}
             <span class="min-w-0 flex-1 truncate font-mono text-ui-xs {isPk ? 'font-medium text-foreground' : 'text-foreground/85'}">{col.name}</span>
-            <span class="shrink-0 truncate text-ui-2xs text-muted-foreground/80">{col.dataType}</span>
+            <span class="shrink-0 truncate text-ui-2xs text-muted-foreground">{col.dataType}</span>
           </div>
         {/each}
 
         {#if selFks.length > 0}
           <div class="mx-1.5 mt-2 mb-0.5 flex items-center gap-2 px-1.5 py-1">
           <h4 class="text-ui-xs text-muted-foreground">References</h4>
-          <span class="text-ui-xs tabular-nums text-muted-foreground/70">{selFks.length}</span>
+          <span class="text-ui-xs tabular-nums text-muted-foreground">{selFks.length}</span>
           <span class="ml-1 h-px flex-1 bg-border/50" aria-hidden="true"></span>
         </div>
           {#each selFks as fk (fk.name)}
@@ -2655,7 +2655,7 @@
         {#if refBy.length > 0}
           <div class="mx-1.5 mt-2 mb-0.5 flex items-center gap-2 px-1.5 py-1">
           <h4 class="text-ui-xs text-muted-foreground">Referenced by</h4>
-          <span class="text-ui-xs tabular-nums text-muted-foreground/70">{refBy.length}</span>
+          <span class="text-ui-xs tabular-nums text-muted-foreground">{refBy.length}</span>
           <span class="ml-1 h-px flex-1 bg-border/50" aria-hidden="true"></span>
         </div>
           {#each refBy as t (t.name)}

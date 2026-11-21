@@ -57,7 +57,7 @@
     <!-- Header -->
     <div class="flex shrink-0 items-center justify-between border-b border-border/50 px-4 py-2.5">
       <span class="font-mono text-ui-sm font-medium text-foreground">{title}</span>
-      <button
+      <button aria-label="Close" title="Close"
         type="button"
         class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         onclick={onclose}

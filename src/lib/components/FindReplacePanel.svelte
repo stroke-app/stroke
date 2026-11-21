@@ -416,7 +416,7 @@
           title={`Row ${m.rowIdx + 1} · ${m.old} → ${m.value}`}
         >
           <span class="flex min-w-0 items-center gap-1.5">
-            <span class="shrink-0 font-mono text-ui-3xs tabular-nums text-muted-foreground/60">{m.rowIdx + 1}</span>
+            <span class="shrink-0 font-mono text-ui-3xs tabular-nums text-muted-foreground">{m.rowIdx + 1}</span>
             {#if showMatchColumn}
               <span class="shrink-0 truncate font-mono text-ui-3xs text-primary/80">{colNameAt(m.colIdx)}</span>
             {/if}

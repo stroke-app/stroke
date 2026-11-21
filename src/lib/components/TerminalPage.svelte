@@ -1492,7 +1492,7 @@
     {#if target}
       <span class="h-3.5 w-px shrink-0 bg-border/70" aria-hidden="true"></span>
       <span class="min-w-0 truncate font-mono text-ui-2xs" title={target}>
-        <span class="text-muted-foreground/60">{targetParts.lead}</span><span class="text-muted-foreground">{targetParts.db}</span>
+        <span class="text-muted-foreground">{targetParts.lead}</span><span class="text-muted-foreground">{targetParts.db}</span>
       </span>
     {/if}
     <div class="flex-1"></div>

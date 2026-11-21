@@ -159,13 +159,13 @@
             <Icon
               class={cn(
                 "size-3.5 shrink-0 transition-colors",
-                active ? "text-foreground/80" : "text-muted-foreground group-hover:text-muted-foreground",
+                active ? "text-foreground/80" : "text-muted-foreground",
               )}
             />
             {group.label}
             <span class={cn(
-              "ml-auto text-ui-2xs tabular-nums text-muted-foreground/70",
-              active ? "text-muted-foreground" : "text-muted-foreground group-hover:text-muted-foreground",
+              "ml-auto text-ui-2xs tabular-nums text-muted-foreground",
+              active ? "text-muted-foreground" : "text-muted-foreground",
             )}>
               {group.shortcuts.length}
             </span>

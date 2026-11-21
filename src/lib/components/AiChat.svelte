@@ -4675,7 +4675,7 @@
                   {/if}
                   <span class="min-w-0 truncate text-ui-sm leading-snug">{displayTitle(conv)}</span>
                 </span>
-                <span class={cn("shrink-0 self-end pb-px font-mono text-ui-2xs tabular-nums text-muted-foreground/80", !selecting && "group-hover/conv:invisible")}>{relativeTime(conv.updatedAt)}</span>
+                <span class={cn("shrink-0 self-end pb-px font-mono text-ui-2xs tabular-nums text-muted-foreground", !selecting && "group-hover/conv:invisible")}>{relativeTime(conv.updatedAt)}</span>
               </button>
               {#if !selecting}
               <div
@@ -6574,7 +6574,7 @@
                       <p class="text-ui-xs font-medium text-foreground">{b.name}</p>
                       <p class="truncate text-ui-2xs text-muted-foreground">{b.desc}</p>
                     </div>
-                    <span class="mt-0.5 shrink-0 text-ui-3xs text-muted-foreground/80" title="Loads when a question is about {b.when}">auto</span>
+                    <span class="mt-0.5 shrink-0 text-ui-3xs text-muted-foreground" title="Loads when a question is about {b.when}">auto</span>
                   </li>
                 {/each}
               </ul>

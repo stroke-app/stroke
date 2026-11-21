@@ -657,7 +657,7 @@
                     {#if busy === item.key}
                       <Icon name="loader-2" class="size-3 shrink-0 animate-spin text-muted-foreground" />
                     {:else if item.right}
-                      <span class="max-w-[40%] shrink-0 truncate text-right font-mono text-ui-2xs tabular-nums text-muted-foreground/80">{item.right}</span>
+                      <span class="max-w-[40%] shrink-0 truncate text-right font-mono text-ui-2xs tabular-nums text-muted-foreground">{item.right}</span>
                     {/if}
                   </div>
                 {/if}

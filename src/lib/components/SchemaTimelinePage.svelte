@@ -735,7 +735,7 @@
       <div class="flex shrink-0 items-center gap-2.5 px-5 pt-5 pb-4">
         <Camera class="size-4 shrink-0 text-foreground/40" />
         <p class="flex-1 text-ui-sm font-semibold text-foreground/85">New snapshot</p>
-        <button
+        <button aria-label="Close" title="Close"
           onclick={() => { captureOpen = false }}
           class="rounded p-1 text-muted-foreground hover:text-foreground"
         >
@@ -1046,8 +1046,8 @@
               {@const parts = selectedDdlDiff?.words.get(line)}
               {@const tone = line.type === 'add' ? 'success' : line.type === 'remove' ? 'destructive' : ''}
               <tr class={cn(tone === 'success' && 'bg-success/[0.07]', tone === 'destructive' && 'bg-destructive/[0.07]')}>
-                <td class={cn('w-11 select-none py-0 pr-2 pl-3 text-right text-ui-3xs tabular-nums text-muted-foreground/60', tone && 'shadow-[inset_2px_0_0_var(--accent-bar)]')} style={tone ? `--accent-bar: var(--${tone})` : ''}>{line.lineA ?? ''}</td>
-                <td class="w-10 select-none py-0 pr-2 text-right text-ui-3xs tabular-nums text-muted-foreground/60">{line.lineB ?? ''}</td>
+                <td class={cn('w-11 select-none py-0 pr-2 pl-3 text-right text-ui-3xs tabular-nums text-muted-foreground', tone && 'shadow-[inset_2px_0_0_var(--accent-bar)]')} style={tone ? `--accent-bar: var(--${tone})` : ''}>{line.lineA ?? ''}</td>
+                <td class="w-10 select-none py-0 pr-2 text-right text-ui-3xs tabular-nums text-muted-foreground">{line.lineB ?? ''}</td>
                 <td class={cn('w-5 select-none text-center', tone === 'success' ? 'text-success' : tone === 'destructive' ? 'text-destructive' : 'text-transparent')}>{line.type === 'add' ? '+' : line.type === 'remove' ? '−' : ' '}</td>
                 <td class={cn('py-0 pr-4 pl-1', tone ? 'text-foreground' : 'text-muted-foreground')}>
                   <span class="whitespace-pre">{#if parts}{#each parts as p, k (k)}{#if p.changed}<mark class={cn('rounded-sm px-px text-inherit', tone === 'success' ? 'bg-success/25' : 'bg-destructive/25')}>{p.text}</mark>{:else}{p.text}{/if}{/each}{:else}{line.content}{/if}</span>

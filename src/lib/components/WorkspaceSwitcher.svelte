@@ -68,7 +68,7 @@
     />
     {#if !compact}<span class="min-w-0 flex-1 truncate text-ui-sm font-medium text-foreground">{active?.name}</span>{/if}
     {#if !compact}<span class="shrink-0 font-mono text-ui-2xs tabular-nums text-muted-foreground" aria-hidden="true">{count}</span>{/if}
-    {#if !compact}<ChevronsUpDown class="size-3.5 shrink-0 text-muted-foreground/70 group-hover:text-muted-foreground" />{/if}
+    {#if !compact}<ChevronsUpDown class="size-3.5 shrink-0 text-muted-foreground" />{/if}
   </DropdownMenu.Trigger>
   <DropdownMenu.Content align="start" class="min-w-60">
     {#each $workspaces as w (w.id)}

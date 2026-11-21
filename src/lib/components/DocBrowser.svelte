@@ -842,7 +842,7 @@ GET products/_search
             disabled={!info}
             onfocus={() => (filterFocused = true)}
             onblur={() => setTimeout(() => (filterFocused = false), 120)}
-            class="no-field-frame no-focus-ring h-full min-w-0 flex-1 border-0 bg-transparent font-mono text-ui-xs text-foreground shadow-none outline-none placeholder:text-muted-foreground/50"
+            class="no-field-frame no-focus-ring h-full min-w-0 flex-1 border-0 bg-transparent font-mono text-ui-xs text-foreground shadow-none outline-none placeholder:text-muted-foreground"
           />
           {#if queried}
             <button type="button" class={cn(iconBtn, 'size-6')} onclick={reset} title="Clear the query" aria-label="Clear the query"><X class="size-3.5 shrink-0" /></button>
@@ -873,9 +873,9 @@ GET products/_search
               <label class="field-surface flex h-8 min-w-56 flex-1 items-center gap-2 pl-3 pr-1 shadow-none transition-[border-color] focus-within:border-ring">
                 <span class="w-12 shrink-0 text-ui-2xs text-muted-foreground">{o.label}</span>
                 {#if o.key === 'sort'}
-                  <input bind:value={sort} placeholder={o.placeholder} spellcheck="false" autocomplete="off" aria-label={o.label} class="no-field-frame no-focus-ring h-full min-w-0 flex-1 border-0 bg-transparent font-mono text-ui-xs text-foreground shadow-none outline-none placeholder:text-muted-foreground/40" />
+                  <input bind:value={sort} placeholder={o.placeholder} spellcheck="false" autocomplete="off" aria-label={o.label} class="no-field-frame no-focus-ring h-full min-w-0 flex-1 border-0 bg-transparent font-mono text-ui-xs text-foreground shadow-none outline-none placeholder:text-muted-foreground" />
                 {:else}
-                  <input bind:value={projection} placeholder={o.placeholder} spellcheck="false" autocomplete="off" aria-label={o.label} class="no-field-frame no-focus-ring h-full min-w-0 flex-1 border-0 bg-transparent font-mono text-ui-xs text-foreground shadow-none outline-none placeholder:text-muted-foreground/40" />
+                  <input bind:value={projection} placeholder={o.placeholder} spellcheck="false" autocomplete="off" aria-label={o.label} class="no-field-frame no-focus-ring h-full min-w-0 flex-1 border-0 bg-transparent font-mono text-ui-xs text-foreground shadow-none outline-none placeholder:text-muted-foreground" />
                 {/if}
                 <button type="button" class={cn(iconBtn, 'size-6')} onclick={() => hideOption(o.key)} aria-label={`Remove ${o.label.toLowerCase()}`} title={`Remove ${o.label.toLowerCase()}`}><X class="size-3 shrink-0" /></button>
               </label>

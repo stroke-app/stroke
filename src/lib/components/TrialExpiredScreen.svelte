@@ -181,7 +181,7 @@
           <ShieldCheck class="size-3.5 shrink-0" />
           Connections and settings stay on this device.
         </p>
-        <button type="button" onclick={quit} class={cn('mt-2 inline-flex h-7 items-center rounded-md px-2 text-ui-2xs text-muted-foreground/80 transition-[color,scale] duration-[120ms] hover:text-foreground active:scale-[0.97]', waiting && 'pointer-events-none opacity-0')}>
+        <button type="button" onclick={quit} class={cn('mt-2 inline-flex h-7 items-center rounded-md px-2 text-ui-2xs text-muted-foreground transition-[color,scale] duration-[120ms] hover:text-foreground active:scale-[0.97]', waiting && 'pointer-events-none opacity-0')}>
           Quit Stroke
         </button>
       {/if}
@@ -189,7 +189,7 @@
   </div>
   <!-- The app (and its update dialog) is not rendered behind this screen, so
        updates are checked from here. -->
-  <div class="flex h-10 shrink-0 items-center justify-center text-ui-2xs text-muted-foreground/80">
+  <div class="flex h-10 shrink-0 items-center justify-center text-ui-2xs text-muted-foreground">
     <GateUpdateCheck />
   </div>
 </div>

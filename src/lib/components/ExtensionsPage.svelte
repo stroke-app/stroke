@@ -767,7 +767,7 @@
                       {#if it.country && it.country !== it.label}
                         <span class="shrink-0 truncate text-ui-3xs text-muted-foreground">{it.country}</span>
                       {/if}
-                      <span class="ml-1 shrink-0 font-mono text-ui-3xs text-muted-foreground/80">{timeZoneOffsetLabel(it.value)}</span>
+                      <span class="ml-1 shrink-0 font-mono text-ui-3xs text-muted-foreground">{timeZoneOffsetLabel(it.value)}</span>
                       {#if it.value === (c.timeZone ?? "local")}<Check class="size-3.5 shrink-0 text-primary" />{/if}
                     {/snippet}
                   </SearchableMenu>

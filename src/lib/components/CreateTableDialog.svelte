@@ -247,7 +247,7 @@
   const cell = 'no-field-frame h-7 w-full min-w-0 rounded-md bg-transparent px-2 font-mono text-ui-sm text-foreground outline-none placeholder:text-muted-foreground hover:bg-accent/60 focus:bg-accent'
   const flag = (/** @type {boolean} */ on) => cn(
     'inline-flex h-6 min-w-7 items-center justify-center rounded-md px-1 font-mono text-ui-2xs transition-colors',
-    on ? 'bg-primary/15 font-semibold text-primary' : 'text-muted-foreground/70 hover:bg-accent hover:text-foreground',
+    on ? 'bg-primary/15 font-semibold text-primary' : 'text-muted-foreground hover:bg-accent hover:text-foreground',
   )
   const iconBtn = 'hit-area inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-[color,background-color,scale] duration-[120ms] ease-[var(--ease-out)] active:scale-[0.97] hover:bg-accent hover:text-foreground'
   const sectionHead = 'flex items-center gap-2'

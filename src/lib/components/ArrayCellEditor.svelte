@@ -175,7 +175,7 @@
                 >
                   <GripVertical class="size-3.5 shrink-0" />
                 </button>
-                <span class="w-6 shrink-0 pr-1 text-right font-mono text-ui-3xs tabular-nums text-muted-foreground/60">{i}</span>
+                <span class="w-6 shrink-0 pr-1 text-right font-mono text-ui-3xs tabular-nums text-muted-foreground">{i}</span>
                 {#if item.v === null}
                   <button
                     type="button"
@@ -190,7 +190,7 @@
                     placeholder="value"
                     spellcheck="false"
                     autocomplete="off"
-                    class="h-7 min-w-0 flex-1 rounded-md bg-transparent px-2 font-mono text-ui-xs text-foreground outline-none transition-colors placeholder:text-muted-foreground/50 hover:bg-muted/25 focus:bg-muted/30 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
+                    class="h-7 min-w-0 flex-1 rounded-md bg-transparent px-2 font-mono text-ui-xs text-foreground outline-none transition-colors placeholder:text-muted-foreground hover:bg-muted/25 focus:bg-muted/30 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
                     onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addItem() } }}
                   />
                 {/if}
@@ -201,12 +201,12 @@
                   <button type="button" aria-label={item.v === null ? 'Clear NULL' : 'Set NULL'}
                     class={cn(
                       'inline-flex size-6 items-center justify-center rounded-md transition-colors hover:bg-accent focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring',
-                      item.v === null ? 'text-warning' : 'text-muted-foreground/40 group-hover:text-muted-foreground hover:text-foreground',
+                      item.v === null ? 'text-warning' : 'text-muted-foreground hover:text-foreground',
                     )}
                     title={item.v === null ? 'Clear NULL' : 'Set NULL'}
                     onclick={() => toggleNull(i)}><CircleSlash class="size-3.5 shrink-0" /></button>
                   <button type="button" aria-label="Remove element"
-                    class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground/40 transition-colors group-hover:text-muted-foreground hover:bg-destructive/15 hover:text-destructive focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
+                    class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive/15 hover:text-destructive focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-ring"
                     title="Remove"
                     onclick={() => removeAt(i)}><X class="size-3.5 shrink-0" /></button>
                 </div>

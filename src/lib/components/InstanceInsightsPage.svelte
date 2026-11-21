@@ -926,7 +926,7 @@
                   <div class="mb-1 flex items-center gap-2 px-3 py-1.5">
                     <Settings class="size-4 shrink-0 text-muted-foreground" />
                     <h3 class="text-ui-sm text-muted-foreground">{sec.group}</h3>
-                    <span class="text-ui-sm tabular-nums text-muted-foreground/70">{sec.rows.length}</span>
+                    <span class="text-ui-sm tabular-nums text-muted-foreground">{sec.rows.length}</span>
                     <span class="ml-2 h-px flex-1 bg-border/50" aria-hidden="true"></span>
                   </div>
                 {/if}
@@ -970,11 +970,11 @@
                           {#if row.pendingRestart}
                             <PowerOff class="size-4 text-warning" />
                           {:else if row.editable === false}
-                            <Lock class="size-3.5 text-muted-foreground/60" />
+                            <Lock class="size-3.5 text-muted-foreground" />
                           {:else if modified}
                             <CircleDot class="size-4 text-primary" />
                           {:else}
-                            <Circle class="size-4 text-muted-foreground/40" />
+                            <Circle class="size-4 text-muted-foreground" />
                           {/if}
                         </span>
                         <div class="min-w-0 flex-1">
@@ -1185,7 +1185,7 @@
   <div class="mb-1 flex items-center gap-2 px-3 py-1.5">
     <Glyph class="size-4 shrink-0 text-muted-foreground" />
     <h3 class="text-ui-sm text-muted-foreground">{title}</h3>
-    <span class="text-ui-sm tabular-nums text-muted-foreground/70">{n}</span>
+    <span class="text-ui-sm tabular-nums text-muted-foreground">{n}</span>
     <span class="ml-2 h-px flex-1 bg-border/50" aria-hidden="true"></span>
   </div>
 {/snippet}
@@ -1198,7 +1198,7 @@
       {#if s.tone === 'bad'}<CircleX class="size-4 text-destructive" />
       {:else if s.tone === 'warn'}<CircleAlert class="size-4 text-warning" />
       {:else if s.tone === 'ok'}<CircleCheck class="size-4 text-success" />
-      {:else}<Circle class="size-4 text-muted-foreground/40" />{/if}
+      {:else}<Circle class="size-4 text-muted-foreground" />{/if}
     </span>
     <div class="min-w-0 flex-1">
       <div class="truncate text-ui-sm text-foreground">{s.label}</div>
@@ -1322,7 +1322,7 @@
         <tbody>
           {#each rows as row, i (i)}
             <tr class={cn('transition-colors hover:bg-muted/25 [&:last-child>td]:border-b-0', isBlocked(row) && 'bg-destructive/[0.06]')}>
-              <td class="border-b border-border/15 px-2 py-2 text-right tabular-nums text-muted-foreground/70">{i + 1}</td>
+              <td class="border-b border-border/15 px-2 py-2 text-right tabular-nums text-muted-foreground">{i + 1}</td>
               {#each cols as k (k)}
                 {@const raw = row[k]}
                 {@const text = cell(raw)}
@@ -1343,7 +1343,7 @@
                     <!-- A column of identical-weight true/false is unreadable at a
                          glance. Only the true half carries information here, so
                          false recedes to the muted tone. -->
-                    <span class={raw ? 'text-foreground/85' : 'text-muted-foreground/70'}>{raw}</span>
+                    <span class={raw ? 'text-foreground/85' : 'text-muted-foreground'}>{raw}</span>
                   {:else}
                     {text}
                   {/if}

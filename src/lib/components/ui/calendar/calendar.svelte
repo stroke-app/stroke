@@ -34,7 +34,7 @@
 	// and the footer below.
 	const headCell = $derived(
 		compact
-			? "flex-1 rounded-md font-mono text-ui-3xs font-normal text-muted-foreground/70"
+			? "flex-1 rounded-md font-mono text-ui-3xs font-normal text-muted-foreground"
 			: "flex-1 rounded-md text-ui-2xs font-normal text-muted-foreground",
 	);
 	const dayCell = $derived(compact ? "size-7 font-mono text-ui-2xs tabular-nums" : "size-9 text-ui-sm");

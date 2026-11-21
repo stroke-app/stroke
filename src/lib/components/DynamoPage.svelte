@@ -457,7 +457,7 @@
   /** A quiet text toggle: the on state is foreground, the rest muted. No pill, no frame. */
   const textToggle = 'inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-ui-xs transition-colors hover:text-foreground'
   /** A frameless field inside the command bar. */
-  const barInput = 'field-surface h-8 min-w-0 px-3 font-mono text-ui-xs text-foreground shadow-none outline-none placeholder:text-muted-foreground/60'
+  const barInput = 'field-surface h-8 min-w-0 px-3 font-mono text-ui-xs text-foreground shadow-none outline-none placeholder:text-muted-foreground'
 
   const from = $derived(items.length ? (size === -1 ? 1 : page * size + 1) : 0)
 </script>

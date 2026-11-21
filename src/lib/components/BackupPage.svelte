@@ -613,7 +613,7 @@
   >
     {#each logLines as line (line.id)}
       <div class="flex gap-3">
-        <span class="shrink-0 tabular-nums text-muted-foreground/70">{logTime(line.at)}</span>
+        <span class="shrink-0 tabular-nums text-muted-foreground">{logTime(line.at)}</span>
         <span
           class={cn(
             'min-w-0 break-words whitespace-pre-wrap',
@@ -653,7 +653,7 @@
   {:else if status === 'error'}
     <X class="size-3.5 shrink-0 text-destructive" aria-label="Failed" />
   {:else}
-    <Circle class="size-3.5 shrink-0 text-muted-foreground/60" aria-label="Waiting" />
+    <Circle class="size-3.5 shrink-0 text-muted-foreground" aria-label="Waiting" />
   {/if}
 {/snippet}
 

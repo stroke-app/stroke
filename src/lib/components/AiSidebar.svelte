@@ -1128,7 +1128,7 @@
                 <span class="w-full truncate text-ui-xs text-foreground">{conv.title}</span>
                 <span class="text-ui-2xs text-muted-foreground">{relTime(conv.updatedAt)}</span>
               </button>
-              <button type="button" class="hit-area inline-flex size-5 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100" onclick={() => void removeConversation(conv.id)}>
+              <button aria-label="Delete chat" title="Delete chat" type="button" class="hit-area inline-flex size-5 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100" onclick={() => void removeConversation(conv.id)}>
                 <Trash2 class="size-3 shrink-0" />
               </button>
             </div>
@@ -1307,7 +1307,7 @@
               >
                 {#if running}<span class="size-3 shrink-0 animate-spin rounded-full border-[1.5px] border-current/25 border-t-current will-change-transform" aria-hidden="true"></span>{/if}
                 <span class="shrink-0">{running ? 'Working' : `Worked for ${formatElapsed((item.endedAt ?? item.startedAt) - item.startedAt)}`}</span>
-                {#if summary}<span class="truncate text-muted-foreground/70">· {summary}</span>{/if}
+                {#if summary}<span class="truncate text-muted-foreground">· {summary}</span>{/if}
                 {#if failed}<span class="shrink-0 text-destructive">· {failed} failed</span>{/if}
                 <ChevronRight class={cn('size-3 shrink-0 transition-transform duration-150', isOpen && 'rotate-90')} />
               </button>

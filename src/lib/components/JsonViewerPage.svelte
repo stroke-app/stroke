@@ -238,7 +238,7 @@
           {#if copiedInput}<CheckCheck class="size-3 shrink-0 text-success" />{:else}<Copy class="size-3 shrink-0" />{/if}
           Copy
         </button>
-        <button type="button"
+        <button aria-label="Clear input" title="Clear input" type="button"
           class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
           onclick={clearInput}
         ><Trash2 class="size-3 shrink-0" /></button>

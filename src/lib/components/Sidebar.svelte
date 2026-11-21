@@ -2180,7 +2180,7 @@
                                  `information_schema` into an ellipsis to label the
                                  thing it had just made unreadable. -->
                             <span class="flex shrink-0 items-center" title="System schema" aria-label="System schema">
-                              <Icon name="lock" class="size-3 shrink-0 text-muted-foreground/70" />
+                              <Icon name="lock" class="size-3 shrink-0 text-muted-foreground" />
                             </span>
                           {/if}
                           {#if it.value === activeSchema}<Icon name="check" class="size-3.5 shrink-0 text-primary" />{/if}
@@ -3366,7 +3366,7 @@
                   {#if busy}
                     <Icon name="loader-2" class="size-3 shrink-0 animate-spin text-primary" aria-label="Working" />
                   {:else}
-                    <span class={cn('shrink-0 font-mono text-ui-2xs tabular-nums text-muted-foreground/80', !confirming && 'group-hover/chat:invisible group-focus-within/chat:invisible')}>{confirming ? '' : ago(chat.updatedAt)}</span>
+                    <span class={cn('shrink-0 font-mono text-ui-2xs tabular-nums text-muted-foreground', !confirming && 'group-hover/chat:invisible group-focus-within/chat:invisible')}>{confirming ? '' : ago(chat.updatedAt)}</span>
                   {/if}
                 </button>
                 {#if !busy}
@@ -3576,7 +3576,7 @@
               <DbIcon id={engineId(c)} class="size-4 shrink-0" />
               <span class="min-w-0 flex-1 truncate">{c.name || c.database || c.host || c.filePath || 'Connection'}</span>
               {#if c.pinned}<Icon name="pin" class="size-3 shrink-0 opacity-60" />{/if}
-              <span class="shrink-0 font-mono text-ui-2xs tabular-nums text-muted-foreground/80">{ago(c.lastConnectedAt)}</span>
+              <span class="shrink-0 font-mono text-ui-2xs tabular-nums text-muted-foreground">{ago(c.lastConnectedAt)}</span>
             </button>
           {/each}
           {#if connsQuery.trim() && !connsShown.length}

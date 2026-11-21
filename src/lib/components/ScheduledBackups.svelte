@@ -309,7 +309,7 @@
                   <span class="text-muted-foreground">Never run</span>
                 {/if}
                 {#if job.enabled && job.next_run_at}
-                  <span class="block text-muted-foreground/70 tabular-nums">Next {when(job.next_run_at)}</span>
+                  <span class="block text-muted-foreground tabular-nums">Next {when(job.next_run_at)}</span>
                 {/if}
               </div>
               <div class="flex shrink-0 items-center">
