@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.4.4] - 2026-11-21
+
+### Changes
+- Connect to local libsql:// servers, show libSQL types, Copy as INSERT per engine (#347)
+
+
 ## [3.4.3] - 2026-11-21
 
 ### Changes
