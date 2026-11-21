@@ -4082,7 +4082,16 @@ let rowSearch = $state('')
     closeInspector()
   })
 
-  createCommandHotkey('table.deleteRows', (e) => {
+  createCommandHotkey('table.deleteRows', (e) => deleteRowsHotkey(e))
+  // Ctrl+Delete too, while the command keeps its default: on a PC keyboard
+  // Delete is the key for it, and the grid already leaves the modified Delete
+  // to this handler (a bare Delete clears the cell).
+  createHotkey('Mod+Delete', (e) => deleteRowsHotkey(e), () => ({
+    conflictBehavior: 'allow',
+    enabled: bindingFor('table.deleteRows') === 'Mod+Backspace',
+  }))
+  /** @param {KeyboardEvent} e */
+  function deleteRowsHotkey(e) {
     if (commandOpen || showConnectionModal || showSettingsModal) return
     // Ctrl+Backspace is the word-delete shortcut in inputs/textareas - don't steal it
     const el = document.activeElement
@@ -4096,7 +4105,7 @@ let rowSearch = $state('')
     // the focused row, which is the row the menu offers this chord on.
     e.preventDefault()
     stageDeleteSelectedRows()
-  })
+  }
 
   createCommandHotkey('view.refresh', (e) => {
     if (!connection) return
