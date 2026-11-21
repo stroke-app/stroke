@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.2.9] - 2026-11-21
+
+### Changes
+- Fix blank screens after the AI tab setting; redesign the model picker (#332)
+
+
 ## [3.2.8] - 2026-11-21
 
 ### Changes
