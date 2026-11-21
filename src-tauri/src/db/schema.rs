@@ -406,11 +406,14 @@ async fn list_indexes_pg(pool: &PgPool, schema: &str) -> Result<Vec<IndexInfo>, 
 
 // ── SQLite / D1 ───────────────────────────────────────────────────────────────
 
+// SQLite reserves the sqlite_ prefix (CREATE TABLE sqlite_x is an error), so
+// sqlite_sequence and sqlite_stat1 are never the user's: they stay out of the
+// table lists, as libSQL's already did. Escaped: `_` alone matches any letter.
 async fn list_tables_sqlite(pool: &sqlx::SqlitePool) -> Result<Vec<TableInfo>, String> {
     // The catalog's rowid grows as objects are created, so it doubles as the
     // creation order SQLite otherwise does not keep.
     let rows = sqlx::query(
-        "SELECT name, type, rowid FROM sqlite_master WHERE type IN ('table','view') ORDER BY name",
+        "SELECT name, type, rowid FROM sqlite_master WHERE type IN ('table','view') AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' ORDER BY name",
     )
     .fetch_all(pool)
     .await
@@ -555,7 +558,7 @@ async fn list_indexes_sqlite_master(pool: &sqlx::SqlitePool) -> Result<Vec<Index
 async fn list_tables_d1(cfg: &super::connection::D1Config) -> Result<Vec<TableInfo>, String> {
     let result = super::d1::query(
         cfg,
-        "SELECT name, type, rowid AS seq FROM sqlite_master WHERE type IN ('table','view') ORDER BY name",
+        "SELECT name, type, rowid AS seq FROM sqlite_master WHERE type IN ('table','view') AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' ORDER BY name",
         vec![],
     )
     .await?;
@@ -691,7 +694,7 @@ async fn list_indexes_d1_master(cfg: &super::connection::D1Config) -> Result<Vec
 async fn list_tables_libsql(cfg: &super::connection::LibSqlConfig) -> Result<Vec<TableInfo>, String> {
     let result = super::libsql::query(
         cfg,
-        "SELECT name, type, rowid AS seq FROM sqlite_master WHERE type IN ('table','view') AND name NOT LIKE 'sqlite_%' ORDER BY name",
+        "SELECT name, type, rowid AS seq FROM sqlite_master WHERE type IN ('table','view') AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' ORDER BY name",
         vec![],
     ).await?;
     let name_idx = result.columns.iter().position(|c| c.name == "name").unwrap_or(0);
@@ -2279,7 +2282,7 @@ async fn get_incoming_fks_mysql(pool: &MySqlPool, schema: &str, table: &str) -> 
 
 async fn get_incoming_fks_sqlite(pool: &sqlx::SqlitePool, table: &str) -> Result<Vec<IncomingForeignKey>, String> {
     let tables: Vec<String> = sqlx::query(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\'"
     ).fetch_all(pool).await.unwrap_or_default()
      .iter().filter_map(|r| r.try_get::<String, _>(0).ok()).collect();
 
@@ -2441,7 +2444,7 @@ async fn get_incoming_fks_d1(cfg: &super::connection::D1Config, table: &str) -> 
     }
     let tables: Vec<String> = super::d1::query(
         cfg,
-        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\'",
         vec![],
     )
     .await
@@ -2475,7 +2478,7 @@ async fn get_incoming_fks_libsql(cfg: &super::connection::LibSqlConfig, table: &
     }
     let tables: Vec<String> = super::libsql::query(
         cfg,
-        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\'",
         vec![],
     )
     .await
@@ -2930,6 +2933,18 @@ mod create_order_tests {
         assert!(order("zeta") < order("alpha") && order("alpha") < order("mid"));
         assert_eq!(tables.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), ["alpha", "mid", "zeta"]);
         assert!(tables.iter().all(|t| t.created_at.is_none()));
+    }
+
+    /// sqlite_sequence is SQLite's, not the user's; a table merely starting with
+    /// "sqlite" is the user's.
+    #[tokio::test]
+    async fn sqlite_internal_tables_stay_out_of_the_list() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        for sql in ["CREATE TABLE books (id INTEGER PRIMARY KEY AUTOINCREMENT)", "INSERT INTO books DEFAULT VALUES", "CREATE TABLE sqlitex (id INTEGER)"] {
+            sqlx::query(sql).execute(&pool).await.unwrap();
+        }
+        let names: Vec<String> = super::list_tables_sqlite(&pool).await.unwrap().into_iter().map(|t| t.name).collect();
+        assert_eq!(names, ["books", "sqlitex"]);
     }
 }
 
