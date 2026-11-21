@@ -115,7 +115,7 @@
   /** Engines with no interactive CLI get the app's own SQL prompt instead. */
   const BUILTIN_REPL = new Set(['d1', 'dynamodb'])
   /** Engines whose CLI is not SQL: no SQL prompt to fall back to. */
-  const NON_SQL = new Set(['redis', 'valkey', 'keydb', 'dragonfly', 'mongodb', 'couchdb', 'elasticsearch', 'opensearch', 'cassandra', 'firestore'])
+  const NON_SQL = new Set(['redis', 'valkey', 'keydb', 'dragonfly', 'mongodb', 'couchdb', 'elasticsearch', 'opensearch', 'cassandra', 'firestore', 'neo4j'])
 
   /** A result set from executeSqlMulti as the prompt's table shape. @param {string} sql */
   async function sqlRows(sql) {

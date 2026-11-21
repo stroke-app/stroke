@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { couchAdapter, cassandraAdapter, firestoreAdapter, mongoAdapter, uriHost, docGrid, fsPlainFields, fsTypedFields, fsTyped, fsFilter, fsDoc, docColumns, docCell, humanBytes, PAGE_SIZE } from './doc-adapters.js'
+import { couchAdapter, cassandraAdapter, firestoreAdapter, mongoAdapter, neo4jAdapter, uriHost, docGrid, fsPlainFields, fsTypedFields, fsTyped, fsFilter, fsDoc, docColumns, docCell, humanBytes, PAGE_SIZE } from './doc-adapters.js'
 
 /** A fake CouchDB that records calls and answers from a script. */
 function fake(/** @type {Record<string, any>} */ answers = {}) {
@@ -270,5 +270,38 @@ describe('elasticAdapter', async () => {
     calls.length = 0
     await a.save('logs', { _id: '', n: 1 }, null)
     expect(calls[0].slice(0, 2)).toEqual(['POST', 'logs/_doc?refresh=wait_for'])
+  })
+})
+
+describe('neo4j adapter', () => {
+  const api = {
+    labels: vi.fn(async () => [['Person', 2], ['My Label', 0]]),
+    describe: vi.fn(async () => ({ keys: ['name', 'born'], count: 2 })),
+    page: vi.fn(async () => ({ docs: [{ _id: '4:a:1', _labels: ['Person'], name: 'Ada' }], next: null })),
+    save: vi.fn(async (_l, doc) => ({ ...doc, _id: doc._id ?? '4:a:9' })),
+    remove: vi.fn(async () => {}),
+  }
+  const a = neo4jAdapter(api)
+
+  it('lists labels and pages nodes by skip', async () => {
+    expect(await a.listCollections()).toEqual(['Person', 'My Label'])
+    const p = await a.load('Person', { cursor: null, filter: 'n.born > 1900', size: 50 })
+    expect(api.page).toHaveBeenCalledWith('Person', 'n.born > 1900', 0, 50)
+    expect(p.docs[0].name).toBe('Ada')
+    expect(a.idOf(p.docs[0])).toBe('4:a:1')
+  })
+
+  it('saves to the node that was opened, and creates without an id', async () => {
+    await a.save('Person', { _id: 'edited', name: 'Ada L' }, { _id: '4:a:1', name: 'Ada' })
+    expect(api.save).toHaveBeenLastCalledWith('Person', { _id: '4:a:1', name: 'Ada L' })
+    await a.save('Person', { name: 'Grace' }, null)
+    expect(api.save).toHaveBeenLastCalledWith('Person', { _id: null, name: 'Grace' })
+    await a.remove('Person', { _id: '4:a:1' })
+    expect(api.remove).toHaveBeenCalledWith('4:a:1')
+  })
+
+  it('quotes unusual labels in the seed query', () => {
+    expect(a.querySeed('Person')).toBe('MATCH (n:Person) RETURN n LIMIT 100')
+    expect(a.querySeed('My Label')).toBe('MATCH (n:`My Label`) RETURN n LIMIT 100')
   })
 })

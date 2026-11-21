@@ -36,6 +36,8 @@
     connectElastic,
     testCassandra,
     connectCassandra,
+    testNeo4j,
+    connectNeo4j,
     testFirestore,
     connectFirestore,
     testSpanner,
@@ -222,6 +224,7 @@
         { id: "cassandra", label: "Cassandra", desc: "Wide-column store (CQL)" },
         { id: "scylladb", label: "ScyllaDB", desc: "Cassandra-compatible wide-column store (CQL)" },
         { id: "firestore", label: "Firestore", desc: "Google Cloud document database" },
+        { id: "neo4j", label: "Neo4j", desc: "Graph database, also Aura (over HTTP)", beta: true },
       ],
     },
     {
@@ -324,6 +327,7 @@
     "dynamodb",
     "mongodb",
     "couchdb",
+    "neo4j",
     "elasticsearch",
     "opensearch",
     "cassandra",
@@ -1237,6 +1241,8 @@
       };
     if (dbType === "couchdb")
       return { type: "couchdb", name: nm, url: couchUrl.trim(), user: user.trim(), password, ...(ssh && { ssh }) };
+    if (dbType === "neo4j")
+      return { type: "neo4j", name: nm, url: couchUrl.trim(), database: database.trim(), user: user.trim(), password };
     if (dbType === "elasticsearch" || dbType === "opensearch")
       return {
         type: dbType,
@@ -1389,6 +1395,7 @@
       couchUrl =
         conn.type === "couchdb" ? (conn.url ?? "http://localhost:5984")
         : conn.type === "elasticsearch" || conn.type === "opensearch" ? (conn.url ?? "http://localhost:9200")
+        : conn.type === "neo4j" ? (conn.url ?? "http://localhost:7474")
         : "http://localhost:5984";
       esAuth = conn.apiKey ? "apikey" : "basic";
       esApiKey = conn.apiKey ?? "";
@@ -1646,6 +1653,7 @@
     valkey:      { database: "0", user: "" },
     dynamodb:    { database: "", user: "" },
     couchdb:     { database: "", user: "admin" },
+    neo4j:       { database: "neo4j", user: "neo4j" },
     elasticsearch: { database: "", user: "elastic" },
     opensearch:  { database: "", user: "admin" },
     cassandra:   { database: "", user: "" },
@@ -1683,7 +1691,7 @@
     if (id === "duckdb") filePath = "";
     // The HTTP engines share one URL field; move it to the new engine's port
     // while it still holds the previous one's local default.
-    const HTTP_DEFAULT = /** @type {Record<string, string>} */ ({ couchdb: "http://localhost:5984", elasticsearch: "http://localhost:9200", opensearch: "http://localhost:9200" });
+    const HTTP_DEFAULT = /** @type {Record<string, string>} */ ({ couchdb: "http://localhost:5984", elasticsearch: "http://localhost:9200", opensearch: "http://localhost:9200", neo4j: "http://localhost:7474" });
     if (HTTP_DEFAULT[id] && (!couchUrl.trim() || Object.values(HTTP_DEFAULT).includes(couchUrl.trim()))) couchUrl = HTTP_DEFAULT[id];
     esServer = "";
     if (id === "odbc" || id.startsWith("odbc-")) {
@@ -1871,6 +1879,10 @@
       return where && odbcMode === "fields" ? `${activeDriver.label} · ${where}` : activeDriver.label;
     }
     if (dbType === "firestore") return fsProject.trim() || "Firestore";
+    if (dbType === "neo4j") {
+      const at = couchUrl.trim().replace(/^\w+:\/\//, "").split(/[/:]/)[0];
+      return at ? `Neo4j@${at}` : "Neo4j";
+    }
     // DynamoDB has no host field of its own: the form's leftover 127.0.0.1
     // named an AWS connection after localhost. Name it after where it goes.
     if (dbType === "dynamodb") {
@@ -2067,7 +2079,7 @@
     if (conn.type === "posthog") return conn.projectId ? `project ${conn.projectId}` : "—";
     // Redis has no database name worth showing; where it lives is the useful bit.
     if (engineFamily(conn.type) === "redis") return conn.host ? `${conn.host}${conn.port ? `:${conn.port}` : ""}` : "—";
-    if (conn.type === "couchdb" || conn.type === "elasticsearch" || conn.type === "opensearch") return conn.url || "—";
+    if (conn.type === "couchdb" || conn.type === "elasticsearch" || conn.type === "opensearch" || conn.type === "neo4j") return conn.url || "—";
     if (conn.type === "mongodb") return conn.uri ? uriHost(conn.uri) : "—";
     if (conn.type === "odbc") return conn.odbcMode === "dsn" || (!conn.odbcMode && conn.dsn) ? `DSN ${conn.dsn}` : [conn.host, conn.database].filter(Boolean).join(" · ") || "ODBC";
     if (conn.type === "snowflake") return [conn.account, conn.database].filter(Boolean).join(" · ") || "—";
@@ -2177,6 +2189,7 @@
     if (engineFamily(conn.type) === "redis") return connectRedis(conn);
     if (conn.type === "dynamodb") return connectDynamo(conn);
     if (conn.type === "couchdb") return connectCouch(conn);
+    if (conn.type === "neo4j") return connectNeo4j(conn);
     if (conn.type === "elasticsearch" || conn.type === "opensearch") return connectElastic(conn);
     if (conn.type === "cassandra") return connectCassandra(conn);
     if (conn.type === "firestore") return connectFirestore(conn);
@@ -2711,6 +2724,7 @@
       else if (engineFamily(p.type) === "redis") await testRedis(p);
       else if (p.type === "dynamodb") await testDynamo(p);
       else if (p.type === "couchdb") await testCouch(p);
+      else if (p.type === "neo4j") await testNeo4j(p);
       else if (p.type === "elasticsearch" || p.type === "opensearch") {
         const info = await testElastic(p);
         esServer = `${info.flavor === "opensearch" ? "OpenSearch" : "Elasticsearch"} ${info.version}`.trim();
@@ -2950,7 +2964,7 @@
       return filePath || ":memory:";
     if (dbType === "libsql") return uriHost(libsqlUrl.replace(/^libsql:/, "https:")) || libsqlUrl || "—";
     if (dbType === "d1") return databaseId ? `${databaseId.slice(0, 8)}…` : "—";
-    if (dbType === "couchdb" || dbType === "elasticsearch" || dbType === "opensearch") return couchUrl || "—";
+    if (dbType === "couchdb" || dbType === "elasticsearch" || dbType === "opensearch" || dbType === "neo4j") return couchUrl || "—";
     if (isCqlForm) return cqlHosts || "—";
     if (dbType === "firestore") return fsProject || "—";
     if (dbType === "spanner") return [fsProject, spInstance, spDatabase].filter(Boolean).join("/") || "—";
@@ -5516,6 +5530,28 @@
                             <p class="-mt-1 text-ui-3xs text-muted-foreground">
                               Leave the user blank for a server without a login (admin party).
                             </p>
+
+                            <!-- ── Neo4j ──────────────────────────────────── -->
+                          {:else if dbType === "neo4j"}
+                            <div>
+                              <label for="cn-neo-url" class={lbl}>HTTP address</label>
+                              <Input id="cn-neo-url" bind:value={couchUrl} placeholder="http://localhost:7474" spellcheck="false" autocomplete="off" class={cn(inp, "font-mono")} />
+                              <p class="mt-1 text-ui-3xs text-muted-foreground">The HTTP API port (7474), not Bolt (7687). Aura: <span class="font-mono">https://&lt;id&gt;.databases.neo4j.io</span>.</p>
+                            </div>
+                            <div>
+                              <label for="cn-neo-db" class={lbl}>Database</label>
+                              <Input id="cn-neo-db" bind:value={database} placeholder="neo4j" spellcheck="false" autocomplete="off" class={inp} />
+                            </div>
+                            <div class="grid grid-cols-2 gap-2">
+                              <div>
+                                <label for="cn-neo-user" class={lbl}>User</label>
+                                <Input id="cn-neo-user" bind:value={user} autocomplete="username" spellcheck="false" class={inp} />
+                              </div>
+                              <div>
+                                <label for="cn-neo-pass" class={lbl}>Password</label>
+                                <PasswordInput id="cn-neo-pass" bind:value={password} autocomplete="current-password" class={inp} />
+                              </div>
+                            </div>
 
                             <!-- ── Elasticsearch / OpenSearch ─────────────── -->
                           {:else if dbType === "elasticsearch" || dbType === "opensearch"}

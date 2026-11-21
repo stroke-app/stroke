@@ -76,6 +76,7 @@ const ENGINE_SHORT = {
   cassandra: 'Cassandra',
   scylladb: 'ScyllaDB',
   firestore: 'Firestore',
+  neo4j: 'Neo4j',
   spanner: 'Spanner',
   bigquery: 'BigQuery',
   snowflake: 'Snowflake',

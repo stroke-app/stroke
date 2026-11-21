@@ -13,6 +13,7 @@ pub enum DocConn {
     Firestore(super::firestore::FirestoreConfig),
     Mongo(super::mongo::MongoHandle),
     Elastic(super::elastic::EsConfig),
+    Neo4j(super::neo4j::Neo4jConfig),
 }
 
 impl DocConn {
@@ -24,6 +25,7 @@ impl DocConn {
             Self::Mongo(_) => "mongodb",
             Self::Elastic(c) if c.is_opensearch() => "opensearch",
             Self::Elastic(_) => "elasticsearch",
+            Self::Neo4j(_) => "neo4j",
         }
     }
 }
@@ -36,6 +38,7 @@ pub async fn query(conn: &DocConn, stmt: &str) -> Result<SqlResult, String> {
         DocConn::Firestore(c) => super::firestore::query(c, stmt).await,
         DocConn::Mongo(m) => super::mongo::query(m, stmt).await,
         DocConn::Elastic(c) => super::elastic::query(c, stmt).await,
+        DocConn::Neo4j(c) => super::neo4j::query(c, stmt).await,
     }
 }
 
@@ -57,6 +60,7 @@ pub async fn list_tables(conn: &DocConn) -> Result<Vec<TableInfo>, String> {
         DocConn::Firestore(c) => super::firestore::list_collections(c).await?,
         DocConn::Mongo(m) => super::mongo::list_collections(m).await?,
         DocConn::Elastic(c) => super::elastic::list_indices(c).await?.into_iter().map(|i| i.name).collect(),
+        DocConn::Neo4j(c) => super::neo4j::labels(c).await?.into_iter().map(|(n, _)| n).collect(),
     };
     Ok(names
         .into_iter()
@@ -74,7 +78,7 @@ pub async fn list_schemas(conn: &DocConn) -> Result<Vec<String>, String> {
     match conn {
         DocConn::Mongo(m) => super::mongo::list_databases(m).await,
         DocConn::Cassandra(s) => super::cassandra::list_keyspaces(s).await,
-        DocConn::Couch(_) | DocConn::Firestore(_) | DocConn::Elastic(_) => Ok(vec![FLAT_SCHEMA.to_string()]),
+        DocConn::Couch(_) | DocConn::Firestore(_) | DocConn::Elastic(_) | DocConn::Neo4j(_) => Ok(vec![FLAT_SCHEMA.to_string()]),
     }
 }
 
@@ -117,6 +121,7 @@ pub async fn list_tables_in(conn: &DocConn, schema: &str) -> Result<Vec<TableInf
         }
         DocConn::Firestore(c) => Ok(super::firestore::list_collections(c).await?.into_iter().map(|n| info(n, -1)).collect()),
         DocConn::Elastic(c) => Ok(super::elastic::list_indices(c).await?.into_iter().map(|i| info(i.name, i.docs)).collect()),
+        DocConn::Neo4j(c) => Ok(super::neo4j::labels(c).await?.into_iter().map(|(n, k)| info(n, k)).collect()),
     }
 }
 
@@ -138,7 +143,7 @@ pub async fn use_schema(conn: &DocConn, schema: &str) -> Result<(), String> {
             }
             s.use_keyspace(schema, true).await.map_err(|e| format!("Keyspace \"{schema}\": {e}"))
         }
-        DocConn::Couch(_) | DocConn::Firestore(_) | DocConn::Elastic(_) => Ok(()),
+        DocConn::Couch(_) | DocConn::Firestore(_) | DocConn::Elastic(_) | DocConn::Neo4j(_) => Ok(()),
     }
 }
 
@@ -155,7 +160,7 @@ pub async fn columns_in(conn: &DocConn, schema: &str, table: &str) -> Result<Vec
         }
         // Mappings are the index's columns: typed fields, nested ones dotted.
         DocConn::Elastic(c) => super::elastic::index_columns(c, table).await,
-        DocConn::Mongo(_) | DocConn::Couch(_) | DocConn::Firestore(_) => Ok(vec![]),
+        DocConn::Mongo(_) | DocConn::Couch(_) | DocConn::Firestore(_) | DocConn::Neo4j(_) => Ok(vec![]),
     }
 }
 
@@ -164,7 +169,7 @@ pub async fn columns_in(conn: &DocConn, schema: &str, table: &str) -> Result<Vec
 pub async fn schema_columns_in(conn: &DocConn, schema: &str) -> Result<Vec<super::schema::TableColumnStructure>, String> {
     match conn {
         DocConn::Cassandra(s) => Ok(super::cassandra::columns_by_table(super::cassandra::keyspace_columns(s, schema).await?)),
-        DocConn::Mongo(_) | DocConn::Couch(_) | DocConn::Firestore(_) | DocConn::Elastic(_) => Ok(vec![]),
+        DocConn::Mongo(_) | DocConn::Couch(_) | DocConn::Firestore(_) | DocConn::Elastic(_) | DocConn::Neo4j(_) => Ok(vec![]),
     }
 }
 

@@ -384,6 +384,21 @@ const DYNAMO_WRITE_RE = /(^|"operation"\s*:\s*")(PutItem|UpdateItem|DeleteItem|B
 /** Firestore and CouchDB shell-style writes. */
 const DOC_WRITE_RE = /\.\s*(add|set|update|delete|insert|put|remove|bulkDocs|destroy|create)\s*\(/
 
+/**
+ * Cypher clauses that change data, the schema or the server. Strings and
+ * backtick-quoted names are removed before testing.
+ */
+const CYPHER_WRITE_RE = /\b(CREATE|MERGE|SET|DELETE|DETACH|REMOVE|FOREACH|LOAD\s+CSV|DROP|ALTER|GRANT|REVOKE|DENY)\b|\bCALL\s+(?!db\.(labels|relationshipTypes|propertyKeys|schema\.|indexes|constraints)|dbms\.components)[\w.]+\s*\(/i
+
+/** @param {string} sql */
+function isCypherWrite(sql) {
+  const text = String(sql ?? '')
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|`[^`]*`/g, ' ')
+    .replace(/\/\/.*$/gm, ' ')
+  return CYPHER_WRITE_RE.test(text)
+}
+
 /** Elasticsearch endpoints that only read even when sent as a POST. */
 const ES_POST_READ_RE = /(^|\/)_(search|count|msearch|mget|explain|field_caps|validate|analyze|sql|plugins|pit|search_shards|termvectors)(\/|\?|$)/
 
@@ -410,6 +425,9 @@ function isEsWrite(text) {
  * @param {string} sql @param {string | null | undefined} engine connection type
  */
 export function isWriteFor(sql, engine) {
+  // Cypher isn't SQL: its procedures that only read (CALL db.labels()) would
+  // count as writes under the SQL rules, so it is read by its own.
+  if (engine === 'neo4j') return isCypherWrite(sql)
   if (isWriteSql(sql)) return true
   const text = stripSqlComments(String(sql ?? '')).trim()
   if (!text) return false

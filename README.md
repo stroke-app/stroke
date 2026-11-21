@@ -44,11 +44,12 @@ Any client can draw a grid. Stroke is built for the moments where most of them f
 
 | Kind | Engines |
 |---|---|
-| **Relational** | PostgreSQL · MySQL · MariaDB · SQLite · SQL Server · Oracle · CockroachDB · Turso / libSQL · Cloudflare D1 · Google Spanner (beta) |
+| **Relational** | PostgreSQL · MySQL · MariaDB · SQLite · SQL Server · Oracle · CockroachDB · Turso / libSQL · Cloudflare D1 · Google Spanner (beta) · YugabyteDB (beta) · AlloyDB (beta) |
 | **Document** | MongoDB · CouchDB · Firestore · Cassandra · ScyllaDB |
 | **Key-value** | Redis · Valkey · DynamoDB |
-| **Analytics** | DuckDB · ClickHouse · PostHog · Google BigQuery (beta) |
+| **Analytics** | DuckDB · ClickHouse · PostHog · Google BigQuery (beta) · Snowflake (beta) |
 | **Search** | Elasticsearch · OpenSearch |
+| **Graph** | Neo4j (beta) |
 
 Oracle needs [Oracle Instant Client](https://www.oracle.com/database/technologies/instant-client.html) installed.
 
