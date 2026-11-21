@@ -91,6 +91,9 @@
     el?.select()
   }
 
+  /** Names shown while a rename is being saved. @type {Map<string, string>} */
+  let renamedTo = $state(new Map())
+
   async function commitRename() {
     const r = renaming
     if (!r) return
@@ -103,8 +106,18 @@
     }
     const current = queries.find((q) => q.id === r.id)
     if (!current || current.name === name) return
-    await updateSavedQuery(r.id, { name })
-    await onrefresh()
+    // Optimistic: the list shows the new name until the refreshed one arrives.
+    renamedTo = new Map(renamedTo).set(r.id, name)
+    try {
+      await updateSavedQuery(r.id, { name })
+      await onrefresh()
+    } catch (e) {
+      toast.error("Couldn't rename the query", { description: String(e) })
+    } finally {
+      const next = new Map(renamedTo)
+      next.delete(r.id)
+      renamedTo = next
+    }
   }
 
   /** @param {KeyboardEvent} e */
@@ -294,7 +307,7 @@
       oncontextmenu={() => (menu = { kind: 'query', query: q })}
     >
       <Icon name="file-code" class={cn('size-3.5 shrink-0', activeId === q.id ? 'text-primary' : 'text-muted-foreground')} />
-      <span class="min-w-0 flex-1 truncate text-ui-sm leading-4">{q.name}</span>
+      <span class="min-w-0 flex-1 truncate text-ui-sm leading-4">{renamedTo.get(q.id) ?? q.name}</span>
     </button>
   {/if}
 {/snippet}

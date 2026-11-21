@@ -561,6 +561,16 @@ GET products/_search
     }
     const prev = creating ? null : editing
     if (prev && adapter.idOf(next, info?.meta) !== adapter.idOf(prev, info?.meta) && !confirm(adapter.keyChangeWarning)) return
+    // Optimistic for an existing document: the list shows the edit now, the
+    // stored version replaces it when the database answers, and a failure
+    // puts the original back. A new one waits: its id comes from the database.
+    const before = docs
+    const beforeVersion = dataVersion
+    if (prev) {
+      const pid = adapter.idOf(prev, info?.meta)
+      docs = docs.map((d) => (adapter.idOf(d, info?.meta) === pid ? next : d))
+      dataVersion += 1
+    }
     saving = true
     try {
       const stored = await adapter.save(coll, next, prev, info?.meta)
@@ -578,6 +588,10 @@ GET products/_search
       editingId = id
       toast.success(prev ? `${noun.item} saved` : `${noun.item} added`)
     } catch (e) {
+      if (prev) {
+        docs = before
+        dataVersion = beforeVersion + 2
+      }
       draftError = msg(e)
     } finally {
       saving = false
@@ -591,20 +605,24 @@ GET products/_search
       confirmDelete = true
       return
     }
-    saving = true
+    // Optimistic: gone from the list now; back, with the error, if the
+    // database refuses.
+    const before = docs
+    const beforeTotal = total
+    const id = adapter.idOf(d, info?.meta)
+    docs = docs.filter((x) => adapter.idOf(x, info?.meta) !== id)
+    if (total != null) total = Math.max(0, total - 1)
+    dataVersion += 1
+    closePanel()
+    confirmDelete = false
     try {
       await adapter.remove(coll, d, info?.meta)
-      const id = adapter.idOf(d, info?.meta)
-      docs = docs.filter((x) => adapter.idOf(x, info?.meta) !== id)
-      if (total != null) total = Math.max(0, total - 1)
-      dataVersion += 1
-      closePanel()
       toast.success(`${noun.item} deleted`)
     } catch (e) {
-      draftError = msg(e)
-    } finally {
-      saving = false
-      confirmDelete = false
+      docs = before
+      total = beforeTotal
+      dataVersion += 1
+      toast.error(`Couldn't delete the ${noun.item.toLowerCase()}`, { description: msg(e) })
     }
   }
 
@@ -620,6 +638,18 @@ GET products/_search
   }
   async function removeMany() {
     const list = pendingRemove.map((i) => docs[i]).filter(Boolean)
+    // Optimistic: every chosen one leaves the list now; any the database
+    // refuses comes back in its place.
+    const before = docs
+    const beforeTotal = total
+    const key = (/** @type {any} */ d) => JSON.stringify(adapter.idOf(d, info?.meta))
+    const chosen = new Set(list.map(key))
+    docs = docs.filter((x) => !chosen.has(key(x)))
+    if (total != null) total = Math.max(0, total - list.length)
+    selected = new Set()
+    dataVersion += 1
+    closePanel()
+    removeOpen = false
     removing = true
     /** @type {any[]} */
     const done = []
@@ -628,14 +658,13 @@ GET products/_search
     for (const d of list) {
       try { await adapter.remove(coll, d, info?.meta); done.push(adapter.idOf(d, info?.meta)) } catch (e) { errors.push(msg(e)) }
     }
-    const gone = new Set(done.map((x) => JSON.stringify(x)))
-    docs = docs.filter((x) => !gone.has(JSON.stringify(adapter.idOf(x, info?.meta))))
-    if (total != null) total = Math.max(0, total - done.length)
-    selected = new Set()
-    dataVersion += 1
-    closePanel()
+    if (errors.length) {
+      const gone = new Set(done.map((x) => JSON.stringify(x)))
+      docs = before.filter((x) => !gone.has(key(x)))
+      if (beforeTotal != null) total = Math.max(0, beforeTotal - done.length)
+      dataVersion += 1
+    }
     removing = false
-    removeOpen = false
     const ok = done.length
     if (ok) toast.success(`Deleted ${ok.toLocaleString()} ${ok === 1 ? noun.item.toLowerCase() : noun.items}`)
     if (errors.length) toast.error(`${errors.length} could not be deleted`, { description: errors[0] })

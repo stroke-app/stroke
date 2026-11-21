@@ -2029,11 +2029,21 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       return;
     }
 
+    // Optimistic: the cell shows the new value (as a staged edit) and the
+    // editor closes now; the write confirms it. It used to keep the editor open
+    // until the database answered. A failed write leaves the value staged, so
+    // nothing typed is lost: Apply retries it, Reset drops it.
+    const key = editKey(rowIdx, colIdx);
+    // (A parent that stages through oncellcommit gets the write alone.)
+    if (!oncellcommit) stageEdit(rowIdx, colIdx, parsed.value);
+    editingCell = null;
+    if (afterAction) navigateAfterEdit(rowIdx, colIdx, afterAction);
+    else tick().then(() => tableContainer?.focus({ preventScroll: true }));
     try {
       await onsave({ rowIdx, colIdx, value: parsed.value });
-      // Drop any staged edit for this cell - it's now persisted.
-      const key = editKey(rowIdx, colIdx);
-      if (pendingEdits.has(key)) {
+      // Persisted: the staged copy goes, unless the cell was edited again meanwhile.
+      const staged = pendingEdits.get(key);
+      if (staged && Object.is(staged.value, parsed.value)) {
         const next = new Map(pendingEdits);
         next.delete(key);
         pendingEdits = next;
@@ -2042,12 +2052,9 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       // so an undo must not re-stage the old value and a later Apply re-write it.
       pastEdits = pastEdits.filter((e) => !(e.rowIdx === rowIdx && e.colIdx === colIdx));
       futureEdits = futureEdits.filter((e) => !(e.rowIdx === rowIdx && e.colIdx === colIdx));
-      editingCell = null;
       toast.success("Saved", { description: `${col.name} updated` });
-      if (afterAction) navigateAfterEdit(rowIdx, colIdx, afterAction);
-      else tick().then(() => tableContainer?.focus({ preventScroll: true }));
     } catch (err) {
-      toast.error("Could not save", { description: String(err) });
+      toast.error("Could not save", { description: `${String(err)}. The value is kept as a pending edit: Apply to retry, or Reset.` });
     }
   }
 

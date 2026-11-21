@@ -1633,8 +1633,10 @@
     renamingChatId = null
     if (!id || !title) return
     if (liveChats) return requestChat({ type: 'rename', id, title })
-    await updateConversation(id, { title }).catch(() => {})
+    // Optimistic: shown now, put back if the store refuses.
+    const before = storedChats
     storedChats = storedChats.map((c) => (c.id === id ? { ...c, title } : c))
+    await updateConversation(id, { title }).catch(() => { storedChats = before })
   }
   /** @param {string} id */
   async function deleteChat(id) {
@@ -1647,8 +1649,9 @@
     confirmDeleteChatId = null
     clearTimeout(confirmDeleteTimer)
     if (liveChats) return requestChat({ type: 'delete', id })
-    await deleteConversation(id).catch(() => {})
+    const before = storedChats
     storedChats = storedChats.filter((c) => c.id !== id)
+    await deleteConversation(id).catch(() => { storedChats = before })
   }
   /** Focus and select a field as it mounts. @param {HTMLInputElement} el */
   function selectOnMount(el) {

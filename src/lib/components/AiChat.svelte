@@ -817,8 +817,15 @@
     const title = renamingTitle.trim();
     renamingConvId = null;
     if (!id || !title) return;
-    await updateConversation(id, { title });
+    // Optimistic: the new title shows now; the old one comes back on failure.
+    const before = convList;
     convList = convList.map((c) => (c.id === id ? { ...c, title } : c));
+    try {
+      await updateConversation(id, { title });
+    } catch (e) {
+      convList = before;
+      toast.error("Couldn't rename the chat", { description: String(e) });
+    }
   }
 
   function cancelRename() {
