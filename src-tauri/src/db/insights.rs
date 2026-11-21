@@ -484,12 +484,20 @@ async fn mysql_activity(pool: &MySqlPool) -> InstanceActivity {
             "Innodb_rows_updated",
             "Innodb_rows_deleted",
             "Innodb_rows_read",
+            // MariaDB 10.6+ dropped the Innodb_rows_* counters; the server-wide
+            // Rows_* and Handler_* ones count the same work.
+            "Rows_read",
+            "Handler_update",
+            "Handler_delete",
             "Innodb_buffer_pool_read_requests",
             "Innodb_buffer_pool_reads",
         ],
     )
     .await;
     let g = |k: &str| -> i64 { status.get(k).copied().unwrap_or(0) };
+    // The first counter the server has, so MariaDB reads its own names rather
+    // than zeros for counters MySQL alone still keeps.
+    let first = |keys: &[&str]| -> i64 { keys.iter().find_map(|k| status.get(*k).copied()).unwrap_or(0) };
 
     // InnoDB exposes logical read requests and physical (disk) reads. Map onto the
     // PostgreSQL buffer-cache model: hits = requests - physical reads (pages served
@@ -501,10 +509,10 @@ async fn mysql_activity(pool: &MySqlPool) -> InstanceActivity {
     let counters = ActivityCounters {
         commits: g("Com_commit"),
         rollbacks: g("Com_rollback"),
-        tup_updated: g("Innodb_rows_updated"),
-        tup_deleted: g("Innodb_rows_deleted"),
-        tup_fetched: g("Innodb_rows_read"),
-        tup_returned: g("Innodb_rows_read"),
+        tup_updated: first(&["Innodb_rows_updated", "Handler_update"]),
+        tup_deleted: first(&["Innodb_rows_deleted", "Handler_delete"]),
+        tup_fetched: first(&["Innodb_rows_read", "Rows_read"]),
+        tup_returned: first(&["Innodb_rows_read", "Rows_read"]),
         blks_read: disk_reads,
         blks_hit,
     };
