@@ -38,6 +38,7 @@ export const ENGINE_TINT = {
   scylladb: "text-cyan-500/80",
   firestore: "text-amber-500/80",
   neo4j: "text-blue-500/80",
+  influxdb: "text-violet-500/80",
   spanner: "text-blue-500/80",
   bigquery: "text-blue-500/80",
   snowflake: "text-sky-500/80",

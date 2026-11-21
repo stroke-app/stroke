@@ -50,6 +50,7 @@ Any client can draw a grid. Stroke is built for the moments where most of them f
 | **Analytics** | DuckDB · ClickHouse · PostHog · Google BigQuery (beta) · Snowflake (beta) |
 | **Search** | Elasticsearch · OpenSearch |
 | **Graph** | Neo4j (beta) |
+| **Time series** | InfluxDB 1.x, 2.x and 3.x (beta, read-only) |
 
 Oracle needs [Oracle Instant Client](https://www.oracle.com/database/technologies/instant-client.html) installed.
 

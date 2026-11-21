@@ -1,11 +1,13 @@
 // Per-engine adapters for DocBrowser.svelte: the one page that browses and
-// edits CouchDB, Cassandra, Firestore, MongoDB, Elasticsearch/OpenSearch and Neo4j. Each adapter turns that engine's API
+// edits CouchDB, Cassandra, Firestore, MongoDB, Elasticsearch/OpenSearch and
+// Neo4j, and reads InfluxDB. Each adapter turns that engine's API
 // into the same few verbs (list collections, load a page, save, delete). The
 // API calls are injected so the logic is unit-tested without Tauri.
 
 /**
  * @typedef {{
  *   engine: string,
+ *   readOnly?: boolean,
  *   noun: { collection: string, collections: string, item: string, items: string },
  *   consoleLabel: string,
  *   filterPlaceholder: string,
@@ -236,6 +238,47 @@ export function neo4jAdapter(api) {
     template: () => ({ name: '' }),
     keyChangeWarning: 'A node keeps its element id: this saves the properties to the node you opened. Continue?',
     querySeed: (label) => `MATCH (n:${ident(label)}) RETURN n LIMIT 100`,
+  }
+}
+
+// ── InfluxDB ────────────────────────────────────────────────────────────────
+
+/**
+ * InfluxDB (beta, read-only): measurements are the collections, points the
+ * documents, newest first.
+ * @param {{
+ *   measurements: () => Promise<string[]>,
+ *   describe: (m: string) => Promise<{ tags: string[], fields: { name: string, type: string }[] }>,
+ *   page: (m: string, filter: string, skip: number, limit: number) => Promise<{ docs: Record<string, any>[], next: number | null }>,
+ * }} api
+ * @param {string} version "1", "2" or "3"
+ * @returns {DocAdapter}
+ */
+export function influxAdapter(api, version) {
+  const sql = version === '3'
+  const readOnly = () => Promise.reject(new Error('InfluxDB is read-only in Stroke for now'))
+  return {
+    engine: 'influxdb',
+    readOnly: true,
+    noun: { collection: 'Measurement', collections: 'Measurements', item: 'Point', items: 'points' },
+    consoleLabel: sql ? 'SQL' : 'InfluxQL / Flux',
+    filterPlaceholder: sql ? "host = 'a' AND time > now() - INTERVAL '1 hour'" : "host = 'a' AND time > now() - 1h",
+    filterHint: sql ? 'A SQL WHERE condition' : 'An InfluxQL WHERE condition',
+    listCollections: () => api.measurements(),
+    async describe(m) {
+      const d = await api.describe(m)
+      return { keys: [], meta: d, summary: [`${d.tags.length} tags`, `${d.fields.length} fields`] }
+    },
+    async load(m, { cursor, filter, size = PAGE_SIZE }) {
+      const p = await api.page(m, filter, Number(cursor) || 0, size)
+      return { docs: p.docs, cursor: p.next }
+    },
+    idOf: (doc) => JSON.stringify(doc),
+    save: readOnly,
+    remove: readOnly,
+    template: () => ({}),
+    keyChangeWarning: '',
+    querySeed: (m) => `SELECT * FROM "${m.replace(/"/g, sql ? '""' : '\\"')}" ORDER BY time DESC LIMIT 100`,
   }
 }
 

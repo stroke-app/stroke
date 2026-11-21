@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { couchAdapter, cassandraAdapter, firestoreAdapter, mongoAdapter, neo4jAdapter, uriHost, docGrid, fsPlainFields, fsTypedFields, fsTyped, fsFilter, fsDoc, docColumns, docCell, humanBytes, PAGE_SIZE } from './doc-adapters.js'
+import { couchAdapter, cassandraAdapter, firestoreAdapter, mongoAdapter, neo4jAdapter, influxAdapter, uriHost, docGrid, fsPlainFields, fsTypedFields, fsTyped, fsFilter, fsDoc, docColumns, docCell, humanBytes, PAGE_SIZE } from './doc-adapters.js'
 
 /** A fake CouchDB that records calls and answers from a script. */
 function fake(/** @type {Record<string, any>} */ answers = {}) {
@@ -303,5 +303,31 @@ describe('neo4j adapter', () => {
   it('quotes unusual labels in the seed query', () => {
     expect(a.querySeed('Person')).toBe('MATCH (n:Person) RETURN n LIMIT 100')
     expect(a.querySeed('My Label')).toBe('MATCH (n:`My Label`) RETURN n LIMIT 100')
+  })
+})
+
+describe('influx adapter', () => {
+  const api = {
+    measurements: vi.fn(async () => ['cpu', 'mem']),
+    describe: vi.fn(async () => ({ tags: ['host'], fields: [{ name: 'usage', type: 'float' }] })),
+    page: vi.fn(async () => ({ docs: [{ time: 't', host: 'a', usage: 1 }], next: 1 })),
+  }
+
+  it('reads measurements and pages of points, and never writes', async () => {
+    const a = influxAdapter(api, '2')
+    expect(a.readOnly).toBe(true)
+    expect(await a.listCollections()).toEqual(['cpu', 'mem'])
+    expect((await a.describe('cpu')).summary).toEqual(['1 tags', '1 fields'])
+    const p = await a.load('cpu', { cursor: null, filter: "host = 'a'", size: 1 })
+    expect(api.page).toHaveBeenCalledWith('cpu', "host = 'a'", 0, 1)
+    expect(p.cursor).toBe(1)
+    await expect(a.save('cpu', {}, null)).rejects.toThrow(/read-only/)
+    await expect(a.remove('cpu', {})).rejects.toThrow(/read-only/)
+  })
+
+  it('seeds SQL or InfluxQL by version', () => {
+    expect(influxAdapter(api, '3').querySeed('my"m')).toBe('SELECT * FROM "my""m" ORDER BY time DESC LIMIT 100')
+    expect(influxAdapter(api, '1').querySeed('my"m')).toBe('SELECT * FROM "my\\"m" ORDER BY time DESC LIMIT 100')
+    expect(influxAdapter(api, '3').consoleLabel).toBe('SQL')
   })
 })

@@ -1922,6 +1922,12 @@ pub async fn connect_snowflake(state: Db<'_>, config: crate::db::snowflake::Snow
     set_conn(&state, Some(ActiveConnection::Snowflake(h)))
 }
 
+/// InfluxDB (beta, read-only): 1.x, 2.x or 3.x over HTTP.
+pub async fn connect_influx(state: Db<'_>, config: crate::db::influx::InfluxConfig) -> Result<(), String> {
+    let config = crate::db::influx::connect(&config).await?;
+    set_conn(&state, Some(ActiveConnection::Doc(crate::db::docdb::DocConn::Influx(config))))
+}
+
 /// Neo4j (beta): over its HTTP API.
 pub async fn connect_neo4j(state: Db<'_>, config: crate::db::neo4j::Neo4jConfig) -> Result<(), String> {
     let config = crate::db::neo4j::connect(&config).await?;

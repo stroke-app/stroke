@@ -77,6 +77,7 @@ const ENGINE_SHORT = {
   scylladb: 'ScyllaDB',
   firestore: 'Firestore',
   neo4j: 'Neo4j',
+  influxdb: 'InfluxDB',
   spanner: 'Spanner',
   bigquery: 'BigQuery',
   snowflake: 'Snowflake',
