@@ -1,4 +1,5 @@
 <script>
+  import { plural } from '$lib/utils.js'
   import { Button } from '$lib/components/ui/button/index.js'
   /**
    * Find & replace, as a sidebar panel.
@@ -359,7 +360,7 @@
         class="shrink-0 font-mono" size="sm"
         disabled={matches.length === 0 || applying || !!regexError || noKey}
         onclick={handleApply}
-        title={`Replace in ${matches.length} cell(s) · ${keycaps('Mod+Enter').join(' ')}`}
+        title={`Replace in ${matches.length} ${plural(matches.length, 'cell')} · ${keycaps('Mod+Enter').join(' ')}`}
 >
         {#if applying}<Icon name="loader-2" class="size-3 shrink-0 animate-spin" />{/if}
         {matches.length ? `Replace ${matches.length.toLocaleString('en-US')}` : 'Replace'}

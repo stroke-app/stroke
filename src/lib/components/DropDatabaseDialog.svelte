@@ -1,4 +1,5 @@
 <script>
+  import { plural } from '$lib/utils.js'
   // Dropping a database is the least reversible thing in the app, so the confirm
   // asks for the name typed back rather than a single click, and shows the exact
   // statement that will run.
@@ -59,7 +60,7 @@
       <div class="min-w-0">
         <p class="text-ui-xs font-medium text-foreground">Close other sessions</p>
         <p class="mt-0.5 text-ui-2xs text-muted-foreground">
-          {sessions ? `${sessions} session(s) connected. ` : ''}{engineName} refuses the drop while anything is connected.
+          {sessions ? `${sessions} ${plural(sessions, 'session')} connected. ` : ''}{engineName} refuses the drop while anything is connected.
         </p>
       </div>
       <button
