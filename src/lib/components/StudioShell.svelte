@@ -1,5 +1,6 @@
 <script>
   import { formatApiCall } from '$lib/dynamo-json.js'
+  import { sqlFamily, SQL_SNIPPETS } from '$lib/sql-complete-data.js'
   import ArrowLeft from '@lucide/svelte/icons/arrow-left'
   import { onMount, onDestroy, untrack, tick } from 'svelte'
   import { panelMotionOff, slidePanel } from '$lib/panel-motion.js'
@@ -4793,6 +4794,21 @@ let rowSearch = $state('')
    * fields (Tab walks them) once the editor holds the tab.
    * @param {{ text: string, title: string, snippet?: string }} spec
    */
+  /**
+   * New table. The dialog writes Postgres, MySQL or SQLite DDL; SQL Server and
+   * ClickHouse got Postgres DDL from it (double quotes, serial, timestamptz)
+   * that they reject, so there it opens the editor on the engine's own
+   * CREATE TABLE, with its fields to Tab through.
+   */
+  function openNewTable() {
+    const fam = sqlFamily(dbType)
+    if (fam === 'mssql' || fam === 'clickhouse') {
+      const s = SQL_SNIPPETS.find((x) => x.name === 'CREATE TABLE' && x.only?.includes(fam))
+      if (s) { openObjectSql({ text: '', title: 'New table', snippet: s.body }); return }
+    }
+    showCreateTableDialog = true
+  }
+
   function openObjectSql({ text, title, snippet }) {
     if (aiMode) exitAiMode()
     openSqlTabWith(text, title, { draft: false })
@@ -10814,7 +10830,7 @@ let rowSearch = $state('')
         ondatabaseinfo={(args) => void openDatabaseInfo(args)}
         onterminatedbsessions={(args) => void terminateDbSessions(args)}
         {databasesRefreshKey}
-        onnewtable={() => (showCreateTableDialog = true)}
+        onnewtable={openNewTable}
         onnewschema={() => (showCreateSchemaDialog = true)}
         ontruncatetable={handleTruncateTable}
         ondroptable={(t, c, k) => void handleDropTable(t, c, k)}
