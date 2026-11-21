@@ -661,7 +661,7 @@
   <div class="flex flex-1 flex-col items-center justify-center gap-2 px-8 text-center">
     <Icon class="size-5 shrink-0 text-muted-foreground" />
     <p class="text-ui-sm font-medium text-foreground">{title}</p>
-    <p class="max-w-sm text-ui-xs leading-relaxed text-muted-foreground">{body}</p>
+    <p class="max-w-sm text-pretty text-ui-xs leading-relaxed text-muted-foreground">{body}</p>
   </div>
 {/snippet}
 
@@ -691,7 +691,7 @@
     <div class="flex min-h-0 flex-1 overflow-hidden">
       <!-- Left: what to export -->
       <aside class="flex w-80 shrink-0 flex-col border-r border-border/60" aria-label="Backup options">
-        <div class="app-scroll flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto p-4">
+        <div class="app-scroll flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto p-4">
           {#if supportsSchemaFilter && schemas.length > 0}
             <section class="flex flex-col gap-2">
               <label for="backup-schema" class={sectionLabel}>Schema</label>
@@ -720,8 +720,11 @@
             {/each}
           </section>
 
-          <section class="flex flex-col gap-2">
-            <div class="flex h-6 items-center gap-2">
+          <!-- The list takes the column's remaining height: capped at eight rows,
+               it scrolled in a small box above an empty column. min-h keeps a
+               usable list on a short window, where the column scrolls instead. -->
+          <section class="flex min-h-56 flex-1 flex-col gap-2">
+            <div class="flex h-6 shrink-0 items-center gap-2">
               <h2 class={sectionLabel}>Tables</h2>
               {#if tables.length > 0}
                 <span class="font-mono text-ui-2xs tabular-nums text-muted-foreground">
@@ -736,9 +739,9 @@
             {#if tables.length === 0}
               <p class="text-ui-xs text-muted-foreground">No tables in this {supportsSchemaFilter ? 'schema' : 'database'}.</p>
             {:else}
-              <div class="overflow-hidden rounded-lg border border-border/60">
+              <div class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-border/60">
                 {#if showTableSearch}
-                  <div class="relative border-b border-border/50">
+                  <div class="relative shrink-0 border-b border-border/50">
                     <Search class="pointer-events-none absolute top-1/2 left-2.5 size-3.5 shrink-0 -translate-y-1/2 text-muted-foreground" />
                     <input
                       bind:value={tableQuery}
@@ -751,8 +754,7 @@
                     />
                   </div>
                 {/if}
-                <!-- max-h-64 is exactly eight h-8 rows, so the list never ends on a half row. -->
-                <ul class="app-scroll max-h-64 overflow-y-auto" aria-label="Tables to export">
+                <ul class="app-scroll min-h-0 flex-1 overflow-y-auto" aria-label="Tables to export">
                   {#each visibleTables as t (t.name)}
                     {@const checked = selectedTables.has(t.name)}
                     <li>

@@ -5220,16 +5220,18 @@ let rowSearch = $state('')
     if (!(await confirmDiscardTabChanges(closing))) return
     rememberClosedTab(closing)
     const nextTabs = tabs.filter((t) => t.id !== id)
-    if (nextTabs.length === 0) {
-      tabs = [createWelcomeTab()]
+    // Only tabs the bar shows count: a hidden one can't be the screen you land on.
+    if (!nextTabs.some(isGroupable)) {
+      tabs = [...nextTabs.filter(isGroupable), createWelcomeTab()]
       activeTabId = tabs[0].id
       clearTableEditor()
       return
     }
     tabs = nextTabs
     if (activeTabId === id) {
-      const nextIdx = Math.min(idx, nextTabs.length - 1)
-      await activateTab(nextTabs[nextIdx].id)
+      const shown = nextTabs.filter(isGroupable)
+      const before = nextTabs.slice(0, idx).filter(isGroupable).length
+      await activateTab(shown[Math.min(before, shown.length - 1)].id)
     }
   }
 
@@ -5353,6 +5355,37 @@ let rowSearch = $state('')
     await activateTab(copy.id)
   }
 
+  // AI tabs exist only while "AI chat in a tab" is on; off, AI is the
+  // window's AI mode. Turning it off used to leave them in `tabs`, hidden from
+  // the bar: the screen showed the hidden tab (blank), and closing the last
+  // visible tab didn't open the new-tab page because hidden ones remained.
+  $effect(() => {
+    if ($appAiInTab) return
+    untrack(() => {
+      let keptChanged = false
+      for (const [k, sess] of _sessions) {
+        if (!sess.tabs?.some((t) => t.kind === 'ai')) continue
+        const left = sess.tabs.filter((t) => t.kind !== 'ai')
+        const active = left.some((t) => t.id === sess.activeTabId) ? sess.activeTabId : (left[0]?.id ?? null)
+        _sessions.set(k, { ...sess, tabs: left, activeTabId: active })
+        keptChanged = true
+      }
+      if (keptChanged) sessionsTick++
+      if (!tabs.some((t) => t.kind === 'ai')) return
+      const wasActive = tabs.find((t) => t.id === activeTabId)?.kind === 'ai'
+      const idx = tabs.findIndex((t) => t.id === activeTabId)
+      const left = tabs.filter((t) => t.kind !== 'ai')
+      if (!left.length) {
+        tabs = [createWelcomeTab()]
+        activeTabId = tabs[0].id
+        clearTableEditor()
+        return
+      }
+      tabs = left
+      if (wasActive) void activateTab(left[Math.min(Math.max(idx, 0), left.length - 1)].id)
+    })
+  })
+
   // ── Pane-layout reconciliation & group-aware actions ─────────────────────
   // AI tabs live in a full-window overlay, not the tab flow, so they never
   // belong to a group.
@@ -5460,8 +5493,9 @@ let rowSearch = $state('')
     // Remember it so Reopen Closed Tab (⌘⇧T) can restore it - mirrors closeTab().
     rememberClosedTab(closing)
     const nextTabs = tabs.filter((t) => t.id !== id)
-    if (nextTabs.length === 0) {
-      tabs = [createWelcomeTab()]
+    // Only tabs the bar shows count: a hidden one can't be the screen you land on.
+    if (!nextTabs.some(isGroupable)) {
+      tabs = [...nextTabs.filter(isGroupable), createWelcomeTab()]
       activeTabId = tabs[0].id
       clearTableEditor()
       return
