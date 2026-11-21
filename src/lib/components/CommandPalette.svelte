@@ -895,7 +895,7 @@
                             {#each turn.result.rows as row}
                               <tr class="border-t border-border/30">
                                 {#each row.slice(0, 5) as cell}
-                                  <td class={['max-w-[220px] truncate px-3 py-1.5 font-mono text-ui-2xs', cell === null ? 'text-muted-foreground' : 'text-foreground/85']}>{cell === null ? 'NULL' : String(cell)}</td>
+                                  <td class={['max-w-[13.75rem] truncate px-3 py-1.5 font-mono text-ui-2xs', cell === null ? 'text-muted-foreground' : 'text-foreground/85']}>{cell === null ? 'NULL' : String(cell)}</td>
                                 {/each}
                               </tr>
                             {/each}
@@ -1145,6 +1145,12 @@
                 <span class="shrink-0 text-ui-xs tabular-nums text-muted-foreground">{savedConnections.length}</span>
               {/if}
               <Icon name="chevron-right" class="size-3.5 shrink-0 text-muted-foreground" />
+            </Command.Item>
+            <!-- Also at the top level: "new connection" found nothing here
+                 because the item lived only inside Connections. -->
+            <Command.Item value="new connection add database server" keywords={['New connection']} onSelect={() => run(onopenconnection)}>
+              <Icon name="plus" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+              <span data-slot="command-label" class="truncate">New connection…</span>
             </Command.Item>
           </Command.Group>
 

@@ -65,7 +65,7 @@
     ondblclick={onDragRegionDblClick}
   >
     {#if isMac}
-      <div class="w-[92px] shrink-0"></div>
+      <div class="w-[5.75rem] shrink-0"></div>
     {/if}
     <Logo class="size-4 shrink-0" />
     <div class="min-w-0 flex-1" data-tauri-drag-region></div>

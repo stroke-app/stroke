@@ -939,7 +939,7 @@
         if (next) selectLayer(next)
       }}
       items={layers.map((l) => ({ value: layerLabel(l), label: layerLabel(l), hint: `${l.geomType} · ${rowsLabel(l.rows)}` }))}
-      triggerClass="h-7 w-[290px]"
+      triggerClass="h-7 w-[18.125rem]"
       contentClass="w-[22rem]"
     />
 
@@ -952,7 +952,7 @@
           placeholder="Column"
           onValueChange={(v) => (filterColumn = v ?? '')}
           items={[{ value: '', label: 'No filter' }, ...filterColumns.map((c) => ({ value: c, label: c }))]}
-          triggerClass="h-7 w-[130px]"
+          triggerClass="h-7 w-[8.125rem]"
           contentClass="w-56"
         />
 
@@ -962,13 +962,13 @@
             value={filterOp}
             onValueChange={(v) => v && (filterOp = v)}
             items={FILTER_OPS.map((o) => ({ value: o.value, label: o.label }))}
-            triggerClass="h-7 w-[120px]"
+            triggerClass="h-7 w-[7.5rem]"
             contentClass="w-48"
           />
 
           {#if opNeedsValue}
             <input
-            class= "field-surface h-7 w-[140px] bg-muted/30 px-2 text-ui-xs outline-none focus:border-ring"
+            class= "field-surface h-7 w-[8.75rem] bg-muted/30 px-2 text-ui-xs outline-none focus:border-ring"
               placeholder="Value"
               bind:value={filterValue}
               onkeydown={(e) => e.key === 'Enter' && applyFilter()}
@@ -1094,7 +1094,7 @@
       <!-- Selected feature -->
       {#if selected}
         <div
-          class="absolute top-3 left-3 flex max-h-[70%] w-[300px] flex-col overflow-hidden rounded-lg border border-border/60 bg-popover elevate-2-rim"
+          class="absolute top-3 left-3 flex max-h-[70%] w-[18.75rem] flex-col overflow-hidden rounded-lg border border-border/60 bg-popover elevate-2-rim"
         >
           <div class="flex h-8 shrink-0 items-center gap-2 border-b border-border/50 px-2.5">
             <span class="min-w-0 flex-1 truncate text-ui-xs font-medium">{layer?.table}</span>

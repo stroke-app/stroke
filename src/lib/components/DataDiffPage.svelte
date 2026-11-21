@@ -495,7 +495,7 @@
         <Loader2 class="size-3 shrink-0 animate-spin text-muted-foreground" />
         <span class="text-muted-foreground">{placeholder}</span>
       {:else}
-        <span class={cn('max-w-[140px] truncate', value && 'font-medium')}>{value || placeholder}</span>
+        <span class={cn('max-w-[8.75rem] truncate', value && 'font-medium')}>{value || placeholder}</span>
         {#if options.length > 0 || value}
           <ChevronDown class={cn('ml-auto size-3 shrink-0 text-muted-foreground transition-transform', isOpen && 'rotate-180')} />
         {/if}
@@ -541,10 +541,10 @@
   <div class="relative inline-flex">
     <button type="button"
       onclick={(e) => { e.stopPropagation(); if (isOpen) closeDd(); else openDd(id, e) }}
-      class={cn('flex h-7 max-w-[200px] items-center gap-1.5 rounded-md border border-border/40 bg-muted/25 px-2.5 text-ui-xs font-medium text-foreground/90 transition-colors hover:bg-muted/45 select-none', isOpen && 'border-border/70 bg-muted/50 text-foreground')}
+      class={cn('flex h-7 max-w-[12.5rem] items-center gap-1.5 rounded-md border border-border/40 bg-muted/25 px-2.5 text-ui-xs font-medium text-foreground/90 transition-colors hover:bg-muted/45 select-none', isOpen && 'border-border/70 bg-muted/50 text-foreground')}
     >
       {#if value === currentConnectionId}<span class="size-1.5 shrink-0 rounded-full bg-info" title="Active connection"></span>{/if}
-      <span class="max-w-[140px] truncate">{selected?.name ?? 'Connection'}</span>
+      <span class="max-w-[8.75rem] truncate">{selected?.name ?? 'Connection'}</span>
       <ChevronDown class={cn('ml-auto size-3 shrink-0 text-muted-foreground transition-transform', isOpen && 'rotate-180')} />
     </button>
     {#if isOpen}
@@ -600,7 +600,7 @@
 
         <!-- SOURCE row -->
         <div class="flex items-center gap-2.5 px-5 py-2.5">
-          <span class="flex w-[74px] shrink-0 items-center gap-1.5">
+          <span class="flex w-[4.625rem] shrink-0 items-center gap-1.5">
             <span class="size-1.5 shrink-0 rounded-full bg-info"></span>
             <span class="text-ui-3xs font-semibold uppercase tracking-[0.06em] text-info">Source</span>
           </span>
@@ -619,7 +619,7 @@
           <!-- Named, not silent. An empty option list renders as an unclickable
                chip, so without this a dropped connection and "no tables here"
                looked identical - and neither said anything. -->
-          <p class="px-5 pb-1 ps-[104px] font-mono text-ui-2xs text-destructive">{L.error}</p>
+          <p class="px-5 pb-1 ps-[6.5rem] font-mono text-ui-2xs text-destructive">{L.error}</p>
         {/if}
 
         <div class="relative flex items-center px-5">
@@ -637,7 +637,7 @@
 
         <!-- TARGET row -->
         <div class="flex items-center gap-2.5 px-5 py-2.5">
-          <span class="flex w-[74px] shrink-0 items-center gap-1.5">
+          <span class="flex w-[4.625rem] shrink-0 items-center gap-1.5">
             <span class="size-1.5 shrink-0 rounded-full bg-success"></span>
             <span class="text-ui-3xs font-semibold uppercase tracking-[0.06em] text-success">Target</span>
           </span>
@@ -656,7 +656,7 @@
           <!-- Named, not silent. An empty option list renders as an unclickable
                chip, so without this a dropped connection and "no tables here"
                looked identical - and neither said anything. -->
-          <p class="px-5 pb-1 ps-[104px] font-mono text-ui-2xs text-destructive">{R.error}</p>
+          <p class="px-5 pb-1 ps-[6.5rem] font-mono text-ui-2xs text-destructive">{R.error}</p>
         {/if}
 
       </div>
@@ -669,7 +669,7 @@
 
     <!-- Key cols + compare -->
     <div class="flex items-center gap-2.5 border-t border-border/15 px-5 py-2.5">
-      <span class="w-[74px] shrink-0 text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground" title="Columns used to match rows between source and target">Key cols</span>
+      <span class="w-[4.625rem] shrink-0 text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground" title="Columns used to match rows between source and target">Key cols</span>
       <div class="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
         {#each [...selectedKeyCols] as col}
           <button onclick={() => toggleKeyCol(col)}
@@ -844,7 +844,7 @@
               isModified? 'bg-warning/25' : ''}
             <tr class="{rowBg || 'hover:bg-foreground/[0.025]'} transition-colors" style="height:{rowHeight}px">
               <td class="relative select-none border-b border-border/8 px-2 text-center font-mono text-ui-3xs font-semibold {statusColor}">
-                {#if accentColor}<span class="absolute inset-y-0 left-0 w-[2px] {accentColor}"></span>{/if}
+                {#if accentColor}<span class="absolute inset-y-0 left-0 w-[0.125rem] {accentColor}"></span>{/if}
                 {statusGlyph}
               </td>
               {#each columns as _col, ci}

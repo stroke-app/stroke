@@ -190,7 +190,9 @@ export function smoothScroll(node, params = {}) {
     const inner = e.target instanceof Element ? e.target.closest('[data-native-scroll]') : null
     if (inner && inner !== node) return
     const { dx, dy } = wheelPixels(e, node.clientHeight)
-    const wantX = axis === 'x' || (axis === 'both' && Math.abs(dx) > Math.abs(dy)) || (axis === 'y' && e.shiftKey)
+    // Shift turns a vertical wheel sideways on either axis setting. On Windows
+    // and Linux the delta stays on Y with Shift held, so `both` scrolled down.
+    const wantX = axis === 'x' || (axis === 'both' && (e.shiftKey || Math.abs(dx) > Math.abs(dy))) || (axis === 'y' && e.shiftKey)
     const canScrollY = node.scrollHeight > node.clientHeight
     const canScrollX = node.scrollWidth > node.clientWidth
     if (wantX) {

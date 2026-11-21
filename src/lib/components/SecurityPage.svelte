@@ -797,7 +797,7 @@
                   >
                 </td>
                 <td
-                  class="max-w-[100px] truncate px-3 py-2 font-mono text-muted-foreground"
+                  class="max-w-[6.25rem] truncate px-3 py-2 font-mono text-muted-foreground"
                   >{pol.roles || "public"}</td
                 >
                 <td class="px-3 py-2">

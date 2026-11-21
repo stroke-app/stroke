@@ -10539,7 +10539,7 @@ let rowSearch = $state('')
     >
       <svelte:boundary onerror={(e) => console.error('[sidebar] crashed:', e)}>
         {#snippet failed(err, reset)}
-          <div class="flex h-full w-[220px] shrink-0 flex-col items-center justify-center gap-3 border-r border-border/50 bg-sidebar p-4 text-center">
+          <div class="flex h-full w-[13.75rem] shrink-0 flex-col items-center justify-center gap-3 border-r border-border/50 bg-sidebar p-4 text-center">
             <AlertTriangle class="size-5 text-destructive" />
             <p class="text-ui-xs font-medium text-muted-foreground">Sidebar error</p>
             <p class="max-w-full break-words font-mono text-ui-3xs text-muted-foreground">{String(/** @type {any} */ (err)?.message ?? err)}</p>

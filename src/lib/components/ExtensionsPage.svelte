@@ -518,7 +518,7 @@
                       </span>
                     {/if}
                   </div>
-                  <div class="absolute right-3 top-2.5 flex h-[18px] items-center">
+                  <div class="absolute right-3 top-2.5 flex h-[1.125rem] items-center">
                     {#if p.loadable}
                       {@render toggle(on, () => void setExternalEnabled(p.id, !on), `Toggle ${p.name}`)}
                     {:else}

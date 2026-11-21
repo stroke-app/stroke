@@ -54,7 +54,7 @@
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
-  class="fixed z-[9999] max-w-[268px] overflow-hidden rounded-[10px] border border-border/60 bg-popover elevate-2-rim"
+  class="fixed z-[9999] max-w-[16.75rem] overflow-hidden rounded-[10px] border border-border/60 bg-popover elevate-2-rim"
   style={style}
   onmouseenter={onmouseenter}
   onmouseleave={onmouseleave}
@@ -63,7 +63,7 @@
     <!-- Image area -->
     <div class="relative min-h-[80px] bg-muted/20">
       {#if !imgLoaded && !imgError}
-        <div class="flex h-[120px] w-[200px] items-center justify-center">
+        <div class="flex h-[120px] w-[12.5rem] items-center justify-center">
           <span class="inline-flex gap-1">
             <span class="size-1.5 animate-bounce rounded-full bg-muted-foreground/40" style="animation-delay:0ms"></span>
             <span class="size-1.5 animate-bounce rounded-full bg-muted-foreground/40" style="animation-delay:120ms"></span>
@@ -72,7 +72,7 @@
         </div>
       {/if}
       {#if imgError}
-        <div class="flex h-[80px] w-[200px] flex-col items-center justify-center gap-1.5 text-muted-foreground">
+        <div class="flex h-[80px] w-[12.5rem] flex-col items-center justify-center gap-1.5 text-muted-foreground">
           <ImageOff class="size-5 shrink-0 opacity-40" />
           <span class="text-ui-2xs">Could not load image</span>
         </div>
@@ -80,7 +80,7 @@
         <img
           src={url}
           alt=""
-          class="block max-h-[200px] max-w-[268px] object-contain"
+          class="block max-h-[200px] max-w-[16.75rem] object-contain"
           class:hidden={!imgLoaded}
           loading="eager"
           onload={() => { imgLoaded = true }}

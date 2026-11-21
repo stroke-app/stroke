@@ -1581,7 +1581,7 @@
               <span class="tabular-nums">{currentDisplay.queryMs} ms</span>
             {/if}
             {#if currentDisplay.message}
-              <span class="max-w-[160px] truncate">{currentDisplay.message}</span>
+              <span class="max-w-[10rem] truncate">{currentDisplay.message}</span>
             {/if}
           </div>
         {/if}
