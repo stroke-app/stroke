@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.4.3] - 2026-11-21
+
+### Changes
+- Generate SQL that runs on its own engine: export, Open in SQL editor, upsert (#346)
+
+
 ## [3.4.2] - 2026-11-21
 
 ### Changes
