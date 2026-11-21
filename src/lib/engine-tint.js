@@ -35,6 +35,8 @@ export const ENGINE_TINT = {
   cassandra: "text-sky-600/80",
   scylladb: "text-cyan-500/80",
   firestore: "text-amber-500/80",
+  spanner: "text-blue-500/80",
+  bigquery: "text-blue-500/80",
 };
 /** @param {string} id */
 export function engineTint(id) {

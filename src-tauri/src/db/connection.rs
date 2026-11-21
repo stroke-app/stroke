@@ -418,6 +418,8 @@ pub enum ActiveConnection {
     Mssql(MssqlHandle),
     Oracle(OracleHandle),
     Posthog(PosthogConfig),
+    /// Google Cloud Spanner (beta), over its REST API.
+    Spanner(crate::db::spanner::SpannerHandle),
 }
 
 impl ActiveConnection {
@@ -436,6 +438,7 @@ impl ActiveConnection {
             Self::Mssql(_) => "mssql",
             Self::Oracle(_) => "oracle",
             Self::Posthog(_) => "posthog",
+            Self::Spanner(_) => "spanner",
         }
     }
 }
@@ -1856,6 +1859,14 @@ pub async fn connect_mongo(state: Db<'_>, tunnel_state: State<'_, TunnelState>, 
     set_conn(&state, Some(ActiveConnection::Doc(crate::db::docdb::DocConn::Mongo(handle))))?;
     tunnel_state.set(tunnel);
     Ok(())
+}
+
+/// Google Cloud Spanner (beta): checks the database, learns its dialect and
+/// opens a session before it becomes the active connection.
+pub async fn connect_spanner(state: Db<'_>, config: crate::db::spanner::SpannerConfig) -> Result<(), String> {
+    let h = crate::db::spanner::connect(&config).await?;
+    close_existing(&state).await;
+    set_conn(&state, Some(ActiveConnection::Spanner(h)))
 }
 
 pub async fn connect_firestore(state: Db<'_>, config: crate::db::firestore::FirestoreConfig) -> Result<(), String> {

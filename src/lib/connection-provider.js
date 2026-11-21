@@ -72,6 +72,7 @@ const ENGINE_SHORT = {
   cassandra: 'Cassandra',
   scylladb: 'ScyllaDB',
   firestore: 'Firestore',
+  spanner: 'Spanner',
   mongodb: 'MongoDB',
   d1: 'D1',
   posthog: 'HogQL',

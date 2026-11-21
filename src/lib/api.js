@@ -902,6 +902,38 @@ export async function firestoreRequest(method, path, body) {
   return inv('firestore_request', { method, path, body: body ?? null })
 }
 
+// ── Spanner (beta) ───────────────────────────────────────────────────────────
+
+/**
+ * @typedef {{ name?: string, projectId?: string, instanceId?: string, databaseId?: string,
+ *   auth?: 'emulator' | 'serviceAccount' | 'gcloud', keyFile?: string, emulatorHost?: string }} SpannerConnConfig
+ */
+
+/** @param {SpannerConnConfig} config */
+function normalizeSpanner(config) {
+  /** @param {string | undefined} s */
+  const opt = (s) => (s && String(s).trim()) || null
+  return {
+    name: String(config.name || 'Spanner'),
+    projectId: String(config.projectId || '').trim(),
+    instanceId: String(config.instanceId || '').trim(),
+    databaseId: String(config.databaseId || '').trim(),
+    auth: config.auth || 'gcloud',
+    keyFile: opt(config.keyFile),
+    emulatorHost: opt(config.emulatorHost),
+  }
+}
+
+/** @param {SpannerConnConfig} config */
+export async function testSpanner(config) {
+  return inv('test_spanner', { config: normalizeSpanner(config) })
+}
+
+/** @param {SpannerConnConfig} config */
+export async function connectSpanner(config) {
+  return connectInv('connect_spanner_db', { config: normalizeSpanner(config) })
+}
+
 // ── Cassandra ─────────────────────────────────────────────────────────────────
 
 /** @typedef {{ name?: string, hosts?: string, user?: string, password?: string, keyspace?: string }} CassandraConnConfig */

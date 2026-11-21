@@ -37,7 +37,7 @@ impl Dialect {
             ActiveConnection::Mssql(_) => Some(Self::Mssql),
             ActiveConnection::Oracle(_) => Some(Self::Oracle),
             ActiveConnection::Clickhouse(_) => Some(Self::Clickhouse),
-            ActiveConnection::Redis(_) | ActiveConnection::Posthog(_) | ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => None,
+            ActiveConnection::Redis(_) | ActiveConnection::Posthog(_) | ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) | ActiveConnection::Spanner(_) => None,
         }
     }
 
@@ -139,6 +139,7 @@ pub(crate) async fn run_statement(conn: &ActiveConnection, sql: &str) -> Result<
         ActiveConnection::Mssql(h) => super::mssql::execute_sql(h, sql).await.map(|_| ()),
         ActiveConnection::Oracle(h) => super::oracle::execute_sql(h, sql).await.map(|_| ()),
         ActiveConnection::Clickhouse(cfg) => super::clickhouse::query(cfg, sql).await.map(|_| ()),
+        ActiveConnection::Spanner(h) => super::spanner::query(h, sql).await.map(|_| ()),
         ActiveConnection::Redis(_) | ActiveConnection::Posthog(_) | ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => Err("This connection does not run DDL statements".into()),
     }
 }

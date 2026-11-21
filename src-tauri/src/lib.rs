@@ -773,6 +773,8 @@ pub fn run() {
             commands::cassandra_delete,
             commands::test_firestore,
             commands::connect_firestore_db,
+            commands::test_spanner,
+            commands::connect_spanner_db,
             commands::firestore_request,
             commands::test_mongo,
             commands::connect_mongo_db,

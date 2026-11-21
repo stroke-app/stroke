@@ -38,6 +38,8 @@
     connectCassandra,
     testFirestore,
     connectFirestore,
+    testSpanner,
+    connectSpanner,
     testMongo,
     connectMongo,
     dynamoProfiles,
@@ -183,6 +185,7 @@
       label: "Cloud",
       drivers: [
         { id: "d1", label: "Cloudflare D1", desc: "Edge SQLite via REST API" },
+        { id: "spanner", label: "Spanner", desc: "Google Cloud Spanner, GoogleSQL or PostgreSQL", beta: true },
       ],
     },
     {
@@ -288,6 +291,7 @@
     "upstash",
     "posthog",
     "d1",
+    "spanner",
     "redis",
     "valkey",
     "dynamodb",
@@ -460,6 +464,11 @@
   let fsAuth = $state(/** @type {'serviceAccount'|'gcloud'|'emulator'} */ ("serviceAccount"));
   let fsKeyFile = $state("");
   let fsEmulator = $state("localhost:8080");
+  // Spanner: the Google project, key file and sign-in above, plus the
+  // instance and database it lives in.
+  let spInstance = $state("");
+  let spDatabase = $state("");
+  let spEmulator = $state("localhost:9020");
   // Oracle: a service name (in the shared `database` field), a SID, or a whole
   // connect string; and where Instant Client lives when the app can't find it.
   /** Copy URL just copied: the button says so for a moment. */
@@ -874,6 +883,8 @@
         // "serverless" finds what the label alone does not.
         keywords: [d.label, cat.label, d.desc, d.id],
         group: cat.label,
+        desc: d.desc,
+        beta: !!d.beta,
         disabled: DISABLED_TABS.has(d.id),
       })),
     ),
@@ -1055,6 +1066,17 @@
         ...(fsAuth === "serviceAccount" && { keyFile: fsKeyFile.trim() }),
         ...(fsAuth === "emulator" && { emulatorHost: fsEmulator.trim() }),
       };
+    if (dbType === "spanner")
+      return {
+        type: "spanner",
+        name: nm,
+        projectId: fsProject.trim(),
+        instanceId: spInstance.trim(),
+        databaseId: spDatabase.trim(),
+        auth: fsAuth,
+        ...(fsAuth === "serviceAccount" && { keyFile: fsKeyFile.trim() }),
+        ...(fsAuth === "emulator" && { emulatorHost: spEmulator.trim() }),
+      };
     if (isCqlForm)
       return {
         type: "cassandra",
@@ -1185,6 +1207,9 @@
       fsAuth = conn.auth ?? "serviceAccount";
       fsKeyFile = conn.keyFile ?? "";
       fsEmulator = conn.emulatorHost ?? "localhost:8080";
+      spInstance = conn.instanceId ?? "";
+      spDatabase = conn.databaseId ?? "";
+      spEmulator = conn.emulatorHost ?? "localhost:9020";
       cqlHosts = conn.hosts ?? "127.0.0.1:9042";
       cqlKeyspace = conn.keyspace ?? "";
       if (conn.type === "oracle") {
@@ -1263,6 +1288,9 @@
       fsDatabase = "";
       fsAuth = "serviceAccount";
       fsKeyFile = "";
+      spInstance = "";
+      spDatabase = "";
+      spEmulator = "localhost:9020";
       fsEmulator = "localhost:8080";
       awsAuth = "profile";
       awsProfile = awsProfileList.includes("default") ? "default" : (awsProfileList[0] ?? "");
@@ -1433,6 +1461,7 @@
     cassandra:   { database: "", user: "" },
     scylladb:    { database: "", user: "" },
     firestore:   { database: "", user: "" },
+    spanner:     { database: "", user: "" },
     mongodb:     { database: "", user: "" },
   };
 
@@ -1623,6 +1652,9 @@
         libsqlUrl.replace(/^\w+:\/\//, "").split(".")[0] || activeDriver.label
       );
     if (dbType === "d1") return "Cloudflare D1";
+    // Google's engines have no host field: name them after the database.
+    if (dbType === "spanner") return spDatabase.trim() || fsProject.trim() || "Spanner";
+    if (dbType === "firestore") return fsProject.trim() || "Firestore";
     // DynamoDB has no host field of its own: the form's leftover 127.0.0.1
     // named an AWS connection after localhost. Name it after where it goes.
     if (dbType === "dynamodb") {
@@ -1819,6 +1851,7 @@
     if (engineFamily(conn.type) === "redis") return conn.host ? `${conn.host}${conn.port ? `:${conn.port}` : ""}` : "—";
     if (conn.type === "couchdb" || conn.type === "elasticsearch" || conn.type === "opensearch") return conn.url || "—";
     if (conn.type === "mongodb") return conn.uri ? uriHost(conn.uri) : "—";
+    if (conn.type === "spanner") return [conn.instanceId && conn.databaseId ? `${conn.instanceId}/${conn.databaseId}` : conn.projectId, conn.auth === "emulator" ? "emulator" : null].filter(Boolean).join(" · ") || "—";
     if (conn.type === "firestore") return [conn.projectId, conn.auth === "emulator" ? "emulator" : null].filter(Boolean).join(" · ") || "—";
     if (conn.type === "cassandra") return [conn.hosts, conn.keyspace].filter(Boolean).join(" · ") || "—";
     if (conn.type === "dynamodb") return conn.endpoint || [conn.profile, conn.region].filter(Boolean).join(" · ") || "AWS";
@@ -1926,6 +1959,7 @@
     if (conn.type === "elasticsearch" || conn.type === "opensearch") return connectElastic(conn);
     if (conn.type === "cassandra") return connectCassandra(conn);
     if (conn.type === "firestore") return connectFirestore(conn);
+    if (conn.type === "spanner") return connectSpanner(conn);
     if (conn.type === "mongodb") return connectMongo(conn);
     return connectPostgres(conn);
   }
@@ -2461,6 +2495,7 @@
       }
       else if (p.type === "cassandra") await testCassandra(p);
       else if (p.type === "firestore") await testFirestore(p);
+      else if (p.type === "spanner") await testSpanner(p);
       else if (p.type === "mongodb") await testMongo(p);
       else await testPostgresConnection(p);
       if (myOp !== opId) return; // cancelled by the user
@@ -2691,6 +2726,7 @@
     if (dbType === "couchdb" || dbType === "elasticsearch" || dbType === "opensearch") return couchUrl || "—";
     if (isCqlForm) return cqlHosts || "—";
     if (dbType === "firestore") return fsProject || "—";
+    if (dbType === "spanner") return [fsProject, spInstance, spDatabase].filter(Boolean).join("/") || "—";
     if (dbType === "mongodb") return uriHost(mongoUri) || "—";
     if (dbType === "dynamodb") return awsEndpoint || awsRegion || (awsAuth === "profile" ? awsProfile || "default profile" : "AWS");
     if (dbType === "oracle" && oraMode === "connect") return oraConnect || "—";
@@ -3878,6 +3914,9 @@
                       <span class="min-w-0 truncate text-ui-sm font-medium text-foreground">
                         {editingId ? name || activeDriver.label : activeDriver.label}
                       </span>
+                      {#if activeDriver.beta}
+                        <span class="shrink-0 rounded-sm bg-primary/10 px-1 text-ui-3xs font-medium text-primary">Beta</span>
+                      {/if}
                       <Icon name="chevron-down" class="size-3.5 shrink-0 text-muted-foreground" />
                     </button>
                   {/snippet}
@@ -3887,6 +3926,9 @@
                          rows in a row was noise beside names that already say what
                          they are. The category still matches in search (keywords). -->
                     <span class="min-w-0 shrink-0 truncate">{it.label}</span>
+                    {#if it.beta}
+                      <span class="shrink-0 rounded-sm bg-primary/10 px-1 text-ui-3xs font-medium text-primary">Beta</span>
+                    {/if}
                     <span class="min-w-0 flex-1 truncate text-ui-3xs text-muted-foreground">{it.desc}</span>
                     {#if it.value === dbType}
                       <Icon name="check" class="size-3.5 shrink-0 text-primary" />
@@ -4918,7 +4960,23 @@
                             </div>
 
                             <!-- ── Firestore ──────────────────────────────── -->
-                          {:else if dbType === "firestore"}
+                          {:else if dbType === "firestore" || dbType === "spanner"}
+                            {#if dbType === "spanner"}
+                            <div>
+                              <label for="cn-fs-project" class={lbl}>Project ID</label>
+                              <Input id="cn-fs-project" bind:value={fsProject} placeholder="my-project" spellcheck="false" autocomplete="off" class={cn(inp, "font-mono")} />
+                            </div>
+                            <div class="grid grid-cols-2 gap-2">
+                              <div>
+                                <label for="cn-sp-instance" class={lbl}>Instance</label>
+                                <Input id="cn-sp-instance" bind:value={spInstance} placeholder="my-instance" spellcheck="false" autocomplete="off" class={cn(inp, "font-mono")} />
+                              </div>
+                              <div>
+                                <label for="cn-sp-db" class={lbl}>Database</label>
+                                <Input id="cn-sp-db" bind:value={spDatabase} placeholder="my-database" spellcheck="false" autocomplete="off" class={cn(inp, "font-mono")} />
+                              </div>
+                            </div>
+                            {:else}
                             <div class="grid grid-cols-2 gap-2">
                               <div>
                                 <label for="cn-fs-project" class={lbl}>Project ID</label>
@@ -4929,6 +4987,7 @@
                                 <Input id="cn-fs-db" bind:value={fsDatabase} placeholder="(default)" spellcheck="false" autocomplete="off" class={cn(inp, "font-mono")} />
                               </div>
                             </div>
+                            {/if}
                             <div>
                               <span class={lbl} id="cn-fs-auth-label">Sign in with</span>
                               <div class="flex h-8 items-center gap-0.5 rounded-[var(--radius-field)] bg-muted/40 p-0.5" role="group" aria-labelledby="cn-fs-auth-label">
@@ -4953,7 +5012,7 @@
                                   <Button type="button" variant="outline" onclick={pickFirestoreKey}>Browse…</Button>
                                 </div>
                                 <p class="mt-1 text-ui-3xs text-muted-foreground">
-                                  A JSON key with Cloud Datastore access. It stays on this machine and is used to sign in to Google.
+                                  A JSON key with {dbType === "spanner" ? "Cloud Spanner" : "Cloud Datastore"} access. It stays on this machine and is used to sign in to Google.
                                 </p>
                               </div>
                             {:else if fsAuth === "gcloud"}
@@ -4963,7 +5022,12 @@
                             {:else}
                               <div>
                                 <label for="cn-fs-emu" class={lbl}>Emulator host</label>
-                                <Input id="cn-fs-emu" bind:value={fsEmulator} placeholder="localhost:8080" spellcheck="false" autocomplete="off" class={cn(inp, "font-mono")} />
+                                {#if dbType === "spanner"}
+                                  <Input id="cn-fs-emu" bind:value={spEmulator} placeholder="localhost:9020" spellcheck="false" autocomplete="off" class={cn(inp, "font-mono")} />
+                                  <p class="mt-1 text-ui-3xs text-muted-foreground">The emulator's REST port, 9020 by default.</p>
+                                {:else}
+                                  <Input id="cn-fs-emu" bind:value={fsEmulator} placeholder="localhost:8080" spellcheck="false" autocomplete="off" class={cn(inp, "font-mono")} />
+                                {/if}
                               </div>
                             {/if}
 
