@@ -338,6 +338,7 @@
       : connection?.type === 'firestore' ? 'Firestore'
       : connection?.type === 'spanner' ? 'Spanner'
       : connection?.type === 'bigquery' ? 'BigQuery'
+      : connection?.type === 'snowflake' ? 'Snowflake'
       : connection?.type === 'odbc' ? engineLabel(engineId(connection))
       : connection?.type === 'mongodb' ? 'MongoDB'
       : 'PostgreSQL',

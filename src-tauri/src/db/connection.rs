@@ -424,6 +424,8 @@ pub enum ActiveConnection {
     Bigquery(crate::db::bigquery::BigQueryHandle),
     /// Any database through its ODBC driver (beta).
     Odbc(crate::db::odbc::OdbcHandle),
+    /// Snowflake (beta), over its SQL REST API.
+    Snowflake(crate::db::snowflake::SnowflakeHandle),
 }
 
 impl ActiveConnection {
@@ -445,6 +447,7 @@ impl ActiveConnection {
             Self::Spanner(_) => "spanner",
             Self::Bigquery(_) => "bigquery",
             Self::Odbc(_) => "odbc",
+            Self::Snowflake(_) => "snowflake",
         }
     }
 }
@@ -1891,6 +1894,13 @@ pub async fn connect_odbc(state: Db<'_>, config: crate::db::odbc::OdbcConfig) ->
     close_existing(&state).await;
     set_conn(&state, Some(ActiveConnection::Odbc(h)))?;
     Ok(summary)
+}
+
+/// Snowflake (beta): signs in and runs SELECT 1 before it becomes active.
+pub async fn connect_snowflake(state: Db<'_>, config: crate::db::snowflake::SnowflakeConfig) -> Result<(), String> {
+    let h = crate::db::snowflake::connect(&config).await?;
+    close_existing(&state).await;
+    set_conn(&state, Some(ActiveConnection::Snowflake(h)))
 }
 
 pub async fn connect_firestore(state: Db<'_>, config: crate::db::firestore::FirestoreConfig) -> Result<(), String> {

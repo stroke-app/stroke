@@ -307,6 +307,17 @@ pub async fn table_row_counts(
             }
             Ok(counts)
         }
+        // SHOW TABLES carries every table's row count: one call, no warehouse.
+        ActiveConnection::Snowflake(h) => {
+            let listed = super::snowflake::list_tables(&h, &schema).await.unwrap_or_default();
+            Ok(tables
+                .into_iter()
+                .map(|name| {
+                    let row_count = listed.iter().find(|t| t.name == name).map(|t| t.row_count).unwrap_or(-1);
+                    TableRowCount { name, row_count }
+                })
+                .collect())
+        }
         _ => Ok(Vec::new()),
     }
 }
@@ -1168,6 +1179,7 @@ pub async fn list_schemas(state: Db<'_>) -> Result<Vec<String>, String> {
         ActiveConnection::Posthog(cfg) => super::posthog::list_schemas(&cfg).await,
         ActiveConnection::Spanner(h) => super::spanner::list_schemas(&h).await,
         ActiveConnection::Bigquery(h) => super::bigquery::list_schemas(&h).await,
+        ActiveConnection::Snowflake(h) => super::snowflake::list_schemas(&h).await,
         ActiveConnection::Odbc(h) => super::odbc::list_schemas(&h).await,
         ActiveConnection::Redis(_) => Ok(vec![]),
         ActiveConnection::Dynamodb(_) => Ok(vec![super::docdb::FLAT_SCHEMA.to_string()]),
@@ -1203,6 +1215,7 @@ pub async fn list_tables(state: Db<'_>, schema: String) -> Result<Vec<TableInfo>
         ActiveConnection::Posthog(cfg) => super::posthog::list_tables(&cfg).await,
         ActiveConnection::Spanner(h) => super::spanner::list_tables(&h, &schema).await,
         ActiveConnection::Bigquery(h) => super::bigquery::list_tables(&h, &schema).await,
+        ActiveConnection::Snowflake(h) => super::snowflake::list_tables(&h, &schema).await,
         ActiveConnection::Odbc(h) => super::odbc::list_tables(&h, &schema).await,
         ActiveConnection::Redis(cfg) => super::redis::list_tables(&cfg).await,
         ActiveConnection::Dynamodb(cfg) => super::dynamodb::list_tables(&cfg).await,
@@ -1244,6 +1257,7 @@ pub async fn list_indexes_for(
         ActiveConnection::Spanner(h) => super::spanner::list_indexes(&h, &schema).await,
         // BigQuery has no indexes to browse (search indexes aside).
         ActiveConnection::Bigquery(_) => Ok(vec![]),
+        ActiveConnection::Snowflake(_) => Ok(vec![]),
         ActiveConnection::Odbc(_) => Ok(vec![]),
         ActiveConnection::Redis(cfg) => super::redis::list_indexes(&cfg).await,
         ActiveConnection::Dynamodb(cfg) => match table {
@@ -1431,6 +1445,7 @@ pub async fn get_table_column_structure(
         ActiveConnection::Posthog(cfg) => super::posthog::get_column_structure(&cfg, &table).await,
         ActiveConnection::Spanner(h) => super::spanner::get_column_structure(&h, &schema, &table).await,
         ActiveConnection::Bigquery(h) => super::bigquery::get_column_structure(&h, &schema, &table).await,
+        ActiveConnection::Snowflake(h) => super::snowflake::get_column_structure(&h, &schema, &table).await,
         ActiveConnection::Odbc(h) => super::odbc::get_column_structure(&h, &schema, &table).await,
         ActiveConnection::Redis(cfg) => {
             super::redis::get_column_structure(&cfg, &table).await
@@ -1765,6 +1780,7 @@ pub async fn get_schema_column_structure(
         // Spanner's schemas are '' and 'default', which the identifier check refuses.
         ActiveConnection::Spanner(h) => return super::spanner::schema_column_structure(&h, &schema).await,
         ActiveConnection::Bigquery(h) => return super::bigquery::schema_column_structure(&h, &schema).await,
+        ActiveConnection::Snowflake(h) => return super::snowflake::schema_column_structure(&h, &schema).await,
         ActiveConnection::Odbc(h) => return super::odbc::schema_column_structure(&h, &schema).await,
         _ => {}
     }
@@ -2554,6 +2570,9 @@ pub async fn get_incoming_foreign_keys(
     if let ActiveConnection::Bigquery(h) = require_conn(&state)? {
         return super::bigquery::incoming_foreign_keys(&h, &schema, &table).await;
     }
+    if let ActiveConnection::Snowflake(h) = require_conn(&state)? {
+        return super::snowflake::incoming_foreign_keys(&h, &schema, &table).await;
+    }
     if let ActiveConnection::Odbc(h) = require_conn(&state)? {
         return super::odbc::incoming_foreign_keys(&h, &schema, &table).await;
     }
@@ -2744,6 +2763,7 @@ pub async fn get_table_ddl(
         ActiveConnection::Posthog(cfg) => super::posthog::get_ddl(&cfg, &table).await,
         ActiveConnection::Spanner(h) => super::spanner::get_ddl(&h, &schema, &table).await,
         ActiveConnection::Bigquery(h) => super::bigquery::get_ddl(&h, &schema, &table).await,
+        ActiveConnection::Snowflake(h) => super::snowflake::get_ddl(&h, &schema, &table).await,
         ActiveConnection::Odbc(h) => super::odbc::get_ddl(&h, &schema, &table).await,
         ActiveConnection::Redis(cfg) => super::redis::get_ddl(&cfg, &table).await,
         ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => Ok(String::new()),

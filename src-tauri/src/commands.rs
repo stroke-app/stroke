@@ -976,6 +976,17 @@ pub async fn odbc_data_sources() -> Result<Vec<crate::db::odbc::OdbcDataSource>,
     crate::db::odbc::data_sources().await
 }
 
+/// Snowflake (beta): signs in and the warehouse answers.
+#[tauri::command]
+pub async fn test_snowflake(config: crate::db::snowflake::SnowflakeConfig) -> Result<(), String> {
+    crate::db::snowflake::connect(&config).await.map(|_| ())
+}
+
+#[tauri::command]
+pub async fn connect_snowflake_db(state: Db<'_>, config: crate::db::snowflake::SnowflakeConfig) -> Result<(), String> {
+    crate::db::connection::connect_snowflake(state, config).await
+}
+
 /// One Firestore REST call (document paths of this database only).
 #[tauri::command]
 pub async fn firestore_request(
@@ -1320,6 +1331,12 @@ pub async fn pg_explain_sql(
             planning_time: 0.0,
             execution_time: 0.0,
             driver: "bigquery".into(),
+        }),
+        ActiveConnection::Snowflake(h) => Ok(ExplainResult {
+            plan: crate::db::snowflake::explain_plan(&h, &sql).await?,
+            planning_time: 0.0,
+            execution_time: 0.0,
+            driver: "snowflake".into(),
         }),
         _ => Err("This engine doesn't expose a query plan".into()),
     }

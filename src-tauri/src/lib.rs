@@ -779,6 +779,8 @@ pub fn run() {
             commands::connect_bigquery_db,
             commands::test_odbc,
             commands::connect_odbc_db,
+            commands::test_snowflake,
+            commands::connect_snowflake_db,
             commands::odbc_drivers,
             commands::odbc_data_sources,
             commands::firestore_request,

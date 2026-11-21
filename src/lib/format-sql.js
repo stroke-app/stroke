@@ -14,7 +14,7 @@ const LANGUAGE = /** @type {Record<string, import('sql-formatter').SqlLanguage>}
   postgres: 'postgresql', cockroachdb: 'postgresql',
   mysql: 'mysql', mariadb: 'mariadb', tidb: 'tidb',
   sqlite: 'sqlite', d1: 'sqlite', libsql: 'sqlite',
-  mssql: 'transactsql', duckdb: 'duckdb', clickhouse: 'clickhouse', oracle: 'plsql', spanner: 'bigquery', bigquery: 'bigquery',
+  mssql: 'transactsql', duckdb: 'duckdb', clickhouse: 'clickhouse', oracle: 'plsql', spanner: 'bigquery', bigquery: 'bigquery', snowflake: 'snowflake',
 })
 
 /**

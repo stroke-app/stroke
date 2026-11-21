@@ -648,6 +648,13 @@ async fn execute_sql(
             let result = crate::db::bigquery::query(h, sql).await?;
             Ok(truncated_result_json(&result, max_rows))
         }
+        ActiveConnection::Snowflake(h) => {
+            if read_only && !crate::db::snowflake::reads(sql) {
+                return Err("This connection is read-only: only SELECT statements run".into());
+            }
+            let result = crate::db::snowflake::query(h, sql).await?;
+            Ok(truncated_result_json(&result, max_rows))
+        }
         ActiveConnection::Odbc(h) => {
             if read_only && !crate::db::odbc::reads(sql) {
                 return Err("This connection is read-only: only SELECT statements run".into());
@@ -817,6 +824,10 @@ async fn list_tables(conn: &ActiveConnection, schema: &str) -> Result<String, St
             let tables = crate::db::bigquery::list_tables(h, schema).await?;
             Ok(json!({"tables":tables.iter().map(|t|&t.name).collect::<Vec<_>>()}).to_string())
         }
+        ActiveConnection::Snowflake(h) => {
+            let tables = crate::db::snowflake::list_tables(h, schema).await?;
+            Ok(json!({"tables":tables.iter().map(|t|&t.name).collect::<Vec<_>>()}).to_string())
+        }
         ActiveConnection::Odbc(h) => {
             let tables = crate::db::odbc::list_tables(h, schema).await?;
             Ok(json!({"tables":tables.iter().map(|t|&t.name).collect::<Vec<_>>()}).to_string())
@@ -969,6 +980,14 @@ async fn describe_table(
                 "default": c.column_default, "primary_key": c.is_primary_key, "references": c.foreign_key,
             })).collect();
             Ok(json!({"table":table,"columns":columns,"note":"BigQuery GoogleSQL: write `dataset.table` with backticks. Queries are billed by bytes scanned: select only the columns you need"}).to_string())
+        }
+        ActiveConnection::Snowflake(h) => {
+            let cols = crate::db::snowflake::get_column_structure(h, schema, table).await?;
+            let columns: Vec<_> = cols.iter().map(|c| json!({
+                "name": c.name, "type": c.data_type, "nullable": c.is_nullable,
+                "default": c.column_default, "primary_key": c.is_primary_key, "references": c.foreign_key,
+            })).collect();
+            Ok(json!({"table":table,"columns":columns,"note":"Snowflake: unquoted names fold to upper case; quote mixed-case names with double quotes. Queries run on the connection's warehouse"}).to_string())
         }
         ActiveConnection::Odbc(h) => {
             let cols = crate::db::odbc::get_column_structure(h, schema, table).await?;
@@ -1295,6 +1314,7 @@ async fn check_migrations(conn: &ActiveConnection, schema: &str) -> Result<Strin
         ActiveConnection::Posthog(_) => Ok(json!({"migrations":[],"note":"Migration detection not supported for PostHog"}).to_string()),
         ActiveConnection::Spanner(_) => Ok(json!({"migrations":[],"note":"Migration detection not supported for Spanner"}).to_string()),
         ActiveConnection::Bigquery(_) => Ok(json!({"migrations":[],"note":"Migration detection not supported for BigQuery"}).to_string()),
+        ActiveConnection::Snowflake(_) => Ok(json!({"migrations":[],"note":"Migration detection not supported for Snowflake"}).to_string()),
         ActiveConnection::Odbc(_) => Ok(json!({"migrations":[],"note":"Migration detection not supported for ODBC"}).to_string()),
         ActiveConnection::Redis(_) => Ok(json!({"migrations":[],"note":"Migration detection not supported for Redis"}).to_string()),
         ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => Ok(json!({"migrations":[],"note":"Migration detection not supported for DynamoDB"}).to_string()),
@@ -1517,6 +1537,10 @@ async fn explain_query(conn: &ActiveConnection, sql: &str) -> Result<String, Str
             let plan = crate::db::bigquery::explain_plan(h, sql).await?;
             Ok(json!({"plan":plan,"database":"bigquery"}).to_string())
         }
+        ActiveConnection::Snowflake(h) => {
+            let plan = crate::db::snowflake::explain_plan(h, sql).await?;
+            Ok(json!({"plan":plan,"database":"snowflake"}).to_string())
+        }
         ActiveConnection::Odbc(h) => Ok(json!({"plan":[],"database":"odbc","dbms":h.info.dbms,"note":"ODBC has no standard query plan; run the database's own EXPLAIN through execute_query"}).to_string()),
         ActiveConnection::Duckdb(h) => {
             let r = crate::db::duckdb::execute_sql(h, &format!("EXPLAIN {sql}")).await?;
@@ -1617,6 +1641,10 @@ async fn get_database_stats(conn: &ActiveConnection, schema: &str) -> Result<Str
         ActiveConnection::Bigquery(h) => {
             let tables = crate::db::bigquery::list_tables(h, schema).await?;
             Ok(json!({"database":"bigquery","dialect":"GoogleSQL","project":h.project_id,"dataset":schema,"table_count":tables.len()}).to_string())
+        }
+        ActiveConnection::Snowflake(h) => {
+            let tables = crate::db::snowflake::list_tables(h, schema).await?;
+            Ok(json!({"database":"snowflake","dialect":"Snowflake SQL","database_name":h.cfg.database,"schema":schema,"table_count":tables.len()}).to_string())
         }
         ActiveConnection::Odbc(h) => {
             let tables = crate::db::odbc::list_tables(h, schema).await?;

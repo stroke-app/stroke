@@ -37,7 +37,7 @@ impl Dialect {
             ActiveConnection::Mssql(_) => Some(Self::Mssql),
             ActiveConnection::Oracle(_) => Some(Self::Oracle),
             ActiveConnection::Clickhouse(_) => Some(Self::Clickhouse),
-            ActiveConnection::Redis(_) | ActiveConnection::Posthog(_) | ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) | ActiveConnection::Spanner(_) | ActiveConnection::Bigquery(_) | ActiveConnection::Odbc(_) => None,
+            ActiveConnection::Redis(_) | ActiveConnection::Posthog(_) | ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) | ActiveConnection::Spanner(_) | ActiveConnection::Bigquery(_) | ActiveConnection::Snowflake(_) | ActiveConnection::Odbc(_) => None,
         }
     }
 
@@ -141,6 +141,7 @@ pub(crate) async fn run_statement(conn: &ActiveConnection, sql: &str) -> Result<
         ActiveConnection::Clickhouse(cfg) => super::clickhouse::query(cfg, sql).await.map(|_| ()),
         ActiveConnection::Spanner(h) => super::spanner::query(h, sql).await.map(|_| ()),
         ActiveConnection::Bigquery(h) => super::bigquery::query(h, sql).await.map(|_| ()),
+        ActiveConnection::Snowflake(h) => super::snowflake::query(h, sql).await.map(|_| ()),
         ActiveConnection::Odbc(h) => super::odbc::query(h, sql).await.map(|_| ()),
         ActiveConnection::Redis(_) | ActiveConnection::Posthog(_) | ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => Err("This connection does not run DDL statements".into()),
     }

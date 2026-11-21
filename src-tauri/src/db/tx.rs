@@ -359,6 +359,7 @@ pub async fn tx_begin(db: Db<'_>, session_id: String) -> Result<TxStatus, String
         ActiveConnection::Posthog(_) => return Err("PostHog does not support transactions".into()),
         ActiveConnection::Spanner(_) => return Err("Explicit transactions are not supported for Spanner yet; each statement commits on its own".into()),
         ActiveConnection::Bigquery(_) => return Err("Explicit transactions are not supported for BigQuery yet; each statement commits on its own".into()),
+        ActiveConnection::Snowflake(_) => return Err("Explicit transactions are not supported for Snowflake yet; each statement commits on its own".into()),
         ActiveConnection::Odbc(_) => return Err("Explicit transactions are not supported for ODBC yet; each statement commits on its own".into()),
         ActiveConnection::Redis(_) => return Err("Redis does not support SQL transactions".into()),
         ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => return Err("DynamoDB does not support SQL transactions here".into()),

@@ -1933,7 +1933,7 @@ pub(crate) fn raw_filter_dialect(conn: &ActiveConnection) -> super::sql_util::Ra
         ActiveConnection::Sqlite(_) | ActiveConnection::D1(_) | ActiveConnection::LibSql(_) => D::Sqlite,
         ActiveConnection::Duckdb(_) => D::Duckdb,
         ActiveConnection::Oracle(_) => D::Oracle,
-        ActiveConnection::Mssql(_) | ActiveConnection::Clickhouse(_) | ActiveConnection::Posthog(_) | ActiveConnection::Redis(_) | ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) | ActiveConnection::Spanner(_) | ActiveConnection::Bigquery(_) | ActiveConnection::Odbc(_) => D::Literal,
+        ActiveConnection::Mssql(_) | ActiveConnection::Clickhouse(_) | ActiveConnection::Posthog(_) | ActiveConnection::Redis(_) | ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) | ActiveConnection::Spanner(_) | ActiveConnection::Bigquery(_) | ActiveConnection::Snowflake(_) | ActiveConnection::Odbc(_) => D::Literal,
     }
 }
 
@@ -2040,6 +2040,9 @@ pub async fn get_table_rows(
         }
         ActiveConnection::Bigquery(h) => {
             return super::bigquery::get_table_rows(&h, &schema, &table, limit, offset, search, sort_column, sort_direction, filters).await;
+        }
+        ActiveConnection::Snowflake(h) => {
+            return super::snowflake::get_table_rows(&h, &schema, &table, limit, offset, search, sort_column, sort_direction, filters).await;
         }
         ActiveConnection::Odbc(h) => {
             return super::odbc::get_table_rows(&h, &schema, &table, limit, offset, search, sort_column, sort_direction, filters).await;
@@ -2728,6 +2731,9 @@ pub async fn update_table_cell(
         ActiveConnection::Bigquery(h) => {
             return super::bigquery::update_table_cell(&h, &schema, &table, primary_key, &column, &value).await;
         }
+        ActiveConnection::Snowflake(h) => {
+            return super::snowflake::update_table_cell(&h, &schema, &table, primary_key, &column, &value).await;
+        }
         ActiveConnection::Odbc(h) => {
             return super::odbc::update_table_cell(&h, &schema, &table, primary_key, &column, &value).await;
         }
@@ -2964,6 +2970,10 @@ pub async fn insert_table_row(
             let row = super::bigquery::insert_table_row(&h, &schema, &table, values).await?;
             return Ok(InsertRowResult { row });
         }
+        ActiveConnection::Snowflake(h) => {
+            let row = super::snowflake::insert_table_row(&h, &schema, &table, values).await?;
+            return Ok(InsertRowResult { row });
+        }
         ActiveConnection::Odbc(h) => {
             let row = super::odbc::insert_table_row(&h, &schema, &table, values).await?;
             return Ok(InsertRowResult { row });
@@ -3104,6 +3114,9 @@ pub async fn delete_table_rows(
         }
         ActiveConnection::Bigquery(h) => {
             return super::bigquery::delete_table_rows(&h, &schema, &table, primary_keys).await;
+        }
+        ActiveConnection::Snowflake(h) => {
+            return super::snowflake::delete_table_rows(&h, &schema, &table, primary_keys).await;
         }
         ActiveConnection::Odbc(h) => {
             return super::odbc::delete_table_rows(&h, &schema, &table, primary_keys).await;
@@ -4601,6 +4614,7 @@ async fn run_one_other(conn: &ActiveConnection, stmt: &str) -> Result<SqlResult,
         ActiveConnection::Posthog(cfg) => super::posthog::query(cfg, stmt).await,
         ActiveConnection::Spanner(h) => super::spanner::query(h, stmt).await,
         ActiveConnection::Bigquery(h) => super::bigquery::query(h, stmt).await,
+        ActiveConnection::Snowflake(h) => super::snowflake::query(h, stmt).await,
         ActiveConnection::Odbc(h) => super::odbc::query(h, stmt).await,
         ActiveConnection::Redis(cfg) => super::redis::query(cfg, stmt).await,
         ActiveConnection::Dynamodb(cfg) => super::dynamodb::query(cfg, stmt).await,
@@ -4675,6 +4689,7 @@ pub(crate) async fn run_one_cancellable(
         ActiveConnection::Doc(super::docdb::DocConn::Elastic(cfg)) => super::elastic::query_cancellable(cfg, stmt, stop).await,
         // jobs.cancel on the query's job.
         ActiveConnection::Bigquery(h) => super::bigquery::query_cancellable(h, stmt, stop).await,
+        ActiveConnection::Snowflake(h) => super::snowflake::query_cancellable(h, stmt, stop).await,
         // SQLCancel on the running statement.
         ActiveConnection::Odbc(h) => super::odbc::query_cancellable(h, stmt, stop.receiver()).await,
         // No server-side stop exists: stop waiting, and say the server may not.
@@ -4724,6 +4739,7 @@ async fn stream_one(
         ActiveConnection::Oracle(h) if super::oracle::reads(stmt) => super::oracle::stream_into(h, stmt, sink, stop).await,
         ActiveConnection::Clickhouse(cfg) if super::clickhouse::reads(stmt) => super::clickhouse::stream_into(cfg, stmt, sink, stop).await,
         ActiveConnection::Bigquery(h) if super::bigquery::reads(stmt) => super::bigquery::stream_into(h, stmt, sink, stop).await,
+        ActiveConnection::Snowflake(h) if super::snowflake::reads(stmt) => super::snowflake::stream_into(h, stmt, sink, stop).await,
         ActiveConnection::Odbc(h) if super::odbc::reads(stmt) => super::odbc::stream_into(h, stmt, sink, stop.receiver()).await,
         _ => return None,
     })
@@ -5634,6 +5650,7 @@ async fn dispatch_stats_sql(conn: &ActiveConnection, sql: &str) -> Result<SqlRes
         ActiveConnection::Posthog(cfg) => super::posthog::query(cfg, sql).await,
         ActiveConnection::Spanner(h) => super::spanner::query(h, sql).await,
         ActiveConnection::Bigquery(h) => super::bigquery::query(h, sql).await,
+        ActiveConnection::Snowflake(h) => super::snowflake::query(h, sql).await,
         ActiveConnection::Odbc(h) => super::odbc::query(h, sql).await,
         ActiveConnection::Redis(_) => Err("Column statistics are not supported on Redis".into()),
         ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => Err("Column statistics are not supported on DynamoDB".into()),
@@ -5657,7 +5674,7 @@ pub async fn ping_connection(state: Db<'_>) -> Result<(), String> {
         }
         ActiveConnection::Mysql(pool) => super::connection::keepalive_idle(&pool).await,
         // HTTP-based: stateless, no persistent TCP connection to validate
-        ActiveConnection::D1(_) | ActiveConnection::LibSql(_) | ActiveConnection::Clickhouse(_) | ActiveConnection::Redis(_) | ActiveConnection::Posthog(_) | ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) | ActiveConnection::Spanner(_) | ActiveConnection::Bigquery(_) | ActiveConnection::Odbc(_) => Ok(()),
+        ActiveConnection::D1(_) | ActiveConnection::LibSql(_) | ActiveConnection::Clickhouse(_) | ActiveConnection::Redis(_) | ActiveConnection::Posthog(_) | ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) | ActiveConnection::Spanner(_) | ActiveConnection::Bigquery(_) | ActiveConnection::Snowflake(_) | ActiveConnection::Odbc(_) => Ok(()),
         ActiveConnection::Duckdb(h) => super::duckdb::execute_sql(&h, "SELECT 1").await.map(|_| ()),
         ActiveConnection::Mssql(h) => super::mssql::execute_sql(&h, "SELECT 1").await.map(|_| ()),
         ActiveConnection::Oracle(h) => super::oracle::ping(&h).await,

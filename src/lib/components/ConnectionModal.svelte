@@ -42,6 +42,8 @@
     connectSpanner,
     testBigquery,
     connectBigquery,
+    testSnowflake,
+    connectSnowflake,
     testOdbc,
     connectOdbc,
     odbcDrivers,
@@ -195,6 +197,7 @@
         { id: "d1", label: "Cloudflare D1", desc: "Edge SQLite via REST API" },
         { id: "spanner", label: "Spanner", desc: "Google Cloud Spanner, GoogleSQL or PostgreSQL", beta: true },
         { id: "bigquery", label: "BigQuery", desc: "Google Cloud data warehouse", beta: true },
+        { id: "snowflake", label: "Snowflake", desc: "Snowflake data cloud, key pair or access token", beta: true },
       ],
     },
     {
@@ -309,6 +312,7 @@
     "d1",
     "spanner",
     "bigquery",
+    "snowflake",
     "odbc",
     ...ODBC_PRESETS.map((p) => `odbc-${p.id}`),
     "redis",
@@ -493,6 +497,23 @@
   let bqDataset = $state("");
   let bqLocation = $state("");
   let bqEmulator = $state("localhost:9050");
+  // Snowflake: the account, how to sign in, and where queries run. User,
+  // database and the access token use the form's shared fields.
+  let sfAccount = $state("");
+  let sfAuth = $state(/** @type {'keypair'|'token'} */ ("keypair"));
+  let sfKeyFile = $state("");
+  let sfWarehouse = $state("");
+  let sfSchema = $state("");
+  let sfRole = $state("");
+  async function pickSnowflakeKey() {
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const path = await open({ title: "Select the private key", filters: [{ name: "Private key", extensions: ["p8", "pem", "key"] }] });
+      if (typeof path === "string" && path) sfKeyFile = path;
+    } catch {
+      /* browser/non-Tauri env - the field is still typeable */
+    }
+  }
   // ODBC: a preset's fields, a data source name, or a whole connection string.
   // Host, port, database, user and password are the form's shared fields;
   // anything else a preset asks for lives in `odbcFields`.
@@ -1171,6 +1192,19 @@
         user: user.trim(),
         password,
       };
+    if (dbType === "snowflake")
+      return {
+        type: "snowflake",
+        name: nm,
+        account: sfAccount.trim(),
+        user: user.trim(),
+        auth: sfAuth,
+        ...(sfAuth === "keypair" ? { privateKeyFile: sfKeyFile.trim() } : { password }),
+        warehouse: sfWarehouse.trim(),
+        database: database.trim(),
+        schema: sfSchema.trim(),
+        role: sfRole.trim(),
+      };
     if (dbType === "bigquery")
       return {
         type: "bigquery",
@@ -1318,6 +1352,14 @@
       bqDataset = conn.type === "bigquery" ? (conn.dataset ?? "") : "";
       bqLocation = conn.location ?? "";
       bqEmulator = conn.emulatorHost ?? "localhost:9050";
+      if (conn.type === "snowflake") {
+        sfAccount = conn.account ?? "";
+        sfAuth = conn.auth ?? "keypair";
+        sfKeyFile = conn.privateKeyFile ?? "";
+        sfWarehouse = conn.warehouse ?? "";
+        sfSchema = conn.schema ?? "";
+        sfRole = conn.role ?? "";
+      }
       if (conn.type === "odbc") {
         odbcMode = conn.odbcMode ?? (conn.preset && conn.preset !== "generic" ? "fields" : conn.dsn ? "dsn" : "string");
         odbcDriver = conn.odbcDriver ?? "";
@@ -1410,6 +1452,12 @@
       bqDataset = "";
       bqLocation = "";
       bqEmulator = "localhost:9050";
+      sfAccount = "";
+      sfAuth = "keypair";
+      sfKeyFile = "";
+      sfWarehouse = "";
+      sfSchema = "";
+      sfRole = "";
       odbcMode = "fields";
       odbcDriver = "";
       odbcFields = {};
@@ -1594,6 +1642,7 @@
     firestore:   { database: "", user: "" },
     spanner:     { database: "", user: "" },
     bigquery:    { database: "", user: "" },
+    snowflake:   { database: "", user: "" },
     odbc:        { database: "", user: "" },
     ...Object.fromEntries(
       ODBC_PRESETS.map((p) => [`odbc-${p.id}`, { database: p.fields.find((f) => f.key === "database")?.default ?? "", user: "" }]),
@@ -1804,6 +1853,7 @@
     // Google's engines have no host field: name them after the database.
     if (dbType === "spanner") return spDatabase.trim() || fsProject.trim() || "Spanner";
     if (dbType === "bigquery") return [fsProject.trim(), bqDataset.trim()].filter(Boolean).join(".") || "BigQuery";
+    if (dbType === "snowflake") return database.trim() ? `${database.trim()} · Snowflake` : "Snowflake";
     if (isOdbcForm) {
       if (odbcMode === "dsn" && odbcDsn.trim()) return odbcDsn.trim();
       const where = host.trim() || database.trim();
@@ -2007,6 +2057,7 @@
     if (conn.type === "couchdb" || conn.type === "elasticsearch" || conn.type === "opensearch") return conn.url || "—";
     if (conn.type === "mongodb") return conn.uri ? uriHost(conn.uri) : "—";
     if (conn.type === "odbc") return conn.odbcMode === "dsn" || (!conn.odbcMode && conn.dsn) ? `DSN ${conn.dsn}` : [conn.host, conn.database].filter(Boolean).join(" · ") || "ODBC";
+    if (conn.type === "snowflake") return [conn.account, conn.database].filter(Boolean).join(" · ") || "—";
     if (conn.type === "bigquery") return [[conn.projectId, conn.dataset].filter(Boolean).join("."), conn.auth === "emulator" ? "emulator" : null].filter(Boolean).join(" · ") || "—";
     if (conn.type === "spanner") return [conn.instanceId && conn.databaseId ? `${conn.instanceId}/${conn.databaseId}` : conn.projectId, conn.auth === "emulator" ? "emulator" : null].filter(Boolean).join(" · ") || "—";
     if (conn.type === "firestore") return [conn.projectId, conn.auth === "emulator" ? "emulator" : null].filter(Boolean).join(" · ") || "—";
@@ -2118,6 +2169,7 @@
     if (conn.type === "firestore") return connectFirestore(conn);
     if (conn.type === "spanner") return connectSpanner(conn);
     if (conn.type === "bigquery") return connectBigquery(conn);
+    if (conn.type === "snowflake") return connectSnowflake(conn);
     if (conn.type === "odbc") return connectOdbc(conn);
     if (conn.type === "mongodb") return connectMongo(conn);
     return connectPostgres(conn);
@@ -2656,6 +2708,7 @@
       else if (p.type === "firestore") await testFirestore(p);
       else if (p.type === "spanner") await testSpanner(p);
       else if (p.type === "bigquery") await testBigquery(p);
+      else if (p.type === "snowflake") await testSnowflake(p);
       else if (p.type === "odbc") odbcServer = await testOdbc(p);
       else if (p.type === "mongodb") await testMongo(p);
       else await testPostgresConnection(p);
@@ -2889,6 +2942,7 @@
     if (dbType === "firestore") return fsProject || "—";
     if (dbType === "spanner") return [fsProject, spInstance, spDatabase].filter(Boolean).join("/") || "—";
     if (dbType === "bigquery") return [fsProject, bqDataset].filter(Boolean).join(".") || "—";
+    if (dbType === "snowflake") return [sfAccount, database].filter(Boolean).join(" · ") || "—";
     if (isOdbcForm)
       return odbcMode === "dsn" ? odbcDsn || "—" : odbcMode === "string" ? "connection string" : [host, database].filter(Boolean).join(" · ") || "—";
     if (dbType === "mongodb") return uriHost(mongoUri) || "—";
@@ -5108,6 +5162,72 @@
                                 >Use TLS</span
                               >
                             </label>
+
+                            <!-- ── Snowflake ──────────────────────────────── -->
+                          {:else if dbType === "snowflake"}
+                            <div>
+                              <label for="cn-sf-account" class={lbl}>Account identifier</label>
+                              <Input id="cn-sf-account" bind:value={sfAccount} placeholder="myorg-myaccount" spellcheck="false" autocomplete="off" class={cn(inp, "font-mono")} />
+                              <p class="mt-1 text-ui-3xs text-muted-foreground">The part before <span class="font-mono">.snowflakecomputing.com</span> in your account URL.</p>
+                            </div>
+                            <div class="grid grid-cols-2 gap-2">
+                              <div>
+                                <label for="cn-sf-user" class={lbl}>User</label>
+                                <Input id="cn-sf-user" bind:value={user} autocomplete="username" spellcheck="false" class={inp} />
+                              </div>
+                              <div>
+                                <label for="cn-sf-role" class={lbl}>Role <span class="normal-case font-normal opacity-50">(optional)</span></label>
+                                <Input id="cn-sf-role" bind:value={sfRole} placeholder="the user's default" spellcheck="false" autocomplete="off" class={cn(inp, "font-mono")} />
+                              </div>
+                            </div>
+                            <div>
+                              <span class={lbl} id="cn-sf-auth-label">Sign in with</span>
+                              <div class="flex h-8 items-center gap-0.5 rounded-[var(--radius-field)] bg-muted/40 p-0.5" role="group" aria-labelledby="cn-sf-auth-label">
+                                {#each [{ v: "keypair", l: "Key pair" }, { v: "token", l: "Access token" }] as m (m.v)}
+                                  <button
+                                    type="button"
+                                    aria-pressed={sfAuth === m.v}
+                                    class={cn(
+                                      "inline-flex h-7 flex-1 items-center justify-center rounded-md text-ui-xs font-medium transition-colors",
+                                      sfAuth === m.v ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+                                    )}
+                                    onclick={() => (sfAuth = /** @type {'keypair'|'token'} */ (m.v))}
+                                  >{m.l}</button>
+                                {/each}
+                              </div>
+                            </div>
+                            {#if sfAuth === "keypair"}
+                              <div>
+                                <label for="cn-sf-key" class={lbl}>Private key</label>
+                                <div class="flex gap-2">
+                                  <Input id="cn-sf-key" bind:value={sfKeyFile} placeholder="/path/to/rsa_key.p8" spellcheck="false" autocomplete="off" class={cn(inp, "min-w-0 flex-1 font-mono")} />
+                                  <Button type="button" variant="outline" onclick={pickSnowflakeKey}>Browse…</Button>
+                                </div>
+                                <p class="mt-1 text-ui-3xs text-muted-foreground">
+                                  An unencrypted PKCS#8 RSA key whose public half is set on the user (<span class="font-mono">ALTER USER … SET RSA_PUBLIC_KEY</span>). It stays on this machine.
+                                </p>
+                              </div>
+                            {:else}
+                              <div>
+                                <label for="cn-sf-token" class={lbl}>Programmatic access token</label>
+                                <PasswordInput id="cn-sf-token" bind:value={password} autocomplete="off" class={inp} />
+                                <p class="mt-1 text-ui-3xs text-muted-foreground">Kept in your OS keychain. Snowflake's SQL API does not take passwords.</p>
+                              </div>
+                            {/if}
+                            <div class="grid grid-cols-2 gap-2">
+                              <div>
+                                <label for="cn-sf-wh" class={lbl}>Warehouse</label>
+                                <Input id="cn-sf-wh" bind:value={sfWarehouse} placeholder="COMPUTE_WH" spellcheck="false" autocomplete="off" class={cn(inp, "font-mono")} />
+                              </div>
+                              <div>
+                                <label for="cn-sf-db" class={lbl}>Database</label>
+                                <Input id="cn-sf-db" bind:value={database} placeholder="ANALYTICS" spellcheck="false" autocomplete="off" class={cn(inp, "font-mono")} />
+                              </div>
+                            </div>
+                            <div>
+                              <label for="cn-sf-schema" class={lbl}>Schema <span class="normal-case font-normal opacity-50">(optional)</span></label>
+                              <Input id="cn-sf-schema" bind:value={sfSchema} placeholder="PUBLIC" spellcheck="false" autocomplete="off" class={cn(inp, "font-mono")} />
+                            </div>
 
                             <!-- ── ODBC ───────────────────────────────────── -->
                           {:else if isOdbcForm}
