@@ -20,7 +20,7 @@
     column = '',
     constraintName = /** @type {string|null} */ (null),
     existingFk = /** @type {string|null} */ (null),
-    tables = /** @type {{ name: string }[]} */ ([]),
+    tables = /** @type {{ name: string, kind?: string }[]} */ ([]),
     onrefresh = () => {},
   } = $props()
 
@@ -167,7 +167,7 @@
                 class="w-full text-ui-xs"
                 bind:value={refTable}
                 placeholder="Select table…"
-                options={[{ value: '', label: 'Select table…' }, ...tables.map((t) => ({ value: t.name, label: t.name }))]}
+                options={[{ value: '', label: 'Select table…' }, ...tables.filter((t) => !t.kind || t.kind === 'table').map((t) => ({ value: t.name, label: t.name }))]}
               />
             </div>
           </div>
