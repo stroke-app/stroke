@@ -9700,7 +9700,8 @@ let rowSearch = $state('')
 
       // Gate on rows.length: rowsToSql returns a "-- no rows" comment for empty
       // input, but an empty table should export as DDL only.
-      const inserts = rows.length ? rowsToSql(cols, rows, tableName) : ''
+      // In the engine's own SQL, to load beside its own DDL.
+      const inserts = rows.length ? rowsToSql(cols, rows, tableName, engineFamily(connection?.type)) : ''
       const sql = inserts ? `${ddl}\n\n${inserts}` : ddl
       const filename = `${tableName}_${new Date().toISOString().slice(0, 10)}.sql`
       await saveExportFile(sql, filename, 'sql')

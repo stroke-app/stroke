@@ -264,15 +264,29 @@ export function hasTableQuery(search, filters, sort) {
  * @returns {string}
  */
 export function buildSelectSql({ schema, table, columns = [], filters = [], search = '', sort = null, limit = 100, engine = 'postgres', quote = 'always', qualify = true }) {
-  const mysql = engine === 'mysql' || engine === 'mariadb'
-  const pg = !mysql // postgres/sqlite/etc. use double-quote identifiers + ILIKE-ish
+  // The engine family: wire-compatible engines write the same SQL.
+  const fam = ['cockroachdb', 'yugabytedb', 'alloydb', 'redshift'].includes(engine) ? 'postgres'
+    : engine === 'mariadb' ? 'mysql'
+    : engine
+  const google = fam === 'spanner' || fam === 'bigquery'
   /** quote identifier, per Settings → SQL editor → Quote object names */
   const q = (/** @type {string} */ id) => quoteName(id, engine, quote)
-  /** quote a string literal */
-  const lit = (/** @type {string} */ v) => `'${String(v).replace(/'/g, "''")}'`
-  const like = pg ? 'ILIKE' : 'LIKE'
-  /** text-cast a column for substring search */
-  const asText = (/** @type {string} */ col) => (engine === 'postgres' ? `${col}::text` : col)
+  /** quote a string literal: GoogleSQL escapes with a backslash, the rest double the quote */
+  const lit = (/** @type {string} */ v) => google
+    ? `'${String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`
+    : `'${String(v).replace(/'/g, "''")}'`
+  // ILIKE is Postgres's alone (DuckDB has it too). Everywhere else LIKE, which
+  // is case-insensitive under MySQL's and SQL Server's usual collations.
+  const like = fam === 'postgres' || fam === 'duckdb' ? 'ILIKE' : 'LIKE'
+  /** text-cast a column for substring search, so a number or date can be searched too */
+  const asText = (/** @type {string} */ col) =>
+    fam === 'postgres' ? `${col}::text`
+    : fam === 'duckdb' ? `CAST(${col} AS VARCHAR)`
+    : google ? `CAST(${col} AS STRING)`
+    : fam === 'mssql' ? `CAST(${col} AS NVARCHAR(MAX))`
+    : fam === 'oracle' ? `TO_CHAR(${col})`
+    : fam === 'clickhouse' ? `toString(${col})`
+    : col
 
   const target = tableRef({ schema, table, engine, mode: quote, qualify })
   // SELECT * keeps the generated query clean and avoids referencing virtual /
@@ -333,6 +347,11 @@ export function buildSelectSql({ schema, table, columns = [], filters = [], sear
     }
   }
   if (sort?.column) sql += ` ORDER BY ${q(sort.column)} ${sort.direction === 'desc' ? 'DESC' : 'ASC'}`
-  if (limit && limit > 0 && limit !== MAX_PAGE_SIZE) sql += ` LIMIT ${limit}`
+  if (limit && limit > 0 && limit !== MAX_PAGE_SIZE) {
+    // SQL Server has no LIMIT: TOP after SELECT. Oracle: FETCH FIRST (12c+).
+    if (fam === 'mssql') sql = sql.replace(/^SELECT /, `SELECT TOP ${limit} `)
+    else if (fam === 'oracle') sql += ` FETCH FIRST ${limit} ROWS ONLY`
+    else sql += ` LIMIT ${limit}`
+  }
   return sql + ';'
 }
