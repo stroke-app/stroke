@@ -257,8 +257,8 @@
           </colgroup>
           <thead>
             <tr>
-              {#each ['index_name','table','algorithm','unique','columns','condition'] as h}
-                <th class="border-b border-r border-border bg-panel/80 px-3 py-2 text-left font-medium text-muted-foreground text-ui-2xs uppercase tracking-[0.06em] whitespace-nowrap">{h}</th>
+              {#each ['Index','Table','Method','Unique','Columns','Condition'] as h}
+                <th class="border-b border-r border-border bg-panel/80 px-3 py-2 text-left font-medium text-muted-foreground text-ui-xs whitespace-nowrap">{h}</th>
               {/each}
             </tr>
           </thead>
@@ -302,8 +302,8 @@
           </colgroup>
           <thead>
             <tr>
-              {#each ['trigger_name','table','timing','events','function','status',''] as h}
-                <th class="border-b border-r border-border bg-panel/80 px-3 py-2 text-left font-medium text-muted-foreground text-ui-2xs uppercase tracking-[0.06em] whitespace-nowrap">{h}</th>
+              {#each ['Trigger','Table','Timing','Events','Function','Status',''] as h}
+                <th class="border-b border-r border-border bg-panel/80 px-3 py-2 text-left font-medium text-muted-foreground text-ui-xs whitespace-nowrap">{h}</th>
               {/each}
             </tr>
           </thead>
@@ -376,8 +376,8 @@
           </colgroup>
           <thead>
             <tr>
-              {#each ['sequence_name','data_type','start','increment','range','cycle','owned_by',''] as h}
-                <th class="border-b border-r border-border bg-panel/80 px-3 py-2 text-left font-medium text-muted-foreground text-ui-2xs uppercase tracking-[0.06em] whitespace-nowrap last:border-r-0">{h}</th>
+              {#each ['Sequence','Type','Start','Increment','Range','Cycle','Owned by',''] as h}
+                <th class="border-b border-r border-border bg-panel/80 px-3 py-2 text-left font-medium text-muted-foreground text-ui-xs whitespace-nowrap last:border-r-0">{h}</th>
               {/each}
             </tr>
           </thead>
@@ -478,7 +478,7 @@
         <table class="border-collapse" style="table-layout:fixed;width:max-content;min-width:100%">
           <thead>
             <tr>
-              <th class="border-b border-r border-border bg-panel/80 px-3 py-2 text-left font-medium text-muted-foreground text-ui-2xs uppercase tracking-[0.06em]">view_name</th>
+              <th class="border-b border-r border-border bg-panel/80 px-3 py-2 text-left font-medium text-muted-foreground text-ui-xs">View</th>
             </tr>
           </thead>
           <tbody>
@@ -501,8 +501,8 @@
         <table class="border-collapse" style="table-layout:fixed;width:max-content;min-width:100%">
           <thead>
             <tr>
-              <th class="border-b border-r border-border bg-panel/80 px-3 py-2 text-left font-medium text-muted-foreground text-ui-2xs uppercase tracking-[0.06em]">view_name</th>
-              <th class="border-b border-border bg-panel/80 px-3 py-2 text-left font-medium text-muted-foreground text-ui-2xs uppercase tracking-[0.06em]">rows</th>
+              <th class="border-b border-r border-border bg-panel/80 px-3 py-2 text-left font-medium text-muted-foreground text-ui-xs">View</th>
+              <th class="border-b border-border bg-panel/80 px-3 py-2 text-left font-medium text-muted-foreground text-ui-xs">Rows</th>
             </tr>
           </thead>
           <tbody>

@@ -911,7 +911,7 @@
         </colgroup>
         <thead>
           <tr>
-            {#each ['index_name','algorithm','is_unique','column_name','condition','comment',''] as h}
+            {#each ['Index','Method','Unique','Columns','Condition','Comment',''] as h}
               <th class={TH}>{h}</th>
             {/each}
           </tr>
@@ -1135,7 +1135,7 @@
         </colgroup>
         <thead>
           <tr>
-            {#each ['trigger_name','timing','events','function','status',''] as h}
+            {#each ['Trigger','Timing','Events','Function','Status',''] as h}
               <th class="{TH} last:border-r-0">{h}</th>
             {/each}
           </tr>
