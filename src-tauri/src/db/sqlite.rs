@@ -259,7 +259,7 @@ async fn run_sql(conn: &mut sqlx::SqliteConnection, sql: &str) -> Result<SqlResu
             columns: vec![],
             rows: vec![],
             row_count: Some(affected),
-            message: Some(format!("{affected} row(s) affected")),
+            message: Some(super::query::affected_message(sql, affected)),
             query_ms: t0.elapsed().as_millis() as u64,
             sql: sql.to_string(),
         })

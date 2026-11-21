@@ -379,7 +379,7 @@ fn run_on(conn: &::duckdb::Connection, sql: &str, read: bool, t0: Instant) -> Re
             columns: vec![],
             rows: vec![],
             row_count: Some(affected as i64),
-            message: Some(format!("{affected} row(s) affected")),
+            message: Some(super::query::affected_message(sql, affected as i64)),
             query_ms: t0.elapsed().as_millis() as u64,
             sql: sql.to_string(),
         })
@@ -514,7 +514,7 @@ pub async fn execute_sql(handle: &DuckdbHandle, sql: &str) -> Result<SqlResult, 
                 columns: vec![],
                 rows: vec![],
                 row_count: Some(affected as i64),
-                message: Some(format!("{affected} row(s) affected")),
+                message: Some(super::query::affected_message(&sql, affected as i64)),
                 query_ms: t0.elapsed().as_millis() as u64,
                 sql: sql.clone(),
             })

@@ -922,7 +922,7 @@ fn run_one(conn: &Connection, sql: &str, binds: &[Bind]) -> Result<SqlResult, St
     stmt.execute(&params).map_err(ora_err)?;
     let (row_count, message) = if stmt.is_dml() {
         let n = stmt.row_count().unwrap_or(0) as i64;
-        (Some(n), Some(format!("{n} row(s) affected")))
+        (Some(n), Some(super::query::affected_message(sql, n)))
     } else if stmt.is_plsql() {
         (None, Some("PL/SQL procedure successfully completed".to_string()))
     } else {
@@ -2376,7 +2376,7 @@ mod tests {
         assert_eq!(exact_row_count(&h, "STROKE", "STROKE_TYPES").await.unwrap(), 28);
 
         // Messages, the explain plan and an error the UI can show.
-        assert_eq!(exec(&h, "UPDATE stroke_types SET ratio = 1 WHERE id < 5;").await.message.as_deref(), Some("4 row(s) affected"));
+        assert_eq!(exec(&h, "UPDATE stroke_types SET ratio = 1 WHERE id < 5;").await.message.as_deref(), Some("4 rows affected"));
         assert_eq!(exec(&h, "begin null; end;").await.message.as_deref(), Some("PL/SQL procedure successfully completed"));
         let plan = explain_lines(&h, "SELECT * FROM stroke_types WHERE id = 5").await.unwrap();
         assert!(plan.iter().any(|l| l.contains("INDEX UNIQUE SCAN") || l.contains("TABLE ACCESS")), "{plan:?}");

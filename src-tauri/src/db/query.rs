@@ -4215,7 +4215,7 @@ async fn run_sql_pg(
                     columns: vec![],
                     rows: vec![],
                     row_count: Some(affected),
-                    message: Some(format!("{affected} row(s) affected")),
+                    message: Some(affected_message(stmt, affected)),
                     query_ms: query_ms(),
                     sql: stmt.to_string(),
                 });
@@ -4520,7 +4520,7 @@ async fn run_sql_multi_pg(
                         columns: vec![],
                         rows: vec![],
                         row_count: Some(affected),
-                        message: Some(format!("{affected} row(s) affected")),
+                        message: Some(affected_message(stmt, affected)),
                         query_ms: stmt_ms(),
                         sql: stmt.clone(),
                     });
@@ -5680,6 +5680,37 @@ pub async fn ping_connection(state: Db<'_>) -> Result<(), String> {
         ActiveConnection::Duckdb(h) => super::duckdb::execute_sql(&h, "SELECT 1").await.map(|_| ()),
         ActiveConnection::Mssql(h) => super::mssql::execute_sql(&h, "SELECT 1").await.map(|_| ()),
         ActiveConnection::Oracle(h) => super::oracle::ping(&h).await,
+    }
+}
+
+/// What a write says it did. "1 row affected" / "1,000 rows affected"; for a
+/// schema statement that reports no rows (DuckDB's CREATE TABLE AS among
+/// them), "Done", since "0 row(s) affected" read as if nothing happened.
+pub(crate) fn affected_message(sql: &str, n: i64) -> String {
+    let first = sql.trim_start().split(|c: char| !c.is_ascii_alphabetic()).next().unwrap_or("").to_ascii_uppercase();
+    const SCHEMA: [&str; 16] = ["CREATE", "ALTER", "DROP", "TRUNCATE", "COMMENT", "GRANT", "REVOKE", "RENAME", "ATTACH", "DETACH", "VACUUM", "ANALYZE", "PRAGMA", "SET", "USE", "REINDEX"];
+    if n == 0 && SCHEMA.contains(&first.as_str()) {
+        return "Done".into();
+    }
+    let digits = n.unsigned_abs().to_string();
+    let mut grouped = String::new();
+    for (i, ch) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i) % 3 == 0 {
+            grouped.push(',');
+        }
+        grouped.push(ch);
+    }
+    format!("{grouped} {} affected", if n == 1 { "row" } else { "rows" })
+}
+
+#[cfg(test)]
+mod affected_message_tests {
+    #[test]
+    fn says_what_a_write_did() {
+        assert_eq!(super::affected_message("UPDATE t SET a = 1", 1), "1 row affected");
+        assert_eq!(super::affected_message("delete from t", 1234567), "1,234,567 rows affected");
+        assert_eq!(super::affected_message("  create table x as select 1", 0), "Done");
+        assert_eq!(super::affected_message("INSERT INTO t SELECT 1 WHERE false", 0), "0 rows affected");
     }
 }
 

@@ -100,7 +100,7 @@ fn result_to_sql(result: D1QueryResult, elapsed: u64) -> Result<SqlResult, Strin
     };
 
     let message = if result.meta.changes > 0 {
-        Some(format!("{} row(s) affected", result.meta.changes))
+        Some(super::query::affected_message("", result.meta.changes as i64))
     } else {
         None
     };
