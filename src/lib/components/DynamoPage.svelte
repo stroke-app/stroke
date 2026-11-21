@@ -262,8 +262,26 @@
       const prev = creating ? null : selectedItem
       const req = saveRequest(table, tableKey, next, prev)
       if (req.op === 'TransactWriteItems' && !confirm('The key changed. This creates a new item and deletes the old one. Continue?')) return
+      // Optimistic for an existing item with the same key: the list shows the
+      // edit now and gets the original back if DynamoDB refuses. A new item,
+      // or a key change, waits for the write.
+      const before = items
+      const sameKey = !!prev && keyId(prev, tableKey) === keyId(next, tableKey)
+      if (sameKey && prev) {
+        const pid = keyId(prev, tableKey)
+        items = items.map((it) => (keyId(it, tableKey) === pid ? next : it))
+        dataVersion++
+      }
       saving = true
-      await dynamoRequest(req.op, req.body)
+      try {
+        await dynamoRequest(req.op, req.body)
+      } catch (e) {
+        if (sameKey) {
+          items = before
+          dataVersion++
+        }
+        throw e
+      }
       const id = keyId(next, tableKey)
       const oldId = prev ? keyId(prev, tableKey) : null
       const kept = items.filter((it) => {
@@ -298,6 +316,15 @@
   async function removeMany() {
     if (!tableKey) return
     const list = pendingRemove.map((i) => items[i]).filter(Boolean)
+    // Optimistic: the chosen items leave the list now; any DynamoDB refuses
+    // come back in their places.
+    const before = items
+    const chosen = new Set(list.map((it) => keyId(it, tableKey)))
+    items = items.filter((x) => !chosen.has(keyId(x, tableKey)))
+    gridSelected = new Set()
+    selectedId = null
+    dataVersion++
+    removeOpen = false
     removing = true
     /** @type {Set<string>} */
     const gone = new Set()
@@ -306,12 +333,11 @@
     for (const it of list) {
       try { await dynamoRequest('DeleteItem', { TableName: table, Key: keyOf(it, tableKey) }); gone.add(keyId(it, tableKey)) } catch (e) { errors.push(msg(e)) }
     }
-    items = items.filter((x) => !gone.has(keyId(x, tableKey)))
-    gridSelected = new Set()
-    selectedId = null
-    dataVersion++
+    if (errors.length) {
+      items = before.filter((x) => !gone.has(keyId(x, tableKey)))
+      dataVersion++
+    }
     removing = false
-    removeOpen = false
     if (gone.size) toast.success(`Deleted ${gone.size.toLocaleString()} ${gone.size === 1 ? 'item' : 'items'}`)
     if (errors.length) toast.error(`${errors.length} could not be deleted`, { description: errors[0] })
   }
@@ -323,19 +349,20 @@
       confirmDelete = true
       return
     }
-    saving = true
+    // Optimistic: gone now, back with the error if DynamoDB refuses.
+    const before = items
+    const id = keyId(it, tableKey)
+    items = items.filter((x) => keyId(x, tableKey) !== id)
+    dataVersion++
+    selectedId = null
+    confirmDelete = false
     try {
       await dynamoRequest('DeleteItem', { TableName: table, Key: keyOf(it, tableKey) })
-      const id = keyId(it, tableKey)
-      items = items.filter((x) => keyId(x, tableKey) !== id)
-      dataVersion++
-      selectedId = null
       toast.success('Item deleted')
     } catch (e) {
-      draftError = msg(e)
-    } finally {
-      saving = false
-      confirmDelete = false
+      items = before
+      dataVersion++
+      toast.error("Couldn't delete the item", { description: msg(e) })
     }
   }
 
