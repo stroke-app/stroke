@@ -11,7 +11,7 @@
 
 **A fast, native database client for every database you run.**
 
-Postgres, MySQL, SQLite, MongoDB, Redis and 16 more engines in one app for macOS, Windows and Linux.<br>
+Postgres, MySQL, SQLite, MongoDB, Redis and 18 more engines in one app for macOS, Windows and Linux, plus anything with an ODBC driver.<br>
 Built in Rust, with no Electron and no JVM: it starts in about a second, stays light on memory, and keeps scrolling smoothly through millions of rows.
 
 [![Release](https://img.shields.io/github/v/release/stroke-app/stroke?label=release&color=ffc107&labelColor=1d1d1f)](https://github.com/stroke-app/stroke/releases/latest)
@@ -44,13 +44,15 @@ Any client can draw a grid. Stroke is built for the moments where most of them f
 
 | Kind | Engines |
 |---|---|
-| **Relational** | PostgreSQL · MySQL · MariaDB · SQLite · SQL Server · Oracle · CockroachDB · Turso / libSQL · Cloudflare D1 |
+| **Relational** | PostgreSQL · MySQL · MariaDB · SQLite · SQL Server · Oracle · CockroachDB · Turso / libSQL · Cloudflare D1 · Google Spanner (beta) |
 | **Document** | MongoDB · CouchDB · Firestore · Cassandra · ScyllaDB |
 | **Key-value** | Redis · Valkey · DynamoDB |
-| **Analytics** | DuckDB · ClickHouse · PostHog |
+| **Analytics** | DuckDB · ClickHouse · PostHog · Google BigQuery (beta) |
 | **Search** | Elasticsearch · OpenSearch |
 
 Oracle needs [Oracle Instant Client](https://www.oracle.com/database/technologies/instant-client.html) installed.
+
+**Through ODBC (beta)**, with the database's own ODBC driver installed: IBM Db2, SAP HANA, SAP ASE (Sybase), Informix, Teradata, Vertica, Exasol, Firebird, Amazon Redshift, Databricks, Apache Hive, Trino and Presto, Dremio, InterSystems IRIS, Microsoft Access, and any other database by DSN or connection string. The driver manager is built in. See [ODBC databases](https://stroke.click/docs/odbc).
 
 **Sign in and pick a database**, no connection string needed:
 

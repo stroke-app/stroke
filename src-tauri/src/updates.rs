@@ -190,6 +190,39 @@ pub async fn update_download(
     if is_manual(&state) {
         return Err(MANAGED_MESSAGE.into());
     }
+    match download_pending(&app, &state, &on_event).await {
+        // The feed and the file disagree: a release was being replaced while
+        // this check ran (the feed is new, the file still the old one, or
+        // the other way round). Read the feed again and try once more.
+        Err(e) if is_signature_error(&e) => {
+            log::warn!("[updater] {e}; checking the feed again");
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            update_check(app.clone(), state.clone()).await?;
+            download_pending(&app, &state, &on_event).await.map_err(|e| {
+                if is_signature_error(&e) {
+                    "The update didn't match its signature, which happens while a new release is being published. \
+                     Nothing was installed. Try again in a few minutes."
+                        .to_string()
+                } else {
+                    e
+                }
+            })
+        }
+        other => other,
+    }
+}
+
+fn is_signature_error(e: &str) -> bool {
+    let e = e.to_ascii_lowercase();
+    e.contains("signature") || e.contains("minisign")
+}
+
+/// Download the update the last check found and stage it on disk.
+async fn download_pending(
+    app: &AppHandle,
+    state: &State<'_, UpdateState>,
+    on_event: &Channel<DownloadEvent>,
+) -> Result<UpdateInfo, String> {
     let update = lock(&state.pending)
         .clone()
         .ok_or("No update to download. Check for updates first.")?;
@@ -217,7 +250,7 @@ pub async fn update_download(
         .await
         .map_err(|e| e.to_string())?;
 
-    let dir = updates_dir(&app)?;
+    let dir = updates_dir(app)?;
     // The version comes from the feed but was parsed as semver by the plugin,
     // so it is only digits, letters, dots, dashes and plus signs.
     let path = dir.join(format!("{}.update", update.version));

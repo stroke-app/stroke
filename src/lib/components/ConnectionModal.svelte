@@ -508,11 +508,15 @@
   /** What the driver called the database on the last Test. */
   let odbcServer = $state("");
   let odbcListed = false;
-  $effect(() => {
-    if (!isOdbcForm || odbcListed) return;
+  /** The drivers and data sources, read again each time a preset is picked,
+   *  so one installed with the form open shows up. */
+  function loadOdbcLists() {
     odbcListed = true;
     odbcDrivers().then((d) => (odbcInstalled = d.map((x) => x.name))).catch(() => {});
     odbcDataSources().then((d) => (odbcDsns = d)).catch(() => {});
+  }
+  $effect(() => {
+    if (isOdbcForm && !odbcListed) loadOdbcLists();
   });
   // A preset takes the matching installed driver once the list is in.
   $effect(() => {
@@ -1633,6 +1637,7 @@
       );
       odbcMode = preset ? "fields" : odbcDsns.length ? "dsn" : "string";
       odbcServer = "";
+      loadOdbcLists();
     }
     error = "";
     testOk = false;
