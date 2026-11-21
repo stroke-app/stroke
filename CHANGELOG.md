@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.1.5] - 2026-11-21
+
+### Changes
+- Google BigQuery support (beta) (#318)
+
+
 ## [3.1.4] - 2026-11-21
 
 ### Changes
