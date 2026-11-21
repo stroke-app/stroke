@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.4.7] - 2026-11-21
+
+### Changes
+- Spanner PostgreSQL dialect SQL, hidden-tab menu, narrow results toolbar, and more (#350)
+
+
 ## [3.4.6] - 2026-11-21
 
 ### Changes
