@@ -57,7 +57,7 @@
 		data-slot="dialog-content"
 		onCloseAutoFocus={handleCloseAutoFocus}
 		class={cn(
-			"bg-background text-foreground data-open:animate-in data-closed:animate-out data-closed:fade-out-0 data-open:fade-in-0 ease-out flex flex-col gap-4 rounded-2xl border border-border/60 p-5 text-ui-sm elevate-3-rim w-full max-w-[calc(100%-2rem)] fixed top-1/2 left-1/2 z-50 -translate-x-1/2 -translate-y-1/2 outline-none",
+			"bg-background text-foreground data-open:animate-in data-closed:animate-out data-closed:fade-out-0 data-open:fade-in-0 ease-out flex flex-col gap-4 rounded-2xl border border-border/60 p-5 text-ui-sm elevate-3-rim w-full max-w-[calc(100%-2rem)] h-fit fixed inset-0 m-auto z-50 outline-none",
 			motion === 'pop'
 				? "data-closed:zoom-out-[0.96] data-open:zoom-in-[0.96] data-open:slide-in-from-bottom-1 duration-200"
 				: "duration-150",

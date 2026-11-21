@@ -2,6 +2,7 @@
   import Kbd from './Kbd.svelte'
   import Icon from './Icon.svelte'
   import { cn } from '$lib/utils.js'
+  import { engineId, engineLabel } from '$lib/connection-provider.js'
   import * as Command from '$lib/components/ui/command/index.js'
   import { formatTableRowCount } from '$lib/table-list.js'
   import { get } from 'svelte/store'
@@ -755,6 +756,13 @@
   function connSubtitle(conn) {
     if (conn.type === 'sqlite') return conn.filePath ?? ''
     if (conn.type === 'd1')     return `${conn.accountId?.slice(0, 8) ?? ''}… / ${conn.databaseId?.slice(0, 8) ?? ''}…`
+    // Engines without a host (Spanner, BigQuery, Snowflake, a DSN, ...): the
+    // parts they do have, never a URI (it can hold a password).
+    if (!conn.host) {
+      const c = /** @type {any} */ (conn)
+      const parts = [c.account, c.projectId, c.instanceId, c.databaseId ?? c.dataset, c.dsn && `DSN ${c.dsn}`, c.database]
+      return [...new Set(parts.filter(Boolean))].join(' · ') || engineLabel(engineId(conn))
+    }
     return `${conn.user ?? ''}@${conn.host ?? ''}:${conn.port ?? ''}/${conn.database ?? ''}`
   }
 
