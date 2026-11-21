@@ -5912,14 +5912,16 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       }
       case "PageDown": {
         e.preventDefault();
-        const pdn = Math.min(curRow + 10, rowLen - 1);
+        // A screenful, as everywhere else Page Down goes: a fixed 10 moved less
+        // than half of a tall grid.
+        const pdn = Math.min(curRow + pageRows(), rowLen - 1);
         focusedRow = pdn; if (focusedCol === null) focusedCol = 0;
         scrollRowIntoView(pdn);
         break;
       }
       case "PageUp": {
         e.preventDefault();
-        const pup = Math.max(curRow - 10, 0);
+        const pup = Math.max(curRow - pageRows(), 0);
         focusedRow = pup; if (focusedCol === null) focusedCol = 0;
         scrollRowIntoView(pup);
         break;
@@ -6755,6 +6757,9 @@ import FilterX from "@lucide/svelte/icons/filter-x";
    *  whole fetch - placeholder rows stand in for it (see the empty states). */
   let hasHeldFrame = $state(false)
   /** Placeholder rows that fill the viewport, at the grid's own row height. */
+  /** Rows one Page Up / Page Down moves: the body's height in rows, less one
+   *  so the row at the edge stays in view. */
+  const pageRows = () => Math.max(1, Math.floor(((_viewportHeight || 800) - HEADER_H) / Math.max(1, ROW_HEIGHT)) - 1)
   const skeletonRows = $derived(Math.max(6, Math.min(60, Math.ceil(((_viewportHeight || 800) - HEADER_H) / Math.max(1, ROW_HEIGHT)))))
   let _surfaceHasFrame = false
   /** Reactivity budget: the pill re-reads at most this often, not per frame. */
