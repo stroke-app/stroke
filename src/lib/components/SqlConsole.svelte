@@ -33,6 +33,9 @@
   import { Label } from "$lib/components/ui/label/index.js";
   import { queryTitle } from "$lib/stores/query-history.js";
   import DataTable from "./DataTable.svelte";
+  import ResultMap from "./ResultMap.svelte";
+  import MapIcon from "@lucide/svelte/icons/map";
+  import { spatialColumns } from "$lib/result-geo.js";
   import TableLoading from "./TableLoading.svelte";
   import JsonViewer from "./JsonViewer.svelte";
   import ChartView from "./ChartView.svelte";
@@ -587,6 +590,39 @@
 
   // Postgres: measure (runs, then rolls back) or only estimate. Kept per app.
   let explainAnalyze = $state((() => { try { return localStorage.getItem('stroke:explain-analyze') !== 'false' } catch { return true } })())
+
+  // The result map: a panel beside the grid whenever a result holds shapes.
+  // Open or closed, and its width, are kept per app.
+  const MAP_OPEN_KEY = 'stroke:result-map:open'
+  const MAP_WIDTH_KEY = 'stroke:result-map:width'
+  let mapOpen = $state((() => { try { return localStorage.getItem(MAP_OPEN_KEY) !== 'false' } catch { return true } })())
+  let mapWidth = $state((() => { try { return Number(localStorage.getItem(MAP_WIDTH_KEY)) || 420 } catch { return 420 } })())
+  let mapStartWidth = 0
+  /** @type {any} */
+  let resultTableRef = $state(null)
+  const spatialCols = $derived(currentDisplay.columns.length && foundRows.length ? spatialColumns(currentDisplay.columns, foundRows) : [])
+  const showMap = $derived(mapOpen && spatialCols.length > 0 && outputView === 'table')
+  /** @param {boolean} open */
+  function setMapOpen(open) {
+    mapOpen = open
+    try { localStorage.setItem(MAP_OPEN_KEY, String(open)) } catch { /* only the preference is lost */ }
+  }
+  /** A click on the map: select that row (or add it), and show it in the grid. @param {number | null} row @param {boolean} additive */
+  function selectFromMap(row, additive) {
+    if (row == null) {
+      if (!additive) selected = new Set()
+      return
+    }
+    if (additive) {
+      const next = new Set(selected)
+      if (next.has(row)) next.delete(row)
+      else next.add(row)
+      selected = next
+    } else {
+      selected = new Set([row])
+    }
+    resultTableRef?.revealRow?.(row)
+  }
 
   /** @param {boolean} [analyze] */
   async function handleExplain(analyze = explainAnalyze) {
@@ -1477,6 +1513,19 @@
           </button>
         {/each}
       </div>
+      {#if spatialCols.length > 0 && outputView === 'table'}
+        <button
+          type="button"
+          onclick={() => setMapOpen(!mapOpen)}
+          aria-pressed={showMap}
+          aria-label="Map view"
+          title={showMap ? 'Hide the map' : 'Show the shapes on a map'}
+          class={cn('flex h-7 items-center gap-1 rounded-md px-1.5 transition-colors', showMap ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground')}
+        >
+          <MapIcon class="size-3.5 shrink-0" />
+          <span class="text-ui-xs">Map</span>
+        </button>
+      {/if}
       {#if resultShown && currentDisplay.rows.length > 0}
         <span class="mx-1 h-4 w-px shrink-0 bg-border/60" aria-hidden="true"></span>
         {#if findOpen}
@@ -1752,7 +1801,10 @@
                 oncharttypechange={(t) => (chartType = t)}
               />
             {:else}
+              <div class="flex h-full min-h-0 min-w-0">
+              <div class="min-h-0 min-w-0 flex-1">
               <DataTable
+                bind:this={resultTableRef}
                 columns={currentDisplay.columns}
                 rows={foundRows}
                 searchQuery={findOpen ? findText : ''}
@@ -1767,6 +1819,28 @@
                 onretrywindows={onretrywindows}
                 readonly
               />
+              </div>
+              {#if showMap}
+                <ResizeHandle
+                  axis="x"
+                  edge="start"
+                  onresizestart={() => (mapStartWidth = mapWidth)}
+                  onresize={(dx) => (mapWidth = Math.min(Math.max(260, mapStartWidth + dx), 1200))}
+                  onresizeend={() => { try { localStorage.setItem(MAP_WIDTH_KEY, String(mapWidth)) } catch { /* only the width is lost */ } }}
+                />
+                <div class="min-h-0 shrink-0" style="width:{mapWidth}px; max-width:70%">
+                  <ResultMap
+                    columns={currentDisplay.columns}
+                    rows={foundRows}
+                    spatial={spatialCols}
+                    {selected}
+                    onselect={selectFromMap}
+                    onclose={() => setMapOpen(false)}
+                    partial={windowed && foundRows.filter(Boolean).length < foundRows.length}
+                  />
+                </div>
+              {/if}
+              </div>
             {/if}
           {:else if loading}
             <TableLoading />
