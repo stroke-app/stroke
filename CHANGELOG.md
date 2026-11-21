@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.4.6] - 2026-11-21
+
+### Changes
+- Show DuckDB column types; collapse repeated toasts (#349)
+
+
 ## [3.4.5] - 2026-11-21
 
 ### Changes
