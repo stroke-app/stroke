@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.1.8] - 2026-11-21
+
+### Changes
+- Drag the window from anywhere on the title bar (#321)
+
+
 ## [3.1.7] - 2026-11-21
 
 ### Changes
