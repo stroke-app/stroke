@@ -1240,6 +1240,14 @@
   {#if show($t('settings.autoReconnect'), $t('settings.autoReconnect.desc'))}
     {@render switchRow($t('settings.autoReconnect'), $t('settings.autoReconnect.desc'), settings.autoReconnectOnStartup, toggleAutoReconnect)}
   {/if}
+  {#if show('Reopen tabs', 'Restore the tabs a database had open when you connect to it again')}
+    {@render switchRow(
+      'Reopen tabs',
+      'Connecting to a database opens the tabs it had open last time.',
+      settings.reopenTabs !== false,
+      () => { settings = updateSettings({ reopenTabs: settings.reopenTabs === false }); },
+    )}
+  {/if}
   {#if show($t('settings.previewSql'), $t('settings.previewSql.desc'))}
     {@render switchRow($t('settings.previewSql'), $t('settings.previewSql.desc'), settings.previewDmlBeforeApply, togglePreviewDml)}
   {/if}
