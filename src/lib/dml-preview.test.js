@@ -58,3 +58,25 @@ describe('buildRowDeleteStatements', () => {
     ])
   })
 })
+
+describe('GoogleSQL previews (Spanner, BigQuery)', () => {
+  it('backticks names, escapes with backslashes, and leaves Spanner\'s default schema unnamed', () => {
+    const spanner = { ...ctx, dialect: /** @type {const} */ ('spanner'), schema: 'default' }
+    expect(buildRowUpdateStatements([{ rowIdx: 1, colIdx: 1, value: "O'Neil \\ co" }], rows, spanner)).toEqual([
+      "UPDATE `users` SET `name` = 'O\\'Neil \\\\ co' WHERE `id` = 2;",
+    ])
+    const bq = { ...ctx, dialect: /** @type {const} */ ('bigquery'), schema: 'shop' }
+    expect(buildRowDeleteStatements([0], rows, bq)).toEqual(['DELETE FROM `shop`.`users` WHERE `id` = 1;'])
+  })
+})
+
+describe('ODBC previews', () => {
+  it("use the driver's own quote", async () => {
+    const { setOdbcDialect } = await import('./sql-ident.js')
+    setOdbcDialect({ quote: '`', namespace: 'catalog' })
+    const odbcCtx = { ...ctx, dialect: /** @type {const} */ ('odbc'), schema: 'shop' }
+    expect(buildRowDeleteStatements([0], rows, odbcCtx)).toEqual(['DELETE FROM `shop`.`users` WHERE `id` = 1;'])
+    setOdbcDialect({ quote: '"', namespace: 'flat' })
+    expect(buildRowDeleteStatements([0], rows, odbcCtx)).toEqual(['DELETE FROM "users" WHERE "id" = 1;'])
+  })
+})
