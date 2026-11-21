@@ -17,6 +17,7 @@
   import { onMount } from 'svelte'
   import { geoOverview, geoFeatures } from '$lib/api.js'
   import { getWorldGeoJson } from '$lib/geo.js'
+  import { compileGeometry, screenTransform, onScreen, traceRings, hitCompiled, boundsWithin } from '$lib/geo-cache.js'
   import { FILTER_OPS } from '$lib/table-query.js'
   import { cn } from '$lib/utils.js'
   import {
@@ -30,8 +31,6 @@
     fitExtent,
     degreesPerPixel,
     clusterCell,
-    walkGeometry,
-    hitTest,
   } from '$lib/geo-map.js'
   import Globe from '@lucide/svelte/icons/globe'
   import Layers from '@lucide/svelte/icons/layers'
@@ -164,6 +163,23 @@
   /** Bumped on every viewport fetch so a slow one can't overwrite a newer one. */
   let fetchSeq = 0
   /**
+   * The features and the basemap, projected to world units once (geo-cache.js).
+   * Plain arrays, not state: they change only with `features` and `world`, and
+   * a frame reads them thousands of times.
+   * @type {import('$lib/geo-cache.js').Compiled[]}
+   */
+  let compiled = []
+  /** @type {import('$lib/geo-cache.js').Compiled[]} */
+  let worldCompiled = []
+  /**
+   * What the last viewport fetch covered. When it held every matching row and
+   * the view has only moved inside it, the next fetch would return the same
+   * rows, so it is skipped. Zooming in on lines and polygons still refetches
+   * past 1.5x: their vertices were simplified for the old zoom.
+   * @type {{ bounds: { minLon: number, minLat: number, maxLon: number, maxLat: number }, scale: number, complete: boolean, key: string } | null}
+   */
+  let lastFetch = null
+  /**
    * The grid size, in degrees, the server actually clustered by. Kept because a
    * cluster disc has to be drawn at the size of its own cell, and the view can
    * be zoomed between the fetch and the frame that draws its result.
@@ -254,6 +270,8 @@
     layer = next
     selected = null
     features = []
+    compiled = []
+    lastFetch = null
     matched = 0
     // A filter names a column of the old table; carrying it over would either
     // error or, worse, silently match a same-named column that means something
@@ -274,6 +292,12 @@
   /** @param {{ fit?: boolean }} [opts] */
   async function fetchFeatures(opts = {}) {
     if (!layer) return
+    const key = fetchKey()
+    if (!opts.fit && lastFetch?.complete && lastFetch.key === key && width && height) {
+      const now = viewBounds(view, width, height)
+      const pointsOnly = /POINT/i.test(String(layer.geomType ?? ''))
+      if (boundsWithin(now, lastFetch.bounds) && (pointsOnly || view.scale <= lastFetch.scale * 1.5)) return
+    }
     const seq = ++fetchSeq
     loading = true
     error = ''
@@ -305,6 +329,7 @@
       // A viewport moved on while this was in flight - its answer is stale.
       if (seq !== fetchSeq) return
       features = res?.features || []
+      compiled = features.map((f) => compileGeometry(f?.geometry))
       if (res?.mode === 'clusters') clusterCellDeg = cell
       // The server sends the column list alongside the extent, i.e. once per
       // layer. Deriving it from a returned feature instead meant a table big
@@ -313,6 +338,9 @@
       mode = res?.mode || 'features'
       matched = Number(res?.matched ?? 0)
       queryMs = Number(res?.queryMs ?? 0)
+      lastFetch = bounds
+        ? { bounds, scale: view.scale, complete: res?.mode !== 'clusters' && Number(res?.returned ?? features.length) >= matched, key }
+        : null
       if (opts.fit && Array.isArray(res?.extent) && width && height) {
         view = fitExtent(
           /** @type {[number, number, number, number]} */ (res.extent),
@@ -328,9 +356,16 @@
       if (seq !== fetchSeq) return
       error = err instanceof Error ? err.message : String(err)
       features = []
+      compiled = []
+      lastFetch = null
     } finally {
       if (seq === fetchSeq) loading = false
     }
+  }
+
+  /** The layer and filters a fetch was for: a cached answer is only good for the same ones. */
+  function fetchKey() {
+    return JSON.stringify([layer?.schema, layer?.table, layer?.column, activeFilters])
   }
 
   function scheduleRefetch() {
@@ -360,18 +395,16 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     ctx.clearRect(0, 0, width, height)
 
-    const project = (/** @type {number} */ x, /** @type {number} */ y) =>
-      toScreen(view, width, height, x, y)
-
     // The bundled vector map is always drawn. Tiles go OVER it rather than
     // instead of it, so a provider that is slow, blocked, or offline degrades to
     // the map that ships with the app instead of to a black rectangle - and the
     // first paint after switching basemaps has something on it while the tiles
     // are still in flight.
+    const t = screenTransform(view, width, height)
     drawGraticule(ctx)
-    drawWorld(ctx, project)
+    drawWorld(ctx, t)
     if (!basemap.offline) drawTiles(ctx)
-    drawFeatures(ctx, project)
+    drawFeatures(ctx, t)
   }
 
   /** @param {CanvasRenderingContext2D} ctx */
@@ -470,42 +503,26 @@
 
   /**
    * @param {CanvasRenderingContext2D} ctx
-   * @param {(x: number, y: number) => { px: number, py: number }} project
+   * @param {{ s: number, ox: number, oy: number }} t
    */
-  function drawWorld(ctx, project) {
-    if (!world) return
-    // Zoomed into one city, 216 of the 217 countries are off screen. Culling on
-    // a precomputed bounding box skips their vertices entirely, which is what
-    // keeps a drag at 60fps instead of re-walking the whole basemap per frame.
-    const b = viewBounds(view, width, height)
+  function drawWorld(ctx, t) {
+    if (!worldCompiled.length) return
+    // Zoomed into one city, 216 of the 217 countries are off screen; their box
+    // test is all they cost.
     ctx.save()
     // Land is FILLED, not outlined. An outline-only basemap disappears the
     // moment data is drawn over it, and a map you cannot recognise is not a map
     // - the continent is the frame that makes a cluster mean something. The tone
     // comes from the foreground rather than the border token so it holds its
-    // contrast in either polarity: 10% of near-white on black reads as land,
-    // and 10% of near-black on white does too.
+    // contrast in either polarity.
     ctx.strokeStyle = `rgba(${palette.ink},0.22)`
     ctx.fillStyle = `rgba(${palette.ink},0.1)`
     ctx.lineWidth = 1
     ctx.lineJoin = 'round'
-    for (const feature of world.features || []) {
-      const box = feature.__bbox
-      if (
-        box &&
-        (box[2] < b.minLon || box[0] > b.maxLon || box[3] < b.minLat || box[1] > b.maxLat)
-      ) {
-        continue
-      }
+    for (const c of worldCompiled) {
+      if (!onScreen(c, t, width, height, 2)) continue
       ctx.beginPath()
-      walkGeometry(feature.geometry, project, {
-        point() {},
-        ring(pts) {
-          ctx.moveTo(pts[0], pts[1])
-          for (let i = 2; i + 1 < pts.length; i += 2) ctx.lineTo(pts[i], pts[i + 1])
-          ctx.closePath()
-        },
-      })
+      traceRings(ctx, c, t)
       ctx.fill()
       ctx.stroke()
     }
@@ -513,28 +530,11 @@
   }
 
   /**
-   * Stamp a lon/lat bounding box onto each basemap feature, once, at load.
+   * Project the basemap once, at load (see geo-cache.js).
    * @param {any} data
    */
   function indexWorld(data) {
-    for (const feature of data?.features || []) {
-      let minLon = Infinity
-      let minLat = Infinity
-      let maxLon = -Infinity
-      let maxLat = -Infinity
-      const visit = (/** @type {any} */ coords) => {
-        if (typeof coords[0] === 'number') {
-          if (coords[0] < minLon) minLon = coords[0]
-          if (coords[0] > maxLon) maxLon = coords[0]
-          if (coords[1] < minLat) minLat = coords[1]
-          if (coords[1] > maxLat) maxLat = coords[1]
-          return
-        }
-        for (const c of coords) visit(c)
-      }
-      if (feature?.geometry?.coordinates) visit(feature.geometry.coordinates)
-      feature.__bbox = [minLon, minLat, maxLon, maxLat]
-    }
+    worldCompiled = (data?.features || []).map((/** @type {any} */ f) => compileGeometry(f?.geometry))
     return data
   }
 
@@ -554,10 +554,10 @@
 
   /**
    * @param {CanvasRenderingContext2D} ctx
-   * @param {(x: number, y: number) => { px: number, py: number }} project
+   * @param {{ s: number, ox: number, oy: number }} t
    */
-  function drawFeatures(ctx, project) {
-    if (!features.length) return
+  function drawFeatures(ctx, t) {
+    if (!features.length || compiled.length !== features.length) return
     const accent = palette.accent
     // Every mark carries a ring in the page background colour. Over the offline
     // basemap it is nearly invisible; over satellite imagery it is the only
@@ -575,11 +575,12 @@
 
       /** @type {Array<{x: number, y: number, r: number, n: number}>} */
       const marks = []
-      for (const f of features) {
-        const n = Number(f?.properties?.count) || 0
-        let px = 0
-        let py = 0
-        walkGeometry(f.geometry, project, { point: (x, y) => ((px = x), (py = y)), ring() {} })
+      for (let i = 0; i < features.length; i++) {
+        const p = compiled[i].points
+        if (p.length < 2) continue
+        const n = Number(features[i]?.properties?.count) || 0
+        const px = p[0] * t.s + t.ox
+        const py = p[1] * t.s + t.oy
         if (px < -60 || px > width + 60 || py < -60 || py > height + 60) continue
         // Area, not radius, tracks the count - radius alone exaggerates a busy
         // cell by the square of how busy it is.
@@ -623,41 +624,39 @@
     // this did - paints every dot at the polygon's alpha and turns the whole
     // layer into hollow rings.
     const dotted = features.length > 3000 ? 1.8 : 3
+    const isSel = (/** @type {number} */ i) => !!selected && features[i] === selected.feature
 
-    /** @param {any} f @param {boolean} pointsOnly */
-    const trace = (f, pointsOnly) => {
+    /** Every point of one shape into the current path, culled to the screen. @param {import('$lib/geo-cache.js').Compiled} c */
+    const tracePoints = (c) => {
+      const p = c.points
       let drew = false
-      walkGeometry(f.geometry, project, {
-        point(px, py) {
-          if (!pointsOnly) return
-          if (px < -8 || px > width + 8 || py < -8 || py > height + 8) return
-          ctx.moveTo(px + dotted, py)
-          ctx.arc(px, py, dotted, 0, Math.PI * 2)
-          drew = true
-        },
-        ring(pts, closed) {
-          if (pointsOnly) return
-          ctx.moveTo(pts[0], pts[1])
-          for (let i = 2; i + 1 < pts.length; i += 2) ctx.lineTo(pts[i], pts[i + 1])
-          if (closed) ctx.closePath()
-          drew = true
-        },
-      })
+      for (let j = 0; j < p.length; j += 2) {
+        const px = p[j] * t.s + t.ox
+        const py = p[j + 1] * t.s + t.oy
+        if (px < -8 || px > width + 8 || py < -8 || py > height + 8) continue
+        ctx.moveTo(px + dotted, py)
+        ctx.arc(px, py, dotted, 0, Math.PI * 2)
+        drew = true
+      }
       return drew
     }
 
     // Areas and lines, one feature at a time so each polygon's wash is its own
     // and a hole is subtracted from its own shell rather than a neighbour's.
+    // Only areas are washed: filling an open line painted a wedge between its ends.
     ctx.strokeStyle = `rgba(${accent},0.85)`
     ctx.fillStyle = `rgba(${accent},0.18)`
     ctx.lineWidth = 1.4
-    for (const f of features) {
-      if (selected && f === selected.feature) continue
+    for (let i = 0; i < compiled.length; i++) {
+      const c = compiled[i]
+      if (!c.rings.length || isSel(i) || !onScreen(c, t, width, height)) continue
       ctx.beginPath()
-      if (trace(f, false)) {
+      if (c.polygons) {
+        traceRings(ctx, c, t, 'areas')
         ctx.fill()
-        ctx.stroke()
       }
+      traceRings(ctx, c, t, 'lines')
+      ctx.stroke()
     }
 
     // Every point in one path: stroke first for a rim in the page colour, then
@@ -665,9 +664,10 @@
     // against satellite imagery of roughly its own colour.
     ctx.beginPath()
     let anyPoint = false
-    for (const f of features) {
-      if (selected && f === selected.feature) continue
-      if (trace(f, true)) anyPoint = true
+    for (let i = 0; i < compiled.length; i++) {
+      const c = compiled[i]
+      if (!c.points.length || isSel(i) || !onScreen(c, t, width, height)) continue
+      if (tracePoints(c)) anyPoint = true
     }
     if (anyPoint) {
       ctx.strokeStyle = ring
@@ -677,14 +677,17 @@
       ctx.fill()
     }
 
-    // The selection last, so it is never painted over by a neighbour.
-    if (selected?.feature) {
+    // The selection last, so it is never painted over by a neighbour. It keeps
+    // its own compiled shape: a refetch may have replaced the list it came from.
+    const sel = selected?.compiled
+    if (sel) {
       ctx.beginPath()
-      const isArea = trace(selected.feature, false)
-      if (isArea) {
+      if (sel.polygons) {
+        traceRings(ctx, sel, t, 'areas')
         ctx.fillStyle = `rgba(${accent},0.3)`
         ctx.fill()
       }
+      traceRings(ctx, sel, t, 'lines')
       ctx.strokeStyle = ring
       ctx.lineWidth = 4
       ctx.stroke()
@@ -693,7 +696,7 @@
       ctx.stroke()
 
       ctx.beginPath()
-      if (trace(selected.feature, true)) {
+      if (tracePoints(sel)) {
         ctx.strokeStyle = ring
         ctx.lineWidth = 4
         ctx.stroke()
@@ -758,11 +761,9 @@
       // more than it tells you: mid-drag (the cursor is already 'grabbing'), in
       // cluster mode (nothing there is selectable), and on a set large enough
       // that the walk would eat the frame it is trying to stay ahead of.
-      hoveringFeature =
-        mode === 'features' &&
-        !dragging &&
-        features.length <= 4000 &&
-        !!hitTest(features, (x, y) => toScreen(view, width, height, x, y), px, py, 7)
+      // Against the projected cache this is a box test per feature and a few
+      // segments for the ones under the cursor, cheap enough for every frame.
+      hoveringFeature = mode === 'features' && !dragging && pick(px, py) >= 0
     })
   }
 
@@ -796,15 +797,20 @@
     // A click that didn't drag is a pick.
     const rect = canvas?.getBoundingClientRect()
     if (!rect) return
-    const hit = hitTest(
-      features,
-      (x, y) => toScreen(view, width, height, x, y),
-      e.clientX - rect.left,
-      e.clientY - rect.top,
-      7,
-    )
-    selected = mode === 'clusters' ? null : hit
+    const i = mode === 'clusters' ? -1 : pick(e.clientX - rect.left, e.clientY - rect.top)
+    selected = i >= 0 ? { index: i, feature: features[i], compiled: compiled[i] } : null
     requestDraw()
+  }
+
+  /**
+   * The feature under a screen point: within 7px of a point or edge, or inside
+   * a polygon. -1 for none.
+   * @param {number} px @param {number} py
+   */
+  function pick(px, py) {
+    if (compiled.length !== features.length) return -1
+    const w = fromScreen(view, width, height, px, py)
+    return hitCompiled(compiled, w.x, w.y, 7 / view.scale)
   }
 
   /** @param {WheelEvent} e */
