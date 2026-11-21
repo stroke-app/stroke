@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.4.1] - 2026-11-21
+
+### Changes
+- Fix clipped dialogs, the terminal on engines without a CLI, and more (#344)
+
+
 ## [3.4.0] - 2026-11-21
 
 ### Changes
