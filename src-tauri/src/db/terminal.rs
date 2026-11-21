@@ -925,7 +925,10 @@ pub async fn terminal_close(state: State<'_, TerminalState>, id: String) -> Resu
 /// "unsupported protocol scheme"; the shell itself takes https just as well.
 fn turso_shell_url(url: &str) -> String {
     let u = url.trim();
-    for (from, to) in [("libsql://", "https://"), ("wss://", "https://"), ("ws://", "http://")] {
+    if u.starts_with("libsql://") {
+        return super::libsql::libsql_http_url(u);
+    }
+    for (from, to) in [("wss://", "https://"), ("ws://", "http://")] {
         if let Some(rest) = u.strip_prefix(from) {
             return format!("{to}{rest}");
         }
