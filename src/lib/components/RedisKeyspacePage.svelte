@@ -272,7 +272,8 @@
   let staged = $state.raw(/** @type {Staged[]} */ ([]))
   let applying = $state(false)
   let reviewOpen = $state(false)
-  let panelReload = $state(0)
+  /** @type {any} */
+  let valuePanel = $state(null)
 
   /** List-delete cleanups only matter while a tombstoned element is staged. */
   function dropOrphans(/** @type {Staged[]} */ list) {
@@ -316,6 +317,12 @@
       /** @type {Map<number, string>} */
       const errors = new Map()
       outcomes.forEach((o, i) => { if (!o.ok && !errors.has(owner[i])) errors.set(owner[i], o.error ?? 'failed') })
+      const okCount = sent.filter((s) => !errors.has(s.id) && !s.cell.startsWith('post:')).length
+      // The edits stay on screen (as "Applying…") until the stored values
+      // have been read back into the list and the open panel. Clearing them
+      // first showed the old value for the length of that read.
+      await refreshKeys(sent.filter((s) => !errors.has(s.id)))
+      await valuePanel?.reload?.()
       // Keep what failed staged (with its error); anything staged while the
       // apply was in flight stays too.
       const sentIds = new Set(sent.map((s) => s.id))
@@ -323,9 +330,6 @@
         ...sent.filter((s) => errors.has(s.id)).map((s) => ({ ...s, error: errors.get(s.id) })),
         ...staged.filter((s) => !sentIds.has(s.id)),
       ]
-      const okCount = sent.filter((s) => !errors.has(s.id) && !s.cell.startsWith('post:')).length
-      await refreshKeys(sent.filter((s) => !errors.has(s.id)))
-      panelReload++
       if (errors.size) {
         toast.error(`${errors.size} change${errors.size === 1 ? '' : 's'} failed`, {
           description: `${[...errors.values()][0]}${okCount ? ` · ${okCount} applied` : ''}`,
@@ -997,11 +1001,12 @@
       />
       <div class="shrink-0 border-l border-border/30" style:width="calc({panelWidth}px * var(--app-scale, 1))">
         <RedisValuePanel
+          bind:this={valuePanel}
+          {applying}
           row={selectedRow}
           meta={metaFor(selectedRow.type)}
           {staged}
           {now}
-          reloadToken={panelReload}
           {readOnly}
           {onstage}
           {onunstage}

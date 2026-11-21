@@ -24,12 +24,12 @@
 
   /** @type {{
    *   row: RedisKeyRow, meta?: { icon: any, color: string, label: string },
-   *   staged: Staged[], now: number, reloadToken?: number, readOnly?: boolean,
+   *   staged: Staged[], now: number, reloadToken?: number, readOnly?: boolean, applying?: boolean,
    *   onstage: (item: Omit<Staged, 'id'>) => void,
    *   onunstage: (key: string, cell: string) => void,
    *   onclose: () => void,
    * }} */
-  let { row, meta, staged, now, reloadToken = 0, readOnly = false, onstage, onunstage, onclose } = $props()
+  let { row, meta, staged, now, reloadToken = 0, readOnly = false, applying = false, onstage, onunstage, onclose } = $props()
 
   const PAGE = 200
   let data = $state(/** @type {RedisKeyValue | null} */ (null))
@@ -62,6 +62,15 @@
     } finally {
       if (seq === loadSeq) loading = false
     }
+  }
+
+  /**
+   * Re-read the key and resolve once the panel shows it. The page waits on
+   * this after an apply, so the edit stays on screen until the stored value
+   * has replaced it, instead of flashing back to the old one in between.
+   */
+  export function reload() {
+    return load()
   }
 
   async function loadMore() {
@@ -302,7 +311,7 @@
               <Braces /> Format JSON
             </Button>
           {/if}
-          {#if stagedText}<span class="text-ui-2xs text-warning">Edited, not applied</span>{/if}
+          {#if stagedText}<span class="text-ui-2xs {applying ? 'text-muted-foreground' : 'text-warning'}">{applying ? 'Applying…' : 'Edited, not applied'}</span>{/if}
           <span class="flex-1"></span>
           {#if stagedText && textDraft == null}
             <Button variant="ghost" size="xs" onclick={() => onunstage(row.key, 'value')}><Undo2 /> Revert</Button>

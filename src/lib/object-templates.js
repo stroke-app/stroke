@@ -20,8 +20,8 @@ export const OBJECT_KIND_META = {
   function: { label: 'Functions', one: 'function', icon: 'function-square', tone: 'text-info' },
   procedure: { label: 'Procedures', one: 'procedure', icon: 'cog', tone: 'text-success' },
   trigger: { label: 'Triggers', one: 'trigger', icon: 'zap', tone: 'text-destructive' },
-  sequence: { label: 'Sequences', one: 'sequence', icon: 'list-ordered', tone: 'text-muted-foreground' },
-  type: { label: 'Types', one: 'type', icon: 'box', tone: 'text-primary' },
+  sequence: { label: 'Sequences', one: 'sequence', icon: 'hash', tone: 'text-info' },
+  type: { label: 'Types', one: 'type', icon: 'shapes', tone: 'text-primary' },
   event: { label: 'Events', one: 'event', icon: 'clock', tone: 'text-warning' },
 }
 

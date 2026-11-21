@@ -8794,7 +8794,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
         <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
         <div
           bind:this={tableContainer}
-          data-canvas-table=""
+          data-canvas-table={embedded ? "embedded" : "full"}
           {...props}
           tabindex={-1}
           role="grid"

@@ -43,6 +43,7 @@ import GitBranch from '@lucide/svelte/icons/git-branch'
 import Download from '@lucide/svelte/icons/download'
 import Play from '@lucide/svelte/icons/play'
 import Eye from '@lucide/svelte/icons/eye'
+import TableProperties from '@lucide/svelte/icons/table-properties'
 import EyeOff from '@lucide/svelte/icons/eye-off'
 import Bot from '@lucide/svelte/icons/bot'
 import AlertTriangle from '@lucide/svelte/icons/alert-triangle'
@@ -195,7 +196,9 @@ export const ICON_MAP = {
   // A view is an eye everywhere in the app - TabBar picks 'eye' for view tabs,
   // so the sidebar has to agree. Plain table glyphs made views indistinguishable
   // from tables at size-3.
-  'table-view':     { lucide: Eye,           huge: ViewIcon },
+  // A database view: a grid with its query's lines, not an eye. Lucide in
+  // every icon set: Hugeicons' table glyphs are the furniture.
+  'table-view':     { lucide: TableProperties },
   'refresh-cw':     { lucide: RefreshCw,     huge: RefreshIcon },
   'copy':           { lucide: Copy,          huge: Copy01Icon },
   'copy-plus':      { lucide: CopyPlus,      huge: Copy01Icon },
