@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.2.3] - 2026-11-21
+
+### Changes
+- Backup, import, transactions and SSH for Spanner, BigQuery, Snowflake and ODBC (#326)
+
+
 ## [3.2.2] - 2026-11-21
 
 ### Changes
