@@ -55,7 +55,7 @@
   import { isCurrentThemeDark } from '$lib/stores/settings.js'
   import { loadErdSettings, saveErdSettings, SPACING_PRESETS, SCOPE_DEFAULTS, DEFAULT_ERD_SETTINGS } from '$lib/stores/erd-settings.js'
   import { routeEdges, routeToSvgPath, corridorPathOrtho, CLEAR, MAX_ROUTED_NODES } from '$lib/erd-routing.js'
-  import { separateCards, wrapTallRanks } from '$lib/erd-layout.js'
+  import { separateCards, wrapTallRanks, packOrphans } from '$lib/erd-layout.js'
   import { layoutWithElk } from '$lib/erd-elk.js'
   import { visibleTables, visibleRels, relatedTo, linkedTables, mergeParallelEdges, hubTables } from '$lib/erd-filter.js'
   import { cn, plural, errorText } from '$lib/utils.js'
@@ -885,16 +885,16 @@
       })
     }
 
-    // Orphans in a responsive grid below the connected graph
+    // Orphans below the connected graph, as masonry on a landscape page (see
+    // packOrphans): the old grid set every row to the tallest orphan's height.
     const orphanY = laidConn.length ? bottomY + gaps.rowGap * 2 : hubRow.length ? topY : 0
-    const maxH = orphans.reduce((m, n) => Math.max(m, hOf(n)), HDR_H)
-    const GCOLS = Math.max(3, Math.min(6, Math.ceil(Math.sqrt(orphans.length * 1.8))))
-    const laidOrphans = orphans.map((n, i) => ({
+    const orphanAt = packOrphans(
+      orphans.map((n) => ({ id: n.id, w: NODE_W, h: hOf(n) })),
+      { gapX: gaps.colGap, gapY: gaps.rowGap, y: orphanY },
+    )
+    const laidOrphans = orphans.map((n) => ({
       ...n,
-      position: {
-        x: (i % GCOLS) * (NODE_W + gaps.colGap),
-        y: orphanY + Math.floor(i / GCOLS) * (maxH + gaps.rowGap),
-      },
+      position: orphanAt.get(n.id) ?? { x: 0, y: orphanY },
     }))
 
     const combined = [...laidHubs, ...laidConn, ...laidOrphans]

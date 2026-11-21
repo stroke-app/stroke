@@ -383,6 +383,21 @@ pub struct SqlResult {
 /// A result column's type as the grid shows it. A result carries no length, so
 /// `varchar` stays `varchar`: it used to read `varchar(...)`, which the header
 /// font draws as a ligature that looks like `varchar(.)`.
+/// A statement's result columns without running it again: what an empty
+/// result reports, since the columns are otherwise read off its first row.
+/// Empty when the statement can't be described.
+async fn pg_describe_columns(conn: &mut sqlx::PgConnection, sql: &str) -> Vec<ColumnInfo> {
+    use sqlx::{Column, TypeInfo};
+    match sqlx::Executor::describe(conn, sql).await {
+        Ok(d) => d
+            .columns()
+            .iter()
+            .map(|c| ColumnInfo::new(c.name(), pg_type_label(c.type_info().name())))
+            .collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
 pub(crate) fn pg_type_label(type_name: &str) -> String {
     type_name.to_lowercase()
 }
@@ -4167,6 +4182,23 @@ async fn run_sql_pg(
                 capped = false;
                 tx = begin_console_tx(pool, &tag).await?.0;
             }
+            // No row, so no row to read the columns off: an empty SELECT came
+            // back with none, and the results pane showed "Run a query" with no
+            // headers right after a run. Describing the statement gets them
+            // without running it again.
+            if total == 0 && columns.is_empty() {
+                columns = pg_describe_columns(&mut tx, &executed).await;
+                {
+                    if let Some(sink) = sink.as_deref_mut() {
+                        if !columns.is_empty() {
+                            if let Err(e) = sink.start(columns.clone()) {
+                                let _ = tx.rollback().await;
+                                return Err(e.into());
+                            }
+                        }
+                    }
+                }
+            }
             // COMMIT, not ROLLBACK. "Ends in a SELECT" does not mean "read-only":
             // `UPDATE …; SELECT …`, a data-modifying CTE (`WITH d AS (DELETE …
             // RETURNING *) SELECT …`) and `SELECT nextval(…)` all write, and a
@@ -4495,6 +4527,10 @@ async fn run_sql_multi_pg(
                 }
             }
             drop(stream);
+            // An empty result has no row to read the columns off.
+            if columns.is_empty() {
+                columns = pg_describe_columns(&mut tx, stmt).await;
+            }
 
             let row_count = data.len() as i64;
             results.push(SqlResult {
@@ -5698,6 +5734,23 @@ pub(crate) fn affected_message(sql: &str, n: i64) -> String {
         grouped.push(ch);
     }
     format!("{grouped} {} affected", if n == 1 { "row" } else { "rows" })
+}
+
+#[cfg(test)]
+mod pg_empty_result_tests {
+    /// Against Postgres (STROKE_TEST_POSTGIS): a SELECT that matches nothing
+    /// still names its columns, on the one-statement and the script path.
+    #[tokio::test]
+    async fn live_empty_select_keeps_its_columns() {
+        let Ok(url) = std::env::var("STROKE_TEST_POSTGIS") else { return };
+        let pool = sqlx::PgPool::connect(&url).await.unwrap();
+        let one = super::execute_sql_pg(&pool, "SELECT 1::int AS n, 'x'::text AS label WHERE false", None).await.unwrap();
+        assert!(one.rows.is_empty());
+        let names: Vec<_> = one.columns.iter().map(|c| (c.name.as_str(), c.data_type.as_str())).collect();
+        assert_eq!(names, [("n", "int4"), ("label", "text")]);
+        let multi = super::execute_sql_multi_pg(&pool, &["SELECT 1".into(), "SELECT 2::int8 AS big WHERE false".into()], None).await.unwrap();
+        assert_eq!(multi[1].columns.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), ["big"]);
+    }
 }
 
 #[cfg(test)]

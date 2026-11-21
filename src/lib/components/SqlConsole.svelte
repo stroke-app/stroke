@@ -1843,6 +1843,7 @@
                 {onvisiblerange}
                 onretrywindows={onretrywindows}
                 readonly
+                emptyText="The query returned no rows"
               />
               </div>
               {#if showMap}

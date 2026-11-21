@@ -345,3 +345,33 @@ export function wrapTallRanks(cards, opts) {
   }
   return { moved: true, pos }
 }
+
+/**
+ * Tables with no relations, packed as masonry on a landscape page.
+ *
+ * They went into a grid of at most six columns whose every row was as tall as
+ * the tallest of them: a 40-column table set the pitch for rows of 5-column
+ * ones, and PostGIS's 34 `tiger` tables fit to a narrow ribbon of boxes too
+ * small to read. Here the column count aims at 16:9 for the cards' total area,
+ * and each card drops into the shortest column so far, in input order.
+ * @param {{ id: string, w: number, h: number }[]} cards all the same width
+ * @param {{ gapX: number, gapY: number, x?: number, y?: number, aspect?: number }} opts
+ * @returns {Map<string, { x: number, y: number }>}
+ */
+export function packOrphans(cards, opts) {
+  /** @type {Map<string, { x: number, y: number }>} */
+  const out = new Map()
+  if (!cards.length) return out
+  const { gapX, gapY, x = 0, y = 0, aspect = 16 / 9 } = opts
+  const colW = Math.max(...cards.map((c) => c.w)) + gapX
+  const area = cards.reduce((sum, c) => sum + colW * (c.h + gapY), 0)
+  const cols = Math.max(1, Math.min(cards.length, Math.round(Math.sqrt(area * aspect) / colW)))
+  const heights = new Array(cols).fill(0)
+  for (const c of cards) {
+    let k = 0
+    for (let i = 1; i < cols; i++) if (heights[i] < heights[k]) k = i
+    out.set(c.id, { x: x + k * colW, y: y + heights[k] })
+    heights[k] += c.h + gapY
+  }
+  return out
+}

@@ -204,3 +204,24 @@ describe('wrapTallRanks', () => {
     expect(out.pos.get('only')).toEqual({ x: 5, y: 7 })
   })
 })
+
+describe('packOrphans', () => {
+  it('fills columns by height and aims at a landscape page', async () => {
+    const { packOrphans, cardsAreSeparated } = await import('./erd-layout.js')
+    const hs = [600, 120, 120, 120, 120, 400, 120, 120, 120, 120, 120, 120, 300, 120, 120, 120]
+    const cards = hs.map((h, i) => ({ id: `t${i}`, w: 220, h }))
+    const pos = packOrphans(cards, { gapX: 40, gapY: 30 })
+    const placed = cards.map((c) => ({ ...c, ...pos.get(c.id) }))
+    expect(cardsAreSeparated(placed, 40, 30)).toBe(true)
+    const w = Math.max(...placed.map((c) => c.x + c.w)), h = Math.max(...placed.map((c) => c.y + c.h))
+    expect(w / h).toBeGreaterThan(1)
+    // The short cards fill in beside the tall first one instead of waiting under it.
+    expect(placed[1].y).toBe(0)
+  })
+
+  it('handles none and one', async () => {
+    const { packOrphans } = await import('./erd-layout.js')
+    expect(packOrphans([], { gapX: 10, gapY: 10 }).size).toBe(0)
+    expect(packOrphans([{ id: 'a', w: 100, h: 50 }], { gapX: 10, gapY: 10, x: 5, y: 7 }).get('a')).toEqual({ x: 5, y: 7 })
+  })
+})

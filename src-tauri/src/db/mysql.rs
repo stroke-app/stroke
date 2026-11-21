@@ -810,6 +810,9 @@ pub async fn stream_into(
     }
     if total > 0 {
         sink.finish()?;
+    } else {
+        // No row to read the columns off: an empty SELECT showed no headers.
+        columns = describe_columns(&mut conn, sql).await;
     }
     Ok(SqlResult {
         columns,
@@ -891,6 +894,15 @@ async fn run_script_on(
     })
 }
 
+/// A statement's result columns, without running it again: what an empty result
+/// reports. Empty when the server can't prepare it (SHOW and the like).
+async fn describe_columns(conn: &mut sqlx::MySqlConnection, sql: &str) -> Vec<ColumnInfo> {
+    match sqlx::Executor::describe(conn, sql).await {
+        Ok(d) => d.columns().iter().map(|c| ColumnInfo::new(c.name(), c.type_info().name().to_lowercase())).collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
 /// A statement's first line, cut to 120 characters, for an error message.
 fn first_line(sql: &str) -> String {
     let line = sql.trim().lines().next().unwrap_or("");
@@ -915,6 +927,8 @@ async fn run_one_on(conn: &mut sqlx::MySqlConnection, sql: &str) -> Result<SqlRe
             other => other,
         }
         .map_err(|e| format!("Query failed: {e}"))?;
+        // An empty result has no row to read its columns off.
+        let columns = if columns.is_empty() { describe_columns(conn, sql).await } else { columns };
 
         let row_count = data.len() as i64;
         return Ok(SqlResult {
@@ -1523,5 +1537,20 @@ mod search_pruning_tests {
         let names: Vec<String> = vec!["id".into(), "name".into()];
         let a = build_where(&names, Some("x"), false, false, &[]).unwrap();
         assert_eq!(a.binds.len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod empty_result_tests {
+    /// Against MySQL or MariaDB (STROKE_TEST_MYSQL_URL, a mysql:// URL with a
+    /// database): a SELECT that matches nothing still names its columns.
+    #[tokio::test]
+    async fn live_empty_select_keeps_its_columns() {
+        let Ok(url) = std::env::var("STROKE_TEST_MYSQL_URL") else { return };
+        let pool = sqlx::MySqlPool::connect(&url).await.unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let r = super::run_one_on(&mut conn, "SELECT 1 AS n, 'x' AS label FROM DUAL WHERE 1 = 0").await.unwrap();
+        assert!(r.rows.is_empty());
+        assert_eq!(r.columns.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), ["n", "label"]);
     }
 }
