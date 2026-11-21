@@ -291,7 +291,7 @@
     </div>
 
     <Dialog.Footer
-      class="flex shrink-0 items-center gap-2 border-t border-border/80 bg-muted/15 px-5 py-3"
+      class="mx-0 mb-0 flex shrink-0 items-center gap-2 border-t border-border/80 bg-muted/15 px-5 py-3"
     >
       <p class="mr-auto hidden text-ui-2xs text-muted-foreground sm:block">
         <kbd>{comboTitle('Mod+Enter')}</kbd>

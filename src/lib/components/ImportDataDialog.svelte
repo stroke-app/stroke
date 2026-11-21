@@ -261,7 +261,7 @@
   }}
 >
   <Dialog.Content class="flex max-h-[85vh] max-w-3xl flex-col gap-0 overflow-hidden p-0">
-    <Dialog.Header class="border-b border-border/60 px-5 py-4">
+    <Dialog.Header class="shrink-0 border-b border-border/60 px-5 py-4">
       <Dialog.Title class="text-ui-sm">Import data</Dialog.Title>
       <Dialog.Description class="text-ui-2xs">
         Load rows from a CSV, TSV or JSON file into
@@ -473,7 +473,7 @@
       {/if}
     </div>
 
-    <Dialog.Footer class="border-t border-border/60 px-5 py-3">
+    <Dialog.Footer class="mx-0 mb-0 shrink-0 border-t border-border/60 px-5 py-3">
       {#if phase === "done"}
         <Button variant="outline" size="sm" onclick={reset}>Import another</Button>
         <Button size="sm" onclick={() => (open = false)}>Done</Button>
