@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.3.7] - 2026-11-21
+
+### Changes
+- Reopen a database's tabs, and fix connection identity and Advisor noise (#340)
+
+
 ## [3.3.6] - 2026-11-21
 
 ### Changes
