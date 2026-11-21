@@ -16,6 +16,7 @@
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
   import Download from "@lucide/svelte/icons/download";
   import Share2 from "@lucide/svelte/icons/share-2";
+  import History from "@lucide/svelte/icons/history";
   import { requestShare, chartTitle, resultsTitle, rowsToJson as rowsToJsonValue } from "$lib/share-flow.js";
   import Table2 from "@lucide/svelte/icons/table-2";
   import SlidersHorizontal from "@lucide/svelte/icons/sliders-horizontal";
@@ -113,6 +114,8 @@
     /** Set true to open the History list in the results pane; it reads back
      *  false once the list is up, so the next request opens it again. */
     queryHistoryVisible = $bindable(false),
+    /** Open the Queries tab (history, saved, charts). @param {'history' | 'saved' | 'charts'} view */
+    onopenqueries = /** @type {((view: 'history' | 'saved' | 'charts') => void) | undefined} */ (undefined),
     /** @type {import('$lib/stores/query-history.js').QueryHistoryEntry[]} */
     queryHistory = [],
     /** @type {import('$lib/stores/query-history.js').SavedQuery[]} */
@@ -412,8 +415,9 @@
     if (!outputVisible) toggleOutput()
   }
 
-  /** Open a list, or close the open one back to the result. @param {'history' | 'saved' | 'charts'} view */
+  /** Open a list: the Queries tab when the shell has one, else in the results pane. @param {'history' | 'saved' | 'charts'} view */
   function toggleList(view) {
+    if (onopenqueries) return onopenqueries(view)
     if (!outputVisible || outputView !== view) return openList(view)
     closeList()
   }
@@ -431,7 +435,8 @@
   $effect(() => {
     if (!queryHistoryVisible) return
     untrack(() => {
-      openList('history')
+      if (onopenqueries) onopenqueries('history')
+      else openList('history')
       queryHistoryVisible = false
     })
   })
@@ -1534,6 +1539,17 @@
 
       <!-- The lists, beside the result views. They are the connection's, so
            every editor tab shows the same ones. -->
+      {#if onopenqueries}
+        <!-- History, Saved and Charts have their own tab now. -->
+        <button
+          type="button"
+          onclick={() => onopenqueries('history')}
+          class="flex h-7 items-center gap-1.5 rounded-md px-2.5 text-ui-xs whitespace-nowrap text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+          title={tipText('Queries', 'History, saved queries and saved charts, in their own tab', [mod, '⇧', 'B'])}
+        >
+          <History class="size-3.5 shrink-0" />Queries
+        </button>
+      {:else}
       <div class="flex items-center gap-1">
         {#each LIST_VIEWS as lv (lv.id)}
           {@const on = outputVisible && outputView === lv.id}
@@ -1549,6 +1565,7 @@
           >{lv.label}</button>
         {/each}
       </div>
+      {/if}
 
 
         <div class="flex items-center gap-0.5">

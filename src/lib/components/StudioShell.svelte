@@ -229,6 +229,8 @@
     findShortcutsTab,
     createSharesTab,
     findSharesTab,
+    createQueriesTab,
+    findQueriesTab,
     findTableTab,
     findSchemaTab,
     findOrmTab,
@@ -4884,6 +4886,24 @@ let rowSearch = $state('')
   }
 
   /** Shared links as a tab; without a connection there is no tab bar, so the overlay. */
+  /** What the Queries tab shows: History, Saved or the saved charts. */
+  let queriesView = $state(/** @type {'history' | 'saved' | 'charts'} */ ('history'))
+
+  /** The Queries tab (history, saved queries, saved charts), on a view. @param {'history' | 'saved' | 'charts'} [view] */
+  function openQueriesTab(view = 'history') {
+    if (!connection) return
+    commandOpen = false
+    queriesView = view
+    const existing = findQueriesTab(tabs)
+    if (existing) { void activateTab(existing.id); return }
+    saveActiveTabState()
+    dropWelcomeTabs()
+    const tab = createQueriesTab()
+    tabs = [...tabs, tab]
+    activeTabId = tab.id
+    clearTableEditor()
+  }
+
   function openSharesTab() {
     commandOpen = false
     showSettingsModal = false
@@ -9868,8 +9888,7 @@ let rowSearch = $state('')
   }
 
   async function openQueryHistory() {
-    await focusSqlView()
-    queryHistoryVisible = true
+    openQueriesTab('history')
   }
 
   /**
@@ -11127,6 +11146,25 @@ let rowSearch = $state('')
         {/key}
       {/if}
 
+      <!-- Queries tab: history, saved queries and saved charts. Mounts while active. -->
+      {#if activeTab?.kind === 'queries'}
+        <div class="flex min-h-0 flex-1 flex-col">
+          <svelte:boundary failed={tabError}>
+            {#await import('./QueriesPage.svelte')}<TabLoading />{:then { default: QueriesPage }}
+              <QueriesPage
+                bind:view={queriesView}
+                history={queryHistory}
+                saved={savedQueries}
+                connectionName={connection?.name ?? ''}
+                onopen={(sql) => void openQueryInEditor(sql)}
+                onrun={async (sql) => { await openQueryInEditor(sql); await tick(); sqlConsoleRef?.runEditor?.() }}
+                onrefresh={refreshQueryStores}
+              />
+            {/await}
+          </svelte:boundary>
+        </div>
+      {/if}
+
       <!-- Shared links tab: mounts while active, and reloads each time it is shown -->
       {#if activeTab?.kind === 'shares'}
         <div class="flex min-h-0 flex-1 flex-col">
@@ -11453,6 +11491,7 @@ let rowSearch = $state('')
             onmodshifto={() => { if (connection) openOrmTab() }}
             onqueryrefresh={refreshQueryStores}
             onhistoryselect={(sql) => openQueryInEditor(sql)}
+            onopenqueries={(view) => openQueriesTab(view)}
             onsavequery={handleSaveQuery}
             onsaveinplace={handleSaveInPlace}
             savedQueryName={activeSavedQuery?.name ?? ''}

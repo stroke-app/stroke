@@ -1793,8 +1793,8 @@
     class="flex h-8 w-full items-center justify-between gap-3 rounded-sm px-2 text-left hover:bg-accent"
   >
     <span class="truncate text-ui-xs text-foreground">{label}</span>
-    <span class={cn('inline-flex h-4 w-7 shrink-0 items-center rounded-full px-0.5 transition-colors duration-150', checked ? 'bg-primary' : 'bg-input')}>
-      <span class={cn('block size-3 rounded-full transition-transform duration-150', checked ? 'translate-x-3 bg-background' : 'translate-x-0 bg-foreground/80')}></span>
+    <span class="app-switch" data-size="sm" data-state={checked ? 'checked' : 'unchecked'} aria-hidden="true">
+      <span class="app-switch-thumb"></span>
     </span>
   </button>
 {/snippet}

@@ -845,12 +845,9 @@
     <button
       type="button" role="switch" aria-checked={checked} aria-label={label}
       onclick={ontoggle}
-      class={cn(
-        'relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full px-0.5 transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.98]',
-        checked ? 'bg-primary' : 'bg-muted',
-      )}
+      class="app-switch cursor-pointer"
     >
-      <span class={cn('pointer-events-none block size-4 rounded-full bg-background shadow-sm transition-transform duration-150 ease-[cubic-bezier(0.23,1,0.32,1)]', checked ? 'translate-x-4' : 'translate-x-0')}></span>
+      <span class="app-switch-thumb"></span>
     </button>
   </div>
 {/snippet}

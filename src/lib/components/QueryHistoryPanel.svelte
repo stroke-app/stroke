@@ -9,7 +9,6 @@
   import X from '@lucide/svelte/icons/x'
   import BarChart2 from '@lucide/svelte/icons/bar-chart-2'
   import Star from '@lucide/svelte/icons/star'
-  import CircleAlert from '@lucide/svelte/icons/circle-alert'
   import { cn } from '$lib/utils.js'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
   import {
@@ -277,26 +276,38 @@
           data-row={i}
           role="option"
           aria-selected={on}
-          class={cn('group/row flex h-8 items-center gap-2 pl-3 pr-1.5', on ? 'bg-accent/60' : 'hover:bg-muted/50')}
+          class={cn('group/row mx-1.5 flex items-center gap-2 rounded-lg py-2 pl-3 pr-1.5', on ? 'bg-accent/60' : 'hover:bg-muted/50')}
         >
+          <!-- Two lines: what ran (or the saved name), then when, how long and
+               how often, with a failure's message in full width under it. -->
           <button
             type="button"
             tabindex="-1"
-            class="flex h-full min-w-0 flex-1 items-center gap-3 text-left"
+            class="flex min-w-0 flex-1 items-start gap-2.5 text-left"
             title={row.error ? `${row.sql}\n\nFailed: ${row.error}` : row.sql}
             onclick={() => { cursor = i; load(row) }}
           >
             {#if row.kind === 'history'}
-              {#if row.error}<CircleAlert class="size-3.5 shrink-0 text-destructive" aria-label="Failed" />{/if}
-              <span class="min-w-0 flex-1 truncate font-mono text-ui-xs text-foreground/90">{row.label}</span>
-              {#if row.error}
-                <span class="min-w-0 max-w-[35%] shrink truncate text-ui-2xs text-destructive">{row.error}</span>
-              {/if}
+              <span class={cn('mt-[3px] size-2 shrink-0 rounded-full', row.error ? 'bg-destructive' : 'bg-success/70')} aria-label={row.error ? 'Failed' : 'Ran'}></span>
+              <span class="flex min-w-0 flex-1 flex-col gap-0.5">
+                <span class="truncate font-mono text-ui-xs text-foreground/90">{row.label}</span>
+                <span class="flex min-w-0 items-center gap-1.5 text-ui-2xs text-muted-foreground">
+                  <span class="shrink-0 tabular-nums">{row.meta}</span>
+                  {#if row.error}
+                    <span aria-hidden="true">·</span>
+                    <span class="min-w-0 truncate text-destructive">{row.error}</span>
+                  {/if}
+                </span>
+              </span>
             {:else}
-              <span class="min-w-0 max-w-[40%] shrink-0 truncate text-ui-xs text-foreground">{row.label}</span>
-              <span class="min-w-0 flex-1 truncate font-mono text-ui-2xs text-muted-foreground">{row.detail}</span>
+              <span class="flex min-w-0 flex-1 flex-col gap-0.5">
+                <span class="flex min-w-0 items-baseline gap-2">
+                  <span class="truncate text-ui-sm font-medium text-foreground">{row.label}</span>
+                  {#if row.meta}<span class="shrink-0 text-ui-2xs tabular-nums text-muted-foreground">{row.meta}</span>{/if}
+                </span>
+                <span class="truncate font-mono text-ui-2xs text-muted-foreground">{row.detail}</span>
+              </span>
             {/if}
-            <span class="shrink-0 font-mono text-ui-2xs tabular-nums text-muted-foreground">{row.meta}</span>
           </button>
           <div class="flex shrink-0 items-center gap-0.5">
             <button
