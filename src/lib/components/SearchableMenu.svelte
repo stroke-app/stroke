@@ -189,7 +189,7 @@
                 bind:this={inputEl}
                 onkeydown={(e) => { if (onInputKeydown(e) === true) return; /** @type {any} */ (props).onkeydown?.(e); }}
                 {placeholder}
-                class="search-box no-field-frame no-focus-ring h-7 w-full min-w-0 pl-8 pr-2 text-ui-sm"
+                class="search-box no-field-frame h-7 w-full min-w-0 pl-8 pr-2 text-ui-sm"
               />
             {/snippet}
           </Command.Input>

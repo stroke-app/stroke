@@ -68,6 +68,7 @@
     erd: { label: 'Schema diagram', icon: 'network', tint: 'bg-info/12 text-info' },
     mermaid: { label: 'Diagram', icon: 'workflow', tint: 'bg-info/12 text-info' },
     chart: { label: 'Chart', icon: 'bar-chart-3', tint: 'bg-primary/12 text-primary' },
+    json: { label: 'JSON', icon: 'braces', tint: 'bg-warning/14 text-warning' },
   })
   /** @param {string} k */
   const kindOf = (k) => KIND[k] ?? { label: k, icon: 'share-2', tint: 'bg-muted text-muted-foreground' }

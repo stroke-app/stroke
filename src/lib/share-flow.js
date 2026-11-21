@@ -23,8 +23,39 @@ export const SHARE_EXPIRIES = /** @type {const} */ ([
  * @typedef {{ kind: 'erd', title: string, source?: string, tables: { name: string, x: number, y: number, columns: { name: string, type: string, pk?: boolean, fk?: string | null }[] }[], links: { from: string, fromCol: string, to: string, toCol: string }[] }} ErdSource
  * @typedef {{ kind: 'mermaid', title: string, source?: string, code: string }} MermaidSource
  * @typedef {{ kind: 'chart', title: string, source?: string, chart: { type: string, x: string, y: string[], group?: string | null }, columns: { name: string, type?: string }[], rows: unknown[][] }} ChartSource
- * @typedef {TableSource | QuerySource | ErdSource | MermaidSource | ChartSource} ShareSource
+ * @typedef {{ kind: 'json', title: string, source?: string, value: unknown }} JsonSource
+ * @typedef {TableSource | QuerySource | ErdSource | MermaidSource | ChartSource | JsonSource} ShareSource
  */
+
+/** @param {unknown} v @returns {v is Record<string, unknown>} */
+const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v)
+
+/**
+ * A JSON value's top-level fields, as columns and rows: the keys of an object,
+ * or of the objects in an array (first seen first). The share dialog offers
+ * them like a table's columns, to leave out or mask.
+ * @param {unknown} value
+ * @returns {{ columns: { name: string }[], rows: unknown[][] }}
+ */
+export function jsonFields(value) {
+  const objs = Array.isArray(value) ? value.filter(isObj) : isObj(value) ? [value] : []
+  /** @type {string[]} */
+  const keys = []
+  const seen = new Set()
+  for (const o of objs.slice(0, 500)) {
+    for (const k of Object.keys(o)) if (!seen.has(k)) { seen.add(k); keys.push(k) }
+  }
+  return { columns: keys.map((name) => ({ name })), rows: objs.slice(0, 500).map((o) => keys.map((k) => o[k])) }
+}
+
+/**
+ * Rows as JSON: one object per row, keyed by column name, the way the JSON
+ * views show them.
+ * @param {{ name: string }[]} columns @param {unknown[][]} rows
+ */
+export function rowsToJson(columns, rows) {
+  return rows.map((r) => Object.fromEntries(columns.map((c, i) => [c.name, r[i]])))
+}
 
 // ── Defaults for new links (Settings → Account & Sync → Sharing) ────────────
 
@@ -144,6 +175,25 @@ export function buildPayload(src, o) {
     const masked = keep.filter((i) => mask.has(i)).map((i) => src.columns[i].name)
     if (src.kind === 'chart') return { ...base, kind: 'chart', chart: src.chart, columns, rows, totalRows: src.rows.length, masked }
     return { ...base, kind: src.kind, columns, rows, totalRows: src.totalRows ?? src.rows.length, masked, sql: src.sql }
+  }
+  if (src.kind === 'json') {
+    const { columns } = jsonFields(src.value)
+    const drop = new Set(columns.map((c, i) => (o.keep && !o.keep.has(i) ? c.name : null)).filter(Boolean))
+    const hide = new Set(columns.map((c, i) => (o.mask?.has(i) ? c.name : null)).filter(Boolean))
+    /** @param {unknown} v */
+    const shape = (v) => {
+      if (!isObj(v) || (drop.size === 0 && hide.size === 0)) return v
+      /** @type {Record<string, unknown>} */
+      const out = {}
+      for (const [k, x] of Object.entries(v)) {
+        if (drop.has(k)) continue
+        out[k] = hide.has(k) ? maskValue(x) : x
+      }
+      return out
+    }
+    const all = Array.isArray(src.value) ? src.value : null
+    const value = all ? all.slice(0, o.rowCap ?? all.length).map(shape) : shape(src.value)
+    return { ...base, kind: 'json', value, totalItems: all ? all.length : undefined, masked: [...hide] }
   }
   if (src.kind === 'query') return { ...base, kind: 'query', sql: src.sql, dialect: src.dialect }
   if (src.kind === 'erd') return { ...base, kind: 'erd', tables: src.tables, links: src.links }

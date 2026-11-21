@@ -4,6 +4,8 @@
   import Copy from '@lucide/svelte/icons/copy'
   import Download from '@lucide/svelte/icons/download'
   import CheckCheck from '@lucide/svelte/icons/check-check'
+  import Share2 from '@lucide/svelte/icons/share-2'
+  import { requestShare } from '$lib/share-flow.js'
   import JsonWrapToggle from './JsonWrapToggle.svelte'
   import JsonPathSuggest from './JsonPathSuggest.svelte'
   import { appJsonWordWrap } from '$lib/stores/settings.js'
@@ -27,6 +29,9 @@
     rowCount = 0,
     onshowtable = () => {},
     ondownload = /** @type {(() => void) | undefined} */ (undefined),
+    /** A share link's title, and where the JSON came from. */
+    sharetitle = 'JSON',
+    sharesource = /** @type {string | undefined} */ (undefined),
   } = $props()
 
   /** True when the caller trimmed the result to keep this view responsive. */
@@ -106,6 +111,14 @@
   }
 
 
+  /** Share what is shown as an encrypted link: the JSONPath result when there is one. */
+  function handleShare() {
+    const value = pathResult?.ok ? pathResult.value : parsedJson
+    if (value === null || value === undefined) return
+    const p = jsonPath.trim()
+    requestShare({ kind: 'json', title: p && p !== '$' ? `${sharetitle} ${p}` : sharetitle, source: sharesource, value })
+  }
+
   function handleCopy() {
     navigator.clipboard.writeText(displayedJson).then(() => {
       copied = true
@@ -177,6 +190,16 @@
           <Copy class="size-3 shrink-0" />
           <span>Copy</span>
         {/if}
+      </button>
+
+      <button
+        type="button"
+        title="Share as an encrypted link"
+        class="inline-flex items-center gap-1.5 rounded-md px-2 py-1 font-mono text-ui-2xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        onclick={handleShare}
+      >
+        <Share2 class="size-3 shrink-0" />
+        <span>Share</span>
       </button>
 
       {#if ondownload}

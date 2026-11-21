@@ -16,7 +16,7 @@
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
   import Download from "@lucide/svelte/icons/download";
   import Share2 from "@lucide/svelte/icons/share-2";
-  import { requestShare, chartTitle, resultsTitle } from "$lib/share-flow.js";
+  import { requestShare, chartTitle, resultsTitle, rowsToJson as rowsToJsonValue } from "$lib/share-flow.js";
   import Table2 from "@lucide/svelte/icons/table-2";
   import SlidersHorizontal from "@lucide/svelte/icons/sliders-horizontal";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
@@ -892,6 +892,8 @@
     if (outputView === 'chart' && chartViewRef?.shareSpec) {
       const spec = chartViewRef.shareSpec()
       requestShare({ kind: 'chart', title: chartTitle(spec), chart: spec, columns: cols, rows: r })
+    } else if (outputView === 'json') {
+      requestShare({ kind: 'json', title: shareTitle(), value: rowsToJsonValue(cols, r) })
     } else {
       requestShare({ kind: 'result', title: shareTitle(), columns: cols, rows: r, sql })
     }
@@ -1161,6 +1163,10 @@
             <DropdownMenu.Item onSelect={() => requestShare({ kind: 'result', title: shareTitle(), ...resultSource(), sql })}>
               <Share2 class="size-3.5 shrink-0 text-muted-foreground" />
               <span data-slot="menu-label">Share results…</span>
+            </DropdownMenu.Item>
+            <DropdownMenu.Item onSelect={() => { const { columns: c, rows: r } = resultSource(); requestShare({ kind: 'json', title: shareTitle(), value: rowsToJsonValue(c, r) }) }}>
+              <Share2 class="size-3.5 shrink-0 text-muted-foreground" />
+              <span data-slot="menu-label">Share as JSON…</span>
             </DropdownMenu.Item>
           {/if}
           <DropdownMenu.Item onSelect={() => requestShare({ kind: 'query', title: shareTitle(), sql })}>
@@ -1718,7 +1724,7 @@
             {/if}
           {:else if currentDisplay.columns.length > 0}
             {#if outputView === 'json'}
-              <JsonViewer json={jsonText} data={rowObjects} shownRows={rowObjects.length} rowCount={currentDisplay.rows.length} onshowtable={() => (outputView = 'table')} />
+              <JsonViewer json={jsonText} data={rowObjects} sharetitle={shareTitle()} shownRows={rowObjects.length} rowCount={currentDisplay.rows.length} onshowtable={() => (outputView = 'table')} />
             {:else if outputView === 'chart'}
               <ChartView
                 bind:this={chartViewRef}

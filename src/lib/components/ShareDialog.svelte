@@ -13,7 +13,7 @@
   import { cn } from '$lib/utils.js'
   import { shareList } from '$lib/api.js'
   import { detectSensitiveColumns } from '$lib/share-crypto.js'
-  import { shareRequest, buildPayload, publishShare, settleShare, SHARE_EXPIRIES, loadShareDefaults, openSharesPage } from '$lib/share-flow.js'
+  import { shareRequest, buildPayload, publishShare, settleShare, SHARE_EXPIRIES, loadShareDefaults, openSharesPage, jsonFields } from '$lib/share-flow.js'
 
   const src = $derived($shareRequest)
   let open = $state(false)
@@ -27,9 +27,14 @@
     erd: { label: 'schema diagram', icon: 'network' },
     mermaid: { label: 'diagram', icon: 'workflow' },
     chart: { label: 'chart', icon: 'bar-chart-3' },
+    json: { label: 'JSON', icon: 'braces' },
   })
   const kind = $derived(KIND[src?.kind ?? ''] ?? { label: '', icon: 'share-2' })
-  const tabular = $derived(src?.kind === 'result' || src?.kind === 'table' || src?.kind === 'chart')
+  const tabular = $derived(src?.kind === 'result' || src?.kind === 'table' || src?.kind === 'chart' || src?.kind === 'json')
+  /** A JSON share's top-level fields, offered like columns. */
+  const fields = $derived(src?.kind === 'json' ? jsonFields(src.value) : null)
+  /** Columns and rows the field list reads: a table's own, or a JSON share's fields. */
+  const grid = $derived(fields ?? (src && 'columns' in src ? { columns: src.columns, rows: src.rows } : { columns: [], rows: [] }))
 
   /** @type {{ plan: 'free' | 'pro', limits: import('$lib/api.js').ShareLimits } | null} */
   let plan = $state(null)
@@ -76,9 +81,10 @@
     error = ''
     link = ''
     copied = false
-    if (s.kind === 'result' || s.kind === 'table' || s.kind === 'chart') {
-      const hits = detectSensitiveColumns(s.columns, s.rows)
-      keep = new Set(s.columns.map((_, i) => i))
+    if (s.kind === 'result' || s.kind === 'table' || s.kind === 'chart' || s.kind === 'json') {
+      const g = s.kind === 'json' ? jsonFields(s.value) : { columns: s.columns, rows: s.rows }
+      const hits = detectSensitiveColumns(g.columns, g.rows)
+      keep = new Set(g.columns.map((_, i) => i))
       sensitive = hits
       mask = new Set(d.maskPii ? hits.map((h) => h.index) : [])
     } else {
@@ -97,9 +103,21 @@
 
   const pro = $derived(plan?.plan === 'pro')
   const rowCap = $derived(plan?.limits.rows ?? 1000)
-  const rowCount = $derived(src && 'rows' in src ? src.rows.length : 0)
+  const rowCount = $derived(src?.kind === 'json' ? (Array.isArray(src.value) ? src.value.length : 1) : src && 'rows' in src ? src.rows.length : 0)
   const sensitiveByIndex = $derived(new Map(sensitive.map((s) => [s.index, s])))
-  const colCount = $derived(src && 'columns' in src ? src.columns.length : 0)
+  const colCount = $derived(grid.columns.length)
+  /** What a row is called in the hints: a JSON array holds items. */
+  const unit = $derived(src?.kind === 'json' ? 'item' : 'row')
+  /** The first lines of a JSON share, pretty-printed, for the preview. */
+  const jsonPreview = $derived.by(() => {
+    if (src?.kind !== 'json') return ''
+    const v = Array.isArray(src.value) ? src.value.slice(0, 3) : src.value
+    let text = ''
+    try { text = JSON.stringify(v, null, 2) ?? 'null' } catch { text = String(v) }
+    const lines = text.split('\n')
+    const more = Array.isArray(src.value) && src.value.length > 3 ? `\n… ${(src.value.length - 3).toLocaleString()} more` : ''
+    return (lines.length > 24 ? lines.slice(0, 24).join('\n') + '\n…' : text) + more
+  })
 
   /** @param {number} i */
   function toggleKeep(i) {
@@ -116,7 +134,7 @@
 
   async function create() {
     if (!src || busy) return
-    if (tabular && keep.size === 0) { error = 'Keep at least one column.'; return }
+    if (tabular && colCount > 0 && keep.size === 0) { error = src.kind === 'json' ? 'Keep at least one field.' : 'Keep at least one column.'; return }
     busy = true
     error = ''
     try {
@@ -268,10 +286,15 @@
           </div>
         {/if}
 
-        {#if tabular && src && 'columns' in src}
+        {#if src?.kind === 'json'}
+          <!-- The start of what the link will show, as it will show it. -->
+          <pre class="app-scroll h-36 shrink-0 overflow-auto rounded-lg border border-border/60 bg-muted/10 px-3 py-2 font-mono text-ui-2xs leading-relaxed text-muted-foreground" aria-label="JSON preview">{jsonPreview}</pre>
+        {/if}
+
+        {#if tabular && colCount > 0}
           <section class="flex flex-col gap-1.5" aria-labelledby="sh-cols">
             <div class="flex items-baseline justify-between gap-3">
-              <span id="sh-cols" class={lbl}>Columns</span>
+              <span id="sh-cols" class={lbl}>{src?.kind === 'json' ? 'Fields' : 'Columns'}</span>
               <span class="text-ui-2xs text-muted-foreground tabular-nums">
                 {keep.size} of {colCount} shared{#if mask.size} · {mask.size} masked{/if}
               </span>
@@ -279,7 +302,7 @@
             <!-- One row per column: include it, and mask it. Masked rows say so
                  in words; the rest keep a quiet Mask button. -->
             <ul class="app-scroll max-h-56 overflow-y-auto rounded-lg border border-border/60">
-              {#each src.columns as col, i (i)}
+              {#each grid.columns as col, i (i)}
                 {@const hit = sensitiveByIndex.get(i)}
                 {@const kept = keep.has(i)}
                 {@const masked = mask.has(i)}
@@ -312,9 +335,9 @@
             </ul>
             <p class={hint}>
               {#if rowCount > rowCap}
-                Shares the first {rowCap.toLocaleString()} of {rowCount.toLocaleString()} rows{pro ? '' : '. Pro shares up to 100,000'}.
+                Shares the first {rowCap.toLocaleString()} of {rowCount.toLocaleString()} {unit}s{pro ? '' : '. Pro shares up to 100,000'}.
               {:else}
-                {rowCount.toLocaleString()} row{rowCount === 1 ? '' : 's'}. Masked values keep their shape, like a••@e••••.com.
+                {rowCount.toLocaleString()} {unit}{rowCount === 1 ? '' : 's'}. Masked values keep their shape, like a••@e••••.com.
               {/if}
             </p>
           </section>
