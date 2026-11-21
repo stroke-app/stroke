@@ -170,7 +170,7 @@
     }
     if (canEdit) return true
     toast.error('Structure editing not available here', {
-      description: `Editing columns on ${engineLabel(connectionType)} isn't supported yet, use the SQL console to alter this table.`,
+      description: `Editing columns on ${engineLabel(connectionType)} isn't supported yet, use the SQL editor to alter this table.`,
     })
     return false
   }
@@ -544,7 +544,7 @@
   {#if !canEdit}
     <div class="flex shrink-0 items-center gap-2 border-b border-border/30 bg-muted/15 px-4 py-1.5 font-mono text-ui-2xs text-muted-foreground">
       <Lock class="size-3 shrink-0 text-muted-foreground" />
-      <span>Read-only structure on {engineLabel(connectionType)}, alter this table from the SQL console.</span>
+      <span>Read-only structure on {engineLabel(connectionType)}, alter this table from the SQL editor.</span>
     </div>
   {/if}
 

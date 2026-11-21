@@ -357,7 +357,7 @@
         <p class="text-ui font-medium text-foreground">{engineLabel} does not support roles or RLS</p>
         <p class="text-ui-xs text-muted-foreground">
           Row Level Security and role management require PostgreSQL or CockroachDB.<br />
-          Use the SQL console to manage {engineLabel} users and permissions directly.
+          Use the SQL editor to manage {engineLabel} users and permissions directly.
         </p>
       </div>
     </div>

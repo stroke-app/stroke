@@ -1786,7 +1786,7 @@
   <ContextMenu.Separator />
   <ContextMenu.Item onSelect={() => onopeninconsole(name)}>
     <Icon name="terminal" />
-    Open in SQL console
+    Open in SQL editor
   </ContextMenu.Item>
   {#if sqlTables}
   <ContextMenu.Item onSelect={() => ongeneratesql(name)}>

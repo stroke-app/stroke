@@ -1880,7 +1880,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
         // reports no PK on purpose. Say why and point to the supported path rather
         // than the misleading generic "no primary key" message.
         description: dialect === "clickhouse"
-          ? "ClickHouse tables are browse-only here, modify data with ALTER TABLE … UPDATE in the SQL console."
+          ? "ClickHouse tables are browse-only here, modify data with ALTER TABLE … UPDATE in the SQL editor."
           : "This table has no primary key.",
       });
       return;
