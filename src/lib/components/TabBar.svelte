@@ -361,6 +361,30 @@
       </ContextMenu.Root>
     {/each}
   </div>
+  <!-- Tabs scrolled out of view fade at the edge, and a tab starting inside the
+       fade showed nothing at all, so the strip looked complete. While any are
+       hidden, this lists every open tab. -->
+  {#if fadeLeft || fadeRight}
+    <DropdownMenu.Root>
+      <DropdownMenu.Trigger
+        class="ml-0.5 inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-sidebar-accent/50 hover:text-foreground"
+        title="All open tabs"
+        aria-label="All open tabs ({tabs.length})"
+      >
+        <Icon name="chevron-down" class="size-3.5 shrink-0" />
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Content align="end" class="app-scroll max-h-[min(70vh,28rem)] w-64 overflow-y-auto">
+        {#each tabs as tab (tab.id)}
+          <DropdownMenu.Item onSelect={() => onselect(tab.id)}>
+            <Icon name={tabIcon(tab)} class="size-3.5 shrink-0 text-muted-foreground" />
+            <span data-slot="menu-label" class={cn('min-w-0 flex-1 truncate', tab.id === activeTabId && 'font-medium text-foreground')}>{tabDisplayTitle(tab)}</span>
+            {#if tab.connLabel}<span class="ml-auto max-w-24 shrink-0 truncate text-ui-2xs text-muted-foreground">{tab.connLabel}</span>{/if}
+            {#if tab.id === activeTabId}<Icon name="check" class="size-3.5 shrink-0" />{/if}
+          </DropdownMenu.Item>
+        {/each}
+      </DropdownMenu.Content>
+    </DropdownMenu.Root>
+  {/if}
   <!-- A grab handle that is always there, even with the strip full of tabs. -->
   <div class="h-full w-10 shrink-0" data-tauri-drag-region aria-hidden="true"></div>
 </header>

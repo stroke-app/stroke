@@ -1,4 +1,5 @@
 <script>
+  import { comboTitle } from '$lib/shortcuts.js'
   import { onMount, untrack } from "svelte";
   import { Prec } from "@codemirror/state";
   import { tooltips } from "@codemirror/view";
@@ -410,7 +411,7 @@
       size="sm"
       class="h-7 shrink-0 px-2.5 font-mono text-ui-xs text-muted-foreground hover:text-foreground"
       disabled={!code.trim()}
-      title={`Format code (${mod}S)`}
+      title={`Format code (${comboTitle('Mod+S')})`}
       onclick={() => editor?.getAction("editor.action.formatDocument")?.run()}
     >
       Format

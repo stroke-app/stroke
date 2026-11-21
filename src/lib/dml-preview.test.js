@@ -80,3 +80,18 @@ describe('ODBC previews', () => {
     expect(buildRowDeleteStatements([0], rows, odbcCtx)).toEqual(['DELETE FROM "users" WHERE "id" = 1;'])
   })
 })
+
+describe('PostgreSQL-dialect Spanner previews', () => {
+  it('quote and escape the PostgreSQL way, and GoogleSQL is untouched', async () => {
+    const { setSpannerDialect } = await import('./sql-ident.js')
+    const spanner = { ...ctx, dialect: /** @type {const} */ ('spanner'), schema: 'public' }
+    setSpannerDialect('postgresql')
+    expect(buildRowUpdateStatements([{ rowIdx: 1, colIdx: 1, value: "O'Neil" }], rows, spanner)).toEqual([
+      `UPDATE "users" SET "name" = 'O''Neil' WHERE "id" = 2;`,
+    ])
+    setSpannerDialect('googlesql')
+    expect(buildRowUpdateStatements([{ rowIdx: 1, colIdx: 1, value: "O'Neil" }], rows, { ...spanner, schema: 'default' })).toEqual([
+      "UPDATE `users` SET `name` = 'O\\'Neil' WHERE `id` = 2;",
+    ])
+  })
+})

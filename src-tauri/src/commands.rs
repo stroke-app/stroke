@@ -934,7 +934,7 @@ pub async fn test_spanner(config: crate::db::spanner::SpannerConfig) -> Result<(
 }
 
 #[tauri::command]
-pub async fn connect_spanner_db(state: Db<'_>, config: crate::db::spanner::SpannerConfig) -> Result<(), String> {
+pub async fn connect_spanner_db(state: Db<'_>, config: crate::db::spanner::SpannerConfig) -> Result<String, String> {
     crate::db::connection::connect_spanner(state, config).await
 }
 

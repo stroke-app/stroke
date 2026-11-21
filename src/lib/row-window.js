@@ -121,7 +121,7 @@ export function windowKeepCount(rowsPerWindow) {
  *   sharing the anchor's value; a PK is also NOT NULL, which that predicate
  *   likewise can't order around.
  * - a cast the backend will accept. It rejects anything outside
- *   `[A-Za-z0-9_ ]` - notably the `varchar(...)` label a text key reports - and
+ *   `[A-Za-z0-9_ ]` (a length like `varchar(20)`) and
  *   answers with the offset page instead, so taking the seek path there would
  *   have read-ahead waiting on anchors that buy nothing.
  * - Postgres. Other engines ignore the cursor entirely.

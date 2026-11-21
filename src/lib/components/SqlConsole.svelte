@@ -1,5 +1,5 @@
 <script>
-  import { IS_MAC } from '$lib/shortcuts.js'
+  import { IS_MAC, comboTitle } from '$lib/shortcuts.js'
   import { rowsToCsv, rowsToJson, rowsToSql, rowsToTsv, rowsToMarkdown, rowsToJsonl, rowsToObjects, saveExportFile, buildExportFilename, exportRows, EXPORT_FORMATS } from '$lib/export.js'
   import Play from "@lucide/svelte/icons/play";
   import PanelBottom from "@lucide/svelte/icons/panel-bottom";
@@ -762,6 +762,8 @@
     return Math.round(Math.min(max, Math.max(280, w)));
   }
   const beside = $derived($appSqlEditor.resultsBeside && outputVisible);
+  /** Where Saved lives: its own Queries tab in the shell, else the results pane. */
+  const savedWhere = $derived(onopenqueries ? 'in the Queries tab under Saved' : 'under Saved in the results pane');
   /** @type {(() => Promise<void>) | null} */
   let formatSql = $state(null);
 
@@ -982,7 +984,7 @@
           onclick={() => handleRun(undefined)}
           title={tipText(
             'Run query',
-            `Runs every statement, each gets its own result tab. ${mod}R runs only the statement under the cursor, ${mod}L selects it.`,
+            `Runs every statement, each gets its own result tab. ${comboTitle('Mod+R')} runs only the statement under the cursor, ${comboTitle('Mod+L')} selects it.`,
             [mod, '↵'],
           )}
         >
@@ -1289,7 +1291,7 @@
         onclick={(e) => (e.shiftKey ? openSaveDialog() : void saveQuery())}
         title={savedQueryName
           ? tipText(`Save "${savedQueryName}"`, `Writes this tab into the saved query. Shift+click or ${mod}⇧S saves a copy under a new name.`, [mod, 'S'])
-          : tipText('Save query', 'Keep this query for later, under Saved in the results pane, per connection.', [mod, 'S'])}
+          : tipText('Save query', `Keep this query for later, ${savedWhere}, per connection.`, [mod, 'S'])}
       >
         {#if savingQuery}
           <Loader2 class="size-3.5 shrink-0 animate-spin" />
@@ -1450,7 +1452,7 @@
   <div class={outputVisible ? "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" : "flex shrink-0 flex-col"}>
     <!-- Output tab bar -->
     <div
-      class="studio-chrome flex h-10 shrink-0 items-stretch border-b border-border/30 bg-panel px-2"
+      class="@container/out studio-chrome flex h-10 shrink-0 items-stretch border-b border-border/30 bg-panel px-2"
       data-studio-chrome
     >
       <!-- Result-set selector tabs (only when multi-result) -->
@@ -1585,9 +1587,9 @@
       <!-- Right: what the run returned, then its actions. The facts read as one
            quiet line (`56k rows · 523 ms`); "Unordered" is a note about that
            line, not another number, so it is plain text after a dot. -->
-      <div class="ml-auto flex shrink-0 items-center gap-3 pr-1.5">
+      <div class="ml-auto flex shrink-0 items-center gap-3 pr-1.5 @max-[34rem]/out:gap-1">
         {#if resultShown && (currentDisplay.rows.length > 0 || currentDisplay.queryMs > 0 || currentDisplay.message)}
-          <div class="flex min-w-0 items-center gap-1.5 text-ui-xs text-muted-foreground">
+          <div class="flex min-w-0 items-center gap-1.5 text-ui-xs text-muted-foreground @max-[34rem]/out:hidden">
             {#if currentDisplay.rows.length > 0}
               <span class="tabular-nums">{formatCompactCount(currentDisplay.rows.length)} {currentDisplay.rows.length === 1 ? 'row' : 'rows'}</span>
             {/if}
@@ -1608,10 +1610,10 @@
         <button
           type="button"
           onclick={() => onopenqueries('history')}
-          class="flex h-7 items-center gap-1.5 rounded-md px-2.5 text-ui-xs whitespace-nowrap text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+          class="flex h-7 items-center gap-1.5 rounded-md px-2.5 text-ui-xs @max-[40rem]/out:px-1.5 whitespace-nowrap text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
           title={tipText('Queries', 'History, saved queries and saved charts, in their own tab', [mod, '⇧', 'B'])}
         >
-          <History class="size-3.5 shrink-0" />Queries
+          <History class="size-3.5 shrink-0" /><span class="@max-[40rem]/out:sr-only">Queries</span>
         </button>
       {:else}
       <div class="flex items-center gap-1">
@@ -1642,7 +1644,7 @@
             aria-label={outputView === 'chart' ? 'Share chart' : 'Share results'}
             onclick={shareShown}
           >
-            <Share2 class="size-3.5 shrink-0" />Share
+            <Share2 class="size-3.5 shrink-0" /><span class="@max-[40rem]/out:sr-only">Share</span>
           </button>
         {/if}
         <!-- Export dropdown, only when there are results -->
@@ -1886,8 +1888,8 @@
       <Dialog.Title class="text-ui-sm font-semibold">{savedQueryName ? 'Save as a new query' : 'Save query'}</Dialog.Title>
       <Dialog.Description class="text-ui-xs text-muted-foreground">
         {savedQueryName
-          ? `A copy of "${savedQueryName}". This tab moves to the copy; ${mod}S then saves into it.`
-          : `Saved queries are kept per connection, under Saved in the results pane. After this, ${mod}S saves this tab into it.`}
+          ? `A copy of "${savedQueryName}". This tab moves to the copy; ${comboTitle('Mod+S')} then saves into it.`
+          : `Saved queries are kept per connection, ${savedWhere}. After this, ${comboTitle('Mod+S')} saves this tab into it.`}
       </Dialog.Description>
     </Dialog.Header>
     <div class="flex flex-col gap-2">

@@ -17,7 +17,6 @@
   import { bindNativeMenu, syncNativeMenuState, watchFullscreen } from '$lib/native-menu.js'
 
   const isMac = typeof navigator !== 'undefined' && detectOs() === 'macos'
-  const mod = isMac ? '⌘' : 'Ctrl'
 
   // Window is frameless everywhere (see src-tauri/src/lib.rs), so this bar is
   // the drag region and double-click-to-maximize target.

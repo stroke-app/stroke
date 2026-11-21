@@ -1,4 +1,4 @@
-import { quoteName, tableRef } from './sql-ident.js'
+import { quoteName, tableRef, spannerIsPg } from './sql-ident.js'
 import { normalizeForeignKeys } from '$lib/foreign-key-nav.js'
 
 /** Sentinel used when the filter should match across every column. */
@@ -268,7 +268,7 @@ export function buildSelectSql({ schema, table, columns = [], filters = [], sear
   const fam = ['cockroachdb', 'yugabytedb', 'alloydb', 'redshift'].includes(engine) ? 'postgres'
     : engine === 'mariadb' ? 'mysql'
     : engine
-  const google = fam === 'spanner' || fam === 'bigquery'
+  const google = fam === 'bigquery' || (fam === 'spanner' && !spannerIsPg())
   /** quote identifier, per Settings → SQL editor → Quote object names */
   const q = (/** @type {string} */ id) => quoteName(id, engine, quote)
   /** quote a string literal: GoogleSQL escapes with a backslash, the rest double the quote */
@@ -283,6 +283,7 @@ export function buildSelectSql({ schema, table, columns = [], filters = [], sear
     fam === 'postgres' ? `${col}::text`
     : fam === 'duckdb' ? `CAST(${col} AS VARCHAR)`
     : google ? `CAST(${col} AS STRING)`
+    : fam === 'spanner' ? `CAST(${col} AS VARCHAR)`
     : fam === 'mssql' ? `CAST(${col} AS NVARCHAR(MAX))`
     : fam === 'oracle' ? `TO_CHAR(${col})`
     : fam === 'clickhouse' ? `toString(${col})`

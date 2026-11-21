@@ -23,6 +23,19 @@ export function setOdbcDialect(info) {
   odbc = { quote: info?.quote || '"', flat: info?.namespace === 'flat' }
 }
 
+/** The active Spanner database's dialect: GoogleSQL or PostgreSQL. */
+let spannerPg = false
+
+/** @param {string | null | undefined} dialect as connect_spanner_db returns it */
+export function setSpannerDialect(dialect) {
+  spannerPg = dialect === 'postgresql'
+}
+
+/** Whether the active Spanner database speaks PostgreSQL (double quotes, '' escapes). */
+export function spannerIsPg() {
+  return spannerPg
+}
+
 /** Whether the active ODBC database has no schemas (bare table names). */
 export function odbcFlat() {
   return odbc.flat
@@ -117,6 +130,7 @@ function reservedFor(engine) {
 
 /** @param {string | null | undefined} engine */
 function quoteChars(engine) {
+  if (engine === 'spanner' && spannerPg) return ['"', '"']
   if (engine === 'mysql' || engine === 'mariadb' || engine === 'spanner' || engine === 'bigquery') return ['`', '`']
   if (engine === 'mssql') return ['[', ']']
   if (engine === 'odbc') return odbc.quote === '[' ? ['[', ']'] : [odbc.quote, odbc.quote]

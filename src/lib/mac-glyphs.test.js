@@ -35,4 +35,14 @@ describe('shortcut hints', () => {
     }
     expect(offenders).toEqual([])
   })
+
+  it('never glue a modifier variable to a key ("CtrlS" off macOS)', () => {
+    const offenders = []
+    for (const file of svelteFiles('src/lib/components')) {
+      readFileSync(file, 'utf8').split('\n').forEach((line, i) => {
+        if (/\{(mod|modKey)\}[A-Z]\b/.test(line)) offenders.push(`${file}:${i + 1}`)
+      })
+    }
+    expect(offenders).toEqual([])
+  })
 })

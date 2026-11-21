@@ -1,4 +1,5 @@
 <script>
+  import { comboTitle } from '$lib/shortcuts.js'
   import Kbd from './Kbd.svelte'
   import { onDestroy, onMount, tick } from 'svelte'
   import History from '@lucide/svelte/icons/history'
@@ -122,7 +123,7 @@
 
   const EMPTY = {
     history: { Icon: History, title: 'No queries run yet', hint: `${modKey}↵ runs the editor` },
-    saved: { Icon: Bookmark, title: 'No saved queries', hint: `${modKey}S in the editor saves it` },
+    saved: { Icon: Bookmark, title: 'No saved queries', hint: `${comboTitle('Mod+S')} in the editor saves it` },
     charts: { Icon: BarChart2, title: 'No saved charts', hint: 'Save one from the Chart view of a result' },
   }
 

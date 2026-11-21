@@ -57,7 +57,6 @@
   import { selectAllInFocus } from '$lib/select-all.js'
   import { startTelemetry, track } from '$lib/telemetry.js'
   import Sidebar from './Sidebar.svelte'
-  import SidebarQueries from './SidebarQueries.svelte'
   import TabBar from './TabBar.svelte'
   import PaneLayout from './PaneLayout.svelte'
   import * as PaneTree from '$lib/pane-layout.js'
@@ -10810,6 +10809,7 @@ let rowSearch = $state('')
         queriesCount={savedQueries.length}
       >
         {#snippet queriesPanel()}
+          {#await import('./SidebarQueries.svelte') then { default: SidebarQueries }}
           <SidebarQueries
             connectionId={persistConnectionId}
             queries={savedQueries}
@@ -10819,6 +10819,7 @@ let rowSearch = $state('')
             onnew={(folderId) => { if (aiMode) exitAiMode(); void newSavedQuery(folderId) }}
             onrefresh={refreshQueryStores}
           />
+          {/await}
         {/snippet}
       </Sidebar>
       </svelte:boundary>
