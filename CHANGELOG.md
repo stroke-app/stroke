@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.3.4] - 2026-11-21
+
+### Changes
+- Show saves and deletes right away, with a rollback on failure (#337)
+
+
 ## [3.3.3] - 2026-11-21
 
 ### Changes
