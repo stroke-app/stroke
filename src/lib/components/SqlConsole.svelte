@@ -1450,7 +1450,7 @@
   <div class={outputVisible ? "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" : "flex shrink-0 flex-col"}>
     <!-- Output tab bar -->
     <div
-      class="studio-chrome flex h-10 shrink-0 items-stretch border-b border-border/30 bg-panel px-2"
+      class="@container/out studio-chrome flex h-10 shrink-0 items-stretch border-b border-border/30 bg-panel px-2"
       data-studio-chrome
     >
       <!-- Result-set selector tabs (only when multi-result) -->
@@ -1585,9 +1585,9 @@
       <!-- Right: what the run returned, then its actions. The facts read as one
            quiet line (`56k rows · 523 ms`); "Unordered" is a note about that
            line, not another number, so it is plain text after a dot. -->
-      <div class="ml-auto flex shrink-0 items-center gap-3 pr-1.5">
+      <div class="ml-auto flex shrink-0 items-center gap-3 pr-1.5 @max-[34rem]/out:gap-1">
         {#if resultShown && (currentDisplay.rows.length > 0 || currentDisplay.queryMs > 0 || currentDisplay.message)}
-          <div class="flex min-w-0 items-center gap-1.5 text-ui-xs text-muted-foreground">
+          <div class="flex min-w-0 items-center gap-1.5 text-ui-xs text-muted-foreground @max-[34rem]/out:hidden">
             {#if currentDisplay.rows.length > 0}
               <span class="tabular-nums">{formatCompactCount(currentDisplay.rows.length)} {currentDisplay.rows.length === 1 ? 'row' : 'rows'}</span>
             {/if}
@@ -1608,10 +1608,10 @@
         <button
           type="button"
           onclick={() => onopenqueries('history')}
-          class="flex h-7 items-center gap-1.5 rounded-md px-2.5 text-ui-xs whitespace-nowrap text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+          class="flex h-7 items-center gap-1.5 rounded-md px-2.5 text-ui-xs @max-[40rem]/out:px-1.5 whitespace-nowrap text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
           title={tipText('Queries', 'History, saved queries and saved charts, in their own tab', [mod, '⇧', 'B'])}
         >
-          <History class="size-3.5 shrink-0" />Queries
+          <History class="size-3.5 shrink-0" /><span class="@max-[40rem]/out:sr-only">Queries</span>
         </button>
       {:else}
       <div class="flex items-center gap-1">
@@ -1642,7 +1642,7 @@
             aria-label={outputView === 'chart' ? 'Share chart' : 'Share results'}
             onclick={shareShown}
           >
-            <Share2 class="size-3.5 shrink-0" />Share
+            <Share2 class="size-3.5 shrink-0" /><span class="@max-[40rem]/out:sr-only">Share</span>
           </button>
         {/if}
         <!-- Export dropdown, only when there are results -->
