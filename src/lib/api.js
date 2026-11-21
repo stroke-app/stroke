@@ -229,12 +229,29 @@ function withTimezone(payload) {
   return payload
 }
 
+/**
+ * The TLS verification level and CA, and a Postgres URL's other parameters.
+ * The payloads above are rebuilt field by field, and these were not among the
+ * fields: a connection set to verify-full with a CA connected as plain
+ * `require` (encrypted, certificate never checked), and a pasted URL's
+ * application_name or options never left the form. Sent only with TLS on, as
+ * the form does: `sslMode` alone would turn it back on in the backend.
+ * @param {Record<string, any>} payload @param {Record<string, any>} config
+ */
+export function withTlsAndParams(payload, config) {
+  const out = { ...payload }
+  if (config.ssl && config.sslMode) out.sslMode = String(config.sslMode)
+  if (config.ssl && config.sslRootCert) out.sslRootCert = String(config.sslRootCert)
+  if (config.params && String(config.params).trim()) out.params = String(config.params).trim()
+  return out
+}
+
 export async function testPostgresConnection(config) {
-  return inv('test_postgres_connection', { config: withSsh(withTimezone(normalizeConnectionConfig(config)), config) })
+  return inv('test_postgres_connection', { config: withSsh(withTlsAndParams(withTimezone(normalizeConnectionConfig(config)), config), config) })
 }
 
 export async function connectPostgres(config) {
-  return connectInv('connect_postgres', { config: withSsh(withTimezone(normalizeConnectionConfig(config)), config) })
+  return connectInv('connect_postgres', { config: withSsh(withTlsAndParams(withTimezone(normalizeConnectionConfig(config)), config), config) })
 }
 
 /** Toggle the WebView DevTools (no-op in release builds). */
@@ -276,7 +293,7 @@ export async function testMysqlConnection(config) {
     password: String(config.password || ''),
     ssl: Boolean(config.ssl),
   }
-  return inv('test_mysql', { config: withSsh(withTimezone(base), config) })
+  return inv('test_mysql', { config: withSsh(withTlsAndParams(withTimezone(base), config), config) })
 }
 
 /** @param {{ name: string, host: string, port: number, database: string, user: string, password: string, ssl: boolean, ssh?: object }} config */
@@ -290,7 +307,7 @@ export async function connectMysql(config) {
     password: String(config.password || ''),
     ssl: Boolean(config.ssl),
   }
-  return connectInv('connect_mysql_db', { config: withSsh(withTimezone(base), config) })
+  return connectInv('connect_mysql_db', { config: withSsh(withTlsAndParams(withTimezone(base), config), config) })
 }
 
 // ── Cloudflare D1 ─────────────────────────────────────────────────────────────

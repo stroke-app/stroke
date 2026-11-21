@@ -67,6 +67,11 @@ export function parsePostgresUri(uri) {
       sslmode === 'verify-full' ||
       url.searchParams.get('ssl') === 'true'
 
+    const mode = ['require', 'verify-ca', 'verify-full'].includes(sslmode ?? '') ? sslmode : ''
+    const sslRootCert = url.searchParams.get('sslrootcert') ?? ''
+    // Everything else rides along as written (application_name, options, ...).
+    const rest = new URLSearchParams(url.search)
+    for (const k of ['sslmode', 'ssl', 'sslrootcert']) rest.delete(k)
     return {
       host: url.hostname || '127.0.0.1',
       port: url.port || '5432',
@@ -74,6 +79,9 @@ export function parsePostgresUri(uri) {
       user: decodePart(url.username),
       password: decodePart(url.password),
       ssl,
+      sslMode: mode,
+      sslRootCert,
+      params: rest.toString(),
     }
   } catch {
     return { error: 'Could not parse connection URI' }
@@ -683,7 +691,8 @@ export function connectionUrl(p) {
     case 'cockroachdb':
     case 'yugabytedb':
     case 'alloydb': {
-      const q = p.ssl ? `?sslmode=${p.sslMode || 'require'}` : ''
+      const parts = [p.ssl && `sslmode=${p.sslMode || 'require'}`, p.params].filter(Boolean)
+      const q = parts.length ? `?${parts.join('&')}` : ''
       return `postgresql://${auth(p.user, p.password)}${hp(p.host, p.port)}/${enc(p.database ?? '')}${q}`
     }
     case 'mysql':

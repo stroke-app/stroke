@@ -117,6 +117,8 @@
      * once consumed so the next plain open starts on the picker again.
      */
     initialEngine = $bindable(""),
+    /** A saved connection to open straight into its form (sidebar Edit…). */
+    initialEditId = $bindable(""),
     /**
      * A connection string handed over from outside (a stroke:// link or the
      * command line): read as if pasted, so the form opens filled in. Nothing
@@ -510,6 +512,13 @@
    */
   let sslMode = $state("require");
   let sslCaPath = $state("");
+  /**
+   * The rest of a Postgres URL's query (`application_name=...&options=...`),
+   * passed through as written. A pasted URL used to lose everything but host,
+   * login, database and TLS - Neon's `options=endpoint%3D...` included.
+   */
+  let pgParams = $state("");
+  const pgWire = $derived(dbType === "postgres" || dbType === "cockroachdb" || dbType === "yugabytedb" || dbType === "alloydb");
   let secure = $state(false);
   let encrypt = $state(false);
   let trustCert = $state(true);
@@ -1170,6 +1179,7 @@
         password,
         ssl,
         ...sslPayload("postgres"),
+        ...(pgParams.trim() && { params: pgParams.trim() }),
         ...(ssh && { ssh }),
       };
     if (dbType === "clickhouse")
@@ -1348,6 +1358,7 @@
       password,
       ssl,
       ...sslPayload("postgres"),
+      ...(pgParams.trim() && { params: pgParams.trim() }),
       ...(ssh && { ssh }),
     };
   }
@@ -1492,6 +1503,7 @@
         : conn.sslMode || "require"
       );
       sslCaPath = conn.sslRootCert ?? "";
+      pgParams = conn.params ?? "";
       sslPanelOpen = !!conn.ssl;
       sshPanelOpen = !!s?.host;
       readOnly = conn.readOnly ?? false;
@@ -1915,6 +1927,14 @@
       } else {
         ssl = parsed.ssl;
         changed.push("ssl");
+        // The verification level and CA too, not just "TLS on": verify-full
+        // pasted in came back as plain require.
+        if ("sslMode" in parsed && parsed.sslMode) sslMode = /** @type {any} */ (parsed.sslMode);
+        if ("sslRootCert" in parsed && parsed.sslRootCert) sslCaPath = parsed.sslRootCert;
+        if ("params" in parsed) {
+          pgParams = parsed.params ?? "";
+          if (pgParams) changed.push("pgParams");
+        }
       }
       flashFields(changed);
       uriHint = "Fields updated from URI";
@@ -2190,6 +2210,11 @@
       clipboardDismissed = "";
       // Arriving from an engine chip skips the picker - that choice is already made.
       if (initialEngine) { pickEngine(initialEngine); initialEngine = ""; }
+      if (initialEditId) {
+        const conn = saved.find((c) => c.id === initialEditId);
+        initialEditId = "";
+        if (conn) resetForm(conn);
+      }
       engineQuery = "";
       quickUri = "";
       quickHint = "";
@@ -5885,6 +5910,22 @@
                               <span class={lbl}>Options</span>
                               {@render advancedFields()}
                             </div>
+                            {#if pgWire}
+                              <div class="min-w-0">
+                                <label for="cn-params" class={lbl}>
+                                  Parameters
+                                  <span class="font-normal text-muted-foreground">· optional</span>
+                                </label>
+                                <Input
+                                  id="cn-params"
+                                  bind:value={pgParams}
+                                  class={cn(inp, "font-mono")}
+                                  placeholder="application_name=stroke&options=-c%20search_path%3Dapp"
+                                  spellcheck="false"
+                                  autocomplete="off"
+                                />
+                              </div>
+                            {/if}
                             <div class="flex min-w-0 items-start gap-4">
                             <div class="min-w-0 flex-1">
                               <label for="cn-name" class={lbl}>

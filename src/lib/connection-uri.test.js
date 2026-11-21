@@ -316,3 +316,24 @@ describe('ScyllaDB connections', () => {
     expect(connectionUrl({ ...p, flavor: undefined })).toBe('cassandra://u:p%40ss@n1:9042,n2:9042/shop')
   })
 })
+
+describe('Postgres URL parameters', () => {
+  it('keeps the verification level, the CA and every other parameter', async () => {
+    const { parsePostgresUri, connectionUrl } = await import('./connection-uri.js')
+    const p = /** @type {any} */ (parsePostgresUri('postgres://a:b@h:6543/db?sslmode=verify-full&sslrootcert=%2Fca.pem&application_name=stroke&options=endpoint%3Dep-1'))
+    expect(p.ssl).toBe(true)
+    expect(p.sslMode).toBe('verify-full')
+    expect(p.sslRootCert).toBe('/ca.pem')
+    expect(p.params).toBe('application_name=stroke&options=endpoint%3Dep-1')
+    const back = connectionUrl({ type: 'postgres', host: 'h', port: '6543', database: 'db', user: 'a', password: 'b', ssl: true, sslMode: 'verify-full', params: p.params })
+    expect(back).toBe('postgresql://a:b@h:6543/db?sslmode=verify-full&application_name=stroke&options=endpoint%3Dep-1')
+  })
+
+  it('reads a URL with no parameters as before', async () => {
+    const { parsePostgresUri } = await import('./connection-uri.js')
+    const p = /** @type {any} */ (parsePostgresUri('postgresql://u@localhost/app'))
+    expect(p.params).toBe('')
+    expect(p.sslMode).toBe('')
+    expect(p.ssl).toBe(false)
+  })
+})

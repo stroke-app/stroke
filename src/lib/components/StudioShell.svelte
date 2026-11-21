@@ -547,6 +547,8 @@
   let showConnectionModal = $state(false)
   /** Engine chosen on the welcome screen - the modal opens straight into its form. */
   let connectionModalEngine = $state('')
+  /** A saved connection the dialog opens into its form (sidebar Edit…). */
+  let connectionModalEditId = $state('')
   /** A connection handed over by a stroke:// link or the command line (launch.rs). */
   let connectionModalUri = $state('')
   let connectionModalName = $state('')
@@ -10269,6 +10271,7 @@ let rowSearch = $state('')
 <ConnectionModal
   bind:open={showConnectionModal}
   bind:initialEngine={connectionModalEngine}
+  bind:initialEditId={connectionModalEditId}
   bind:initialUri={connectionModalUri}
   bind:initialName={connectionModalName}
   onconnected={(conn, id) => onConnected(conn, id)}
@@ -10726,6 +10729,7 @@ let rowSearch = $state('')
         onswitchconnection={(c) => { if (aiMode) exitAiMode(); void handleSwitchDatabase(c) }}
         onaddconnection={() => { showConnectionModal = true }}
         onremoveconnection={(id) => { removeConnection(id); handleConnectionRemoved(id) }}
+        oneditconnection={(c) => { connectionModalEditId = c.id; showConnectionModal = true }}
         onsetconnectiongroup={(id, group) => { savedConnections = setConnectionGroup(id, group) }}
         onconnectionmeta={(list) => { savedConnections = list }}
         ondisconnectconnection={() => handleDisconnect()}
@@ -12172,16 +12176,19 @@ let rowSearch = $state('')
             {onclick}
             title={locked ? `${label} - ${desc} - Pro` : `${label} - ${desc}${chordText}`}
             class={cn(
-              "group flex h-9 min-w-0 items-center gap-2.5 rounded-md px-2.5 text-left text-muted-foreground outline-none transition-colors hover:bg-accent/50 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring",
+              // flex-wrap in a one-line-high, clipped box: a chord that does not
+              // fit beside the label wraps out of sight instead of squeezing
+              // the label ("Extensions" became "Ext..." on hover).
+              "group flex h-9 min-w-0 flex-wrap content-start items-center gap-x-2.5 overflow-hidden rounded-md px-2.5 text-left text-muted-foreground outline-none transition-colors hover:bg-accent/50 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring",
               locked && "cursor-not-allowed",
             )}
           >
             <Icon class={cn('size-4 shrink-0', toneCls)} />
-            <span class="min-w-0 truncate text-ui-sm">{label}</span>
+            <span class="flex h-9 min-w-0 items-center truncate text-ui-sm">{label}</span>
             {#if locked}<Lock class="size-3 shrink-0 text-warning" aria-label="Pro feature" />{/if}
             <!-- In the layout only while it shows: hidden but laid out, the chord
                  kept its width and cut "Search" to "Se..." at every pane size. -->
-            {#if opts.keys}<span class="ml-auto hidden shrink-0 group-hover:inline-flex group-focus-visible:inline-flex">{@render chord(opts.keys)}</span>{/if}
+            {#if opts.keys}<span class="ml-auto hidden h-9 shrink-0 items-center group-hover:inline-flex group-focus-visible:inline-flex">{@render chord(opts.keys)}</span>{/if}
           </button>
         {/snippet}
 

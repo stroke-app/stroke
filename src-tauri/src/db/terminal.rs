@@ -1398,6 +1398,7 @@ mod tests {
             ssl_root_cert: Some("/ca.pem".into()),
             ssh: None,
             timezone: Some("SYSTEM".into()),
+            params: None,
         };
         let launch = tauri::async_runtime::block_on(pg_launch(config)).unwrap();
         assert!(launch.args.iter().all(|a| !a.contains("s3cret")));
