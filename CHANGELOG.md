@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.4.9] - 2026-11-21
+
+### Changes
+- Fix the crash when choosing a file to import; import from the palette (#352)
+
+
 ## [3.4.8] - 2026-11-21
 
 ### Changes
