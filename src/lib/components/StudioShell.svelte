@@ -6471,6 +6471,22 @@ let rowSearch = $state('')
     return landed
   }
 
+  /**
+   * Re-count the open table in the sidebar after rows were added from outside
+   * the grid (Import data): its count stayed at the old number, 0 for a table
+   * just filled. Engines that count inline re-list quietly instead.
+   */
+  async function recountActiveTable() {
+    const name = activeTable
+    if (!name) return
+    const key = catalogKey(persistConnectionId, 'tables', activeSchema)
+    const landed = await resolveRowCounts(key, activeSchema, [name])
+    if (!landed) {
+      _catalog.invalidate(key)
+      await loadTables({ quiet: true })
+    }
+  }
+
   async function reloadTableFromQuery(resetPage = true) {
     if (resetPage) { page = 1; rawOffset = null; _keysetCursor = null }
     await loadRows()
@@ -10410,7 +10426,7 @@ let rowSearch = $state('')
   table={activeTable ?? ''}
   {columns}
   {primaryKey}
-  onimported={() => reloadTableFromQuery(false)}
+  onimported={async () => { await reloadTableFromQuery(false); void recountActiveTable() }}
 />
   {/await}
 {/if}
@@ -10525,6 +10541,7 @@ let rowSearch = $state('')
   bind:page={commandPage}
   onexporttable={activeTab?.kind === 'table' && activeTable && !aiMode && total > 0 ? (/** @type {string} */ f) => void handleExport(f) : null}
   exportTableName={activeTable ?? ''}
+  onimporttable={activeTab?.kind === 'table' && activeTable && !aiMode && !tableReadonly ? () => (importDataOpen = true) : null}
   connected={!!connection}
   {schemas}
   {tables}

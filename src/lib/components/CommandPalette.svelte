@@ -23,6 +23,9 @@
     onexporttable = null,
     /** The open table's name, for the export rows' labels. */
     exportTableName = '',
+    /** Open Import data for the open table, or null when there is none or it is read-only.
+     *  @type {(() => void) | null} */
+    onimporttable = null,
     open = $bindable(false),
     /** @type {'root' | 'docker' | 'connections' | 'tables' | 'pages' | 'ask' | 'theme'} */
     page = $bindable('root'),
@@ -1073,18 +1076,24 @@
               </Command.Group>
             {/if}
 
-            {#if onexporttable && paletteSearch.trim()}
+            {#if (onexporttable || onimporttable) && paletteSearch.trim()}
               <!-- Export was only in the table toolbar's menu: "export" here
                    found Backup & restore and nothing else. Only while searching,
                    so eight format rows don't sit in the root list. -->
-              <Command.Group heading="Export">
-                {#each EXPORT_FORMATS as fmt (fmt.id)}
+              <Command.Group heading="Export and import">
+                {#each onexporttable ? EXPORT_FORMATS : [] as fmt (fmt.id)}
                   <Command.Item value={`export download save table rows ${fmt.label} ${fmt.id} ${fmt.hint}`} keywords={[`Export as ${fmt.label}`]} onSelect={() => run(() => onexporttable?.(fmt.id))}>
                     <Icon name="file-down" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                     <span data-slot="command-label" class="truncate">Export {exportTableName || 'table'} as {fmt.label}</span>
                     <span data-slot="command-trailing" class="shrink-0 text-ui-xs text-muted-foreground">{fmt.hint}</span>
                   </Command.Item>
                 {/each}
+                {#if onimporttable}
+                  <Command.Item value="import load upload rows file csv json excel into table" keywords={['Import data']} onSelect={() => run(onimporttable)}>
+                    <Icon name="file-up" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                    <span data-slot="command-label" class="truncate">Import data into {exportTableName || 'table'}…</span>
+                  </Command.Item>
+                {/if}
               </Command.Group>
             {/if}
             <Command.Group heading="Actions">
