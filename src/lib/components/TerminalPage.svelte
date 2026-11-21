@@ -1,4 +1,5 @@
 <script>
+  import DbIcon from './DbIcon.svelte'
   /**
    * The terminal tab: the connection's own command-line client (psql, mysql,
    * sqlite3, sqlcmd, redis-cli) in a real terminal, so every meta-command,
@@ -55,7 +56,6 @@
   import { lineEditorFor, clearLineKeys, consoleKeystrokes, consoleInput, consoleClearCommand } from '$lib/terminal-keys.js'
   import { wantsTerminator } from '$lib/sql-terminator.js'
   import ArrowDown from '@lucide/svelte/icons/arrow-down'
-  import SquareTerminal from '@lucide/svelte/icons/square-terminal'
 
   let {
     active = false,
@@ -158,7 +158,7 @@
     if (!term || !connection) return
     void endSession()
     term.reset()
-    client = { name: 'SQL prompt', path: null, version: null }
+    client = { name: 'Built-in console', path: null, version: null }
     repl = createSqlRepl({
       write: (s) => term?.write(s),
       cols: () => term?.cols ?? 120,
@@ -1474,17 +1474,18 @@
        terminal (⌘J) has the same strip: its actions used to float over the
        output, on top of the install notice's button. -->
   <div class="studio-chrome flex h-8 shrink-0 items-center gap-2 border-b border-border/40 bg-panel ps-2 pe-1">
-    <!-- Client: a glyph with the status dot on its corner, the name, the version. -->
-    <span class="relative flex size-5 shrink-0 items-center justify-center rounded-md bg-muted/70 text-muted-foreground">
-      <SquareTerminal class="size-3 shrink-0" />
-      <span
-        class={['absolute -right-0.5 -bottom-0.5 size-2 rounded-full ring-2 ring-panel', statusDot]}
-        title={statusLabel || undefined}
-        aria-label={statusLabel || undefined}
-        role={statusLabel ? 'status' : undefined}
-      ></span>
-    </span>
+    <!-- Client: the database's own mark, the client's name with its status
+         dot, then the version. The dot sat on the corner of a generic
+         terminal glyph, where the pointer covered it and the glyph said
+         nothing about which database this was. -->
+    <DbIcon id={connection?.type || dbType} class="size-3.5 shrink-0 text-muted-foreground" />
     <span class="shrink-0 text-ui-xs font-medium text-foreground">{client?.name || 'Terminal'}</span>
+    <span
+      class={['size-1.5 shrink-0 rounded-full', statusDot]}
+      title={statusLabel || undefined}
+      aria-label={statusLabel || undefined}
+      role={statusLabel ? 'status' : undefined}
+    ></span>
     {#if shortVersion}
       <span class="shrink-0 rounded bg-muted/60 px-1 font-mono text-ui-3xs leading-4 text-muted-foreground tabular-nums" title={client?.version ?? ''}>{shortVersion}</span>
     {/if}
@@ -1727,7 +1728,7 @@
             </p>
             {#if !NON_SQL.has(dbType)}
             <Button size="sm" variant="outline" onclick={() => startBuiltinPrompt(`${client?.name ?? 'The client'} is not installed: using the built-in prompt. Install it for ${client?.name ?? 'its'} own commands.`)}>
-              Use the built-in SQL prompt
+              Use the built-in console
             </Button>
             {/if}
             {#if client?.hint}
