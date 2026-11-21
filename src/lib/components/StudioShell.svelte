@@ -547,6 +547,8 @@
   let showConnectionModal = $state(false)
   /** Engine chosen on the welcome screen - the modal opens straight into its form. */
   let connectionModalEngine = $state('')
+  /** A saved connection the dialog opens into its form (sidebar Edit…). */
+  let connectionModalEditId = $state('')
   /** A connection handed over by a stroke:// link or the command line (launch.rs). */
   let connectionModalUri = $state('')
   let connectionModalName = $state('')
@@ -10269,6 +10271,7 @@ let rowSearch = $state('')
 <ConnectionModal
   bind:open={showConnectionModal}
   bind:initialEngine={connectionModalEngine}
+  bind:initialEditId={connectionModalEditId}
   bind:initialUri={connectionModalUri}
   bind:initialName={connectionModalName}
   onconnected={(conn, id) => onConnected(conn, id)}
@@ -10726,6 +10729,7 @@ let rowSearch = $state('')
         onswitchconnection={(c) => { if (aiMode) exitAiMode(); void handleSwitchDatabase(c) }}
         onaddconnection={() => { showConnectionModal = true }}
         onremoveconnection={(id) => { removeConnection(id); handleConnectionRemoved(id) }}
+        oneditconnection={(c) => { connectionModalEditId = c.id; showConnectionModal = true }}
         onsetconnectiongroup={(id, group) => { savedConnections = setConnectionGroup(id, group) }}
         onconnectionmeta={(list) => { savedConnections = list }}
         ondisconnectconnection={() => handleDisconnect()}

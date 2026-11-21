@@ -29,6 +29,8 @@
   import { smoothScroll } from "$lib/smooth-scroll.js";
   import * as Select from "$lib/components/ui/select/index.js";
   import * as ContextMenu from "$lib/components/ui/context-menu/index.js";
+  import ConfirmDialog from "./ConfirmDialog.svelte";
+  import { setConnectionMeta } from "$lib/stores/connections.js";
   import PanelRight from "@lucide/svelte/icons/panel-right";
   import PanelLeft from "@lucide/svelte/icons/panel-left";
   import ResizeHandle from "./ResizeHandle.svelte";
@@ -108,6 +110,8 @@
     updateState = /** @type {'' | 'available' | 'ready'} */ (''),
     /** @type {(id: string) => void} */
     onremoveconnection = () => {},
+    /** Open a saved connection's form in the connect dialog. @type {(c: any) => void} */
+    oneditconnection = () => {},
     /** @type {(id: string, group: string | null) => void} */
     onsetconnectiongroup = () => {},
     /** A connection's colour or workspace changed; carries the saved list. @type {(list: any[]) => void} */
@@ -811,6 +815,10 @@
   // the per-row cost to a <button>, which is what makes an unwindowed list of a
   // few thousand tables affordable.
   let menuTable = $state('')
+
+  /** A saved connection waiting on "Delete connection?". @type {any} */
+  let pendingConnRemove = $state(null)
+  let confirmConnRemoveOpen = $state(false)
 
   // ── Selection state ───────────────────────────────────────────────────────
   /** @type {Set<string>} */
@@ -3572,6 +3580,11 @@
         <div class="app-scroll min-h-0 overflow-y-auto px-2 pb-2">
           {#each connsShown as c (c.id)}
             {@const current = c.id === activeConnectionId}
+            <!-- Right-click: what the Connections panel offers, here too. It
+                 used to fall through to the sidebar's own menu ("Move sidebar
+                 to the right") with nothing about the connection. -->
+            <ContextMenu.Root>
+            <ContextMenu.Trigger class="block w-full">
             <button
               type="button"
               class={cn(
@@ -3587,6 +3600,36 @@
               {#if c.pinned}<Icon name="pin" class="size-3 shrink-0 opacity-60" />{/if}
               <span class="shrink-0 font-mono text-ui-2xs tabular-nums text-muted-foreground">{ago(c.lastConnectedAt)}</span>
             </button>
+            </ContextMenu.Trigger>
+            <ContextMenu.Content class="min-w-52">
+              {#if !current}
+                <ContextMenu.Item onSelect={() => { connHover = null; onswitchconnection(c) }}>
+                  <Icon name="arrow-right" />
+                  Connect
+                </ContextMenu.Item>
+              {/if}
+              <ContextMenu.Item onSelect={() => { connHover = null; oneditconnection(c) }}>
+                <Icon name="pencil" />
+                Edit…
+              </ContextMenu.Item>
+              <ContextMenu.Item onSelect={() => onconnectionmeta(setConnectionMeta(c.id, { pinned: !c.pinned }))}>
+                <Icon name="pin" />
+                {c.pinned ? 'Unpin' : 'Pin'}
+              </ContextMenu.Item>
+              <ContextMenu.Separator />
+              {#if current}
+                <ContextMenu.Item onSelect={() => ondisconnectconnection()}>
+                  <Icon name="unplug" />
+                  Disconnect
+                </ContextMenu.Item>
+              {:else}
+                <ContextMenu.Item variant="destructive" onSelect={() => { pendingConnRemove = c; confirmConnRemoveOpen = true }}>
+                  <Icon name="trash-2" />
+                  Delete…
+                </ContextMenu.Item>
+              {/if}
+            </ContextMenu.Content>
+            </ContextMenu.Root>
           {/each}
           {#if connsQuery.trim() && !connsShown.length}
             <p class="px-2 py-2 text-ui-xs text-muted-foreground">No connection matches “{connsQuery.trim()}”.</p>
@@ -3633,3 +3676,19 @@
   {@const at = lf ? String(text).toLowerCase().indexOf(lf) : -1}
   {#if at >= 0}{String(text).slice(0, at)}<mark class="rounded-[2px] bg-primary/25 text-inherit">{String(text).slice(at, at + lf.length)}</mark>{String(text).slice(at + lf.length)}{:else}{text}{/if}
 {/snippet}
+
+<ConfirmDialog
+  bind:open={confirmConnRemoveOpen}
+  icon="trash-2"
+  title="Delete connection?"
+  description={`"${pendingConnRemove?.name || pendingConnRemove?.database || pendingConnRemove?.host || pendingConnRemove?.filePath || 'this connection'}" will be removed from your saved connections.`}
+  note="Its query history, saved queries, charts and AI chats are deleted with it. This can't be undone."
+  confirmLabel="Delete"
+  confirmIcon="trash-2"
+  variant="destructive"
+  onconfirm={() => {
+    if (pendingConnRemove) onremoveconnection(pendingConnRemove.id);
+    pendingConnRemove = null;
+  }}
+  oncancel={() => (pendingConnRemove = null)}
+/>

@@ -117,6 +117,8 @@
      * once consumed so the next plain open starts on the picker again.
      */
     initialEngine = $bindable(""),
+    /** A saved connection to open straight into its form (sidebar Edit…). */
+    initialEditId = $bindable(""),
     /**
      * A connection string handed over from outside (a stroke:// link or the
      * command line): read as if pasted, so the form opens filled in. Nothing
@@ -2208,6 +2210,11 @@
       clipboardDismissed = "";
       // Arriving from an engine chip skips the picker - that choice is already made.
       if (initialEngine) { pickEngine(initialEngine); initialEngine = ""; }
+      if (initialEditId) {
+        const conn = saved.find((c) => c.id === initialEditId);
+        initialEditId = "";
+        if (conn) resetForm(conn);
+      }
       engineQuery = "";
       quickUri = "";
       quickHint = "";
