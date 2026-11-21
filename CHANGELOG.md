@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.1.7] - 2026-11-21
+
+### Changes
+- ODBC driver refresh, and nightly updates that pass their signature check (#320)
+
+
 ## [3.1.6] - 2026-11-21
 
 ### Changes
