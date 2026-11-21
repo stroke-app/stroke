@@ -21,8 +21,6 @@
   import { readOnlyMode, guardWrite, READ_ONLY_HINT } from "$lib/stores/read-only.js";
   import { appNativeScroll, appSidebarComments, appSidebarStyle, appZoom } from "$lib/stores/settings.js";
   import { rootPxFor } from "$lib/type-scale.js";
-  import SidebarObjects from "./SidebarObjects.svelte";
-  import SidebarTree from "./SidebarTree.svelte";
   import { treeConnectionScope } from "$lib/stores/sidebar-tree.js";
   import { objectsVersion } from "$lib/stores/sidebar-objects.svelte.js";
   import { listObjectComments } from "$lib/api.js";
@@ -1546,9 +1544,9 @@
   // ── Objects tab ─────────────────────────────────────────────────────────
   /** True while the Objects tab loads, for the bar's refresh spinner. */
   let objectsLoading = $state(false)
-  /** @type {SidebarObjects | null} */
+  /** @type {import('./SidebarObjects.svelte').default | null} */
   let objectsPanel = $state(null)
-  /** The Tree sidebar (beta), when it is the open tab. @type {SidebarTree | null} */
+  /** The Tree sidebar (beta), when it is the open tab. @type {import('./SidebarTree.svelte').default | null} */
   let treePanel = $state(null)
 
   /**
@@ -2352,6 +2350,8 @@
       {/if}
       {#if connectionName && panelMounted('objects')}
         <div class={activePanel === 'objects' ? 'contents' : 'hidden'}>
+          <!-- Loaded with the tab: most sessions never open it. -->
+          {#await import('./SidebarObjects.svelte') then { default: SidebarObjects }}
           <SidebarObjects
             bind:this={objectsPanel}
             bind:busyLoading={objectsLoading}
@@ -2372,10 +2372,12 @@
             bind:total={objectsTotal}
             bind:shown={objectsShown}
           />
+          {/await}
         </div>
       {/if}
       {#if panelMounted('tree')}
         <div class={activePanel === 'tree' ? 'contents' : 'hidden'}>
+          {#await import('./SidebarTree.svelte') then { default: SidebarTree }}
           <SidebarTree
             bind:this={treePanel}
             {connection}
@@ -2412,6 +2414,7 @@
             {onconnectionmeta}
             {onremoveconnection}
           />
+          {/await}
         </div>
       {/if}
       {#if activePanel === 'search'}
