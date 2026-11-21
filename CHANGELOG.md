@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.5.0] - 2026-11-21
+
+### Changes
+- Column headers for empty results, readable diagrams without relations, and more (#353)
+
+
 ## [3.4.9] - 2026-11-21
 
 ### Changes
