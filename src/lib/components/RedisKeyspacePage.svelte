@@ -775,7 +775,7 @@
     {/if}
     {#if pendingCount > 0}
       <Button variant="ghost" size="sm" onclick={() => (reviewOpen = !reviewOpen)} aria-expanded={reviewOpen}>
-        {pendingCount} pending{#if failed.length}<span class="text-destructive"> · {failed.length} failed</span>{/if}
+        {pendingCount} pending{#if failed.length}<span class="text-destructive">{' '}· {failed.length} failed</span>{/if}
       </Button>
       <Button variant="ghost" size="sm" onclick={discard} disabled={applying}>Discard</Button>
       <Button size="sm" onclick={() => void apply()} disabled={applying || readOnly} title={pendingTitle}>

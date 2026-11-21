@@ -343,7 +343,7 @@
           <p class="font-mono text-ui-sm font-semibold text-destructive">{game.over.reason}</p>
           <p class="max-w-md font-mono text-ui-2xs text-muted-foreground">{game.over.detail}</p>
           <p class="font-mono text-ui-2xs tabular-nums text-muted-foreground">
-            {game.score} reclaimed{#if game.score >= best && game.score > 0} · new best{/if}
+            {game.score} reclaimed{#if game.score >= best && game.score > 0}{' '}· new best{/if}
           </p>
           <p class="mt-1 font-mono text-ui-2xs text-muted-foreground">
             <kbd>space</kbd> to run again

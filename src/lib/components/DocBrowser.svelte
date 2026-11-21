@@ -772,7 +772,7 @@ GET products/_search
         {#if info && docs.length > 0}
           <span class="mr-1 hidden tabular-nums xl:inline">
             <span class="text-foreground">{from.toLocaleString()}-{to.toLocaleString()}</span>
-            {#if total != null} of {total.toLocaleString()}{:else if hasNext || capped} of many{/if}
+            {#if total != null} of {total.toLocaleString()}{:else if hasNext || capped}{' '}of many{/if}
           </span>
         {/if}
         <Select.Root type="single" value={String(size)} onValueChange={(v) => { if (v) setSize(v) }} disabled={loading}>

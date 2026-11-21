@@ -146,7 +146,7 @@
               <span class={cn('text-right text-ui-xs tabular-nums', f.presence < 0.995 ? 'text-warning' : 'text-muted-foreground')} title="{f.count.toLocaleString()} of {data.sampled.toLocaleString()} sampled documents">{pct(f.presence)}</span>
               <span class="min-w-0 truncate font-mono text-ui-2xs text-muted-foreground">
                 {#if f.min != null || f.max != null}{show(f.min)} – {show(f.max)}
-                {:else if f.top.length}{f.top.slice(0, 4).map(([v]) => show(v)).join(' · ')}{#if f.distinct > 4} · {(f.distinct - 4).toLocaleString()}{f.distinctCapped ? '+' : ''} more{/if}
+                {:else if f.top.length}{f.top.slice(0, 4).map(([v]) => show(v)).join(' · ')}{#if f.distinct > 4}{' '}· {(f.distinct - 4).toLocaleString()}{f.distinctCapped ? '+' : ''} more{/if}
                 {/if}
               </span>
             </button>

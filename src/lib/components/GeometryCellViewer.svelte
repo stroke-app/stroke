@@ -153,7 +153,7 @@
       <Icon name="globe" class="size-3.5 shrink-0 text-primary" />
       <span class="min-w-0 truncate font-mono text-ui-sm font-medium">{column}</span>
       <span class="shrink-0 rounded bg-muted/60 px-1.5 py-0.5 font-mono text-ui-2xs text-muted-foreground">
-        {dataType.replace(/\(.*$/, '')}{#if geom} · {geom.type}{/if}
+        {dataType.replace(/\(.*$/, '')}{#if geom}{' '}· {geom.type}{/if}
       </span>
       {#if nullable}
         <span class="shrink-0 rounded bg-muted/40 px-1.5 py-0.5 font-mono text-ui-3xs text-muted-foreground">nullable</span>

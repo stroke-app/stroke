@@ -509,7 +509,7 @@
         {#if loading && items.length > 0}<LoaderCircle class="size-3 shrink-0 animate-spin" />{/if}
         {#if desc && items.length > 0}
           <span class="mr-1 tabular-nums" title={mode === 'scan' && scanned > items.length ? `${scanned.toLocaleString()} scanned` : undefined}>
-            <span class="text-foreground">{size === -1 ? 1 : from.toLocaleString()}-{(size === -1 ? items.length : page * size + items.length).toLocaleString()}</span>{#if lastKey || capped} of many{/if}
+            <span class="text-foreground">{size === -1 ? 1 : from.toLocaleString()}-{(size === -1 ? items.length : page * size + items.length).toLocaleString()}</span>{#if lastKey || capped}{' '}of many{/if}
           </span>
         {/if}
         <Select.Root type="single" value={String(size)} onValueChange={(v) => { if (v) { size = Number(v); void load(true) } }} disabled={loading}>

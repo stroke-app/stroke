@@ -60,7 +60,7 @@
             {@render planPill()}
           </p>
           <p class="mt-0.5 truncate text-ui-xs text-muted-foreground">
-            {#if user?.name}{user.email} · {/if}<span class="font-mono tabular-nums">{devices}</span> {devices === 1 ? 'device' : 'devices'}{#if $account?.offline} · offline{/if}
+            {#if user?.name}{user.email} · {/if}<span class="font-mono tabular-nums">{devices}</span> {devices === 1 ? 'device' : 'devices'}{#if $account?.offline}{' '}· offline{/if}
           </p>
         </div>
       </div>

@@ -304,7 +304,7 @@
       {:else}
         {schema}
       {/if}
-      {#if tableCount}<span class="text-muted-foreground"> · {tableCount} {tableCount === 1 ? 'table' : 'tables'}</span>{/if}
+      {#if tableCount}<span class="text-muted-foreground">{' '}· {tableCount} {tableCount === 1 ? 'table' : 'tables'}</span>{/if}
     </span>
 
     <span class="ml-auto flex shrink-0 items-center gap-1">

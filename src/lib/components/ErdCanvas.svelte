@@ -1078,7 +1078,7 @@
         nameW -= bw + 8
       }
       if (zoom >= LOD_ROWS) {
-        drawTableGlyph(p.x + 16, p.y + HDR_H / 2 - 6, c('mfg', 0.7))
+        drawTableGlyph(p.x + 16, p.y + HDR_H / 2 - 6, c('mfg', 0.7), !!d.view)
         forgetStyle()
         setFont(`600 14.5px ${FONT_SANS}`)
         setFill(c('fg', 1))
@@ -1089,7 +1089,8 @@
           setFont(FONT_TYPE)
           setFill(c('mfg', 0.55))
           ctx.textAlign = 'right'
-          ctx.fillText(String((d.columns?.length ?? 0) + (d.hiddenCount ?? 0)), p.x + NODE_W - 16, p.y + HDR_H / 2 + 0.5)
+          // A view says so where the column count would be.
+          ctx.fillText(d.view ? 'view' : String((d.columns?.length ?? 0) + (d.hiddenCount ?? 0)), p.x + NODE_W - 16, p.y + HDR_H / 2 + 0.5)
         }
       }
     }
@@ -1223,10 +1224,12 @@
   }
 
   /** A small table glyph for the card header. */
-  function drawTableGlyph(/** @type {number} */ x, /** @type {number} */ y, /** @type {string} */ color) {
+  /** A table, or with `view` a dashed one: the usual ER mark for a view. */
+  function drawTableGlyph(/** @type {number} */ x, /** @type {number} */ y, /** @type {string} */ color, view = false) {
     ctx.save()
     ctx.strokeStyle = color
     ctx.lineWidth = 1.4
+    if (view) ctx.setLineDash([2.5, 1.5])
     roundRect(x, y, 13, 12, 2.5)
     ctx.stroke()
     ctx.beginPath()

@@ -3460,7 +3460,7 @@
             </DropdownMenu.Trigger>
             <DropdownMenu.Content align="start" class="min-w-52">
               <div class="px-2 pt-1 pb-1.5 text-ui-2xs text-muted-foreground leading-relaxed">
-                <span class="font-mono tabular-nums text-foreground/80">{regularTables.length}</span> tables{#if views.length} · <span class="font-mono tabular-nums text-foreground/80">{views.length}</span> views{/if}{#if matViews.length} · <span class="font-mono tabular-nums text-foreground/80">{matViews.length}</span> mat.{/if}
+                <span class="font-mono tabular-nums text-foreground/80">{regularTables.length}</span> tables{#if views.length}{' '}· <span class="font-mono tabular-nums text-foreground/80">{views.length}</span> views{/if}{#if matViews.length}{' '}· <span class="font-mono tabular-nums text-foreground/80">{matViews.length}</span> mat.{/if}
                 {#if hiddenCount > 0}<br /><span class="text-warning">{hiddenCount} hidden by filters</span>{/if}
               </div>
               <DropdownMenu.Separator />

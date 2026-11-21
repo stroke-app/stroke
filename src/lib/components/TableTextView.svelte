@@ -316,7 +316,7 @@
       {#if rows.length > 0}
         <span class="select-none px-1 text-ui-2xs tabular-nums text-muted-foreground">
           {rows.length.toLocaleString('en-US')}
-          {rows.length === 1 ? 'row' : 'rows'}{#if hidden.size} · {shownColumns.length} of {columns.length} columns{/if}
+          {rows.length === 1 ? 'row' : 'rows'}{#if hidden.size}{' '}· {shownColumns.length} of {columns.length} columns{/if}
         </span>
         <div class="mx-0.5 h-4 w-px bg-border"></div>
       {/if}

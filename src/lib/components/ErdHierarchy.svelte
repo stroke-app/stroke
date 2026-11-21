@@ -509,7 +509,7 @@
               <span class="min-w-0 truncate font-mono text-ui-xs font-medium leading-tight">{t.name}</span>
             </span>
             <span class="flex min-w-0 items-center gap-1.5 whitespace-nowrap pl-5 text-ui-2xs leading-none text-muted-foreground">
-              <span class="min-w-0 truncate tabular-nums">{colCount.get(t.name) ?? 0} {plural(colCount.get(t.name) ?? 0, 'col')}{#if n !== undefined} · {formatTableRowCount(n)} {plural(n, 'row')}{/if}</span>
+              <span class="min-w-0 truncate tabular-nums">{colCount.get(t.name) ?? 0} {plural(colCount.get(t.name) ?? 0, 'col')}{#if n !== undefined}{' '}· {formatTableRowCount(n)} {plural(n, 'row')}{/if}</span>
               {#if downN}
                 <span class="ml-auto shrink-0 tabular-nums" title="{downN} {plural(downN, 'table')} point at {t.name}">used by {downN}</span>
               {/if}

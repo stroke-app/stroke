@@ -3,7 +3,7 @@
   import { requestShare } from '$lib/share-flow.js'
   import { onDestroy, tick, untrack } from 'svelte'
   import dagre from '@dagrejs/dagre'
-  import { getSchemaColumnStructure, listIndexes, getTableDdl, saveExportAs } from '$lib/api.js'
+  import { getSchemaColumnStructure, listIndexes, getTableDdl, saveExportAs, listTables } from '$lib/api.js'
   import ErdCanvas from './ErdCanvas.svelte'
   import Loader from '@lucide/svelte/icons/loader'
   import RefreshCw from '@lucide/svelte/icons/refresh-cw'
@@ -84,7 +84,7 @@
    *   columnDefault: string|null, foreignKey: string|null,
    *   fkConstraintName: string|null, ordinalPosition: number, isPrimaryKey?: boolean }} Col
    * @typedef {{ name: string, columns: Col[], pkCols: Set<string>,
-   *   uniqueCols?: Set<string>, hiddenCount?: number }} TableMeta
+   *   uniqueCols?: Set<string>, hiddenCount?: number, view?: boolean }} TableMeta
    * @typedef {'self' | 'related' | 'all'} Scope
    */
 
@@ -181,6 +181,7 @@
   // node array is. Both writers below mutate and then replace the Map, which is
   // what makes reactivity fire either way.
   let tableMeta = $state.raw(new Map())
+  const viewCount = $derived([...tableMeta.values()].filter((t) => t.view).length)
 
   // Raw, not deep-reactive. These arrays are the canvas renderer's hot data: it
   // reads n.position, n.data.columns[i].name and friends for every card and every
@@ -1120,7 +1121,13 @@
       // One call for the whole schema. This used to fan out one request per
       // table, which meant the diagram couldn't start drawing until N round
       // trips had completed - the dominant cost on any non-trivial schema.
-      const schemaCols = await getSchemaColumnStructure(activeSchema)
+      // The column catalog lists views beside tables; the table list says which
+      // is which, so a view is drawn and counted as one.
+      const [schemaCols, listed] = await Promise.all([
+        getSchemaColumnStructure(activeSchema),
+        listTables(activeSchema).catch(() => []),
+      ])
+      const views = new Set(/** @type {any[]} */ (listed ?? []).filter((t) => /view/i.test(t?.kind ?? '')).map((t) => t.name))
       autoConnected = schemaCols.length > WARN_MANY
 
       for (const { table, columns } of schemaCols) {
@@ -1137,7 +1144,7 @@
             ))
           ).map(c => c.name)
         )
-        tableMeta.set(table, /** @type {TableMeta} */ ({ name: table, columns: cols, pkCols }))
+        tableMeta.set(table, /** @type {TableMeta} */ ({ name: table, columns: cols, pkCols, view: views.has(table) }))
       }
       tableMeta = new Map(tableMeta)
       await tick()
@@ -2063,7 +2070,7 @@
       {#if tableMeta.size > 0 && !loading}
         {#if erdView === 'canvas'}
           <span class="whitespace-nowrap pr-1 text-ui-xs tabular-nums text-muted-foreground">
-            {#if nodes.length === tableMeta.size}{tableMeta.size} {plural(tableMeta.size, 'table')}{:else}{nodes.length} of {tableMeta.size} tables{/if} · {fkCount} {plural(fkCount, 'relation')}{layingOut ? ' · laying out…' : ''}
+            {#if nodes.length === tableMeta.size}{tableMeta.size - viewCount} {plural(tableMeta.size - viewCount, 'table')}{#if viewCount}{` · ${viewCount} ${plural(viewCount, 'view')}`}{/if}{:else}{nodes.length} of {tableMeta.size} {viewCount ? 'tables and views' : 'tables'}{/if} · {fkCount} {plural(fkCount, 'relation')}{layingOut ? ' · laying out…' : ''}
           </span>
         {:else if erdView === 'dictionary'}
           <span class="whitespace-nowrap pr-1 text-ui-xs tabular-nums text-muted-foreground">
