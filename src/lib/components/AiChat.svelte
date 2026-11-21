@@ -432,6 +432,13 @@
   /** Access levels as the backend ranks them (src-tauri/src/mcp/access.rs). @type {Record<string, number>} */
   const ACCESS_RANK = { read: 0, write: 1, modify: 2, dangerous: 3 };
   const ACCESS_NAMES = ["Read only", "Read & write", "Modify schema", "Dangerous"];
+  /** What execute_sql runs at each access level, as the agent is told it. */
+  const ACCESS_RULES = [
+    "execute_sql runs reads only (SELECT, WITH, EXPLAIN, SHOW). For anything that changes data or schema, give the SQL in a ```sql block for the user to run, and say they can raise the access level under the composer.",
+    "execute_sql runs reads, INSERTs, and UPDATEs or DELETEs with a WHERE clause. Schema changes go in a ```sql block for the user.",
+    "execute_sql runs reads, writes with a WHERE clause, and CREATE, ALTER and indexes. Nothing that drops or truncates: give that SQL in a ```sql block.",
+    "execute_sql runs anything; destructive statements still ask the user first.",
+  ];
   /** Engines where execute_sql's `database` argument can open another database by name. */
   const CROSS_DB_ENGINES = new Set(["postgres", "cockroachdb", "mysql", "mariadb", "mssql", "clickhouse"]);
 
@@ -2392,12 +2399,7 @@
     // What execute_sql will run, so the model proposes SQL instead of
     // sending statements the access level refuses.
     const rank = isReadOnly() ? 0 : ACCESS_RANK[$agentPrefs.access] ?? 0;
-    const accessNote = `=== ACCESS ===\nThe user set this chat to "${ACCESS_NAMES[rank]}". ${[
-      "execute_sql runs reads only (SELECT, WITH, EXPLAIN, SHOW). For anything that changes data or schema, give the SQL in a ```sql block for the user to run, and say they can raise the access level under the composer.",
-      "execute_sql runs reads, INSERTs, and UPDATEs or DELETEs with a WHERE clause. Schema changes go in a ```sql block for the user.",
-      "execute_sql runs reads, writes with a WHERE clause, and CREATE, ALTER and indexes. Nothing that drops or truncates: give that SQL in a ```sql block.",
-      "execute_sql runs anything; destructive statements still ask the user first.",
-    ][rank]}`;
+    const accessNote = `=== ACCESS ===\nThe user set this chat to "${ACCESS_NAMES[rank]}". ${ACCESS_RULES[rank]}`;
     const withAccess = `${basePrompt}\n\n${accessNote}`;
     turnSystemPrompt = ci ? `${ci}\n\n---\n\n${withAccess}` : withAccess;
 
@@ -2683,6 +2685,19 @@
   /** Ends the running turn early (Stop, or a switch of conversation). */
   let agentSettle = /** @type {(() => void) | null} */ (null);
 
+  /** The access level the agent last heard in a turn, so a change can be announced. */
+  let agentToldAccess = /** @type {string | null} */ (null);
+
+  // Picking a level restarts an idle agent at once, so the next message does
+  // not wait on the restart. Mid-turn, the change waits for the turn to end.
+  $effect(() => {
+    void $agentPrefs.access;
+    void $readOnlyMode;
+    untrack(() => {
+      if (agentSession && !loading) prewarmAgent();
+    });
+  });
+
   function stopAgentSession() {
     if (agentSession) void agentStop(agentSession.key).catch(() => {});
     agentSession = null;
@@ -2787,6 +2802,16 @@
    */
   async function runAgentTurn(agent, model, text, disowned) {
     const key = await ensureAgentSession(agent, model);
+    // A changed access level restarts the agent with the new tools, but it
+    // resumes the same conversation, and that history still says what it
+    // could not do ("I only have read access"). Tell it, in the turn itself,
+    // so Claude, Codex or Cursor act on the new level straight away.
+    const access = isReadOnly() ? "read" : $agentPrefs.access;
+    if (agentToldAccess && agentToldAccess !== access) {
+      const rank = ACCESS_RANK[access] ?? 0;
+      text = `[Stroke: the user changed this chat's access level to "${ACCESS_NAMES[rank]}". ${ACCESS_RULES[rank]} Earlier limits in this conversation no longer apply.]\n\n${text}`;
+    }
+    agentToldAccess = access;
     let content = "";
     let reply = "";
     let itemId = /** @type {string | null} */ (null);

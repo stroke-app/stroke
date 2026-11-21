@@ -538,45 +538,54 @@
           {@const tableCount = Object.values(snap.tables ?? {}).flat().length}
           {@const displayName = snap.title || shortName(snap.connectionLabel)}
 
+          <!-- One row per snapshot: the title gets the full width; a lettered
+               badge says which side it is (A the baseline, B the comparison);
+               Base and Compare sit on the date line, shown on hover or focus. -->
           <div class={cn(
-            'group mb-0.5 rounded-lg px-2.5 py-2 transition-colors',
+            'group mb-1 rounded-lg px-2.5 py-2 transition-colors focus-within:bg-accent/50',
             isActive ? 'bg-accent' : 'hover:bg-accent/50',
           )}>
             <div class="flex min-w-0 items-center gap-2">
-              <span class="min-w-0 flex-1 truncate text-ui-xs font-medium text-foreground" title={snap.connectionLabel}>
+              <span
+                class={cn(
+                  'flex size-5 shrink-0 items-center justify-center rounded-full text-ui-3xs font-bold',
+                  isBefore ? 'bg-warning/20 text-warning' : isAfter ? 'bg-info/20 text-info' : 'border border-border/70 text-transparent',
+                )}
+                aria-label={isBefore ? 'Baseline' : isAfter ? 'Compared' : undefined}
+              >{isBefore ? 'A' : isAfter ? 'B' : ''}</span>
+              <span class="min-w-0 flex-1 truncate text-ui-sm font-medium text-foreground" title={snap.title ? `${snap.title} · ${snap.connectionLabel}` : snap.connectionLabel}>
                 {displayName}
               </span>
-              <!-- Base / Compare: one small two-part control. The picked side
-                   stays lit; both show on hover. -->
-              <div class={cn('flex shrink-0 items-center rounded-md border border-border/60 bg-background/60 p-px', !isActive && 'hidden group-hover:flex')}>
+              <button
+                type="button"
+                onclick={() => remove(snap.id)}
+                class="flex size-6 shrink-0 items-center justify-center rounded-md text-transparent transition-colors group-hover:text-muted-foreground group-focus-within:text-muted-foreground hover:bg-muted hover:!text-destructive"
+                aria-label="Delete snapshot"
+                title="Delete snapshot"
+              >
+                <X class="size-3.5 shrink-0" />
+              </button>
+            </div>
+            <div class="mt-1 flex min-w-0 items-center gap-1.5 ps-7 text-ui-2xs text-muted-foreground">
+              <span class="shrink-0 tabular-nums">{fmtDate(snap.capturedAt)}</span>
+              <span aria-hidden="true">·</span>
+              <span class="min-w-0 truncate tabular-nums">{tableCount} {tableCount === 1 ? 'table' : 'tables'}</span>
+              <span class="ms-auto flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
                 <button
                   type="button"
                   onclick={() => { beforeId = snap.id }}
-                  class={cn('h-5 rounded-sm px-1.5 text-ui-3xs font-medium transition-colors', isBefore ? 'bg-foreground text-background' : 'text-muted-foreground hover:text-foreground')}
-                  title="Use as the baseline"
+                  class={cn('h-5 rounded px-1.5 font-medium transition-colors', isBefore ? 'text-warning' : 'hover:bg-muted hover:text-foreground')}
+                  title="Use as the baseline (A)"
                   aria-pressed={isBefore}
                 >Base</button>
                 <button
                   type="button"
                   onclick={() => { afterId = snap.id }}
-                  class={cn('h-5 rounded-sm px-1.5 text-ui-3xs font-medium transition-colors', isAfter ? 'bg-foreground text-background' : 'text-muted-foreground hover:text-foreground')}
-                  title="Compare against the baseline"
+                  class={cn('h-5 rounded px-1.5 font-medium transition-colors', isAfter ? 'text-info' : 'hover:bg-muted hover:text-foreground')}
+                  title="Compare against the baseline (B)"
                   aria-pressed={isAfter}
                 >Compare</button>
-              </div>
-              <button
-                type="button"
-                onclick={() => remove(snap.id)}
-                class="flex size-5 shrink-0 items-center justify-center rounded text-transparent group-hover:text-muted-foreground hover:!text-destructive"
-                aria-label="Delete snapshot"
-              >
-                <X class="size-3 shrink-0" />
-              </button>
-            </div>
-            <div class="mt-0.5 flex items-center gap-1.5 text-ui-2xs text-muted-foreground">
-              <span class="shrink-0 tabular-nums">{fmtDate(snap.capturedAt)}</span>
-              <span aria-hidden="true">·</span>
-              <span class="min-w-0 truncate tabular-nums">{tableCount} {tableCount === 1 ? 'table' : 'tables'}</span>
+              </span>
             </div>
           </div>
         {/each}

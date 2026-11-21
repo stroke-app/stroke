@@ -145,6 +145,7 @@
     if (tab.kind === 'license') return 'key-round'
     if (tab.kind === 'shortcuts') return 'keyboard'
     if (tab.kind === 'shares') return 'share-2'
+    if (tab.kind === 'queries') return 'history'
     if (tab.kind === 'migrations') return 'git-merge'
     return 'file-text'
   }

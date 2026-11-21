@@ -1898,3 +1898,44 @@ html[data-os="linux"]:has([role="dialog"][data-state="open"], [role="alertdialog
   :is(.app-scroll, .overflow-auto, .overflow-y-auto, .overflow-x-auto):not(:is([role="dialog"], [role="alertdialog"]) *)::-webkit-scrollbar {
   display: none;
 }
+
+/* ── Switches: one geometry at every zoom ─────────────────────────────────────
+   The thumb is sized from the track's own height and slides by percentage, so
+   it stays centred and the gap stays even whatever the zoom. Switches used to
+   mix a pixel track (h-[18px], translate-x-[14px]) with a rem thumb that grew
+   with zoom, so zoomed in the thumb outgrew its track. */
+.app-switch {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+  height: 1.25rem;
+  width: 2.25rem;
+  border-radius: 9999px;
+  background-color: color-mix(in oklab, var(--muted-foreground) 30%, transparent);
+  transition: background-color 150ms ease-out;
+}
+.app-switch[data-size='sm'] { height: 1rem; width: 1.75rem; }
+.app-switch[aria-checked='true'],
+.app-switch[data-state='checked'] { background-color: var(--primary); }
+.app-switch:disabled { opacity: 0.5; cursor: not-allowed; }
+.app-switch:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+.app-switch-thumb {
+  position: absolute;
+  top: 0.125rem;
+  bottom: 0.125rem;
+  left: 0.125rem;
+  aspect-ratio: 1;
+  border-radius: 9999px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.25);
+  pointer-events: none;
+  transition: left 160ms cubic-bezier(0.23, 1, 0.32, 1), transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.app-switch[aria-checked='true'] .app-switch-thumb,
+.app-switch[data-state='checked'] .app-switch-thumb {
+  left: calc(100% - 0.125rem);
+  transform: translateX(-100%);
+  /* The token made to contrast with --primary: a near-white accent hid a
+     white knob. */
+  background: var(--primary-foreground);
+}

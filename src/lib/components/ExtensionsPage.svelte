@@ -362,41 +362,17 @@
 
 <!-- Compact Linear/Resend-style toggle -->
 {#snippet toggle(on, onclick, label)}
+  <!-- The shared switch (app.css .app-switch): one geometry at every zoom. The
+       before: pseudo-element widens the hit area without moving neighbours. -->
   <button
     type="button"
     role="switch"
     aria-label={label}
     aria-checked={on}
     {onclick}
-    class={cn(
-      // before: expands the hit area beyond the 18px visual without moving neighbors
-      "group/toggle relative inline-flex h-[18px] w-8 shrink-0 cursor-pointer items-center rounded-full before:absolute before:-inset-1 before:content-[''] focus-visible:ring-2 focus-visible:ring-ring/18 focus-visible:outline-none",
-      "transition-[background-color] duration-150",
-      // Inset rim defines the pill edge on dark surfaces; inner shadow gives the
-      // trough depth so the knob reads as sitting *in* the track, not on it.
-      "shadow-[inset_0_0_0_1px_rgba(255,255,255,0.07),inset_0_1px_2px_rgba(0,0,0,0.2)]",
-      // The theme's own accent, not `success`. Green is this app's word for "that
-      // operation worked"; twenty switches, twenty icons and a count badge all
-      // wearing it made the page read as a status board and left the theme's
-      // accent unused on the one page built entirely out of on/off. The knob
-      // swaps to `primary-foreground`, which is the token guaranteed to contrast
-      // with `primary` - that pairing is what the near-white Studio accent broke
-      // when the knob was hard-coded white.
-      on ? "bg-primary" : "bg-muted-foreground/25 hover:bg-muted-foreground/35",
-    )}
+    class="app-switch cursor-pointer before:absolute before:-inset-1 before:content-['']"
   >
-    <span
-      class={cn(
-        // iOS-style press feedback: the knob stretches along the travel axis
-        // while staying anchored to its end of the track.
-        "pointer-events-none block h-3.5 w-3.5 rounded-full",
-        on ? "bg-primary-foreground" : "bg-white",
-        "shadow-[0_1px_2px_rgba(0,0,0,0.28),0_0_1px_rgba(0,0,0,0.16)]",
-        "transition-[translate,width] duration-[180ms] ease-[cubic-bezier(0.23,1,0.32,1)]",
-        "group-active/toggle:w-4",
-        on ? "translate-x-4 group-active/toggle:translate-x-3.5" : "translate-x-0.5",
-      )}
-    ></span>
+    <span class="app-switch-thumb"></span>
   </button>
 {/snippet}
 

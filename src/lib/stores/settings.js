@@ -1492,22 +1492,28 @@ export function updateSettings(patch) {
   return next
 }
 
+/**
+ * Counts zoom gestures (in, out, reset), so the zoom pill shows for those and
+ * only those. The zoom value itself is re-applied by every settings change
+ * and every sync, which is why the pill used to appear at launch and at
+ * random.
+ */
+export const zoomGesture = writable(0)
+
 export function increaseZoom() {
   const current = loadSettings()
   const idx = ZOOM_STEPS.indexOf(current.zoom)
-  if (idx < ZOOM_STEPS.length - 1) {
-    return updateSettings({ zoom: ZOOM_STEPS[idx + 1] })
-  }
-  return current
+  const next = idx < ZOOM_STEPS.length - 1 ? updateSettings({ zoom: ZOOM_STEPS[idx + 1] }) : current
+  zoomGesture.update((n) => n + 1)
+  return next
 }
 
 export function decreaseZoom() {
   const current = loadSettings()
   const idx = ZOOM_STEPS.indexOf(current.zoom)
-  if (idx > 0) {
-    return updateSettings({ zoom: ZOOM_STEPS[idx - 1] })
-  }
-  return current
+  const next = idx > 0 ? updateSettings({ zoom: ZOOM_STEPS[idx - 1] }) : current
+  zoomGesture.update((n) => n + 1)
+  return next
 }
 
 export function resetZoom() {
@@ -1517,7 +1523,9 @@ export function resetZoom() {
   // still magnified with no way back, and Cmd+0 is the one gesture that has to
   // always mean "put it back".
   resetWebviewZoom()
-  return updateSettings({ zoom: DEFAULT_ZOOM })
+  const next = updateSettings({ zoom: DEFAULT_ZOOM })
+  zoomGesture.update((n) => n + 1)
+  return next
 }
 
 /** Cycle only through themes of the same darkness as the current theme. */
