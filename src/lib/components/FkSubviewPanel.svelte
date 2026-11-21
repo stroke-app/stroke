@@ -106,7 +106,7 @@
     return {
       cell: base + col,
       cellRight: base + col + ' text-right tabular-nums',
-      num: 'select-none text-right align-middle tabular-nums text-muted-foreground/60',
+      num: 'select-none text-right align-middle tabular-nums text-muted-foreground',
       rowRule: 'border-b-border/10',
       groupRule: rule.group,
     }
@@ -433,7 +433,7 @@
                 <tr>
                   {#if numW}
                     <th
-                      class="sticky top-0 z-10 border-b border-border/40 bg-[color-mix(in_oklch,var(--muted)_25%,var(--background))] text-right align-middle font-[530] text-muted-foreground/70"
+                      class="sticky top-0 z-10 border-b border-border/40 bg-[color-mix(in_oklch,var(--muted)_25%,var(--background))] text-right align-middle font-[530] text-muted-foreground"
                       style="height:{metrics.headerH}px; padding:0 {Math.round(7 * metrics.zoom)}px"
                       aria-label="Row number"
                     >#</th>
@@ -504,7 +504,7 @@
                         class={cn(
                           c.alignRight ? cls.cellRight : cls.cell,
                           rowRule,
-                          isNullVal && 'italic text-muted-foreground/70',
+                          isNullVal && 'italic text-muted-foreground',
                           isSel ? 'bg-accent text-foreground' : 'group-hover/row:bg-muted/15',
                         )}
                         title={isNullVal ? '' : text}

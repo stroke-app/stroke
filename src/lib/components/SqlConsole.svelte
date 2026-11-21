@@ -1003,7 +1003,7 @@
                   <DropdownMenu.Shortcut combo="Mod+R" />
                 </span>
                 {#if cursorStmtPreview}
-                  <span class="truncate font-mono text-ui-3xs leading-4 text-muted-foreground/80">{clipSql(cursorStmtPreview)}</span>
+                  <span class="truncate font-mono text-ui-3xs leading-4 text-muted-foreground">{clipSql(cursorStmtPreview)}</span>
                 {/if}
               </div>
             </DropdownMenu.Item>
@@ -1012,7 +1012,7 @@
                 <TextSelect class="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
                 <div class="flex w-full min-w-0 flex-col gap-0.5">
                   <span class="whitespace-nowrap">Run selection</span>
-                  <span class="truncate font-mono text-ui-3xs leading-4 text-muted-foreground/80">{clipSql(selectionPreview)}</span>
+                  <span class="truncate font-mono text-ui-3xs leading-4 text-muted-foreground">{clipSql(selectionPreview)}</span>
                 </div>
               </DropdownMenu.Item>
             {/if}
@@ -1462,7 +1462,7 @@
               {#if rs.error}<X class="size-3 shrink-0" aria-label="Failed" />{/if}
               Result {i + 1}
               {#if !rs.error}
-                <span class={cn('font-mono text-ui-3xs tabular-nums', rsActive ? 'text-muted-foreground' : 'text-muted-foreground/70')}>
+                <span class={cn('font-mono text-ui-3xs tabular-nums', rsActive ? 'text-muted-foreground' : 'text-muted-foreground')}>
                   {rs.columns.length ? formatCompactCount(rs.rows.length) : '✓'}
                 </span>
               {/if}

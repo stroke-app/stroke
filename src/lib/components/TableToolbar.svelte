@@ -975,7 +975,7 @@
                   "inline-flex h-5 min-w-5 items-center justify-center rounded-md px-1 font-mono text-ui-3xs",
                   active
                     ? "bg-primary/15 text-primary"
-                    : "text-muted-foreground/70 hover:bg-accent hover:text-foreground",
+                    : "text-muted-foreground hover:bg-accent hover:text-foreground",
                 )}
                 onclick={() => onsearchoptionschange({ ...searchOptions, [opt.key]: !active })}
               >{opt.cap}</button>

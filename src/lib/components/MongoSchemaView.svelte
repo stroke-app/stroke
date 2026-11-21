@@ -134,7 +134,7 @@
               aria-expanded={expanded}
             >
               <span class="flex min-w-0 items-baseline font-mono text-ui-xs" style:padding-left="{d * 0.9}rem" title={f.path}>
-                {#if parent}<span class="shrink-0 text-muted-foreground/60">{parent}</span>{/if}<span class="truncate text-foreground">{leaf}</span>
+                {#if parent}<span class="shrink-0 text-muted-foreground">{parent}</span>{/if}<span class="truncate text-foreground">{leaf}</span>
               </span>
               <span class="flex min-w-0 flex-wrap gap-1">
                 {#each f.types as [t, n] (t)}

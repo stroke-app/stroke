@@ -467,7 +467,7 @@
         <div class="mb-1 flex items-center gap-2 px-3 py-1.5">
           <Icon name="columns-3" class="size-4 shrink-0 text-muted-foreground" />
           <h3 class="text-ui-sm text-muted-foreground">{fieldSearch ? 'Matching fields' : 'Fields'}</h3>
-          <span class="text-ui-sm tabular-nums text-muted-foreground/70">{filteredFields.length}{fieldSearch ? ` of ${fields.length}` : ''}</span>
+          <span class="text-ui-sm tabular-nums text-muted-foreground">{filteredFields.length}{fieldSearch ? ` of ${fields.length}` : ''}</span>
           <span class="ml-2 h-px flex-1 bg-border/50" aria-hidden="true"></span>
         </div>
         <!-- A label/value list, not a form. Every value used to sit in its own
@@ -487,7 +487,7 @@
                 {#if field.isPk}
                   <Icon name="key-round" class="size-3 shrink-0 self-center text-warning" aria-label="Primary key" />
                 {/if}
-                <span class="ml-auto min-w-0 shrink truncate text-ui-2xs text-muted-foreground/70">{field.dataType}</span>
+                <span class="ml-auto min-w-0 shrink truncate text-ui-2xs text-muted-foreground">{field.dataType}</span>
               </dt>
 
               <dd class="relative min-w-0">
@@ -551,7 +551,7 @@
                     class={cn(
                       'w-full rounded-sm border border-transparent px-1.5 py-0.5 font-mono text-ui-xs leading-5',
                       field.editable && 'cursor-text hover:border-field-border hover:bg-background/40',
-                      field.isNull || field.isEmpty ? 'text-muted-foreground/70' : 'text-foreground',
+                      field.isNull || field.isEmpty ? 'text-muted-foreground' : 'text-foreground',
                       field.isMultiline ? 'line-clamp-3 break-all whitespace-pre-wrap' : 'line-clamp-2 break-all',
                     )}
                     title={field.displayValue}
@@ -605,7 +605,7 @@
             <p class="px-3 py-10 text-center text-ui-sm text-muted-foreground">No fields match "{fieldSearch}"</p>
           {/if}
         </dl>
-        <p class="mt-4 flex select-none flex-wrap items-center justify-center gap-x-3 gap-y-1 text-ui-xs text-muted-foreground/80">
+        <p class="mt-4 flex select-none flex-wrap items-center justify-center gap-x-3 gap-y-1 text-ui-xs text-muted-foreground">
           <span><kbd class="rounded-sm border border-border/60 px-1 font-sans text-ui-2xs">←</kbd> <kbd class="rounded-sm border border-border/60 px-1 font-sans text-ui-2xs">→</kbd> records</span>
           {#if onsave && !readonly}
             <span>Click a value to edit</span>

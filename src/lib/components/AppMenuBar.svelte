@@ -62,8 +62,8 @@
   <Menubar.Item class={itemCls} {disabled} onSelect={() => run(action)}>
     <Icon name={icon} class="size-3.5 shrink-0 text-muted-foreground" />
     <span data-slot="menu-label" class="min-w-0 truncate">{label}</span>
-    {#if COMMAND_BY_ID.has(combo)}<Kbd command={combo} class="ml-auto shrink-0 ps-6 text-muted-foreground/80" />
-    {:else if combo}<Kbd {combo} class="ml-auto shrink-0 ps-6 text-muted-foreground/80" />{/if}
+    {#if COMMAND_BY_ID.has(combo)}<Kbd command={combo} class="ml-auto shrink-0 ps-6 text-muted-foreground" />
+    {:else if combo}<Kbd {combo} class="ml-auto shrink-0 ps-6 text-muted-foreground" />{/if}
   </Menubar.Item>
 {/snippet}
 

@@ -416,7 +416,7 @@
                 class="no-focus-ring flex-1 bg-transparent text-ui-sm text-foreground outline-none placeholder:text-muted-foreground"
               />
               {#if pickerSearch}
-                <button type="button" onclick={() => (pickerSearch = '')} class="text-muted-foreground hover:text-foreground">
+                <button aria-label="Clear search" title="Clear search" type="button" onclick={() => (pickerSearch = '')} class="text-muted-foreground hover:text-foreground">
                   <X class="size-3.5 shrink-0" />
                 </button>
               {/if}

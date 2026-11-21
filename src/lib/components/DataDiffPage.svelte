@@ -512,7 +512,7 @@
           <Search class="size-3 shrink-0 text-muted-foreground" />
           <input use:focusNode type="text" bind:value={dropdownSearch} placeholder="Search…"
             class="no-focus-ring flex-1 bg-transparent text-ui-xs outline-none placeholder:text-muted-foreground" />
-          {#if dropdownSearch}<button onclick={() => { dropdownSearch = '' }} class="text-muted-foreground hover:text-foreground"><X class="size-3 shrink-0" /></button>{/if}
+          {#if dropdownSearch}<button aria-label="Clear search" title="Clear search" onclick={() => { dropdownSearch = '' }} class="text-muted-foreground hover:text-foreground"><X class="size-3 shrink-0" /></button>{/if}
         </div>
         <div class="max-h-52 overflow-y-auto py-1">
           {#if filtered.length === 0}

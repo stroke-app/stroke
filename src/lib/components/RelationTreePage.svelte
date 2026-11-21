@@ -292,7 +292,7 @@
       <div class="studio-chrome flex h-10 shrink-0 items-center gap-2 border-b border-border/60 px-3" data-studio-chrome>
         <GitBranch class="size-3.5 shrink-0 text-muted-foreground" />
         <span class="font-mono text-ui-xs font-semibold text-foreground/70">Relation tree</span>
-        <button
+        <button aria-label="Reload" title="Reload"
           type="button"
           disabled={loading}
           class="ml-auto flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40"

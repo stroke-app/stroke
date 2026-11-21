@@ -730,13 +730,35 @@
   // On root page: bits-ui filters with a plain substring check against item value strings.
   const shouldFilter = $derived(page !== 'tables' && page !== 'ask')
 
-  /** @type {(value: string, search: string) => number} */
-  const commandFilter = (value, search) => {
-    if (!search) return 1
-    const v = value.toLowerCase(), s = search.toLowerCase()
-    if (v.includes(s)) return 1
-    // Separator-insensitive fallback so "newtable"/"new-table" match "new table".
-    return stripSep(v).includes(stripSep(s)) ? 1 : 0
+  /**
+   * Ranks root-page matches; bits-ui sorts by the score. The visible label
+   * (passed as the first keyword) outranks the hidden search words, so "Map"
+   * puts Map above Schema diagram, whose keywords also mention maps. It used
+   * to return 1 for every match, which left results in declaration order.
+   * @type {(value: string, search: string, keywords?: string[]) => number}
+   */
+  const commandFilter = (value, search, keywords = []) => {
+    const s = search.trim().toLowerCase()
+    if (!s) return 1
+    const label = (keywords[0] ?? '').toLowerCase()
+    const v = value.toLowerCase()
+    const wordStart = (/** @type {string} */ text) => text.split(/[^a-z0-9]+/).some((w) => w.startsWith(s))
+    if (label) {
+      if (label === s) return 1
+      if (label.startsWith(s)) return 0.95
+      if (wordStart(label)) return 0.9
+    }
+    if (wordStart(v)) return 0.7
+    if (v.includes(s) || label.includes(s)) return 0.5
+    // Separator-insensitive fallback so "newtable"/"new-table" match "new table",
+    // anchored at a word start: unanchored, "map" matched "schema public"
+    // through "sche(ma p)ublic".
+    const words = `${label} ${v}`.split(/[^a-z0-9]+/).filter(Boolean)
+    const q = stripSep(s)
+    for (let i = 0; i < words.length; i++) {
+      if (words.slice(i).join('').startsWith(q)) return 0.3
+    }
+    return 0
   }
 
   /** @param {() => void} action */
@@ -836,7 +858,7 @@
 
         <!-- Shared page-destination row (root "Views" + "Go to page" navigator) -->
         {#snippet pageRow(/** @type {typeof pageItems[number]} */ it)}
-          <Command.Item value={it.value} onSelect={() => run(it.action)}>
+          <Command.Item value={it.value} keywords={[it.label]} onSelect={() => run(it.action)}>
             <Icon name={it.icon} class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
             <span data-slot="command-label" class="truncate">{it.label}</span>
             {#if it.keys}<Command.Shortcut keys={it.keys} />{/if}
@@ -1307,7 +1329,7 @@
         <div class="flex h-10 shrink-0 items-center gap-2 border-t border-border/50 bg-muted/20 ps-4 pe-2 text-ui-2xs text-muted-foreground">
           <Icon name="sparkles" class="size-3.5 shrink-0 text-primary" />
           <span class="min-w-0 truncate">{askModel}</span>
-          {#if askStreaming}<span class="shrink-0 text-muted-foreground/70">· answering</span>{/if}
+          {#if askStreaming}<span class="shrink-0 text-muted-foreground">· answering</span>{/if}
           <span class="flex-1"></span>
           {#if askStreaming}
             <button type="button" class={askBar} onclick={stopAsk}><Icon name="square" class="size-3 shrink-0" />Stop</button>

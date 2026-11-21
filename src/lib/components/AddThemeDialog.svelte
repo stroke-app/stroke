@@ -160,7 +160,7 @@
           bind:value={json}
           spellcheck="false"
           placeholder={'{\n  "version": 1,\n  "name": "Aurora",\n  "appearance": "dark",\n  "colors": { "background": "#0f1117", "foreground": "#e6e6e6", "primary": "#7aa2f7" }\n}'}
-          class="field-surface app-scroll h-36 w-full resize-none bg-transparent p-3 font-mono text-ui-xs text-foreground placeholder:text-muted-foreground/70"
+          class="field-surface app-scroll h-36 w-full resize-none bg-transparent p-3 font-mono text-ui-xs text-foreground placeholder:text-muted-foreground"
         ></textarea>
         {#if pasted?.error}
           <p class="text-ui-2xs text-destructive">{pasted.error}</p>

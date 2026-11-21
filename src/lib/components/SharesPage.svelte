@@ -285,7 +285,7 @@
 {#snippet section(/** @type {string} */ label, /** @type {import('$lib/api.js').ShareRow[]} */ list)}
   <div class="flex items-center gap-2 px-2 pt-3 pb-1">
     <span class="text-ui-2xs font-medium text-muted-foreground">{label}</span>
-    <span class="text-ui-3xs text-muted-foreground/70 tabular-nums">{list.length}</span>
+    <span class="text-ui-3xs text-muted-foreground tabular-nums">{list.length}</span>
   </div>
   <ul class="flex flex-col" role="listbox" aria-label="{label} links">
     {#each list as r (r.id)}
@@ -317,9 +317,9 @@
              the row's actions show. -->
         <div class={cn('flex shrink-0 items-center gap-4 text-ui-2xs text-muted-foreground tabular-nums group-hover/row:hidden group-focus-within/row:hidden', confirmId === r.id && 'hidden')}>
           <span class="inline-flex items-center gap-1" title="{r.views} view{r.views === 1 ? '' : 's'}{r.lastViewedAt ? `, last ${when(r.lastViewedAt)}` : ''}">
-            <Icon name="eye" class="size-3.5 shrink-0" /><span>{r.views.toLocaleString()}{#if r.maxViews !== null}<span class="text-muted-foreground/60">/{r.maxViews}</span>{/if}</span>
+            <Icon name="eye" class="size-3.5 shrink-0" /><span>{r.views.toLocaleString()}{#if r.maxViews !== null}<span class="text-muted-foreground">/{r.maxViews}</span>{/if}</span>
           </span>
-          <span class={cn('inline-flex min-w-24 items-center justify-end gap-1', !st.live && 'text-muted-foreground/70')}>
+          <span class={cn('inline-flex min-w-24 items-center justify-end gap-1', !st.live && 'text-muted-foreground')}>
             <Icon name="clock" class="size-3.5 shrink-0" />
             {#if st.live}{r.expiresAt ? when(r.expiresAt) : 'No expiry'}{:else}{st.label}{/if}
           </span>

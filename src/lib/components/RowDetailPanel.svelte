@@ -455,7 +455,7 @@
                         {#if field.isPk}
                           <KeyRound class="size-3 shrink-0 text-warning" aria-label="Primary key, cannot be changed" />
                         {/if}
-                        <span class="ml-auto min-w-0 shrink truncate text-ui-2xs text-muted-foreground/70" title={field.dataType}>{field.dataType}</span>
+                        <span class="ml-auto min-w-0 shrink truncate text-ui-2xs text-muted-foreground" title={field.dataType}>{field.dataType}</span>
 
                         {#if field.editable}
                           <DropdownMenu.Root>
@@ -527,7 +527,7 @@
                       {#if !field.editable}
                         <!-- Read-only -->
                         <div
-                          class="w-full px-1.5 font-mono text-ui-xs leading-5 {field.isNull || field.isEmpty ? 'text-muted-foreground/70' : 'text-foreground'} {field.isMultiline ? 'line-clamp-6 whitespace-pre-wrap break-all' : 'line-clamp-2 break-all'}"
+                          class="w-full px-1.5 font-mono text-ui-xs leading-5 {field.isNull || field.isEmpty ? 'text-muted-foreground' : 'text-foreground'} {field.isMultiline ? 'line-clamp-6 whitespace-pre-wrap break-all' : 'line-clamp-2 break-all'}"
                           title={field.displayValue}
                         >{#if field.isNull}<span class="rounded-sm bg-muted/60 px-1 text-ui-2xs">NULL</span>{:else if field.isEmpty}<span class="rounded-sm bg-muted/60 px-1 text-ui-2xs">empty</span>{:else}{field.displayValue}{/if}</div>
 

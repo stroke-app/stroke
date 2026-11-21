@@ -72,7 +72,7 @@
   </div>
 
   <!-- Fine print, out of the way. -->
-  <div class="flex h-10 shrink-0 items-center justify-center gap-3 text-ui-2xs text-muted-foreground/80">
+  <div class="flex h-10 shrink-0 items-center justify-center gap-3 text-ui-2xs text-muted-foreground">
     <a href="https://stroke.click/terms" target="_blank" rel="noopener noreferrer" class="transition-colors hover:text-foreground">Terms</a>
     <span aria-hidden="true">·</span>
     <a href="https://stroke.click/privacy" target="_blank" rel="noopener noreferrer" class="transition-colors hover:text-foreground">Privacy</a>

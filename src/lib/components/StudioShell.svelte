@@ -10542,7 +10542,7 @@ let rowSearch = $state('')
           <div class="flex h-full w-[220px] shrink-0 flex-col items-center justify-center gap-3 border-r border-border/50 bg-sidebar p-4 text-center">
             <AlertTriangle class="size-5 text-destructive" />
             <p class="text-ui-xs font-medium text-muted-foreground">Sidebar error</p>
-            <p class="max-w-full break-words font-mono text-ui-3xs text-muted-foreground/80">{String(/** @type {any} */ (err)?.message ?? err)}</p>
+            <p class="max-w-full break-words font-mono text-ui-3xs text-muted-foreground">{String(/** @type {any} */ (err)?.message ?? err)}</p>
             <button
               type="button"
               class="rounded-md border border-border bg-muted/40 px-2.5 py-1 text-ui-xs font-medium transition-colors hover:bg-accent"
@@ -12050,7 +12050,7 @@ let rowSearch = $state('')
           <button
             type="button"
             {onclick}
-            class="group inline-flex h-7 min-w-0 items-center gap-1.5 rounded-md px-2 text-left text-muted-foreground/80 outline-none hover:text-foreground focus-visible:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+            class="group inline-flex h-7 min-w-0 items-center gap-1.5 rounded-md px-2 text-left text-muted-foreground outline-none hover:text-foreground focus-visible:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
           >
             <Icon class="size-4 shrink-0" />
             <span class="truncate text-ui-sm">{label}</span>

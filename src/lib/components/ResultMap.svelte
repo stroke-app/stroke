@@ -451,7 +451,7 @@
         <dl class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
           {#each cardFields as f (f.name)}
             <dt class="truncate text-ui-2xs text-muted-foreground">{f.name}</dt>
-            <dd class={cn('min-w-0 truncate font-mono text-ui-2xs', f.isNull ? 'text-muted-foreground/60' : 'text-foreground')} title={f.text}>{f.text}</dd>
+            <dd class={cn('min-w-0 truncate font-mono text-ui-2xs', f.isNull ? 'text-muted-foreground' : 'text-foreground')} title={f.text}>{f.text}</dd>
           {/each}
         </dl>
       </div>

@@ -430,8 +430,8 @@
                   <div class="ms-8.5 flex min-w-0 flex-wrap gap-x-4 gap-y-1">
                     {#each cells as c (c.name)}
                       <span class="flex min-w-0 max-w-[30ch] items-baseline gap-1.5">
-                        <span class={cn('shrink-0 text-ui-3xs', c.hit ? 'text-foreground/80' : 'text-muted-foreground/70')}>{c.name}</span>
-                        <span class={cn('min-w-0 truncate font-mono text-ui-2xs', c.isNull ? 'text-muted-foreground/60' : 'text-foreground/75')}>
+                        <span class={cn('shrink-0 text-ui-3xs', c.hit ? 'text-foreground/80' : 'text-muted-foreground')}>{c.name}</span>
+                        <span class={cn('min-w-0 truncate font-mono text-ui-2xs', c.isNull ? 'text-muted-foreground' : 'text-foreground/75')}>
                           {#each marked(c.text) as part, pi (pi)}{#if part.m}<mark class="rounded-sm bg-warning/25 px-px text-foreground">{part.t}</mark>{:else}{part.t}{/if}{/each}
                         </span>
                       </span>

@@ -1021,7 +1021,7 @@
     >
       <TriangleAlert class="size-3.5 shrink-0" />
       <span class="min-w-0 flex-1 truncate">{error}</span>
-      <button type="button" class="shrink-0 opacity-70 hover:opacity-100" onclick={() => (error = '')}>
+      <button aria-label="Dismiss error" title="Dismiss error" type="button" class="shrink-0 opacity-70 hover:opacity-100" onclick={() => (error = '')}>
         <X class="size-3.5 shrink-0" />
       </button>
     </div>

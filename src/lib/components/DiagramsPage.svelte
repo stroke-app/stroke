@@ -364,7 +364,7 @@
                 onclick={confirmDelete}
                 class="inline-flex h-7 items-center gap-1 rounded-md bg-destructive px-2 text-ui-3xs text-destructive-foreground hover:opacity-90"
               ><Check class="size-3 shrink-0" />Confirm</button>
-              <button
+              <button aria-label="Cancel delete" title="Cancel delete"
                 type="button"
                 onclick={() => confirmingDelete = false}
                 class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"

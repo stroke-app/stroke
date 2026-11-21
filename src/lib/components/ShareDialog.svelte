@@ -310,7 +310,7 @@
                   <input type="checkbox" checked={kept} onchange={() => toggleKeep(i)} class="size-3.5 shrink-0 accent-primary" aria-label="Include {col.name}" />
                   <span class="flex min-w-0 flex-1 items-baseline gap-2">
                     <span class={cn('truncate text-ui-sm', kept ? 'text-foreground' : 'text-muted-foreground line-through')}>{col.name}</span>
-                    {#if col.type}<span class="shrink-0 truncate font-mono text-ui-3xs text-muted-foreground/80">{col.type}</span>{/if}
+                    {#if col.type}<span class="shrink-0 truncate font-mono text-ui-3xs text-muted-foreground">{col.type}</span>{/if}
                   </span>
                   {#if hit && !masked}
                     <span class="inline-flex shrink-0 items-center gap-1 text-ui-2xs text-warning" title={hit.why === 'name' ? 'The name suggests personal data or a secret' : `Most values look like ${hit.why}`}>

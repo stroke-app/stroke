@@ -4358,7 +4358,7 @@
                         onclick={useQuickUri}
                         class={cn(
                           "h-8 shrink-0 rounded-full px-3.5",
-                          !quickUri.trim() && "disabled:opacity-100 text-muted-foreground/60",
+                          !quickUri.trim() && "disabled:opacity-100 text-muted-foreground",
                         )}
 >
                         Continue
@@ -4411,7 +4411,7 @@
                           />
                           <span class="min-w-0 flex-1 truncate text-ui-sm">{d.label}</span>
                           {#if off}
-                            <span class="shrink-0 text-ui-3xs text-muted-foreground/70">soon</span>
+                            <span class="shrink-0 text-ui-3xs text-muted-foreground">soon</span>
                           {/if}
                         </button>
                       {/each}

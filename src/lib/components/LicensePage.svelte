@@ -81,7 +81,7 @@
     if (d < 86400) return `${Math.floor(d / 3600)} h ago`
     return `${Math.floor(d / 86400)} d ago`
   }
-  const sectionLabel = 'text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground/60'
+  const sectionLabel = 'text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground'
 </script>
 
 <div class="app-scroll flex min-h-0 flex-1 flex-col overflow-y-auto bg-background">
@@ -175,7 +175,7 @@
       <ul class="grid grid-cols-2 gap-x-6 gap-y-2.5">
         {#each features as f (f.label)}
           <li class="flex items-center gap-2 text-ui-sm text-muted-foreground">
-            <f.icon class="size-4 shrink-0 text-muted-foreground/70" />
+            <f.icon class="size-4 shrink-0 text-muted-foreground" />
             {f.label}
           </li>
         {/each}

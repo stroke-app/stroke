@@ -7036,7 +7036,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       drawIcon(
         ctx, 'link-2',
         cellX + relPadX, ry + (rh - relIcon) / 2, relIcon,
-        isActive ? c.cPrimary : withAlpha(c.cMuted, isVHov ? 1 : 0.8),
+        isActive ? c.cPrimary : isVHov ? c.cFg : c.cMuted,
         1.8,
       )
       const relTextX = cellX + relPadX + relIcon + relGap
@@ -7609,7 +7609,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       // which lined it up with its own values and out of line with every header
       // beside it. Headers read across the row; that edge wins.
       const hdrTextX = CELL_PAD_X
-      ctx.font = _fonts.header; ctx.fillStyle = withAlpha(c.cMuted, 0.6)
+      ctx.font = _fonts.header; ctx.fillStyle = c.cMuted
       ctx.textAlign = 'left'; ctx.textBaseline = 'middle'
       ctx.fillText(truncText(ctx, vc.label, cw - hdrTextX - 12), x + hdrTextX, HEADER_H / 2 + 0.5)
       // Resize edge affordance (matches regular column behaviour)
@@ -7762,12 +7762,13 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       }
     }
 
-    // Inline datatype - secondary, lower contrast, a touch of breathing room.
+    // Inline datatype - secondary through size and colour. The muted colour at
+    // 60% alpha measured 2.6:1 on the light themes; full muted is 6:1 or more.
     const typeStartX = tx + (indicators.length ? 5 : 3)
     const typeRoom = x + w - sortReserve - typeStartX
     if (typeRoom > 24 && col.dataType) {
       ctx.font = _fonts.type
-      ctx.fillStyle = withAlpha(c.cMuted, 0.6)
+      ctx.fillStyle = c.cMuted
       ctx.fillText(truncText(ctx, col.dataType, typeRoom), typeStartX, cy + 0.5)
     }
 
@@ -7796,7 +7797,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
         ctx.textAlign = 'left'
       }
     } else if (_resizeHoverCol !== col.name && hoveredColName === col.name && hoveredRow === null) {
-      drawIcon(ctx, 'chevrons-up-down', sortX, sortY, SORT_ICON, withAlpha(c.cMuted, 0.55), 1.6)
+      drawIcon(ctx, 'chevrons-up-down', sortX, sortY, SORT_ICON, withAlpha(c.cMuted, 0.8), 1.6)
     }
 
     // Column annotator strip - mini histogram (numeric) or non-null fill bar.
