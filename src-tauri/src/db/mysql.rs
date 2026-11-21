@@ -271,6 +271,50 @@ fn searchable_columns(columns: &[(String, String)], term: &str) -> Vec<String> {
         .collect()
 }
 
+/// The values of a MySQL `enum('a','b','it''s')` column type, in order.
+fn enum_values(column_type: &str) -> Option<Vec<String>> {
+    let t = column_type.trim();
+    let inner = t.strip_prefix("enum(").or_else(|| t.strip_prefix("ENUM("))?.strip_suffix(')')?;
+    let mut out = Vec::new();
+    let mut chars = inner.chars().peekable();
+    loop {
+        while chars.peek().is_some_and(|c| *c == ',' || c.is_whitespace()) {
+            chars.next();
+        }
+        if chars.next()? != '\'' {
+            return None;
+        }
+        let mut v = String::new();
+        loop {
+            match chars.next()? {
+                '\'' if chars.peek() == Some(&'\'') => {
+                    chars.next();
+                    v.push('\'');
+                }
+                '\'' => break,
+                '\\' => v.push(chars.next()?),
+                c => v.push(c),
+            }
+        }
+        out.push(v);
+        if chars.peek().is_none() {
+            return Some(out);
+        }
+    }
+}
+
+#[cfg(test)]
+mod enum_values_tests {
+    #[test]
+    fn reads_an_enum_column_type() {
+        assert_eq!(super::enum_values("enum('book','game','tool')").unwrap(), ["book", "game", "tool"]);
+        // As information_schema writes them: a quote doubled, a backslash escaped.
+        assert_eq!(super::enum_values(r"ENUM('it''s', 'a,b', 'x\\y')").unwrap(), ["it's", "a,b", r"x\y"]);
+        assert_eq!(super::enum_values("varchar(20)"), None);
+        assert_eq!(super::enum_values("enum('open"), None);
+    }
+}
+
 #[cfg(test)]
 fn build_where(columns: &[String], search: Option<&str>, search_is_regex: bool, search_case_sensitive: bool, filters: &[RowFilter]) -> Result<WhereClause, String> {
     build_where_searching(columns, None, search, search_is_regex, search_case_sensitive, filters)
@@ -442,7 +486,7 @@ pub async fn get_table_rows(
     // fetch; and a plain open (no search, filter or sort) doesn't need the column
     // list to build its query, so the column metadata joins it too: one stage.
     let meta_q = sqlx::query(
-        "SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, EXTRA, COLUMN_DEFAULT \
+        "SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, EXTRA, COLUMN_DEFAULT, COLUMN_TYPE \
          FROM information_schema.COLUMNS \
          WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION",
     )
@@ -570,7 +614,26 @@ pub async fn get_table_rows(
             .collect()
     };
 
+    // The catalog's type over the wire's: a result names a binary-collation
+    // text column "BLOB", which is how MariaDB's JSON (LONGTEXT, utf8mb4_bin)
+    // read in the grid header, and an ENUM can come back as plain CHAR.
+    let declared: HashMap<String, String> = meta_rows
+        .iter()
+        .filter_map(|r| Some((my_text(r, 0)?, my_text(r, 1)?.to_lowercase())))
+        .collect();
+    // An ENUM's values, so its cell edits from a list as a Postgres enum does;
+    // it opened as free text, where a typo is an error from the server.
+    let enums: HashMap<String, Vec<String>> = meta_rows
+        .iter()
+        .filter_map(|r| Some((my_text(r, 0)?, enum_values(&my_text(r, 5)?)?)))
+        .collect();
     for col in &mut columns {
+        if let Some(t) = declared.get(&col.name).filter(|t| !t.is_empty()) {
+            col.data_type = t.clone();
+        }
+        if let Some(v) = enums.get(&col.name) {
+            col.enum_values = Some(v.clone());
+        }
         if let Some(f) = flags_map.get(&col.name) {
             col.nullable = f.nullable;
             col.auto_generated = f.auto_generated;

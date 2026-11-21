@@ -8,7 +8,7 @@
  * `src-tauri/src/db/*` per engine family; the inlined literals are for display
  * only and are NOT what gets sent to the database.
  *
- * @typedef {'postgres' | 'mysql' | 'sqlite' | 'd1' | 'libsql' | 'duckdb' | 'clickhouse' | 'mssql' | 'oracle'} Dialect
+ * @typedef {'postgres' | 'mysql' | 'sqlite' | 'd1' | 'libsql' | 'duckdb' | 'clickhouse' | 'mssql' | 'oracle' | 'spanner' | 'bigquery' | 'odbc'} Dialect
  *
  * @typedef {{ name: string, [k: string]: unknown }} Column
  *
@@ -21,8 +21,12 @@
  * }} DmlContext
  */
 
+import { odbcQuote, odbcFlat } from './sql-ident.js'
+
 /** Engine families that don't qualify grid writes with a schema. */
 const NO_SCHEMA = new Set(['sqlite', 'd1', 'libsql', 'duckdb'])
+/** Spanner and BigQuery speak GoogleSQL: backticked names, backslash escapes. */
+const GOOGLE_SQL = new Set(['spanner', 'bigquery'])
 
 /**
  * Quote an identifier for the given dialect.
@@ -31,6 +35,15 @@ const NO_SCHEMA = new Set(['sqlite', 'd1', 'libsql', 'duckdb'])
 export function quoteIdent(name, dialect) {
   const s = String(name)
   if (dialect === 'mysql') return '`' + s.replace(/`/g, '``') + '`'
+  // GoogleSQL: backticks, escaped with a backslash. A double-quoted name is a
+  // string there, so the review showed SQL that would not run if applied.
+  if (GOOGLE_SQL.has(dialect)) return '`' + s.replace(/\\/g, '\\\\').replace(/`/g, '\\`') + '`'
+  // ODBC: the quote the driver reported on connect (a MySQL driver wants backticks).
+  if (dialect === 'odbc') {
+    const q = odbcQuote()
+    if (q === '[') return '[' + s.replace(/]/g, ']]') + ']'
+    return q + s.split(q).join(q + q) + q
+  }
   return '"' + s.replace(/"/g, '""') + '"'
 }
 
@@ -40,14 +53,18 @@ export function quoteIdent(name, dialect) {
  */
 export function qualifiedTable(ctx) {
   const t = quoteIdent(ctx.table, ctx.dialect)
+  // Spanner's default schema has no name: "default" is only the app's label for it.
+  if (ctx.dialect === 'spanner' && ctx.schema === 'default') return t
+  if (ctx.dialect === 'odbc' && odbcFlat()) return t
   if (ctx.schema && !NO_SCHEMA.has(ctx.dialect)) {
     return quoteIdent(ctx.schema, ctx.dialect) + '.' + t
   }
   return t
 }
 
-/** Single-quote a string literal, doubling embedded quotes. */
-function quoteString(/** @type {string} */ s) {
+/** Single-quote a string literal, doubling embedded quotes (backslash-escaping in GoogleSQL). */
+function quoteString(/** @type {string} */ s, /** @type {string} */ dialect = '') {
+  if (GOOGLE_SQL.has(dialect)) return "'" + s.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n') + "'"
   return "'" + s.replace(/'/g, "''") + "'"
 }
 
@@ -67,9 +84,9 @@ export function sqlLiteral(value, dialect) {
     return value ? 'TRUE' : 'FALSE'
   }
   if (typeof value === 'object') {
-    try { return quoteString(JSON.stringify(value)) } catch { return quoteString(String(value)) }
+    try { return quoteString(JSON.stringify(value), dialect) } catch { return quoteString(String(value), dialect) }
   }
-  return quoteString(String(value))
+  return quoteString(String(value), dialect)
 }
 
 /**
