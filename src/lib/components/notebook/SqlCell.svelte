@@ -255,6 +255,9 @@
                     {/each}
                   </tr>
                 {/each}
+                {#if !result.rows.length}
+                  <tr><td colspan={result.columns.length + 1} class="px-4 py-3 text-center text-ui-xs text-muted-foreground">The query returned no rows</td></tr>
+                {/if}
                 {#if truncated}
                   <tr><td colspan={result.columns.length + 1} class="px-4 py-2 text-center text-ui-xs text-muted-foreground italic">Showing first {MAX_DISPLAY_ROWS} of {result.rows.length} rows</td></tr>
                 {/if}

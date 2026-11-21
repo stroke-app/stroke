@@ -353,6 +353,8 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     stageDeleteSelected = $bindable(/** @type {() => void} */ (() => {})),
     /** When true all write operations (edit, delete, insert) are disabled. */
     readonly = false,
+    /** What an empty grid says: a table's rows by default, a query's in the console. */
+    emptyText = 'No rows in this table',
     /** Read-only grids: a double-click opens the row here instead of editing
      *  (the document browser's JSON editor). @type {((rowIdx: number) => void) | null} */
     onrowopen = null,
@@ -9566,7 +9568,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
                   {/if}
                 {:else}
                   <Table2 class="size-8 text-muted-foreground" />
-                  <p class="text-ui-sm text-muted-foreground">No rows in this table</p>
+                  <p class="text-ui-sm text-muted-foreground">{emptyText}</p>
                 {/if}
               </div>
             </div>
