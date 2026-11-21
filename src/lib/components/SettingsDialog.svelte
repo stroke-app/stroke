@@ -55,9 +55,6 @@
     DEFAULT_GRID_FONT_SIZE,
     MOTION_MODES,
     DEFAULT_MAX_QUERY_HISTORY,
-    DEFAULT_CONNECT_TIMEOUT_MS,
-    DEFAULT_SOCKET_TIMEOUT_MS,
-    DEFAULT_MAX_ALLOWED_PACKET,
     DEFAULT_SESSION_TIMEZONE,
     AGENT_FONT_SIZES,
     THINKING_STYLES,
@@ -514,9 +511,6 @@
     { id: 'keyset',   label: 'Keyset',   icon: 'key-round', hint: 'Same as cursor (keyset on the primary key)' },
     { id: 'temporal', label: 'Temporal', icon: 'clock', hint: 'Keyset on a timestamp column, newest-first' },
   ];
-  const paginationOption = $derived(
-    PAGINATION_OPTIONS.find((o) => o.id === settings.paginationMode) ?? PAGINATION_OPTIONS[0],
-  );
   /** @param {string} v */
   function setPaginationMode(v) {
     if (v) settings = updateSettings({ paginationMode: v });
@@ -995,15 +989,6 @@
   {/if}
 
   {@render secLabel($t('settings.sec.connectionDefaults'))}
-  {#if show($t('settings.maxAllowedPacket'), $t('settings.maxAllowedPacket.desc'))}
-    {@render numberRow($t('settings.maxAllowedPacket'), $t('settings.maxAllowedPacket.desc'), 'maxAllowedPacket', DEFAULT_MAX_ALLOWED_PACKET, 'bytes', 1024)}
-  {/if}
-  {#if show($t('settings.socketTimeout'), $t('settings.socketTimeout.desc'))}
-    {@render numberRow($t('settings.socketTimeout'), $t('settings.socketTimeout.desc'), 'socketTimeoutMs', DEFAULT_SOCKET_TIMEOUT_MS, 'ms', 0)}
-  {/if}
-  {#if show($t('settings.connectTimeout'), $t('settings.connectTimeout.desc'))}
-    {@render numberRow($t('settings.connectTimeout'), $t('settings.connectTimeout.desc'), 'connectTimeoutMs', DEFAULT_CONNECT_TIMEOUT_MS, 'ms', 0)}
-  {/if}
   {#if show($t('settings.timezone'), $t('settings.timezone.desc'))}
     {@render textRow($t('settings.timezone'), $t('settings.timezone.desc'), 'sessionTimezone', DEFAULT_SESSION_TIMEZONE)}
   {/if}
