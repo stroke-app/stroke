@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.4.0] - 2026-11-21
+
+### Changes
+- Send verify-full TLS on connect, keep pasted URL parameters, and more (#343)
+
+
 ## [3.3.9] - 2026-11-21
 
 ### Changes
