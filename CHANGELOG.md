@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.3.8] - 2026-11-21
+
+### Changes
+- Fix Ctrl+Delete, multi-word palette search, and more from another sweep (#341)
+
+
 ## [3.3.7] - 2026-11-21
 
 ### Changes
