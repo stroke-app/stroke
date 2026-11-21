@@ -389,13 +389,10 @@
     kbd = false
     active = hit.r.key
     scroller?.focus({ preventScroll: true })
-    if (hit.r.t !== 'item') toggle(hit.r)
-  }
-
-  /** @param {MouseEvent} e */
-  function onDblClick(e) {
-    const hit = rowAt(e)
-    if (hit?.r.t === 'item') void openItem(hit.r.item)
+    // One click opens an object, as one click opens a table in the Tables
+    // tree; it used to take two here, with nothing to say so.
+    if (hit.r.t === 'item') void openItem(hit.r.item)
+    else toggle(hit.r)
   }
 
   /** Focus the tree from outside (ArrowDown in the filter box). */
@@ -552,7 +549,6 @@
             onblur={() => (focused = false)}
             onpointerdown={(e) => { kbd = false; props.onpointerdown?.(e) }}
             onclick={onClick}
-            ondblclick={onDblClick}
             oncontextmenu={(e) => {
               const hit = rowAt(e)
               if (!hit) { e.preventDefault(); return }

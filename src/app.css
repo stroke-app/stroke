@@ -1146,6 +1146,15 @@ html[data-os="linux"]   { --window-radius: 8px; }
     will-change: scroll-position;
   }
 
+  /* The main grid doesn't bounce. Scrolling into an edge on macOS rubber-banded
+     the whole scroll container, header and columns included, a few pixels
+     down and sideways before springing back: a flicker at the top of the grid
+     on every scroll to the start. An embedded grid (AI chat results) keeps
+     `contain`, so scrolling past its edge still reaches the chat around it. */
+  [data-canvas-table="full"] {
+    overscroll-behavior: none;
+  }
+
   /* Minimal thin scrollbars - all platforms */
   :is(.app-scroll, .overflow-auto, .overflow-y-auto, .overflow-x-auto) {
     scrollbar-width: thin;
