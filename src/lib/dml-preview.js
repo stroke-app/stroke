@@ -68,6 +68,10 @@ export function qualifiedTable(ctx) {
 /** Single-quote a string literal, doubling embedded quotes (backslash-escaping in GoogleSQL). */
 function quoteString(/** @type {string} */ s, /** @type {string} */ dialect = '') {
   if (isGoogleSql(dialect)) return "'" + s.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n') + "'"
+  // MySQL (under its default sql_mode) and ClickHouse read a backslash in a
+  // string as an escape: 'C:\new' arrived as "C:" and a newline. Doubled, it
+  // stays a backslash.
+  if (dialect === 'mysql' || dialect === 'clickhouse') return "'" + s.replace(/\\/g, '\\\\').replace(/'/g, "''") + "'"
   return "'" + s.replace(/'/g, "''") + "'"
 }
 
