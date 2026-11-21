@@ -14,6 +14,8 @@
   import Search from '@lucide/svelte/icons/search'
   import { onMount, untrack } from 'svelte'
   import { cn } from '$lib/utils.js'
+  import { buildSelectSql } from '$lib/table-query.js'
+  import { engineLabel } from '$lib/connection-provider.js'
   import CodeEditor from './CodeEditor.svelte'
   import {
     getTableRows,
@@ -361,26 +363,36 @@
     selectedKeyCols = next
   }
 
+  /** Rows read from each side, at most. */
+  const ROW_CAP = 10000
+  /** A side returned the cap, so rows past it were not compared. */
+  let capped = $state(false)
+
   async function runFetch(/** @type {SourceState} */ src) {
     if (src.mode === 'sql') {
       const res = isCurrent(src.connId) ? await executeSql(src.sql) : await executeSqlOnConnection(effectiveConfig(src), src.sql)
       return { columns: res.columns ?? [], rows: res.rows ?? [] }
     }
     if (isCurrent(src.connId) && effectiveConfig(src)?.database === connById(src.connId)?.database) {
-      const res = await getTableRows(src.schema, src.table, 10000, 0)
+      const res = await getTableRows(src.schema, src.table, ROW_CAP, 0)
       return { columns: res.columns ?? [], rows: res.rows ?? [] }
     }
-    const sql = `SELECT * FROM "${src.schema}"."${src.table}" LIMIT 10000`
+    // Written for the side's own engine: this was `"schema"."table" LIMIT`
+    // everywhere, which MySQL, SQL Server and Oracle all reject.
+    const sql = buildSelectSql({ schema: src.schema, table: src.table, limit: ROW_CAP, engine: connById(src.connId)?.type ?? 'postgres' })
     const res = await executeSqlOnConnection(effectiveConfig(src), sql)
     return { columns: res.columns ?? [], rows: res.rows ?? [] }
   }
 
+  /** Both sides name a table or hold SQL, so Compare has something to run. */
+  const bothReady = $derived(
+    (L.mode === 'table' ? !!L.table : !!L.sql.trim()) && (R.mode === 'table' ? !!R.table : !!R.sql.trim()),
+  )
+
   async function compare() {
     if (comparing) return
     error = ''
-    const lReady = L.mode === 'table' ? !!L.table : !!L.sql.trim()
-    const rReady = R.mode === 'table' ? !!R.table : !!R.sql.trim()
-    if (!lReady || !rReady) { error = 'Configure both sources first.'; return }
+    if (!bothReady) { error = 'Pick a table or write SQL for both the source and the target.'; return }
     comparing = true
     try {
       const [lRes, rRes] = await Promise.all([runFetch(L), runFetch(R)])
@@ -388,6 +400,7 @@
       const keyNames = selectedKeyCols.size ? [...selectedKeyCols] : null
       const keyIdx = keyNames ? keyNames.map((n) => columns.findIndex((c) => c.name === n)).filter((i) => i >= 0) : [0]
       if (!keyIdx.length) { error = 'Key columns not found in result set.'; return }
+      capped = lRes.rows.length >= ROW_CAP || rRes.rows.length >= ROW_CAP
       diffRows = await computeDiff(lRes.rows, rRes.rows, columns.length, keyIdx)
       activeFilter = 'changed'
       searchQuery = ''
@@ -537,7 +550,7 @@
 {#snippet ConnSelect({ id, value, onchange })}
   {@const isOpen = openDropdown === id}
   {@const selected = connections.find((c) => c.id === value)}
-  {@const filtered = dropdownSearch ? connections.filter((c) => c.name.toLowerCase().includes(dropdownSearch.toLowerCase())) : connections}
+  {@const filtered = dropdownSearch ? connections.filter((c) => `${c.name} ${engineLabel(c.type)}`.toLowerCase().includes(dropdownSearch.toLowerCase())) : connections}
   <div class="relative inline-flex">
     <button type="button"
       onclick={(e) => { e.stopPropagation(); if (isOpen) closeDd(); else openDd(id, e) }}
@@ -569,7 +582,8 @@
               >
                 <span class={cn('w-3 shrink-0 text-center text-ui-3xs', value === conn.id ? 'text-primary' : 'opacity-0')}>✓</span>
                 <span class="flex-1 truncate text-left">{conn.name}</span>
-                {#if conn.id === currentConnectionId}<span class="shrink-0 text-ui-3xs text-info">active</span>{/if}
+                {#if conn.id === currentConnectionId}<span class="shrink-0 text-ui-3xs text-info">active</span>
+                {:else}<span class="shrink-0 text-ui-3xs text-muted-foreground">{engineLabel(conn.type)}</span>{/if}
               </button>
             {/each}
           {/if}
@@ -699,8 +713,9 @@
         <RefreshCw class={cn('size-3.5', refreshing && 'animate-spin')} />
         Refresh
       </button>
-      <Button onclick={compare} disabled={comparing}
+      <Button onclick={compare} disabled={comparing || !bothReady}
         class="shrink-0" size="sm"
+        title={bothReady ? `Compare the source with the target` : 'Pick a table or write SQL for both sides first'}
 >
         {#if comparing}<Loader2 class="size-3.5 shrink-0 animate-spin" />{:else}<GitCompare class="size-3.5 shrink-0" />{/if}
         Compare
@@ -782,6 +797,11 @@
       </div>
     </div>
 
+    {#if capped}
+      <p class="shrink-0 border-b border-border/40 px-5 py-1.5 text-ui-2xs text-muted-foreground">
+        Compared the first {ROW_CAP.toLocaleString()} rows of each side; rows past that were not read.
+      </p>
+    {/if}
     <!-- Virtual-scroll table ── -->
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
     <div
@@ -887,6 +907,13 @@
           {#if bottomPad > 0}<tr style="height:{bottomPad}px"><td colspan={columns.length + 2}></td></tr>{/if}
         </tbody>
       </table>
+      {#if displayRows.length === 0}
+        <!-- The Changed view opens first, and with nothing changed it was a
+             header over blank space: the same as a diff that hadn't run. -->
+        <p class="px-5 py-10 text-center text-ui-xs text-muted-foreground">
+          {debouncedQuery ? 'No rows match the search.' : activeFilter === 'changed' ? 'No differences: every compared row matches.' : 'No rows in this view.'}
+        </p>
+      {/if}
     </div>
 
   {:else if comparing}
@@ -899,8 +926,8 @@
         <GitCompare class="size-6 shrink-0 opacity-20" />
       </div>
       <div class="text-center">
-        <p class="text-ui-sm font-medium text-foreground/40">Compare any two data sources</p>
-        <p class="mt-1 text-ui-xs text-muted-foreground">Tables or SQL, even across different hosts</p>
+        <p class="text-ui-sm font-medium text-foreground">Compare any two data sources</p>
+        <p class="mt-1 text-ui-xs text-muted-foreground">{bothReady ? 'Tables or SQL, even across different hosts' : 'Pick a table or write SQL for the source and the target'}</p>
       </div>
     </div>
   {/if}
