@@ -762,6 +762,8 @@
     return Math.round(Math.min(max, Math.max(280, w)));
   }
   const beside = $derived($appSqlEditor.resultsBeside && outputVisible);
+  /** Where Saved lives: its own Queries tab in the shell, else the results pane. */
+  const savedWhere = $derived(onopenqueries ? 'in the Queries tab under Saved' : 'under Saved in the results pane');
   /** @type {(() => Promise<void>) | null} */
   let formatSql = $state(null);
 
@@ -1289,7 +1291,7 @@
         onclick={(e) => (e.shiftKey ? openSaveDialog() : void saveQuery())}
         title={savedQueryName
           ? tipText(`Save "${savedQueryName}"`, `Writes this tab into the saved query. Shift+click or ${mod}⇧S saves a copy under a new name.`, [mod, 'S'])
-          : tipText('Save query', 'Keep this query for later, under Saved in the results pane, per connection.', [mod, 'S'])}
+          : tipText('Save query', `Keep this query for later, ${savedWhere}, per connection.`, [mod, 'S'])}
       >
         {#if savingQuery}
           <Loader2 class="size-3.5 shrink-0 animate-spin" />
@@ -1887,7 +1889,7 @@
       <Dialog.Description class="text-ui-xs text-muted-foreground">
         {savedQueryName
           ? `A copy of "${savedQueryName}". This tab moves to the copy; ${comboTitle('Mod+S')} then saves into it.`
-          : `Saved queries are kept per connection, under Saved in the results pane. After this, ${comboTitle('Mod+S')} saves this tab into it.`}
+          : `Saved queries are kept per connection, ${savedWhere}. After this, ${comboTitle('Mod+S')} saves this tab into it.`}
       </Dialog.Description>
     </Dialog.Header>
     <div class="flex flex-col gap-2">
