@@ -183,7 +183,7 @@
       const reads = d('blksRead'), hits = d('blksHit')
       out.push({
         t: b.t, commits: d('commits'), rollbacks: d('rollbacks'), tps: d('commits') + d('rollbacks'),
-        tupUpdated: d('tupUpdated'), tupDeleted: d('tupDeleted'),
+        tupInserted: d('tupInserted'), tupUpdated: d('tupUpdated'), tupDeleted: d('tupDeleted'),
         reads, hits, hitRatio: (hits + reads) > 0 ? (hits / (hits + reads)) * 100 : 100,
       })
     }
@@ -712,13 +712,14 @@
           })}
           {@render stat({
             label: 'Row writes',
-            help: 'Rows updated and deleted per second across every database on this instance.',
-            value: cur ? num(cur.tupUpdated + cur.tupDeleted) : '—',
+            help: 'Rows inserted, updated and deleted per second across every database on this instance.',
+            value: cur ? num(cur.tupInserted + cur.tupUpdated + cur.tupDeleted) : '—',
             unit: '/s',
             hint: '',
             tone: 'plain',
-            series: rateHistory.map((r) => r.tupUpdated + r.tupDeleted),
+            series: rateHistory.map((r) => r.tupInserted + r.tupUpdated + r.tupDeleted),
             rows: [
+              { k: 'Inserts/s', v: cur ? num(cur.tupInserted) : '—' },
               { k: 'Updates/s', v: cur ? num(cur.tupUpdated) : '—' },
               { k: 'Deletes/s', v: cur ? num(cur.tupDeleted) : '—' },
               { k: 'Fetched total', v: activity ? compact(activity.counters.tupFetched) : '—' },
