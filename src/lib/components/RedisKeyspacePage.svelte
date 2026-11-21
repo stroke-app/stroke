@@ -409,7 +409,8 @@
     staged
       .filter((s) => s.cell === 'create' && s.create)
       .map((s) => /** @type {Row} */ ({
-        key: s.key, binary: false, type: s.create?.type ?? 'string', ttl_ms: -1, memory: null,
+        // The TTL it will get: the row said "no expiry" while a 1h one was staged.
+        key: s.key, binary: false, type: s.create?.type ?? 'string', ttl_ms: s.create?.ttlSeconds ? s.create.ttlSeconds * 1000 : -1, memory: null,
         length: null, preview: s.create?.preview ?? '', truncated: false, at: Date.now(), isNew: true,
       })),
   )
@@ -426,7 +427,13 @@
         return (typeof x === 'string' ? x.localeCompare(String(y), undefined, { numeric: true }) : Number(x) - Number(y)) * dir
       })
     }
-    return creates.length ? [...creates, ...list] : list
+    if (!creates.length) return list
+    // Apply reads the new keys back into `rows` before it clears them from the
+    // staged list, so for that moment a key was in both, and the keyed list
+    // stopped the view with each_key_duplicate. The loaded row wins.
+    const present = new Set(list.map((r) => r.key))
+    const pending = creates.filter((c) => !present.has(c.key))
+    return pending.length ? [...pending, ...list] : list
   })
 
   // ── Selection ─────────────────────────────────────────────────────────────
@@ -557,7 +564,7 @@
     onstage({
       key, binary: false, cell: 'create', label: `create ${nk.type}`,
       ops: createOps(key, nk.type, { value: nk.value, field: nk.field, score: nk.score, ttl: ttl?.seconds ?? null }),
-      create: { type: nk.type, preview },
+      create: { type: nk.type, preview, ttlSeconds: ttl?.seconds ?? null },
     })
     creating = false
   }
@@ -869,7 +876,7 @@
                 <input bind:value={nk.score} placeholder="score" aria-label="Score" inputmode="decimal" autocomplete="off" class="field-surface shadow-none h-7 w-20 min-w-0 px-2 font-mono text-ui-xs text-foreground placeholder:text-muted-foreground" />
               {/if}
               <input bind:value={nk.value} placeholder={nk.type === 'string' || nk.type === 'hash' ? 'value' : 'first element'} aria-label="Value" spellcheck="false" autocomplete="off" class="field-surface shadow-none h-7 min-w-40 flex-1 px-2 font-mono text-ui-xs text-foreground placeholder:text-muted-foreground" />
-              <input bind:value={nk.ttl} placeholder="TTL, e.g. 1h" aria-label="TTL" spellcheck="false" autocomplete="off" class="field-surface shadow-none h-7 w-24 min-w-0 px-2 font-mono text-ui-xs text-foreground placeholder:text-muted-foreground" />
+              <input bind:value={nk.ttl} placeholder="TTL: 1h" title="Time to live: 30s, 10m, 1h, 2d. Empty keeps the key until deleted." aria-label="TTL" spellcheck="false" autocomplete="off" class="field-surface shadow-none h-7 w-24 min-w-0 px-2 font-mono text-ui-xs text-foreground placeholder:text-muted-foreground" />
               <Button type="submit" size="sm" disabled={!nk.key.trim()}>Stage</Button>
               <Button type="button" variant="ghost" size="sm" onclick={() => (creating = false)}>Cancel</Button>
               {#if nkError}<p class="w-full text-ui-2xs text-destructive">{nkError}</p>{/if}
