@@ -3604,7 +3604,7 @@
                  it jumped across and down on every collapse. -->
             <div
               class={cn("flex h-(--app-titlebar-h) shrink-0 items-center gap-1.5 ps-3 pe-2", isMacChrome && "ps-[92px]")}
-              data-tauri-drag-region
+              data-tauri-drag-region="deep"
             >
               <button
                 type="button"
@@ -3916,7 +3916,7 @@
                the window's drag area here. -->
           <div
             class={cn("flex h-(--app-titlebar-h) shrink-0 items-center gap-1 px-3", isMacChrome && !railOpen && "ps-[92px]")}
-            data-tauri-drag-region
+            data-tauri-drag-region="deep"
           >
             {#if !railOpen}
               <button
