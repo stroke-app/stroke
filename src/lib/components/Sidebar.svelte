@@ -1723,8 +1723,18 @@
     clearTimeout(connHoverTimer)
     const r = /** @type {HTMLElement} */ (el)?.getBoundingClientRect?.()
     if (!r) return
-    connHoverTimer = setTimeout(() => { connHover = { c, x: Math.round(r.right + 8), y: Math.round(r.top - 4) } }, 350)
+    connHoverTimer = setTimeout(() => { connCardTop = Math.round(r.top - 4); connHover = { c, x: Math.round(r.right + 8), y: connCardTop } }, 350)
   }
+  /** @type {HTMLElement | null} */
+  let connCardEl = $state(null)
+  /** The card's top, kept inside the window: a row near the bottom put a
+   *  wrapped file path's card past the window's edge. */
+  let connCardTop = $state(0)
+  $effect(() => {
+    const h = connHover, el = connCardEl
+    if (!h || !el) return
+    connCardTop = Math.max(8, Math.min(h.y, window.innerHeight - el.offsetHeight - 8))
+  })
   function hideConnCard() {
     clearTimeout(connHoverTimer)
     connHover = null
@@ -3668,16 +3678,19 @@
 
   {#if connHover}
     <div
-      class="pointer-events-none fixed z-[90] min-w-52 rounded-[10px] border border-border/60 bg-popover px-3 py-2.5 text-ui-xs elevate-2-rim"
+      bind:this={connCardEl}
+      class="pointer-events-none fixed z-[90] min-w-52 max-w-80 rounded-[10px] border border-border/60 bg-popover px-3 py-2.5 text-ui-xs elevate-2-rim"
       style:left="{connHover.x}px"
-      style:top="{connHover.y}px"
+      style:top="{connCardEl ? connCardTop : connHover.y}px"
       role="tooltip"
     >
       <p class="mb-1.5 font-medium text-foreground">{connHover.c.name || connHover.c.database || 'Connection'}</p>
       <div class="flex flex-col gap-1 text-muted-foreground">
         <span class="flex items-center gap-2"><DbIcon id={engineId(connHover.c)} class="size-3.5 shrink-0" /> {engineId(connHover.c)}</span>
         {#if connHover.c.host || connHover.c.filePath}
-          <span class="flex items-center gap-2"><Icon name="server" class="size-3.5 shrink-0" /> <span class="truncate">{connHover.c.host ?? connHover.c.filePath}</span></span>
+          <!-- A file path wraps: on one line a DuckDB file in a deep folder
+               stretched the card across most of the window. -->
+          <span class="flex items-start gap-2"><Icon name="server" class="mt-px size-3.5 shrink-0" /> <span class="min-w-0 break-all">{connHover.c.host ?? connHover.c.filePath}</span></span>
         {/if}
         {#if connHover.c.database}
           <span class="flex items-center gap-2"><Icon name="database" class="size-3.5 shrink-0" /> {connHover.c.database}</span>
