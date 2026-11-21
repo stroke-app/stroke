@@ -37,7 +37,7 @@
     indexes = [],
     /** @type {{ name: string, tableName: string, timing: string, events: string, functionName: string, enabled: boolean }[]} */
     triggers = [],
-    tables = /** @type {{ name: string }[]} */ ([]),
+    tables = /** @type {{ name: string, kind?: string }[]} */ ([]),
     enums = /** @type {{ name: string }[]} */ ([]),
     columnSearch = '',
     loading = false,

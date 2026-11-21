@@ -93,7 +93,7 @@
             <ArrowDown class="size-3.5 shrink-0" />
           </div>
           <span class="mb-1.5 text-ui-2xs font-medium text-muted-foreground">
-            Revert runs{#if undo.statements.length > 1}<span class="tabular-nums"> · {undo.statements.length} statements</span>{/if}
+            Revert runs{#if undo.statements.length > 1}<span class="tabular-nums">{' '}· {undo.statements.length} statements</span>{/if}
           </span>
           <div class="max-h-48 overflow-auto rounded-lg bg-muted/50">
             <CodeEditor value={revertSql} readOnly lang="sql" {dialect} wrap={false} gutter={false} folding={false} suggestWhileTyping={false} ariaLabel="Revert SQL" />

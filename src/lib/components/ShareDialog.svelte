@@ -296,7 +296,7 @@
             <div class="flex items-baseline justify-between gap-3">
               <span id="sh-cols" class={lbl}>{src?.kind === 'json' ? 'Fields' : 'Columns'}</span>
               <span class="text-ui-2xs text-muted-foreground tabular-nums">
-                {keep.size} of {colCount} shared{#if mask.size} · {mask.size} masked{/if}
+                {keep.size} of {colCount} shared{#if mask.size}{' '}· {mask.size} masked{/if}
               </span>
             </div>
             <!-- One row per column: include it, and mask it. Masked rows say so

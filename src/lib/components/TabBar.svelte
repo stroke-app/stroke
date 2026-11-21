@@ -160,7 +160,31 @@
     if (tab.kind === 'shares') return 'share-2'
     if (tab.kind === 'queries') return 'history'
     if (tab.kind === 'migrations') return 'git-merge'
-    return 'file-text'
+    // The rest match the command palette's icon for the same page; they all
+    // fell through to a page icon, so a diagram looked like a notebook.
+    const PAGE_ICONS = /** @type {Record<string, string>} */ ({
+      erd: 'network',
+      diagrams: 'git-branch',
+      reltree: 'list-tree',
+      'schema-timeline': 'git-branch',
+      'data-diff': 'git-compare',
+      backup: 'archive',
+      json: 'braces',
+      charts: 'bar-chart-2',
+      dashboard: 'layout-dashboard',
+      logs: 'history',
+      insights: 'database',
+      advisor: 'shield-check',
+      objects: 'shapes',
+      'extension-detail': 'blocks',
+      ddl: 'file-code',
+      notebook: 'notebook-pen',
+      // A collection, a measurement, a label, a DynamoDB table: rows, like a table tab.
+      docs: 'table-2',
+      dynamodb: 'table-2',
+      redis: 'key-round',
+    })
+    return PAGE_ICONS[tab.kind] ?? 'file-text'
   }
 </script>
 
