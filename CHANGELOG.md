@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.2.0] - 2026-11-21
+
+### Changes
+- Grid: scroll both axes at once, and a switch for the referenced-by columns (#323)
+
+
 ## [3.1.9] - 2026-11-21
 
 ### Changes
