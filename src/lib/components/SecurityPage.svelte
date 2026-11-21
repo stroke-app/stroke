@@ -1,4 +1,5 @@
 <script>
+  import { errorText } from '$lib/utils.js'
   import { executeSql } from "$lib/api.js";
   import ShieldCheck from "@lucide/svelte/icons/shield-check";
   import Users from "@lucide/svelte/icons/users";
@@ -212,7 +213,7 @@
       sqlModal = null;
       refresh();
     } catch (e) {
-      toast.error("Could not run statement", { description: String(e) });
+      toast.error("Could not run statement", { description: errorText(e) });
     } finally {
       sqlRunning = false;
     }

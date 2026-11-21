@@ -8,7 +8,7 @@
   import { Button } from '$lib/components/ui/button/index.js'
   import Icon from './Icon.svelte'
   import SearchField from './SearchField.svelte'
-  import { cn } from '$lib/utils.js'
+  import { cn, errorText } from '$lib/utils.js'
   import { parseThemeFile } from '$lib/themes/theme-file.js'
   import { addImportedTheme } from '$lib/stores/imported-themes.js'
   import { updateSettings } from '$lib/stores/settings.js'
@@ -175,7 +175,7 @@
 
     <Dialog.Footer class="mx-0 mb-0 flex-row gap-2 border-t border-border/40 px-6 py-3 sm:justify-end">
       <Button variant="ghost" size="sm" onclick={() => (open = false)}>Cancel</Button>
-      <Button size="sm" class="gap-1.5" disabled={!pasted?.theme} onclick={() => { try { add(JSON.parse(json), 'pasted JSON') } catch (e) { toast.error("Couldn't add the theme", { description: String(e) }) } }}>
+      <Button size="sm" class="gap-1.5" disabled={!pasted?.theme} onclick={() => { try { add(JSON.parse(json), 'pasted JSON') } catch (e) { toast.error("Couldn't add the theme", { description: errorText(e) }) } }}>
         <Icon name="plus" class="size-3.5 shrink-0" />Add theme
       </Button>
     </Dialog.Footer>

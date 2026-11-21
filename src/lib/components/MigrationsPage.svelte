@@ -10,7 +10,7 @@
   import { Button } from '$lib/components/ui/button/index.js'
   import SegmentedControl from './SegmentedControl.svelte'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
-  import { cn } from '$lib/utils.js'
+  import { cn, errorText } from '$lib/utils.js'
   import RefreshCw from '@lucide/svelte/icons/refresh-cw'
   import FolderOpen from '@lucide/svelte/icons/folder-open'
   import ChevronRight from '@lucide/svelte/icons/chevron-right'
@@ -135,7 +135,7 @@
       await loadProject()
       if (project && project.tool !== tool) setTool(project.tool)
     } catch (e) {
-      toast.error('Could not open the folder', { description: String(e) })
+      toast.error('Could not open the folder', { description: errorText(e) })
     }
   }
 

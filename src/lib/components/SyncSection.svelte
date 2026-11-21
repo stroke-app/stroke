@@ -6,7 +6,7 @@
   import { Input } from '$lib/components/ui/input/index.js'
   import { syncStatus, syncLabel, syncNow, setupSync, unlockSync, resetSync, lockSync } from '$lib/sync/runtime.js'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
-  import { cn } from '$lib/utils.js'
+  import { cn, errorText } from '$lib/utils.js'
   import RefreshCw from '@lucide/svelte/icons/refresh-cw'
   import LockKeyhole from '@lucide/svelte/icons/lock-keyhole'
   import CircleAlert from '@lucide/svelte/icons/circle-alert'
@@ -82,7 +82,7 @@
       await lockSync()
       toast.success('Sync locked on this device', { description: 'Your synced data stays in your account.' })
     } catch (e) {
-      toast.error('Could not lock sync', { description: String(e) })
+      toast.error('Could not lock sync', { description: errorText(e) })
     }
   }
 </script>

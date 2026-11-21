@@ -20,7 +20,7 @@
   import { readOnlyMode, guardWrite, READ_ONLY_HINT } from '$lib/stores/read-only.js'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
   import { getAppScale } from '$lib/app-zoom.js'
-  import { cn } from '$lib/utils.js'
+  import { cn, errorText } from '$lib/utils.js'
   import {
     unmarshallItem, marshallItem, cellText, attrType, columnsFor, keyShapes, keyOf, keyId,
     queryBody, scanBody, saveRequest, newItemTemplate, SORT_OPS, dynamoGrid,
@@ -467,7 +467,7 @@
     try {
       if (await saveExportFile(content, buildExportFilename(table, fmt), fmt)) toast.success(`Exported ${rows.length.toLocaleString()} ${rows.length === 1 ? 'item' : 'items'}`)
     } catch (e) {
-      toast.error('Export failed', { description: String(e) })
+      toast.error('Export failed', { description: errorText(e) })
     }
   }
   async function copyJson() {
@@ -476,7 +476,7 @@
       await navigator.clipboard.writeText(JSON.stringify(objs.length === 1 ? objs[0] : objs, null, 2))
       toast.success(`Copied ${objs.length.toLocaleString()} as JSON`)
     } catch (e) {
-      toast.error('Could not copy', { description: String(e) })
+      toast.error('Could not copy', { description: errorText(e) })
     }
   }
 

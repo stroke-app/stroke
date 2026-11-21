@@ -14,7 +14,7 @@
   import Copy from '@lucide/svelte/icons/copy'
   import CopyPlus from '@lucide/svelte/icons/copy-plus'
   import Braces from '@lucide/svelte/icons/braces'
-  import { cn } from '$lib/utils.js'
+  import { cn, errorText } from '$lib/utils.js'
   import { saveExportAs } from '$lib/api.js'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
   import { variableNames } from '$lib/notebook.js'
@@ -110,7 +110,7 @@
       const path = await saveExportAs([header, ...rows].join('\n'), `query-${cellIndex + 1}.csv`, { name: 'CSV', extensions: ['csv'] })
       if (path) toast.success('Exported as CSV', { description: `Saved to ${path}` })
     } catch (e) {
-      toast.error('Export failed', { description: String(e) })
+      toast.error('Export failed', { description: errorText(e) })
     }
   }
 

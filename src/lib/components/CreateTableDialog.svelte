@@ -11,7 +11,7 @@
     buildTableSql, validateTable, tableFamily, typeDef, indexName, fkActions,
     COLUMN_TYPES, DEFAULT_SUGGESTIONS, hasPlaceholder, placeholderText, toSnippet,
   } from '$lib/ddl-builders.js'
-  import { cn } from '$lib/utils.js'
+  import { cn, errorText } from '$lib/utils.js'
   import Plus from '@lucide/svelte/icons/plus'
   import X from '@lucide/svelte/icons/x'
   import GripVertical from '@lucide/svelte/icons/grip-vertical'
@@ -215,7 +215,7 @@
       try {
         await onexecute(create)
       } catch (e) {
-        toast.error('Could not create table', { description: String(e) })
+        toast.error('Could not create table', { description: errorText(e) })
         return
       }
       // Comments and indexes run after the table exists, one at a time: not

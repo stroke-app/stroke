@@ -12,7 +12,7 @@
   } from '$lib/chart-utils.js'
   import { isCurrentThemeDark } from '$lib/stores/settings.js'
   import { chartGroups, saveChart, addGroup } from '$lib/stores/saved-charts.js'
-  import { cn } from '$lib/utils.js'
+  import { cn, errorText } from '$lib/utils.js'
   import { saveExportAs } from '$lib/api.js'
   import { canvasToPngBlob, copyPngToClipboard } from '$lib/svg-png.js'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
@@ -248,7 +248,7 @@
       if (!path) return  // dialog cancelled
       toast.success('Chart saved', { description: `Saved to ${path}` })
     } catch (e) {
-      toast.error('Could not save the chart', { description: String(e) })
+      toast.error('Could not save the chart', { description: errorText(e) })
     }
   }
 
@@ -257,7 +257,7 @@
       await copyPngToClipboard(await canvasToPngBlob(chartCanvas()))
       toast.success('Chart copied as PNG')
     } catch (e) {
-      toast.error('Copy failed', { description: String(e) })
+      toast.error('Copy failed', { description: errorText(e) })
     }
   }
 
@@ -285,7 +285,7 @@
       if (!path) return  // dialog cancelled
       toast.success('Chart saved as SVG', { description: `Saved to ${path}` })
     } catch (e) {
-      toast.error('Could not save the chart', { description: String(e) })
+      toast.error('Could not save the chart', { description: errorText(e) })
     } finally {
       host.remove()
     }

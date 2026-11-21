@@ -173,8 +173,9 @@ pub async fn stream_into(
     stop: &super::stop::Stop,
 ) -> Result<SqlResult, String> {
     let id = fresh_query_id();
-    let run = stream_rows(config, sql, sink, &id);
-    tokio::pin!(run);
+    // Boxed, so `drop(run)` below really ends the future and lets go of
+    // what it holds (a connection, a stream); a stack pin outlived it.
+    let mut run = Box::pin(stream_rows(config, sql, sink, &id));
     tokio::select! {
         r = &mut run => r,
         _ = stop.wait() => {

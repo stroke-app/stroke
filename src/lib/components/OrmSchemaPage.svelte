@@ -18,7 +18,7 @@
     renderSqlSchema, renderSqlDatabase,
     PRISMA_ENGINES, DRIZZLE_ENGINES, SQL_ENGINES,
   } from '$lib/orm-schema.js'
-  import { cn } from '$lib/utils.js'
+  import { cn, errorText } from '$lib/utils.js'
 
   let {
     /** Schema to describe. */
@@ -206,7 +206,7 @@
       clearTimeout(copyTimer)
       copyTimer = setTimeout(() => (copied = false), 1600)
     } catch (e) {
-      toast.error('Could not copy', { description: String(e) })
+      toast.error('Could not copy', { description: errorText(e) })
     }
   }
 
@@ -219,7 +219,7 @@
       if (!path) return // dialog cancelled
       toast.success(`Exported ${active.label} schema`, { description: `Saved to ${path}` })
     } catch (e) {
-      toast.error('Export failed', { description: String(e) })
+      toast.error('Export failed', { description: errorText(e) })
     }
   }
 </script>

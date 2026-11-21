@@ -52,6 +52,19 @@
     ondragtabend = () => {},
   } = $props()
 
+  /** Titles that tabs from different databases share (two "orders" tables):
+   *  those tabs name their database after the title. */
+  const clashing = $derived.by(() => {
+    /** @type {Map<string, Set<string>>} */
+    const by = new Map()
+    for (const t of tabs) {
+      if (!t.connLabel) continue
+      const title = tabDisplayTitle(t)
+      by.set(title, (by.get(title) ?? new Set()).add(t.connLabel))
+    }
+    return new Set([...by].filter(([, dbs]) => dbs.size > 1).map(([title]) => title))
+  })
+
   // ── Pointer-based tab drag (HTML5 DnD is unreliable in Tauri's WebKit) ──────
   /** @type {{ id: string, startX: number, startY: number, active: boolean } | null} */
   let _tabDrag = null
@@ -219,7 +232,7 @@
                 onclick={() => { if (_suppressTabClick) { _suppressTabClick = false; return } onselect(tab.id) }}
               >
                 <Icon name={tabIconName} class={cn('size-3.5 shrink-0', active ? 'text-foreground' : 'text-muted-foreground')} />
-                <span class="truncate">{tabDisplayTitle(tab)}</span>
+                <span class="truncate">{tabDisplayTitle(tab)}{#if tab.connLabel && clashing.has(tabDisplayTitle(tab))}<span class="text-muted-foreground">{` · ${tab.connLabel}`}</span>{/if}</span>
               </button>
 
               {#if tab.pinned}

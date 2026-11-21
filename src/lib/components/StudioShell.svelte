@@ -21,7 +21,7 @@
   import SquareTerminal from '@lucide/svelte/icons/square-terminal'
   import Sparkles from '@lucide/svelte/icons/sparkles'
   import LayoutTemplate from '@lucide/svelte/icons/layout-template'
-  import { cn } from '$lib/utils.js'
+  import { cn, errorText } from '$lib/utils.js'
   import Command from '@lucide/svelte/icons/command'
   import Keyboard from '@lucide/svelte/icons/keyboard'
   import Code2 from '@lucide/svelte/icons/code-2'
@@ -610,7 +610,7 @@
       const { openLocalServersWindow } = await import('$lib/local-servers.js')
       await openLocalServersWindow(getCurrentWindow().label)
     } catch (e) {
-      toast.error('Could not open Local servers', { description: String(e) })
+      toast.error('Could not open Local servers', { description: errorText(e) })
     }
   }
   $effect(() => {
@@ -1366,7 +1366,7 @@
         }
         toast.success(`Replaced ${done.toLocaleString('en-US')} value${done === 1 ? '' : 's'} in ${activeTable}`)
       } catch (err) {
-        toast.error(`Stopped after ${done} of ${edits.length} replacements`, { description: String(err) })
+        toast.error(`Stopped after ${done} of ${edits.length} replacements`, { description: errorText(err) })
       }
       return
     }
@@ -1394,7 +1394,7 @@
       toast.success(`Replaced ${done.toLocaleString('en-US')} value${done === 1 ? '' : 's'} in ${activeTable}`)
     } catch (err) {
       recordActivity({ type: 'row_save', title: `Find & replace failed in ${activeTable}`, schema: activeSchema, table: activeTable, success: false, error: String(err) })
-      toast.error(done ? `Stopped after ${done.toLocaleString('en-US')} of ${edits.length}` : 'Find & replace failed', { description: String(err) })
+      toast.error(done ? `Stopped after ${done.toLocaleString('en-US')} of ${edits.length}` : 'Find & replace failed', { description: errorText(err) })
     }
     await loadRows({ keepScroll: true })
   }
@@ -1456,7 +1456,7 @@
       if (!Number.isFinite(n) || n < 0) throw new Error('Count not available on this connection')
       toast.success(tableName, { description: `${n.toLocaleString('en-US')} row${n === 1 ? '' : 's'}` })
     } catch (e) {
-      toast.error('Count failed', { description: String(e) })
+      toast.error('Count failed', { description: errorText(e) })
     }
   }
 
@@ -1467,7 +1467,7 @@
       await navigator.clipboard.writeText(cols.map((c) => c.name).join(', '))
       toast.success(`Copied ${cols.length} column name${cols.length === 1 ? '' : 's'}`)
     } catch (e) {
-      toast.error('Copy columns failed', { description: String(e) })
+      toast.error('Copy columns failed', { description: errorText(e) })
     }
   }
 
@@ -1643,7 +1643,7 @@
       setTxStatus(activeTabId, status)
       toast.info('Transaction open — nothing is saved until you commit')
     } catch (e) {
-      toast.error('Could not start a transaction', { description: String(e) })
+      toast.error('Could not start a transaction', { description: errorText(e) })
     } finally {
       sqlTxBusy = false
     }
@@ -1673,7 +1673,7 @@
       // rolls back what is left, or closes the connection so the server does.
       forgetTxSession(tabId)
       toast.error(how === 'commit' ? 'Could not commit' : 'Could not roll back', {
-        description: String(e),
+        description: errorText(e),
       })
     } finally {
       sqlTxBusy = false
@@ -3621,7 +3621,7 @@ let rowSearch = $state('')
   function openNewWindow() {
     void import('@tauri-apps/api/core')
       .then(({ invoke }) => invoke('open_new_window'))
-      .catch((err) => toast.error('Could not open a new window', { description: String(err) }))
+      .catch((err) => toast.error('Could not open a new window', { description: errorText(err) }))
   }
 
   /**
@@ -6037,7 +6037,7 @@ let rowSearch = $state('')
     } catch (e) {
       if (String(e).includes('Query cancelled')) return
       if (connectionMoved(connAtCall)) return
-      toast.error('Could not load table structure', { description: String(e) })
+      toast.error('Could not load table structure', { description: errorText(e) })
       if (activeTable === targetTable) { structureColumns = []; structureError = String(e).replace(/^Error:\s*/, '') }
     } finally {
       if (mySeq === _structureSeq) loadingStructure = false
@@ -7600,7 +7600,7 @@ let rowSearch = $state('')
       } catch (e) {
         toast.dismiss(fetchId)
         exportingData = false
-        toast.error('Export failed', { description: String(e) })
+        toast.error('Export failed', { description: errorText(e) })
         return
       }
       toast.dismiss(fetchId)
@@ -7652,7 +7652,7 @@ let rowSearch = $state('')
       }
     } catch (e) {
       toast.dismiss(toastId)
-      toast.error('Export failed', { description: String(e) })
+      toast.error('Export failed', { description: errorText(e) })
       recordActivity({ type: 'export', title: `Failed to export ${activeTable} as ${format.toUpperCase()}`, schema: activeSchema, table: activeTable ?? undefined, success: false, error: String(e) })
     } finally {
       exportingData = false
@@ -7810,7 +7810,7 @@ let rowSearch = $state('')
       void refreshAfterSql(sqlRunEffects(u.statements[0] ?? ''))
       settleRevert(true)
     } catch (e) {
-      toast.error('Revert failed', { description: String(e).replace(/^Error:\s*/, '').replace(/^Query failed:\s*/, ''), code: true })
+      toast.error('Revert failed', { description: errorText(e).replace(/^Error:\s*/, '').replace(/^Query failed:\s*/, ''), code: true })
       settleRevert(false)
     }
   }
@@ -8106,7 +8106,7 @@ let rowSearch = $state('')
         } catch (e) {
           // Schema list failed - surface it but keep going so loadTables() still
           // runs and clears the loading flag (sidebar must never hang forever).
-          toast.error('Could not load schemas', { description: String(e) })
+          toast.error('Could not load schemas', { description: errorText(e) })
         }
         if (schemas.length > 0) break
       }
@@ -8514,7 +8514,7 @@ let rowSearch = $state('')
         newId: newConnectionId,
       }))
     } catch (e) {
-      toast.error('Could not switch database', { description: String(e) })
+      toast.error('Could not switch database', { description: errorText(e) })
     }
   }
 
@@ -8654,7 +8654,7 @@ let rowSearch = $state('')
       toast.success(`Database "${name}" dropped`)
       databasesRefreshKey++
     } catch (e) {
-      toast.error(`Could not drop "${name}"`, { description: String(e) })
+      toast.error(`Could not drop "${name}"`, { description: errorText(e) })
     }
   }
 
@@ -8666,7 +8666,7 @@ let rowSearch = $state('')
       const closed = r?.rows?.length ?? 0
       toast.success(closed === 0 ? `No other sessions on "${name}"` : `Closed ${closed} session(s) on "${name}"`)
     } catch (e) {
-      toast.error(`Could not close sessions on "${name}"`, { description: String(e) })
+      toast.error(`Could not close sessions on "${name}"`, { description: errorText(e) })
     }
   }
 
@@ -9058,6 +9058,19 @@ let rowSearch = $state('')
    * switch. They look like any other tab: which database one belongs to is in
    * its tooltip and in the status bar (openDatabases).
    */
+  /**
+   * An open database's name where several are open (tab tooltips, status bar):
+   * its connection's own name, since "postgres" next to "Redis local" said
+   * nothing and Spanner and BigQuery both called theirs "shop". The database
+   * joins it only when one connection has several open.
+   * @param {any} c @param {any[]} conns
+   */
+  function openLabel(c, conns) {
+    if (!c?.name) return sessionLabel(c)
+    const several = conns.filter((o) => o?.id && o.id === c.id).length > 1
+    return several ? `${c.name} · ${sessionLabel(c)}` : String(c.name)
+  }
+
   const barTabs = $derived.by(() => {
     void sessionsTick
     const own = $appAiInTab ? tabs : tabs.filter((t) => t.kind !== 'ai')
@@ -9065,14 +9078,16 @@ let rowSearch = $state('')
     const here = sessionKey(connection)
     const kept = [..._sessions].filter(([k, s]) => k !== here && s.tabs.some((t) => t.kind !== 'welcome'))
     if (!kept.length) return own
-    const label = sessionLabel(connection)
+    const conns = [connection, ...kept.map(([, s]) => s.conn)]
+    const label = openLabel(connection, conns)
     const order = sessionOrder.includes(here) ? sessionOrder : [...sessionOrder, here]
     /** @type {any[]} */
     const out = []
     for (const k of order) {
+      const s = _sessions.get(k)
       const group = k === here
         ? own.map((t) => ({ ...t, connLabel: label }))
-        : (_sessions.get(k)?.tabs ?? []).filter((t) => t.kind !== 'welcome' && ($appAiInTab || t.kind !== 'ai')).map((t) => ({ ...t, connLabel: _sessions.get(k)?.label, foreign: true }))
+        : (s?.tabs ?? []).filter((t) => t.kind !== 'welcome' && ($appAiInTab || t.kind !== 'ai')).map((t) => ({ ...t, connLabel: openLabel(s?.conn, conns), foreign: true }))
       out.push(...group)
     }
     return out
@@ -9084,13 +9099,15 @@ let rowSearch = $state('')
     if (!connection || _sessions.size === 0) return []
     const here = sessionKey(connection)
     const order = sessionOrder.includes(here) ? sessionOrder : [...sessionOrder, here]
-    /** @type {{ key: string, label: string, current: boolean }[]} */
-    const out = []
+    /** @type {{ key: string, conn: any, current: boolean }[]} */
+    const open = []
     for (const k of order) {
-      if (k === here) out.push({ key: k, label: sessionLabel(connection), current: true })
-      else if (_sessions.has(k)) out.push({ key: k, label: /** @type {KeptSession} */ (_sessions.get(k)).label, current: false })
+      if (k === here) open.push({ key: k, conn: connection, current: true })
+      else if (_sessions.has(k)) open.push({ key: k, conn: /** @type {KeptSession} */ (_sessions.get(k)).conn, current: false })
     }
-    return out.length > 1 ? out : []
+    if (open.length < 2) return []
+    const conns = open.map((o) => o.conn)
+    return open.map(({ key, conn, current }) => ({ key, current, label: openLabel(conn, conns) }))
   })
 
   /**
@@ -9207,7 +9224,7 @@ let rowSearch = $state('')
       switchingTo = ''
       // Say why, then put the user back where they were instead of leaving
       // them disconnected behind a dialog with no message in it.
-      toast.error(`Could not connect to ${conn.name ?? conn.database ?? conn.host ?? 'the database'}`, { description: String(e) })
+      toast.error(`Could not connect to ${conn.name ?? conn.database ?? conn.host ?? 'the database'}`, { description: e instanceof Error ? e.message : String(e) })
       const back = kept ? _sessions.get(kept) : undefined
       if (back && (await resumeKept(kept, back, null))) return
       let restored = false
@@ -9493,7 +9510,7 @@ let rowSearch = $state('')
       toast.success(`Truncated "${tableName}"`)
       if (activeTable === tableName) await loadRows()
     } catch (err) {
-      toast.error('Could not truncate table', { description: String(err) })
+      toast.error('Could not truncate table', { description: errorText(err) })
     }
   }
 
@@ -9507,7 +9524,7 @@ let rowSearch = $state('')
     try {
       await dropTable(schema, tableName, cascade, kind)
     } catch (err) {
-      toast.error('Could not drop', { description: String(err) })
+      toast.error('Could not drop', { description: errorText(err) })
       return
     }
     toast.success(`Dropped ${kind === 'table' ? 'table' : 'view'} "${tableName}"`)
@@ -9530,7 +9547,7 @@ let rowSearch = $state('')
       if (aiMode) exitAiMode()
       openDdlTab(ddl.endsWith('\n') ? ddl : `${ddl}\n`, `DDL · ${tableName}`)
     } catch (e) {
-      toast.error('Could not load DDL', { description: String(e) })
+      toast.error('Could not load DDL', { description: errorText(e) })
     }
   }
 
@@ -9552,7 +9569,7 @@ let rowSearch = $state('')
       const filename = `${tableName}_${new Date().toISOString().slice(0, 10)}.sql`
       await saveExportFile(sql, filename, 'sql')
     } catch (e) {
-      toast.error('Could not export', { description: String(e) })
+      toast.error('Could not export', { description: errorText(e) })
     }
   }
 
@@ -9567,7 +9584,7 @@ let rowSearch = $state('')
       const filename = buildExportFilename(tableName, 'csv')
       await saveExportFile(csv, filename, 'csv')
     } catch (e) {
-      toast.error('Could not export', { description: String(e) })
+      toast.error('Could not export', { description: errorText(e) })
     }
   }
 
@@ -9587,7 +9604,7 @@ let rowSearch = $state('')
       const sql = `-- Generated test data template for ${tableName}\nINSERT INTO "${tableName}" (\n  ${colNames}\n) VALUES (\n  ${colPlaceholders}\n);`
       await openQueryInEditor(sql)
     } catch (e) {
-      toast.error('Could not generate test data', { description: String(e) })
+      toast.error('Could not generate test data', { description: errorText(e) })
     }
   }
 
@@ -9655,7 +9672,7 @@ let rowSearch = $state('')
       saveActiveTabState()
       await loadRows({ keepScroll: true })
     } catch (err) {
-      toast.error('Could not delete rows', { description: String(err) })
+      toast.error('Could not delete rows', { description: errorText(err) })
       throw err
     } finally {
       deletingRows = false
@@ -9800,7 +9817,7 @@ let rowSearch = $state('')
         })
       }
     } catch (err) {
-      toast.error('Could not insert row', { description: String(err) })
+      toast.error('Could not insert row', { description: errorText(err) })
       throw err
     } finally {
       insertingRow = false
@@ -9825,7 +9842,7 @@ let rowSearch = $state('')
       toast.success('Changes applied')
     } catch (err) {
       recordActivity({ type: 'row_save', title: `Failed edited SQL${activeTable ? ` on ${activeTable}` : ''}`, schema: activeSchema, table: activeTable ?? '', success: false, error: String(err) })
-      toast.error('Could not apply changes', { description: String(err) })
+      toast.error('Could not apply changes', { description: errorText(err) })
       throw err
     }
   }
@@ -10198,7 +10215,7 @@ let rowSearch = $state('')
   existingSchemas={schemas}
   onexecute={async (sql) => {
     try { await executeDdl(sql) }
-    catch (e) { toast.error('Could not create schema', { description: String(e) }); throw e }
+    catch (e) { toast.error('Could not create schema', { description: errorText(e) }); throw e }
   }}
   oncreated={async (schemaName) => {
     toast.success(`Schema "${schemaName}" created`)
@@ -10603,6 +10620,7 @@ let rowSearch = $state('')
         onschemachange={handleSchemaChange}
         ontableselect={handleTableSelect}
         sqlTables={!isKV}
+        tablesLabel={docAdapter?.noun.collections ?? ''}
         ontablefilter={(v) => (tableFilter = v)}
         onrefresh={handleRefresh}
         {connection}

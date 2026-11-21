@@ -9,7 +9,9 @@
 
   // With no label there is nothing to read while the chunk lands - show a
   // credit instead, same pool the table loader draws from.
-  const message = label || nextLoadingMessage(EASTER_EGGS);
+  // A credit is picked once; a label passed later still shows.
+  const credit = nextLoadingMessage(EASTER_EGGS);
+  const message = $derived(label || credit);
 
   // Held back like the grid's loader: a chunk that lands in a frame or two
   // (most of them) never flashes a spinner and a line of text on its way past.

@@ -2,7 +2,7 @@
   import FieldSelect from './FieldSelect.svelte';
   import { untrack } from 'svelte'
   import Icon from './Icon.svelte'
-  import { cn } from '$lib/utils.js'
+  import { cn, errorText } from '$lib/utils.js'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
   import { formatCellValue, anyDisplayExtEnabled } from '$lib/plugins/registry.js'
   import { pluginState } from '$lib/stores/plugins.js'
@@ -298,7 +298,7 @@
     try {
       await onsave({ rowIdx: idx, colIdx, value })
     } catch (e) {
-      toast.error(`Failed to save ${col.name}`, { description: String(e) })
+      toast.error(`Failed to save ${col.name}`, { description: errorText(e) })
     } finally {
       savingFields = { ...savingFields, [colIdx]: false }
     }

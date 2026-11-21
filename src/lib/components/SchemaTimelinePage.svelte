@@ -15,7 +15,7 @@
   import Ellipsis from '@lucide/svelte/icons/ellipsis'
   import { onMount } from 'svelte'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
-  import { cn } from '$lib/utils.js'
+  import { cn, errorText } from '$lib/utils.js'
   import * as Dialog from '$lib/components/ui/dialog/index.js'
   import { Button } from '$lib/components/ui/button/index.js'
   import FileCode from '@lucide/svelte/icons/file-code'
@@ -123,7 +123,7 @@
       await navigator.clipboard.writeText(migrationScript)
       toast.success('Migration copied')
     } catch (e) {
-      toast.error('Could not copy', { description: String(e) })
+      toast.error('Could not copy', { description: errorText(e) })
     }
   }
   const totalChanges = $derived(

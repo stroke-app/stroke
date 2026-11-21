@@ -1,4 +1,5 @@
 <script>
+  import { errorText } from '$lib/utils.js'
   import { onDestroy, tick, untrack } from "svelte";
   import { createSwapy } from "swapy";
   import EChartPanel from "./EChartPanel.svelte";
@@ -273,7 +274,7 @@
       const { invoke } = await import("@tauri-apps/api/core");
       await invoke("open_dashboard_window", { dashboardId: activeDash.id, connectionId: dashboardsConnectionId() || connection.id, title: activeDash.name });
     } catch (e) {
-      toast.error("Could not open the window", { description: String(e) });
+      toast.error("Could not open the window", { description: errorText(e) });
     }
   }
 

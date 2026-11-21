@@ -1,4 +1,5 @@
 <script>
+  import { errorText } from '$lib/utils.js'
   import FieldSelect from './FieldSelect.svelte';
   import { getAppScale } from '$lib/app-zoom.js'
   import X from '@lucide/svelte/icons/x'
@@ -281,7 +282,7 @@
     try {
       await onsave({ rowIdx: target.rowIdx, colIdx, value })
     } catch (e) {
-      toast.error(`Failed to save ${col.name}`, { description: String(e) })
+      toast.error(`Failed to save ${col.name}`, { description: errorText(e) })
     } finally {
       savingFields = { ...savingFields, [colIdx]: false }
     }

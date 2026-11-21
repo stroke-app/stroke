@@ -10,7 +10,7 @@
   import * as Dialog from '$lib/components/ui/dialog/index.js'
   import { Button } from '$lib/components/ui/button/index.js'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
-  import { cn } from '$lib/utils.js'
+  import { cn, errorText } from '$lib/utils.js'
   import { buildQueryTree, copyName, uniqueFolderName, planFolderDelete } from '$lib/query-folders.js'
   import { loadQueryFolders, saveQueryFolders } from '$lib/stores/query-folders.js'
   import {
@@ -112,7 +112,7 @@
       await updateSavedQuery(r.id, { name })
       await onrefresh()
     } catch (e) {
-      toast.error("Couldn't rename the query", { description: String(e) })
+      toast.error("Couldn't rename the query", { description: errorText(e) })
     } finally {
       const next = new Map(renamedTo)
       next.delete(r.id)

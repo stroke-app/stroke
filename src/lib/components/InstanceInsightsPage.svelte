@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte'
-  import { cn } from '$lib/utils.js'
+  import { cn, errorText } from '$lib/utils.js'
   import EChartPanel from './EChartPanel.svelte'
   import SearchableMenu from './SearchableMenu.svelte'
   import { Button } from '$lib/components/ui/button/index.js'
@@ -517,7 +517,7 @@
           duration: 10000,
         })
       } else {
-        toast.error('Could not change setting', { description: String(e), duration: 8000 })
+        toast.error('Could not change setting', { description: errorText(e), duration: 8000 })
       }
     } finally {
       savingSetting = ''

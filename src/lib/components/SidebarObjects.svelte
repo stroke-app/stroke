@@ -37,7 +37,7 @@
   import {
     objectGroups, objectsVersion, bumpObjects, openDefinition, copyDefinition, openTemplate,
   } from '$lib/stores/sidebar-objects.svelte.js'
-  import { cn } from '$lib/utils.js'
+  import { cn, errorText } from '$lib/utils.js'
 
   /** @typedef {import('$lib/object-templates.js').ObjectKind} ObjectKind */
   /** @typedef {import('$lib/objects-tree.js').TreeRow} TreeRow */
@@ -447,7 +447,7 @@
       }
       bumpObjects()
     } catch (e) {
-      toast.error(`Couldn't drop ${item.name}`, { description: String(e) })
+      toast.error(`Couldn't drop ${item.name}`, { description: errorText(e) })
     }
   }
 
@@ -457,7 +457,7 @@
       await navigator.clipboard.writeText(text)
       toast.success('Copied')
     } catch (e) {
-      toast.error('Copy failed', { description: String(e) })
+      toast.error('Copy failed', { description: errorText(e) })
     }
   }
 

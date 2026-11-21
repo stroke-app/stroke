@@ -1,4 +1,5 @@
 <script>
+  import { errorText } from '$lib/utils.js'
   import { ECHARTS_THEME } from '$lib/chart-utils.js'
   import { chartRows } from '$lib/ai-chart-data.js'
   /**
@@ -179,7 +180,7 @@
       if (!path) return  // dialog cancelled
       toast.success('Chart saved as PNG', { description: `Saved to ${path}` })
     } catch (e) {
-      toast.error('Could not save the chart', { description: String(e) })
+      toast.error('Could not save the chart', { description: errorText(e) })
     }
   }
 

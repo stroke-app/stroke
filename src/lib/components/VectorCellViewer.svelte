@@ -13,7 +13,7 @@
   import { Button } from '$lib/components/ui/button/index.js'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
   import { parseVector, vectorBars, vectorHistogram, short } from '$lib/vector-cell.js'
-  import { cn } from '$lib/utils.js'
+  import { cn, errorText } from '$lib/utils.js'
 
   let {
     open = $bindable(false),
@@ -79,7 +79,7 @@
       await navigator.clipboard.writeText(String(value ?? ''))
       toast.success(`Copied ${info ? `${info.dim} values` : 'value'}`)
     } catch (e) {
-      toast.error('Could not copy', { description: String(e) })
+      toast.error('Could not copy', { description: errorText(e) })
     }
   }
 

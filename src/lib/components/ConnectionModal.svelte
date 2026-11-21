@@ -1,4 +1,5 @@
 <script>
+  import { errorText } from '$lib/utils.js'
   import { tick, untrack, onDestroy } from "svelte";
   import Icon from "./Icon.svelte";
   import CloudflareLogin from "./CloudflareLogin.svelte";
@@ -2545,7 +2546,7 @@
         : {});
       await refreshLocal();
     } catch (e) {
-      toast.error(`Couldn't ${action} ${name}`, { description: String(e).replace(/^Error:\s*/, "") });
+      toast.error(`Couldn't ${action} ${name}`, { description: errorText(e).replace(/^Error:\s*/, "") });
     } finally {
       dockerBusy = "";
     }
