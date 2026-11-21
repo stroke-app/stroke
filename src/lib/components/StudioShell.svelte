@@ -10266,7 +10266,7 @@ let rowSearch = $state('')
 <Dialog.Root bind:open={showProGate} closeOnEscape={true} closeOnOutsideClick={true}>
   <Dialog.Portal>
     <Dialog.Overlay class="fixed inset-0 z-50 bg-black/65" />
-    <Dialog.Content class="fixed left-1/2 top-1/2 z-50 w-full max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-border/60 bg-background p-5 elevate-3-rim outline-none">
+    <Dialog.Content class="fixed inset-0 m-auto h-fit z-50 w-full max-w-sm rounded-2xl border border-border/60 bg-background p-5 elevate-3-rim outline-none">
       <div class="mb-5 flex size-10 items-center justify-center rounded-lg border border-warning/20 bg-warning/10">
         <Lock class="size-5 text-warning" />
       </div>

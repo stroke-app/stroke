@@ -8712,9 +8712,27 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     }
     window.addEventListener('resize', resync)
     window.visualViewport?.addEventListener('resize', resync)
+    // Moving the window between a Retina screen and a 1x external monitor
+    // changes the pixel density without resizing anything, so no resize event
+    // comes: the canvas kept its 2x bitmap, scaled down, and read as blurry.
+    // A media query on the current density fires when it changes; re-armed
+    // for the new one each time.
+    /** @type {MediaQueryList | null} */
+    let mq = null
+    const armDpr = () => {
+      mq?.removeEventListener('change', onDpr)
+      mq = window.matchMedia?.(`(resolution: ${window.devicePixelRatio}dppx)`) ?? null
+      mq?.addEventListener('change', onDpr)
+    }
+    function onDpr() {
+      resync()
+      armDpr()
+    }
+    armDpr()
     return () => {
       window.removeEventListener('resize', resync)
       window.visualViewport?.removeEventListener('resize', resync)
+      mq?.removeEventListener('change', onDpr)
     }
   })
 
