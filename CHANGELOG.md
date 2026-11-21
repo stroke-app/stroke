@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.3.2] - 2026-11-21
+
+### Changes
+- Make the agent tools work on every engine; Spanner interleave relations; Turso .dump (#335)
+
+
 ## [3.3.1] - 2026-11-21
 
 ### Changes
