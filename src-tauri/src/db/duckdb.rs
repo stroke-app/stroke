@@ -181,6 +181,50 @@ fn for_each_row_streaming(
     for_each_row_in(conn, sql, &[], true, on_columns, on_row)
 }
 
+
+/// DuckDB's SQL name for a column's logical type (the short aliases it accepts).
+fn duck_type_name(id: ::duckdb::core::LogicalTypeId) -> String {
+    use ::duckdb::core::LogicalTypeId as T;
+    match id {
+        T::Boolean => "boolean",
+        T::Tinyint => "tinyint",
+        T::Smallint => "smallint",
+        T::Integer => "integer",
+        T::Bigint => "bigint",
+        T::Hugeint => "hugeint",
+        T::UTinyint => "utinyint",
+        T::USmallint => "usmallint",
+        T::UInteger => "uinteger",
+        T::UBigint => "ubigint",
+        T::UHugeint => "uhugeint",
+        T::Float => "float",
+        T::Double => "double",
+        T::Decimal => "decimal",
+        T::Varchar => "varchar",
+        T::Blob => "blob",
+        T::Date => "date",
+        T::Time => "time",
+        T::TimeTZ => "timetz",
+        T::Timestamp => "timestamp",
+        T::TimestampS => "timestamp_s",
+        T::TimestampMs => "timestamp_ms",
+        T::TimestampNs => "timestamp_ns",
+        T::TimestampTZ => "timestamptz",
+        T::Interval => "interval",
+        T::Uuid => "uuid",
+        T::Enum => "enum",
+        T::List => "list",
+        T::Array => "array",
+        T::Struct => "struct",
+        T::Map => "map",
+        T::Union => "union",
+        T::Bit => "bit",
+        T::Geometry => "geometry",
+        _ => "",
+    }
+    .to_string()
+}
+
 fn is_spurious_interrupt(e: &str) -> bool {
     e.contains("INTERRUPT Error")
 }
@@ -231,12 +275,16 @@ fn for_each_row_in(
         stmt.query(::duckdb::params_from_iter(params.iter())).map_err(|e| format!("DuckDB error: {e}"))?
     };
 
-    let (col_names, col_count): (Vec<String>, usize) = match rows.as_ref() {
-        Some(s) => (s.column_names(), s.column_count()),
-        None => (Vec::new(), 0),
+    let (col_names, col_count, col_types): (Vec<String>, usize, Vec<String>) = match rows.as_ref() {
+        Some(s) => {
+            let n = s.column_count();
+            (s.column_names(), n, (0..n).map(|i| duck_type_name(s.column_logical_type(i).id())).collect())
+        }
+        None => (Vec::new(), 0, Vec::new()),
     };
 
-    on_columns(col_names.into_iter().map(|n| ColumnInfo::new(n, "")).collect());
+    // Each column with DuckDB's name for its type; the grid's headers showed none.
+    on_columns(col_names.into_iter().zip(col_types.into_iter().chain(std::iter::repeat(String::new()))).map(|(n, t)| ColumnInfo::new(n, t)).collect());
     while let Some(row) = rows.next().map_err(|e| format!("DuckDB row error: {e}"))? {
         let mut r = Vec::with_capacity(col_count);
         for i in 0..col_count {

@@ -48,10 +48,22 @@ class ToastStore {
    * @param {ToastOptions} [opts]
    */
   #add(type, title, opts = {}) {
-    const id = ++counter
     // A loading toast stays until it is updated to its outcome.
     // An error stays long enough to read (errorDuration).
     const duration = opts.duration ?? (type === 'loading' ? Infinity : type === 'error' ? errorDuration(title, opts) : DEFAULT_DURATION)
+    // The same message again while it is still up (a double-click, a key
+    // held down) restarts its timer instead of stacking a copy under it.
+    const text = String(title ?? '')
+    const same = type !== 'loading' && !opts.action && opts.progress == null
+      ? this.toasts.find((t) => t.type === type && t.title === text && (t.description ?? '') === (opts.description ?? '') && !t.action && t.progress == null)
+      : undefined
+    if (same) {
+      const old = this.#timers.get(same.id)
+      if (old) { clearTimeout(old.handle); this.#timers.delete(same.id) }
+      this.#schedule(same.id, duration)
+      return same.id
+    }
+    const id = ++counter
     /** @type {Toast} */
     const entry = { id, type, title: String(title ?? ''), description: opts.description ?? '' }
     if (opts.action) entry.action = opts.action
