@@ -88,6 +88,8 @@
     onopenmyshares = () => {},
     /** Settings ▸ Keybindings, where shortcuts are remapped. */
     onopenkeybindings = () => {},
+    /** Settings, on Appearance (where the theme builder is). */
+    onopenappearance = () => {},
     onopenabout = () => {},
     onopenreport = () => {},
     oncheckupdate = () => {},
@@ -1181,6 +1183,11 @@
                 <Command.Shortcut command="theme.pick" />
                 <Icon name="chevron-right" class="size-3.5 shrink-0 text-muted-foreground" />
               </span>
+            </Command.Item>
+            <!-- The builder lives in Settings; "theme builder" found nothing here. -->
+            <Command.Item value="theme builder custom make your own colours colors grain intensity" onSelect={() => run(onopenappearance)}>
+              <Icon name="sparkles" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+              <span data-slot="command-label" class="truncate">Theme builder</span>
             </Command.Item>
           </Command.Group>
 
