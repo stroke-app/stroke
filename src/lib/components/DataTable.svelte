@@ -3140,6 +3140,17 @@ import FilterX from "@lucide/svelte/icons/filter-x";
    * row: the dock reads it in pages, so this is the answer rather than a
    * message telling you to press a key yourself.
    */
+  /**
+   * Focus a row and scroll it into view, for a caller that selected it from
+   * elsewhere (the result map).
+   * @param {number} rowIdx
+   */
+  export function revealRow(rowIdx) {
+    if (rowIdx < 0 || rowIdx >= rows.length) return
+    focusedRow = rowIdx
+    scrollRowIntoView(rowIdx)
+  }
+
   export function openCellDock(rowIdx, colIdx) {
     focusedRow = rowIdx
     const vi = actualToVisColIdx(colIdx)
