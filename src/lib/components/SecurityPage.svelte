@@ -90,6 +90,12 @@
     }
   }
 
+  // Postgres reserves the pg_ prefix for its predefined roles (pg_monitor,
+  // pg_read_all_data, ...): fifteen of them listed above the user's own.
+  const ownRoles = $derived((roles ?? []).filter((r) => !String(r.rolname).startsWith("pg_")));
+  const builtinRoles = $derived((roles ?? []).filter((r) => String(r.rolname).startsWith("pg_")));
+  let showBuiltin = $state(false);
+
   /** SQL single-quoted string literal (escapes embedded quotes). */
   const sqlLit = (/** @type {unknown} */ v) => `'${String(v).replace(/'/g, "''")}'`;
 
@@ -394,7 +400,7 @@
         class="flex items-center justify-between border-b border-border/40 px-3 py-2"
       >
         <span class="text-ui-xs text-muted-foreground"
-          >{roles?.length ?? 0} roles</span
+          >{ownRoles.length} {ownRoles.length === 1 ? "role" : "roles"}{#if builtinRoles.length}{` · ${builtinRoles.length} built-in`}{/if}</span
         >
         <button
           type="button"
@@ -469,7 +475,7 @@
             </tr>
           </thead>
           <tbody>
-            {#each roles ?? [] as role (role.rolname)}
+            {#each showBuiltin ? [...ownRoles, ...builtinRoles] : ownRoles as role (role.rolname)}
               {@const isSuper = bool(role.rolsuper)}
               {@const isLogin = bool(role.rolcanlogin)}
               <tr
@@ -529,6 +535,19 @@
                 </td>
               </tr>
             {/each}
+            {#if builtinRoles.length}
+              <tr>
+                <td colspan="9" class="px-3 py-2">
+                  <button
+                    type="button"
+                    class="text-ui-xs text-muted-foreground hover:text-foreground"
+                    aria-expanded={showBuiltin}
+                    onclick={() => (showBuiltin = !showBuiltin)}
+                    >{showBuiltin ? "Hide" : "Show"} {builtinRoles.length} built-in {builtinRoles.length === 1 ? "role" : "roles"}</button
+                  >
+                </td>
+              </tr>
+            {/if}
           </tbody>
         </table>
       {/if}
