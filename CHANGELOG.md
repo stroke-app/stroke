@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.5.1] - 2026-11-21
+
+### Changes
+- Fix the Redis crash after adding a key; correct backslash and Unicode string literals (#354)
+
+
 ## [3.5.0] - 2026-11-21
 
 ### Changes
