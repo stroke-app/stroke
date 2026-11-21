@@ -43,6 +43,30 @@ pub struct PgConfig {
     /// "America/New_York"). `None`/"SYSTEM" leaves the server default in place.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timezone: Option<String>,
+    /// The rest of a connection URL's query, as written (`application_name=x&
+    /// options=endpoint%3Dep-1`): what a pasted URL carried beyond the fields.
+    /// TLS keys are the fields' to set and are skipped here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub params: Option<String>,
+}
+
+/// Extra query parameters that can be appended to a Postgres URL: `key=value`
+/// pairs, minus the ones the form owns, and nothing that would end the query
+/// or start a fragment.
+fn extra_pg_params(raw: Option<&str>) -> Vec<String> {
+    const OWNED: [&str; 3] = ["sslmode", "sslrootcert", "ssl"];
+    raw.unwrap_or("")
+        .trim()
+        .trim_start_matches('?')
+        .split('&')
+        .map(str::trim)
+        .filter(|p| !p.is_empty() && !p.contains(['#', ' ', '?']))
+        .filter(|p| {
+            let key = p.split('=').next().unwrap_or("").to_ascii_lowercase();
+            !key.is_empty() && !OWNED.contains(&key.as_str())
+        })
+        .map(String::from)
+        .collect()
 }
 
 impl PgConfig {
@@ -67,6 +91,7 @@ impl PgConfig {
                 params.push(format!("sslrootcert={}", urlencoding::encode(ca)));
             }
         }
+        params.extend(extra_pg_params(self.params.as_deref()));
         let ssl = if params.is_empty() {
             String::new()
         } else {
@@ -2108,7 +2133,20 @@ mod tests {
             ssl_root_cert: ca.map(str::to_string),
             ssh: None,
             timezone: None,
+            params: None,
         }
+    }
+
+    #[test]
+    fn a_pasted_urls_other_parameters_ride_along() {
+        let mut c = pg(true, Some("verify-full"), None);
+        c.params = Some("application_name=stroke&options=endpoint%3Dep-1&sslmode=disable&bad#frag& &=x".into());
+        let url = c.connection_url();
+        assert!(url.ends_with("?sslmode=verify-full&application_name=stroke&options=endpoint%3Dep-1"), "{url}");
+        let opts: PgConnectOptions = url.parse().unwrap();
+        assert_eq!(opts.get_application_name(), Some("stroke"));
+        // No params, no change.
+        assert!(pg(false, None, None).connection_url().ends_with("/shop"));
     }
 
     // Live: TLS through an SSH tunnel verifies the server's real name. The
