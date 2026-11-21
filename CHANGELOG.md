@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.2.6] - 2026-11-21
+
+### Changes
+- Add InfluxDB (beta, read-only) (#329)
+
+
 ## [3.2.5] - 2026-11-21
 
 ### Changes
