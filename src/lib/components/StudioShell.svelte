@@ -2318,6 +2318,8 @@ let rowSearch = $state('')
   const _activeColsTyped = $derived(columns.map((c) => ({ name: c.name, type: c.dataType ?? c.data_type ?? '' })))
   const _sqlColNames = $derived(sqlColumns.map((c) => c.name))
   const _tableNames = $derived(tables.map((t) => t.name))
+  /** Views among them, for labels that count tables (the AI's "public · 2 tables"). */
+  const _viewCount = $derived(tables.filter((t) => /view/i.test(t.kind ?? '')).length)
 
   // ── Async SQL-completion hints (enums + user functions) ──────────────────────
   // Loaded lazily when the SQL tab becomes active. Stored as reactive state so
@@ -2852,7 +2854,7 @@ let rowSearch = $state('')
       return {
         schemas, activeSchema, tables: _tableNames,
         activeTable, columns: [], primaryKey: [], foreignKeys: [],
-        allTableColumns: {}, dbType: engineFamily(connection?.type),
+        allTableColumns: {}, dbType: engineFamily(connection?.type), viewCount: _viewCount,
         environment: connection?.environment ?? null,
         database: connection?.database || connection?.name || '',
       }
@@ -2868,6 +2870,7 @@ let rowSearch = $state('')
       allTableColumns: _allTableColumns,
       /** @type {import('$lib/stores/connections.js').DbType} */
       dbType: engineFamily(connection?.type),
+      viewCount: _viewCount,
       environment: connection?.environment ?? null,
       database: connection?.database || connection?.name || '',
     }

@@ -5116,7 +5116,9 @@
                   {#if schemaContext.activeTable}
                     {schemaContext.activeSchema}.{schemaContext.activeTable}
                   {:else}
-                    {schemaContext.activeSchema} · {schemaContext.tables.length} tables
+                    {@const views = schemaContext.viewCount ?? 0}
+                    {@const tableCount = schemaContext.tables.length - views}
+                    {schemaContext.activeSchema} · {tableCount} {tableCount === 1 ? 'table' : 'tables'}{#if views}{` · ${views} ${views === 1 ? 'view' : 'views'}`}{/if}
                   {/if}
                 </p>
               {/if}
