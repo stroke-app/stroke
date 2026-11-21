@@ -25,3 +25,12 @@ describe('Prisma to SQL', () => {
     expect(sql('prisma.users.findMany({ where: { OR: [{ id: 1 }, { id: 2 }] } })')).toBe('SELECT * FROM "users" WHERE (("id" = 1) OR ("id" = 2))')
   })
 })
+
+describe('Drizzle to SQL', () => {
+  it('quotes column references and escapes values', async () => {
+    const { evalDrizzleQuery } = await import('./orm-builder.js')
+    const { sql } = evalDrizzleQuery(`db.select().from(users).where(and(eq(users.createdAt, 5), like(users.name, "O'N%"))).limit(3)`, ['users'])
+    expect(sql).toContain(`"users"."createdAt" = 5`)
+    expect(sql).toContain(`"users"."name" LIKE 'O''N%'`)
+  })
+})

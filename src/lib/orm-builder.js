@@ -19,7 +19,7 @@ function literalSql(v) {
     // Column reference - use qualified name for column-to-column comparisons
     if ('col' in /** @type {any} */ (v)) {
       const r = /** @type {any} */ (v)
-      return r.table ? `${r.table}.${r.col}` : r.col
+      return r.table ? `${quoteIdent(r.table)}.${quoteIdent(r.col)}` : quoteIdent(r.col)
     }
   }
   return `'${String(v).replace(/'/g, "''")}'`
@@ -255,7 +255,8 @@ function buildDrizzleContext(tableNames) {
   /** @param {any} col */
   function colExpr(col) {
     if (col && typeof col === 'object' && '__sql' in col) return col.__sql
-    if (col && typeof col === 'object' && 'col' in col) return col.table ? `${col.table}.${col.col}` : col.col
+    // Quoted, as the Prisma side is: users.createdAt folded to createdat.
+    if (col && typeof col === 'object' && 'col' in col) return col.table ? `${quoteIdent(col.table)}.${quoteIdent(col.col)}` : quoteIdent(col.col)
     return col ? String(col) : '*'
   }
 
