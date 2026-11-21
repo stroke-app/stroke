@@ -366,3 +366,11 @@ describe('buildSelectSql backslashes', () => {
     expect(pg).toContain(`"p" = 'C:\\new'`)
   })
 })
+
+describe('buildSelectSql on SQL Server', () => {
+  it('writes non-ASCII filter text as N strings', () => {
+    const sql = buildSelectSql({ schema: 'dbo', table: 't', engine: 'mssql', filters: [{ id: 'a', column: 'city', op: 'eq', value: 'Kraków' }] })
+    expect(sql).toContain("= N'Kraków'")
+    expect(buildSelectSql({ schema: 'dbo', table: 't', engine: 'mssql', filters: [{ id: 'a', column: 'city', op: 'eq', value: 'Oslo' }] })).toContain("= 'Oslo'")
+  })
+})

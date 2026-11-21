@@ -279,7 +279,8 @@ export function buildSelectSql({ schema, table, columns = [], filters = [], sear
     ? `'${String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`
     : backslashEscapes
       ? `'${String(v).replace(/\\/g, '\\\\').replace(/'/g, "''")}'`
-      : `'${String(v).replace(/'/g, "''")}'`
+      // SQL Server: N'...' keeps non-ASCII text Unicode (see dml-preview's quoteString).
+      : `${fam === 'mssql' && /[^\x00-\x7f]/.test(String(v)) ? 'N' : ''}'${String(v).replace(/'/g, "''")}'`
   /** A LIKE pattern's text: in MySQL and ClickHouse the backslash is also LIKE's
    *  own escape, so a literal one is doubled once for the pattern, then again
    *  for the string. @param {string} v */
