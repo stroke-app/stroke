@@ -5041,6 +5041,10 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   $effect(() => {
     function onCapture(/** @type {KeyboardEvent} */ e) {
       if (!isTableFocused || editingCell) return;
+      // A grid kept mounted behind another tab is display:none, and hiding a
+      // focused element does not reliably send focusout: its flag can still
+      // say focused while the keys belong to the page on screen.
+      if (!tableContainer?.getClientRects().length) return;
       // This listener is on `window`, so it runs before every other capture
       // handler in the app - including the one that gives inputs their undo
       // stack and their word deletion. Undoing a cell edit because the caret

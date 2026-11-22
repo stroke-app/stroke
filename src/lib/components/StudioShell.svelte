@@ -1185,6 +1185,10 @@
 
   // Keep Monaco-heavy tabs mounted once opened so the editor isn't destroyed on tab switch.
   let sqlEverOpened = $state(false)
+  // The data grid as well: building it costs about 85 ms, paid on every return
+  // from an editor or a page tab while the table area was torn down with it.
+  let tableEverOpened = $state(false)
+  const onTableTab = $derived(activeTab?.kind === 'table')
   let ormEverOpened = $state(false)
   let securityEverOpened = $state(false)
   let logsEverOpened = $state(false)
@@ -1516,6 +1520,7 @@
 
   $effect(() => {
     if (activeTab?.kind === 'sql') sqlEverOpened = true
+    if (activeTab?.kind === 'table') tableEverOpened = true
     if (activeTab?.kind === 'orm') ormEverOpened = true
     if (activeTab?.kind === 'security') securityEverOpened = true
     if (activeTab?.kind === 'logs') logsEverOpened = true
@@ -1989,6 +1994,36 @@
   const currentOffset = $derived(
     pageSize === PAGE_SIZE_ALL ? 0 : (rawOffset ?? (page - 1) * pageSize),
   )
+
+  // What the grid shows, parked while another tab is up. The grid stays mounted
+  // behind editor and page tabs, and leaving for an editor clears the table
+  // state; fed live, the hidden grid emptied itself (about 20 ms) and refilled
+  // on return. Parked, coming back to the same table changes none of its data
+  // props, and coming back to a different one is a plain table-to-table switch.
+  // Only one-way data is parked: the bound selection and cursor stay live.
+  /** @type {any} */
+  let _parkedGrid = null
+  const gridData = $derived.by(() => {
+    if (!onTableTab && _parkedGrid) return _parkedGrid
+    _parkedGrid = {
+      columns,
+      rows,
+      primaryKey,
+      foreignKeys,
+      incomingForeignKeys,
+      indexes: activeTableIndexes,
+      schema: activeSchema,
+      tableName: activeTable ?? '',
+      columnWidthsKey: activeTable ? `${persistConnectionId}\x00${activeSchema}.${activeTable}` : undefined,
+      rowNumberOffset: infiniteScroll ? 0 : currentOffset,
+      rowSort,
+      rowSortMore,
+      searchQuery: rowSearch,
+      filtered: rowSearch.trim() !== '' || activeFilters(rowFilters).length > 0,
+      endOfResults: infiniteScroll && !windowed && total > 0 && rows.length >= total,
+    }
+    return _parkedGrid
+  })
 
   // ── Keyset / cursor / temporal pagination ────────────────────────────────
   // Cursor for the NEXT fetch (null = first page / offset-0). Set by next/prev.
@@ -11866,11 +11901,19 @@ let rowSearch = $state('')
         </div>
       {/if}
 
-      {#if activeTab?.kind === 'table'}
+      {#if tableEverOpened}
+        <!-- Kept mounted behind other tabs. Leaving for an editor clears the
+             table state (no table, no error), and those two branches are only
+             taken on a table tab, so the hidden area keeps its grid instead of
+             swapping it for the empty state and building it again on return. -->
+        <div
+          class={onTableTab ? 'flex min-h-0 min-w-0 flex-1 flex-col' : 'hidden'}
+          inert={!onTableTab || undefined}
+        >
         <!-- The failure outranks the empty state: an error raised while the tab
              has no table selected still has to be readable, and it carries the
              only control that clears it. -->
-        {#if error}
+        {#if error && onTableTab}
           <!-- ── Load failure, stated where the grid would be ────────────────
                A banner pinned to the top over an empty grid made the reader
                look in two places and left them with "dismiss to continue" as
@@ -11938,7 +11981,7 @@ let rowSearch = $state('')
               >{showRawError ? 'Hide raw error' : 'Show raw error'}</button>
             {/if}
           </div>
-        {:else if !activeTable}
+        {:else if !activeTable && onTableTab}
           <div class="flex flex-1 flex-col items-center justify-center gap-2 p-8 text-center">
             <p class="font-mono text-ui text-muted-foreground">
               Select a table from the sidebar or press
@@ -12100,22 +12143,22 @@ let rowSearch = $state('')
               {#await loadDataTable() then { default: DataTable }}
               <DataTable
                 bind:this={dataTable}
-                {columns}
-                {rows}
+                columns={gridData.columns}
+                rows={gridData.rows}
                 getsqlhints={buildSqlHints}
-                {primaryKey}
-                {foreignKeys}
-                rowNumberOffset={infiniteScroll ? 0 : currentOffset}
-                {incomingForeignKeys}
+                primaryKey={gridData.primaryKey}
+                foreignKeys={gridData.foreignKeys}
+                rowNumberOffset={gridData.rowNumberOffset}
+                incomingForeignKeys={gridData.incomingForeignKeys}
                 onfetchrelatedrows={handleFetchRelatedRows}
                 onfetchcellvalue={dbType === 'postgres' ? handleFetchCellValue : null}
                 onloadcellvalue={dbType === 'postgres' ? handleLoadCellValue : null}
-                schema={activeSchema}
-                tableName={activeTable ?? ''}
+                schema={gridData.schema}
+                tableName={gridData.tableName}
                 connectionId={persistConnectionId}
                 onrequestsearch={() => tableToolbar?.focusRowSearch?.()}
                 dialect={dbType}
-                indexes={activeTableIndexes}
+                indexes={gridData.indexes}
                 {hiddenColumns}
                 {reloadToken}
                 {dataVersion}
@@ -12124,12 +12167,12 @@ let rowSearch = $state('')
                 {windowStatus}
                 onvisiblerange={handleVisibleRange}
                 onretrywindows={retryFailedWindows}
-                columnWidthsKey={activeTable ? `${persistConnectionId}\x00${activeSchema}.${activeTable}` : undefined}
+                columnWidthsKey={gridData.columnWidthsKey}
                 loading={loadingRows}
                 {loadingMore}
                 {infiniteScroll}
-                endOfResults={infiniteScroll && !windowed && total > 0 && rows.length >= total}
-                filtered={rowSearch.trim() !== '' || activeFilters(rowFilters).length > 0}
+                endOfResults={gridData.endOfResults}
+                filtered={gridData.filtered}
                 onclearfilters={clearRowFilters}
                 onloadmore={handleLoadMore}
                 saving={savingCell || deletingRows || insertingRow}
@@ -12153,9 +12196,9 @@ let rowSearch = $state('')
                 bind:getExpanded={tableGetExpanded}
                 bind:applyScroll={tableApplyScroll}
                 bind:vcolPanelOpen
-                {rowSort}
-                {rowSortMore}
-                searchQuery={rowSearch}
+                rowSort={gridData.rowSort}
+                rowSortMore={gridData.rowSortMore}
+                searchQuery={gridData.searchQuery}
                 {searchOptions}
                 onsortchange={(s) => void handleRowSortChange(s)}
                 onhidecolumn={(colName) => {
@@ -12276,6 +12319,7 @@ let rowSearch = $state('')
           </div>
           {/if}
         {/if}
+        </div>
       {/if}
 
       {#if !activeTab || activeTab.kind === 'welcome'}

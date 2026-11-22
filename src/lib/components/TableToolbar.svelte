@@ -277,6 +277,9 @@
     /** @param {KeyboardEvent} e */
     function handler(e) {
       if ((e.ctrlKey || e.metaKey) && e.key === "f") {
+        // The table area stays mounted (hidden) behind other tabs; the key is
+        // theirs then.
+        if (!structureSearchEl?.getClientRects().length) return;
         e.preventDefault();
         structureSearchEl?.focus();
         structureSearchEl?.select();
