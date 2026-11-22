@@ -4,6 +4,15 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.7.0] - 2026-11-22
+
+### New Features
+- **Proxy settings** - Settings > Network sends app requests, AI requests, database connections and tunnels each through its own proxy (HTTP or SOCKS5, with an optional login), or directly. Each has a Test button.
+
+### Bug Fixes
+- **Two tabs of the same table** - In All rows mode, scrolling or closing one no longer blanks the other's rows into skeletons that reload slowly.
+
+
 ## [3.6.9] - 2026-11-22
 
 ### New Features
