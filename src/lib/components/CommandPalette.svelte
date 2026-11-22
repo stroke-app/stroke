@@ -1,4 +1,5 @@
 <script>
+  import { openTransfer } from '$lib/stores/transfer-ui.js'
   import { EXPORT_FORMATS } from '$lib/export.js'
   import Kbd from './Kbd.svelte'
   import Icon from './Icon.svelte'
@@ -293,7 +294,9 @@
     { icon: 'globe',           label: 'Map',                           action: onopenmap, show: connected && geoAvailable, value: 'open map geo postgis spatial geometry geography geojson world plot points' },
     { icon: 'blocks',          label: 'Extensions',                    action: onopenextensions, show: connected && !isKeyValue, value: 'open extensions plugins formatters generators transforms better time uuid' },
     { icon: 'archive',         label: 'Backup & restore',              action: onopenbackup,     show: connected && !isKeyValue, value: 'backup restore export import dump data schedule scheduled cron' },
-    { icon: 'braces',          label: 'JSON viewer',                   action: onopenJsonViewer, show: connected, value: 'open json viewer explorer jsonpath tool' },
+    { icon: 'braces',          label: 'JSON viewer',                   action: onopenJsonViewer, show: connected, value: 'open json viewer explorer jsonpath tool format pretty print' },
+    { icon: 'download',        label: 'Export connections and settings', action: () => openTransfer('export'), show: true, value: 'export connections settings snippets saved queries file backup transfer move another computer' },
+    { icon: 'file-up',         label: 'Import connections and settings', action: () => openTransfer('import'), show: true, value: 'import connections settings snippets saved queries file restore transfer move another computer' },
     { icon: 'git-branch',      label: 'Schema timeline',               action: openschematimeline, show: connected && !isKeyValue, value: 'schema timeline snapshots snapshot drift detection history changes diff version compare' },
     { icon: 'database',        label: 'Local servers',                 action: openlocalservers, show: true, value: 'local servers database postgres mysql mariadb redis mongodb docker native homebrew dbngin start stop version' },
     { icon: 'git-merge',       label: 'Migrations',                    action: openmigrations,   show: connected && !isKeyValue, value: 'migrations prisma drizzle applied pending failed migrate schema history' },

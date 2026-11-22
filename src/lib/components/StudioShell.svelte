@@ -92,6 +92,7 @@
   import { aiChatKey, chatBelongsTo } from '$lib/ai-chat-key.js'
   import { crashReportFields } from '$lib/crash-report.js'
   import UpdateDialog from './UpdateDialog.svelte'
+  import TransferDialog from './TransferDialog.svelte'
   import StatusBar from './StatusBar.svelte'
   import DisconnectDialog from './DisconnectDialog.svelte'
   import SwitchDatabaseDialog from './SwitchDatabaseDialog.svelte'
@@ -10833,6 +10834,7 @@ let rowSearch = $state('')
     <SqlRevertDialog undo={revertAsk} dialect={dbType} onconfirm={() => void confirmRevert()} oncancel={() => settleRevert(false)} />
   {/await}
 {/if}
+<TransferDialog />
 <UpdateDialog
   bind:this={updateDialog}
   onwhatsnewaction={handleWhatsNewAction}

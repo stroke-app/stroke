@@ -277,7 +277,7 @@ export const aiSettings = writable(/** @type {AiSettings} */ ({
 
 // ── Bootstrap: load API key from secure store ────────────────────────────────
 
-async function loadKeyForProfile(profileId) {
+export async function loadKeyForProfile(profileId) {
   try {
     return await invoke('ai_load_key', { profileId })
   } catch {
