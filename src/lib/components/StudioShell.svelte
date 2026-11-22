@@ -9,7 +9,7 @@
   import { traceInteraction, tracePoint, traceMark } from '$lib/perf.js'
   import { couchAdapter, cassandraAdapter, elasticAdapter, firestoreAdapter, mongoAdapter, neo4jAdapter, influxAdapter, uriHost } from '$lib/doc-adapters.js'
   import { queryLanguageFor } from '$lib/ai-query-languages.js'
-  import { setQueryEngine } from '$lib/ai.js'
+  import { setQueryEngine } from '$lib/ai-query-engine.js'
   import { revealApp, isRevealed } from '$lib/app-reveal.js'
   import { setReadOnly, readOnlyMode } from '$lib/stores/read-only.js'
   import { isWriteSql, sqlRunEffects, stripSqlComments } from '$lib/sql-write.js'
@@ -261,7 +261,7 @@
   import { createNotebook, deserializeNotebook } from '$lib/notebook.js'
   import { openNotebookFile } from '$lib/api.js'
   import { formatCompactCount, normalizeTableRowCount } from '$lib/table-list.js'
-  import { humanizeDbError } from '$lib/ai.js'
+  import { humanizeDbError } from '$lib/db-error-text.js'
   import { focusTrap } from '$lib/actions/focus-trap.js'
   import {
     MAX_PAGE_SIZE,
