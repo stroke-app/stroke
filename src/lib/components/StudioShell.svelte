@@ -11366,6 +11366,7 @@ let rowSearch = $state('')
             {#await import('./ObjectsPage.svelte')}<TabLoading />{:then { default: ObjectsPage }}
               <ObjectsPage
                 bind:focusSearch={objectsFocusSearch}
+                connectionId={persistConnectionId ?? ''}
                 active={activeTab?.kind === 'objects'}
                 connectionType={connection?.type ?? null}
                 onopen={({ schema, name }) => void openTableTab(schema || activeSchema, name)}
