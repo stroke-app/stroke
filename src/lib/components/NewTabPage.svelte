@@ -38,6 +38,18 @@
     onconnect = () => {},
   } = $props()
 
+  /**
+   * The shell the terminal dock starts for this engine (db/terminal.rs
+   * `client_for`), or null where there is none and the dock opens its built-in
+   * SQL prompt. The tile said "psql, mysql or sqlite3" on every engine.
+   */
+  const TERMINAL_CLIENTS = /** @type {Record<string, string>} */ ({
+    postgres: 'psql', yugabytedb: 'psql', cockroachdb: 'psql',
+    mysql: 'mysql', mariadb: 'mysql', tidb: 'mysql',
+    sqlite: 'sqlite3', mssql: 'sqlcmd', oracle: 'sqlplus',
+    redis: 'redis-cli', valkey: 'redis-cli', libsql: 'turso',
+  })
+  const terminalClient = $derived(TERMINAL_CLIENTS[String(/** @type {any} */ (connection)?.type ?? '')] ?? null)
   const welcomeTitle = $derived(connection ? String(connection.database || connection.name || 'Database') : '')
   const welcomeWhere = $derived.by(() => {
     if (!connection) return ''
@@ -161,7 +173,7 @@
       {@render row(Terminal, "SQL", "Write and run a query", onsql, { keys: [mod, shiftKey, "S"], tone: 'info' })}
     {/if}
     {#if connection && !isDynamo && !isDoc}
-      {@render row(SquareTerminal, "Terminal", isRedis ? "redis-cli, docked below" : "psql, mysql or sqlite3, docked below", onterminal, { keys: [IS_MAC ? "⌘" : "Ctrl", "J"], tone: 'success' })}
+      {@render row(SquareTerminal, "Terminal", `${terminalClient ?? 'Built-in SQL prompt'}, docked below`, onterminal, { keys: [IS_MAC ? "⌘" : "Ctrl", "J"], tone: 'success' })}
     {/if}
     {@render row(Sparkles, "AI", "Ask about this database", onai, { pro: true, keys: [mod, "I"], tone: 'primary' })}
     {#if connection && !isKV}
