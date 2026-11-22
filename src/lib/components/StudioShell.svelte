@@ -8092,6 +8092,8 @@ let rowSearch = $state('')
     track('sql_run')
     const sqlRan = typeof overrideSql === 'string' && overrideSql.trim() ? overrideSql : sqlText
     if (!connection || !sqlRan.trim()) return
+    // Run to the painted result, for the perf log (off unless profiling).
+    const traceDone = traceInteraction('run sql')
     if (tableReadonly && isWriteSql(sqlRan)) {
       sqlError = 'This connection is open in read-only mode, so write statements are blocked.'
       return
@@ -8272,6 +8274,7 @@ let rowSearch = $state('')
       if (runTabId && _sqlQueryIdByTab.get(runTabId) === queryId) _sqlQueryIdByTab.delete(runTabId)
       patchSqlTab(runTabId, { sqlLoading: false })
       if (stillHere()) sqlLoading = false
+      traceDone()
       recordActivity({ type: 'sql_exec', title: sqlRan.trim().slice(0, 80) + (sqlRan.trim().length > 80 ? '…' : ''), detail: sqlRan, durationMs: ranMs, rowCount: ranRowCount || undefined, success: !ranError, error: ranError || undefined })
       // A failed run goes into history too, marked with its error, so the
       // query you were fixing is still there to fix. A Stop is not a failure.
@@ -9430,6 +9433,8 @@ let rowSearch = $state('')
    * @param {{ focusTab?: string | null }} [opts] Labs: the tab to land on
    */
   async function handleSwitchDatabase(conn, opts = {}) {
+    // Click to connected, for the perf log (off unless profiling).
+    const traceConnect = traceInteraction(`connect ${conn?.type ?? ''}`)
     // A deliberate switch is the other half of "PIN to open or reconnect".
     // Resolves true immediately unless a PIN is set with the connect prompt on.
     if (!(await requireUnlock('Unlock to connect to a database'))) return
@@ -9503,6 +9508,7 @@ let rowSearch = $state('')
       // say it. The list left on screen belongs to a database nobody is looking
       // at any more, and the Databases tab is a switcher, not a destination.
       sidebarShowTables()
+      traceConnect()
     } catch (e) {
       switchingTo = ''
       // Say why, then put the user back where they were instead of leaving

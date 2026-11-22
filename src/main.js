@@ -27,8 +27,10 @@ if (import.meta.env.VITE_FRESH_START === '1') {
 // used to leave the failsafe unarmed and the window black.
 armRevealFailsafe()
 applySettings(loadSettings())
-// Frame timing for profiling: dev builds only, opt-in (perf-probe.js).
-if (import.meta.env.DEV && import.meta.env.VITE_STROKE_PERF === '1') {
+// Frame timing for profiling: dev builds, or a release build made for
+// benchmarking with VITE_STROKE_BENCH=1. Opt-in (perf-probe.js); both are
+// build-time constants, so a normal release drops this whole branch.
+if ((import.meta.env.DEV || import.meta.env.VITE_STROKE_BENCH === '1') && import.meta.env.VITE_STROKE_PERF === '1') {
   void import('$lib/perf-probe.js').then((m) => m.installPerfProbe())
 }
 installZoomShortcuts()
