@@ -2150,12 +2150,21 @@
   const loadSeqOf = (tabId) => (tabId ? _loadSeqByTab.get(tabId) ?? 0 : 0)
   /** @param {string | null} tabId */
   /**
+   * Where this page's load numbers start. The backend keeps the highest one it
+   * has seen per tab and refuses lower ones as superseded, and it outlives the
+   * page: after a reload the counter began at 1 again for the same tab ids, so
+   * every load of a restored tab was refused ("Superseded by a newer load")
+   * until the app restarted. Starting from the clock puts each page above every
+   * earlier one (1000 loads per millisecond between reloads).
+   */
+  const FETCH_EPOCH = Date.now() * 1000
+  /**
    * Tag for a row fetch of a tab's load `seq`: a newer load of the same tab
    * cancels it on the server (see FetchTag in query.rs).
    * @param {string | null} tabId @param {number} seq
    */
   function fetchTagFor(tabId, seq) {
-    return tabId ? { group: tabId, generation: seq } : null
+    return tabId ? { group: tabId, generation: FETCH_EPOCH + seq } : null
   }
   /** A window belongs to the active tab's newest load. */
   function windowFetchTag() {
@@ -7852,6 +7861,9 @@ let rowSearch = $state('')
     } catch (e) {
       if (!live()) return
       const errStr = String(e)
+      // Replaced on the server by a newer fetch of this tab: that one owns the
+      // grid now. Never an error to show (matches SUPERSEDED_FETCH in query.rs).
+      if (errStr.includes('Superseded by a newer load')) return
       if (isNetworkError(errStr)) { connectionLost = true; void silentReconnect() }
       // A typed SQL condition that the database rejects is a mistake in the
       // filter, not a broken table: keep the grid (and the filter bar, which
