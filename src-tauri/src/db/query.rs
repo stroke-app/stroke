@@ -1491,6 +1491,10 @@ fn build_plain_search(
 fn ensure_column(column: &str, allowed: &[String]) -> Result<(), String> {
     if allowed.iter().any(|c| c == column) {
         Ok(())
+    } else if allowed.is_empty() {
+        // No columns at all: the table itself is gone (dropped or renamed since
+        // it was listed). "Unknown column: id" sent people looking at the column.
+        Err("This table no longer exists. It may have been dropped or renamed; refresh the table list.".to_string())
     } else {
         Err(format!("Unknown column: {column}"))
     }
@@ -5799,6 +5803,19 @@ mod pg_type_label_tests {
         assert_eq!(super::pg_type_label("VARCHAR"), "varchar");
         assert_eq!(super::pg_type_label("BPCHAR"), "bpchar");
         assert_eq!(super::pg_type_label("INT4"), "int4");
+    }
+}
+
+#[cfg(test)]
+mod ensure_column_tests {
+    use super::ensure_column;
+
+    #[test]
+    fn says_when_the_table_is_gone() {
+        let cols = vec!["id".to_string(), "name".to_string()];
+        assert!(ensure_column("id", &cols).is_ok());
+        assert_eq!(ensure_column("nope", &cols).unwrap_err(), "Unknown column: nope");
+        assert!(ensure_column("id", &[]).unwrap_err().contains("no longer exists"));
     }
 }
 
