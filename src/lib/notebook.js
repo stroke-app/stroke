@@ -82,8 +82,8 @@ export function variableNames(sql) {
 
 /**
  * Fill `{{ name }}` placeholders from the notebook's variables. Text, not
- * parameters: the value goes in as written, so `'{{status}}'` quotes a string
- * and `{{limit}}` stays a number. Unknown names are left for the database to
+ * parameters: `'{{status}}'` quotes a string (its quotes doubled) and
+ * `{{limit}}` stays a number. Unknown names are left for the database to
  * reject, with the list returned so the cell can say which.
  * @param {string} sql
  * @param {NotebookVariable[]} vars
@@ -93,12 +93,36 @@ export function substituteVars(sql, vars = []) {
   const map = new Map(vars.filter((v) => v.name).map((v) => [v.name, v.value]))
   /** @type {string[]} */
   const missing = []
-  const out = String(sql).replace(/\{\{\s*([A-Za-z_][\w]*)\s*\}\}/g, (all, name) => {
-    if (map.has(name)) return /** @type {string} */ (map.get(name))
+  const src = String(sql)
+  const out = src.replace(/\{\{\s*([A-Za-z_][\w]*)\s*\}\}/g, (all, name, at) => {
+    if (map.has(name)) {
+      const value = /** @type {string} */ (map.get(name))
+      // Inside a quoted string the value's own quotes are doubled: `O'Neil` in
+      // `'{{name}}'` ended the literal early and broke the query (and let a
+      // value write SQL of its own). Outside quotes it goes in as written.
+      return insideQuotes(src, at) ? value.replace(/'/g, "''") : value
+    }
     if (!missing.includes(name)) missing.push(name)
     return all
   })
   return { sql: out, missing }
+}
+
+/**
+ * Whether `at` falls inside a single-quoted literal of `sql`. Comments are
+ * skipped so an apostrophe in one does not flip the count; a doubled quote
+ * inside a literal stays inside it.
+ * @param {string} sql @param {number} at
+ */
+function insideQuotes(sql, at) {
+  let inside = false
+  for (let i = 0; i < at; i++) {
+    const c = sql[i]
+    if (!inside && c === '-' && sql[i + 1] === '-') { const nl = sql.indexOf('\n', i); if (nl < 0 || nl >= at) return false; i = nl; continue }
+    if (!inside && c === '/' && sql[i + 1] === '*') { const end = sql.indexOf('*/', i + 2); if (end < 0 || end >= at) return false; i = end + 1; continue }
+    if (c === "'") inside = !inside
+  }
+  return inside
 }
 
 // ── Import ───────────────────────────────────────────────────────────────────
