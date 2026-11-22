@@ -2001,6 +2001,12 @@
       const where = awsRegion.trim() || (awsAuth === "profile" ? (awsProfile.trim() || "default") : "AWS");
       return `DynamoDB · ${where}`;
     }
+    // Redis's "database" is a number: the name was "0@127.0.0.1". The engine
+    // names it, and a logical database other than 0 is kept as /n.
+    if (dbType === "redis" || dbType === "valkey") {
+      const n = database.trim();
+      return host.trim() ? `${activeDriver.label}@${host.trim()}${n && n !== "0" ? `/${n}` : ""}` : activeDriver.label;
+    }
     if (host.trim())
       return `${database.trim() || activeDriver.label}@${host.trim()}`;
     return activeDriver.label;
@@ -2987,7 +2993,7 @@
     // Only for a row that does not exist yet: connecting to a connection you
     // already have saved is not a filing decision, and being asked about it on
     // the way in is the wrong question at the wrong time.
-    if (save && !editingId && blockedAsDuplicate(payload, () => void handleConnect({ save }))) return;
+    if (save && !editingId && blockedAsDuplicate(payload, () => void handleConnect({ save }), true)) return;
     const myOp = ++opId;
     connecting = editingId ?? "__new__";
     dialing = { conn: { ...payload, name: payload.name || name || statusTarget }, via: "form" };
@@ -3034,7 +3040,7 @@
    * scan - and the list is sorted by last use, so the copy hides the original.
    * It is not always a mistake though (a read-only twin, a different name for a
    * different project), so this asks rather than refuses.
-   * @type {{ existing: any, proceed: () => void } | null}
+   * @type {{ existing: any, proceed: () => void, connecting?: boolean } | null}
    */
   let duplicatePrompt = $state(null);
   /** Set by "Save anyway", so the retry of the same action goes straight through. */
@@ -3042,13 +3048,13 @@
 
   /**
    * Returns true when the action should stop and let the user answer first.
-   * @param {any} payload @param {() => void} proceed
+   * @param {any} payload @param {() => void} proceed @param {boolean} [connecting] the action was Connect
    */
-  function blockedAsDuplicate(payload, proceed) {
+  function blockedAsDuplicate(payload, proceed, connecting = false) {
     if (duplicateAck) return false;
     const existing = findDuplicateConnection(payload, saved, editingId);
     if (!existing) return false;
-    duplicatePrompt = { existing, proceed };
+    duplicatePrompt = { existing, proceed, connecting };
     return true;
   }
 
@@ -6393,8 +6399,13 @@
                 data-autofocus
                 onclick={() => {
                   const existing = duplicatePrompt?.existing;
+                  const connecting = duplicatePrompt?.connecting;
                   duplicatePrompt = null;
-                  if (existing) resetForm(existing);
+                  if (!existing) return;
+                  // From Connect, "Open it" opens it: connect to the saved one.
+                  // From Save, it shows the saved one in the form.
+                  if (connecting) void connectWith(existing);
+                  else resetForm(existing);
                 }}
                 class="field-surface inline-flex h-8 shrink-0 items-center px-3 text-ui-xs text-muted-foreground transition-[color,background-color,border-color,transform] duration-150 ease-out hover:bg-muted/40 hover:text-foreground active:scale-[0.97]"
               >
