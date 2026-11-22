@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.5.4] - 2026-11-22
+
+### Changes
+- New table in each engine's own DDL; show what a run did (#357)
+
+
 ## [3.5.3] - 2026-11-21
 
 ### Changes
