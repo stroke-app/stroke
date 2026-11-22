@@ -2432,7 +2432,13 @@ let rowSearch = $state('')
       dbLatencyMs = null
       return
     }
-    void pingNow()
+    // The first reading waits out the connect's own catalog load. Taken at once
+    // it queued behind the schema, table and count queries and showed a local
+    // DuckDB file as a red "958ms, very slow" that read 3 ms a moment later.
+    // Connecting just proved the link, so nothing is missed in the wait.
+    // The last database's reading is not this one's: blank (pulsing) until then.
+    dbLatencyMs = null
+    const firstPing = setTimeout(() => void pingNow(), 2_500)
     let stopped = false
     /** @type {ReturnType<typeof setTimeout> | undefined} */
     let timer
@@ -2460,7 +2466,7 @@ let rowSearch = $state('')
       schedule()
     }
     schedule()
-    return () => { stopped = true; if (timer) clearTimeout(timer) }
+    return () => { stopped = true; clearTimeout(firstPing); if (timer) clearTimeout(timer) }
   })
 
   // Reconnect the instant the OS reports the network is back, or when the user
