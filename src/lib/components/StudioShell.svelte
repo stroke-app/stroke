@@ -548,8 +548,127 @@
   async function cancelAutoConnect() {
     autoConnectCancelled = true
     autoConnecting = false
+    autoConnectOffline = false
+    reconnectGen++
     showConnectionModal = true
     try { await disconnectPostgres() } catch { /* nothing to tear down */ }
+  }
+
+  // ── The startup reconnect, and the network going away under it ──────────
+  /** Bumped per attempt: an attempt overtaken by a retry drops its outcome. */
+  let reconnectGen = 0
+  /** The connection the startup reconnect is for, so a retry can redo it. */
+  let reconnectTarget = /** @type {any} */ (null)
+  /** No network, and the reconnect is waiting for it (the overlay says so). */
+  let autoConnectOffline = $state(false)
+  /** Whether this machine has no network and the connection needs one. @param {any} c */
+  function offlineFor(c) {
+    return typeof navigator !== 'undefined' && navigator.onLine === false && !isLocalConnection(c)
+  }
+  /** A database on this machine: a file, or a server on localhost. @param {any} c */
+  function isLocalConnection(c) {
+    if (!c) return true
+    if (c.type === 'sqlite' || c.type === 'duckdb' || c.filePath) return true
+    return /^(localhost|127\.\d+\.\d+\.\d+|::1|\[::1\])$/i.test(String(c.host ?? '').trim()) && !c.ssh
+  }
+  // The network left mid-reconnect: stop dialling and wait. It came back: try
+  // again at once, without anyone pressing anything.
+  $effect(() => {
+    if (!autoConnecting || autoConnectVerb !== 'Reconnecting') return
+    const offline = () => {
+      if (!reconnectTarget || isLocalConnection(reconnectTarget)) return
+      reconnectGen++
+      autoConnectOffline = true
+      void disconnectPostgres().catch(() => {})
+    }
+    const online = () => {
+      if (autoConnectOffline && reconnectTarget && !autoConnectCancelled) void reconnectLast(reconnectTarget)
+    }
+    window.addEventListener('offline', offline)
+    window.addEventListener('online', online)
+    return () => {
+      window.removeEventListener('offline', offline)
+      window.removeEventListener('online', online)
+    }
+  })
+
+  /** Reconnect to the last connection, on launch. @param {any} last */
+  async function reconnectLast(last) {
+    const gen = ++reconnectGen
+    reconnectTarget = last
+    autoConnectOffline = false
+    beginConnectOverlay(last.name ?? '', 'Reconnecting')
+    // No network and a database across it: say so and wait for the network,
+    // instead of dialling into nothing for 20s and opening the dialog on a
+    // "Nothing answered" that only meant the Wi-Fi was off.
+    if (offlineFor(last)) { autoConnectOffline = true; revealApp(); return }
+    // Its password comes from the keychain, which startup did not wait for.
+    Object.assign(last, await withSecrets(last))
+    // A warm reconnect and its table list land in a few hundred ms. Revealing
+    // on the overlay meant three screens in that time - "Reconnecting", an empty
+    // shell with a skeleton sidebar, then the tables - which is the startup
+    // flicker. Stay hidden until the tables are in (the effect watching
+    // `revealOnTables`) and only fall back to the overlay when it runs long.
+    revealOnTables = true
+    setTimeout(revealApp, RECONNECT_REVEAL_MS)
+    // The backend already enforces its own per-engine deadlines (DNS + TCP preflight,
+    // a 20s connect deadline for Postgres, HTTP timeouts for the REST engines) and
+    // fails with a message the user can act on. This race is only a last-resort guard
+    // for a command that never returns AT ALL, so it has to sit above those deadlines.
+    // At 5s it fired first and turned every slow-but-healthy wake-up into "not
+    // connected" - serverless Postgres (Neon, and Prisma/Supabase pooler cold starts)
+    // autosuspends and takes 3-15s to come back, which is why resuming one meant
+    // reconnecting by hand on nearly every launch.
+    /** @param {Promise<unknown>} p */
+    const withTimeout = (p) => Promise.race([
+      p,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Connection timed out')), 45_000)),
+    ])
+    try {
+      if (last.type === 'sqlite') await withTimeout(connectSqlite(last))
+      else if (last.type === 'd1') await withTimeout(connectD1(last))
+      else if (last.type === 'libsql') await withTimeout(connectLibSql(last))
+      else if (last.type === 'mysql' || last.type === 'mariadb') await withTimeout(connectMysql(last))
+      else if (last.type === 'clickhouse') await withTimeout(connectClickhouse(last))
+      else if (last.type === 'posthog') await withTimeout(connectPosthog(last))
+      else if (last.type === 'duckdb') await withTimeout(connectDuckdb(last))
+      else if (last.type === 'mssql') await withTimeout(connectMssql(last))
+      else if (last.type === 'oracle') await withTimeout(connectOracle(last))
+      else if (engineFamily(last.type) === 'redis') await withTimeout(connectRedis(last))
+      else if (last.type === 'dynamodb') await withTimeout(connectDynamo(last))
+      else if (last.type === 'couchdb') await withTimeout(connectCouch(last))
+      else if (last.type === 'elasticsearch' || last.type === 'opensearch') await withTimeout(connectElastic(last))
+      else if (last.type === 'cassandra') await withTimeout(connectCassandra(last))
+      else if (last.type === 'neo4j') await withTimeout(connectNeo4j(last))
+      else if (last.type === 'influxdb') await withTimeout(connectInflux(last))
+      else if (last.type === 'firestore') await withTimeout(connectFirestore(last))
+      else if (last.type === 'spanner') await withTimeout(connectSpanner(last))
+      else if (last.type === 'bigquery') await withTimeout(connectBigquery(last))
+      else if (last.type === 'odbc') await withTimeout(connectOdbc(last))
+      else if (last.type === 'snowflake') await withTimeout(connectSnowflake(last))
+      else if (last.type === 'mongodb') await withTimeout(connectMongo(last))
+      else await withTimeout(connectPostgres(last))
+      // onConnected already refreshes the query stores (concurrently with the
+      // catalog load) - no second fetch needed here.
+      if (autoConnectCancelled || gen !== reconnectGen) { if (autoConnectCancelled) { try { await disconnectPostgres() } catch { /* ignore */ } } return }
+      await onConnected(last, last.id)
+    } catch {
+      // Cancelled, or given up on when the network went (a retry owns it now).
+      if (autoConnectCancelled || gen !== reconnectGen) return
+      // Racing the timeout abandons the promise but not the backend: a connect that
+      // lands after we gave up would leave a live pool behind a UI that says
+      // "Not connected", and the next attempt would stack a second one on top.
+      try { await disconnectPostgres() } catch { /* nothing to tear down */ }
+      // The network dropped while dialling: wait for it rather than fail.
+      if (offlineFor(last)) { autoConnectOffline = true; return }
+      showConnectionModal = true
+    } finally {
+      // A retry, or the wait for the network, keeps the overlay up.
+      if (gen !== reconnectGen || autoConnectOffline) { revealApp(); return }
+      autoConnecting = false
+      // Failed, cancelled or timed out: whatever screen is up now is final.
+      revealApp()
+    }
   }
   /** Assigned by ObjectsPage so ⌘F can reach its search box. */
   let objectsFocusSearch = $state(/** @type {() => void} */ (() => {}))
@@ -8898,69 +9017,7 @@ let rowSearch = $state('')
     // to the connection modal instead of re-connecting silently.
     if (!loadSettings().autoReconnectOnStartup) { await lazyDialogs.connection().catch(() => {}); showConnectionModal = true; revealApp(); return }
 
-    beginConnectOverlay(last.name ?? '', 'Reconnecting')
-    // Its password comes from the keychain, which startup did not wait for.
-    Object.assign(last, await withSecrets(last))
-    // A warm reconnect and its table list land in a few hundred ms. Revealing
-    // on the overlay meant three screens in that time - "Reconnecting", an empty
-    // shell with a skeleton sidebar, then the tables - which is the startup
-    // flicker. Stay hidden until the tables are in (the effect watching
-    // `revealOnTables`) and only fall back to the overlay when it runs long.
-    revealOnTables = true
-    setTimeout(revealApp, RECONNECT_REVEAL_MS)
-    // The backend already enforces its own per-engine deadlines (DNS + TCP preflight,
-    // a 20s connect deadline for Postgres, HTTP timeouts for the REST engines) and
-    // fails with a message the user can act on. This race is only a last-resort guard
-    // for a command that never returns AT ALL, so it has to sit above those deadlines.
-    // At 5s it fired first and turned every slow-but-healthy wake-up into "not
-    // connected" - serverless Postgres (Neon, and Prisma/Supabase pooler cold starts)
-    // autosuspends and takes 3-15s to come back, which is why resuming one meant
-    // reconnecting by hand on nearly every launch.
-    /** @param {Promise<unknown>} p */
-    const withTimeout = (p) => Promise.race([
-      p,
-      new Promise((_, reject) => setTimeout(() => reject(new Error('Connection timed out')), 45_000)),
-    ])
-    try {
-      if (last.type === 'sqlite') await withTimeout(connectSqlite(last))
-      else if (last.type === 'd1') await withTimeout(connectD1(last))
-      else if (last.type === 'libsql') await withTimeout(connectLibSql(last))
-      else if (last.type === 'mysql' || last.type === 'mariadb') await withTimeout(connectMysql(last))
-      else if (last.type === 'clickhouse') await withTimeout(connectClickhouse(last))
-      else if (last.type === 'posthog') await withTimeout(connectPosthog(last))
-      else if (last.type === 'duckdb') await withTimeout(connectDuckdb(last))
-      else if (last.type === 'mssql') await withTimeout(connectMssql(last))
-      else if (last.type === 'oracle') await withTimeout(connectOracle(last))
-      else if (engineFamily(last.type) === 'redis') await withTimeout(connectRedis(last))
-      else if (last.type === 'dynamodb') await withTimeout(connectDynamo(last))
-      else if (last.type === 'couchdb') await withTimeout(connectCouch(last))
-      else if (last.type === 'elasticsearch' || last.type === 'opensearch') await withTimeout(connectElastic(last))
-      else if (last.type === 'cassandra') await withTimeout(connectCassandra(last))
-      else if (last.type === 'neo4j') await withTimeout(connectNeo4j(last))
-      else if (last.type === 'influxdb') await withTimeout(connectInflux(last))
-      else if (last.type === 'firestore') await withTimeout(connectFirestore(last))
-      else if (last.type === 'spanner') await withTimeout(connectSpanner(last))
-      else if (last.type === 'bigquery') await withTimeout(connectBigquery(last))
-      else if (last.type === 'odbc') await withTimeout(connectOdbc(last))
-      else if (last.type === 'snowflake') await withTimeout(connectSnowflake(last))
-      else if (last.type === 'mongodb') await withTimeout(connectMongo(last))
-      else await withTimeout(connectPostgres(last))
-      // onConnected already refreshes the query stores (concurrently with the
-      // catalog load) - no second fetch needed here.
-      if (autoConnectCancelled) { try { await disconnectPostgres() } catch { /* ignore */ } return }
-      await onConnected(last, last.id)
-    } catch {
-      if (autoConnectCancelled) return
-      // Racing the timeout abandons the promise but not the backend: a connect that
-      // lands after we gave up would leave a live pool behind a UI that says
-      // "Not connected", and the next attempt would stack a second one on top.
-      try { await disconnectPostgres() } catch { /* nothing to tear down */ }
-      showConnectionModal = true
-    } finally {
-      autoConnecting = false
-      // Failed, cancelled or timed out: whatever screen is up now is final.
-      revealApp()
-    }
+    await reconnectLast(last)
   })
 
   async function handleSchemaChange(schema) {
@@ -11112,6 +11169,7 @@ let rowSearch = $state('')
       verb={autoConnectVerb}
       name={autoConnectName ? shortConnLabel(autoConnectName) : ''}
       delay={autoConnectVerb === 'Reconnecting' ? 350 : 0}
+      offline={autoConnectOffline}
       oncancel={() => void cancelAutoConnect()}
     />
   </div>
