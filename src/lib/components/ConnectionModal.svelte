@@ -1441,9 +1441,22 @@
    */
   function failWith(msg) {
     error = msg;
+    // A network failure with no network is the network. "Nothing answered at
+    // that address" sent people to check a host that was fine.
+    if (typeof navigator !== "undefined" && navigator.onLine === false && /refused|timed out|timeout|unreachable|no route|reset|resolve|lookup|dns|network/i.test(msg)) {
+      toast.error("You're offline", {
+        key: "connect-failure",
+        description: "This computer has no network connection. Connect again when you're back online.",
+        duration: 9000,
+      });
+      return;
+    }
     // errorFix is derived from `error`, so it re-reads against the new message.
     const fix = errorFix;
     toast.error(fix ? fix.title : "Couldn't connect", {
+      // One at a time: a second failure replaces the first instead of stacking
+      // the same "Nothing answered" twice.
+      key: "connect-failure",
       description: fix ? fix.hint : msg,
       // Unrecognised failures show the driver's own words, so they get the
       // monospace treatment the toast already has for raw output.

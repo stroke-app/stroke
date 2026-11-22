@@ -21,8 +21,8 @@ const DEFAULT_DURATION = 4500
 /**
  * @typedef {'success' | 'error' | 'info' | 'warning' | 'message' | 'loading'} ToastType
  * @typedef {{ label: string, onClick: () => void }} ToastAction
- * @typedef {{ id: number, type: ToastType, title: string, description: string, action?: ToastAction, code?: boolean, progress?: number | null }} Toast
- * @typedef {{ description?: string, duration?: number, action?: ToastAction, code?: boolean, progress?: number | null }} ToastOptions
+ * @typedef {{ id: number, type: ToastType, title: string, description: string, action?: ToastAction, code?: boolean, progress?: number | null, key?: string }} Toast
+ * @typedef {{ description?: string, duration?: number, action?: ToastAction, code?: boolean, progress?: number | null, key?: string }} ToastOptions
  */
 
 class ToastStore {
@@ -54,6 +54,21 @@ class ToastStore {
     // The same message again while it is still up (a double-click, a key
     // held down) restarts its timer instead of stacking a copy under it.
     const text = String(title ?? '')
+    // A keyed toast replaces the one up under the same key, whatever it said:
+    // a failure that repeats (a connect retried) is one toast that updates, not
+    // a pile, even when it carries an action.
+    const keyed = opts.key ? this.toasts.find((t) => t.key === opts.key) : undefined
+    if (keyed) {
+      const old = this.#timers.get(keyed.id)
+      if (old) { clearTimeout(old.handle); this.#timers.delete(keyed.id) }
+      /** @type {Toast} */
+      const next = { id: keyed.id, type, title: text, description: opts.description ?? '', key: opts.key }
+      if (opts.action) next.action = opts.action
+      if (opts.code) next.code = true
+      this.toasts = this.toasts.map((t) => (t.id === keyed.id ? next : t))
+      this.#schedule(keyed.id, duration)
+      return keyed.id
+    }
     const same = type !== 'loading' && !opts.action && opts.progress == null
       ? this.toasts.find((t) => t.type === type && t.title === text && (t.description ?? '') === (opts.description ?? '') && !t.action && t.progress == null)
       : undefined
@@ -69,6 +84,7 @@ class ToastStore {
     if (opts.action) entry.action = opts.action
     if (opts.code) entry.code = true
     if (opts.progress != null) entry.progress = opts.progress
+    if (opts.key) entry.key = opts.key
     // newest first; immutable reassignment keeps the read-side reactive
     this.toasts = [entry, ...this.toasts]
     this.#schedule(id, duration)

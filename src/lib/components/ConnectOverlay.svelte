@@ -13,6 +13,7 @@
   import { onDestroy } from 'svelte'
   import Logo from './Logo.svelte'
   import DbIcon from './DbIcon.svelte'
+  import Icon from './Icon.svelte'
 
   let {
     /** DbIcon id (provider or engine). Empty shows the app mark. */
@@ -25,6 +26,8 @@
     detail = '',
     /** Hold the ring and text back this long, so a fast connect never flashes. */
     delay = 350,
+    /** No network: the caller stopped dialling and waits for it to come back. */
+    offline = false,
     /** @type {(() => void) | null} */
     oncancel = null,
   } = $props()
@@ -47,24 +50,39 @@
   </div>
 
   <div class="flex w-full flex-col items-center gap-1" role="status" aria-live="polite">
-    <p class="max-w-full truncate text-ui-sm font-medium text-foreground">
-      {verb}{name ? ` to ${name}` : ''}
-    </p>
-    {#if detail}
-      <p class="max-w-full truncate font-mono text-ui-2xs text-muted-foreground" title={detail}>{detail}</p>
+    {#if offline}
+      <!-- Waiting on the network, not on the database: no spinner and no
+           clock, since nothing is being dialled. It goes on by itself. -->
+      <p class="flex max-w-full items-center gap-1.5 text-ui-sm font-medium text-foreground">
+        <Icon name="wifi-off" class="size-3.5 shrink-0 text-muted-foreground" />You're offline
+      </p>
+      <p class="max-w-72 text-ui-xs text-pretty text-muted-foreground">
+        {name ? `${name} is` : "It's"} across the network. Stroke reconnects as soon as you're back online.
+      </p>
+    {:else}
+      <p class="max-w-full truncate text-ui-sm font-medium text-foreground">
+        {verb}{name ? ` to ${name}` : ''}
+      </p>
+      {#if detail}
+        <p class="max-w-full truncate font-mono text-ui-2xs text-muted-foreground" title={detail}>{detail}</p>
+      {/if}
     {/if}
   </div>
 
   <!-- Indeterminate: a short segment sliding along a hairline track. It keeps
        moving (slower) under reduced motion, like the app's other spinners. -->
-  <div class="relative h-0.5 w-40 overflow-hidden rounded-full bg-muted" aria-hidden="true">
-    <span class="connect-sweep absolute inset-y-0 w-1/3 rounded-full bg-foreground/50"></span>
-  </div>
+  {#if !offline}
+    <div class="relative h-0.5 w-40 overflow-hidden rounded-full bg-muted" aria-hidden="true">
+      <span class="connect-sweep absolute inset-y-0 w-1/3 rounded-full bg-foreground/50"></span>
+    </div>
+  {/if}
 
   <!-- Elapsed time from 2s: long enough that a normal connect never shows it,
        and past that a number says it is still working, not stuck. -->
   <div class="flex h-7 items-center gap-3 text-ui-2xs text-muted-foreground tabular-nums">
-    {#if elapsed >= 8}
+    {#if offline}
+      <!-- Nothing to time while waiting for the network. -->
+    {:else if elapsed >= 8}
       <span>{elapsed}s · a far region can take a few seconds</span>
     {:else if elapsed >= 2}
       <span>{elapsed}s</span>
