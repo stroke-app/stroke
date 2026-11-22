@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.5.7] - 2026-11-22
+
+### Changes
+- Stop kept-alive pages showing the previous database after a switch (#360)
+
+
 ## [3.5.6] - 2026-11-22
 
 ### Changes
