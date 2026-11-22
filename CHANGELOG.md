@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.6.0] - 2026-11-22
+
+### Changes
+- Materialized views in the sidebar, palette and diagram; data grid kept mounted between tabs (#363)
+
+
 ## [3.5.9] - 2026-11-22
 
 ### Changes
