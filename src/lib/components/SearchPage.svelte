@@ -17,6 +17,14 @@
    * @typedef {{ table: string, schema: string, count: number, columns: any[], sampleRow: any[] | null, tableKind?: string }} SearchHit
    */
 
+  /** "3 tables", or "2 tables and 1 view" when the list has views in it. @param {any[]} list */
+  function relationCount(list) {
+    const views = list.filter((t) => /view/.test(t.tableKind ?? t.kind ?? '')).length
+    const n = list.length - views
+    const tablesPart = `${n} table${n === 1 ? '' : 's'}`
+    return views ? `${tablesPart} and ${views} view${views === 1 ? '' : 's'}` : tablesPart
+  }
+
   let {
     /** @type {TableInfo[]} */
     tables = [],
@@ -412,10 +420,11 @@
         {:else if searched && results.length}
           <span><span class="font-medium text-foreground">{totalMatches.toLocaleString()}</span> {totalMatches === 1 ? 'match' : 'matches'} in <span class="font-medium text-foreground">{results.length}</span> of {progress.total} tables</span>
         {:else if !query.trim()}
-          {#if !canScope}<span>{tables.length} tables in {schema}</span>{/if}
+          {#if !canScope}<span>{relationCount(tables)} in {schema}</span>{/if}
         {/if}
-        {#if failed && !searching}
-          <span class="text-warning">· {failed} table{failed === 1 ? '' : 's'} couldn't be searched</span>
+        {#if failed && !searching && query.trim()}
+          <!-- The dot separates it from a results line; alone it led with one. -->
+          <span class="text-warning">{searched && results.length ? '· ' : ''}{failed} table{failed === 1 ? '' : 's'} couldn't be searched</span>
         {/if}
         {#if results.length && !searching}
           <span class="ms-auto hidden items-center gap-1 sm:flex"><Kbd combo="ArrowUp" /><Kbd combo="ArrowDown" /> move <Kbd combo="Enter" /> open</span>

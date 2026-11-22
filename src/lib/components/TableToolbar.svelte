@@ -312,6 +312,12 @@
       ? offset + (isAll ? Math.max(1, loaded) : _effectivePageSize)
       : Math.min(offset + _effectivePageSize, total),
   );
+  // Infinite scroll appends pages to one list, so the readout counts what has
+  // arrived. It used the page arithmetic above and stayed at "50 of 100,000"
+  // with rows 93-113 on screen.
+  const loadedTo = $derived(
+    loaded > 0 ? (counting ? loaded : Math.min(loaded, total)) : to,
+  );
   const pageCount = $derived(Math.max(1, Math.ceil(total / _effectivePageSize) || 1));
   const canPrev = $derived(page > 1);
   const canNext = $derived(keysetMode ? keysetHasMore : (counting || page * _effectivePageSize < total));
@@ -1329,9 +1335,9 @@
         {#if total > 0 || counting || loading}
           <span
             class={cn("flex shrink-0 items-center gap-1 font-mono text-ui-2xs tabular-nums @max-[37.5rem]/tb:hidden", hideAt(2))}
-            title="{to.toLocaleString('en-US')} of {counting ? 'counting…' : total.toLocaleString('en-US') + ' rows'} loaded{queryMs > 0 ? ` · ${queryMs}ms` : ''}"
+            title="{loadedTo.toLocaleString('en-US')} of {counting ? 'counting…' : total.toLocaleString('en-US') + ' rows'} loaded{queryMs > 0 ? ` · ${queryMs}ms` : ''}"
           >
-            <span class="text-foreground">{total > 0 || counting ? to.toLocaleString("en-US") : "–"}</span>
+            <span class="text-foreground">{total > 0 || counting ? loadedTo.toLocaleString("en-US") : "–"}</span>
             <span class="text-muted-foreground">of {#if counting || (loading && total === 0)}<Icon name="loader-2" class="inline size-3 shrink-0 animate-spin align-[-2px]" aria-label="Counting rows" />{:else}{total.toLocaleString("en-US")}{/if} loaded</span>
           </span>
         {/if}
