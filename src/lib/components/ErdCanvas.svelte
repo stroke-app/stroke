@@ -1090,7 +1090,7 @@
           setFill(c('mfg', 0.55))
           ctx.textAlign = 'right'
           // A view says so where the column count would be.
-          ctx.fillText(d.view ? 'view' : String((d.columns?.length ?? 0) + (d.hiddenCount ?? 0)), p.x + NODE_W - 16, p.y + HDR_H / 2 + 0.5)
+          ctx.fillText(d.matView ? 'mat. view' : d.view ? 'view' : String((d.columns?.length ?? 0) + (d.hiddenCount ?? 0)), p.x + NODE_W - 16, p.y + HDR_H / 2 + 0.5)
         }
       }
     }

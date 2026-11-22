@@ -2314,6 +2314,29 @@ let rowSearch = $state('')
   /** Structure view only makes sense for real tables, not views/materialized views */
   const canShowStructure = $derived(activeTableKind === 'table' || activeTableKind === 'foreign_table')
 
+  // Table tabs remember their kind. Sessions saved before the snapshot carried
+  // it restored every view as a table, so the listing corrects them once it
+  // arrives for their schema.
+  $effect(() => {
+    const listed = tables
+    const schema = activeSchema
+    if (!listed.length) return
+    untrack(() => {
+      const kinds = new Map(listed.map((t) => [t.name, t.kind ?? 'table']))
+      let changed = false
+      const next = tabs.map((t) => {
+        if (t.kind !== 'table') return t
+        const st = /** @type {any} */ (t.state)
+        if (st?.schema !== schema) return t
+        const kind = kinds.get(st?.table)
+        if (!kind || kind === (st.tableKind ?? 'table')) return t
+        changed = true
+        return { ...t, state: { ...st, tableKind: kind } }
+      })
+      if (changed) tabs = next
+    })
+  })
+
   const activeView = $derived(activeTab?.kind === 'sql' ? 'sql' : 'table')
 
   // Stable name arrays derived separately so sqlSchemaHints doesn't rebuild
@@ -2911,6 +2934,9 @@ let rowSearch = $state('')
     return {
       schema: activeSchema,
       table: activeTable,
+      // Kept, not re-derived: without it every save turned a view tab back into
+      // a table (grid icon, Structure offered) the moment another tab opened.
+      tableKind: activeTableKind,
       page,
       pageSize,
       rowSearch,

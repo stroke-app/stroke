@@ -751,7 +751,9 @@
 
   /** How many rows each tab holds, after the filter. @type {Record<SidebarTab, number>} */
   const tabCounts = $derived({
-    tables: filteredRegularTables.length + filteredPinnedTables.length,
+    // Views and materialized views list under the tables (see "Views" below),
+    // so a schema holding only views isn't an empty Tables tab.
+    tables: filteredRegularTables.length + filteredPinnedTables.length + filteredViews.length + filteredMatViews.length,
     objects: objectsShown,
     recent: Math.min(filteredRecent.length, 5),
     databases: filteredDbEntries.length,
@@ -2760,7 +2762,7 @@
                         }}
                       >
                         {#if item.tableKind === 'view'}
-                          <Icon name="table-view" class="size-4 shrink-0 text-muted-foreground" />
+                          <Icon name="eye" class="size-4 shrink-0 text-muted-foreground" />
                         {:else if item.tableKind === 'materialized_view'}
                           <Icon name="layers" class="size-4 shrink-0 text-muted-foreground" />
                         {:else}
@@ -3192,6 +3194,41 @@
               </ContextMenu.Root>
               </div>
             {/if}
+            {/if}
+
+            <!-- Views and materialized views, under the tables. They were only
+                 in the Objects panel, so a materialized view, which holds rows
+                 and opens like a table, was nowhere in the list people look in. -->
+            {#if lt === 'tables' && filteredViews.length + filteredMatViews.length > 0}
+              <div class="flex w-full items-center gap-1 px-2.5 pt-3 pb-1">
+                <span class="text-ui-xs font-medium text-muted-foreground">Views</span>
+                {@render countBadge(filteredViews.length + filteredMatViews.length, views.length + matViews.length)}
+              </div>
+              <ul class="w-full px-1.5 pb-1">
+                {#each [...filteredMatViews.map((v) => ({ v, mat: true })), ...filteredViews.map((v) => ({ v, mat: false }))] as { v, mat } (v.name)}
+                  <li class="pb-0.5">
+                    <button
+                      type="button"
+                      data-sidebar-row="view:{v.name}"
+                      data-sidebar-current={activeTable === v.name ? '' : undefined}
+                      class={cn(
+                        'grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 rounded-md px-2 py-1.5 text-left transition-colors',
+                        activeTable === v.name
+                          ? 'bg-sidebar-accent font-medium text-sidebar-accent-foreground'
+                          : 'text-sidebar-foreground hover:bg-sidebar-accent/60 hover:text-foreground',
+                      )}
+                      title={mat ? `${v.name} (materialized view)` : `${v.name} (view)`}
+                      onclick={() => ontableselect(v.name)}
+                    >
+                      <span class="relative size-4 shrink-0"><Icon name={mat ? 'layers' : 'eye'} class={cn('absolute inset-0 size-4', mat ? 'text-warning' : 'text-muted-foreground')} /></span>
+                      <span class="truncate text-ui-sm leading-4">{v.name}</span>
+                      {#if showRowCount && mat && v.rowCount != null}
+                        <span class="flex min-w-[4ch] shrink-0 items-center justify-end font-mono text-ui-2xs leading-4 tabular-nums text-muted-foreground">{formatTableRowCount(v.rowCount)}</span>
+                      {:else}<span></span>{/if}
+                    </button>
+                  </li>
+                {/each}
+              </ul>
             {/if}
 
             <!-- ── Empty state, one per tab ──────────────────────── -->

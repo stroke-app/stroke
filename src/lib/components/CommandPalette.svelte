@@ -646,9 +646,11 @@
   })
 
   // Derived table groups - used in both the root page and the dedicated tables page
-  const regularTables = $derived(tables.filter((t) => !t.tableKind || t.tableKind === 'table' || t.tableKind === 'foreign_table'))
-  const viewTables = $derived(tables.filter((t) => t.tableKind === 'view'))
-  const matViewTables = $derived(tables.filter((t) => t.tableKind === 'materialized_view'))
+  // The schema list sends `kind`; older callers passed `tableKind`.
+  const kindOf = (/** @type {any} */ t) => t.kind ?? t.tableKind ?? 'table'
+  const regularTables = $derived(tables.filter((t) => kindOf(t) === 'table' || kindOf(t) === 'foreign_table'))
+  const viewTables = $derived(tables.filter((t) => kindOf(t) === 'view'))
+  const matViewTables = $derived(tables.filter((t) => kindOf(t) === 'materialized_view'))
 
   // Search text bound from Command.Input. We filter + cap the Tables page
   // ourselves (instead of mounting every table and letting bits-ui score them
@@ -1020,6 +1022,13 @@
                     <span data-slot="command-trailing" class="shrink-0 text-ui-xs text-muted-foreground">view</span>
                   </Command.Item>
                 {/each}
+                {#each matViewTables.slice(0, 4) as table (table.name)}
+                  <Command.Item value="materialized view {activeSchema} {table.name}" onSelect={() => run(() => ontableselect(table.name))}>
+                    <Icon name="layers" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                    <span data-slot="command-label" class="truncate font-mono">{table.name}</span>
+                    <span data-slot="command-trailing" class="shrink-0 text-ui-xs text-muted-foreground">mat. view</span>
+                  </Command.Item>
+                {/each}
                 {#if tables.length > 12}
                   <Command.Item value="browse all tables views search" onSelect={() => navigate('tables')}>
                     <Icon name="table-2" class="size-4 shrink-0 opacity-40" />
@@ -1274,7 +1283,7 @@
             <Command.Group heading="Materialized views">
               {#each tablesPageMatViews.items as table (table.name)}
                 <Command.Item value="materialized view {activeSchema} {table.name} {table.name}" onSelect={() => run(() => ontableselect(table.name))}>
-                  <Icon name="eye" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <Icon name="layers" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                   <span data-slot="command-label" class="truncate font-mono">{table.name}</span>
                   <span
                     data-slot="command-trailing"
