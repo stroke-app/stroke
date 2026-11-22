@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.5.5] - 2026-11-22
+
+### Changes
+- Don't overwrite editor tabs, 5x faster result map, terminal input fix (#358)
+
+
 ## [3.5.4] - 2026-11-22
 
 ### Changes
