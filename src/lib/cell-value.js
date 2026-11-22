@@ -176,6 +176,19 @@ export function isBooleanType(dataType) {
 }
 
 /**
+ * A boolean column's value as `true`/`false`. SQLite, libSQL and D1 store a
+ * boolean as 0 or 1; shown raw it reads as a number, and a true/false picker
+ * given "0" matches none of its options. Anything else comes back unchanged.
+ * @param {unknown} value
+ * @returns {unknown}
+ */
+export function asBooleanValue(value) {
+  if (value === 0 || value === '0') return false
+  if (value === 1 || value === '1') return true
+  return value
+}
+
+/**
  * @param {string} dataType
  */
 export function isEditableType(dataType) {

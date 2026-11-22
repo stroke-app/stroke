@@ -28,6 +28,7 @@
   import {
     isEditableType,
     isBooleanType,
+    asBooleanValue,
     getColumnEnumValues,
     valueToEditString,
     parseCellInput,
@@ -141,8 +142,8 @@
     const row = rows[target.rowIdx] ?? []
     const canEdit = !!onsave && primaryKey.length > 0
     return columns.map((col, i) => {
-      const raw = normalizeCellValue(row[i])
       const dataType = col.dataType ?? col.data_type ?? ''
+      const raw = isBooleanType(dataType) ? asBooleanValue(normalizeCellValue(row[i])) : normalizeCellValue(row[i])
       const normalType = normalizeColumnType(dataType)
       const enumValues = getColumnEnumValues(col)
       const isBoolean = isBooleanType(dataType)

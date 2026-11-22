@@ -14,6 +14,7 @@
   import {
     isEditableType,
     isBooleanType,
+    asBooleanValue,
     getColumnEnumValues,
     valueToEditString,
     parseCellInput,
@@ -203,8 +204,8 @@
     const out = []
     columns.forEach((col, i) => {
       if (hiddenColumns.has(col.name)) return
-      const raw = normalizeCellValue(row[i])
       const dataType = col.dataType ?? col.data_type ?? ''
+      const raw = isBooleanType(dataType) ? asBooleanValue(normalizeCellValue(row[i])) : normalizeCellValue(row[i])
       const normalType = normalizeColumnType(dataType)
       const enumValues = getColumnEnumValues(col)
       const isPk = pkSet.has(col.name)

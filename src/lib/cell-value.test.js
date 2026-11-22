@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatTimestampForDb, parseCellInput } from "./cell-value.js";
+import { asBooleanValue, formatTimestampForDb, parseCellInput } from "./cell-value.js";
 
 describe("formatTimestampForDb", () => {
   it("keeps the instant when the value carries an explicit zone", () => {
@@ -80,3 +80,18 @@ describe("parseCellInput — timestamps", () => {
     expect(parseCellInput("NULL", "timestamptz")).toEqual({ ok: true, value: null });
   });
 });
+
+describe('asBooleanValue', () => {
+  it('reads 0/1 stored booleans as false/true', () => {
+    expect(asBooleanValue(0)).toBe(false)
+    expect(asBooleanValue(1)).toBe(true)
+    expect(asBooleanValue('0')).toBe(false)
+    expect(asBooleanValue('1')).toBe(true)
+  })
+  it('leaves real booleans, NULL and other values alone', () => {
+    expect(asBooleanValue(true)).toBe(true)
+    expect(asBooleanValue(null)).toBe(null)
+    expect(asBooleanValue(2)).toBe(2)
+    expect(asBooleanValue('yes')).toBe('yes')
+  })
+})
