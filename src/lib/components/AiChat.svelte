@@ -6316,7 +6316,7 @@
             </button>
 
             <p class="text-center text-ui-3xs text-muted-foreground">
-              Shared with AI sidebar · <kbd class="font-mono">{comboTitle('Mod+I')}</kbd>
+              Shared with AI sidebar · <kbd class="font-mono">{comboTitle('Mod+Shift+E')}</kbd>
             </p>
           </div>
 
