@@ -281,6 +281,8 @@
     WINDOW_THRESHOLD,
     measureRowBytes,
     pickWindowRows,
+    pickMirrorPage,
+    SCREENFUL_FIRST_BYTES,
     seekKeyFor,
     shouldWindow,
     stableWindowOrder,
@@ -7384,7 +7386,12 @@ let rowSearch = $state('')
     while (_mirrors.size >= MIRROR_MAX_COUNT) dropMirror(_mirrors.keys().next().value)
     const id = `mirror:${tabId}:${++_mirrorSerial}`
     _mirrors.set(tabId, { id, seq: _windowSeq })
-    void startTableMirror(id, activeSchema, activeTable ?? '', currentRowQuery(false), seek, Math.min(_windowCount, MIRROR_MAX_ROWS))
+    // Pages sized by bytes, and one at a time over a slow link: the copy must
+    // never be what a scroll waits for.
+    void startTableMirror(id, activeSchema, activeTable ?? '', currentRowQuery(false), seek, Math.min(_windowCount, MIRROR_MAX_ROWS), {
+      pageRows: pickMirrorPage(_windowBytesPerRow),
+      parallel: _windowSlow ? 1 : 2,
+    })
       .catch(() => {
         // Refused (no disk room) or failed mid-walk: forget it; the windows
         // keep fetching remotely, which is all they did before.
@@ -7430,7 +7437,12 @@ let rowSearch = $state('')
       // whole window is 10,000 rows, ~1.5 MB, most of a second over a far
       // link, for the ~30 rows on screen. Those are asked for alone (a few
       // hundred, one small round trip), then the window as before.
-      if (!local && !keyset && limit > VIEWPORT_FIRST_MIN && _visStart >= start && _visStart < start + limit && rows[_visStart] === undefined) {
+      // Keyset windows too: by OFFSET in the same order, which is the same rows.
+      // They were left out, so on a table of wide rows (HTML, JSON) the rows in
+      // view waited for a ~2 MB window, 4 s at 5 Mbit, while a screenful is a
+      // tenth of a second. Worth it whenever the window is heavy or the link slow.
+      const heavyWindow = limit * (_windowBytesPerRow || 0) > SCREENFUL_FIRST_BYTES || _windowSlow
+      if (!local && (limit > VIEWPORT_FIRST_MIN || heavyWindow) && _visStart >= start && _visStart < start + limit && rows[_visStart] === undefined) {
         const from = Math.max(start, _visStart - 20)
         const count = Math.min(start + limit, Math.max(_visEnd, _visStart) + 60) - from
         try {

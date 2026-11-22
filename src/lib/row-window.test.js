@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   WINDOW_ROWS_DEFAULT,
+  pickMirrorPage,
   WINDOW_ROWS_MAX,
   WINDOW_ROWS_MIN,
   measureRowBytes,
@@ -204,5 +205,14 @@ describe('seekKeyFor', () => {
 
   it('refuses a view with no stable order at all', () => {
     expect(seekKeyFor(view({ order: null }))).toBeNull()
+  })
+})
+
+describe('pickMirrorPage', () => {
+  it('keeps a page near 256 KB, within 200-5000 rows', () => {
+    expect(pickMirrorPage(850)).toBe(301)
+    expect(pickMirrorPage(20)).toBe(5000)
+    expect(pickMirrorPage(50_000)).toBe(200)
+    expect(pickMirrorPage(0)).toBe(2000)
   })
 })
