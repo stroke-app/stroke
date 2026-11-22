@@ -34,7 +34,12 @@ if ((import.meta.env.DEV || import.meta.env.VITE_STROKE_BENCH === '1') && import
   // Room for every module a session loads (the default 250 fills at startup),
   // so the perf log can say which code a connect pulled in.
   try { performance.setResourceTimingBufferSize(20000) } catch { /* not supported */ }
-  void import('$lib/perf.js').then((m) => { m.traceMark('main'); m.traceStartupStalls() })
+  // The stall heartbeat (every 10 ms) costs startup time itself, so it runs
+  // only when asked for: localStorage 'stroke:perf-stalls' = '1'.
+  void import('$lib/perf.js').then((m) => {
+    m.traceMark('main')
+    try { if (localStorage.getItem('stroke:perf-stalls') === '1') m.traceStartupStalls() } catch { /* storage blocked */ }
+  })
   void import('$lib/perf-probe.js').then((m) => m.installPerfProbe())
 }
 installZoomShortcuts()
