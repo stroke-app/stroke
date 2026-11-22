@@ -6,7 +6,7 @@
   import { workspaces, activeWorkspaceId, inWorkspace } from '$lib/stores/workspaces.js'
 
   import { comboTitle } from '$lib/shortcuts.js'
-  import { untrack, onDestroy } from "svelte";
+  import { untrack, onDestroy, onMount } from "svelte";
   import { getAppScale } from '$lib/app-zoom.js';
   import { createCommandHotkey } from "$lib/command-hotkey.js";
   import { bindingFor, withShortcut } from "$lib/stores/keybindings.js";
@@ -1741,6 +1741,19 @@
     return `${Math.round(s / (86400 * 7))}w`
   }
   /** @type {{ c: any, x: number, y: number } | null} */
+  /**
+   * The connections list and the AI chats render a frame after the rest. The
+   * sidebar mounts with a connect, in the same synchronous render as the rest
+   * of the connected layout and ahead of the catalog's reply; these two lists
+   * (a row, an engine icon and a hover card per saved connection) are not
+   * what anyone looks at in that first frame.
+   */
+  let lowerReady = $state(false)
+  onMount(() => {
+    const id = requestAnimationFrame(() => { lowerReady = true })
+    return () => cancelAnimationFrame(id)
+  })
+
   /** The connection the list's right-click menu is for. @type {any} */
   let connMenuFor = $state(null)
   let connHover = $state(null)
@@ -3414,7 +3427,7 @@
   <!-- AI chats (beta, AI in a tab): the T3 thread list. A chat that is
        replying says so in place of its time, so you can read a table while it
        works and see when it is done. -->
-  {#if aiInTab && aiChatId}
+  {#if aiInTab && aiChatId && lowerReady}
     <div class="flex max-h-[40%] shrink-0 flex-col pt-2">
       <div class="flex h-9 shrink-0 items-center gap-1 pr-2 pl-4">
         <button
@@ -3642,7 +3655,7 @@
   <!-- Connections, pinned to the sidebar's foot (T3's "Settled" pattern): a
        header that folds the list away, quiet rows with the engine and when you
        last used it, "Show more", and a hover card with the details. -->
-  {#if wsConnections.length}
+  {#if wsConnections.length && lowerReady}
     <div class="flex max-h-[45%] shrink-0 flex-col pt-2">
       <button
         type="button"

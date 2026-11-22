@@ -488,6 +488,8 @@
    * holding a 10 ms database answer behind ~300 ms of parsing.
    */
   let connectSettled = $state(true)
+  /** Last session's tabs are being put back (see onConnected). */
+  let restoringTabs = $state(false)
   let autoConnecting = $state(false)
   /** Name of the connection the overlay is waiting on. */
   let autoConnectName = $state('')
@@ -8487,6 +8489,12 @@ let rowSearch = $state('')
     const tabsKey = sqlDraftKey
     holdOpenTabs(tabsKey)
     tabs = []
+    // Tabs from last time are coming back once the catalog is in: the new-tab
+    // page would render now only to be replaced by them (a flash, and its
+    // mount was part of the connect's first render). Shown only when nothing
+    // is coming back.
+    restoringTabs = !!tabsKey && loadSettings().reopenTabs !== false && loadOpenTabs(tabsKey).length > 0
+    if (restoringTabs) setTimeout(() => { restoringTabs = false }, 3000)
     // Labs: the tabs kept for the other open databases keep their rows and
     // results. Wiping them handed a resumed grid the proxied copy of its rows
     // (slow to scroll) and dropped every kept SQL result.
@@ -8559,6 +8567,7 @@ let rowSearch = $state('')
       await restoreOpenTabs(tabsKey)
     } finally {
       _openTabsReady.add(tabsKey)
+      restoringTabs = false
       phase('tabs')
       void tick().then(() => requestAnimationFrame(() => {
         connectSettled = true
@@ -12504,146 +12513,24 @@ let rowSearch = $state('')
         </div>
       {/if}
 
-      {#if !activeTab || activeTab.kind === 'welcome'}
-        <!-- One platform test for the whole app: `IS_MAC` comes from `detectOs()`,
-             which reads the Tauri platform. `navigator.platform` is deprecated,
-             and a second source of truth is a second answer waiting to happen. -->
-        {@const isMac = IS_MAC}
-        {@const mod = isMac ? '⌘' : 'Ctrl'}
-        <!-- Tile chrome. Every tile is the same fixed height with the icon row
-             pinned to the top and the label to the bottom, so labels stay on a
-             shared baseline whether or not a tile carries a chord or wraps to
-             two lines. Colors use solid tokens (not fractional alpha) - thinned
-             strokes read as fuzzy against the dark panel. -->
-        <!-- min-h, not h: a label that wraps to two lines in a narrow pane grows
-             the tile instead of spilling out of it. min-w-0 + overflow-hidden
-             keep a long word inside the border when the column is tight. -->
-        {@const cell = 'group relative flex min-h-[5.25rem] min-w-0 flex-col justify-between overflow-hidden rounded-lg border border-border/60 bg-card/50 p-2.5 text-left transition-[background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out)] hover:border-border hover:bg-accent/40 active:scale-[0.98]'}
-        {@const proCell = 'group relative flex min-h-[5.25rem] min-w-0 cursor-not-allowed flex-col justify-between overflow-hidden rounded-lg border border-border/40 bg-card/30 p-2.5 text-left transition-[background-color,border-color] duration-150 hover:border-warning/30 hover:bg-warning/[0.04]'}
-        {@const iconCls = 'size-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground'}
-        {@const proIconCls = 'size-4 shrink-0 text-muted-foreground'}
-        {@const labelCls = 'text-ui-2xs font-medium leading-[1.25] text-foreground/85 transition-colors group-hover:text-foreground [overflow-wrap:anywhere]'}
-        {@const proLabelCls = 'text-ui-2xs font-medium leading-[1.25] text-muted-foreground [overflow-wrap:anywhere]'}
-
-        <!-- Shift is spelled out off macOS: the bundled UI/mono webfonts have no
-             U+21E7, so "Ctrl⇧E" fell back mid-word and rendered as garbage.
-             Keys are separate spans - butted-together chords are unreadable at
-             this size. -->
-        {@const shiftKey = isMac ? '⇧' : 'Shift'}
-        {#snippet chord(/** @type {string[]} */ keys)}
-          <Kbd {keys} wrap />
-        {/snippet}
-
-        <!-- A tile: one line, icon and label. Compact on purpose: the two-line
-             version with a description and printed chord was most of the page,
-             and in the monospace font its descriptions truncated anyway. The
-             description and the shortcut are in the tooltip. -->
-        {#snippet row(/** @type {any} */ Icon, /** @type {string} */ label, /** @type {string} */ desc, /** @type {() => void} */ onclick, /** @type {{ pro?: boolean, keys?: string[], tone?: 'info' | 'success' | 'primary' | 'warning' }} */ opts = {})}
-          {@const locked = !!opts.pro && !$hasPro}
-          {@const toneCls = { info: 'text-info', success: 'text-success', primary: 'text-primary', warning: 'text-warning' }[opts.tone ?? 'info']}
-          {@const chordText = opts.keys ? ` (${opts.keys.join(isMac ? '' : '+')})` : ''}
-          <!-- A simple action: coloured icon and label; what it does and its
-               chord are in the tooltip, the chord also shows on hover. -->
-          <button
-            type="button"
-            {onclick}
-            title={locked ? `${label} - ${desc} - Pro` : `${label} - ${desc}${chordText}`}
-            class={cn(
-              // flex-wrap in a one-line-high, clipped box: a chord that does not
-              // fit beside the label wraps out of sight instead of squeezing
-              // the label ("Extensions" became "Ext..." on hover).
-              "group flex h-9 min-w-0 flex-wrap content-start items-center gap-x-2.5 overflow-hidden rounded-md px-2.5 text-left text-muted-foreground outline-none transition-colors hover:bg-accent/50 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring",
-              locked && "cursor-not-allowed",
-            )}
-          >
-            <Icon class={cn('size-4 shrink-0', toneCls)} />
-            <span class="flex h-9 min-w-0 items-center truncate text-ui-sm">{label}</span>
-            {#if locked}<Lock class="size-3 shrink-0 text-warning" aria-label="Pro feature" />{/if}
-            <!-- In the layout only while it shows: hidden but laid out, the chord
-                 kept its width and cut "Search" to "Se..." at every pane size. -->
-            {#if opts.keys}<span class="ml-auto hidden h-9 shrink-0 items-center group-hover:inline-flex group-focus-visible:inline-flex">{@render chord(opts.keys)}</span>{/if}
-          </button>
-        {/snippet}
-
-        <!-- A second-tier destination: one line, no border, no chord. It has to
-             read as subordinate to the tiles at a glance, which is what keeps
-             the page a shortlist rather than a menu. -->
-        {#snippet jump(/** @type {any} */ Icon, /** @type {string} */ label, /** @type {() => void} */ onclick)}
-          <button
-            type="button"
-            {onclick}
-            class="group inline-flex h-7 min-w-0 items-center gap-1.5 rounded-md px-2 text-left text-muted-foreground outline-none hover:text-foreground focus-visible:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
-          >
-            <Icon class="size-4 shrink-0" />
-            <span class="truncate text-ui-sm">{label}</span>
-          </button>
-        {/snippet}
-
-        <!-- Scroll container keeps top/bottom padding reachable when the content
-             outgrows the viewport (e.g. at high zoom); inner wrapper centers when it fits. -->
-        <div class="min-h-0 flex-1 overflow-auto">
-          <!-- Everything on this page hangs off ONE leading edge, and the block
-               itself is centred in the pane. It used to centre each band on its
-               own axis: a centred logo over a centred label over a centred meta
-               line over a left-aligned grid, so nothing lined up with anything
-               and the tiles read as off-centre against the text above them.
-               `max-w-xl` is the grid's width, so the header, the list and the
-               footer now all start where the first tile starts. -->
-          <div class="welcome-hero @container/welcome mx-auto flex min-h-full w-full max-w-2xl flex-col justify-center gap-6 px-6 pt-10 pb-[12vh]">
-
-          {#if connection}
-            <!-- Identity: which database this tab is on, as a header row that
-                 shares the block's left edge with everything below it. -->
-            <div class="flex min-w-0 items-center gap-3">
-              <span class="flex size-10 shrink-0 items-center justify-center rounded-xl border border-border/60 bg-card">
-                <DbIcon id={engineId(connection)} class="size-5 shrink-0" />
-              </span>
-              <div class="flex min-w-0 flex-col gap-0.5">
-                <h1 class="truncate text-ui-xl font-semibold tracking-[-0.01em] text-foreground">{welcomeTitle}</h1>
-                <p class="truncate text-ui-xs text-muted-foreground" title={welcomeWhere}>{shortWhere(welcomeWhere)}</p>
-              </div>
-            </div>
-            <!-- The one main control: everything starts in ⌘K. -->
-            <button
-              type="button"
-              class="flex h-11 w-full cursor-pointer items-center gap-3 rounded-lg bg-muted/40 px-3.5 text-left text-ui-sm text-muted-foreground transition-colors duration-150 hover:bg-muted/70 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
-              onclick={() => { commandPage = 'root'; commandOpen = true }}
-            >
-              <Search class="size-4 shrink-0" />
-              <span class="min-w-0 flex-1 truncate">Search tables, run SQL, or ask AI…</span>
-              {@render chord([mod, 'K'])}
-            </button>
-          {/if}
-
-          <!-- Six actions, two rows of three (one column when the pane is narrow). -->
-          <div class="grid w-full grid-cols-1 gap-1 @md/welcome:grid-cols-3">
-            {#if isDoc}
-              {@render row(Database, "Browse", "Open collections and edit documents", openDocsTab, { tone: 'info' })}
-              {@render row(Terminal, "Query", "Run queries in the SQL editor", openSqlTab, { keys: [mod, shiftKey, "S"], tone: 'success' })}
-            {:else if isDynamo}
-              {@render row(Database, "Tables", "Scan, query and edit items", openDynamoTab, { tone: 'info' })}
-              {@render row(Terminal, "PartiQL", "Query in the SQL editor", openSqlTab, { keys: [mod, shiftKey, "S"], tone: 'success' })}
-            {:else if isRedis}
-              {@render row(KeyRound, "Keyspace", "Browse keys and values", openRedisTab, { tone: 'info' })}
-            {:else}
-              {@render row(Terminal, "SQL", "Write and run a query", openSqlTab, { keys: [mod, shiftKey, "S"], tone: 'info' })}
-            {/if}
-            {#if connection && !isDynamo && !isDoc}
-              {@render row(SquareTerminal, "Terminal", isRedis ? "redis-cli, docked below" : "psql, mysql or sqlite3, docked below", () => { if (aiMode) exitAiMode(); if (!terminalDockOpen) toggleTerminalDock() }, { keys: [IS_MAC ? "⌘" : "Ctrl", "J"], tone: 'success' })}
-            {/if}
-            {@render row(Sparkles, "AI", "Ask about this database", openAiTab, { pro: true, keys: [mod, shiftKey, "E"], tone: 'primary' })}
-            {#if connection && !isKV}
-              {@render row(Search, "Search", "Find in database: search every table at once", openSearchTab, { keys: [mod, shiftKey, "G"], tone: 'warning' })}
-            {/if}
-            {@render row(Blocks, "Extensions", "Add and manage extensions", openExtensionsTab, { pro: true, keys: [mod, shiftKey, "X"], tone: 'info' })}
-            {@render row(Database, "Connect", "Switch or add a connection", () => (showConnectionModal = true), { keys: [mod, shiftKey, "C"], tone: 'success' })}
-          </div>
-
-          <button type="button" class="inline-flex h-7 items-center gap-1.5 self-start rounded-md px-1 text-ui-xs text-muted-foreground transition-colors hover:text-foreground" onclick={() => { commandPage = 'pages'; commandOpen = true }}>
-            Browse all pages {@render chord([mod, shiftKey, 'P'])}
-          </button>
-          </div>
-        </div>
+      {#if (!activeTab || activeTab.kind === 'welcome') && !restoringTabs}
+        <NewTabPage
+          {connection}
+          {isDoc}
+          {isDynamo}
+          {isRedis}
+          {isKV}
+          onpalette={(page) => { commandPage = page; commandOpen = true }}
+          ondocs={openDocsTab}
+          onsql={openSqlTab}
+          ondynamo={openDynamoTab}
+          onredis={openRedisTab}
+          onterminal={() => { if (aiMode) exitAiMode(); if (!terminalDockOpen) toggleTerminalDock() }}
+          onai={openAiTab}
+          onsearch={openSearchTab}
+          onextensions={openExtensionsTab}
+          onconnect={() => (showConnectionModal = true)}
+        />
       {/if}
       {/snippet}
       {/if}
