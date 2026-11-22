@@ -176,6 +176,17 @@
     onaskaiprompt = undefined,
   } = $props();
 
+  // A new run starts its result at the top. The grid kept its scroll offset
+  // across runs, so a 1M-row result streaming in opened around row 9,282 of
+  // wherever the last one had been. The token bumps when a run starts.
+  let resultToken = $state(0)
+  let _wasLoading = false
+  $effect(() => {
+    const now = loading
+    if (now && !_wasLoading) untrack(() => { resultToken += 1 })
+    _wasLoading = now
+  })
+
   /** @type {{ focus: () => void, markRunning: (ranStatement?: string | null) => void, markExecuted: (ranStatement?: string | null, run?: { ms?: number | null, rows?: number | null }) => void, markOutcomes: (outcomes: Array<{ sql: string, sent?: string, error: string | null, position: number | null, ms?: number | null, rows?: number | null, affected?: number | null }>) => void, clearRunMarks: () => void, markReverted: (undoId: string) => void, replaceInFailed: (name: string, replacement: string) => boolean, getStatementAtCursor: () => string, getSelectionText: () => string } | null} */
   let sqlEditorRef = $state(null)
 
@@ -1837,6 +1848,7 @@
                 bind:this={resultTableRef}
                 columns={currentDisplay.columns}
                 rows={foundRows}
+                reloadToken={resultToken}
                 searchQuery={findOpen ? findText : ''}
                 loading={loading || sorting}
                 bind:selected

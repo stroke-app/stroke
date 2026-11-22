@@ -12277,6 +12277,8 @@ let rowSearch = $state('')
                   onprevpage={() => void handlePageChange(page - 1)}
                   onnextpage={() => void handlePageChange(page + 1)}
                   onsave={handleSaveCell}
+                  onloadvalue={dbType === 'postgres' ? handleLoadCellValue : null}
+                  {dataVersion}
                 />
               {:else if dataViewMode === 'text'}
                 {#await import('./TableTextView.svelte')}<TabLoading />{:then { default: TableTextView }}
