@@ -11220,7 +11220,7 @@ let rowSearch = $state('')
         >
           <svelte:boundary failed={tabError}>
             {#await import('./SecurityPage.svelte')}<TabLoading />{:then { default: SecurityPage }}
-              <SecurityPage bind:this={securityPageRef} active={activeTab?.kind === 'security'} connectionType={connection?.type ?? null} />
+              <SecurityPage bind:this={securityPageRef} active={activeTab?.kind === 'security'} connectionType={connection?.type ?? null} connectionId={persistConnectionId ?? ''} />
             {/await}
           </svelte:boundary>
         </div>
@@ -11445,7 +11445,7 @@ let rowSearch = $state('')
         >
           <svelte:boundary failed={tabError}>
             {#await import('./MapPage.svelte')}<TabLoading />{:then { default: MapPage }}
-              <MapPage />
+              <MapPage connectionId={persistConnectionId ?? ''} />
             {/await}
           </svelte:boundary>
         </div>
