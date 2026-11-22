@@ -2041,10 +2041,16 @@ pub async fn table_mirror(
     preview_wide: Option<bool>,
     seek: MirrorSeek,
     max_rows: usize,
+    page_rows: Option<i64>,
+    parallel: Option<usize>,
 ) -> Result<usize, String> {
     use futures::StreamExt;
     let mut writer = store.create(&id)?;
-    let page_rows = MIRROR_PAGE as usize;
+    // Sized by the grid from the row width (pickMirrorPage): a page in flight
+    // is what a scroll waits behind, so it is kept to a few hundred KB.
+    let page_limit = page_rows.unwrap_or(MIRROR_PAGE).clamp(100, MIRROR_PAGE);
+    let page_rows = page_limit as usize;
+    let parallel = parallel.unwrap_or(MIRROR_PARALLEL).clamp(1, MIRROR_PARALLEL);
     let chunks = max_rows.div_ceil(page_rows).max(1);
     // Every page is addressed by its offset, which on a single-column primary
     // key is an index skip (see get_table_rows), so pages need not wait on the
@@ -2070,7 +2076,7 @@ pub async fn table_mirror(
                 state,
                 schema,
                 table,
-                MIRROR_PAGE,
+                page_limit,
                 (k * page_rows) as i64,
                 search,
                 search_is_regex.unwrap_or(false),
@@ -2090,7 +2096,7 @@ pub async fn table_mirror(
             .map(Some)
         }
     };
-    let mut pages = futures::stream::iter(0..chunks).map(fetch_page).buffered(MIRROR_PARALLEL);
+    let mut pages = futures::stream::iter(0..chunks).map(fetch_page).buffered(parallel);
     let mut total = 0usize;
     let mut first = true;
     while let Some(res) = pages.next().await {

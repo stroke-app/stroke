@@ -1695,9 +1695,9 @@ function tableRowsQueryArgs(query) {
  * @param {number} maxRows
  * @returns {Promise<number>}
  */
-export async function startTableMirror(id, schema, table, query, seek, maxRows) {
+export async function startTableMirror(id, schema, table, query, seek, maxRows, { pageRows, parallel } = /** @type {{ pageRows?: number, parallel?: number }} */ ({})) {
   const { keyset: _k, includeMeta: _m, includeCount: _c, ...args } = tableRowsQueryArgs(query)
-  return await inv('table_mirror', { id, schema, table, ...args, seek, maxRows })
+  return await inv('table_mirror', { id, schema, table, ...args, seek, maxRows, pageRows: pageRows ?? null, parallel: parallel ?? null })
 }
 
 /**
