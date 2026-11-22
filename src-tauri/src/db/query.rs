@@ -6481,6 +6481,28 @@ mod stream_tests {
         Some(cfg)
     }
 
+    /// Decimals keep their scale and every digit, collected, streamed and
+    /// read-only: as JSON numbers 12.50 came back 12.5, and a Decimal(38)
+    /// past a double's precision came back rounded.
+    #[tokio::test]
+    async fn clickhouse_live_decimals_keep_scale() {
+        let Some(cfg) = live_clickhouse() else { return };
+        let sql = "SELECT toDecimal64(12.5, 2) AS p, toDecimal128('12345678901234567890.12', 2) AS big";
+        let want = [Value::from("12.50"), Value::from("12345678901234567890.12")];
+        let r = super::super::clickhouse::query(&cfg, sql).await.unwrap();
+        assert_eq!(r.rows[0], want, "collected");
+        let r = super::super::clickhouse::query_readonly(&cfg, sql).await.unwrap();
+        assert_eq!(r.rows[0], want, "read-only");
+        assert!(super::super::clickhouse::query_readonly(&cfg, "CREATE TABLE stroke_ro_probe (x UInt8) ENGINE = Memory").await.is_err(), "read-only must still refuse DDL");
+        let store = super::super::result_store::ResultStore::default();
+        let mut sink = sink_into(&store, "ch-dec");
+        let (_tx, rx) = tokio::sync::oneshot::channel();
+        let stop = super::super::stop::Stop::from_rx(rx);
+        super::super::clickhouse::stream_into(&cfg, sql, &mut sink, &stop).await.unwrap();
+        let row: Vec<Value> = serde_json::from_str::<Vec<Vec<Value>>>(&store.get("ch-dec").unwrap().read_window(0, 1).unwrap()).unwrap().remove(0);
+        assert_eq!(row, want, "streamed");
+    }
+
     #[tokio::test]
     async fn clickhouse_live_streams_and_stops() {
         let Some(cfg) = live_clickhouse() else { return };
