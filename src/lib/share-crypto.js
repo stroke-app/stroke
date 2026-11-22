@@ -97,6 +97,11 @@ export async function openShare(blob, linkKey, password, passwordSalt) {
 const PII_NAME = /(^|_)(e_?mail|phone|mobile|tel|ssn|passport|national_id|tax_id|iban|card|cc_num|cvv|dob|birth(day|date)?|address|street|zip|postcode|ip(_?addr(ess)?)?|password|passwd|pwd|secret|token|api_?key|access_?key|private_?key|salt|hash|session|otp|first_?name|last_?name|full_?name|surname)($|_)/i
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/
 const PHONE = /^\+?[\d\s().-]{8,}$/
+/** Dates (2024-01-03, 03.01.2024) fit PHONE's characters, so a join date was
+ *  masked as a phone number; a bare run of digits is more often an id. */
+const DATEISH = /^(\d{4}[-./]\d{1,2}[-./]\d{1,2}|\d{1,2}[-./]\d{1,2}[-./]\d{4})$/
+const looksLikePhone = (/** @type {string} */ v) =>
+  PHONE.test(v) && /\d{7,}/.test(v.replace(/\D/g, '')) && !DATEISH.test(v.trim()) && /^\+|[\s().-]/.test(v.trim())
 const TOKENISH = /^(?:sk|pk|rk|ghp|gho|xox[abp]|eyJ)[\w.-]{16,}|^[A-Za-z0-9_-]{32,}$/
 
 /**
@@ -117,7 +122,7 @@ export function detectSensitiveColumns(columns, rows) {
       if (typeof v !== 'string' || !v) continue
       seen++
       if (EMAIL.test(v)) emails++
-      else if (PHONE.test(v) && /\d{7,}/.test(v.replace(/\D/g, ''))) phones++
+      else if (looksLikePhone(v)) phones++
       else if (TOKENISH.test(v)) tokens++
     }
     if (!seen) return
