@@ -11621,6 +11621,7 @@ let rowSearch = $state('')
             {#await import('./SearchPage.svelte')}<TabLoading />{:then { default: SearchPage }}
               <SearchPage
                 bind:focusSearch={dbSearchFocusInput}
+                connectionId={persistConnectionId ?? ''}
                 {tables}
                 schema={activeSchema}
                 dialect={dbType}
