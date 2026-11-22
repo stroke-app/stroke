@@ -20,8 +20,6 @@
   import Boxes from '@lucide/svelte/icons/boxes'
   import FileCode2 from '@lucide/svelte/icons/file-code-2'
   import Terminal from '@lucide/svelte/icons/terminal'
-  import SquareTerminal from '@lucide/svelte/icons/square-terminal'
-  import Sparkles from '@lucide/svelte/icons/sparkles'
   import LayoutTemplate from '@lucide/svelte/icons/layout-template'
   import { cn, errorText } from '$lib/utils.js'
   import Command from '@lucide/svelte/icons/command'
@@ -32,13 +30,10 @@
   import BarChart2 from '@lucide/svelte/icons/bar-chart-2'
   import LayoutDashboard from '@lucide/svelte/icons/layout-dashboard'
   import GitBranch from '@lucide/svelte/icons/git-branch'
-  import Blocks from '@lucide/svelte/icons/blocks'
   import GitCompare from '@lucide/svelte/icons/git-compare'
   import History from '@lucide/svelte/icons/history'
-  import Plus from '@lucide/svelte/icons/plus'
   import Search from '@lucide/svelte/icons/search'
   import { bindingFor } from '$lib/stores/keybindings.js'
-  import { ago } from '$lib/plugins/extensions/id-decoder.js'
   import Gauge from '@lucide/svelte/icons/gauge'
   import Network from '@lucide/svelte/icons/network'
   import { createHotkey } from '@tanstack/svelte-hotkeys'
@@ -73,7 +68,9 @@
   // AiChat / AiSidebar (large, pull in marked + shiki) are loaded lazily the first time
   // the AI panel is opened - see the {#await import()} blocks below.
   import { terminalDockOpen as terminalDockStore } from '$lib/stores/redis-nav.js'
-  import DbIcon from './DbIcon.svelte'
+  import NewTabPage from './NewTabPage.svelte'
+  import LauncherScreen from './LauncherScreen.svelte'
+  import TableLoadError from './TableLoadError.svelte'
   import { requestShare, sharesPageRequest, chartTitle, shareRequest, rowsToJson as rowsToJsonValue } from '$lib/share-flow.js'
   import MySharesDialog from './MySharesDialog.svelte'
   import Icon from './Icon.svelte'
@@ -128,12 +125,8 @@
   // Heavy feature pages (echarts / mermaid / swapy / xyflow+dagre) are loaded lazily
   // the first time their tab is opened - see the {#await import()} blocks below.
   // This keeps those large libraries out of the startup bundle and idle memory.
-  import { Button } from '$lib/components/ui/button/index.js'
   import AlertTriangle from '@lucide/svelte/icons/triangle-alert'
   import Lock from '@lucide/svelte/icons/lock'
-  import WifiOff from '@lucide/svelte/icons/wifi-off'
-  import Unplug from '@lucide/svelte/icons/unplug'
-  import RefreshCw from '@lucide/svelte/icons/refresh-cw'
   import { setConnRoute,
     disconnectPostgres,
     prewarmDns,
@@ -594,17 +587,6 @@
       .catch(() => {})
     return () => { gone = true; off?.() }
   })
-  /** @type {HTMLElement | null} */
-  let welcomeConnectBtn = $state(null)
-
-  // The welcome screen has exactly one thing to do, so its button starts with
-  // focus: Enter opens the dialog, Tab walks the engine chips, and nobody has to
-  // reach for the mouse to get in. Skipped while a dialog owns the window.
-  $effect(() => {
-    if (connection || showConnectionModal || !welcomeConnectBtn) return
-    welcomeConnectBtn.focus({ preventScroll: true })
-  })
-
   /**
    * Open a link in the user's browser. In a Tauri window a plain anchor
    * navigates the webview itself - away from the app - so every outbound link
@@ -659,18 +641,6 @@
   let showCreateTableDialog = $state(false)
   let showCreateSchemaDialog = $state(false)
   let savedConnections = $state(loadSavedConnections())
-  /** The welcome screen's Recent list: the last four connections actually opened. */
-  const recentConnections = $derived(
-    savedConnections.filter((c) => c.lastConnectedAt).sort((a, b) => (b.lastConnectedAt ?? 0) - (a.lastConnectedAt ?? 0)).slice(0, 4),
-  )
-  /** "Redis · 127.0.0.1:6379", or the file name for local files. @param {import('$lib/stores/connections.js').SavedConnection} c */
-  function welcomeTarget(c) {
-    const x = /** @type {any} */ (c)
-    if (x.filePath) return x.filePath === ':memory:' ? 'in memory' : String(x.filePath).split(/[\\/]/).pop() ?? ''
-    if (x.url) { try { return new URL(String(x.url).replace(/^libsql:/, 'https:')).host } catch { return '' } }
-    if (x.host) return `${x.host}${x.port ? `:${x.port}` : ''}`
-    return engineLabel(engineId(c))
-  }
   // Sync (src/lib/sync/runtime.js) changed the saved list from another device.
   $effect(() => {
     const reload = () => { savedConnections = loadSavedConnections() }
@@ -1215,16 +1185,6 @@
     warning: 'text-warning',
   }
   /** The welcome header: which database this tab is on, and where it lives. */
-  const welcomeTitle = $derived(connection ? String(connection.database || connection.name || 'Database') : '')
-  const welcomeWhere = $derived.by(() => {
-    if (!connection) return ''
-    const c = /** @type {any} */ (connection)
-    let where = ''
-    if (c.filePath) where = c.filePath === ':memory:' ? 'in memory' : String(c.filePath).split(/[\\/]/).pop() ?? ''
-    else if (c.url) { try { where = new URL(String(c.url).replace(/^libsql:/, 'https:')).host } catch { where = '' } }
-    else if (c.host) where = `${c.host}${c.port ? `:${c.port}` : ''}`
-    return [engineLabel(engineId(c)), where].filter(Boolean).join(' · ')
-  })
   let insightsEverOpened = $state(false)
   let advisorEverOpened = $state(false)
   let golfEverOpened = $state(false)
@@ -2299,11 +2259,6 @@ let rowSearch = $state('')
     return !!tabId && (_busyJobs.get(tabId)?.size ?? 0) > 0
   }
   let error = $state('')
-  /** Whether the error banner is showing the raw driver text. */
-  let showRawError = $state(false)
-  // A new failure starts collapsed; leaving it expanded from a previous
-  // error would dump raw driver text on someone who never asked for it.
-  $effect(() => { void error; showRawError = false })
   let selected = $state(new Set())
   /** @type {number | null} */
   let focusedRow = $state(null)
@@ -9785,7 +9740,6 @@ let rowSearch = $state('')
     retryingLoad = true
     try {
       error = ''
-      showRawError = false
       if (dropped) await reconnectPool()
       // No table selected means the failure came from the catalog, not a row
       // fetch, so retry what actually broke.
@@ -10615,10 +10569,6 @@ let rowSearch = $state('')
     }
   }
 
-  /** `Postgres · prod-db.c1uwsk8m01gi.ap-south-1.rds.amazonaws.com` → `Postgres · prod-db`: the host's first label says enough. @param {string} w */
-  function shortWhere(w) {
-    return String(w ?? '').replace(/([A-Za-z0-9][\w-]*)\.[\w.-]*\.(?:com|net|io|dev|cloud|app|org)\S*/, '$1')
-  }
 </script>
 
 {#if dialogMounted.onboarding}
@@ -11220,107 +11170,16 @@ let rowSearch = $state('')
     {/snippet}
 
     {#if !connection}
-      <!-- Launcher: recent connections first (one click back to work), then a
-           new connection, then engine shortcuts. Left-aligned in one column so
-           the eye runs straight down the list. -->
-      <div class="relative flex flex-1 flex-col items-center justify-center overflow-y-auto p-8">
-        <div class="flex w-full max-w-[30rem] flex-col">
-          <h1 class="text-ui-2xl font-semibold tracking-tight text-foreground">
-            Connect a database
-          </h1>
-          <p class="mt-1 text-ui-sm text-muted-foreground text-pretty">
-            Browse schemas, edit rows and run queries in one fast, native window.
-          </p>
-
-          <div class="mt-6 flex items-center gap-2">
-            <Button type="button" class="h-8 px-3.5 text-ui-sm font-medium" bind:ref={welcomeConnectBtn} onclick={() => (showConnectionModal = true)}>
-              <Plus class="size-3.5 shrink-0" />
-              New connection
-            </Button>
-            <span class="ml-2 flex items-center gap-1.5 text-ui-xs text-muted-foreground">or press <Kbd command="palette.open" size="sm" /></span>
-          </div>
-
-          <!-- Recent: one line each, name first, where it lives muted beside it.
-               Two-line rows made five connections the whole page. -->
-          {#if recentConnections.length}
-            <section class="mt-8" aria-labelledby="welcome-recent">
-              <div class="mb-1.5 flex items-center justify-between px-2.5">
-                <h2 id="welcome-recent" class="text-ui-2xs font-medium text-muted-foreground">Recent</h2>
-                <button type="button" class="text-ui-2xs text-muted-foreground transition-colors hover:text-foreground" onclick={() => (showConnectionModal = true)}>
-                  All connections
-                </button>
-              </div>
-              <ul class="flex flex-col">
-                {#each recentConnections as conn (conn.id)}
-                  {@const slot = savedConnections.indexOf(conn) + 1}
-                  <li>
-                    <button
-                      type="button"
-                      title="Connect to {conn.name}"
-                      class="group flex h-9 w-full min-w-0 items-center gap-2.5 rounded-lg px-2.5 text-left transition-[background-color,scale] duration-150 ease-out hover:bg-accent/60 active:scale-[0.99] focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-ring"
-                      onclick={() => void handleSwitchDatabase(conn)}
-                    >
-                      <DbIcon id={engineId(conn)} class="size-4 shrink-0" />
-                      <span class="min-w-0 shrink truncate text-ui-sm text-foreground">{conn.name}</span>
-                      <span class="min-w-0 flex-1 truncate text-ui-xs text-muted-foreground">{welcomeTarget(conn)}</span>
-                      <span class="shrink-0 text-ui-2xs tabular-nums text-muted-foreground group-hover:hidden group-focus-visible:hidden">{ago(conn.lastConnectedAt ?? 0)}</span>
-                      <span class="hidden shrink-0 group-hover:inline-flex group-focus-visible:inline-flex">
-                        {#if slot > 0 && slot <= 9}<Kbd command={`connection.switchTo.${slot}`} size="sm" />{:else}<span class="text-ui-2xs text-foreground">Connect</span>{/if}
-                      </span>
-                    </button>
-                  </li>
-                {/each}
-              </ul>
-            </section>
-          {/if}
-
-          <!-- Each engine opens its own form directly: naming the engine is the
-               first step of the wizard. -->
-          <section class="mt-8" aria-labelledby="welcome-engines">
-            <h2 id="welcome-engines" class="mb-1.5 px-2.5 text-ui-2xs font-medium text-muted-foreground">Start with</h2>
-            <div class="grid grid-cols-2 gap-0.5 sm:grid-cols-3">
-              {#each [['postgres','PostgreSQL'],['mysql','MySQL'],['sqlite','SQLite'],['mongodb','MongoDB'],['redis','Redis'],['d1','Cloudflare D1']] as [id, label] (id)}
-                <button
-                  type="button"
-                  title="New {label} connection"
-                  class="inline-flex h-9 min-w-0 items-center gap-2.5 rounded-lg px-2.5 text-ui-sm text-muted-foreground transition-[color,background-color,scale] duration-150 ease-out hover:bg-accent/60 hover:text-foreground active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-ring"
-                  onclick={() => { connectionModalEngine = id; showConnectionModal = true }}
-                >
-                  <DbIcon {id} class="size-4 shrink-0" />
-                  <span class="truncate">{label}</span>
-                </button>
-              {/each}
-            </div>
-          </section>
-        </div>
-
-        <!-- The version and a way to check for a newer one: with no
-             connection open there is no sidebar, and so no update button. -->
-        <p class="absolute inset-x-0 bottom-6 flex items-center justify-center gap-2 text-ui-2xs text-muted-foreground">
-          {#if appVersion}
-            <span class="tabular-nums">v{appVersion}</span>
-            <span aria-hidden="true">·</span>
-          {/if}
-          <button
-            type="button"
-            disabled={checkingUpdate}
-            class="inline-flex items-center gap-1 text-foreground/80 underline-offset-4 transition-[color,scale] duration-[120ms] ease-[var(--ease-out)] hover:text-foreground hover:underline active:scale-[0.97] disabled:pointer-events-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-            onclick={() => void updateDialog?.checkNow?.()}
-          >
-            <Icon name="refresh-cw" class={cn('size-3 shrink-0', checkingUpdate && 'animate-spin')} aria-hidden="true" />
-            {checkingUpdate ? 'Checking' : 'Check for updates'}
-          </button>
-          <span aria-hidden="true">·</span>
-          <span>made with care by
-          <a
-            href="https://nischal-dahal.com.np"
-            target="_blank"
-            rel="noreferrer"
-            class="text-foreground/80 underline-offset-4 transition-colors hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-            onclick={(e) => { e.preventDefault(); void openExternalUrl('https://nischal-dahal.com.np') }}
-          >@broisnees</a></span>
-        </p>
-      </div>
+      <LauncherScreen
+        {savedConnections}
+        dialogOpen={showConnectionModal}
+        {appVersion}
+        {checkingUpdate}
+        onnew={(engine) => { if (engine) connectionModalEngine = engine; showConnectionModal = true }}
+        onopen={(conn) => void handleSwitchDatabase(conn)}
+        oncheckupdates={() => void updateDialog?.checkNow?.()}
+        onopenlink={(url) => void openExternalUrl(url)}
+      />
     {:else}
       <!-- Full-window AI chat, kept mounted after first open so state is preserved -->
       {#if aiEverOpened}
@@ -12103,73 +11962,13 @@ let rowSearch = $state('')
              has no table selected still has to be readable, and it carries the
              only control that clears it. -->
         {#if error && onTableTab}
-          <!-- ── Load failure, stated where the grid would be ────────────────
-               A banner pinned to the top over an empty grid made the reader
-               look in two places and left them with "dismiss to continue" as
-               the only way forward. One centred state instead: what broke, why,
-               and the action that fixes it - reconnect for a dropped pool,
-               retry for everything else. -->
-          {@const kind = connectionErrorKind(error)}
-          {@const humanized = humanizeDbError(error)}
-          <div
-            class="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-8 text-center"
-            role="alert"
-          >
-            {#if kind === 'unreachable'}
-              <WifiOff class="size-8 shrink-0 text-muted-foreground" />
-            {:else if kind === 'dropped'}
-              <Unplug class="size-8 shrink-0 text-muted-foreground" />
-            {:else}
-              <AlertTriangle class="size-8 shrink-0 text-destructive" />
-            {/if}
-
-            <div class="flex max-w-md flex-col gap-1">
-              <p class="text-ui-sm font-medium text-foreground">
-                {#if kind === 'unreachable'}Cannot reach database
-                {:else if kind === 'dropped'}Connection dropped
-                {:else}This table failed to load{/if}
-              </p>
-              <!-- Drivers wrap the cause in transport noise - D1 returns its whole
-                   HTTP envelope around a five-word message. Show the cause; the
-                   raw text stays one click away and in the query log. -->
-              <p class="break-words font-mono text-ui-xs leading-relaxed {kind ? 'text-muted-foreground' : 'text-destructive'}">
-                {#if kind === 'unreachable'}Check your internet connection, or whether the server is still accepting connections.
-                {:else if kind === 'dropped'}The pool for this connection closed. Reconnecting rebuilds it and reloads the table.
-                {:else}{humanized}{/if}
-              </p>
-              {#if showRawError}
-                <p class="mt-1 max-h-40 overflow-auto break-all text-left font-mono text-ui-3xs text-muted-foreground">{error}</p>
-              {/if}
-            </div>
-
-            <div class="flex items-center gap-2">
-              <button
-                type="button"
-                data-autofocus
-                disabled={retryingLoad}
-                class="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-muted/40 px-3 text-ui-xs font-medium text-foreground transition-colors hover:bg-accent disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-ring"
-                onclick={() => void retryTableLoad()}
-              >
-                <RefreshCw class="size-3.5 shrink-0 {retryingLoad ? 'animate-spin' : ''}" />
-                {kind === 'dropped' || connectionLost ? 'Reconnect' : 'Retry'}
-              </button>
-              {#if !kind}
-                <button
-                  type="button"
-                  class="inline-flex h-8 items-center rounded-md px-3 text-ui-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-ring"
-                  onclick={() => { error = ''; showRawError = false }}
-                >Dismiss</button>
-              {/if}
-            </div>
-
-            {#if humanized !== error.replace(/^Error:\s*/, '').trim()}
-              <button
-                type="button"
-                class="text-ui-3xs text-muted-foreground underline-offset-2 transition-colors hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-                onclick={() => (showRawError = !showRawError)}
-              >{showRawError ? 'Hide raw error' : 'Show raw error'}</button>
-            {/if}
-          </div>
+          <TableLoadError
+            {error}
+            {connectionLost}
+            retrying={retryingLoad}
+            onretry={() => void retryTableLoad()}
+            ondismiss={() => { error = '' }}
+          />
         {:else if !activeTable && onTableTab}
           <div class="flex flex-1 flex-col items-center justify-center gap-2 p-8 text-center">
             <p class="font-mono text-ui text-muted-foreground">
