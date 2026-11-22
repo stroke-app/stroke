@@ -2701,8 +2701,10 @@ async fn get_ddl_mysql(pool: &MySqlPool, schema: &str, table: &str) -> Result<St
         schema.replace('`', ""),
         table.replace('`', "")
     );
+    // Backticks, so the DDL runs on a stock server too (see backtick_conn).
+    let mut conn = super::mysql::backtick_conn(pool).await?;
     let row = sqlx::query(&sql)
-        .fetch_one(pool)
+        .fetch_one(&mut conn)
         .await
         .map_err(|e| format!("SHOW CREATE TABLE failed: {e}"))?;
     // SHOW CREATE TABLE's second column is binary-flagged too, so this

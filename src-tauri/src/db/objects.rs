@@ -910,7 +910,9 @@ async fn def_pg(pool: &PgPool, kind: &str, schema: &str, name: &str, args: &str,
 /// SHOW CREATE goes over the text protocol: MySQL won't prepare SHOW CREATE
 /// TRIGGER, nor any of the statements this module runs for routines.
 async fn mysql_show(pool: &MySqlPool, sql: &str, column: &str) -> Result<Option<String>, String> {
-    let rows = sqlx::raw_sql(sql).fetch_all(pool).await.map_err(|e| e.to_string())?;
+    // Backticks, so a definition copied out runs on a stock server too.
+    let mut conn = super::mysql::backtick_conn(pool).await?;
+    let rows = sqlx::Executor::fetch_all(&mut conn, sql).await.map_err(|e| e.to_string())?;
     Ok(rows.first().and_then(|r| my_text_named(r, column)))
 }
 

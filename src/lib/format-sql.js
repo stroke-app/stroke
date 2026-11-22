@@ -39,11 +39,27 @@ export function formatSql(sql, overrides, engine) {
       expressionWidth: o.expressionWidth,
       linesBetweenQueries: o.linesBetweenQueries,
     })
-    if (!o.compactClauses) return out
-    return layoutSql(out, { width: o.lineWidth, groupWidth: o.expressionWidth, unit: o.useTabs ? '\t' : ' '.repeat(o.tabWidth) })
+    const cased = recasePatternOps(out, o.keywordCase)
+    if (!o.compactClauses) return cased
+    return layoutSql(cased, { width: o.lineWidth, groupWidth: o.expressionWidth, unit: o.useTabs ? '\t' : ' '.repeat(o.tabWidth) })
   } catch {
     return sql
   }
+}
+
+/**
+ * sql-formatter's MySQL and SQLite dialects don't count LIKE as a keyword, so
+ * with upper-case keywords a query read "WHERE name like '%a%'" beside AND and
+ * ORDER BY. The LIKE family gets the keyword case; strings, quoted names and
+ * comments are left alone.
+ * @param {string} sql @param {string} keywordCase
+ */
+export function recasePatternOps(sql, keywordCase) {
+  if (keywordCase !== 'upper' && keywordCase !== 'lower') return sql
+  const fix = (/** @type {string} */ w) => (keywordCase === 'upper' ? w.toUpperCase() : w.toLowerCase())
+  // Quoted text and comments first, so they are matched whole and kept.
+  return sql.replace(/('(?:[^'\\]|\\.|'')*'|"(?:[^"\\]|\\.|"")*"|`[^`]*`|--[^\n]*|\/\*[\s\S]*?\*\/)|\b(like|ilike|rlike|glob|regexp)\b/gi,
+    (m, quoted, word) => (quoted ? m : fix(word)))
 }
 
 // ── Layout ───────────────────────────────────────────────────────────────────
