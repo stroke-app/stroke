@@ -170,7 +170,7 @@
    *   | { id: string, kind: 'assistant', parts: import('$lib/ai.js').AssistantPart[], ts?: number }
    *   | { id: string, kind: 'streaming' }
    *   | { id: string, kind: 'generating', what: 'chart' | 'diagram' }
-   *   | { id: string, kind: 'result', sql: string, columns: {name:string,dataType?:string}[], rows: unknown[][], total: number, error: string|null, isSchema?: boolean, capped?: boolean }
+   *   | { id: string, kind: 'result', sql: string, columns: {name:string,dataType?:string}[], rows: unknown[][], total: number, error: string|null, isSchema?: boolean, capped?: boolean, userRun?: boolean }
    *   | { id: string, kind: 'chart', spec: { type: string, title: string, data: object[], x_col: string, y_col: string, z_col?: string, group_col?: string }, error: string|null }
    *   | { id: string, kind: 'confirm', sql: string, resolve: (ok: boolean) => void }
    *   | { id: string, kind: 'share-confirm', summary: { what: string, title: string, rows: number, masked: string[], expires: string, once: boolean }, resolve: (ok: boolean) => void }
@@ -1046,7 +1046,7 @@
     };
     items.forEach((it, i) => {
       if (it.kind === "result") {
-        if (!$appAgentQueryCards && !it.error) return;
+        if (!$appAgentQueryCards && !it.error && !it.userRun) return;
         if (loading && i > lastUser) { out.set(it.id, { hidden: true, pos: "single", runKey: it.id }); return; }
         run.push(it.id);
       } else if (it.kind === "assistant" && !it.parts?.some((p) => p.type !== "text" || p.content.trim())) {
@@ -1068,7 +1068,7 @@
    * @param {ChatItem} item
    */
   function drawsNothing(item) {
-    if (item.kind === "result") return (!$appAgentQueryCards && !item.error) || !!resultLayout.get(item.id)?.hidden;
+    if (item.kind === "result") return (!$appAgentQueryCards && !item.error && !item.userRun) || !!resultLayout.get(item.id)?.hidden;
     if (item.kind === "assistant") return !item.parts?.some((p) => p.type !== "text" || p.content.trim());
     return false;
   }
@@ -3918,6 +3918,9 @@
         rows,
         total: data.rowCount ?? rows.length,
         error: null,
+        // Asked for with Run: always shown. The "query cards" setting hides the
+        // agent's own reads, and hid this too, so Run looked like it did nothing.
+        userRun: true,
       });
       const execIdx = items.findIndex((i) => i.id === execId);
       if (execIdx >= 0) items.splice(execIdx, 1, resultItem);
@@ -5538,7 +5541,7 @@
                 <!-- Hidden by the Agent setting, except when the query failed:
                      suppressing an error would leave the model's recovery in the
                      transcript with nothing explaining what it recovered from. -->
-                {#if $appAgentQueryCards || item.error}
+                {#if $appAgentQueryCards || item.error || item.userRun}
                 {@const resOpen = openResultId === item.id}
                 <!-- One neutral card for every outcome. Tinting the whole
                      container per state (red for errors, primary for schema)
