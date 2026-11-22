@@ -1,5 +1,5 @@
 <script>
-  import { IS_MAC, comboTitle } from '$lib/shortcuts.js'
+  import { comboTitle } from '$lib/shortcuts.js'
   import { rowsToCsv, rowsToJson, rowsToSql, rowsToTsv, rowsToMarkdown, rowsToJsonl, rowsToObjects, saveExportFile, buildExportFilename, exportRows, EXPORT_FORMATS } from '$lib/export.js'
   import Play from "@lucide/svelte/icons/play";
   import PanelBottom from "@lucide/svelte/icons/panel-bottom";
@@ -1889,9 +1889,15 @@
             <!-- T3-style empty state: one light line, one quiet hint. -->
             <div class="flex h-full flex-col items-center justify-center gap-1.5 text-center">
               <p class="text-ui-lg font-normal tracking-tight text-foreground/90">Run a query</p>
+              <!-- Mod+Enter runs every statement; Mod+R is the one at the cursor.
+                   This named Mod+Enter for the cursor's, which then ran all of them. -->
               <p class="flex items-center gap-1.5 text-ui-xs text-muted-foreground">
-                <kbd class="rounded bg-sidebar-accent px-1.5 py-0.5 font-sans text-ui-2xs">{IS_MAC ? '⌘' : 'Ctrl'} ↵</kbd>
+                <kbd class="rounded bg-sidebar-accent px-1.5 py-0.5 font-sans text-ui-2xs">{comboTitle('Mod+R')}</kbd>
                 runs the statement at the cursor
+              </p>
+              <p class="flex items-center gap-1.5 text-ui-xs text-muted-foreground">
+                <kbd class="rounded bg-sidebar-accent px-1.5 py-0.5 font-sans text-ui-2xs">{comboTitle('Mod+Enter')}</kbd>
+                runs them all
               </p>
             </div>
           {/if}
