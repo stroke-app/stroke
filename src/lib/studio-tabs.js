@@ -83,7 +83,13 @@ export function cloneTableTabState(state) {
     columns: state.columns,
     primaryKey: state.primaryKey,
     foreignKeys: state.foreignKeys,
-    rows: state.rows,
+    // Its own array. A windowed view ("All rows") fills and evicts rows in
+    // place as it scrolls, so a duplicate sharing the original's array had its
+    // rows blanked by the other tab's eviction while its window list still
+    // said they were loaded: skeletons that never filled in. `slice` keeps the
+    // holes of a sparse array, so the copy costs what is resident.
+    rows: Array.isArray(state.rows) ? state.rows.slice() : state.rows,
+    windowedLoaded: Array.isArray(state.windowedLoaded) ? [...state.windowedLoaded] : state.windowedLoaded,
     rowFilters: state.rowFilters,
     rowSort: state.rowSort,
     // Sets must be new instances so mutations don't bleed between tabs
