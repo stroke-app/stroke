@@ -4,6 +4,20 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.6.3] - 2026-11-22
+
+### Bug Fixes
+- **Dropped tables** - Opening or refreshing a table that was dropped or renamed since it was listed says the table no longer exists, instead of "Unknown column: id".
+
+### Changes
+
+#### Performance
+- **Connect** - The first screen after connecting paints about 25% sooner: the new-tab page no longer renders while last session's tabs are coming back (no flash), and the sidebar's connections list and chats render a frame after the rest.
+
+#### Code
+- **New-tab page** - Shows Cmd/Ctrl+I for AI, its shortcut since 3.6.1.
+
+
 ## [3.6.2] - 2026-11-22
 
 ### Changes
