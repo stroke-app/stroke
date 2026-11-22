@@ -1449,6 +1449,12 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     _vexprTextCache.delete(idx);
     _colTfCache.delete(idx);
   }
+  /**
+   * Columns declared boolean. SQLite, libSQL and D1 store a boolean as 0 or 1,
+   * so the column said `boolean` over a grid of 0s and 1s where Postgres shows
+   * true and false. Shown the same way here; the stored value is unchanged.
+   */
+  const _boolCols = $derived(new Set(columns.flatMap((c, i) => (/^bool(ean)?$/i.test(String(c.dataType ?? c.data_type ?? '').trim()) ? [i] : []))));
   function cellDisplayText(/** @type {number} */ idx, /** @type {number} */ actualIdx, /** @type {unknown} */ value) {
     let arr = _cellTextCache.get(idx);
     if (!arr) {
@@ -1457,7 +1463,10 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     }
     const hit = arr[actualIdx];
     if (hit !== undefined) return hit;
-    const s = displayCell(value);
+    // libSQL's HTTP protocol sends integers as text, so "0" and "1" count too.
+    const s = (value === 0 || value === 1 || value === '0' || value === '1') && _boolCols.has(actualIdx)
+      ? displayCell(value === 1 || value === '1')
+      : displayCell(value);
     arr[actualIdx] = s;
     return s;
   }
@@ -1912,7 +1921,10 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     }
     lastEditOriginalValue = startValue;
     selectOnEditFocus = initialChar === undefined;
-    const original = valueToEditString(startValue);
+    // A boolean stored as 0/1 (SQLite, libSQL, D1) starts the toggle at
+    // false/true: its draft was "0", which the toggle read as NULL.
+    const raw = valueToEditString(startValue);
+    const original = isBooleanType(dataType) && (raw === "0" || raw === "1") ? (raw === "1" ? "true" : "false") : raw;
     editingCell = {
       rowIdx,
       colIdx,
