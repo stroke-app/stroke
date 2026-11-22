@@ -6,7 +6,7 @@
   import { cn } from '$lib/utils.js'
   import { shortcutKeys } from '$lib/kbd-text.js'
   import { escapeHtml } from '$lib/json-inspector.js'
-  import { safeRawHtml, isSafeHref } from '$lib/markdown-safe.js'
+  import { safeRawHtml, isSafeHref, unfenceProse } from '$lib/markdown-safe.js'
 
   let {
     content = '',
@@ -243,7 +243,7 @@
       _streamRaf = 0
       const md = content
       if (!md.trim()) { html = ''; onrender?.(); return }
-      const result = marked.parse(md, markedOpts)
+      const result = marked.parse(unfenceProse(md), markedOpts)
       html = typeof result === 'string' ? result : ''
       onrender?.()
     })
@@ -276,7 +276,7 @@
         loading = false
         return
       }
-      const raw = /** @type {string} */ (marked.parse(md, markedOpts))
+      const raw = /** @type {string} */ (marked.parse(unfenceProse(md), markedOpts))
       if (cancelled) return
       html = raw
       // Nothing to highlight, or not worth doing yet.
