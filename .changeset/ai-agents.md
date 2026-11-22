@@ -1,2 +1,0 @@
-### New Features
-- **Let an AI agent show you the database** - `npx strokedb mcp` is an MCP server for Claude Code and other agents, even ones running on another machine: it reads the database (tables, columns, read-only queries) and its show_table tool gives you a link that opens a table in the web studio or in Stroke. Later calls switch your open studio to the next table. In the app, a `stroke://studio` link opens the shared studio in a window of its own.

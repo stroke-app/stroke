@@ -4,6 +4,17 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.7.2] - 2026-11-22
+
+### New Features
+- **Let an AI agent show you the database** - `npx strokedb mcp` is an MCP server for Claude Code and other agents, even ones running on another machine: it reads the database (tables, columns, read-only queries) and its show_table tool gives you a link that opens a table in the web studio or in Stroke. Later calls switch your open studio to the next table. In the app, a `stroke://studio` link opens the shared studio in a window of its own.
+- **Separate fonts** - Settings > Appearance > Separate fonts gives the interface, the SQL editor, the data grid, the AI chat and the terminal a font each, with a preview. The list has the bundled fonts and your OS's own, named for it (SF Pro, SF Mono and Menlo on a Mac; Segoe UI, Cascadia Mono and Consolas on Windows), and only the ones your machine has.
+- **Font smoothing** - Pick thin grayscale text (Stroke's look) or your OS's default smoothing.
+
+### Bug Fixes
+- **"Superseded by a newer load" after a reload** - When the window reloaded while the app kept running, every table it had open failed with "Superseded by a newer load of this table" until Stroke restarted. Tables load again, and a replaced load is never shown as an error.
+
+
 ## [3.7.1] - 2026-11-22
 
 ### New Features
