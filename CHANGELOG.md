@@ -4,6 +4,15 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.7.4] - 2026-11-22
+
+### New Features
+- **Shared console** - While sharing a database as a web studio, Open shared console (command palette) gives you one SQL tab that everyone on the link edits together, in the app and in the browser. You see each other's cursors and selections by name, and Run runs the query for whoever presses it.
+
+### Bug Fixes
+- **Skeleton rows on wide tables over a slow link** - On a big table with wide rows (HTML, JSON), the rows you scroll or jump to now show in about a second instead of after several, and scrolling sideways no longer sits on skeletons. The rows on screen are fetched first, and the background copy of the table yields to them.
+
+
 ## [3.7.3] - 2026-11-22
 
 ### Bug Fixes
