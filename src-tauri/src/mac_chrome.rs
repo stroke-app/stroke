@@ -84,7 +84,7 @@ const EDIT_APP_ITEMS: &[&[Item]] = &[
 const VIEW_ITEMS: &[&[Item]] = &[
     &[
         ("toggleSidebar", "Toggle Sidebar", Some("CmdOrCtrl+B"), false),
-        ("toggleChat", "Toggle Chat", Some("CmdOrCtrl+I"), false),
+        ("toggleChat", "Toggle Chat", Some("CmdOrCtrl+Shift+E"), false),
     ],
     &[
         ("zoomIn", "Zoom In", Some("CmdOrCtrl+="), false),
