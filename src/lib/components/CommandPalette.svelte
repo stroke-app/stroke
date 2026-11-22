@@ -98,6 +98,8 @@
     onopenextensions = () => {},
     onopenmap = () => {},
     onopenJsonViewer = () => {},
+    /** A database file in one step: a new SQLite file, or an existing one. @type {(how: 'new' | 'open') => void} */
+    onfiledb = () => {},
     onopenshortcuts = () => {},
     /** My shares: share links made on this account. */
     onopenmyshares = () => {},
@@ -295,6 +297,8 @@
     { icon: 'blocks',          label: 'Extensions',                    action: onopenextensions, show: connected && !isKeyValue, value: 'open extensions plugins formatters generators transforms better time uuid' },
     { icon: 'archive',         label: 'Backup & restore',              action: onopenbackup,     show: connected && !isKeyValue, value: 'backup restore export import dump data schedule scheduled cron' },
     { icon: 'braces',          label: 'JSON viewer',                   action: onopenJsonViewer, show: connected, value: 'open json viewer explorer jsonpath tool format pretty print' },
+    { icon: 'plus',            label: 'New SQLite database',           action: () => onfiledb('new'), show: true, value: 'new sqlite database file create db local empty' },
+    { icon: 'folder-open',     label: 'Open a database file',          action: () => onfiledb('open'), show: true, value: 'open database file sqlite duckdb db local path browse' },
     { icon: 'download',        label: 'Export connections and settings', action: () => openTransfer('export'), show: true, value: 'export connections settings snippets saved queries file backup transfer move another computer' },
     { icon: 'file-up',         label: 'Import connections and settings', action: () => openTransfer('import'), show: true, value: 'import connections settings snippets saved queries file restore transfer move another computer' },
     { icon: 'git-branch',      label: 'Schema timeline',               action: openschematimeline, show: connected && !isKeyValue, value: 'schema timeline snapshots snapshot drift detection history changes diff version compare' },

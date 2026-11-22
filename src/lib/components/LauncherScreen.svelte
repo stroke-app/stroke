@@ -26,6 +26,8 @@
     oncheckupdates = () => {},
     /** @type {(url: string) => void} */
     onopenlink = () => {},
+    /** A database file in one step. @type {(how: 'new' | 'open') => void} */
+    onfiledb = () => {},
   } = $props()
 
   /** The Recent list: the last four connections actually opened. */
@@ -70,8 +72,15 @@
         <Plus class="size-3.5 shrink-0" />
         New connection
       </Button>
-      <span class="ml-2 flex items-center gap-1.5 text-ui-xs text-muted-foreground">or press <Kbd command="palette.open" size="sm" /></span>
+      <!-- A local file needs no form: pick where it goes (or which one) and it opens. -->
+      <Button type="button" variant="outline" class="h-8 px-3 text-ui-sm" title="Create an empty SQLite database file and open it" onclick={() => onfiledb('new')}>
+        New SQLite database
+      </Button>
+      <Button type="button" variant="ghost" class="h-8 px-3 text-ui-sm text-muted-foreground" title="Open a SQLite or DuckDB file" onclick={() => onfiledb('open')}>
+        Open file…
+      </Button>
     </div>
+    <p class="mt-2 flex items-center gap-1.5 text-ui-xs text-muted-foreground">or press <Kbd command="palette.open" size="sm" /> for everything else</p>
 
     <!-- Recent: one line each, name first, where it lives muted beside it.
          Two-line rows made five connections the whole page. -->
