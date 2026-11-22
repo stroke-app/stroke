@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.5.9] - 2026-11-22
+
+### Changes
+- View DDL as CREATE VIEW, dark dashboard window, schema picker and diagram details (#362)
+
+
 ## [3.5.8] - 2026-11-22
 
 ### Changes
