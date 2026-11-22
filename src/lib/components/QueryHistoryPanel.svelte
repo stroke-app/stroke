@@ -11,6 +11,7 @@
   import BarChart2 from '@lucide/svelte/icons/bar-chart-2'
   import Star from '@lucide/svelte/icons/star'
   import { cn } from '$lib/utils.js'
+  import { cleanErrorMessage } from '$lib/sql-error-range.js'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
   import {
     clearQueryHistory,
@@ -100,7 +101,8 @@
           meta: [relativeTime(e.executedAt), e.queryMs ? `${e.queryMs}ms` : '', (e.runCount ?? 1) > 1 ? `${e.runCount}×` : ''].filter(Boolean).join(' · '),
           sql: e.sql, starred: !!e.favorite, entry: e,
           // A failed run is listed with its error, and loads and runs like any other.
-          error: e.success === false ? (e.error || 'Failed') : undefined,
+          // Without the backend's wrapping: the row is already marked as failed.
+          error: e.success === false ? (cleanErrorMessage(e.error ?? '') || 'Failed') : undefined,
         }))
     }
     if (view === 'saved') {

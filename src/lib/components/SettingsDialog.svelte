@@ -138,8 +138,14 @@
   const q = $derived(query.trim().toLowerCase());
   const searching = $derived(q.length > 0);
   /** Row visibility under the current search query. */
-  const show = (/** @type {string} */ title, /** @type {string} */ desc = '') =>
-    !q || `${title} ${desc}`.toLowerCase().includes(q);
+  // Every word, in any order: "page size" has to find "Rows per page ... page
+  // size", and "theme dark" the dark theme row.
+  const qWords = $derived(q.split(/\s+/).filter(Boolean));
+  const show = (/** @type {string} */ title, /** @type {string} */ desc = '') => {
+    if (!q) return true;
+    const hay = `${title} ${desc}`.toLowerCase();
+    return qWords.every((w) => hay.includes(w));
+  };
   const activeCategory = $derived(CATEGORIES.find((c) => c.id === category) ?? CATEGORIES[0]);
   // A caller asking for a page (the command palette's "Keyboard shortcuts")
   // sets `section` and opens the dialog programmatically, which may not go
@@ -1374,7 +1380,7 @@
 {#snippet appearanceContent()}
   {@render secLabel($t('settings.sec.themeTypeface'))}
 
-  {#if show($t('settings.theme'), $t('settings.theme.desc'))}
+  {#if show($t('settings.theme'), `${$t('settings.theme.desc')} dark mode light mode appearance colour color`)}
     <div class={rowCls}>
       <div class="min-w-0">
         <p class="text-ui-sm font-medium text-foreground">{$t('settings.theme')}</p>
@@ -1724,7 +1730,7 @@
       toggleFkAutoExpandJson,
     )}
   {/if}
-  {#if show('Rows per page', 'How many rows a newly opened table fetches')}
+  {#if show('Rows per page', 'How many rows a newly opened table fetches, page size, limit')}
     <div class="flex items-center justify-between gap-4 py-2">
       <div class="min-w-0 flex-1">
         <p class="text-ui-sm font-medium text-foreground">Rows per page</p>
