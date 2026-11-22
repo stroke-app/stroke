@@ -55,6 +55,19 @@ describe('tab factories', () => {
 })
 
 describe('clone helpers', () => {
+  it('cloneTableTabState gives a windowed tab its own rows, holes kept', () => {
+    const rows = new Array(10)
+    rows[0] = [1]
+    const state = /** @type {any} */ ({ rows, windowedLoaded: [0], selected: new Set(), hiddenColumns: new Set() })
+    const clone = /** @type {any} */ (cloneTableTabState(state))
+    expect(clone.rows).not.toBe(rows)
+    expect(clone.rows.length).toBe(10)
+    expect(1 in clone.rows).toBe(false)
+    rows[0] = undefined
+    expect(clone.rows[0]).toEqual([1])
+    expect(clone.windowedLoaded).not.toBe(state.windowedLoaded)
+  })
+
   it('cloneTableTabState gives each tab independent Sets', () => {
     const state = createTableTabState('public', 'users')
     state.selected.add(3)
