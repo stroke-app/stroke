@@ -933,7 +933,7 @@
     return store.subscribe((ps) => (sharePeers = ps))
   })
   /** This table as the web studio names it: `schema.table`. */
-  const shareTableKey = $derived(studioShare && activeTable ? `${activeSchema || 'main'}.${activeTable}` : null)
+  const shareTableKey = $derived(studioShare && activeTable && activeTab?.kind === 'table' ? `${activeSchema || 'main'}.${activeTable}` : null)
   const sharePeersHere = $derived(shareTableKey ? sharePeers.filter((p) => p.tab === shareTableKey) : [])
   /** Primary key columns in table order, the order the web studio keys rows by. */
   const sharePkIdx = $derived(primaryKey.length ? columns.map((c, i) => (primaryKey.includes(c.name) ? i : -1)).filter((i) => i >= 0) : [])
@@ -997,7 +997,8 @@
   $effect(() => {
     const presence = studioShare?.presence
     if (!presence) return
-    presence.publish({ tab: shareTableKey })
+    // The web studio names the shared console's tab `console`.
+    presence.publish({ tab: onSharedConsoleTab ? 'console' : shareTableKey })
   })
   // Someone saved a change to the table on screen: show it.
   $effect(() => {
@@ -1008,6 +1009,44 @@
       void loadRows({ keepScroll: true })
     })
   })
+  // ── The shared console: one SQL tab everyone on the link edits ──────────
+  /** The binding for the console, made once per share. */
+  const sharedConsoleExt = $derived(studioShare?.sharedConsole ? studioShare.sharedConsole.extension() : null)
+  const onSharedConsoleTab = $derived(activeTab?.kind === 'sql' && /** @type {any} */ (activeTab).shared === true && !!studioShare?.sharedConsole)
+  /** On once the editor holds the shared text: the binding assumes it does. */
+  let sharedConsoleOn = $state(false)
+  $effect(() => {
+    if (!onSharedConsoleTab) { sharedConsoleOn = false; return }
+    const text = untrack(() => studioShare?.sharedConsole?.text)
+    if (!text) return
+    // The tab's snapshot is stale: what the others typed meanwhile is in the
+    // document. Load it, then bind on the next tick.
+    untrack(() => { sqlText = text.toString() })
+    const t = setTimeout(() => { sharedConsoleOn = true }, 0)
+    return () => clearTimeout(t)
+  })
+  /** Open (or go to) the shared console tab. */
+  function openSharedConsole() {
+    const sc = studioShare?.sharedConsole
+    if (!sc) return
+    const existing = tabs.find((t) => t.kind === 'sql' && /** @type {any} */ (t).shared)
+    if (existing) { void activateTab(existing.id); return }
+    saveActiveTabState()
+    dropWelcomeTabs()
+    const tab = { ...createSqlTab(sc.text.toString(), 'Shared console'), draft: false, shared: true }
+    tabs = [...tabs, tab]
+    activeTabId = tab.id
+    clearTableEditor()
+    applySqlSnapshot(cloneSqlTabState(/** @type {SqlTabState} */ (tab.state)))
+  }
+  // Sharing ended: the console tab has nothing to bind to.
+  $effect(() => {
+    if (studioShare) return
+    if (untrack(() => tabs.some((t) => /** @type {any} */ (t).shared))) {
+      untrack(() => { tabs = tabs.map((t) => (/** @type {any} */ (t).shared ? { ...t, shared: false, title: 'Shared console (ended)' } : t)) })
+    }
+  })
+
   /** Tell the others this table's rows changed. */
   function announceShareChange() {
     if (shareTableKey) studioShare?.presence?.announceChanged(shareTableKey)
@@ -11112,6 +11151,7 @@ let rowSearch = $state('')
   onnewterminal={() => { commandOpen = false; if (aiMode) exitAiMode(); openNewTerminalTab() }}
   onopenwhatsnew={() => { commandOpen = false; void updateDialog?.showWhatsNew?.() }}
   onsharestudio={studioShareEnabled ? () => { commandOpen = false; showStudioShare = true } : null}
+  onsharedconsole={studioShare ? () => { commandOpen = false; openSharedConsole() } : null}
   onopeninsights={() => { if (aiMode) exitAiMode(); openInsightsTab() }}
   onopenadvisor={() => { if (aiMode) exitAiMode(); openAdvisorTab() }}
   onopenobjects={() => { if (aiMode) exitAiMode(); openObjectsTab() }}
@@ -12151,6 +12191,7 @@ let rowSearch = $state('')
             oncommittransaction={() => void endSqlTransaction('commit')}
             onrollbacktransaction={() => void endSqlTransaction('rollback')}
             bind:sql={sqlText}
+            collab={sharedConsoleOn ? sharedConsoleExt : null}
             bind:queryHistoryVisible
             {queryHistory}
             {savedQueries}

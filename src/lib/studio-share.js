@@ -231,13 +231,19 @@ export async function startShare(o) {
   connect()
   // Who else has the link open, and where: shown on this side's grid too.
   const presence = joinPresence({ origin, room, key, name: o.me || 'Host', role: 'host' })
+  // The console everyone on the link can edit together, this side included.
+  // Yjs loads only once something is shared.
+  const { createSharedConsole } = await import('$lib/share-console.js')
+  const sharedConsole = createSharedConsole(presence, { name: o.me || 'Host', color: presence.color })
 
   return {
     link: `${origin}/studio#${new URLSearchParams({ relay: room, key: keyText })}`,
     write: o.write,
     presence,
+    sharedConsole,
     stop() {
       closed = true
+      sharedConsole.stop()
       presence.stop()
       clearInterval(ping)
       try { ws?.close(1000, 'Stopped sharing') } catch { /* closed */ }

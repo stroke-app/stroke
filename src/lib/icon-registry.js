@@ -51,6 +51,7 @@ import AlertTriangle from '@lucide/svelte/icons/alert-triangle'
 import AlertCircle from '@lucide/svelte/icons/alert-circle'
 import ShieldCheck from '@lucide/svelte/icons/shield-check'
 import Globe from '@lucide/svelte/icons/globe'
+import Users from '@lucide/svelte/icons/users'
 import Pencil from '@lucide/svelte/icons/pencil'
 import Braces from '@lucide/svelte/icons/braces'
 import Lock from '@lucide/svelte/icons/lock'
@@ -166,7 +167,7 @@ import {
   HardDriveIcon, DashboardSquare02Icon, SquareUnlock01Icon, Moon02Icon, RadioIcon,
   ServerStack01Icon, Settings02Icon, Sun03Icon, ArrowTurnBackwardIcon, Unlink01Icon,
   WifiConnected01Icon, WifiDisconnected01Icon, TestTubeIcon, WorkflowSquare02Icon,
-  Share08Icon, GitCompareIcon, GitMergeIcon, PuzzleIcon, PlugSocketIcon, NoteEditIcon, ChartBarLineIcon, GlobalIcon,
+  Share08Icon, GitCompareIcon, GitMergeIcon, PuzzleIcon, PlugSocketIcon, NoteEditIcon, ChartBarLineIcon, GlobalIcon, UserMultipleIcon,
   InformationCircleIcon, ArrowUpDownIcon, ArrowLeftRightIcon, Bookmark01Icon, BugIcon,
   UnavailableIcon, Target01Icon, EraserIcon, FileDownloadIcon, FileUploadIcon, File01Icon, FunctionSquareIcon,
   HashIcon, InfinityIcon, KeyboardIcon, Layers01Icon, LeftToRightListBulletIcon, Link01Icon,
@@ -271,6 +272,7 @@ export const ICON_MAP = {
   // Database objects (views, routines, types): not 'blocks', which is Extensions.
   'shapes':         { lucide: Shapes,        huge: Shapes01Icon },
   'globe':          { lucide: Globe,         huge: GlobalIcon },
+  'users':          { lucide: Users,         huge: UserMultipleIcon },
   'plug':           { lucide: Plug,          huge: PlugSocketIcon },
   'notebook-pen':   { lucide: NotebookPen,   huge: NoteEditIcon },
   'bar-chart-3':    { lucide: BarChart3,     huge: ChartBarLineIcon },
