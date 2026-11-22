@@ -752,6 +752,9 @@
   let suggestToken = ''
   /** Suggestions follow typing only; output on its own never opens them. */
   let lastTypedAt = 0
+  /** When the open list was built. A key typed after it means the list was
+   *  read from a line the screen hadn't caught up with yet. */
+  let suggestAt = 0
   let suggestFrame = 0
   /** @type {any} */
   let hintsCache = null
@@ -781,6 +784,7 @@
     suggestToken = token
     suggestItems = items
     suggestIndex = 0
+    suggestAt = performance.now()
     placeSuggest(token)
   }
 
@@ -841,10 +845,16 @@
       case 'ArrowUp': suggestIndex = (suggestIndex - 1 + n) % n; revealSuggestion(); return true
       case 'PageDown': suggestIndex = Math.min(n - 1, suggestIndex + SUGGEST_ROWS); revealSuggestion(); return true
       case 'PageUp': suggestIndex = Math.max(0, suggestIndex - SUGGEST_ROWS); revealSuggestion(); return true
-      case 'Tab': acceptSuggestion(); return true
+      case 'Tab':
+        // A list older than the last key typed belongs to a shorter line:
+        // accepting \dt off the list for "\" sent "dt" after the "dt" already
+        // typed. Wait for the screen and a fresh list instead.
+        if (lastTypedAt >= suggestAt) { hideSuggest(); requestAnimationFrame(() => updateSuggest(true)); return true }
+        acceptSuggestion(); return true
       case 'Escape': hideSuggest(); return true
       case 'Enter':
-        if (e.shiftKey || suggestItems[suggestIndex]?.exact) { hideSuggest(); return false }
+        // Stale as above: the line as typed is what runs.
+        if (e.shiftKey || suggestItems[suggestIndex]?.exact || lastTypedAt >= suggestAt) { hideSuggest(); return false }
         acceptSuggestion()
         return true
     }
