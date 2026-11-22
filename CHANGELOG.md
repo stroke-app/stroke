@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.5.8] - 2026-11-22
+
+### Changes
+- Objects page follows the connection; correct run hint; SQL Server Unicode checked live (#361)
+
+
 ## [3.5.7] - 2026-11-22
 
 ### Changes
