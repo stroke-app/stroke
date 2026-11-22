@@ -3690,7 +3690,7 @@
               aria-checked={tunnelKind === k.value}
               title={k.desc}
               class={cn(
-                "h-7 flex-1 rounded-[5px] text-ui-xs font-medium transition-colors",
+                "h-7 flex-1 rounded-md text-ui-xs font-medium transition-colors",
                 tunnelKind === k.value ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
               )}
               onclick={() => (tunnelKind = /** @type {any} */ (k.value))}
