@@ -6,6 +6,7 @@ import {
   releasesBetween,
   splitInlineCode,
   splitInlineMarks,
+  splitEntry,
 } from './changelog.js'
 
 const CHANGELOG = `# Changelog
@@ -139,5 +140,18 @@ describe('splitInlineMarks', () => {
   it('leaves an unclosed ** and ** inside code alone', () => {
     expect(splitInlineMarks('a ** b')).toEqual([{ text: 'a ** b', code: false, bold: false }])
     expect(splitInlineMarks('`**x**`')).toEqual([{ text: '**x**', code: true, bold: false }])
+  })
+})
+
+describe('splitEntry', () => {
+  it('reads a bold title', () => {
+    expect(splitEntry('**Redis sidebar** - Says "1 client".')).toEqual({ title: 'Redis sidebar', body: 'Says "1 client".' })
+  })
+  it('reads a plain title, as the update feed sends it', () => {
+    expect(splitEntry('Redis sidebar - Says "1 client".')).toEqual({ title: 'Redis sidebar', body: 'Says "1 client".' })
+  })
+  it('leaves a sentence with a dash in it whole', () => {
+    expect(splitEntry('Fixed the grid. It no longer jumps - at all.')).toEqual({ title: '', body: 'Fixed the grid. It no longer jumps - at all.' })
+    expect(splitEntry('Materialized views in the sidebar (#363)')).toEqual({ title: '', body: 'Materialized views in the sidebar (#363)' })
   })
 })

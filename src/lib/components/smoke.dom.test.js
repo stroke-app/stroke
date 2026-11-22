@@ -218,7 +218,9 @@ describe('updates', () => {
     render(WhatsNewDialog, { open: true, current: '2.10.8-nightly.202611150842', previous: '2.10.6-nightly.1', releases })
     await settle()
     const text = document.body.textContent ?? ''
-    expect(text).toContain('Stroke Nightly')
+    // The short version with a Nightly badge; the full build is its tooltip.
+    expect(text).toContain('Stroke 2.10.8 Nightly')
+    expect(document.querySelector('[title="2.10.8-nightly.202611150842"]')).not.toBeNull()
     expect(text).toContain('2.10.7')
     expect(text).toContain('2 changes across 2 versions')
   })

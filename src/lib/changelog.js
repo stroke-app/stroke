@@ -198,3 +198,21 @@ export function splitInlineMarks(text) {
       .map((s) => (/^\*\*[^*]+\*\*$/.test(s) ? { text: s.slice(2, -2), code: false, bold: true } : { text: s, code: false, bold: false }))
   })
 }
+
+/**
+ * A changelog entry as its title and the text after it. Entries read
+ * `**Title** - text`; the update feed strips the asterisks (an older app
+ * printed them), so a plain `Title - text` with a short title counts too.
+ * No title: the whole entry is the text.
+ * @param {string} text
+ * @returns {{ title: string, body: string }}
+ */
+export function splitEntry(text) {
+  const s = String(text ?? '').trim()
+  const bold = /^\*\*([^*]+)\*\*\s*(?:-|:)\s*([\s\S]*)$/.exec(s)
+  if (bold) return { title: bold[1].trim(), body: bold[2].trim() }
+  // A title is a short phrase, not a sentence: no full stop before the dash.
+  const plain = /^([^.!?\n`]{2,60}?) - ([\s\S]+)$/.exec(s)
+  if (plain) return { title: plain[1].trim(), body: plain[2].trim() }
+  return { title: '', body: s }
+}
