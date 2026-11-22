@@ -27,6 +27,7 @@ import {
 import { EditorSelection } from '@codemirror/state'
 import { isStatementSnippet, snippetEndsStatement } from './sql-terminator.js'
 import { statementAt } from '$lib/cm-sql-statements.js'
+import { currentSnippets, snippetsFor } from '$lib/stores/sql-snippets.js'
 import { sqlCompletionContext } from '$lib/sql-complete-context.js'
 import {
   PG_KEYWORDS, DDL_KEYWORDS, DIALECT_KEYWORDS, PG_FUNCTIONS, PG_FUNCTION_FAMILIES, DIALECT_FUNCTIONS,
@@ -228,6 +229,33 @@ function staticTemplates(family) {
   }
   staticCache.set(family, built)
   return built
+}
+
+/**
+ * Your own snippets (Settings > Snippets) for a family, as completions.
+ * Rebuilt only when the list changes: it is a new array on every edit.
+ * @type {WeakMap<object, Map<string, Array<Completion & { aliases: string[] }>>>}
+ */
+const userSnippetCache = new WeakMap()
+/** @param {string} family */
+function userSnippetOptions(family) {
+  const list = currentSnippets()
+  let byFamily = userSnippetCache.get(list)
+  if (!byFamily) { byFamily = new Map(); userSnippetCache.set(list, byFamily) }
+  let out = byFamily.get(family)
+  if (!out) {
+    out = snippetsFor(list, family).map((s) => {
+      // The `;` that closes a statement snippet is added on accept; one typed
+      // into the body as well would write two.
+      const body = s.body.replace(/;\s*$/, '')
+      return {
+        ...statementSnippet(body, { label: s.name, type: 'snippet', detail: s.trigger, info: snippetPreview(body) }),
+        aliases: [s.trigger],
+      }
+    })
+    byFamily.set(family, out)
+  }
+  return out
 }
 
 /** Capitals typed (`VARC`, `I`): write the type in capitals too. @param {string} prefix */
@@ -500,9 +528,11 @@ function buildCandidates(ctx, H, S, dialect, statement, rowTable) {
     for (const e of H.enums) add(e, TIER[6])
     for (const t of H.tables) tableOption(t, 7)
     for (const s of H.schemas) schemaOption(s, 8)
-    if (typed) for (const s of S.snippets) add(s, TIER[6], s.aliases)
+    if (typed) for (const s of [...userSnippetOptions(family), ...S.snippets]) add(s, TIER[6], s.aliases)
   } else {
-    // Start of a statement.
+    // Start of a statement. Yours first: a trigger of your own beats a
+    // built-in one with the same word.
+    for (const s of userSnippetOptions(family)) add(s, TIER[0], s.aliases)
     for (const s of S.snippets) add(s, TIER[0], s.aliases)
     keywords(1, null)
   }
