@@ -127,7 +127,7 @@
     <!-- Identity: which database this tab is on, as a header row that
          shares the block's left edge with everything below it. -->
     <div class="flex min-w-0 items-center gap-3">
-      <span class="flex size-10 shrink-0 items-center justify-center rounded-xl border border-border/60 bg-card">
+      <span class="flex size-10 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-card">
         <DbIcon id={engineId(connection)} class="size-5 shrink-0" />
       </span>
       <div class="flex min-w-0 flex-col gap-0.5">
