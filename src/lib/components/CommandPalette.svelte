@@ -1,4 +1,5 @@
 <script>
+  import { tx } from '$lib/i18n.js'
   import { openTransfer } from '$lib/stores/transfer-ui.js'
   import { EXPORT_FORMATS } from '$lib/export.js'
   import Kbd from './Kbd.svelte'
@@ -852,11 +853,11 @@
         bind:value={paletteSearch}
         oninput={(/** @type {Event} */ e) => { paletteSearch = /** @type {HTMLInputElement} */ (e.currentTarget).value }}
         placeholder={
-          page === 'root' ? 'Search tables, schemas, commands…'
-          : page === 'tables' ? 'Search tables and views…'
-          : page === 'ask' ? 'Ask a follow-up…'
-          : page === 'pages' ? 'Go to page…'
-          : page === 'theme' ? 'Select a theme…'
+          page === 'root' ? $tx('cmd.ph.root', 'Search tables, schemas, commands…')
+          : page === 'tables' ? $tx('cmd.ph.tables', 'Search tables and views…')
+          : page === 'ask' ? $tx('cmd.ph.ask', 'Ask a follow-up…')
+          : page === 'pages' ? $tx('cmd.ph.pages', 'Go to page…')
+          : page === 'theme' ? $tx('cmd.ph.theme', 'Select a theme…')
           : `Search ${pageLabel[page]}…`
         }
       />
@@ -886,14 +887,17 @@
           : 'show-scrollbar max-h-[min(420px,56vh)] pb-2 [mask-image:linear-gradient(to_bottom,black_calc(100%-16px),transparent)]'}
       >
         {#if page !== 'ask'}
-          <Command.Empty class="py-8 text-center text-ui-xs text-muted-foreground">No results.</Command.Empty>
+          <Command.Empty class="py-8 text-center text-ui-xs text-muted-foreground">{$tx('cmd.noResults', 'No results.')}</Command.Empty>
         {/if}
 
         <!-- Shared page-destination row (root "Views" + "Go to page" navigator) -->
         {#snippet pageRow(/** @type {typeof pageItems[number]} */ it)}
-          <Command.Item value={it.value} keywords={[it.label]} onSelect={() => run(it.action)}>
+          {@const shown = $tx('cmd.' + it.label, it.label)}
+          <!-- Translated name shown and searchable; the English words stay in
+               the value so either language finds it. -->
+          <Command.Item value={shown === it.label ? it.value : `${it.value} ${shown}`} keywords={[shown]} onSelect={() => run(it.action)}>
             <Icon name={it.icon} class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
-            <span data-slot="command-label" class="truncate">{it.label}</span>
+            <span data-slot="command-label" class="truncate">{shown}</span>
             {#if it.keys}<Command.Shortcut keys={it.keys} />{/if}
           </Command.Item>
         {/snippet}
@@ -983,7 +987,7 @@
         <!-- ── ROOT PAGE ─────────────────────────────────────────────── -->
         {#if page === 'root'}
           {#if paletteSearch.trim() && $appCmdkAi}
-            <Command.Group heading="Ask">
+            <Command.Group heading={$tx('group.Ask', 'Ask')}>
               <Command.Item value={"ask ai " + paletteSearch} onSelect={() => startAsk(paletteSearch)}>
                 <Icon name="sparkles" class="size-4 shrink-0 text-primary" />
                 <span data-slot="command-label" class="truncate">Ask AI: <span class="text-muted-foreground">"{paletteSearch}"</span></span>
@@ -993,14 +997,14 @@
           {/if}
 
           {#if connected}
-            <Command.Group heading="Views">
+            <Command.Group heading={$tx('group.Views', 'Views')}>
               {#each pageItems as it (it.label)}
                 {@render pageRow(it)}
               {/each}
             </Command.Group>
 
             {#if schemas.length > 0}
-              <Command.Group heading="Schemas">
+              <Command.Group heading={$tx('group.Schemas', 'Schemas')}>
                 {#each schemas as schema (schema)}
                   <Command.Item value="schema {schema}" onSelect={() => run(() => onschemachange(schema))}>
                     <Icon name="database" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
@@ -1014,7 +1018,7 @@
             {/if}
 
             {#if tables.length > 0}
-              <Command.Group heading="Tables">
+              <Command.Group heading={$tx('group.Tables', 'Tables')}>
                 {#each regularTables.slice(0, 8) as table (table.name)}
                   <Command.Item value="table {activeSchema} {table.name}" onSelect={() => run(() => ontableselect(table.name))}>
                     <Icon name="table-2" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
@@ -1046,7 +1050,7 @@
               </Command.Group>
             {/if}
 
-            <Command.Group heading="AI">
+            <Command.Group heading={$tx('group.AI', 'AI')}>
               <Command.Item value="ask ai assistant chat query" onSelect={() => run(onopenai)}>
                 <Icon name="bot" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">Ask AI</span>
@@ -1066,7 +1070,7 @@
               </Command.Item>
             </Command.Group>
 
-            <Command.Group heading="Queries">
+            <Command.Group heading={$tx('group.Queries', 'Queries')}>
               <Command.Item value="open query history sql statements" onSelect={() => run(onopenqueryhistory)}>
                 <Icon name="history" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">Query history</span>
@@ -1074,7 +1078,7 @@
             </Command.Group>
 
             {#if savedQueries.length > 0}
-              <Command.Group heading="Saved queries">
+              <Command.Group heading={$tx('group.Saved queries', 'Saved queries')}>
                 {#each savedQueries as entry (entry.id)}
                   <Command.Item value="saved query {entry.name} {entry.sql}" onSelect={() => run(() => onqueryselect(entry.sql))}>
                     <Icon name="bookmark" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
@@ -1085,7 +1089,7 @@
             {/if}
 
             {#if queryHistory.length > 0}
-              <Command.Group heading="Recent queries">
+              <Command.Group heading={$tx('group.Recent queries', 'Recent queries')}>
                 {#each queryHistory.slice(0, 20) as entry (entry.id)}
                   <Command.Item value="recent query {entry.title} {entry.sql}" onSelect={() => run(() => onqueryselect(entry.sql))}>
                     <Icon name="history" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
@@ -1099,7 +1103,7 @@
               <!-- Export was only in the table toolbar's menu: "export" here
                    found Backup & restore and nothing else. Only while searching,
                    so eight format rows don't sit in the root list. -->
-              <Command.Group heading="Export and import">
+              <Command.Group heading={$tx('group.Export and import', 'Export and import')}>
                 {#each onexporttable ? EXPORT_FORMATS : [] as fmt (fmt.id)}
                   <Command.Item value={`export download save table rows ${fmt.label} ${fmt.id} ${fmt.hint}`} keywords={[`Export as ${fmt.label}`]} onSelect={() => run(() => onexporttable?.(fmt.id))}>
                     <Icon name="file-down" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
@@ -1115,7 +1119,7 @@
                 {/if}
               </Command.Group>
             {/if}
-            <Command.Group heading="Actions">
+            <Command.Group heading={$tx('group.Actions', 'Actions')}>
               {#if onexplainquery}
                 <!-- Explain was only a button in the results bar. -->
                 <Command.Item value="explain query plan analyze cost why slow performance" keywords={['Explain query']} onSelect={() => run(onexplainquery)}>
@@ -1181,7 +1185,7 @@
           <!-- ── Switch database, other saved connections, right at root ── -->
           {@const otherConns = savedConnections.filter((c) => c.id !== activeConnectionId)}
           {#if otherConns.length > 0}
-            <Command.Group heading="Switch database">
+            <Command.Group heading={$tx('group.Switch database', 'Switch database')}>
               {#each otherConns.slice(0, 8) as conn (conn.id)}
                 <Command.Item
                   value="switch database connection {conn.name} {connSubtitle(conn)} {conn.type}"
@@ -1201,7 +1205,7 @@
           {/if}
 
           <!-- ── Drill-in: Connections ───────────────────────────────── -->
-          <Command.Group heading="Database">
+          <Command.Group heading={$tx('group.Database', 'Database')}>
             <Command.Item
               value="connections switch database connect postgres mysql sqlite saved {savedConnections.map(c => c.name).join(' ')}"
               onSelect={() => navigate('connections')}
@@ -1222,7 +1226,7 @@
           </Command.Group>
 
           <!-- ── Drill-in: Docker ───────────────────────────────────── -->
-          <Command.Group heading="Launch">
+          <Command.Group heading={$tx('group.Launch', 'Launch')}>
             <Command.Item value="docker containers launch run postgresql mysql mariadb mongodb redis valkey sql server oracle cockroachdb clickhouse cassandra couchdb elasticsearch opensearch dynamodb libsql pgvector postgis timescale" onSelect={() => navigate('docker')}>
               <DbIcon id="docker" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
               <span data-slot="command-label" class="truncate">Docker</span>
@@ -1231,7 +1235,7 @@
           </Command.Group>
 
           <!-- ── Drill-in: Theme ────────────────────────────────────── -->
-          <Command.Group heading="Appearance">
+          <Command.Group heading={$tx('group.Appearance', 'Appearance')}>
             <Command.Item value="theme appearance colour color scheme palette dark light mode switch change" onSelect={openThemePage}>
               <Icon name={getThemeDefinition($appThemeId)?.isDark ? 'moon' : 'sun'} class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
               <span data-slot="command-label" class="truncate">Theme…</span>
@@ -1252,7 +1256,7 @@
         <!-- ── TABLES PAGE ───────────────────────────────────────────── -->
         {:else if page === 'tables'}
           {#if tablesPageRegular.total > 0}
-            <Command.Group heading="Tables">
+            <Command.Group heading={$tx('group.Tables', 'Tables')}>
               {#each tablesPageRegular.items as table (table.name)}
                 <Command.Item value="table {activeSchema} {table.name} {table.name}" onSelect={() => run(() => ontableselect(table.name))}>
                   <Icon name="table-2" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
@@ -1272,7 +1276,7 @@
             </Command.Group>
           {/if}
           {#if tablesPageViews.total > 0}
-            <Command.Group heading="Views">
+            <Command.Group heading={$tx('group.Views', 'Views')}>
               {#each tablesPageViews.items as table (table.name)}
                 <Command.Item value="view {activeSchema} {table.name} {table.name}" onSelect={() => run(() => ontableselect(table.name))}>
                   <Icon name="eye" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
@@ -1287,7 +1291,7 @@
             </Command.Group>
           {/if}
           {#if tablesPageMatViews.total > 0}
-            <Command.Group heading="Materialized views">
+            <Command.Group heading={$tx('group.Materialized views', 'Materialized views')}>
               {#each tablesPageMatViews.items as table (table.name)}
                 <Command.Item value="materialized view {activeSchema} {table.name} {table.name}" onSelect={() => run(() => ontableselect(table.name))}>
                   <Icon name="layers" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
@@ -1309,7 +1313,7 @@
         <!-- ── DOCKER PAGE ────────────────────────────────────────────── -->
         {:else if page === 'docker'}
           {#if dockerRunning.length}
-            <Command.Group heading="Running">
+            <Command.Group heading={$tx('group.Running', 'Running')}>
               {#each dockerRunning as d (d.containerId)}
                 <Command.Item
                   value="running open {d.name} {d.engine} {d.image} {d.port}"
@@ -1343,7 +1347,7 @@
         <!-- ── CONNECTIONS PAGE ───────────────────────────────────────── -->
         {:else if page === 'connections'}
           {#if savedConnections.length > 0}
-            <Command.Group heading="Saved connections">
+            <Command.Group heading={$tx('group.Saved connections', 'Saved connections')}>
               {#each savedConnections as conn (conn.id)}
                 {@const driverIconName = driverIcon(conn.type ?? 'postgres')}
                 {@const isActive = conn.id === activeConnectionId}
@@ -1364,7 +1368,7 @@
               {/each}
             </Command.Group>
           {/if}
-          <Command.Group heading="Add">
+          <Command.Group heading={$tx('group.Add', 'Add')}>
             <Command.Item value="new connection add connect database" onSelect={() => run(onopenconnection)}>
               <Icon name="database" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
               <span data-slot="command-label" class="truncate">New connection…</span>
@@ -1373,7 +1377,7 @@
 
         {:else if page === 'pages'}
           <!-- Go to page, VSCode-style focused navigator (Ctrl/⌘+P) -->
-          <Command.Group heading="Go to page">
+          <Command.Group heading={$tx('group.Go to page', 'Go to page')}>
             {#each pageItems as it (it.label)}
               {@render pageRow(it)}
             {/each}
@@ -1429,9 +1433,9 @@
         </div>
       {:else if page !== 'ask'}
         <div class="flex h-10 shrink-0 items-center gap-4 border-t border-border/50 bg-muted/25 px-3.5 text-ui-2xs text-muted-foreground">
-          <span class="flex items-center gap-1.5"><Kbd keys={['↑']} /><Kbd keys={['↓']} /> Navigate</span>
-          <span class="flex items-center gap-1.5"><Kbd keys={['↵']} /> Select</span>
-          <span class="flex items-center gap-1.5"><Kbd keys={['esc']} /> Close</span>
+          <span class="flex items-center gap-1.5"><Kbd keys={['↑']} /><Kbd keys={['↓']} /> {$tx('cmd.foot.navigate', 'Navigate')}</span>
+          <span class="flex items-center gap-1.5"><Kbd keys={['↵']} /> {$tx('cmd.foot.select', 'Select')}</span>
+          <span class="flex items-center gap-1.5"><Kbd keys={['esc']} /> {$tx('common.close', 'Close')}</span>
         </div>
       {/if}
     </div>

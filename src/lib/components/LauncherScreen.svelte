@@ -1,4 +1,5 @@
 <script>
+  import { tx } from '$lib/i18n.js'
   // The window with no database open: recent connections first (one click back
   // to work), then a new connection, then engine shortcuts. Split out of
   // StudioShell; it takes what it shows and calls back for what it opens.
@@ -61,35 +62,35 @@
 <div class="relative flex flex-1 flex-col items-center justify-center overflow-y-auto p-8">
   <div class="flex w-full max-w-[30rem] flex-col">
     <h1 class="text-ui-2xl font-semibold tracking-tight text-foreground">
-      Connect a database
+      {$tx('launch.title', 'Connect a database')}
     </h1>
     <p class="mt-1 text-ui-sm text-muted-foreground text-pretty">
-      Browse schemas, edit rows and run queries in one fast, native window.
+      {$tx('launch.sub', 'Browse schemas, edit rows and run queries in one fast, native window.')}
     </p>
 
     <div class="mt-6 flex items-center gap-2">
       <Button type="button" class="h-8 px-3.5 text-ui-sm font-medium" bind:ref={connectBtn} onclick={() => onnew(null)}>
         <Plus class="size-3.5 shrink-0" />
-        New connection
+        {$tx('launch.newConnection', 'New connection')}
       </Button>
       <!-- A local file needs no form: pick where it goes (or which one) and it opens. -->
-      <Button type="button" variant="outline" class="h-8 px-3 text-ui-sm" title="Create an empty SQLite database file and open it" onclick={() => onfiledb('new')}>
-        New SQLite database
+      <Button type="button" variant="outline" class="h-8 px-3 text-ui-sm" title={$tx('launch.newSqlite.title', 'Create an empty SQLite database file and open it')} onclick={() => onfiledb('new')}>
+        {$tx('cmd.New SQLite database', 'New SQLite database')}
       </Button>
-      <Button type="button" variant="ghost" class="h-8 px-3 text-ui-sm text-muted-foreground" title="Open a SQLite or DuckDB file" onclick={() => onfiledb('open')}>
-        Open file…
+      <Button type="button" variant="ghost" class="h-8 px-3 text-ui-sm text-muted-foreground" title={$tx('launch.openFile.title', 'Open a SQLite or DuckDB file')} onclick={() => onfiledb('open')}>
+        {$tx('launch.openFile', 'Open file…')}
       </Button>
     </div>
-    <p class="mt-2 flex items-center gap-1.5 text-ui-xs text-muted-foreground">or press <Kbd command="palette.open" size="sm" /> for everything else</p>
+    <p class="mt-2 flex items-center gap-1.5 text-ui-xs text-muted-foreground">{$tx('launch.orPress', 'or press')} <Kbd command="palette.open" size="sm" /> {$tx('launch.forEverything', 'for everything else')}</p>
 
     <!-- Recent: one line each, name first, where it lives muted beside it.
          Two-line rows made five connections the whole page. -->
     {#if recentConnections.length}
       <section class="mt-8" aria-labelledby="welcome-recent">
         <div class="mb-1.5 flex items-center justify-between px-2.5">
-          <h2 id="welcome-recent" class="text-ui-2xs font-medium text-muted-foreground">Recent</h2>
+          <h2 id="welcome-recent" class="text-ui-2xs font-medium text-muted-foreground">{$tx('sidebar.recent', 'Recent')}</h2>
           <button type="button" class="text-ui-2xs text-muted-foreground transition-colors hover:text-foreground" onclick={() => onnew(null)}>
-            All connections
+            {$tx('launch.allConnections', 'All connections')}
           </button>
         </div>
         <ul class="flex flex-col">
@@ -107,7 +108,7 @@
                 <span class="min-w-0 flex-1 truncate text-ui-xs text-muted-foreground">{welcomeTarget(conn)}</span>
                 <span class="shrink-0 text-ui-2xs tabular-nums text-muted-foreground group-hover:hidden group-focus-visible:hidden">{ago(conn.lastConnectedAt ?? 0)}</span>
                 <span class="hidden shrink-0 group-hover:inline-flex group-focus-visible:inline-flex">
-                  {#if slot > 0 && slot <= 9}<Kbd command={`connection.switchTo.${slot}`} size="sm" />{:else}<span class="text-ui-2xs text-foreground">Connect</span>{/if}
+                  {#if slot > 0 && slot <= 9}<Kbd command={`connection.switchTo.${slot}`} size="sm" />{:else}<span class="text-ui-2xs text-foreground">{$tx('connection.connect', 'Connect')}</span>{/if}
                 </span>
               </button>
             </li>
@@ -119,7 +120,7 @@
     <!-- Each engine opens its own form directly: naming the engine is the
          first step of the wizard. -->
     <section class="mt-8" aria-labelledby="welcome-engines">
-      <h2 id="welcome-engines" class="mb-1.5 px-2.5 text-ui-2xs font-medium text-muted-foreground">Start with</h2>
+      <h2 id="welcome-engines" class="mb-1.5 px-2.5 text-ui-2xs font-medium text-muted-foreground">{$tx('launch.startWith', 'Start with')}</h2>
       <div class="grid grid-cols-2 gap-0.5 sm:grid-cols-3">
         {#each [['postgres','PostgreSQL'],['mysql','MySQL'],['sqlite','SQLite'],['mongodb','MongoDB'],['redis','Redis'],['d1','Cloudflare D1']] as [id, label] (id)}
           <button
@@ -150,7 +151,7 @@
       onclick={oncheckupdates}
     >
       <Icon name="refresh-cw" class={cn('size-3 shrink-0', checkingUpdate && 'animate-spin')} aria-hidden="true" />
-      {checkingUpdate ? 'Checking' : 'Check for updates'}
+      {checkingUpdate ? $tx('launch.checking', 'Checking') : $tx('launch.checkUpdates', 'Check for updates')}
     </button>
     <span aria-hidden="true">·</span>
     <span>made with care by

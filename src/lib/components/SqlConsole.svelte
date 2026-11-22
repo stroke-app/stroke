@@ -1,4 +1,5 @@
 <script>
+  import { tx } from '$lib/i18n.js'
   import { comboTitle } from '$lib/shortcuts.js'
   import { rowsToCsv, rowsToJson, rowsToSql, rowsToTsv, rowsToMarkdown, rowsToJsonl, rowsToObjects, saveExportFile, buildExportFilename, exportRows, EXPORT_FORMATS } from '$lib/export.js'
   import Play from "@lucide/svelte/icons/play";
@@ -1005,7 +1006,7 @@
           )}
         >
           <Play class="size-3.5 shrink-0" />
-          Run
+          {$tx('sql.run', 'Run')}
         </button>
         <DropdownMenu.Root bind:open={runMenuOpen} onOpenChange={captureRunPreviews}>
           <DropdownMenu.Trigger
@@ -1021,7 +1022,7 @@
           <DropdownMenu.Content align="start" class="min-w-64">
             <DropdownMenu.Item onSelect={() => handleRun(undefined)}>
               <Play class="size-3.5 shrink-0 text-muted-foreground" />
-              <span class="whitespace-nowrap">Run all statements</span>
+              <span class="whitespace-nowrap">{$tx('sql.runAll', 'Run all statements')}</span>
               <DropdownMenu.Shortcut combo="Mod+Enter" />
             </DropdownMenu.Item>
             <DropdownMenu.Item
@@ -1032,7 +1033,7 @@
               <TextCursorInput class="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
               <div class="flex w-full min-w-0 flex-col gap-0.5">
                 <span class="flex w-full items-center whitespace-nowrap">
-                  Run statement at cursor
+                  {$tx('sql.runAtCursor', 'Run statement at cursor')}
                   <DropdownMenu.Shortcut combo="Mod+R" />
                 </span>
                 {#if cursorStmtPreview}
@@ -1044,7 +1045,7 @@
               <DropdownMenu.Item class="items-start" onSelect={() => handleRun(selectionPreview)}>
                 <TextSelect class="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
                 <div class="flex w-full min-w-0 flex-col gap-0.5">
-                  <span class="whitespace-nowrap">Run selection</span>
+                  <span class="whitespace-nowrap">{$tx('sql.runSelection', 'Run selection')}</span>
                   <span class="truncate font-mono text-ui-3xs leading-4 text-muted-foreground">{clipSql(selectionPreview)}</span>
                 </div>
               </DropdownMenu.Item>
@@ -1088,7 +1089,7 @@
            8.69:1, the count 6.68:1.) -->
       <div class="flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-warning/25 bg-warning/10 px-2">
         <span class="size-1.5 shrink-0 rounded-full bg-warning" aria-hidden="true"></span>
-        <span class="whitespace-nowrap text-ui-2xs font-medium text-warning">In transaction</span>
+        <span class="whitespace-nowrap text-ui-2xs font-medium text-warning">{$tx('sql.inTx', 'In transaction')}</span>
         <span class="whitespace-nowrap font-mono text-ui-2xs tabular-nums text-muted-foreground">
           {txStatus.statements}<span class="ml-0.5">{txStatus.statements === 1 ? 'stmt' : 'stmts'}</span>
         </span>
@@ -1116,7 +1117,7 @@
         onclick={() => oncommittransaction()}
         title={tipText('Commit', `Save everything this transaction has done: ${txStatus.statements} statement(s), ${txStatus.rowsAffected} row(s) changed.`)}
       >
-        Commit
+        {$tx('sql.commit', 'Commit')}
       </Button>
       <Button
         variant="ghost"
@@ -1126,7 +1127,7 @@
         onclick={() => onrollbacktransaction()}
         title={tipText('Roll back', 'Undo everything this transaction has done.')}
       >
-        Roll back
+        {$tx('sql.rollback', 'Roll back')}
       </Button>
     {:else}
       <Button
@@ -1140,7 +1141,7 @@
           'Run statements without saving them, then commit or roll back.',
         )}
       >
-        Begin
+        {$tx('sql.begin', 'Begin')}
       </Button>
     {/if}
 
@@ -1157,7 +1158,7 @@
         title={tipText('Variables', 'Set values for :name, $name and ${name} variables. They are inlined as escaped literals when the query runs.')}
       >
         <Variable class="size-3.5 shrink-0" />
-        Variables
+        {$tx('sql.variables', 'Variables')}
         <span class="rounded-sm bg-muted/70 px-1 font-mono text-ui-3xs tabular-nums text-muted-foreground">{sqlParams.length}</span>
       </Button>
     {/if}
@@ -1219,16 +1220,16 @@
         <DropdownMenu.Content align="start" class="min-w-48">
           <DropdownMenu.Item onSelect={() => copyQueryAs('sql')}>
             <Copy class="size-3.5 shrink-0 text-muted-foreground" />
-            <span data-slot="menu-label">Copy SQL</span>
+            <span data-slot="menu-label">{$tx('sql.copySql', 'Copy SQL')}</span>
           </DropdownMenu.Item>
           <DropdownMenu.Separator />
           <DropdownMenu.Item onSelect={() => copyQueryAs('drizzle')}>
             <Code2 class="size-3.5 shrink-0 text-muted-foreground" />
-            <span data-slot="menu-label">Copy as Drizzle</span>
+            <span data-slot="menu-label">{$tx('sql.copyDrizzle', 'Copy as Drizzle')}</span>
           </DropdownMenu.Item>
           <DropdownMenu.Item onSelect={() => copyQueryAs('prisma')}>
             <Code2 class="size-3.5 shrink-0 text-muted-foreground" />
-            <span data-slot="menu-label">Copy as Prisma</span>
+            <span data-slot="menu-label">{$tx('sql.copyPrisma', 'Copy as Prisma')}</span>
           </DropdownMenu.Item>
           <DropdownMenu.Separator />
           <!-- An encrypted link: the results (columns you choose, personal
@@ -1236,16 +1237,16 @@
           {#if columns.length > 0}
             <DropdownMenu.Item onSelect={() => requestShare({ kind: 'result', title: shareTitle(), ...resultSource(), sql })}>
               <Share2 class="size-3.5 shrink-0 text-muted-foreground" />
-              <span data-slot="menu-label">Share results…</span>
+              <span data-slot="menu-label">{$tx('sql.shareResults', 'Share results…')}</span>
             </DropdownMenu.Item>
             <DropdownMenu.Item onSelect={() => { const { columns: c, rows: r } = resultSource(); requestShare({ kind: 'json', title: shareTitle(), value: rowsToJsonValue(c, r) }) }}>
               <Share2 class="size-3.5 shrink-0 text-muted-foreground" />
-              <span data-slot="menu-label">Share as JSON…</span>
+              <span data-slot="menu-label">{$tx('sql.shareJson', 'Share as JSON…')}</span>
             </DropdownMenu.Item>
           {/if}
           <DropdownMenu.Item onSelect={() => requestShare({ kind: 'query', title: shareTitle(), sql })}>
             <Share2 class="size-3.5 shrink-0 text-muted-foreground" />
-            <span data-slot="menu-label">Share query…</span>
+            <span data-slot="menu-label">{$tx('sql.shareQuery', 'Share query…')}</span>
           </DropdownMenu.Item>
         </DropdownMenu.Content>
       </DropdownMenu.Root>
@@ -1276,15 +1277,15 @@
           {/each}
           <DropdownMenu.Separator />
           <DropdownMenu.Item onSelect={() => sqlEditorRef?.foldAll?.()}>
-            <span data-slot="menu-label">Fold all statements</span>
+            <span data-slot="menu-label">{$tx('sql.foldAll', 'Fold all statements')}</span>
             <DropdownMenu.Shortcut combo="Ctrl+Alt+[" />
           </DropdownMenu.Item>
           <DropdownMenu.Item onSelect={() => sqlEditorRef?.unfoldAll?.()}>
-            <span data-slot="menu-label">Unfold all</span>
+            <span data-slot="menu-label">{$tx('sql.unfoldAll', 'Unfold all')}</span>
             <DropdownMenu.Shortcut combo="Ctrl+Alt+]" />
           </DropdownMenu.Item>
           <DropdownMenu.Separator />
-          <DropdownMenu.Label>Text size</DropdownMenu.Label>
+          <DropdownMenu.Label>{$tx('sql.textSize', 'Text size')}</DropdownMenu.Label>
           <DropdownMenu.RadioGroup
             value={$appSqlEditor.textSize}
             onValueChange={(v) => setSqlEditorOption('textSize', /** @type {any} */ (v))}
@@ -1314,7 +1315,7 @@
         {:else}
           <Bookmark class={cn('size-3.5 shrink-0', savedQueryName && 'fill-current')} />
         {/if}
-        Save
+        {$tx('common.save', 'Save')}
       </Button>
     </div>
   </div>
@@ -1328,9 +1329,9 @@
       <div class="flex w-full max-w-xl flex-col gap-1.5">
         <div class="flex h-6 items-center gap-2">
           <Variable class="size-3.5 shrink-0 text-muted-foreground" />
-          <span class="text-ui-xs font-medium text-foreground">Variables</span>
+          <span class="text-ui-xs font-medium text-foreground">{$tx('sql.variables', 'Variables')}</span>
           <span class="font-mono text-ui-2xs tabular-nums text-muted-foreground">{sqlParams.length}</span>
-          <span class="ml-auto text-ui-2xs text-muted-foreground">Enter to run</span>
+          <span class="ml-auto text-ui-2xs text-muted-foreground">{$tx('sql.enterToRun', 'Enter to run')}</span>
           <button
             type="button"
             class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
@@ -1556,7 +1557,7 @@
           class={cn('flex h-7 items-center gap-1 rounded-md px-1.5 transition-colors', showMap ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground')}
         >
           <MapIcon class="size-3.5 shrink-0" />
-          <span class="text-ui-xs @max-[40rem]/out:sr-only">Map</span>
+          <span class="text-ui-xs @max-[40rem]/out:sr-only">{$tx('cmd.Map', 'Map')}</span>
         </button>
       {/if}
       {#if resultShown && currentDisplay.rows.length > 0}
@@ -1568,8 +1569,8 @@
               bind:this={findInput}
               bind:value={findText}
               onkeydown={onFindKey}
-              placeholder="Find in results"
-              aria-label="Find in results"
+              placeholder={$tx('sql.findInResults', 'Find in results')}
+              aria-label={$tx('sql.findInResults', 'Find in results')}
               spellcheck="false"
               autocomplete="off"
               class="no-field-frame no-focus-ring h-full w-40 min-w-0 border-0 bg-transparent px-1 text-ui-xs text-foreground shadow-none outline-none placeholder:text-muted-foreground"
@@ -1592,7 +1593,7 @@
             type="button"
             class="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
             title={tipText('Find in results', 'Show only the rows that contain some text.', [mod, 'F'])}
-            aria-label="Find in results"
+            aria-label={$tx('sql.findInResults', 'Find in results')}
             onclick={openFind}
           ><Search class="size-3.5 shrink-0" /></button>
         {/if}
@@ -1629,7 +1630,7 @@
           class="flex h-7 items-center gap-1.5 rounded-md px-2.5 text-ui-xs @max-[40rem]/out:px-1.5 whitespace-nowrap text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
           title={tipText('Queries', 'History, saved queries and saved charts, in their own tab', [mod, '⇧', 'B'])}
         >
-          <History class="size-3.5 shrink-0" /><span class="@max-[40rem]/out:sr-only">Queries</span>
+          <History class="size-3.5 shrink-0" /><span class="@max-[40rem]/out:sr-only">{$tx('group.Queries', 'Queries')}</span>
         </button>
       {:else}
       <div class="flex items-center gap-1">
@@ -1660,7 +1661,7 @@
             aria-label={outputView === 'chart' ? 'Share chart' : 'Share results'}
             onclick={shareShown}
           >
-            <Share2 class="size-3.5 shrink-0" /><span class="@max-[40rem]/out:sr-only">Share</span>
+            <Share2 class="size-3.5 shrink-0" /><span class="@max-[40rem]/out:sr-only">{$tx('sql.share', 'Share')}</span>
           </button>
         {/if}
         <!-- Export dropdown, only when there are results -->
@@ -1748,7 +1749,7 @@
                   <Square class="size-3 fill-current text-muted-foreground" />
                 </span>
                 <div class="flex flex-col gap-1">
-                  <p class="text-ui-sm font-medium text-foreground">Query stopped</p>
+                  <p class="text-ui-sm font-medium text-foreground">{$tx('sql.stopped', 'Query stopped')}</p>
                   <!-- HTTP engines and document stores have no way to stop a
                        statement on the server: the app stopped waiting, the
                        server did not necessarily stop working. -->
@@ -1758,7 +1759,7 @@
                 </div>
                 <Button type="button" variant="outline" size="sm" disabled={!sql.trim()} onclick={() => handleRun(undefined)}>
                   <Play class="size-3.5 shrink-0" data-icon="inline-start" />
-                  Run again
+                  {$tx('sql.runAgain', 'Run again')}
                 </Button>
               </div>
             {:else if isNetworkError(shownError)}
@@ -1800,14 +1801,14 @@
                 {#if explainAnalyze}
                   <Button type="button" variant="outline" size="sm" onclick={stopExplain}>
                     <Square class="size-3 shrink-0 fill-current" data-icon="inline-start" />
-                    Stop
+                    {$tx('sql.stop', 'Stop')}
                   </Button>
                 {/if}
               </div>
             {:else if explainError}
               <div class="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
                 {#if /Query cancelled/i.test(explainError)}
-                  <p class="text-ui-sm font-medium text-foreground">Plan stopped</p>
+                  <p class="text-ui-sm font-medium text-foreground">{$tx('sql.planStopped', 'Plan stopped')}</p>
                   <p class="text-ui-xs text-muted-foreground">The query was cancelled on the server and rolled back. Nothing was changed.</p>
                 {:else}
                   <p class="font-mono text-ui-xs text-destructive">{explainError}</p>
@@ -1818,7 +1819,7 @@
             {:else}
               <div class="flex h-full flex-col items-center justify-center gap-2 text-center">
                 <ScanSearch class="size-6 text-muted-foreground" />
-                <p class="text-ui-sm text-muted-foreground">Click Explain to analyze the query plan</p>
+                <p class="text-ui-sm text-muted-foreground">{$tx('sql.clickExplain', 'Click Explain to analyze the query plan')}</p>
               </div>
             {/if}
           {:else if currentDisplay.columns.length > 0}
@@ -1900,7 +1901,7 @@
           {:else}
             <!-- T3-style empty state: one light line, one quiet hint. -->
             <div class="flex h-full flex-col items-center justify-center gap-1.5 text-center">
-              <p class="text-ui-lg font-normal tracking-tight text-foreground/90">Run a query</p>
+              <p class="text-ui-lg font-normal tracking-tight text-foreground/90">{$tx('sql.runAQuery', 'Run a query')}</p>
               <!-- Mod+Enter runs every statement; Mod+R is the one at the cursor.
                    This named Mod+Enter for the cursor's, which then ran all of them. -->
               <p class="flex items-center gap-1.5 text-ui-xs text-muted-foreground">
@@ -1932,12 +1933,12 @@
       </Dialog.Description>
     </Dialog.Header>
     <div class="flex flex-col gap-2">
-      <Label for="save-query-name" class="text-ui-xs">Name</Label>
+      <Label for="save-query-name" class="text-ui-xs">{$tx('sql.name', 'Name')}</Label>
       <Input
         id="save-query-name"
         bind:value={saveQueryName}
         class="font-mono text-ui-sm"
-        placeholder="Query name"
+        placeholder={$tx('sql.queryName', 'Query name')}
         onkeydown={(e) => {
           if (e.key === 'Enter') void confirmSaveQuery()
           // Explicit Escape close: this dialog is opened programmatically from
@@ -1949,7 +1950,7 @@
     </div>
     <Dialog.Footer class="gap-2 sm:justify-end">
       <Button type="button" variant="outline" size="sm" onclick={() => (saveDialogOpen = false)}>
-        Cancel
+        {$tx('common.cancel', 'Cancel')}
       </Button>
       <Button
         type="button"
