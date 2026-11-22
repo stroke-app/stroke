@@ -88,6 +88,13 @@
     onchange = undefined,
     /** @type {(actions: { format: () => Promise<void> }) => void} */
     onactionsready = undefined,
+    /**
+     * A shared studio's console binding (share-console.js): edits go to
+     * everyone on the link and their cursors show here. Added only while the
+     * editor holds that document's text.
+     * @type {import('@codemirror/state').Extension | null}
+     */
+    collab = null,
   } = $props()
 
   /** @type {HTMLDivElement | null} */
@@ -1295,7 +1302,7 @@
     ...editingExtensions($appSqlEditor),
     ...(onlens && !readOnly && $appSqlEditor.codeLens === 'current' ? [lensRoom] : []),
   ])
-  const extensions = $derived([...(vimExtension ? [Prec.highest(vimExtension)] : []), appKeys, ...baseExtensions, ...editing])
+  const extensions = $derived([...(vimExtension ? [Prec.highest(vimExtension)] : []), appKeys, ...baseExtensions, ...editing, ...(collab ? [collab] : [])])
 
   $effect(() => {
     if (!$appVimMode) { vimExtension = null; return }

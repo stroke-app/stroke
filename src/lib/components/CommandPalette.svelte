@@ -88,6 +88,8 @@
     onopeninsights = () => {},
     /** Labs: share the open database as a web studio (shown when the Labs switch is on). */
     onsharestudio = /** @type {(() => void) | null} */ (null),
+    /** While sharing: the SQL console everyone on the link edits together. */
+    onsharedconsole = /** @type {(() => void) | null} */ (null),
     onopenadvisor = () => {},
     onopenobjects = () => {},
     onopenormschema = () => {},
@@ -285,6 +287,7 @@
     { icon: 'shield-check',    label: 'Security',                      action: onopensecurity,   show: connected && hasSecurity, value: 'open security roles users policies rls row level permissions privileges grants access' },
     { icon: 'shield-check',    label: 'Advisor',                       action: onopenadvisor,    show: connected && hasAdvisor, value: 'open advisor lint audit checks security performance schema rls unused index foreign key bloat vacuum' },
     { icon: 'database',        label: 'Instance insights',             action: onopeninsights,   show: connected && hasInsights, value: 'open instance insights monitoring sessions processes activity locks replication config pg_settings slow queries' },
+    { icon: 'users',           label: 'Open shared console',           action: () => onsharedconsole?.(), show: connected && !!onsharedconsole, value: 'shared console collaborate live cursors sql together web studio' },
     { icon: 'globe',           label: 'Share as web studio',           action: () => onsharestudio?.(), show: connected && !!onsharestudio, value: 'share as web studio link remote relay browser device labs collaborate' },
     { icon: 'layout-dashboard',label: 'Dashboard',                     action: onopendashboard,  show: connected && !isKeyValue, value: 'open dashboard saved metrics overview widgets' },
     { icon: 'bar-chart-2',     label: 'Charts',                        action: onopencharts,     show: connected && !isKeyValue, value: 'open charts visualize query results graphs plots' },

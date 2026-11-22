@@ -83,6 +83,8 @@
     /** Connection family, so parameter values are quoted the way this engine reads them. */
     engine = "postgres",
     sql = $bindable("SELECT 1;"),
+    /** The shared studio console's editor binding, while this tab is it. @type {import('@codemirror/state').Extension | null} */
+    collab = null,
     columns = [],
     rows = [],
     queryMs = 0,
@@ -1405,6 +1407,7 @@
     <SqlEditor
       bind:this={sqlEditorRef}
       bind:value={sql}
+      {collab}
       class="absolute inset-0"
       {schemaHints}
       dialect={engine}

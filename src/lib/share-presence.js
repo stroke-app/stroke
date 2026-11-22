@@ -47,6 +47,10 @@ export function joinPresence(o) {
   let state = { tab: null, cell: null, pointer: null, editing: null }
   /** @type {Set<(table: string) => void>} */
   const changed = new Set()
+  /** Shared console messages (share-console.js). @type {Set<(msg: any) => void>} */
+  const docHandlers = new Set()
+  /** @type {Set<() => void>} */
+  const connectHandlers = new Set()
   /** @type {WebSocket | null} */
   let ws = null
   let closed = false
@@ -77,6 +81,7 @@ export function joinPresence(o) {
       void send({ t: 'hello' })
       clearInterval(ping)
       ping = setInterval(sendState, 20_000)
+      for (const fn of connectHandlers) fn()
     }
     sock.onmessage = async (ev) => {
       /** @type {any} */
@@ -91,6 +96,8 @@ export function joinPresence(o) {
       let msg
       try { msg = await unseal(o.key, raw) } catch { return }
       if (msg?.t === 'hello') sendState()
+      else if ((msg?.t === 'y' || msg?.t === 'aw') && typeof msg.u === 'string') for (const fn of docHandlers) fn(msg)
+      else if (msg?.t === 'y-sync') for (const fn of docHandlers) fn(msg)
       else if (msg?.t === 'changed' && typeof msg.table === 'string') for (const fn of changed) fn(msg.table)
       else if (msg?.t === 'state') {
         /** @type {Peer} */
@@ -137,6 +144,18 @@ export function joinPresence(o) {
     onChanged(fn) {
       changed.add(fn)
       return () => { changed.delete(fn) }
+    },
+    /** A shared console message, sent at once. @param {{ t: 'y' | 'aw', u: string } | { t: 'y-sync' }} msg */
+    sendDoc(msg) { void send(msg) },
+    /** @param {(msg: any) => void} fn */
+    onDoc(fn) {
+      docHandlers.add(fn)
+      return () => { docHandlers.delete(fn) }
+    },
+    /** Each (re)connect, to catch up on what was missed. @param {() => void} fn */
+    onConnect(fn) {
+      connectHandlers.add(fn)
+      return () => { connectHandlers.delete(fn) }
     },
     stop() {
       closed = true
