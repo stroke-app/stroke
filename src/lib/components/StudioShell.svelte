@@ -9247,6 +9247,47 @@ let rowSearch = $state('')
     }
   }
 
+  /**
+   * A database file, in one step: a new SQLite file where you choose, or an
+   * existing SQLite / DuckDB file. A file already saved as a connection opens
+   * that connection; otherwise one is saved, named after the file. Creating a
+   * new database used to take the connection form, its file picker and then
+   * Connect.
+   * @param {'new' | 'open'} how
+   */
+  async function handleFileDatabase(how) {
+    /** @type {string | null} */
+    let path = null
+    try {
+      const dlg = await import('@tauri-apps/plugin-dialog')
+      const picked = how === 'new'
+        ? await dlg.save({ title: 'New SQLite database', defaultPath: 'database.db', filters: [{ name: 'SQLite', extensions: ['db', 'sqlite', 'sqlite3'] }] })
+        : await dlg.open({ title: 'Open a database file', multiple: false, filters: [{ name: 'Database files', extensions: ['db', 'sqlite', 'sqlite3', 'db3', 'duckdb', 'ddb'] }] })
+      path = typeof picked === 'string' && picked ? picked : null
+    } catch { /* outside Tauri */ }
+    if (!path) return
+    const type = /\.(duckdb|ddb)$/i.test(path) ? 'duckdb' : 'sqlite'
+    const saved = loadSavedConnections().find((c) => c.type === type && c.filePath === path)
+    const name = (path.split(/[\\/]/).pop() ?? path).replace(/\.(db|sqlite3?|db3|duckdb|ddb)$/i, '') || 'database'
+    const conn = saved ?? /** @type {import('$lib/stores/connections.js').SavedConnection} */ ({ id: crypto.randomUUID(), type, name, filePath: path })
+    if (!saved) upsertConnection(conn)
+    savedConnections = loadSavedConnections()
+    await disconnectPostgres().catch(() => {})
+    connection = null
+    clearConnectionState()
+    beginConnectOverlay(conn.name ?? name)
+    try {
+      await connectByType(conn)
+      await onConnected(conn, conn.id)
+      showConnectionModal = false
+    } catch (e) {
+      error = String(e)
+      showConnectionModal = true
+    } finally {
+      autoConnecting = false
+    }
+  }
+
   async function handleSampleConnect() {
     await disconnectPostgres().catch(() => {})
     connection = null
@@ -10910,6 +10951,7 @@ let rowSearch = $state('')
   {hasInsights}
   {hasAdvisor}
   onopenJsonViewer={() => { if (aiMode) exitAiMode(); openJsonTab() }}
+  onfiledb={(how) => void handleFileDatabase(how)}
   onopenshortcuts={() => openShortcuts()}
   onopenmyshares={() => openSharesTab()}
   onopenkeybindings={() => { settingsSection = 'keybindings'; showSettingsModal = true }}
@@ -11208,6 +11250,7 @@ let rowSearch = $state('')
         onopen={(conn) => void handleSwitchDatabase(conn)}
         oncheckupdates={() => void updateDialog?.checkNow?.()}
         onopenlink={(url) => void openExternalUrl(url)}
+        onfiledb={(how) => void handleFileDatabase(how)}
       />
     {:else}
       <!-- Full-window AI chat, kept mounted after first open so state is preserved -->
