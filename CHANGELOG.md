@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.5.6] - 2026-11-22
+
+### Changes
+- MySQL backups restore with the mysql client; New table on more engines (#359)
+
+
 ## [3.5.5] - 2026-11-22
 
 ### Changes
