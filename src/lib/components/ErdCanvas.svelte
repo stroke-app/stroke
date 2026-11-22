@@ -1138,6 +1138,10 @@
       // from the type, which then cut off at numeric(1… and timestamp….
       if (isPk) drawKeyGlyph(p.x + 21, midY, PK_INK, zoom)
       else if (isFk) drawLinkGlyph(p.x + 21, midY, FK_INK)
+      // A key column that is also a foreign key (order_items.order_id in a
+      // composite key) showed only the key, and the reference it holds was
+      // invisible on the row. A small link sits on the key's corner.
+      if (isPk && isFk) drawLinkBadge(p.x + 26, midY + 4, FK_INK)
       forgetStyle()
       // A key into a hub names the hub (that relationship has no line).
       let refW = 0
@@ -1220,6 +1224,21 @@
     ctx.arc(cx - 1, cy + 1, 2.5, Math.PI / 2, Math.PI * 1.5)
     ctx.lineTo(cx + 1, cy - 1.5)
     ctx.stroke()
+    ctx.restore()
+  }
+
+  /** The link glyph at a third of its size on a card-coloured disc, for a key
+   *  column that is also a foreign key. */
+  function drawLinkBadge(/** @type {number} */ cx, /** @type {number} */ cy, /** @type {string} */ color) {
+    ctx.save()
+    ctx.fillStyle = c('card', 1)
+    ctx.beginPath()
+    ctx.arc(cx, cy, 4.2, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.translate(cx, cy)
+    ctx.scale(0.62, 0.62)
+    ctx.translate(-cx, -cy)
+    drawLinkGlyph(cx, cy, color)
     ctx.restore()
   }
 

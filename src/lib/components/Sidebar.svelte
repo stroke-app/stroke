@@ -783,7 +783,12 @@
   const SYSTEM_TOGGLE = '\u0000system-schemas'
   const schemaMenuItems = $derived([
     ...splitSchemaList.user.map((sc) => ({ value: sc, label: sc })),
-    ...(showSystemSchemas ? splitSchemaList.system.map((sc) => ({ value: sc, label: sc })) : []),
+    // The schema open now stays in the list even when it is a hidden system
+    // one (tiger, picked from the diagram): the picker showed public and
+    // schools with neither ticked, and no sign of where the sidebar was.
+    ...(showSystemSchemas
+      ? splitSchemaList.system.map((sc) => ({ value: sc, label: sc }))
+      : splitSchemaList.system.filter((sc) => sc === activeSchema).map((sc) => ({ value: sc, label: sc }))),
     ...(splitSchemaList.system.length
       ? [{
           value: SYSTEM_TOGGLE,

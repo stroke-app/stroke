@@ -2602,6 +2602,28 @@ pub async fn get_incoming_foreign_keys(
 // ── DDL reconstruction ────────────────────────────────────────────────────────
 
 async fn get_ddl_pg(pool: &PgPool, schema: &str, table: &str) -> Result<String, String> {
+    // A view came back as CREATE TABLE built from its columns, so the schema
+    // diagram's DDL script would have made tables where geography_columns and
+    // geometry_columns are views. Views and materialized views get their own
+    // definition.
+    let view = sqlx::query(
+        r#"SELECT c.relkind::text, pg_catalog.pg_get_viewdef(c.oid, true)
+           FROM pg_catalog.pg_class c
+           JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+           WHERE n.nspname = $1 AND c.relname = $2 AND c.relkind IN ('v', 'm')"#,
+    )
+    .bind(schema)
+    .bind(table)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| format!("DDL view query failed: {e}"))?;
+    if let Some(row) = view {
+        let kind: String = row.try_get(0).unwrap_or_default();
+        let def: String = row.try_get(1).unwrap_or_default();
+        let q = |s: &str| format!("\"{}\"", s.replace('"', "\"\""));
+        let keyword = if kind == "m" { "MATERIALIZED VIEW" } else { "VIEW" };
+        return Ok(format!("CREATE {keyword} {}.{} AS\n{};", q(schema), q(table), def.trim().trim_end_matches(';')));
+    }
     let col_rows = sqlx::query(
         r#"SELECT
             a.attname,
@@ -3174,5 +3196,25 @@ mod sqlite_tree_catalog {
         assert_eq!(t[0].columns[1].fk_constraint_name.as_deref(), Some("t_p_fkey"));
         assert_eq!(t[0].columns[1].ordinal_position, 2);
         assert!(t[0].columns[0].is_primary_key && !t[0].columns[0].is_nullable);
+    }
+}
+
+#[cfg(test)]
+mod pg_view_ddl_tests {
+    /// Against Postgres (STROKE_TEST_POSTGIS): a view's DDL is its CREATE VIEW,
+    /// and running it recreates the view.
+    #[tokio::test]
+    async fn live_view_ddl_is_a_view() {
+        let Ok(url) = std::env::var("STROKE_TEST_POSTGIS") else { return };
+        let pool = sqlx::PgPool::connect(&url).await.unwrap();
+        sqlx::raw_sql("DROP VIEW IF EXISTS public.stroke_ddl_v; CREATE VIEW public.stroke_ddl_v AS SELECT 1 AS one, 'x'::text AS two")
+            .execute(&pool).await.unwrap();
+        let ddl = super::get_ddl_pg(&pool, "public", "stroke_ddl_v").await.unwrap();
+        assert!(ddl.starts_with("CREATE VIEW \"public\".\"stroke_ddl_v\" AS"), "{ddl}");
+        sqlx::raw_sql("DROP VIEW public.stroke_ddl_v").execute(&pool).await.unwrap();
+        sqlx::raw_sql(&ddl).execute(&pool).await.unwrap();
+        let n: i64 = sqlx::query_scalar("SELECT count(*) FROM public.stroke_ddl_v").fetch_one(&pool).await.unwrap();
+        assert_eq!(n, 1);
+        sqlx::raw_sql("DROP VIEW public.stroke_ddl_v").execute(&pool).await.unwrap();
     }
 }
