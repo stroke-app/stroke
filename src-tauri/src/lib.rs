@@ -858,6 +858,7 @@ pub fn run() {
             commands::share_execute_sql,
             commands::pg_execute_sql_multi,
             commands::pg_execute_sql_stream,
+            commands::table_mirror,
             commands::result_window,
             commands::result_sort,
             commands::result_drop,

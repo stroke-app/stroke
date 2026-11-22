@@ -1844,7 +1844,7 @@ pub(super) fn build_where_typed(
 }
 
 /// One key of a multi-column sort. Serialized camelCase from the frontend.
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SortSpec {
     pub column: String,

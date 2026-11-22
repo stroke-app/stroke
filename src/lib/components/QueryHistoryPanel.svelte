@@ -98,7 +98,7 @@
         .sort((a, b) => Number(!!b.favorite) - Number(!!a.favorite))
         .map((e) => ({
           id: e.id, kind: /** @type {const} */ ('history'), label: oneLine(e.sql), detail: '',
-          meta: [relativeTime(e.executedAt), e.queryMs ? `${e.queryMs}ms` : '', (e.runCount ?? 1) > 1 ? `${e.runCount}×` : ''].filter(Boolean).join(' · '),
+          meta: [relativeTime(e.executedAt), e.queryMs ? `${e.queryMs}ms` : e.queryMs === 0 ? '<1ms' : '', (e.runCount ?? 1) > 1 ? `${e.runCount}×` : ''].filter(Boolean).join(' · '),
           sql: e.sql, starred: !!e.favorite, entry: e,
           // A failed run is listed with its error, and loads and runs like any other.
           // Without the backend's wrapping: the row is already marked as failed.

@@ -1665,6 +1665,7 @@ pub async fn pg_get_table_rows(
     // setting turns back on for anyone who wants it.
     preview_wide: Option<bool>,
 ) -> Result<TableRows, String> {
+    let _foreground = ForegroundFetch::begin();
     get_table_rows(
         state,
         schema,
@@ -1927,6 +1928,149 @@ pub async fn pg_execute_sql_stream(
         }
     }
     result
+}
+
+/// The key a table mirror walks by: the same seek the grid's windows use
+/// (`seekKeyFor` in src/lib/keyset.js), plus where it sits in a row.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MirrorSeek {
+    column: String,
+    sql_type: String,
+    desc: bool,
+    index: usize,
+}
+
+/// Rows per page while a table mirror streams. Large enough that a far link
+/// is not all round trips, small enough that a page in flight holds up a
+/// window the user asks for by well under a second.
+const MIRROR_PAGE: i64 = 5_000;
+
+/// Grid row fetches in flight (`pg_get_table_rows`). A table mirror is
+/// background work sharing the same link and pool: it waits while any is
+/// running, so the rows on screen never queue behind the copy.
+static FOREGROUND_ROW_FETCHES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Counts one foreground fetch for as long as it lives.
+struct ForegroundFetch;
+impl ForegroundFetch {
+    fn begin() -> Self {
+        FOREGROUND_ROW_FETCHES.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        ForegroundFetch
+    }
+}
+impl Drop for ForegroundFetch {
+    fn drop(&mut self) {
+        FOREGROUND_ROW_FETCHES.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// Copy a windowed table view into the result store, in its own order, so the
+/// grid can read any window locally.
+///
+/// Scrolled deep into a large table, every window was a remote `OFFSET n`:
+/// the server reads and throws away n rows first, so row 196,000 of a remote
+/// table took seconds and the grid sat on skeletons labelled "slow
+/// connection". This walks the same query once, page by page, each page an
+/// index seek from the last row of the one before (as the grid's own seeks
+/// are), and spools the rows under `id`. The window reads whatever has landed
+/// with `result_window` and fetches the rest as before. Same rows, same shape
+/// (wide-column previews included): it is the grid's query, not the console's.
+///
+/// Returns the number of rows mirrored. Stops quietly once `id` is dropped (a
+/// reload, a sort or filter change, an edit, the tab closing) or at `max_rows`.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn table_mirror(
+    state: Db<'_>,
+    store: State<'_, crate::db::result_store::ResultStore>,
+    id: String,
+    schema: String,
+    table: String,
+    search: Option<String>,
+    search_is_regex: Option<bool>,
+    search_case_sensitive: Option<bool>,
+    sort_column: Option<String>,
+    sort_direction: Option<String>,
+    sorts: Option<Vec<crate::db::SortSpec>>,
+    filters: Option<Vec<crate::db::RowFilter>>,
+    nulls_order: Option<String>,
+    preview_wide: Option<bool>,
+    seek: MirrorSeek,
+    max_rows: usize,
+) -> Result<usize, String> {
+    let mut writer = store.create(&id)?;
+    let mut cursor: Option<crate::db::KeysetCursor> = None;
+    let mut total = 0usize;
+    let mut first = true;
+    loop {
+        // Rows on screen first: wait out any grid fetch in flight.
+        while FOREGROUND_ROW_FETCHES.load(std::sync::atomic::Ordering::SeqCst) > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(15)).await;
+        }
+        // Dropped by the window: the view it mirrors is gone.
+        if store.get(&id).is_none() {
+            return Ok(total);
+        }
+        let page = get_table_rows(
+            state.clone(),
+            schema.clone(),
+            table.clone(),
+            MIRROR_PAGE,
+            0,
+            search.clone(),
+            search_is_regex.unwrap_or(false),
+            search_case_sensitive.unwrap_or(false),
+            sort_column.clone(),
+            sort_direction.clone(),
+            filters.clone(),
+            first,
+            false,
+            sorts.clone().unwrap_or_default(),
+            cursor.clone(),
+            nulls_order.clone(),
+            preview_wide.unwrap_or(true),
+        )
+        .await;
+        let page = match page {
+            Ok(p) => p,
+            Err(e) => {
+                store.drop_result(&id);
+                return Err(e);
+            }
+        };
+        if first {
+            writer.start(page.columns.clone())?;
+            first = false;
+        }
+        let take = page.rows.len().min(max_rows.saturating_sub(total));
+        for row in &page.rows[..take] {
+            writer.push(row)?;
+        }
+        total += take;
+        writer.flush()?;
+        if (page.rows.len() as i64) < MIRROR_PAGE || total >= max_rows {
+            break;
+        }
+        // The next page seeks from this one's last key. A key that can't be
+        // sent back as text (NULL, a nested value) ends the mirror; the window
+        // keeps fetching those rows remotely.
+        let value = match page.rows.last().and_then(|r| r.get(seek.index)) {
+            Some(serde_json::Value::String(s)) => s.clone(),
+            Some(serde_json::Value::Number(n)) => n.to_string(),
+            Some(serde_json::Value::Bool(b)) => b.to_string(),
+            _ => break,
+        };
+        cursor = Some(crate::db::KeysetCursor {
+            column: seek.column.clone(),
+            value,
+            sql_type: seek.sql_type.clone(),
+            after: true,
+            desc: seek.desc,
+        });
+    }
+    writer.finish()?;
+    Ok(total)
 }
 
 /// Rows `[start, start + count)` of a stored result, in its current order, as

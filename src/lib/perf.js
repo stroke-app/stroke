@@ -5,7 +5,9 @@
 // `perf_log` once a second. Off (and free) otherwise, production included.
 import { invoke } from '@tauri-apps/api/core'
 
-const ON = import.meta.env.DEV && import.meta.env.VITE_STROKE_PERF === '1'
+// Also in a release build made with VITE_STROKE_BENCH=1, so the shipped
+// binary's own timings can be measured. Without it this folds to false.
+const ON = (import.meta.env.DEV || import.meta.env.VITE_STROKE_BENCH === '1') && import.meta.env.VITE_STROKE_PERF === '1'
 const SLOW_IPC_MS = 30
 
 /** @type {string[]} */
@@ -78,4 +80,34 @@ export function traceInteraction(label) {
       push(`ui ${label} ${Math.round(performance.now() - t0)}ms (work ${Math.round(work)}ms)`)
     }))
   }
+}
+
+/** One line in the perf log (off unless profiling). @param {string} line */
+export function tracePoint(line) {
+  if (ON) push(line)
+}
+
+/**
+ * Startup timeline (perf log only): every main-thread stall over 40 ms in the
+ * first few seconds, with when it began, next to the marks below. A stall is a
+ * 10 ms heartbeat that came back late, so it shows that the thread was busy and
+ * when, which the marks then attribute.
+ * @param {number} [forMs]
+ */
+export function traceStartupStalls(forMs = 6000) {
+  if (!ON) return
+  let last = performance.now()
+  const end = last + forMs
+  const id = setInterval(() => {
+    const now = performance.now()
+    const gap = now - last
+    if (gap > 40) push(`stall ${Math.round(gap)}ms from +${Math.round(last)}ms`)
+    last = now
+    if (now > end) clearInterval(id)
+  }, 10)
+}
+
+/** A named point on the startup timeline (ms since the page began). @param {string} name */
+export function traceMark(name) {
+  if (ON) push(`mark ${name} +${Math.round(performance.now())}ms`)
 }

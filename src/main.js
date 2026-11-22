@@ -27,8 +27,19 @@ if (import.meta.env.VITE_FRESH_START === '1') {
 // used to leave the failsafe unarmed and the window black.
 armRevealFailsafe()
 applySettings(loadSettings())
-// Frame timing for profiling: dev builds only, opt-in (perf-probe.js).
-if (import.meta.env.DEV && import.meta.env.VITE_STROKE_PERF === '1') {
+// Frame timing for profiling: dev builds, or a release build made for
+// benchmarking with VITE_STROKE_BENCH=1. Opt-in (perf-probe.js); both are
+// build-time constants, so a normal release drops this whole branch.
+if ((import.meta.env.DEV || import.meta.env.VITE_STROKE_BENCH === '1') && import.meta.env.VITE_STROKE_PERF === '1') {
+  // Room for every module a session loads (the default 250 fills at startup),
+  // so the perf log can say which code a connect pulled in.
+  try { performance.setResourceTimingBufferSize(20000) } catch { /* not supported */ }
+  // The stall heartbeat (every 10 ms) costs startup time itself, so it runs
+  // only when asked for: localStorage 'stroke:perf-stalls' = '1'.
+  void import('$lib/perf.js').then((m) => {
+    m.traceMark('main')
+    try { if (localStorage.getItem('stroke:perf-stalls') === '1') m.traceStartupStalls() } catch { /* storage blocked */ }
+  })
   void import('$lib/perf-probe.js').then((m) => m.installPerfProbe())
 }
 installZoomShortcuts()

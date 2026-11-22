@@ -398,7 +398,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     onvisiblerange = /** @type {(start: number, end: number) => void} */ (() => {}),
     /** Windowed mode: what the parent's window fetcher is doing, so the grid can
      *  say what it is waiting for instead of shimmering silently.
-     *  @type {{ slow: boolean, failed: boolean } | null} */
+     *  @type {{ slow: boolean, failed: boolean, cause?: string } | null} */
     windowStatus = null,
     /** Retry the windows that gave up (the loading pill's Retry button). */
     onretrywindows = /** @type {() => void} */ (() => {}),
@@ -9647,7 +9647,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
                       <span class="text-muted-foreground">of {rows.length.toLocaleString()}</span>
                     </span>
                     {#if windowStatus?.slow}
-                      <span class="text-ui-2xs text-muted-foreground">· slow connection</span>
+                      <span class="text-ui-2xs text-muted-foreground">· {windowStatus.cause === 'query' ? 'deep in the table, fetching' : 'slow connection'}</span>
                     {/if}
                   {/if}
                 </div>
