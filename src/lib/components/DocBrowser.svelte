@@ -796,7 +796,7 @@ GET products/_search
            same select the rest of the app uses. -->
       <SelectMenu
         ariaLabel="View"
-        triggerClass="h-8 w-36"
+        triggerClass="h-8 w-auto min-w-36"
         contentClass="w-[var(--bits-popover-anchor-width)] min-w-[11rem]"
         align="end"
         value={view}

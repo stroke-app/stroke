@@ -3265,7 +3265,11 @@
 
             <!-- ── Empty state, one per tab ──────────────────────── -->
             {#if isTabEmpty(lt)}
-              {@const empty = TAB_EMPTY[lt]}
+              <!-- In the engine's own words: MongoDB has collections in a
+                   database, not tables in a schema. -->
+              {@const empty = lt === 'tables' && tablesLabel
+                ? { ...TAB_EMPTY.tables, title: `No ${tablesLabel.toLowerCase()}`, hint: 'Nothing in this database yet.' }
+                : TAB_EMPTY[lt]}
               <div class="flex flex-1 flex-col items-center justify-center gap-3 px-6 py-16 text-center">
                 <Icon name={isTabEmptyFromFilter(lt) ? 'search' : empty.icon} class="size-5 shrink-0 text-muted-foreground" />
                 <div class="max-w-[16rem]">
