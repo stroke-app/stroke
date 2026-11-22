@@ -138,3 +138,101 @@ export async function startRelayHost({ routes, room, key, secret, base = 'https:
     },
   }
 }
+
+/**
+ * Join a share's presence as its host, so this side can show everyone on the
+ * link a table (`strokedb mcp`'s show_table, an agent saying "show me users").
+ * Same protocol as the studio page (stroke-web src/lib/relay/presence.ts) and
+ * the desktop app (src/lib/share-presence.js); every message is sealed.
+ * @param {{ room: string, key: string, base?: string, name: string }} o
+ */
+export async function joinPresenceHost({ room, key, base = 'https://stroke.click', name }) {
+  const cryptoKey = await importKey(key)
+  const url = `${base.replace(/^http/, 'ws')}/api/relay/${room}/presence`
+  // Violet, so an agent reads as a different kind of participant at a glance.
+  const me = { name, color: '#8e4ec6', role: 'host' }
+  /** @type {{ tab: string | null }} */
+  const state = { tab: null }
+  let closed = false
+  let delay = 1000
+  /** @type {WebSocket | null} */
+  let ws = null
+  /** @type {ReturnType<typeof setInterval> | undefined} */
+  let ping
+  /** How many others are on the link right now (by sender id). */
+  const here = new Set()
+
+  /** @param {unknown} msg */
+  const send = async (msg) => {
+    const sock = ws
+    if (!sock || sock.readyState !== 1) return false
+    sock.send(JSON.stringify(await seal(cryptoKey, msg)))
+    return true
+  }
+  const sendState = () => send({ t: 'state', ...me, tab: state.tab, cell: null, pointer: null, editing: null })
+
+  const connect = () => {
+    if (closed) return
+    const sock = new WebSocket(url)
+    ws = sock
+    sock.addEventListener('open', () => {
+      delay = 1000
+      void sendState()
+      void send({ t: 'hello' })
+      clearInterval(ping)
+      ping = setInterval(() => void sendState(), 20_000)
+    })
+    sock.addEventListener('message', async (ev) => {
+      let raw
+      try {
+        raw = JSON.parse(String(ev.data))
+      } catch {
+        return
+      }
+      if (typeof raw?.gone === 'number') return void here.delete(raw.gone)
+      if (typeof raw?.from !== 'number' || typeof raw.iv !== 'string' || typeof raw.ct !== 'string') return
+      let msg
+      try {
+        msg = await open(cryptoKey, raw)
+      } catch {
+        return
+      }
+      if (msg?.t === 'state') here.add(raw.from)
+      if (msg?.t === 'hello') void sendState()
+    })
+    sock.addEventListener('close', () => {
+      clearInterval(ping)
+      here.clear()
+      if (closed || ws !== sock) return
+      setTimeout(connect, delay)
+      delay = Math.min(delay * 2, 30_000)
+    })
+    sock.addEventListener('error', () => {})
+  }
+  connect()
+
+  return {
+    /** People on the link now. */
+    get here() {
+      return here.size
+    },
+    /**
+     * Show everyone on the link this table (`schema.table` or a bare name).
+     * @param {string} table
+     */
+    async openTable(table) {
+      state.tab = table
+      await sendState()
+      return send({ t: 'open', table })
+    },
+    close() {
+      closed = true
+      clearInterval(ping)
+      try {
+        ws?.close(1000, 'Stopped sharing')
+      } catch {
+        // already closed
+      }
+    },
+  }
+}

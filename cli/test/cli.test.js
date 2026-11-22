@@ -229,3 +229,57 @@ test('sqlite: a read-only engine refuses writes at the file level', async () => 
   await assert.rejects(() => ro.update({ schema: 'main', table: 't', key: { id: 1 }, set: { a: 'z' } }), /read-only/)
   await ro.close()
 })
+
+test('mcp: initialize, tools, read-only query, and refusals', async () => {
+  const { runMcp } = await import('../src/mcp.js')
+  const { PassThrough } = await import('node:stream')
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'strokedb-mcp-'))
+  const file = path.join(dir, 'app.db')
+  const seed = await openSqlite(file)
+  await seed.query('create table users (id integer primary key, email text not null)')
+  await seed.query("insert into users (email) values ('a@x.io'), ('b@x.io')")
+  await seed.close()
+
+  const input = new PassThrough()
+  const output = new PassThrough()
+  /** @type {any[]} */
+  const replies = []
+  let buf = ''
+  output.on('data', (c) => {
+    buf += c
+    let i
+    while ((i = buf.indexOf('\n')) >= 0) {
+      replies.push(JSON.parse(buf.slice(0, i)))
+      buf = buf.slice(i + 1)
+    }
+  })
+  const done = runMcp({ uri: `file:${file}`, engine: 'sqlite', name: 'app', input, output, log: () => {} })
+  const send = (/** @type {any} */ m) => input.write(`${JSON.stringify(m)}\n`)
+  send({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', clientInfo: { name: 'claude-code' } } })
+  send({ jsonrpc: '2.0', method: 'notifications/initialized' })
+  send({ jsonrpc: '2.0', id: 2, method: 'tools/list' })
+  send({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'list_tables', arguments: {} } })
+  send({ jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'describe_table', arguments: { table: 'USERS' } } })
+  send({ jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'query', arguments: { sql: 'select email from users order by id' } } })
+  send({ jsonrpc: '2.0', id: 6, method: 'tools/call', params: { name: 'query', arguments: { sql: 'delete from users' } } })
+  send({ jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: 'show_table', arguments: { table: 'nope' } } })
+  send({ jsonrpc: '2.0', id: 8, method: 'no/such' })
+  input.end()
+  await done
+
+  const byId = Object.fromEntries(replies.map((r) => [r.id, r]))
+  assert.equal(replies.length, 8, 'a reply per request, none for the notification')
+  assert.equal(byId[1].result.serverInfo.name, 'strokedb')
+  assert.deepEqual(byId[2].result.tools.map((t) => t.name), ['list_tables', 'describe_table', 'query', 'show_table'])
+  assert.match(byId[3].result.content[0].text, /main\.users {2}2 rows/)
+  assert.match(byId[4].result.content[0].text, /id INTEGER PRIMARY KEY/)
+  assert.deepEqual(JSON.parse(byId[5].result.content[0].text), [{ email: 'a@x.io' }, { email: 'b@x.io' }])
+  assert.equal(byId[6].result.isError, true)
+  assert.equal(byId[7].result.isError, true)
+  assert.match(byId[7].result.content[0].text, /No table called nope/)
+  assert.equal(byId[8].error.code, -32601)
+  // The refused DELETE changed nothing.
+  const check = await openSqlite(file)
+  assert.equal((await check.query('select count(*) n from users')).rows[0][0], 2)
+  await check.close()
+})
