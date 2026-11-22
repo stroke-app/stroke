@@ -115,9 +115,10 @@ pub async fn query_in(
     query_in_with(config, database, sql, false).await
 }
 
-/// `query` with ClickHouse's own `readonly=1` setting on the request: the
-/// server itself refuses any write, DDL or settings change. For read-only
-/// callers (the MCP server at "Read only").
+/// `query` with ClickHouse's own `readonly` setting on the request: the
+/// server itself refuses any write or DDL. Level 2, which still lets the
+/// request carry output settings (see DECIMAL_OUTPUT). For read-only callers
+/// (the MCP server at "Read only").
 pub async fn query_readonly(config: &ClickhouseConfig, sql: &str) -> Result<SqlResult, String> {
     query_in_with(config, &config.database, sql, true).await
 }
@@ -196,7 +197,7 @@ async fn stream_rows(
     use futures::StreamExt;
     let trimmed = sql.trim().trim_end_matches(';');
     let url = format!(
-        "{}/?database={}&query_id={}",
+        "{}/?database={}&query_id={}{DECIMAL_OUTPUT}",
         config.base_url(),
         urlencoding::encode(&config.database),
         urlencoding::encode(query_id)
@@ -320,6 +321,11 @@ async fn query_in_with(
     query_in_full(config, database, sql, readonly, None).await
 }
 
+/// Decimals as text with their scale: as JSON numbers they lost trailing zeros
+/// (a Decimal(10,2) of 12.50 showed 12.5) and, past 15-17 digits, precision,
+/// since a Decimal(38) does not fit in the double the number parses into.
+const DECIMAL_OUTPUT: &str = "&output_format_json_quote_decimals=1&output_format_decimal_trailing_zeros=1";
+
 async fn query_in_full(
     config: &ClickhouseConfig,
     database: &str,
@@ -336,11 +342,14 @@ async fn query_in_full(
     };
 
     let url = format!(
-        "{}/?database={}{}{}",
+        "{}/?database={}{}{}{}",
         config.base_url(),
         urlencoding::encode(database),
-        if readonly { "&readonly=1" } else { "" },
-        query_id.map(|id| format!("&query_id={}", urlencoding::encode(id))).unwrap_or_default()
+        // 2, not 1: still no writes, but the settings below may be set (1
+        // refuses any setting in the request).
+        if readonly { "&readonly=2" } else { "" },
+        query_id.map(|id| format!("&query_id={}", urlencoding::encode(id))).unwrap_or_default(),
+        if read { DECIMAL_OUTPUT } else { "" }
     );
     let t0 = Instant::now();
     let res = client_for(config)

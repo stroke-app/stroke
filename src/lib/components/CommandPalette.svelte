@@ -287,7 +287,7 @@
     { icon: 'git-branch',      label: 'Diagrams',                      action: onopendiagrams,   show: connected && !isKeyValue, value: 'open diagrams draw erd relationship map' },
     { icon: 'table-2',         label: 'Database objects',              action: onopenobjects,    show: connected && !isKeyValue, value: 'open database objects overview tables views functions routines triggers sizes rows stats' },
     { icon: 'code-2',          label: 'Codegen',                       action: onopenormschema,  show: connected && !isKeyValue, value: 'codegen open schema as code prisma drizzle orm model relations types generate dml psl' },
-    { icon: 'history',         label: 'Activity log',                  action: onopenlogs,       show: connected, value: 'open activity log events history operations' },
+    { icon: 'history',         label: 'Activity log',                  action: onopenlogs,       show: connected, value: 'open activity log logs events history operations audit' },
     { icon: 'history',         label: 'Query history',                 action: onopenqueries,    show: connected, value: 'queries query history saved queries past runs charts' },
     { icon: 'terminal',        label: 'Query log console', keys: '⌘⇧K', action: ontogglequerylog, show: connected && !isKeyValue, value: 'toggle query log console sql executed statements bottom panel' },
     { icon: 'globe',           label: 'Map',                           action: onopenmap, show: connected && geoAvailable, value: 'open map geo postgis spatial geometry geography geojson world plot points' },

@@ -10,6 +10,7 @@
   import { couchAdapter, cassandraAdapter, elasticAdapter, firestoreAdapter, mongoAdapter, neo4jAdapter, influxAdapter, uriHost } from '$lib/doc-adapters.js'
   import { queryLanguageFor } from '$lib/ai-query-languages.js'
   import { setQueryEngine } from '$lib/ai-query-engine.js'
+  import { isSystemSchema } from '$lib/system-schemas.js'
   import { revealApp, isRevealed } from '$lib/app-reveal.js'
   import { setReadOnly, readOnlyMode } from '$lib/stores/read-only.js'
   import { isWriteSql, sqlRunEffects, stripSqlComments } from '$lib/sql-write.js'
@@ -6071,7 +6072,15 @@ let rowSearch = $state('')
       return
     }
     if (!list.includes(activeSchema)) {
-      activeSchema = list.includes('public') ? 'public' : list[0]
+      // The database the connection names first (ClickHouse and MySQL list
+      // databases as schemas), then public, then the first that is not the
+      // engine's own: alphabetically that was INFORMATION_SCHEMA on a
+      // ClickHouse connection to `default`.
+      const named = String(/** @type {any} */ (connection)?.database ?? '').trim()
+      activeSchema = (named && list.includes(named) && named)
+        || (list.includes('public') && 'public')
+        || list.find((s) => !isSystemSchema(s))
+        || list[0]
     }
   }
 
