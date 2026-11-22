@@ -23,6 +23,9 @@
     onexporttable = null,
     /** The open table's name, for the export rows' labels. */
     exportTableName = '',
+    /** Explain the open editor's query, or null when no editor tab is in front.
+     *  @type {(() => void) | null} */
+    onexplainquery = null,
     /** Open Import data for the open table, or null when there is none or it is read-only.
      *  @type {(() => void) | null} */
     onimporttable = null,
@@ -273,11 +276,11 @@
     { icon: 'sparkles',        label: "What's new",       keys: '',    action: onopenwhatsnew,   show: true,      value: 'whats new changelog release notes updates features version' },
     { icon: 'square-terminal', label: 'New terminal tab', keys: '⌃⇧`', action: onnewterminal,    show: connected, value: 'new terminal tab another second shell psql mysql session' },
     { icon: 'code-2',          label: 'ORM runner',       keys: '⌘⇧O', action: onopenorm,        show: connected && !isKeyValue, value: 'open orm runner drizzle prisma query builder' },
-    { icon: 'network',         label: 'Schema diagram',                action: onopenerd,        show: connected && !isKeyValue, value: 'open schema diagram data model er diagram erd entity relationship foreign key pk fk graph hierarchy roadmap mermaid tree dictionary ddl schema map' },
+    { icon: 'network',         label: 'Schema diagram',                action: onopenerd,        show: connected && !isKeyValue, value: 'open schema diagram data model er diagram erd entity relationship relationships relations foreign key foreign keys pk fk graph hierarchy roadmap mermaid tree dictionary ddl schema map' },
     { icon: 'layout-template', label: 'Schema explorer',               action: onopenSchema,     show: connected && hasSchemaExplorer, value: 'open schema explorer indexes enums views materialized' },
-    { icon: 'shield-check',    label: 'Security',                      action: onopensecurity,   show: connected && hasSecurity, value: 'open security roles users policies rls row level' },
-    { icon: 'shield-check',    label: 'Advisor',                       action: onopenadvisor,    show: connected && hasAdvisor, value: 'open advisor lint audit checks security performance schema rls unused index foreign key bloat' },
-    { icon: 'database',        label: 'Instance insights',             action: onopeninsights,   show: connected && hasInsights, value: 'open instance insights monitoring sessions locks replication config pg_settings' },
+    { icon: 'shield-check',    label: 'Security',                      action: onopensecurity,   show: connected && hasSecurity, value: 'open security roles users policies rls row level permissions privileges grants access' },
+    { icon: 'shield-check',    label: 'Advisor',                       action: onopenadvisor,    show: connected && hasAdvisor, value: 'open advisor lint audit checks security performance schema rls unused index foreign key bloat vacuum' },
+    { icon: 'database',        label: 'Instance insights',             action: onopeninsights,   show: connected && hasInsights, value: 'open instance insights monitoring sessions processes activity locks replication config pg_settings slow queries' },
     { icon: 'globe',           label: 'Share as web studio',           action: () => onsharestudio?.(), show: connected && !!onsharestudio, value: 'share as web studio link remote relay browser device labs collaborate' },
     { icon: 'layout-dashboard',label: 'Dashboard',                     action: onopendashboard,  show: connected && !isKeyValue, value: 'open dashboard saved metrics overview widgets' },
     { icon: 'bar-chart-2',     label: 'Charts',                        action: onopencharts,     show: connected && !isKeyValue, value: 'open charts visualize query results graphs plots' },
@@ -287,11 +290,11 @@
     { icon: 'history',         label: 'Activity log',                  action: onopenlogs,       show: connected, value: 'open activity log events history operations' },
     { icon: 'history',         label: 'Query history',                 action: onopenqueries,    show: connected, value: 'queries query history saved queries past runs charts' },
     { icon: 'terminal',        label: 'Query log console', keys: '⌘⇧K', action: ontogglequerylog, show: connected && !isKeyValue, value: 'toggle query log console sql executed statements bottom panel' },
-    { icon: 'globe',           label: 'Map',                           action: onopenmap, show: connected && geoAvailable, value: 'open map geo postgis spatial geometry geography world plot points' },
+    { icon: 'globe',           label: 'Map',                           action: onopenmap, show: connected && geoAvailable, value: 'open map geo postgis spatial geometry geography geojson world plot points' },
     { icon: 'blocks',          label: 'Extensions',                    action: onopenextensions, show: connected && !isKeyValue, value: 'open extensions plugins formatters generators transforms better time uuid' },
-    { icon: 'archive',         label: 'Backup & restore',              action: onopenbackup,     show: connected && !isKeyValue, value: 'backup restore export import dump data' },
+    { icon: 'archive',         label: 'Backup & restore',              action: onopenbackup,     show: connected && !isKeyValue, value: 'backup restore export import dump data schedule scheduled cron' },
     { icon: 'braces',          label: 'JSON viewer',                   action: onopenJsonViewer, show: connected, value: 'open json viewer explorer jsonpath tool' },
-    { icon: 'git-branch',      label: 'Schema timeline',               action: openschematimeline, show: connected && !isKeyValue, value: 'schema timeline drift detection history changes diff' },
+    { icon: 'git-branch',      label: 'Schema timeline',               action: openschematimeline, show: connected && !isKeyValue, value: 'schema timeline snapshots snapshot drift detection history changes diff version compare' },
     { icon: 'database',        label: 'Local servers',                 action: openlocalservers, show: true, value: 'local servers database postgres mysql mariadb redis mongodb docker native homebrew dbngin start stop version' },
     { icon: 'git-merge',       label: 'Migrations',                    action: openmigrations,   show: connected && !isKeyValue, value: 'migrations prisma drizzle applied pending failed migrate schema history' },
     { icon: 'git-compare',     label: 'Data diff',                     action: opendatadiff,     show: connected && !isKeyValue, value: 'data diff compare tables rows changes' },
@@ -1097,6 +1100,13 @@
               </Command.Group>
             {/if}
             <Command.Group heading="Actions">
+              {#if onexplainquery}
+                <!-- Explain was only a button in the results bar. -->
+                <Command.Item value="explain query plan analyze cost why slow performance" keywords={['Explain query']} onSelect={() => run(onexplainquery)}>
+                  <Icon name="scan-search" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">Explain query</span>
+                </Command.Item>
+              {/if}
               <Command.Item value="refresh schema tables" onSelect={() => run(onrefresh)}>
                 <Icon name="refresh-cw" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">Refresh tables</span>
