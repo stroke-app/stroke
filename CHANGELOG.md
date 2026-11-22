@@ -4,6 +4,17 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.6.6] - 2026-11-22
+
+### Bug Fixes
+- **Elasticsearch and OpenSearch** - "No indices yet? Create one" shows only on a cluster with no indices.
+- **New connection** - A pasted http(s) address that doesn't name its engine asks whether it is Elasticsearch, OpenSearch, CouchDB, ClickHouse or libSQL, instead of saying it isn't a connection string.
+- **SQL Server values** - decimal, numeric, uniqueidentifier and datetimeoffset columns showed NULL; they show their values, decimals at their exact scale. A datetime shows .997 instead of .996666666.
+- **SQL Server types** - Column headers say int, bit and nvarchar instead of int4, intn and bitn.
+- **Oracle on Ubuntu 24.04 and later** - When Instant Client won't load because libaio.so.1 is missing, the error says so and gives the link command for this machine, instead of only suggesting the library path.
+- **New-tab page** - The Terminal tile names the client it opens for this database (sqlcmd, sqlplus, turso, redis-cli), or the built-in SQL prompt, instead of "psql, mysql or sqlite3" everywhere.
+
+
 ## [3.6.5] - 2026-11-22
 
 ### Bug Fixes
