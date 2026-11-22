@@ -1948,7 +1948,34 @@ pub struct MirrorSeek {
 const MIRROR_PAGE: i64 = 5_000;
 
 /// Mirror pages in flight at once.
-const MIRROR_PARALLEL: usize = 4;
+const MIRROR_PARALLEL: usize = 2;
+
+/// How long the grid must have been quiet (no row fetch running or just
+/// finished) before a mirror page starts. Opening a table or jumping fires
+/// several window fetches in a row; a copy page squeezed in between them
+/// shared the link with the next one and made the rows on screen slower.
+const MIRROR_QUIET: std::time::Duration = std::time::Duration::from_millis(750);
+
+/// When the last grid row fetch finished, as ms since the first one (0 = never).
+static FOREGROUND_LAST_END_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static FOREGROUND_EPOCH: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+
+fn foreground_now_ms() -> u64 {
+    FOREGROUND_EPOCH.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64
+}
+
+/// Wait until no grid fetch is running and none has for MIRROR_QUIET.
+async fn wait_for_quiet_grid() {
+    loop {
+        let busy = FOREGROUND_ROW_FETCHES.load(std::sync::atomic::Ordering::SeqCst) > 0;
+        let last = FOREGROUND_LAST_END_MS.load(std::sync::atomic::Ordering::SeqCst);
+        let since = foreground_now_ms().saturating_sub(last);
+        if !busy && (last == 0 || since >= MIRROR_QUIET.as_millis() as u64) {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+}
 
 /// Grid row fetches in flight (`pg_get_table_rows`). A table mirror is
 /// background work sharing the same link and pool: it waits while any is
@@ -1965,6 +1992,7 @@ impl ForegroundFetch {
 }
 impl Drop for ForegroundFetch {
     fn drop(&mut self) {
+        FOREGROUND_LAST_END_MS.store(foreground_now_ms().max(1), std::sync::atomic::Ordering::SeqCst);
         FOREGROUND_ROW_FETCHES.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
     }
 }
@@ -2020,10 +2048,8 @@ pub async fn table_mirror(
         let (search, sort_column, sort_direction) = (search.clone(), sort_column.clone(), sort_direction.clone());
         let (filters, sorts, nulls_order) = (filters.clone(), sorts.clone().unwrap_or_default(), nulls_order.clone());
         async move {
-            // Rows on screen first: wait out any grid fetch in flight.
-            while FOREGROUND_ROW_FETCHES.load(std::sync::atomic::Ordering::SeqCst) > 0 {
-                tokio::time::sleep(std::time::Duration::from_millis(15)).await;
-            }
+            // Rows on screen first: start only once the grid has been quiet.
+            wait_for_quiet_grid().await;
             // Dropped by the window: the view it mirrors is gone.
             if store.get(&id).is_none() {
                 return Ok(None);
