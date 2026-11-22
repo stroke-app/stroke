@@ -9524,7 +9524,7 @@ let rowSearch = $state('')
     }
     if (open.length < 2) return []
     const conns = open.map((o) => o.conn)
-    return open.map(({ key, conn, current }) => ({ key, current, label: openLabel(conn, conns) }))
+    return open.map(({ key, conn, current }) => ({ key, current, label: openLabel(conn, conns), engine: engineId(conn) }))
   })
 
   /**

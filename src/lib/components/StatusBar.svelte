@@ -61,7 +61,7 @@
     onswitchproviderdb = /** @type {(db: { provider: string, dbRef: string, name: string }) => void} */ ((_db) => {}),
     onswitchconnection = /** @type {(conn: import('$lib/stores/connections.js').SavedConnection) => void} */ ((_c) => {}),
     /** Labs, several databases open: all of them, the one in front marked. Empty otherwise. */
-    openDatabases = /** @type {{ key: string, label: string, current: boolean }[]} */ ([]),
+    openDatabases = /** @type {{ key: string, label: string, current: boolean, engine?: string }[]} */ ([]),
     /** Bring an open database to the front. */
     onopendatabase = /** @type {(key: string) => void} */ ((_k) => {}),
     /** Labs: the database being opened while the one on screen stays up. */
@@ -746,14 +746,18 @@
           <span class="max-w-[8rem] truncate">{switchingTo}</span>
         </span>
       {:else if openDatabases.length > 1}
+        <!-- Each with its engine icon and set apart: a bare "127.0.0.1:18080"
+             right after this connection's database chip read as its host. -->
         <div role="group" aria-label="Other open databases" class="flex min-w-0 items-center @max-[48rem]/sb:hidden">
+          {@render sep()}
           {#each openDatabases.filter((d) => !d.current) as db (db.key)}
             <button
               type="button"
-              class="flex h-7 min-w-0 max-w-[9rem] items-center rounded-md px-2 text-ui-xs text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground"
+              class="flex h-7 min-w-0 max-w-[10rem] items-center gap-1.5 rounded-md px-2 text-ui-xs text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground"
               title={`Switch to ${db.label}`}
               onclick={() => onopendatabase(db.key)}
             >
+              {#if db.engine}<DbIcon id={db.engine} class="size-3.5 shrink-0 opacity-70" />{/if}
               <span class="truncate">{db.label}</span>
             </button>
           {/each}
