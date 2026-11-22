@@ -30,7 +30,7 @@ fn client_for(config: &ClickhouseConfig) -> reqwest::Client {
 }
 
 fn builder() -> reqwest::ClientBuilder {
-    reqwest::Client::builder()
+    crate::proxy::http_builder(crate::proxy::Kind::Database)
         .tcp_keepalive(std::time::Duration::from_secs(60))
         .pool_max_idle_per_host(10)
         .pool_idle_timeout(std::time::Duration::from_secs(90))
@@ -41,7 +41,7 @@ fn builder() -> reqwest::ClientBuilder {
 
 fn client() -> &'static reqwest::Client {
     CH_CLIENT.get_or_init(|| {
-        reqwest::Client::builder()
+        crate::proxy::http_builder(crate::proxy::Kind::Database)
             .tcp_keepalive(std::time::Duration::from_secs(60))
             .pool_max_idle_per_host(10)
             .pool_idle_timeout(std::time::Duration::from_secs(90))

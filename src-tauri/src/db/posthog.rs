@@ -28,7 +28,7 @@ const SCHEMA_TTL: Duration = Duration::from_secs(300);
 fn client() -> &'static reqwest::Client {
     static C: OnceLock<reqwest::Client> = OnceLock::new();
     C.get_or_init(|| {
-        reqwest::Client::builder()
+        crate::proxy::http_builder(crate::proxy::Kind::Database)
             .user_agent("stroke/1.0")
             .pool_idle_timeout(Duration::from_secs(20))
             .connect_timeout(Duration::from_secs(10))

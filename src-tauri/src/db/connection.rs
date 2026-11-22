@@ -1467,8 +1467,8 @@ pub(crate) async fn tunnel_to(
     host: &str,
     port: u16,
 ) -> Result<(String, u16, Option<SshTunnel>), String> {
-    let Some(ssh) = ssh else { return Ok((host.to_string(), port, None)) };
-    let tunnel = SshTunnel::establish(ssh, host, port).await?;
+    let Some(ssh) = crate::db::ssh_tunnel::effective(ssh) else { return Ok((host.to_string(), port, None)) };
+    let tunnel = SshTunnel::establish(&ssh, host, port).await?;
     Ok(("127.0.0.1".into(), tunnel.local_port, Some(tunnel)))
 }
 
@@ -1479,8 +1479,8 @@ pub(crate) async fn tunnel_via(
     host: &str,
     port: u16,
 ) -> Result<(Option<std::net::SocketAddr>, Option<SshTunnel>), String> {
-    let Some(ssh) = ssh else { return Ok((None, None)) };
-    let tunnel = SshTunnel::establish(ssh, host, port).await?;
+    let Some(ssh) = crate::db::ssh_tunnel::effective(ssh) else { return Ok((None, None)) };
+    let tunnel = SshTunnel::establish(&ssh, host, port).await?;
     Ok((Some(std::net::SocketAddr::from(([127, 0, 0, 1], tunnel.local_port))), Some(tunnel)))
 }
 
@@ -1520,7 +1520,7 @@ pub(crate) async fn resolve_oracle_ssh(mut c: OracleConfig) -> Result<(OracleCon
 }
 
 pub(crate) async fn resolve_mongo_ssh(mut c: crate::db::mongo::MongoConfig) -> Result<(crate::db::mongo::MongoConfig, Option<SshTunnel>), String> {
-    let Some(ssh) = c.ssh.clone() else { return Ok((c, None)) };
+    let Some(ssh) = crate::db::ssh_tunnel::effective(&c.ssh) else { return Ok((c, None)) };
     // Refuse what the tunnel can't carry before opening it.
     crate::db::ssh_tunnel::mongo_uri_via(&c.uri, 0)?;
     let (host, port) = crate::db::ssh_tunnel::mongo_first_host(&c.uri).ok_or("No host in the connection string")?;
@@ -1530,7 +1530,7 @@ pub(crate) async fn resolve_mongo_ssh(mut c: crate::db::mongo::MongoConfig) -> R
 }
 
 pub(crate) async fn resolve_cassandra_ssh(mut c: crate::db::cassandra::CassandraConfig) -> Result<(crate::db::cassandra::CassandraConfig, Option<SshTunnel>), String> {
-    let Some(ssh) = c.ssh.clone() else { return Ok((c, None)) };
+    let Some(ssh) = crate::db::ssh_tunnel::effective(&c.ssh) else { return Ok((c, None)) };
     // One contact point is enough: the driver reaches every node through it.
     let first = c.hosts.split(',').map(str::trim).find(|h| !h.is_empty()).ok_or("Enter at least one host")?.to_string();
     let (host, port) = match first.rsplit_once(':') {
@@ -1611,7 +1611,7 @@ pub(crate) async fn tunnel_any(config: AnyConnectionConfig) -> Result<(AnyConnec
 /// Establish an SSH tunnel if `config.ssh` is set, return a direct config pointing
 /// at the local forwarded port. The tunnel's lifetime must outlive the connection.
 pub(crate) async fn resolve_pg_ssh(config: PgConfig) -> Result<(PgConfig, Option<SshTunnel>), String> {
-    if let Some(ref ssh_cfg) = config.ssh {
+    if let Some(ref ssh_cfg) = crate::db::ssh_tunnel::effective(&config.ssh) {
         let tunnel = SshTunnel::establish(ssh_cfg, &config.host, config.port).await?;
         let local_port = tunnel.local_port;
         let mut direct = config.clone();
@@ -1791,7 +1791,7 @@ pub async fn connect_mysql(
 }
 
 pub(crate) async fn resolve_mysql_ssh(config: MysqlConfig) -> Result<(MysqlConfig, Option<SshTunnel>), String> {
-    if let Some(ref ssh_cfg) = config.ssh {
+    if let Some(ref ssh_cfg) = crate::db::ssh_tunnel::effective(&config.ssh) {
         let tunnel = SshTunnel::establish(ssh_cfg, &config.host, config.port).await?;
         let local_port = tunnel.local_port;
         let mut direct = config.clone();

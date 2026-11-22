@@ -12,6 +12,7 @@
   import { updateState, updateActions } from '$lib/stores/update-state.js'
   import KeybindingsSettings from './KeybindingsSettings.svelte'
   import SnippetsSettings from './SnippetsSettings.svelte'
+  import NetworkSettings from './NetworkSettings.svelte'
   import { openTransfer } from '$lib/stores/transfer-ui.js'
   import { listTimezones, resolveZone } from '$lib/timezone.js'
   import { bindingFor } from '$lib/stores/keybindings.js'
@@ -132,6 +133,7 @@
     { id: 'integrations', label: 'Integrations', icon: 'blocks' },
     { id: 'keybindings',  label: 'Keybindings',  icon: 'keyboard' },
     { id: 'snippets',     label: 'Snippets',     icon: 'braces' },
+    { id: 'network',      label: 'Network',      icon: 'globe' },
     { id: 'labs',         label: 'Labs',         icon: 'flask-conical' },
     { id: 'about',        label: 'About',        icon: 'info' },
   ];
@@ -753,6 +755,8 @@
                 <KeybindingsSettings />
               {:else if category === 'snippets'}
                 <SnippetsSettings />
+              {:else if category === 'network'}
+                <NetworkSettings />
               {:else if category === 'account'}
                 {@render accountContent()}
               {:else if category === 'integrations'}

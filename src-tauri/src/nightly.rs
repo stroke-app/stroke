@@ -37,7 +37,7 @@ impl Track {
 }
 
 fn client() -> reqwest::Client {
-    reqwest::Client::builder()
+    crate::proxy::http_builder(crate::proxy::Kind::App)
         .user_agent("stroke-nightly-installer")
         .timeout(std::time::Duration::from_secs(600))
         .build()

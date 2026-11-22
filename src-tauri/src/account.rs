@@ -366,7 +366,7 @@ pub fn license_status(dir: &Path) -> LicenseStatus {
 pub(crate) fn http() -> &'static reqwest::Client {
     static C: OnceLock<reqwest::Client> = OnceLock::new();
     C.get_or_init(|| {
-        reqwest::Client::builder()
+        crate::proxy::http_builder(crate::proxy::Kind::App)
             .timeout(Duration::from_secs(15))
             .build()
             .unwrap_or_default()

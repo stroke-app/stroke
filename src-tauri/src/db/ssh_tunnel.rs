@@ -35,6 +35,10 @@ pub struct SshConfig {
     /// SSM: the AWS CLI profile; empty is the default credentials.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub profile: String,
+    /// Set by `establish` when the SSH connection goes through a proxy: the
+    /// local forwarder's port, which ssh dials instead of `host:port`.
+    #[serde(skip)]
+    pub hop_port: Option<u16>,
     /// Path to an identity file (e.g. `~/.ssh/id_rsa`).
     /// Leave empty to rely on the system SSH agent.
     #[serde(default)]
@@ -130,6 +134,8 @@ fn announce(via: &str, state: &'static str, message: Option<String>) {
 /// process exits. Dropping the struct stops the supervisor, which kills ssh.
 pub struct SshTunnel {
     pub local_port: u16,
+    /// The proxy forwarder this tunnel dials through, kept alive with it.
+    _hop: Option<crate::proxy::ProxyForward>,
     supervisor: tauri::async_runtime::JoinHandle<()>,
     /// This tunnel is down and its supervisor is reconnecting.
     down: Arc<std::sync::atomic::AtomicBool>,
@@ -176,9 +182,15 @@ fn args_for(ssh: &SshConfig, forward: &str) -> Vec<String> {
         "-o".into(), "StrictHostKeyChecking=accept-new".into(),
         "-o".into(), "ServerAliveCountMax=3".into(),
         "-o".into(), "ConnectTimeout=10".into(),
-        "-p".into(), ssh.port.to_string(),
+        "-p".into(), ssh.hop_port.unwrap_or(ssh.port).to_string(),
         "-L".into(), forward.to_string(),
     ];
+    // Through a proxy: dial its local forwarder, and check the host key under
+    // the bastion's own name rather than 127.0.0.1's.
+    if ssh.hop_port.is_some() {
+        args.push("-o".into());
+        args.push(format!("HostKeyAlias={}", ssh.host));
+    }
     // Keep-alive so long-idle tunnels don't stall the pool. Configurable
     // because the useful value is a property of the network in between, not
     // of the database: 30s is right behind a NAT, pointless on a LAN, and
@@ -197,7 +209,8 @@ fn args_for(ssh: &SshConfig, forward: &str) -> Vec<String> {
         args.push("-o".into());
         args.push(format!("UserKnownHostsFile={file}"));
     }
-    args.push(format!("{}@{}", ssh.username, ssh.host));
+    let dial_host = if ssh.hop_port.is_some() { "127.0.0.1" } else { ssh.host.as_str() };
+    args.push(format!("{}@{}", ssh.username, dial_host));
     args
 }
 
@@ -207,6 +220,11 @@ impl SshConfig {
     }
     fn is_ssm(&self) -> bool {
         self.kind == "ssm"
+    }
+    /// A database connection through a proxy (Settings > Network): `host` is
+    /// the proxy URL, and the "tunnel" is an in-process forwarder.
+    fn is_proxy(&self) -> bool {
+        self.kind == "proxy"
     }
     /// How the tunnel is named in its status events and errors.
     fn label(&self) -> String {
@@ -342,6 +360,9 @@ async fn spawn_ready(ssh: &SshConfig, local_port: u16, db_host: &str, db_port: u
         ("ssh", args_for(ssh, &forward), "Failed to launch SSH. Ensure the 'ssh' binary is on your PATH.")
     };
     let mut cmd = Command::new(program);
+    if ssh.is_kubernetes() || ssh.is_ssm() {
+        cmd.envs(crate::proxy::child_env());
+    }
     cmd.args(args)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
@@ -411,12 +432,39 @@ impl SshTunnel {
     /// forwarded port is reachable, then supervise it for as long as the
     /// tunnel lives.
     pub async fn establish(ssh: &SshConfig, db_host: &str, db_port: u16) -> Result<Self, String> {
-        let local_port = find_free_port()?;
-        let (child, tail) = spawn_ready(ssh, local_port, db_host, db_port).await?;
         let down = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let supervisor = tauri::async_runtime::spawn(supervise(ssh.clone(), local_port, db_host.to_string(), db_port, child, tail, down.clone()));
-        Ok(SshTunnel { local_port, supervisor, down, via: ssh.label() })
+        if ssh.is_proxy() {
+            let fwd = crate::proxy::ProxyForward::start(&ssh.host, db_host, db_port).await?;
+            // Nothing to supervise: every connection dials the proxy afresh.
+            let supervisor = tauri::async_runtime::spawn(std::future::pending::<()>());
+            return Ok(SshTunnel { local_port: fwd.local_port, _hop: Some(fwd), supervisor, down, via: "proxy".into() });
+        }
+        let mut cfg = ssh.clone();
+        let mut hop = None;
+        if !ssh.is_kubernetes() && !ssh.is_ssm() {
+            if let Some(url) = crate::proxy::custom_url(crate::proxy::Kind::Ssh) {
+                let fwd = crate::proxy::ProxyForward::start(&url, &ssh.host, ssh.port).await?;
+                cfg.hop_port = Some(fwd.local_port);
+                hop = Some(fwd);
+            }
+        }
+        let local_port = find_free_port()?;
+        let (child, tail) = spawn_ready(&cfg, local_port, db_host, db_port).await?;
+        let supervisor = tauri::async_runtime::spawn(supervise(cfg.clone(), local_port, db_host.to_string(), db_port, child, tail, down.clone()));
+        Ok(SshTunnel { local_port, _hop: hop, supervisor, down, via: ssh.label() })
     }
+}
+
+/// The tunnel a connection takes: its own SSH/Kubernetes/SSM tunnel when it
+/// has one, otherwise the database proxy from Settings > Network, if set.
+pub fn effective(ssh: &Option<SshConfig>) -> Option<SshConfig> {
+    if let Some(s) = ssh {
+        return Some(s.clone());
+    }
+    crate::proxy::custom_url(crate::proxy::Kind::Database).map(|url| SshConfig { kind: "proxy".into(), host: url, ..Default::default() })
+}
+
+impl SshTunnel {
 }
 
 /// Wait on ssh; when it exits on its own, say so and bring it back on the same
@@ -493,7 +541,9 @@ pub fn http_client(host: &str, via: Option<std::net::SocketAddr>, insecure: bool
     if let Some(c) = map.get(&key) {
         return Some(c.clone());
     }
+    // Always direct: `via` is a local tunnel end, already past any proxy.
     let c = reqwest::Client::builder()
+        .no_proxy()
         .timeout(Duration::from_secs(60))
         .connect_timeout(Duration::from_secs(10))
         .danger_accept_invalid_certs(insecure)

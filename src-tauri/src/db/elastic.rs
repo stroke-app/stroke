@@ -61,7 +61,7 @@ fn client(insecure: bool) -> &'static reqwest::Client {
     static LAX: OnceLock<reqwest::Client> = OnceLock::new();
     let cell = if insecure { &LAX } else { &SAFE };
     cell.get_or_init(|| {
-        reqwest::Client::builder()
+        crate::proxy::http_builder(crate::proxy::Kind::Database)
             .timeout(Duration::from_secs(60))
             .connect_timeout(Duration::from_secs(10))
             .danger_accept_invalid_certs(insecure)
