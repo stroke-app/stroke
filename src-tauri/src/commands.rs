@@ -1665,6 +1665,7 @@ pub async fn pg_get_table_rows(
     // setting turns back on for anyone who wants it.
     preview_wide: Option<bool>,
 ) -> Result<TableRows, String> {
+    let _foreground = ForegroundFetch::begin();
     get_table_rows(
         state,
         schema,
@@ -1940,8 +1941,29 @@ pub struct MirrorSeek {
     index: usize,
 }
 
-/// Rows per page while a table mirror streams.
-const MIRROR_PAGE: i64 = 2_000;
+/// Rows per page while a table mirror streams. Large enough that a far link
+/// is not all round trips, small enough that a page in flight holds up a
+/// window the user asks for by well under a second.
+const MIRROR_PAGE: i64 = 5_000;
+
+/// Grid row fetches in flight (`pg_get_table_rows`). A table mirror is
+/// background work sharing the same link and pool: it waits while any is
+/// running, so the rows on screen never queue behind the copy.
+static FOREGROUND_ROW_FETCHES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Counts one foreground fetch for as long as it lives.
+struct ForegroundFetch;
+impl ForegroundFetch {
+    fn begin() -> Self {
+        FOREGROUND_ROW_FETCHES.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        ForegroundFetch
+    }
+}
+impl Drop for ForegroundFetch {
+    fn drop(&mut self) {
+        FOREGROUND_ROW_FETCHES.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
 
 /// Copy a windowed table view into the result store, in its own order, so the
 /// grid can read any window locally.
@@ -1982,6 +2004,10 @@ pub async fn table_mirror(
     let mut total = 0usize;
     let mut first = true;
     loop {
+        // Rows on screen first: wait out any grid fetch in flight.
+        while FOREGROUND_ROW_FETCHES.load(std::sync::atomic::Ordering::SeqCst) > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(15)).await;
+        }
         // Dropped by the window: the view it mirrors is gone.
         if store.get(&id).is_none() {
             return Ok(total);
