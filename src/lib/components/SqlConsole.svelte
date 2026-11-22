@@ -190,6 +190,11 @@
     handleRun(undefined)
   }
 
+  /** Explain the editor's query (the command palette's Explain query). */
+  export function explainEditor() {
+    void handleExplain()
+  }
+
   /** Focus the SQL editor - called by the parent when this tab becomes active. */
   export function focusEditor() {
     sqlEditorRef?.focus()

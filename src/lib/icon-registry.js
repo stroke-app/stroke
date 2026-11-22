@@ -24,6 +24,7 @@ import ChevronLeft from '@lucide/svelte/icons/chevron-left'
 import Plus from '@lucide/svelte/icons/plus'
 import Minus from '@lucide/svelte/icons/minus'
 import Search from '@lucide/svelte/icons/search'
+import ScanSearch from '@lucide/svelte/icons/scan-search'
 import Trash2 from '@lucide/svelte/icons/trash-2'
 import LogOut from '@lucide/svelte/icons/log-out'
 import Table2 from '@lucide/svelte/icons/table-2'
@@ -153,7 +154,7 @@ import FileDiff from '@lucide/svelte/icons/file-diff'
 // ── Hugeicons data ───────────────────────────────────────────────────────────
 import {
   Cancel01Icon, Tick01Icon, CheckmarkCircle02Icon, ArrowDown01Icon, ArrowUp01Icon,
-  ArrowRight01Icon, ArrowLeft01Icon, Add01Icon, MinusSignIcon, Search01Icon,
+  ArrowRight01Icon, ArrowLeft01Icon, Add01Icon, MinusSignIcon, Search01Icon, ScanEyeIcon,
   Delete02Icon, Logout01Icon, Table01Icon, GridTableIcon, RefreshIcon, Copy01Icon, Loading03Icon, Key01Icon,
   LinkSquare01Icon, Database01Icon, SourceCodeIcon, TerminalIcon, ChartLineData02Icon,
   SparklesIcon, GitBranchIcon, Download04Icon, PlayIcon, ViewIcon, ViewOffSlashIcon,
@@ -190,6 +191,7 @@ export const ICON_MAP = {
   'plus':           { lucide: Plus,          huge: Add01Icon },
   'minus':          { lucide: Minus,         huge: MinusSignIcon },
   'search':         { lucide: Search,        huge: Search01Icon },
+  'scan-search':    { lucide: ScanSearch,    huge: ScanEyeIcon },
   'trash-2':        { lucide: Trash2,        huge: Delete02Icon },
   'log-out':        { lucide: LogOut,        huge: Logout01Icon },
   'table-2':        { lucide: Table2,        huge: GridTableIcon },
