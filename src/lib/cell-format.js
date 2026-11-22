@@ -1,3 +1,4 @@
+import { displayInstant } from './timezone.js';
 /**
  * Cell values as text: CSV, Markdown, SQL literals and JSON for the grid's
  * copy and export, plus the type checks and comparison the grid's editing
@@ -68,7 +69,7 @@ export function cellJsonString(value) {
 /** Escape a cell value for CSV (RFC 4180). */
 export function csvCell(value) {
   if (value === null || value === undefined) return '';
-  const s = typeof value === 'object' ? cellJsonString(value) : String(value);
+  const s = typeof value === 'object' ? cellJsonString(value) : typeof value === 'string' ? displayInstant(value) : String(value);
   if (s.includes(',') || s.includes('"') || s.includes('\n') || s.includes('\r')) {
     return '"' + s.replace(/"/g, '""') + '"';
   }
@@ -90,7 +91,7 @@ export function cellSqlLiteral(value) {
 /** Markdown-safe cell text. */
 export function mdCell(value) {
   if (value === null || value === undefined) return 'NULL';
-  const s = typeof value === 'object' ? cellJsonString(value) : String(value);
+  const s = typeof value === 'object' ? cellJsonString(value) : typeof value === 'string' ? displayInstant(value) : String(value);
   return s.replace(/\|/g, '\\|').replace(/\n/g, ' ');
 }
 
