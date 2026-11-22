@@ -223,13 +223,60 @@ pub fn shell_to_json5(src: &str) -> String {
     out
 }
 
+/// A json5 parse error in words. Its own message is pest's caret diagram
+/// ending in what the grammar wanted next, which misleads for the usual
+/// mistake: `{total: {$gt: 10}` points at `10` and says "expected boolean,
+/// null, or string". An unbalanced bracket or quote is named first; anything
+/// else keeps the grammar's last line and the position.
+fn json5_error_text(src: &str, err: &json5::Error) -> String {
+    let mut stack: Vec<char> = Vec::new();
+    let mut in_str: Option<char> = None;
+    let mut escaped = false;
+    for c in src.chars() {
+        if let Some(q) = in_str {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == q {
+                in_str = None;
+            }
+            continue;
+        }
+        match c {
+            '"' | '\'' => in_str = Some(c),
+            '{' => stack.push('}'),
+            '[' => stack.push(']'),
+            '}' | ']' => {
+                if stack.pop() != Some(c) {
+                    return format!("there is an extra {c}, or a bracket before it isn't closed");
+                }
+            }
+            _ => {}
+        }
+    }
+    if let Some(q) = in_str {
+        return format!("a string isn't closed: it needs a closing {q}");
+    }
+    if let Some(close) = stack.last() {
+        return format!("it is missing a closing {close}");
+    }
+    let json5::Error::Message { msg, location } = err;
+    let what = msg.lines().rev().map(str::trim).find_map(|l| l.strip_prefix("= ")).unwrap_or(msg.as_str()).trim();
+    match location {
+        Some(l) if src.contains('\n') => format!("{what} (line {}, column {})", l.line, l.column),
+        Some(l) => format!("{what} (column {})", l.column),
+        None => what.to_string(),
+    }
+}
+
 /// Parse shell-style arguments (`{plan: "pro"}, {age: 1}`) into JSON values.
 pub fn parse_args(src: &str) -> Result<Vec<Value>, String> {
     let s = src.trim();
     if s.is_empty() {
         return Ok(vec![]);
     }
-    json5::from_str::<Vec<Value>>(&format!("[{}]", shell_to_json5(s))).map_err(|e| format!("Couldn't read the arguments: {e}"))
+    json5::from_str::<Vec<Value>>(&format!("[{}]", shell_to_json5(s))).map_err(|e| format!("Couldn't read the arguments: {}", json5_error_text(s, &e)))
 }
 
 /// One filter (or sort) object from the browser's filter box.
@@ -238,7 +285,7 @@ pub fn parse_object(src: &str, what: &str) -> Result<Document, String> {
     if s.is_empty() {
         return Ok(Document::new());
     }
-    let v: Value = json5::from_str(&shell_to_json5(s)).map_err(|e| format!("The {what} isn't valid: {e}"))?;
+    let v: Value = json5::from_str(&shell_to_json5(s)).map_err(|e| format!("The {what} isn't valid: {}", json5_error_text(s, &e)))?;
     if !v.is_object() {
         return Err(format!("The {what} is an object, e.g. {{plan: \"pro\"}}"));
     }
@@ -1079,7 +1126,7 @@ pub async fn update_field(m: &MongoConn, full: &str, id: &Value, path: &str, val
 
 /// A pipeline in shell syntax: `[{$match: {...}}, ...]`.
 pub fn parse_pipeline(src: &str) -> Result<Vec<Document>, String> {
-    let v: Value = json5::from_str(&shell_to_json5(src.trim())).map_err(|e| format!("The pipeline isn't valid: {e}"))?;
+    let v: Value = json5::from_str(&shell_to_json5(src.trim())).map_err(|e| format!("The pipeline isn't valid: {}", json5_error_text(src.trim(), &e)))?;
     let Value::Array(stages) = v else { return Err("A pipeline is an array of stages".into()) };
     stages
         .iter()
@@ -1905,6 +1952,21 @@ pub async fn query(m: &MongoConn, stmt: &str) -> Result<super::query::SqlResult,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn filter_errors_name_the_real_mistake() {
+        let e = parse_filter("{total: {$gt: 10}").unwrap_err();
+        assert_eq!(e, "The filter isn't valid: it is missing a closing }");
+        let e = parse_filter("{total: 10}}").unwrap_err();
+        assert!(e.contains("an extra }"), "{e}");
+        let e = parse_filter("{name: \"Ada}").unwrap_err();
+        assert!(e.contains("a string isn't closed"), "{e}");
+        // Balanced but wrong: the grammar's expectation and the column, no caret art.
+        let e = parse_filter("{total: @}").unwrap_err();
+        assert!(e.starts_with("The filter isn't valid: expected") && e.contains("(column ") && !e.contains("-->"), "{e}");
+        // A bracket inside a string doesn't count.
+        assert!(parse_filter("{name: \"a}b\"}").is_ok());
+    }
 
     #[test]
     fn index_keys_read_as_fields() {
