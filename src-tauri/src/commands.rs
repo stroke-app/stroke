@@ -1934,6 +1934,7 @@ pub async fn pg_execute_sql_stream(
 /// (`seekKeyFor` in src/lib/keyset.js), plus where it sits in a row.
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)] // The view's key; its presence is what makes paging by offset exact.
 pub struct MirrorSeek {
     column: String,
     sql_type: String,
@@ -1945,6 +1946,9 @@ pub struct MirrorSeek {
 /// is not all round trips, small enough that a page in flight holds up a
 /// window the user asks for by well under a second.
 const MIRROR_PAGE: i64 = 5_000;
+
+/// Mirror pages in flight at once.
+const MIRROR_PARALLEL: usize = 4;
 
 /// Grid row fetches in flight (`pg_get_table_rows`). A table mirror is
 /// background work sharing the same link and pool: it waits while any is
@@ -1971,9 +1975,8 @@ impl Drop for ForegroundFetch {
 /// Scrolled deep into a large table, every window was a remote `OFFSET n`:
 /// the server reads and throws away n rows first, so row 196,000 of a remote
 /// table took seconds and the grid sat on skeletons labelled "slow
-/// connection". This walks the same query once, page by page, each page an
-/// index seek from the last row of the one before (as the grid's own seeks
-/// are), and spools the rows under `id`. The window reads whatever has landed
+/// connection". This reads the same query once, a few pages at a time, and
+/// spools the rows under `id` in order. The window reads whatever has landed
 /// with `result_window` and fetches the rest as before. Same rows, same shape
 /// (wide-column previews included): it is the grid's query, not the console's.
 ///
@@ -1999,41 +2002,62 @@ pub async fn table_mirror(
     seek: MirrorSeek,
     max_rows: usize,
 ) -> Result<usize, String> {
+    use futures::StreamExt;
     let mut writer = store.create(&id)?;
-    let mut cursor: Option<crate::db::KeysetCursor> = None;
+    let page_rows = MIRROR_PAGE as usize;
+    let chunks = max_rows.div_ceil(page_rows).max(1);
+    // Every page is addressed by its offset, which on a single-column primary
+    // key is an index skip (see get_table_rows), so pages need not wait on the
+    // one before them for a key: MIRROR_PARALLEL are in flight at once and
+    // written in order. A far link is then bandwidth-bound instead of a round
+    // trip per page. The view's order is a unique key (the mirror only starts
+    // with a seek), so page k is exactly rows k*page..(k+1)*page.
+    let _ = &seek;
+    let fetch_page = |k: usize| {
+        let state = state.clone();
+        let (store, id) = (store.clone(), id.clone());
+        let (schema, table) = (schema.clone(), table.clone());
+        let (search, sort_column, sort_direction) = (search.clone(), sort_column.clone(), sort_direction.clone());
+        let (filters, sorts, nulls_order) = (filters.clone(), sorts.clone().unwrap_or_default(), nulls_order.clone());
+        async move {
+            // Rows on screen first: wait out any grid fetch in flight.
+            while FOREGROUND_ROW_FETCHES.load(std::sync::atomic::Ordering::SeqCst) > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(15)).await;
+            }
+            // Dropped by the window: the view it mirrors is gone.
+            if store.get(&id).is_none() {
+                return Ok(None);
+            }
+            get_table_rows(
+                state,
+                schema,
+                table,
+                MIRROR_PAGE,
+                (k * page_rows) as i64,
+                search,
+                search_is_regex.unwrap_or(false),
+                search_case_sensitive.unwrap_or(false),
+                sort_column,
+                sort_direction,
+                filters,
+                k == 0,
+                false,
+                sorts,
+                None,
+                nulls_order,
+                preview_wide.unwrap_or(true),
+            )
+            .await
+            .map(Some)
+        }
+    };
+    let mut pages = futures::stream::iter(0..chunks).map(fetch_page).buffered(MIRROR_PARALLEL);
     let mut total = 0usize;
     let mut first = true;
-    loop {
-        // Rows on screen first: wait out any grid fetch in flight.
-        while FOREGROUND_ROW_FETCHES.load(std::sync::atomic::Ordering::SeqCst) > 0 {
-            tokio::time::sleep(std::time::Duration::from_millis(15)).await;
-        }
-        // Dropped by the window: the view it mirrors is gone.
-        if store.get(&id).is_none() {
-            return Ok(total);
-        }
-        let page = get_table_rows(
-            state.clone(),
-            schema.clone(),
-            table.clone(),
-            MIRROR_PAGE,
-            0,
-            search.clone(),
-            search_is_regex.unwrap_or(false),
-            search_case_sensitive.unwrap_or(false),
-            sort_column.clone(),
-            sort_direction.clone(),
-            filters.clone(),
-            first,
-            false,
-            sorts.clone().unwrap_or_default(),
-            cursor.clone(),
-            nulls_order.clone(),
-            preview_wide.unwrap_or(true),
-        )
-        .await;
-        let page = match page {
-            Ok(p) => p,
+    while let Some(res) = pages.next().await {
+        let page = match res {
+            Ok(Some(p)) => p,
+            Ok(None) => return Ok(total),
             Err(e) => {
                 store.drop_result(&id);
                 return Err(e);
@@ -2049,25 +2073,9 @@ pub async fn table_mirror(
         }
         total += take;
         writer.flush()?;
-        if (page.rows.len() as i64) < MIRROR_PAGE || total >= max_rows {
+        if page.rows.len() < page_rows || total >= max_rows {
             break;
         }
-        // The next page seeks from this one's last key. A key that can't be
-        // sent back as text (NULL, a nested value) ends the mirror; the window
-        // keeps fetching those rows remotely.
-        let value = match page.rows.last().and_then(|r| r.get(seek.index)) {
-            Some(serde_json::Value::String(s)) => s.clone(),
-            Some(serde_json::Value::Number(n)) => n.to_string(),
-            Some(serde_json::Value::Bool(b)) => b.to_string(),
-            _ => break,
-        };
-        cursor = Some(crate::db::KeysetCursor {
-            column: seek.column.clone(),
-            value,
-            sql_type: seek.sql_type.clone(),
-            after: true,
-            desc: seek.desc,
-        });
     }
     writer.finish()?;
     Ok(total)
