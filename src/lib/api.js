@@ -203,12 +203,24 @@ function normalizeSshConfig(ssh) {
     // Seconds; 0 turns it off. Dropped here before, so the form's value never
     // reached ssh and every tunnel ran at the default 30.
     keepalive: Math.max(0, Math.min(3600, Number(ssh.keepalive ?? 30) || 0)),
+    // Kubernetes and SSM tunnels (db/ssh_tunnel.rs): `host` is the resource or
+    // the target, and these say where to find it.
+    ...(ssh.kind === 'kubernetes' || ssh.kind === 'ssm'
+      ? {
+          kind: ssh.kind,
+          context: String(ssh.context || '').trim(),
+          namespace: String(ssh.namespace || '').trim(),
+          region: String(ssh.region || '').trim(),
+          profile: String(ssh.profile || '').trim(),
+        }
+      : {}),
   }
 }
 
 /** Attach SSH config to a connection payload when the user has configured a tunnel. */
 function withSsh(payload, config) {
-  if (config.ssh && config.ssh.host && config.ssh.username) {
+  const s = config.ssh
+  if (s && s.host && (s.username || s.kind === 'kubernetes' || s.kind === 'ssm')) {
     return { ...payload, ssh: normalizeSshConfig(config.ssh) }
   }
   return payload

@@ -8,13 +8,33 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 
 /// SSH tunnel configuration - serialized alongside saved connections.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SshConfig {
+    /// How the tunnel is made: "" or "ssh" (a bastion), "kubernetes"
+    /// (`kubectl port-forward`) or "ssm" (`aws ssm start-session`). Every kind
+    /// forwards a local port to the database, so the engines need nothing else.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub kind: String,
+    /// The tunnel's end: the SSH host, the Kubernetes resource (`svc/postgres`,
+    /// `pod/db-0`, `deployment/api`), or the SSM target (`i-0abc…`).
     pub host: String,
     #[serde(default = "default_ssh_port")]
     pub port: u16,
+    #[serde(default)]
     pub username: String,
+    /// Kubernetes: the kubeconfig context; empty is the current one.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub context: String,
+    /// Kubernetes: the namespace; empty is the context's default.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub namespace: String,
+    /// SSM: the AWS region; empty is the CLI's default.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub region: String,
+    /// SSM: the AWS CLI profile; empty is the default credentials.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub profile: String,
     /// Path to an identity file (e.g. `~/.ssh/id_rsa`).
     /// Leave empty to rely on the system SSH agent.
     #[serde(default)]
@@ -181,8 +201,105 @@ fn args_for(ssh: &SshConfig, forward: &str) -> Vec<String> {
     args
 }
 
+impl SshConfig {
+    fn is_kubernetes(&self) -> bool {
+        self.kind == "kubernetes"
+    }
+    fn is_ssm(&self) -> bool {
+        self.kind == "ssm"
+    }
+    /// How the tunnel is named in its status events and errors.
+    fn label(&self) -> String {
+        if self.is_kubernetes() {
+            let ns = if self.namespace.is_empty() { String::new() } else { format!("{}/", self.namespace) };
+            format!("kubectl {ns}{}", self.host)
+        } else if self.is_ssm() {
+            format!("SSM {}", self.host)
+        } else {
+            format!("{}@{}:{}", self.username, self.host, self.port)
+        }
+    }
+}
+
+/// `kubectl port-forward` to the resource, on 127.0.0.1 only.
+fn kubectl_args(cfg: &SshConfig, local_port: u16, db_port: u16) -> Vec<String> {
+    let mut args: Vec<String> = Vec::new();
+    if !cfg.context.trim().is_empty() {
+        args.push("--context".into());
+        args.push(cfg.context.trim().into());
+    }
+    if !cfg.namespace.trim().is_empty() {
+        args.push("--namespace".into());
+        args.push(cfg.namespace.trim().into());
+    }
+    args.extend(["port-forward".into(), "--address".into(), "127.0.0.1".into(), cfg.host.trim().into(), format!("{local_port}:{db_port}")]);
+    args
+}
+
+/// `aws ssm start-session` forwarding through the target to the database
+/// host, so an RDS instance in a private subnet is reached through any
+/// instance that can see it (or the target itself, as localhost).
+fn ssm_args(cfg: &SshConfig, local_port: u16, db_host: &str, db_port: u16) -> Vec<String> {
+    let mut args: Vec<String> = vec!["ssm".into(), "start-session".into(), "--target".into(), cfg.host.trim().into()];
+    if !cfg.region.trim().is_empty() {
+        args.push("--region".into());
+        args.push(cfg.region.trim().into());
+    }
+    if !cfg.profile.trim().is_empty() {
+        args.push("--profile".into());
+        args.push(cfg.profile.trim().into());
+    }
+    let params = serde_json::json!({
+        "host": [db_host],
+        "portNumber": [db_port.to_string()],
+        "localPortNumber": [local_port.to_string()],
+    });
+    args.extend(["--document-name".into(), "AWS-StartPortForwardingSessionToRemoteHost".into(), "--parameters".into(), params.to_string()]);
+    args
+}
+
+/// What kubectl or the AWS CLI said, as a sentence someone can act on.
+fn explain_cli_failure(cfg: &SshConfig, tail: &[String], fallback: &str) -> String {
+    let all = tail.join("\n");
+    let has = |needle: &str| all.contains(needle);
+    if cfg.is_kubernetes() {
+        if has("NotFound") || has("not found") {
+            return format!("Kubernetes has no {} in {}. Check the resource name (svc/…, pod/…, deployment/…) and the namespace.", cfg.host, if cfg.namespace.is_empty() { "the default namespace" } else { &cfg.namespace });
+        }
+        if has("context") && (has("does not exist") || has("not found")) {
+            return format!("No kubeconfig context named {}. kubectl config get-contexts lists them.", cfg.context);
+        }
+        if has("Unauthorized") || has("forbidden") || has("Forbidden") {
+            return format!("Kubernetes refused the port-forward to {}: the credentials in this context may not allow it.", cfg.host);
+        }
+        if has("unable to connect") || has("Unable to connect") || has("connection refused") {
+            return "kubectl could not reach the cluster. Check the context and that the cluster is up.".into();
+        }
+    } else if cfg.is_ssm() {
+        if has("SessionManagerPlugin is not found") || has("session-manager-plugin") {
+            return "SSM port forwarding needs the AWS Session Manager plugin next to the AWS CLI. Install session-manager-plugin, then try again.".into();
+        }
+        if has("TargetNotConnected") {
+            return format!("{} is not connected to Systems Manager. Check the SSM agent is running on it and its role allows SSM.", cfg.host);
+        }
+        if has("AccessDenied") || has("not authorized") {
+            return "AWS refused the session: the credentials in use may not allow ssm:StartSession on this target.".into();
+        }
+        if has("Unable to locate credentials") || has("could not be found") && has("profile") {
+            return "The AWS CLI has no credentials for this. Check the profile, or run aws configure / aws sso login.".into();
+        }
+    }
+    match tail.iter().rev().find(|l| !l.trim().is_empty()) {
+        Some(line) => format!("{} failed: {}", cfg.label(), line.trim()),
+        None => fallback.to_string(),
+    }
+}
+
 /// Turn what ssh printed into a sentence someone can act on.
 fn explain_ssh_failure(ssh: &SshConfig, tail: &[String], fallback: &str) -> String {
+    if ssh.is_kubernetes() || ssh.is_ssm() {
+        return explain_cli_failure(ssh, tail, fallback);
+    }
     let all = tail.join("\n");
     let has = |needle: &str| all.contains(needle);
     let who = format!("{}@{}:{}", ssh.username, ssh.host, ssh.port);
@@ -217,8 +334,15 @@ fn explain_ssh_failure(ssh: &SshConfig, tail: &[String], fallback: &str) -> Stri
 /// exits (fail with its own reason), or the deadline passes.
 async fn spawn_ready(ssh: &SshConfig, local_port: u16, db_host: &str, db_port: u16) -> Result<(Child, StderrTail), String> {
     let forward = format!("{local_port}:{db_host}:{db_port}");
-    let mut cmd = Command::new("ssh");
-    cmd.args(args_for(ssh, &forward))
+    let (program, args, missing) = if ssh.is_kubernetes() {
+        ("kubectl", kubectl_args(ssh, local_port, db_port), "Failed to launch kubectl. Install it and make sure it is on your PATH.")
+    } else if ssh.is_ssm() {
+        ("aws", ssm_args(ssh, local_port, db_host, db_port), "Failed to launch the AWS CLI. Install aws (v2) and the Session Manager plugin, and make sure they are on your PATH.")
+    } else {
+        ("ssh", args_for(ssh, &forward), "Failed to launch SSH. Ensure the 'ssh' binary is on your PATH.")
+    };
+    let mut cmd = Command::new(program);
+    cmd.args(args)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
@@ -227,7 +351,7 @@ async fn spawn_ready(ssh: &SshConfig, local_port: u16, db_host: &str, db_port: u
     // so on Windows it must not get a console window of its own.
     let mut child = crate::proc::quiet(&mut cmd)
         .spawn()
-        .map_err(|e| format!("Failed to launch SSH: {e}. Ensure the 'ssh' binary is on your PATH."))?;
+        .map_err(|e| format!("{missing} ({e})"))?;
 
     let tail: StderrTail = Arc::new(Mutex::new(VecDeque::new()));
     if let Some(stderr) = child.stderr.take() {
@@ -244,14 +368,16 @@ async fn spawn_ready(ssh: &SshConfig, local_port: u16, db_host: &str, db_port: u
         });
     }
 
-    // Poll until the forwarded port accepts connections (up to 10 s).
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    // Poll until the forwarded port accepts connections: 10 s for ssh, 30 s
+    // for kubectl and SSM, which first ask an API (and SSM opens a session).
+    let wait = if ssh.is_kubernetes() || ssh.is_ssm() { 30 } else { 10 };
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(wait);
     loop {
         if let Ok(Some(_)) = child.try_wait() {
             // Give the reader a moment to collect the last lines.
             tokio::time::sleep(Duration::from_millis(100)).await;
             let lines: Vec<String> = tail.lock().unwrap_or_else(|e| e.into_inner()).iter().cloned().collect();
-            return Err(explain_ssh_failure(ssh, &lines, &format!("SSH exited before the tunnel to {}@{} was up.", ssh.username, ssh.host)));
+            return Err(explain_ssh_failure(ssh, &lines, &format!("{} exited before the tunnel was up.", ssh.label())));
         }
         if tokio::net::TcpStream::connect(format!("127.0.0.1:{local_port}")).await.is_ok() {
             return Ok((child, tail));
@@ -261,10 +387,14 @@ async fn spawn_ready(ssh: &SshConfig, local_port: u16, db_host: &str, db_port: u
             return Err(explain_ssh_failure(
                 ssh,
                 &lines,
-                &format!(
-                    "SSH tunnel to {}@{} timed out - check credentials, host reachability, and that port {} is not blocked",
-                    ssh.username, ssh.host, ssh.port
-                ),
+                &if ssh.is_kubernetes() || ssh.is_ssm() {
+                    format!("{} did not open the local port within {wait} seconds.", ssh.label())
+                } else {
+                    format!(
+                        "SSH tunnel to {}@{} timed out - check credentials, host reachability, and that port {} is not blocked",
+                        ssh.username, ssh.host, ssh.port
+                    )
+                },
             ));
         }
         tokio::time::sleep(Duration::from_millis(250)).await;
@@ -285,7 +415,7 @@ impl SshTunnel {
         let (child, tail) = spawn_ready(ssh, local_port, db_host, db_port).await?;
         let down = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let supervisor = tauri::async_runtime::spawn(supervise(ssh.clone(), local_port, db_host.to_string(), db_port, child, tail, down.clone()));
-        Ok(SshTunnel { local_port, supervisor, down, via: format!("{}@{}:{}", ssh.username, ssh.host, ssh.port) })
+        Ok(SshTunnel { local_port, supervisor, down, via: ssh.label() })
     }
 }
 
@@ -301,7 +431,7 @@ async fn supervise(
     mut tail: StderrTail,
     down: Arc<std::sync::atomic::AtomicBool>,
 ) {
-    let via = format!("{}@{}:{}", ssh.username, ssh.host, ssh.port);
+    let via = ssh.label();
     loop {
         let _ = child.wait().await;
         LOSSES.fetch_add(1, Ordering::SeqCst);
@@ -511,7 +641,7 @@ mod tests {
     use super::*;
 
     fn cfg(key: &str) -> SshConfig {
-        SshConfig { host: "bastion".into(), port: 22, username: "me".into(), private_key_path: key.into(), keepalive: 30 }
+        SshConfig { host: "bastion".into(), port: 22, username: "me".into(), private_key_path: key.into(), keepalive: 30, ..Default::default() }
     }
 
     #[test]
@@ -543,7 +673,7 @@ mod tests {
         };
         let (user, hostport) = target.split_once('@').unwrap();
         let (host, port) = hostport.split_once(':').unwrap();
-        let ssh = SshConfig { host: host.into(), port: port.parse().unwrap(), username: user.into(), private_key_path: key, keepalive: 5 };
+        let ssh = SshConfig { host: host.into(), port: port.parse().unwrap(), username: user.into(), private_key_path: key, keepalive: 5, ..Default::default() };
         let pg_port: u16 = pg_port.parse().unwrap();
 
         let tunnel = SshTunnel::establish(&ssh, "127.0.0.1", pg_port).await.unwrap();
@@ -593,7 +723,7 @@ mod tests {
         };
         let (user, hostport) = target.split_once('@').unwrap();
         let (host, port) = hostport.split_once(':').unwrap();
-        let ssh = SshConfig { host: host.into(), port: port.parse().unwrap(), username: user.into(), private_key_path: key, keepalive: 30 };
+        let ssh = SshConfig { host: host.into(), port: port.parse().unwrap(), username: user.into(), private_key_path: key, keepalive: 30, ..Default::default() };
         let pg_port: u16 = pg_port.parse().unwrap();
         let up = |p: u16| async move { tokio::net::TcpStream::connect(("127.0.0.1", p)).await.is_ok() };
 
@@ -636,7 +766,7 @@ mod tests {
         };
         let (user, hostport) = target.split_once('@').unwrap();
         let (host, port) = hostport.split_once(':').unwrap();
-        let ssh = SshConfig { host: host.into(), port: port.parse().unwrap(), username: user.into(), private_key_path: key, keepalive: 30 };
+        let ssh = SshConfig { host: host.into(), port: port.parse().unwrap(), username: user.into(), private_key_path: key, keepalive: 30, ..Default::default() };
         let t = SshTunnel::establish(&ssh, "127.0.0.1", pg_port.parse().unwrap()).await.unwrap();
         // Take the server away and kill the tunnel: it stays down, retrying.
         let sshd = std::fs::read_to_string(&pidfile).unwrap().trim().to_string();
@@ -656,7 +786,7 @@ mod tests {
         };
         let (user, hostport) = target.split_once('@').unwrap();
         let (host, port) = hostport.split_once(':').unwrap();
-        let ssh = SshConfig { host: host.into(), port: port.parse().unwrap(), username: user.into(), private_key_path: key.clone(), keepalive: 30 };
+        let ssh = SshConfig { host: host.into(), port: port.parse().unwrap(), username: user.into(), private_key_path: key.clone(), keepalive: 30, ..Default::default() };
         let err = SshTunnel::establish(&ssh, "127.0.0.1", 5433).await.err().expect("a wrong key must fail");
         assert!(err.contains(&format!("rejected the key {key}")), "{err}");
     }
@@ -687,6 +817,59 @@ mod tests {
         assert_eq!(ip.as_str(), "http://127.0.0.1:41000/");
         let direct = url_via(reqwest::Url::parse("http://10.0.0.5:5984/").unwrap(), None);
         assert_eq!(direct.as_str(), "http://10.0.0.5:5984/");
+    }
+
+    // Live: a Kubernetes tunnel to a Postgres service answers a query, and a
+    // wrong resource says what is wrong. Needs kubectl on PATH and a cluster:
+    //   STROKE_TEST_K8S="svc/postgres|data|pw" KUBECONFIG=... cargo test --lib ssh_tunnel::tests::live_kubernetes
+    #[tokio::test]
+    async fn live_kubernetes_port_forward() {
+        let Ok(spec) = std::env::var("STROKE_TEST_K8S") else { return };
+        let p: Vec<&str> = spec.splitn(3, '|').collect();
+        let cfg = SshConfig { kind: "kubernetes".into(), host: p[0].into(), namespace: p[1].into(), ..Default::default() };
+        let tunnel = SshTunnel::establish(&cfg, "ignored", 5432).await.expect("kubectl tunnel");
+        let url = format!("postgres://postgres:{}@127.0.0.1:{}/postgres", p[2], tunnel.local_port);
+        let pool = sqlx::postgres::PgPoolOptions::new().max_connections(1).connect(&url).await.expect("connect through the tunnel");
+        let one: i32 = sqlx::query_scalar("SELECT 1").fetch_one(&pool).await.unwrap();
+        assert_eq!(one, 1);
+        let wrong = SshConfig { kind: "kubernetes".into(), host: "svc/nope".into(), namespace: p[1].into(), ..Default::default() };
+        let err = SshTunnel::establish(&wrong, "ignored", 5432).await.err().expect("a missing service fails");
+        assert!(err.contains("no svc/nope"), "{err}");
+    }
+
+    // Live: an SSM tunnel through a managed instance reaches a Postgres
+    // server, which answers the 8-byte SSL probe with one byte ('S' or 'N').
+    // Needs the AWS CLI, the Session Manager plugin and credentials in the
+    // environment:
+    //   STROKE_TEST_SSM="i-0abc|ap-south-1|db.host|5432" cargo test --lib ssh_tunnel::tests::live_ssm
+    #[tokio::test]
+    async fn live_ssm_port_forward() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let Ok(spec) = std::env::var("STROKE_TEST_SSM") else { return };
+        let p: Vec<&str> = spec.splitn(4, '|').collect();
+        let cfg = SshConfig { kind: "ssm".into(), host: p[0].into(), region: p[1].into(), ..Default::default() };
+        let tunnel = SshTunnel::establish(&cfg, p[2], p[3].parse().unwrap()).await.expect("ssm tunnel");
+        let mut sock = tokio::net::TcpStream::connect(("127.0.0.1", tunnel.local_port)).await.unwrap();
+        sock.write_all(&[0, 0, 0, 8, 0x04, 0xd2, 0x16, 0x2f]).await.unwrap();
+        let mut buf = [0u8; 1];
+        let n = tokio::time::timeout(Duration::from_secs(20), sock.read(&mut buf)).await.expect("an answer in time").unwrap();
+        assert!(n == 1 && (buf[0] == b'S' || buf[0] == b'N'), "{buf:?}");
+    }
+
+    #[test]
+    fn builds_kubectl_and_ssm_commands() {
+        let k = SshConfig { kind: "kubernetes".into(), host: "svc/postgres".into(), namespace: "data".into(), context: "prod".into(), ..Default::default() };
+        assert_eq!(kubectl_args(&k, 41000, 5432), ["--context", "prod", "--namespace", "data", "port-forward", "--address", "127.0.0.1", "svc/postgres", "41000:5432"]);
+        assert_eq!(k.label(), "kubectl data/svc/postgres");
+        let s = SshConfig { kind: "ssm".into(), host: "i-0abc".into(), region: "ap-south-1".into(), ..Default::default() };
+        let a = ssm_args(&s, 41001, "db.internal", 5432);
+        assert_eq!(&a[..6], ["ssm", "start-session", "--target", "i-0abc", "--region", "ap-south-1"]);
+        assert!(a.contains(&"AWS-StartPortForwardingSessionToRemoteHost".to_string()));
+        assert!(a.last().unwrap().contains(r#""localPortNumber":["41001"]"#) && a.last().unwrap().contains(r#""host":["db.internal"]"#));
+        let err = explain_ssh_failure(&s, &["An error occurred (TargetNotConnected) when calling the StartSession operation".into()], "x");
+        assert!(err.contains("not connected to Systems Manager"), "{err}");
+        let err = explain_ssh_failure(&k, &["Error from server (NotFound): services \"postgres\" not found".into()], "x");
+        assert!(err.contains("no svc/postgres in data"), "{err}");
     }
 
     #[test]

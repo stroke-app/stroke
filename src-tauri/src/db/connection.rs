@@ -1161,6 +1161,10 @@ fn pg_pool_builder() -> PgPoolOptions {
         // first table open's six queries for the same ten slots. The row counts
         // lost that race, which is exactly what "pool timed out while waiting for
         // an open connection" was in the log.
+        // A connection a stopped run or a superseded fetch left mid-result is
+        // closed rather than reused: reusing it first drains the rest of the
+        // abandoned result over the link (query.rs `discard_connection`).
+        .after_release(|conn, _meta| Box::pin(async move { Ok(!super::query::take_discard(conn.backend_process_id())) }))
         .min_connections(2)
         // 20s, not 10: a single handshake to a proxied serverless host measured
         // 5.7s, so a query queued behind two of them blew a 10s ceiling and failed
@@ -2183,7 +2187,7 @@ mod tests {
         c.database = "postgres".into();
         // The tunnel forwards to the scratch server; its far end resolves
         // nothing, it just connects to 127.0.0.1.
-        let ssh = SshConfig { host: sh.into(), port: sp.parse().unwrap(), username: user.into(), private_key_path: key, keepalive: 30 };
+        let ssh = SshConfig { host: sh.into(), port: sp.parse().unwrap(), username: user.into(), private_key_path: key, keepalive: 30, ..Default::default() };
         let tunnel = SshTunnel::establish(&ssh, "127.0.0.1", c.port).await.unwrap();
         c.via = Some(std::net::SocketAddr::from(([127, 0, 0, 1], tunnel.local_port)));
         c.port = tunnel.local_port;
