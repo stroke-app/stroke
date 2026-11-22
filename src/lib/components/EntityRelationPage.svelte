@@ -1759,7 +1759,7 @@
 </script>
 
 <svelte:window onkeydown={(e) => {
-  if (e.key === 'Escape' && fullscreen) { fullscreen = false; return }
+  if (e.key === 'Escape' && fullscreen && !e.defaultPrevented) { fullscreen = false; return }
   const mod = (e.ctrlKey || e.metaKey) && !e.altKey
   // Only the page on screen answers: a hidden tab's page has no width.
   if (mod && e.shiftKey && e.key === 'Enter' && rootEl?.offsetWidth) {

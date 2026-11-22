@@ -259,7 +259,7 @@
 
   /** @param {KeyboardEvent} e */
   function handleWindowKeydown(e) {
-    if (e.key === "Escape" && presenting) {
+    if (e.key === "Escape" && presenting && !e.defaultPrevented) {
       e.preventDefault();
       setViewOnly(false);
     }
