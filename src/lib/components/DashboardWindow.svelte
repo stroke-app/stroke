@@ -46,7 +46,19 @@
     switchDashboardsConnection(scope)
     switchChartsConnection(scope)
     ready = true
-    document.documentElement.classList.add('dark')
+    // A report on a dark wall: the card colours (report-chart.js) are picked
+    // to read on dark, and on a light theme the KPI number was #00b4ff on
+    // white, 2.3:1. The dark class alone left the light theme's palette in
+    // place, because the palette follows data-theme, so both are pinned, and
+    // pinned again if the app's settings are re-applied in this window.
+    const pinDark = () => {
+      const root = document.documentElement
+      if (root.getAttribute('data-theme') !== 'dark') root.setAttribute('data-theme', 'dark')
+      if (!root.classList.contains('dark')) root.classList.add('dark')
+    }
+    pinDark()
+    const themeGuard = new MutationObserver(pinDark)
+    themeGuard.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class'] })
     revealApp()
     /** @param {StorageEvent} e */
     const onStorage = (e) => {
@@ -69,6 +81,7 @@
     window.addEventListener('storage', onStorage)
     window.addEventListener('keydown', onKey)
     return () => {
+      themeGuard.disconnect()
       window.removeEventListener('storage', onStorage)
       window.removeEventListener('keydown', onKey)
     }
