@@ -5,6 +5,7 @@
   import ThemeBuilder from './ThemeBuilder.svelte';
   import AddThemeDialog from './AddThemeDialog.svelte';
   import { detectOs } from '$lib/platform.js';
+  import { facesFor, faceStack, normalizeFontSettings } from '$lib/fonts.js';
   import { importedThemes, activeImportedId, removeImportedTheme, applyImportedTheme } from '$lib/stores/imported-themes.js';
   import { comboTitle } from '$lib/shortcuts.js'
   import Kbd from './Kbd.svelte'
@@ -263,6 +264,35 @@
     if (font === settings.font) return;
     settings = updateSettings({ font });
   }
+
+  // ── Separate fonts and smoothing (src/lib/fonts.js) ──
+  /** Each surface that can take a face of its own, with what it covers. */
+  const FONT_SURFACE_ROWS = /** @type {const} */ ([
+    { key: 'ui', label: 'Interface', desc: 'Menus, the sidebar, dialogs: everything outside the editor, the grid and the terminal.', kinds: ['sans', 'serif'], sample: 'Show the 20 newest orders over $100 and who placed them.' },
+    { key: 'code', label: 'SQL editor', desc: 'The SQL editor and the query consoles.', kinds: ['mono'], sample: "SELECT id, email FROM users WHERE created_at > now() - interval '7 days'; -- 0O 1lI" },
+    { key: 'grid', label: 'Data grid', desc: 'Cells, column headers and the cell editor.', kinds: ['mono', 'sans'], sample: '1042  ada@lovelace.dev  2024-01-03  9.50' },
+    { key: 'chat', label: 'AI chat', desc: 'Your prompts and the replies.', kinds: ['sans', 'serif'], sample: 'Which customers ordered twice this week but never paid?' },
+    { key: 'terminal', label: 'Terminal', desc: 'Database shells like psql and mysql in the Terminal tab.', kinds: ['mono'], sample: 'app=# \\dt public.*' },
+  ]);
+  /** The faces this machine has, per surface; probing installed fonts once is enough. */
+  const faceLists = Object.fromEntries(FONT_SURFACE_ROWS.map((r) => [r.key, facesFor([...r.kinds])]));
+  const fontsCfg = $derived(normalizeFontSettings(settings.fonts));
+  /** @param {Partial<import('$lib/fonts.js').FontSettings>} patch */
+  function setFonts(patch) {
+    settings = updateSettings({ fonts: { ...normalizeFontSettings(settings.fonts), ...patch } });
+  }
+  /** The stack a surface draws in right now, for its preview. @param {string} key */
+  function surfaceStack(key) {
+    const own = faceStack(/** @type {any} */ (fontsCfg)[key]);
+    if (own) return own;
+    const preset = FONT_PRESETS[settings.font] ?? FONT_PRESETS[DEFAULT_FONT];
+    if (key === 'ui' || key === 'chat') return preset.sans;
+    if (key === 'grid') return preset.mono;
+    return 'var(--editor-font-family)';
+  }
+  const smoothingDesc = detectOs() === 'macos'
+    ? 'Grayscale draws thinner text than the macOS default. System uses the macOS smoothing.'
+    : 'Grayscale draws thin, even text. System leaves it to the OS renderer.';
   // The default face leads the list (SF Pro on a Mac, Geist elsewhere).
   const fontEntries = Object.entries(FONT_PRESETS).sort(([a], [b]) => Number(b === DEFAULT_FONT) - Number(a === DEFAULT_FONT));
   const iconStyleEntries = Object.entries(ICON_STYLES);
@@ -1509,6 +1539,59 @@
           <span class="flex size-5 shrink-0 items-center justify-center rounded border border-border/40 bg-muted/30 text-ui-2xs font-semibold text-foreground/70" style="font-family: {it.sans}" aria-hidden="true">Aa</span>
         {/snippet}
       </SelectMenu>
+    </div>
+  {/if}
+
+  {#if show('Separate fonts', 'Set the interface, SQL editor, data grid, AI chat and terminal fonts separately')}
+    {@render switchRow(
+      'Separate fonts',
+      'Set the interface, SQL editor, data grid, AI chat and terminal fonts separately instead of one theme font.',
+      fontsCfg.separate,
+      () => setFonts({ separate: !fontsCfg.separate }),
+    )}
+    {#if fontsCfg.separate}
+      <div class="mb-2 flex flex-col gap-3 rounded-lg border border-border/40 bg-muted/15 p-3">
+        {#each FONT_SURFACE_ROWS as row (row.key)}
+          {@const current = /** @type {any} */ (fontsCfg)[row.key]}
+          <div class="flex flex-col gap-2">
+            <div class="flex items-center justify-between gap-4">
+              <div class="min-w-0">
+                <p class="text-ui-sm font-medium text-foreground">{$tx('set.font.' + row.key, row.label)}</p>
+                <p class="mt-0.5 text-ui-xs leading-relaxed text-muted-foreground">{$tx('set.font.' + row.key + '.desc', row.desc)}</p>
+              </div>
+              <SelectMenu
+                ariaLabel="{row.label} font"
+                value={current || 'theme'}
+                onValueChange={(v) => setFonts({ [row.key]: v && v !== 'theme' ? v : '' })}
+                items={[
+                  { value: 'theme', label: $tx('set.font.theme', 'Theme font'), sans: surfaceStack(row.key === 'ui' || row.key === 'chat' ? 'ui' : row.key === 'grid' ? 'grid' : 'code'), keywords: ['theme', 'default'] },
+                  ...faceLists[row.key].map((f) => ({ value: f.id, label: f.label, sans: f.stack, keywords: [f.label, f.kind] })),
+                ]}
+                searchPlaceholder="Search fonts…"
+              >
+                {#snippet lead(it)}
+                  <span class="flex size-5 shrink-0 items-center justify-center rounded border border-border/40 bg-muted/30 text-ui-2xs font-semibold text-foreground/70" style="font-family: {it.sans}" aria-hidden="true">Aa</span>
+                {/snippet}
+              </SelectMenu>
+            </div>
+            <!-- What the surface will look like, in its face. -->
+            <p
+              class={cn('truncate rounded-md border border-border/30 bg-background px-2.5 py-1.5 text-foreground', row.kinds.includes('mono') && row.key !== 'grid' ? 'text-ui-xs' : 'text-ui-sm')}
+              style="font-family: {surfaceStack(row.key)}"
+            >{row.sample}</p>
+          </div>
+        {/each}
+      </div>
+    {/if}
+  {/if}
+
+  {#if show('Font smoothing', 'Thinner grayscale text smoothing or the OS default')}
+    <div class={rowCls}>
+      <div class="min-w-0">
+        <p class="text-ui-sm font-medium text-foreground">{$tx('set.Font smoothing', 'Font smoothing')}</p>
+        <p class="mt-0.5 text-ui-xs leading-relaxed text-muted-foreground">{$tx(detectOs() === 'macos' ? 'set.smoothing.desc.mac' : 'set.smoothing.desc', smoothingDesc)}</p>
+      </div>
+      {@render segmented('Font smoothing', [{ value: 'grayscale', label: $tx('set.smoothing.grayscale', 'Grayscale') }, { value: 'system', label: $tx('set.smoothing.system', 'System') }], fontsCfg.smoothing, (v) => setFonts({ smoothing: v }))}
     </div>
   {/if}
 

@@ -1713,7 +1713,7 @@
       <div
         bind:this={termEl}
         class="size-full"
-        style="font-family: var(--editor-font-family, var(--font-mono)); font-size: calc({sqlEditorFontSize($appSqlEditor.textSize)} * 0.9);"
+        style="font-family: var(--terminal-font, var(--editor-font-family, var(--font-mono))); font-size: calc({sqlEditorFontSize($appSqlEditor.textSize)} * 0.9);"
       ></div>
     </div>
 
