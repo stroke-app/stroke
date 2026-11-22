@@ -12,6 +12,7 @@
   import { updateState, updateActions } from '$lib/stores/update-state.js'
   import KeybindingsSettings from './KeybindingsSettings.svelte'
   import SnippetsSettings from './SnippetsSettings.svelte'
+  import { openTransfer } from '$lib/stores/transfer-ui.js'
   import { bindingFor } from '$lib/stores/keybindings.js'
   import { startTelemetry, stopTelemetry } from "$lib/telemetry.js";
   import Minus from "@lucide/svelte/icons/minus";
@@ -1939,6 +1940,14 @@
         <Button type="button" size="sm" class="shrink-0" onclick={() => void signInWithToast()}>Sign in</Button>
       </div>
     {/if}
+  {/if}
+
+  {@render secLabel('Move to another computer')}
+  {#if show('Export connections and settings', 'Export import file backup transfer connections settings snippets saved queries passwords without sync')}
+    {@render actionRow('Export to a file', 'Connections, saved queries, settings and snippets in one file, to set up Stroke elsewhere without sync. Passwords only if you choose, encrypted.', 'Export…', () => { open = false; openTransfer('export'); })}
+  {/if}
+  {#if show('Import connections and settings', 'Import export file restore transfer connections settings snippets')}
+    {@render actionRow('Import from a file', 'Shows what a Stroke export holds before anything changes; connections already here are kept unless you replace them.', 'Import…', () => { open = false; openTransfer('import'); })}
   {/if}
 
   {@render secLabel('Sharing')}
