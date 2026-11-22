@@ -43,7 +43,10 @@
    */
 
   const family = $derived(tableFamily(dbType))
-  const typeItems = $derived(COLUMN_TYPES[family].map((t) => ({
+  // DuckDB writes Postgres-style DDL but has no serial or bigserial types:
+  // "Type with name serial does not exist", the moment New table was submitted.
+  const noSerial = $derived(dbType === 'duckdb')
+  const typeItems = $derived(COLUMN_TYPES[family].filter((t) => !(noSerial && /serial$/.test(t.name))).map((t) => ({
     value: t.name, group: t.group, hint: t.params === 2 ? '(p, s)' : t.params === 1 ? '(n)' : '',
   })))
   const canComment = $derived(family !== 'sqlite')
@@ -62,6 +65,7 @@
     const cols = [
       family === 'sqlite' ? col('id', 'INTEGER', { pk: true, notNull: true })
         : family === 'mysql' ? col('id', 'INT', { pk: true, notNull: true, defaultVal: 'AUTO_INCREMENT' })
+        : dbType === 'duckdb' ? col('id', 'integer', { pk: true, notNull: true })
         : col('id', 'serial', { pk: true, notNull: true }),
     ]
     if (family === 'postgres') cols.push(col('created_at', 'timestamptz', { notNull: true, defaultVal: 'now()' }))

@@ -1,5 +1,7 @@
 <script>
   import { formatApiCall } from '$lib/dynamo-json.js'
+  import { sqlFamily, SQL_SNIPPETS } from '$lib/sql-complete-data.js'
+  import { spannerIsPg } from '$lib/sql-ident.js'
   import ArrowLeft from '@lucide/svelte/icons/arrow-left'
   import { onMount, onDestroy, untrack, tick } from 'svelte'
   import { panelMotionOff, slidePanel } from '$lib/panel-motion.js'
@@ -4793,6 +4795,31 @@ let rowSearch = $state('')
    * fields (Tab walks them) once the editor holds the tab.
    * @param {{ text: string, title: string, snippet?: string }} spec
    */
+  /**
+   * New table. The dialog writes Postgres, MySQL or SQLite DDL; SQL Server and
+   * ClickHouse got Postgres DDL from it (double quotes, serial, timestamptz)
+   * that they reject, so there it opens the editor on the engine's own
+   * CREATE TABLE, with its fields to Tab through.
+   */
+  function openNewTable() {
+    const fam = sqlFamily(dbType)
+    if (fam === 'mssql' || fam === 'clickhouse') {
+      const s = SQL_SNIPPETS.find((x) => x.name === 'CREATE TABLE' && x.only?.includes(fam))
+      if (s) { openObjectSql({ text: '', title: 'New table', snippet: s.body }); return }
+    }
+    // GoogleSQL: Spanner keys the table after the column list, and BigQuery
+    // names the dataset. Both checked against their emulators.
+    if (dbType === 'spanner' && !spannerIsPg()) {
+      openObjectSql({ text: '', title: 'New table', snippet: 'CREATE TABLE ${1:name} (\n  id INT64 NOT NULL,\n  ${2:column} ${3:STRING(MAX)},\n  created_at TIMESTAMP NOT NULL OPTIONS (allow_commit_timestamp = true)\n) PRIMARY KEY (id)' })
+      return
+    }
+    if (dbType === 'bigquery') {
+      openObjectSql({ text: '', title: 'New table', snippet: `CREATE TABLE ${activeSchema ? activeSchema + '.' : ''}\${1:name} (\n  id INT64 NOT NULL,\n  \${2:column} \${3:STRING},\n  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP()\n)` })
+      return
+    }
+    showCreateTableDialog = true
+  }
+
   function openObjectSql({ text, title, snippet }) {
     if (aiMode) exitAiMode()
     openSqlTabWith(text, title, { draft: false })
@@ -8132,7 +8159,9 @@ let rowSearch = $state('')
       let msg = data.message ?? ''
       // The reply is camelCase (`SqlResult` in query.rs); `row_count` was never sent.
       const affected = data.rowCount ?? data.row_count
-      if (!msg && affected != null && cols.length === 0) {
+      // Writes only: a read the engine returned no shape for (InfluxDB with
+      // nothing matched) said "0 rows affected", as if it had been an UPDATE.
+      if (!msg && affected != null && cols.length === 0 && isWriteSql(data.sql || sqlRan)) {
         msg = `${formatCompactCount(affected)} ${affected === 1 ? 'row' : 'rows'} affected`
       }
       const stored = runTabId ? _sqlViewsByTab.has(runTabId) : false
@@ -10814,7 +10843,7 @@ let rowSearch = $state('')
         ondatabaseinfo={(args) => void openDatabaseInfo(args)}
         onterminatedbsessions={(args) => void terminateDbSessions(args)}
         {databasesRefreshKey}
-        onnewtable={() => (showCreateTableDialog = true)}
+        onnewtable={openNewTable}
         onnewschema={() => (showCreateSchemaDialog = true)}
         ontruncatetable={handleTruncateTable}
         ondroptable={(t, c, k) => void handleDropTable(t, c, k)}
