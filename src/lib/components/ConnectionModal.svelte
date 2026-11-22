@@ -841,6 +841,30 @@
   /** The front page's paste bar. */
   let quickUri = $state("");
   let quickHint = $state("");
+  /**
+   * An http(s) address that names no engine by host or default port (a
+   * Docker-mapped 19200, a proxy): Elasticsearch, OpenSearch, CouchDB,
+   * ClickHouse and libSQL all speak HTTP, so the bar asks which instead of
+   * saying it isn't a connection string. Holds the address until picked.
+   */
+  let httpAmbiguous = $state("");
+  const HTTP_ENGINES = /** @type {const} */ ([
+    { id: "elasticsearch", uriType: "couchdb" },
+    { id: "opensearch", uriType: "couchdb" },
+    { id: "couchdb", uriType: "couchdb" },
+    { id: "clickhouse", uriType: "clickhouse" },
+    { id: "libsql", uriType: "libsql" },
+  ]);
+  /** @param {{ id: string, uriType: string }} e */
+  function useHttpAs(e) {
+    const raw = httpAmbiguous;
+    httpAmbiguous = "";
+    quickHint = "";
+    pickEngine(e.id);
+    if (!applyConnectionUriFrom(raw, /** @type {any} */ (e.uriType))) quickHint = "Could not read that string.";
+    quickUri = "";
+    clipboardDismissed = raw;
+  }
   /** @type {HTMLInputElement | null} */
   let quickUriEl = $state(null);
 
@@ -948,6 +972,12 @@
     quickHint = "";
     if (!raw) return;
     const hit = detectConnectionUri(raw);
+    httpAmbiguous = "";
+    if (!hit && /^https?:\/\/[^\s]+$/i.test(raw)) {
+      httpAmbiguous = raw;
+      quickHint = "Several databases use an http address. Which one is this?";
+      return;
+    }
     if (!hit) {
       quickHint = "That does not look like a connection string. Paste a URL (postgres://, mysql://, sqlserver://, oracle://, mongodb://, redis://, libsql://, …), a .env line, host=… dbname=…, or a path to a .db file.";
       return;
@@ -4471,6 +4501,7 @@
                           onclick={() => void prefillFromClipboard()}
                           oninput={(e) => {
                             quickHint = "";
+                            httpAmbiguous = "";
                             // Cleared on purpose: do not hand the same string
                             // back on the next window focus.
                             const v = /** @type {HTMLInputElement} */ (e.currentTarget).value;
@@ -4513,6 +4544,16 @@
                     </div>
                     {#if quickHint}
                       <p class="px-0.5 text-ui-2xs text-muted-foreground">{quickHint}</p>
+                    {/if}
+                    {#if httpAmbiguous}
+                      <div class="flex flex-wrap gap-1.5 px-0.5" role="group" aria-label="Engine for this address">
+                        {#each HTTP_ENGINES.filter((e) => !DISABLED_TABS.has(e.id)) as e (e.id)}
+                          <Button variant="outline" size="sm" class="h-7 gap-1.5" onclick={() => useHttpAs(e)}>
+                            <DbIcon id={e.id} class="size-3.5 shrink-0" />
+                            {driverById(e.id).label}
+                          </Button>
+                        {/each}
+                      </div>
                     {/if}
                   </div>
 
