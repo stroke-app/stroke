@@ -4,6 +4,33 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.6.1] - 2026-11-22
+
+### Bug Fixes
+- **AI chat** - A reply that mentions "a ```sql block" in a sentence no longer turns the rest of the reply into a code block captioned with that sentence.
+- **Postgres backup and restore** - Backups record the extensions their tables use (uuid-ossp, citext, PostGIS and others), and leave out what those extensions own. Restoring an older backup into a fresh database adds the extensions its tables need first, instead of failing on `uuid_generate_v4()` and rolling back.
+- **Infinite scroll counter** - It counts the rows that have loaded instead of staying at "50 of 100,000".
+- **Connection latency** - The first reading waits until the connect settles: a local database no longer flashes a red "958 ms", and one database's reading no longer carries over to the next.
+- **Query history** - Errors read as the database wrote them, without "error returned from database:". Runs under a millisecond show "<1ms".
+- **Settings search** - Every word matches in any order, so "page size" and "dark mode" find their settings.
+- **Find in database** - Counts views as views, and its warning no longer starts with a stray dot or outlives the query.
+
+#### Large values
+- **Cell panel** - A JSON value of a megabyte or more (a jsonb holding a file) no longer goes blank when scrolled sideways. JSON is laid out with short lines at any size: one key per line, runs of numbers or strings packed into lines.
+- **Record view** - A value the grid fetched as a size has a Load button, and shows what it loads.
+- **Record view and row inspector** - Large values are shown cut and are edited in the cell panel (Space) instead of a field that could not draw them.
+- **Text view** - Very long cells are cut in the preview only. Copy and Download keep them whole.
+- **Console** - A new result starts at the top instead of where the last one was scrolled.
+
+### Changes
+- **Shortcuts** - The AI panel opens with Cmd/Ctrl+I. The inline AI sidebar moves to Cmd/Ctrl+Shift+E.
+
+#### Performance
+- **Deep scrolling in large tables** - A large table opened with All rows is copied in the background to a local file, in the grid's own order, and windows already copied are read from it instead of asking the database for a deep OFFSET. A jump to row 900,000 no longer waits on the server reading every row before it.
+- **Connect** - Background warm-ups (editor chunks, the terminal dock, the CLI lookup) wait until the first screen after a connect has painted, and idle work waits for the main thread to be idle rather than just for no input.
+- **Loading pill** - Says "deep in the table, fetching" when the link is fast and the query is what is slow, instead of "slow connection".
+
+
 ## [3.6.0] - 2026-11-22
 
 ### Changes
