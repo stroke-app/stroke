@@ -10868,6 +10868,7 @@ let rowSearch = $state('')
         onviewstructure={(t) => void openTableStructure(t)}
         onexportsql={(t) => void handleExportSql(t)}
         onexportdata={(t) => void handleExportData(t)}
+        onimportdata={isKV ? null : async (t) => { if (aiMode) exitAiMode(); await openTableTab(activeSchema, t); importDataOpen = true }}
         onopeninconsole={handleOpenTableInConsole}
         onopenobjectsql={openObjectSql}
         ongeneratesql={handleGenerateSql}

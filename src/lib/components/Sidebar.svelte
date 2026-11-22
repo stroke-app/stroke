@@ -170,6 +170,8 @@
     onviewddl = /** @type {(table: string) => void} */ (() => {}),
     onexportsql = /** @type {(table: string) => void} */ (() => {}),
     onexportdata = /** @type {(table: string) => void} */ (() => {}),
+    /** Open a table and its Import data dialog. @type {((table: string) => void) | null} */
+    onimportdata = null,
     /** Names of tables that currently have an open tab (current schema). @type {string[]} */
     openTables = [],
     onclosetable = /** @type {(table: string) => void} */ (() => {}),
@@ -1841,6 +1843,17 @@
     <Icon name="download" />
     Export data
   </ContextMenu.Item>
+  {#if onimportdata}
+  <!-- Export was here and import only in the open table's menu. -->
+  <ContextMenu.Item
+    disabled={$readOnlyMode}
+    title={$readOnlyMode ? READ_ONLY_HINT : undefined}
+    onSelect={() => onimportdata?.(name)}
+  >
+    <Icon name="file-up" />
+    Import data…
+  </ContextMenu.Item>
+  {/if}
   {/if}
   {#if tableDdl}
   <ContextMenu.Separator />
@@ -2973,6 +2986,16 @@
                           <Icon name="download" />
                           Export data
                         </ContextMenu.Item>
+                        {#if onimportdata}
+                        <ContextMenu.Item
+                          disabled={$readOnlyMode}
+                          title={$readOnlyMode ? READ_ONLY_HINT : undefined}
+                          onSelect={() => onimportdata?.(tableName)}
+                        >
+                          <Icon name="file-up" />
+                          Import data…
+                        </ContextMenu.Item>
+                        {/if}
                         {/if}
                         {/if}
                       </ContextMenu.Content>
