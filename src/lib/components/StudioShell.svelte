@@ -11320,7 +11320,7 @@ let rowSearch = $state('')
         >
           <svelte:boundary failed={tabError}>
             {#await import('./InstanceInsightsPage.svelte')}<TabLoading />{:then { default: InstanceInsightsPage }}
-              <InstanceInsightsPage active={activeTab?.kind === 'insights'} connectionName={connection?.name ?? connection?.database ?? ''} {dbType} />
+              <InstanceInsightsPage active={activeTab?.kind === 'insights'} connectionName={connection?.name ?? connection?.database ?? ''} {dbType} connectionId={persistConnectionId ?? ''} />
             {/await}
           </svelte:boundary>
         </div>
