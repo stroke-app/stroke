@@ -141,6 +141,9 @@
     listTables,
     getTableRowCounts,
     getTableRows,
+    startTableMirror,
+    resultWindow,
+    resultDrop,
     countTableRows,
     searchIndexStatus,
     createSearchIndex,
@@ -1372,6 +1375,8 @@
    * @param {Array<{ rowIdx: number, colIdx: number, value: string }>} edits
    */
   async function handleFindReplaceApply(edits) {
+    // The table is about to change under its local copy.
+    dropActiveMirror()
     if (!activeTable || edits.length === 0) return
     if (dbType === 'clickhouse') {
       let done = 0
@@ -2164,7 +2169,7 @@
   /** What the window fetcher is doing, for the grid's loading pill. Plain state
    *  (not the hot-path sets, which stay non-reactive): assigned only when the
    *  answer actually changes. */
-  let windowStatus = $state({ slow: false, failed: false })
+  let windowStatus = $state(/** @type {{ slow: boolean, failed: boolean, cause?: string }} */ ({ slow: false, failed: false, cause: 'connection' }))
 let rowSearch = $state('')
   let rowSort = $state(/** @type {TableSort | null} */ (null))
   /** Secondary sort keys for multi-column sort (primary is rowSort). @type {TableSort[]} */
@@ -5482,6 +5487,7 @@ let rowSearch = $state('')
     if (!tab || tab.kind === 'welcome') return
     _liveRowsByTab.delete(tab.id)
     forgetSqlResult(tab.id)
+    dropMirror(tab.id)
     // Anything still in flight for this tab is now orphaned: dropping its load
     // token makes the in-flight result fail its own liveness check instead of
     // being applied to whatever tab took its place.
@@ -7056,6 +7062,9 @@ let rowSearch = $state('')
     _windowOrder = s.windowOrder ? { ...s.windowOrder, sorts: (s.windowOrder.sorts ?? []).map((k) => ({ ...k })) } : null
     forgetWindowFetchState()
     windowed = true
+    // The same view as when this tab was left, so its mirror still describes it.
+    const m = activeTabId ? _mirrors.get(activeTabId) : undefined
+    if (m) m.seq = _windowSeq
     dataVersion++
   }
 
@@ -7107,6 +7116,72 @@ let rowSearch = $state('')
     return v === undefined || v === null ? null : v
   }
 
+  // ── Table mirror ──────────────────────────────────────────────────────────
+  // A windowed view deep into a large remote table paid a remote OFFSET per
+  // window: the server reads and discards every row before it, so row 196,000
+  // took seconds and the grid sat on skeletons. Each such view is copied once,
+  // in its own order, into the backend's result store (`table_mirror`, page by
+  // page by key), and a window whose rows have landed there is read from the
+  // local file instead. Windows past what has landed fetch remotely as before.
+  //
+  // One mirror per tab, kept while the tab is open and dropped when its view
+  // changes (reload, sort, filter, a write) - a stale copy must never serve
+  // rows. Read only while it matches the view exactly: the seq it was started
+  // for.
+  const MIRROR_MIN_ROWS = 10_000
+  const MIRROR_MAX_ROWS = 5_000_000
+  /** A view whose rows weigh more than this in total is not copied to disk. */
+  const MIRROR_MAX_BYTES = 2 * 1024 * 1024 * 1024
+  const MIRROR_MAX_COUNT = 4
+  /** tab id → the mirror its current view is being copied into. @type {Map<string, { id: string, seq: number }>} */
+  const _mirrors = new Map()
+  let _mirrorSerial = 0
+
+  /** The active view's mirror, when it describes exactly this view. */
+  function activeMirror() {
+    const m = activeTabId ? _mirrors.get(activeTabId) : undefined
+    return m && m.seq === _windowSeq && windowed && _windowBase === 0 ? m.id : null
+  }
+
+  /** @param {string | null | undefined} tabId */
+  function dropMirror(tabId) {
+    if (!tabId) return
+    const m = _mirrors.get(tabId)
+    if (!m) return
+    _mirrors.delete(tabId)
+    resultDrop(m.id)
+  }
+
+  /** The active table's rows changed under its mirror (an edit): drop it. */
+  function dropActiveMirror() {
+    dropMirror(activeTabId)
+  }
+
+  /** Copy the active windowed view into the result store, when it is worth it. */
+  function startMirror() {
+    const tabId = activeTabId
+    if (!tabId) return
+    dropMirror(tabId)
+    if (!windowed || _windowBase !== 0 || _windowCount < MIRROR_MIN_ROWS) return
+    // Live refresh reloads on a timer: a copy would be stale within seconds and
+    // re-copying the table each time is the opposite of faster.
+    if (activeAutoRefreshMs > 0) return
+    if (_windowBytesPerRow && _windowBytesPerRow * _windowCount > MIRROR_MAX_BYTES) return
+    const seek = windowSeek()
+    if (!seek) return
+    // A few at most: the result store keeps 16 results across the app, and
+    // mirrors must not push the console's results out of it.
+    while (_mirrors.size >= MIRROR_MAX_COUNT) dropMirror(_mirrors.keys().next().value)
+    const id = `mirror:${tabId}:${++_mirrorSerial}`
+    _mirrors.set(tabId, { id, seq: _windowSeq })
+    void startTableMirror(id, activeSchema, activeTable ?? '', currentRowQuery(false), seek, Math.min(_windowCount, MIRROR_MAX_ROWS))
+      .catch(() => {
+        // Refused (no disk room) or failed mid-walk: forget it; the windows
+        // keep fetching remotely, which is all they did before.
+        if (_mirrors.get(tabId)?.id === id) _mirrors.delete(tabId)
+      })
+  }
+
   /** Fetch one window and splice it into the sparse `rows` array in place.
    *  Window `w` covers view rows [w*_windowRows, …), which live at absolute table
    *  offset _windowBase + that - the view can be a page, not just the whole table. */
@@ -7128,13 +7203,30 @@ let rowSearch = $state('')
     if (_windowFailed.delete(w)) syncWindowStatus()
     const t0 = performance.now()
     try {
-      const data = await getTableRows(activeSchema, activeTable, limit, _windowBase + start, { ...currentRowQuery(false), keyset })
+      // From the mirror when it already holds these rows: a local file read in
+      // place of a remote OFFSET. Short (still streaming) or failed, the
+      // window goes to the database as before.
+      const mirror = activeMirror()
+      /** @type {any[] | null} */
+      let local = null
+      if (mirror) {
+        try {
+          const got = await resultWindow(mirror, start, limit)
+          if (Array.isArray(got) && got.length === limit) local = got
+        } catch { /* dropped or unreadable: the remote path below */ }
+        if (seq !== _windowSeq) return
+      }
+      const data = local ? { rows: local } : await getTableRows(activeSchema, activeTable, limit, _windowBase + start, { ...currentRowQuery(false), keyset })
       // Rolling, so the measure tracks the connection rather than latching on the
       // first deep page. Recorded even for a superseded fetch - the round-trip
-      // was just as slow whether or not its rows are still wanted.
-      const ms = performance.now() - t0
-      _windowMs = _windowMs ? _windowMs * 0.65 + ms * 0.35 : ms
-      _windowSlow = _windowMs > WINDOW_SLOW_MS
+      // was just as slow whether or not its rows are still wanted. Only for a
+      // remote fetch: a local read says nothing about the connection.
+      if (!local) {
+        const ms = performance.now() - t0
+        _windowMs = _windowMs ? _windowMs * 0.65 + ms * 0.35 : ms
+        _windowSlow = _windowMs > WINDOW_SLOW_MS
+      }
+      tracePoint(`window ${start} ${local ? 'local' : keyset ? 'seek' : 'offset'} ${Math.round(performance.now() - t0)}ms`)
       if (seq !== _windowSeq) return // table / query changed while in flight
       const fetched = data.rows ?? []
       for (let i = 0; i < fetched.length; i++) rows[start + i] = fetched[i]
@@ -7224,8 +7316,11 @@ let rowSearch = $state('')
   /** Publish fetcher state for the grid's loading pill, only on a real change. */
   function syncWindowStatus() {
     const failed = _windowFailed.size > 0
-    if (windowStatus.slow !== _windowSlow || windowStatus.failed !== failed) {
-      windowStatus = { slow: _windowSlow, failed }
+    // Slow windows over a fast link are the query's cost (a deep OFFSET reads
+    // every row before it), not the connection's: say which, from the ping.
+    const cause = _windowSlow && dbLatencyMs != null && dbLatencyMs * 4 < WINDOW_SLOW_MS ? 'query' : 'connection'
+    if (windowStatus.slow !== _windowSlow || windowStatus.failed !== failed || windowStatus.cause !== cause) {
+      windowStatus = { slow: _windowSlow, failed, cause }
     }
   }
 
@@ -7573,6 +7668,8 @@ let rowSearch = $state('')
           for (let w = firstGap; w <= firstGap + WINDOW_PREFETCH; w++) _windowQueue.push(w)
           pumpWindowQueue()
         }
+        // The view's local copy, so a jump deep into it is a file read.
+        if (isActive()) startMirror()
       } else if (wantsWindow) {
         // Past the limit bar but small and light after measuring - load the rest.
         resetWindowing()
@@ -8267,7 +8364,13 @@ let rowSearch = $state('')
         sqlQueryMs = ranMs
         sqlMessage = msg
       }
-      if (changedSql) void refreshAfterSql(sqlRunEffects(changedSql))
+      traceDone()
+      if (changedSql) {
+        // A write from the editor can touch any open table: no local copy of
+        // one may outlive it.
+        for (const id of [..._mirrors.keys()]) dropMirror(id)
+        void refreshAfterSql(sqlRunEffects(changedSql))
+      }
     } catch (e) {
       ranError = String(e)
       if (runTabId) forgetSqlResult(runTabId)
@@ -9241,6 +9344,7 @@ let rowSearch = $state('')
     for (const id of [..._sqlViewsByTab.keys()]) if (!keep.has(id)) forgetSqlResult(id)
     prune(_sqlRowsByTab)
     prune(_autoRefreshByTab)
+    for (const id of [..._mirrors.keys()]) if (!keep.has(id)) dropMirror(id)
   }
 
   /** Put the open connection's tabs (and its sidebar) aside under its key. */
@@ -9946,6 +10050,8 @@ let rowSearch = $state('')
 
   /** @param {number[]} rowIndices */
   async function handleDeleteRows(rowIndices) {
+    // The table is about to change under its local copy.
+    dropActiveMirror()
     if (!activeTable || !primaryKey.length || rowIndices.length === 0) return
 
     const removed = [...new Set(rowIndices)].sort((a, b) => a - b)
@@ -10018,6 +10124,8 @@ let rowSearch = $state('')
    * @returns {Promise<boolean>}
    */
   async function handleApplyChanges({ edits, deleteRowIndices, insertValues }) {
+    // The table is about to change under its local copy.
+    dropActiveMirror()
     if (!activeTable) return true
     /** @type {Map<number, Record<string, unknown>>} */
     const valuesByRow = new Map()
@@ -10087,6 +10195,8 @@ let rowSearch = $state('')
 
   /** @param {Record<string, unknown>} values */
   async function handleInsertRow(values) {
+    // The table is about to change under its local copy.
+    dropActiveMirror()
     if (!activeTable) return
 
     insertingRow = true
@@ -10153,6 +10263,8 @@ let rowSearch = $state('')
    * @param {string} sql
    */
   async function handleExecuteRawDml(sql) {
+    // The table is about to change under its local copy.
+    dropActiveMirror()
     if (!sql.trim()) return
     const _start = Date.now()
     try {
@@ -10250,6 +10362,8 @@ let rowSearch = $state('')
 
   /** @param {{ rowIdx: number, colIdx: number, value: unknown }} detail */
   async function handleSaveCell(detail) {
+    // The table is about to change under its local copy.
+    dropActiveMirror()
     if (!activeTable || !primaryKey.length) return
 
     const col = columns[detail.colIdx]

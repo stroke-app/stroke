@@ -1634,6 +1634,20 @@ export async function getTableRows(schema, table, limit, offset, query = {}) {
     table,
     limit,
     offset,
+    ...tableRowsQueryArgs(query),
+  })
+  recordQuery({ sql: r?.sql, durationMs: r?.queryMs ?? Math.round(performance.now() - _t0), schema, table, source: 'browse', success: true })
+  traceRows('pg_get_table_rows', r, performance.now() - _t0)
+  return r
+}
+
+/**
+ * The query half of a table-rows call, shared by getTableRows and the table
+ * mirror so both run exactly the same SELECT.
+ * @param {any} query
+ */
+function tableRowsQueryArgs(query) {
+  return {
     search: query.search?.trim() || null,
     searchIsRegex: query.searchIsRegex ?? false,
     searchCaseSensitive: query.searchCaseSensitive ?? false,
@@ -1654,10 +1668,21 @@ export async function getTableRows(schema, table, limit, offset, query = {}) {
     // Fetch a wide column as a size and load its value per cell (Settings →
     // Data). Off means every value on the page, whatever it weighs.
     previewWide: (() => { try { return loadSettings().lazyWideColumns !== false } catch { return true } })(),
-  })
-  recordQuery({ sql: r?.sql, durationMs: r?.queryMs ?? Math.round(performance.now() - _t0), schema, table, source: 'browse', success: true })
-  traceRows('pg_get_table_rows', r, performance.now() - _t0)
-  return r
+  }
+}
+
+/**
+ * Copy a windowed table view into the backend's result store, page by page, so
+ * its windows can be read locally (`resultWindow`) instead of by a remote OFFSET.
+ * Resolves with the rows mirrored once the walk ends; `resultDrop(id)` stops it.
+ * @param {string} id @param {string} schema @param {string} table @param {any} query as for getTableRows
+ * @param {{ column: string, sqlType: string, desc: boolean, index: number }} seek
+ * @param {number} maxRows
+ * @returns {Promise<number>}
+ */
+export async function startTableMirror(id, schema, table, query, seek, maxRows) {
+  const { keyset: _k, includeMeta: _m, includeCount: _c, ...args } = tableRowsQueryArgs(query)
+  return await inv('table_mirror', { id, schema, table, ...args, seek, maxRows })
 }
 
 /**
