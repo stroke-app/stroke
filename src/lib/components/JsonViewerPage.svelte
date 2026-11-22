@@ -14,6 +14,7 @@
   import Braces from '@lucide/svelte/icons/braces'
   import Wand2 from '@lucide/svelte/icons/wand-2'
   import Trash2 from '@lucide/svelte/icons/trash-2'
+  import { layoutJsonText } from '$lib/json-layout.js'
   import { evalJsonPath, getCompletionItems, applyCompletion, describeResult } from '$lib/jsonpath.js'
 
   let { active = false } = $props()
@@ -193,6 +194,16 @@
 
   /** Typing in the input: the header follows at once, the parse 250ms after it stops. @param {string} val */
   function onInput(val) {
+    // JSON pasted into an empty input as one long line (a cell, an API
+    // response, a log entry) is laid out at once instead of sitting on one
+    // line until Format is found.
+    if (!rawJson.trim() && val.length > 60 && !val.includes('\n')) {
+      const pretty = layoutJsonText(val)
+      if (pretty !== null) {
+        setInput(pretty)
+        return
+      }
+    }
     rawJson = val
     // Debounce the expensive parse so it runs at most once per 250ms
     // instead of on every single keystroke. For a 500kb JSON file this
