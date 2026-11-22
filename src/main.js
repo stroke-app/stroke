@@ -31,6 +31,10 @@ applySettings(loadSettings())
 // benchmarking with VITE_STROKE_BENCH=1. Opt-in (perf-probe.js); both are
 // build-time constants, so a normal release drops this whole branch.
 if ((import.meta.env.DEV || import.meta.env.VITE_STROKE_BENCH === '1') && import.meta.env.VITE_STROKE_PERF === '1') {
+  // Room for every module a session loads (the default 250 fills at startup),
+  // so the perf log can say which code a connect pulled in.
+  try { performance.setResourceTimingBufferSize(20000) } catch { /* not supported */ }
+  void import('$lib/perf.js').then((m) => { m.traceMark('main'); m.traceStartupStalls() })
   void import('$lib/perf-probe.js').then((m) => m.installPerfProbe())
 }
 installZoomShortcuts()

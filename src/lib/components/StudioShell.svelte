@@ -6,7 +6,7 @@
   import { onMount, onDestroy, untrack, tick } from 'svelte'
   import { panelMotionOff, slidePanel } from '$lib/panel-motion.js'
   import { fade } from 'svelte/transition'
-  import { traceInteraction } from '$lib/perf.js'
+  import { traceInteraction, tracePoint, traceMark } from '$lib/perf.js'
   import { couchAdapter, cassandraAdapter, elasticAdapter, firestoreAdapter, mongoAdapter, neo4jAdapter, influxAdapter, uriHost } from '$lib/doc-adapters.js'
   import { queryLanguageFor } from '$lib/ai-query-languages.js'
   import { setQueryEngine } from '$lib/ai.js'
@@ -478,6 +478,13 @@
       void silentReconnect()
     }
   }
+  /**
+   * The connect has painted its first screen (catalog, sidebar, restored tabs).
+   * Warm-ups wait for it: the chunk warmer and the hidden terminal dock used to
+   * start the moment `connection` was set and compete with that first render,
+   * holding a 10 ms database answer behind ~300 ms of parsing.
+   */
+  let connectSettled = $state(true)
   let autoConnecting = $state(false)
   /** Name of the connection the overlay is waiting on. */
   let autoConnectName = $state('')
@@ -3731,11 +3738,9 @@ let rowSearch = $state('')
   $effect(() => {
     const conn = connection
     const type = dbType
-    if (!conn || !type) return
+    if (!conn || !type || !connectSettled) return
     const run = () => { void terminalClient({ ...conn, type }).catch(() => {}) }
-    const ric = /** @type {any} */ (window).requestIdleCallback
-    const id = ric ? ric(run, { timeout: 4000 }) : setTimeout(run, 1500)
-    return () => { (ric ? /** @type {any} */ (window).cancelIdleCallback : clearTimeout)(id) }
+    return whenIdle(run, { timeout: 4000 })
   })
   // A new connection gets a fresh client: close the old panel's session.
   $effect(() => {
@@ -8092,8 +8097,12 @@ let rowSearch = $state('')
     track('sql_run')
     const sqlRan = typeof overrideSql === 'string' && overrideSql.trim() ? overrideSql : sqlText
     if (!connection || !sqlRan.trim()) return
-    // Run to the painted result, for the perf log (off unless profiling).
-    const traceDone = traceInteraction('run sql')
+    // Run to the painted result, for the perf log (off unless profiling). Ends
+    // when the result is applied (or the run fails), not after the history write
+    // that follows it.
+    const traceEnd = traceInteraction('run sql')
+    let traced = false
+    const traceDone = () => { if (!traced) { traced = true; traceEnd() } }
     if (tableReadonly && isWriteSql(sqlRan)) {
       sqlError = 'This connection is open in read-only mode, so write statements are blocked.'
       return
@@ -8294,6 +8303,11 @@ let rowSearch = $state('')
   }
 
   async function onConnected(conn, savedId) {
+    connectSettled = false
+    traceMark('connected')
+    const _ph0 = performance.now()
+    /** Phase marks for the perf log (off unless profiling). @param {string} l */
+    const phase = (l) => tracePoint(`connected ${l} +${Math.round(performance.now() - _ph0)}ms`)
     // A fresh pool is in front and unnamed: no routing until the switch that
     // opened it names it (handleSwitchDatabase), or a call meant for this
     // database could be sent to a kept one for the database just left.
@@ -8379,10 +8393,12 @@ let rowSearch = $state('')
       // Schema → tables is a genuine dependency (loadTables needs activeSchema), so
       // this pair stays serial. The retry loop only sleeps when the backend isn't
       // ready yet (schemas come back empty); the happy path succeeds on attempt 0.
+      phase('setup')
       for (let attempt = 0; attempt < 3; attempt++) {
         if (attempt > 0) await new Promise(r => setTimeout(r, attempt * 700))
         try {
           await loadSchemas()
+          phase('schemas')
         } catch (e) {
           // Schema list failed - surface it but keep going so loadTables() still
           // runs and clears the loading flag (sidebar must never hang forever).
@@ -8391,6 +8407,7 @@ let rowSearch = $state('')
         if (schemas.length > 0) break
       }
       await loadTables({ force: true })
+      phase('tables')
       // Retry only when the fetch actually failed - an empty database is a valid
       // result and must not pay a 1 s penalty on every connect.
       if (tables.length === 0 && schemas.length > 0 && error) {
@@ -8410,11 +8427,24 @@ let rowSearch = $state('')
       } catch { /* ignore */ }
     })()
     await storesReady
+    phase('stores')
     // Last time's tabs, now that the catalog says which tables still exist.
     try {
       await restoreOpenTabs(tabsKey)
     } finally {
       _openTabsReady.add(tabsKey)
+      phase('tabs')
+      void tick().then(() => requestAnimationFrame(() => {
+        connectSettled = true
+        phase('painted')
+        // Which code this connect pulled in, and when (perf log only).
+        try {
+          for (const e of performance.getEntriesByType('resource')) {
+            if (e.startTime < _ph0 - 50) continue
+            tracePoint(`loaded ${e.name.split('/').pop()?.split('?')[0]} at +${Math.round(e.startTime - _ph0)}ms for ${Math.round(e.duration)}ms`)
+          }
+        } catch { /* no resource timing */ }
+      }))
     }
   }
 
@@ -8521,7 +8551,7 @@ let rowSearch = $state('')
   // Keep these specifiers identical to the {#await import('./X.svelte')} blocks
   // below so Vite resolves them to the same chunk.
   $effect(() => {
-    if (!connection) return
+    if (!connection || !connectSettled) return
     // [reachable on this engine, loader]. Gates mirror the tab affordances in
     // the empty-state grid and the palette; keep them in sync when a page moves.
     /** @type {Array<[boolean, () => Promise<unknown>]>} */
@@ -8572,6 +8602,7 @@ let rowSearch = $state('')
 
   onMount(async () => {
     performance.mark('stroke:shell')
+    traceMark('shell mounted')
     // Resolve every saved host before the user can pick one. A cold DNS lookup
     // measured 4147ms here against 58ms warm, and the connect waits on it, so
     // this is the difference between a 4s connect and a 300ms one. Fire and
@@ -8763,7 +8794,7 @@ let rowSearch = $state('')
 
   function enterAiMode() {
     if (!connection) return
-    // AI in a tab: every way into AI mode (⌘⇧E, the title bar, the
+    // AI in a tab: every way into AI mode (⌘I, the title bar, the
     // palette) opens the tab instead.
     if ($appAiInTab) { openSingletonTab({ find: findAiTab, create: createAiTab }); return }
     aiMode = true
@@ -12481,7 +12512,9 @@ let rowSearch = $state('')
       {/if}
     {/if}
 
-    {#if connection && terminalDockEver}
+    <!-- A dock used before is mounted ahead of time so ⌘J opens on a live
+         prompt, but only once the connect has painted (or when opened). -->
+    {#if connection && terminalDockEver && (terminalDockOpen || connectSettled)}
       <!-- ⌘J terminal: a hairline, then the client. No header bar; the few
            actions float at the top-right of the terminal itself. -->
       <div
