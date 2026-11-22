@@ -45,12 +45,6 @@ export function installSelectAll() {
   window.addEventListener('keydown', (e) => {
     if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey || e.key.toLowerCase() !== 'a') return
     if (e.isComposing) return
-    // DEBUG-SELECTALL (temporary)
-    try {
-      const t = /** @type {any} */ (e.target)
-      const cs = t instanceof Element ? getComputedStyle(t) : null
-      void import('@tauri-apps/api/core').then(({ invoke }) => invoke('perf_log', { line: `DEBUG-SELECTALL target=${t?.tagName}.${t?.type ?? ''} us=${cs?.webkitUserSelect} prevented=${e.defaultPrevented}` })).catch(() => {})
-    } catch {}
     if (!selectIn(e.target)) return
     e.preventDefault()
     // The grid's and the shell's ⌘A (select all rows) must not also run.

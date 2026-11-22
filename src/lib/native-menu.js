@@ -37,8 +37,6 @@ export function bindNativeMenu(getActions, isConnected) {
       const win = getCurrentWebviewWindow()
       const off = await win.listen('native-menu', (event) => {
         const action = String(event.payload ?? '')
-        // DEBUG-SELECTALL (temporary)
-        void import('@tauri-apps/api/core').then(({ invoke }) => invoke('perf_log', { line: `DEBUG-SELECTALL menu action=${action} active=${document.activeElement?.tagName} has=${typeof getActions()[action]}` })).catch(() => {})
         const fromKeyboard = performance.now() - lastShortcutKeyAt < KEY_FALLTHROUGH_MS
         // ⌘A reaches the menu only when no page handler took the key, and the
         // webview has no select-all of its own without the stock item, so run it.
