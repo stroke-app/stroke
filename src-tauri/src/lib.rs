@@ -1061,18 +1061,24 @@ fn install_open_links(app: &tauri::AppHandle) {
         });
     }
     let cwd = std::env::current_dir().unwrap_or_default();
-    let first = links
-        .get_current()
-        .ok()
-        .flatten()
-        .and_then(|urls| urls.iter().find_map(|u| launch::parse_link(u.as_str())))
+    let current = links.get_current().ok().flatten().unwrap_or_default();
+    for page in current.iter().filter_map(|u| launch::parse_studio_link(u.as_str())) {
+        launch::open_studio_window(app, &page);
+    }
+    let first = current
+        .iter()
+        .find_map(|u| launch::parse_link(u.as_str()))
         .or_else(|| launch::from_args(std::env::args(), &cwd));
     if let Some(req) = first {
         launch::deliver(app, req);
     }
     let handle = app.clone();
     links.on_open_url(move |event| {
-        if let Some(req) = event.urls().iter().find_map(|u| launch::parse_link(u.as_str())) {
+        let urls = event.urls();
+        for page in urls.iter().filter_map(|u| launch::parse_studio_link(u.as_str())) {
+            launch::open_studio_window(&handle, &page);
+        }
+        if let Some(req) = urls.iter().find_map(|u| launch::parse_link(u.as_str())) {
             launch::deliver(&handle, req);
         }
     });
