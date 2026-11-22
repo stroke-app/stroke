@@ -1361,7 +1361,7 @@
             class={cn("mr-1 flex min-w-[18ch] shrink-0 items-center justify-end gap-1 font-mono text-ui-2xs tabular-nums @max-[37.5rem]/tb:hidden", hideAt(2))}
             title="{from.toLocaleString('en-US')}-{to.toLocaleString('en-US')} of {counting ? 'counting…' : total.toLocaleString('en-US') + ' rows'}{queryMs > 0 ? ` · ${queryMs}ms` : ''}"
           >
-            <span class="text-foreground">{total > 0 || counting ? `${from.toLocaleString("en-US")}-${to.toLocaleString("en-US")}` : "–"}</span>
+            <span class="text-foreground">{(total > 0 || counting) && !(counting && loading && loaded === 0) ? `${from.toLocaleString("en-US")}-${to.toLocaleString("en-US")}` : "–"}</span>
             {#if loading && total === 0 && !counting}
               <span class="text-muted-foreground">of <Icon name="loader-2" class="inline size-3 shrink-0 animate-spin align-[-2px]" aria-label="Loading rows" /></span>
             {:else if live && !counting}
@@ -1376,13 +1376,15 @@
 
         <div class="flex shrink-0 items-center gap-1.5">
         <!-- Rows per page: presets as a grid plus a custom size, titled so the
-             number in the toolbar is not a bare "1000". -->
+             number in the toolbar is not a bare "1000". It and the pager stay
+             usable while rows load: picking another size starts a new load,
+             which cancels the one in flight on the server. Disabled, a slow
+             table left no way out but waiting. -->
         <Popover bind:open={sizeMenuOpen}>
           <PopoverTrigger
             class={cn(pageSelectTrigger, "inline-flex items-center", "@max-[30rem]/tb:hidden", hideAt(9))}
             title="Rows per page"
             aria-label="Rows per page: {pageSizeLabel(pageSize)}"
-            disabled={loading}
           >
             {sizeShort(pageSize)}<span class="text-muted-foreground">rows</span>
             <Icon name="chevron-down" class="size-3.5 shrink-0 opacity-60" />
@@ -1438,7 +1440,7 @@
           <button
             type="button"
             class={iconBtn}
-            disabled={!canPrev || loading}
+            disabled={!canPrev}
             onclick={onprev}
             aria-label="Previous page"
           >
@@ -1447,7 +1449,7 @@
           <button
             type="button"
             class={iconBtn}
-            disabled={!canNext || loading}
+            disabled={!canNext}
             onclick={onnext}
             aria-label="Next page"
           >
@@ -1466,7 +1468,7 @@
             <button
               type="button"
               class={iconBtn}
-              disabled={!canPrev || loading}
+              disabled={!canPrev}
               onclick={onprev}
               aria-label="Previous page"
             >
@@ -1477,7 +1479,7 @@
                 class="inline-flex h-7 min-w-[4.5ch] items-center justify-center rounded-md px-1.5 text-ui-xs tabular-nums text-foreground transition-colors hover:bg-accent disabled:text-muted-foreground disabled:hover:bg-transparent data-[state=open]:bg-accent"
                 title="Go to page"
                 aria-label="Page {page}{counting ? '' : ` of ${pageCount}`}, go to page"
-                disabled={loading || total === 0 || (!counting && pageCount <= 1)}
+                disabled={total === 0 || (!counting && pageCount <= 1)}
               >
                 {page.toLocaleString()}<span class="px-0.5 text-muted-foreground">/</span>{#if counting}<Icon name="loader-2" class="inline size-3 shrink-0 animate-spin text-muted-foreground" aria-label="Counting rows" />{:else}<span class="text-muted-foreground">{formatCompactCount(pageCount)}</span>{/if}
               </PopoverTrigger>
@@ -1530,7 +1532,7 @@
             <button
               type="button"
               class={iconBtn}
-              disabled={!canNext || loading}
+              disabled={!canNext}
               onclick={onnext}
               aria-label="Next page"
             >

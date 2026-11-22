@@ -1664,6 +1664,8 @@ pub async fn pg_get_table_rows(
     // like every other column, which is what the app did before and what the
     // setting turns back on for anyone who wants it.
     preview_wide: Option<bool>,
+    // The grid view this fetch is for; a newer load of the tab cancels it.
+    fetch_tag: Option<crate::db::FetchTag>,
 ) -> Result<TableRows, String> {
     let _foreground = ForegroundFetch::begin();
     get_table_rows(
@@ -1684,6 +1686,7 @@ pub async fn pg_get_table_rows(
         keyset,
         nulls_order,
         preview_wide.unwrap_or(true),
+        fetch_tag,
     )
     .await
 }
@@ -2072,6 +2075,7 @@ pub async fn table_mirror(
                 None,
                 nulls_order,
                 preview_wide.unwrap_or(true),
+                None,
             )
             .await
             .map(Some)
