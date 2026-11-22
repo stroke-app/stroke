@@ -4,6 +4,13 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.7.1] - 2026-11-22
+
+### New Features
+- **Languages** - Spanish, French, German, Portuguese and Japanese now cover the command palette, menu bar, start screen, new-tab page, table toolbar, SQL console, sidebar, status bar and most of Settings. Pick one under Settings > Appearance > Language.
+- **Live cursors on a shared studio** - When you share a database as a web studio (Labs), everyone on the link sees each other: a colored outline and name on the cell each person is on, their pointer, and what they are typing before they save. Saved changes on either side reload the table for everyone else.
+
+
 ## [3.7.0] - 2026-11-22
 
 ### New Features
