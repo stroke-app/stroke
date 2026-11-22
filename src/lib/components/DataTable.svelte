@@ -8,7 +8,8 @@
   import { zoomState } from '$lib/stores/canvas-zoom.svelte.js'
   // Zoom is driven through the app-level settings so the canvas scales together
   // with the rest of the UI (applySettings mirrors the app zoom into zoomState).
-  import { increaseZoom, decreaseZoom, resetZoom, appPreviewDml, appTableStyle, TABLE_STYLES, normalizeTableStyle, appVimMode, appTableAlign, appNativeScroll, appRowSpacing, appZebraRows, rowSpacingHeight, appNumberGrouping, appHighlightActiveRow, appGridFontSize, appImagePreview, appOpenUrlsOnClick, appRowNumbers } from '$lib/stores/settings.js'
+  import { increaseZoom, decreaseZoom, resetZoom, appPreviewDml, appTableStyle, TABLE_STYLES, normalizeTableStyle, appVimMode, appTableAlign, appNativeScroll, appRowSpacing, appZebraRows, rowSpacingHeight, appNumberGrouping, appHighlightActiveRow, appGridFontSize, appImagePreview, appOpenUrlsOnClick, appRowNumbers, appDisplayTimezone } from '$lib/stores/settings.js'
+  import { instantIn, resolveZone } from '$lib/timezone.js'
   import { createSmoothScroll, wheelPixels } from '$lib/smooth-scroll.js'
   import { isJsonColumnType } from '$lib/cell-expand.js'
   import { readClipboardText } from '$lib/clipboard.js'
@@ -1272,6 +1273,8 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   let _imagePreviewOn = true
   $effect(() => { _numberGroupingOn = $appNumberGrouping; _groupFmt = null; scheduleDraw() })
   $effect(() => { void $appHighlightActiveRow; scheduleDraw() })
+  let _tzZone = 'UTC'
+  $effect(() => { _tzZone = resolveZone($appDisplayTimezone); scheduleDraw() })
   // Turning previews off must also drop what was already decoded - otherwise the
   // thumbnails stay resident (up to 300 bitmaps) for a feature now switched off.
   $effect(() => {
@@ -1298,6 +1301,13 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       const s = over ? oversizeCellText(over) : JSON.stringify(value);
       _formatCache.set(value, s);
       return s;
+    }
+    // An absolute timestamp, in the zone chosen in Settings (UTC as stored
+    // unless changed). A digit and a dash up front keep this off every other
+    // string's path.
+    if (_tzZone !== 'UTC' && typeof value === "string" && value.length >= 19 && value.charCodeAt(4) === 45 && value.charCodeAt(0) >= 48 && value.charCodeAt(0) <= 57) {
+      const shown = instantIn(value, _tzZone);
+      if (shown !== null) return shown;
     }
     return String(value);
   }

@@ -1,3 +1,4 @@
+import { setDisplayZone } from '$lib/timezone.js'
 import { applyCustomTheme, applyNoise, customTheme, customIsGlass } from '$lib/stores/custom-theme.js'
 import { applyImportedTheme } from '$lib/stores/imported-themes.js'
 import { writable, get } from 'svelte/store'
@@ -108,7 +109,7 @@ const markQualifyDefaultApplied = () => {
 /** @typedef {'claude' | 'geist' | 'serif' | 'apple' | 'inter' | 'mono' | 'fira' | 'plex' | 'space' | 'source'} FontId */
 /** @typedef {'regular' | 'light' | 'bold'} IconStyleId */
 /** @typedef {'lucide' | 'hugeicons' | 'phosphor'} IconSetId */
-/** @typedef {{ theme: ThemeId, zoom: number, font: FontId, iconStyle: IconStyleId, iconSet: IconSetId, tableStyle: TableStyleId, jsonTheme: JsonThemeId, editorTheme: import('$lib/themes/editor-themes.js').EditorThemeId, mcpAutoStart: boolean, launchAtLogin: boolean, autoUpdate: boolean, autoReconnectOnStartup: boolean, previewDmlBeforeApply: boolean, defaultDataView: string, paginationMode: string, maxQueryHistory: number, connectTimeoutMs: number, socketTimeoutMs: number, maxAllowedPacket: number, sessionTimezone: string, vimMode: boolean, cmdkAiEnabled: boolean, liveModeEnabled: boolean, sidebarStyle: SidebarStyleId, aiInTab: boolean, lazyWideColumns: boolean, nullSortOrder: string, agentChatFontSize: number, agentCodeFontSize: number, agentThinkingStyle: string, agentShowQueryCards: boolean, agentWebAccess: boolean, tableTextAlign: string, telemetry: boolean, jsonWordWrap: boolean, nativeScroll: boolean, rowSpacing: RowSpacingId, motion: MotionId, animatePanels: boolean, quitGuard: boolean, reopenTabs: boolean, multiConnection: boolean, studioShare: boolean, treeFocusOnSwitch: boolean, boringConnectionBar: boolean, zebraRows: boolean, showRowNumbers: boolean, showRelationColumns: boolean, showMenuBar: boolean, numberGrouping: boolean, imagePreview: boolean, openUrlsOnClick: boolean, highlightActiveRow: boolean, fkAutoExpandJson: boolean, gridFontSize: number, autoSaveQueries: boolean, streamResults: boolean, sqlUndo: boolean, sidebarComments: boolean, sidebarRememberGroups: boolean, sqlFormat: import('$lib/sql-format-options.js').SqlFormatOptions, sqlEditor: import('$lib/sql-editor-options.js').SqlEditorOptions, shareDefaults: Record<string, any> | null }} AppSettings */
+/** @typedef {{ theme: ThemeId, zoom: number, font: FontId, iconStyle: IconStyleId, iconSet: IconSetId, tableStyle: TableStyleId, jsonTheme: JsonThemeId, editorTheme: import('$lib/themes/editor-themes.js').EditorThemeId, mcpAutoStart: boolean, launchAtLogin: boolean, autoUpdate: boolean, autoReconnectOnStartup: boolean, previewDmlBeforeApply: boolean, defaultDataView: string, paginationMode: string, maxQueryHistory: number, connectTimeoutMs: number, socketTimeoutMs: number, maxAllowedPacket: number, sessionTimezone: string, displayTimezone: string, vimMode: boolean, cmdkAiEnabled: boolean, liveModeEnabled: boolean, sidebarStyle: SidebarStyleId, aiInTab: boolean, lazyWideColumns: boolean, nullSortOrder: string, agentChatFontSize: number, agentCodeFontSize: number, agentThinkingStyle: string, agentShowQueryCards: boolean, agentWebAccess: boolean, tableTextAlign: string, telemetry: boolean, jsonWordWrap: boolean, nativeScroll: boolean, rowSpacing: RowSpacingId, motion: MotionId, animatePanels: boolean, quitGuard: boolean, reopenTabs: boolean, multiConnection: boolean, studioShare: boolean, treeFocusOnSwitch: boolean, boringConnectionBar: boolean, zebraRows: boolean, showRowNumbers: boolean, showRelationColumns: boolean, showMenuBar: boolean, numberGrouping: boolean, imagePreview: boolean, openUrlsOnClick: boolean, highlightActiveRow: boolean, fkAutoExpandJson: boolean, gridFontSize: number, autoSaveQueries: boolean, streamResults: boolean, sqlUndo: boolean, sidebarComments: boolean, sidebarRememberGroups: boolean, sqlFormat: import('$lib/sql-format-options.js').SqlFormatOptions, sqlEditor: import('$lib/sql-editor-options.js').SqlEditorOptions, shareDefaults: Record<string, any> | null }} AppSettings */
 
 /**
  * UI type scale in design pixels: `[step, font-size, line-height?]`, matching
@@ -569,6 +570,8 @@ export const DEFAULT_SETTINGS = {
   socketTimeoutMs: DEFAULT_SOCKET_TIMEOUT_MS,
   maxAllowedPacket: DEFAULT_MAX_ALLOWED_PACKET,
   sessionTimezone: DEFAULT_SESSION_TIMEZONE,
+  // Shown in UTC unless chosen otherwise: what the grid always did.
+  displayTimezone: 'utc',
   vimMode: false,
   cmdkAiEnabled: false,
   // Soft-wrap in every JSON viewer. Off by default: unwrapped keeps the
@@ -723,6 +726,8 @@ export const appRelationColumns = writable(true)
 export const appMenuBar = writable(true)
 /** Grid value rendering - read by the canvas renderer on every paint. */
 export const appNumberGrouping = writable(false)
+/** Zone absolute timestamps are shown in: 'utc', 'auto' (this computer's) or an IANA name. */
+export const appDisplayTimezone = writable('utc')
 /** Fetch and draw thumbnails for image-URL cells. Off also stops the FETCH. */
 export const appImagePreview = writable(true)
 /** Whether a click on a URL cell leaves the app to open it. */
@@ -967,6 +972,8 @@ export function loadSettings() {
       typeof parsed.sessionTimezone === 'string' && parsed.sessionTimezone.trim()
         ? parsed.sessionTimezone.trim()
         : DEFAULT_SESSION_TIMEZONE
+    const displayTimezone =
+      typeof parsed.displayTimezone === 'string' && parsed.displayTimezone.trim() ? parsed.displayTimezone.trim() : 'utc'
     const vimMode = parsed.vimMode === true
     // Absent means on: only an explicit false opts out.
     const telemetry = parsed.telemetry !== false
@@ -1036,7 +1043,7 @@ export function loadSettings() {
     const agentShowQueryCards = parsed.agentShowQueryCards === true
     const agentWebAccess = parsed.agentWebAccess === true
     const tableTextAlign = TABLE_ALIGN_IDS.includes(parsed.tableTextAlign) ? parsed.tableTextAlign : DEFAULT_TABLE_ALIGN
-    _settingsCache = { theme, zoom, font, iconStyle, iconSet, tableStyle, jsonTheme, editorTheme, mcpAutoStart, launchAtLogin, autoUpdate, autoReconnectOnStartup, previewDmlBeforeApply, defaultDataView, paginationMode, maxQueryHistory, connectTimeoutMs, socketTimeoutMs, maxAllowedPacket, sessionTimezone, vimMode, cmdkAiEnabled, liveModeEnabled, sidebarStyle, aiInTab, lazyWideColumns, nullSortOrder, agentChatFontSize, agentCodeFontSize, agentThinkingStyle, agentShowQueryCards, agentWebAccess, tableTextAlign, telemetry, jsonWordWrap, nativeScroll, rowSpacing, motion, animatePanels, quitGuard, reopenTabs, multiConnection, studioShare, treeFocusOnSwitch, boringConnectionBar, zebraRows, showRowNumbers, showRelationColumns, showMenuBar, numberGrouping, imagePreview, openUrlsOnClick, highlightActiveRow, fkAutoExpandJson, gridFontSize, autoSaveQueries, streamResults, sqlUndo, sidebarComments, sidebarRememberGroups, sqlFormat, sqlEditor, shareDefaults }
+    _settingsCache = { theme, zoom, font, iconStyle, iconSet, tableStyle, jsonTheme, editorTheme, mcpAutoStart, launchAtLogin, autoUpdate, autoReconnectOnStartup, previewDmlBeforeApply, defaultDataView, paginationMode, maxQueryHistory, connectTimeoutMs, socketTimeoutMs, maxAllowedPacket, sessionTimezone, displayTimezone, vimMode, cmdkAiEnabled, liveModeEnabled, sidebarStyle, aiInTab, lazyWideColumns, nullSortOrder, agentChatFontSize, agentCodeFontSize, agentThinkingStyle, agentShowQueryCards, agentWebAccess, tableTextAlign, telemetry, jsonWordWrap, nativeScroll, rowSpacing, motion, animatePanels, quitGuard, reopenTabs, multiConnection, studioShare, treeFocusOnSwitch, boringConnectionBar, zebraRows, showRowNumbers, showRelationColumns, showMenuBar, numberGrouping, imagePreview, openUrlsOnClick, highlightActiveRow, fkAutoExpandJson, gridFontSize, autoSaveQueries, streamResults, sqlUndo, sidebarComments, sidebarRememberGroups, sqlFormat, sqlEditor, shareDefaults }
     // A migrated value is saved at once, or the next launch reads the old one.
     if (settingsMigrated) {
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify(_settingsCache)) } catch {}
@@ -1322,6 +1329,8 @@ function applySettingsNow(settings, root, theme, zoom, dark) {
   setStore(appRelationColumns, settings.showRelationColumns !== false)
   setStore(appMenuBar, settings.showMenuBar !== false)
   setStore(appNumberGrouping, settings.numberGrouping === true)
+  setStore(appDisplayTimezone, settings.displayTimezone || 'utc')
+  setDisplayZone(settings.displayTimezone || 'utc')
   setStore(appImagePreview, settings.imagePreview !== false)
   setStore(appOpenUrlsOnClick, settings.openUrlsOnClick !== false)
   setStore(appHighlightActiveRow, settings.highlightActiveRow !== false)

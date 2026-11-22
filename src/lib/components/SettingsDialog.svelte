@@ -13,6 +13,7 @@
   import KeybindingsSettings from './KeybindingsSettings.svelte'
   import SnippetsSettings from './SnippetsSettings.svelte'
   import { openTransfer } from '$lib/stores/transfer-ui.js'
+  import { listTimezones, resolveZone } from '$lib/timezone.js'
   import { bindingFor } from '$lib/stores/keybindings.js'
   import { startTelemetry, stopTelemetry } from "$lib/telemetry.js";
   import Minus from "@lucide/svelte/icons/minus";
@@ -974,6 +975,26 @@
         value={settings.paginationMode}
         onValueChange={setPaginationMode}
         items={PAGINATION_OPTIONS.map((o) => ({ value: o.id, label: o.label, icon: o.icon, keywords: [o.label] }))}
+      />
+    </div>
+  {/if}
+
+  {#if show('Display timezone', 'Timezone time zone timestamps timestamptz display exports utc auto local offset')}
+    <div class={rowCls}>
+      <div class="min-w-0">
+        <p class="text-ui-sm font-medium text-foreground">Display timezone</p>
+        <p class="mt-0.5 text-ui-xs leading-relaxed text-muted-foreground">Shows timestamps that carry a zone (timestamptz) in this zone, in the grid and in what you copy. Auto follows this computer. Values are stored unchanged.</p>
+      </div>
+      <SelectMenu
+        ariaLabel="Display timezone"
+        value={settings.displayTimezone ?? 'utc'}
+        onValueChange={(v) => { if (v) settings = updateSettings({ displayTimezone: v }); }}
+        items={[
+          { value: 'utc', label: 'UTC', hint: 'as stored', keywords: ['utc', 'gmt', 'zulu'] },
+          { value: 'auto', label: 'Auto', hint: resolveZone('auto'), keywords: ['auto', 'local', 'system', resolveZone('auto')] },
+          ...listTimezones().filter((z) => z !== 'UTC').map((z) => ({ value: z, label: z.replace(/_/g, ' '), keywords: [z, ...z.split('/')] })),
+        ]}
+        searchPlaceholder="Search zones…"
       />
     </div>
   {/if}
