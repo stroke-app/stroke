@@ -6,7 +6,7 @@
   import { workspaces, activeWorkspaceId, inWorkspace } from '$lib/stores/workspaces.js'
 
   import { comboTitle } from '$lib/shortcuts.js'
-  import { untrack } from "svelte";
+  import { untrack, onDestroy } from "svelte";
   import { getAppScale } from '$lib/app-zoom.js';
   import { createCommandHotkey } from "$lib/command-hotkey.js";
   import { bindingFor, withShortcut } from "$lib/stores/keybindings.js";
@@ -1516,8 +1516,20 @@
     void tableListEl
     void loadingTables
     void activePanel
-    untrack(measureTables)
+    // In the frame, not now: this runs in the middle of a render (the catalog
+    // landing on connect, the loading flag flipping), and reading layout here
+    // forced the browser to lay the page out early, again for each change.
+    // A frame callback runs after the DOM writes and before the paint, so it
+    // costs the one layout the paint needs anyway.
+    untrack(scheduleMeasureTables)
   })
+
+  let _measureFrame = 0
+  function scheduleMeasureTables() {
+    if (_measureFrame) return
+    _measureFrame = requestAnimationFrame(() => { _measureFrame = 0; measureTables() })
+  }
+  onDestroy(() => cancelAnimationFrame(_measureFrame))
 
   /**
    * Scroll the scroller so row `i` of the Tables list is fully in view, nearest
@@ -1542,10 +1554,15 @@
     const name = activeTable
     if (name === revealedTable) return
     revealedTable = name
+    // In the frame: it reads the scroller's size, and on a tab switch this runs
+    // inside the render (see scheduleMeasureTables).
     untrack(() => {
       if (!name || activePanel !== 'tables') return
-      const i = tableIndexByName.get(name)
-      if (i !== undefined) revealTableRow(i)
+      requestAnimationFrame(() => {
+        if (revealedTable !== name) return
+        const i = tableIndexByName.get(name)
+        if (i !== undefined) revealTableRow(i)
+      })
     })
   })
   const dbEntriesToRender = $derived(filteredDbEntries)
@@ -1724,6 +1741,8 @@
     return `${Math.round(s / (86400 * 7))}w`
   }
   /** @type {{ c: any, x: number, y: number } | null} */
+  /** The connection the list's right-click menu is for. @type {any} */
+  let connMenuFor = $state(null)
   let connHover = $state(null)
   /** @type {ReturnType<typeof setTimeout> | undefined} */
   let connHoverTimer
@@ -3670,15 +3689,24 @@
           onpointerenter={() => (connsFrozenOrder = wsConnections.map((c) => c.id))}
           onpointerleave={() => (connsFrozenOrder = null)}
         >
+          <!-- Right-click: what the Connections panel offers, here too. It
+               used to fall through to the sidebar's own menu ("Move sidebar
+               to the right") with nothing about the connection. One menu for
+               the list, told which row was clicked: a menu per row mounted a
+               bits-ui menu tree for every saved connection on each connect. -->
+          <ContextMenu.Root>
+          <ContextMenu.Trigger
+            class="block w-full"
+            oncontextmenu={(e) => {
+              const id = /** @type {HTMLElement | null} */ (/** @type {Element} */ (e.target).closest('[data-conn-id]'))?.dataset.connId
+              connMenuFor = connsShown.find((x) => x.id === id) ?? null
+            }}
+          >
           {#each connsShown as c (c.id)}
             {@const current = c.id === activeConnectionId}
-            <!-- Right-click: what the Connections panel offers, here too. It
-                 used to fall through to the sidebar's own menu ("Move sidebar
-                 to the right") with nothing about the connection. -->
-            <ContextMenu.Root>
-            <ContextMenu.Trigger class="block w-full">
             <button
               type="button"
+              data-conn-id={c.id}
               class={cn(
                 'flex h-8 w-full min-w-0 items-center gap-2.5 rounded-md px-2 text-left text-ui-sm',
                 current ? 'bg-sidebar-accent text-foreground' : 'text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground',
@@ -3692,8 +3720,12 @@
               {#if c.pinned}<Icon name="pin" class="size-3 shrink-0 opacity-60" />{/if}
               <span class="shrink-0 font-mono text-ui-2xs tabular-nums text-muted-foreground">{ago(c.lastConnectedAt)}</span>
             </button>
-            </ContextMenu.Trigger>
-            <ContextMenu.Content class="min-w-52">
+          {/each}
+          </ContextMenu.Trigger>
+          <ContextMenu.Content class="min-w-52">
+            {#if connMenuFor}
+              {@const c = connMenuFor}
+              {@const current = c.id === activeConnectionId}
               {#if !current}
                 <ContextMenu.Item onSelect={() => { connHover = null; onswitchconnection(c) }}>
                   <Icon name="arrow-right" />
@@ -3720,9 +3752,9 @@
                   Delete…
                 </ContextMenu.Item>
               {/if}
-            </ContextMenu.Content>
-            </ContextMenu.Root>
-          {/each}
+            {/if}
+          </ContextMenu.Content>
+          </ContextMenu.Root>
           {#if connsQuery.trim() && !connsShown.length}
             <p class="px-2 py-2 text-ui-xs text-muted-foreground">No connection matches “{connsQuery.trim()}”.</p>
           {/if}

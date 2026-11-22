@@ -61,10 +61,13 @@ export function createSmoothScroll(el) {
   // the measured distance unchanged: the loop then runs forever without moving
   // and scrolling appears dead. Owning the float means every frame makes progress
   // and the animation always converges.
-  let targetTop = el.scrollTop
-  let targetLeft = el.scrollLeft
-  let curTop = targetTop
-  let curLeft = targetLeft
+  // Not read from the element here: this runs while the grid mounts, and
+  // reading scrollTop then forced a layout in the middle of that render. The
+  // first push() adopts the real position (sync) before moving.
+  let targetTop = 0
+  let targetLeft = 0
+  let curTop = 0
+  let curLeft = 0
   let raf = 0
   /** Timestamp of the last animated frame, 0 when the animation is at rest. */
   let _lastFrame = 0
