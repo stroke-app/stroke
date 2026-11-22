@@ -1012,13 +1012,17 @@ mod tests {
     use crate::db::connection::open_mssql;
 
     fn test_config() -> MssqlConfig {
+        // STROKE_TEST_MSSQL=host:port:user:password, as tx.rs reads it.
+        let spec = std::env::var("STROKE_TEST_MSSQL").ok();
+        let parts: Vec<&str> = spec.as_deref().map(|s| s.splitn(4, ':').collect()).unwrap_or_default();
+        let get = |i: usize, d: &str| parts.get(i).map(|s| s.to_string()).unwrap_or_else(|| d.to_string());
         MssqlConfig { ssh: None, via: None,
             name: "test".into(),
-            host: "127.0.0.1".into(),
-            port: 1433,
+            host: get(0, "127.0.0.1"),
+            port: get(1, "1433").parse().unwrap_or(1433),
             database: "master".into(),
-            user: "sa".into(),
-            password: "Strong!Passw0rd".into(),
+            user: get(2, "sa"),
+            password: get(3, "Strong!Passw0rd"),
             encrypt: false,
             trust_cert: true,
         }
@@ -1078,10 +1082,20 @@ mod tests {
         let _ddl = get_ddl(&h, "dbo", "t_users").await.unwrap();
 
         update_table_cell(&h, "dbo", "t_users", std::collections::HashMap::from([("id".into(), Value::from(1))]), "name", &Value::from("ada2")).await.unwrap();
+        // Non-ASCII text survives an edit: a plain '...' literal was converted
+        // to the code page and stored question marks.
+        update_table_cell(&h, "dbo", "t_users", std::collections::HashMap::from([("id".into(), Value::from(1))]), "name", &Value::from("東京 Zoë")).await.unwrap();
+        let back = execute_sql(&h, "SELECT name FROM dbo.t_users WHERE id = 1").await.unwrap();
+        assert_eq!(back.rows[0][0], Value::from("東京 Zoë"));
         let deleted = delete_table_rows(&h, "dbo", "t_users", vec![std::collections::HashMap::from([("id".into(), Value::from(2))])]).await.unwrap();
         assert_eq!(deleted, 1);
 
         execute_sql(&h, "DROP TABLE dbo.t_users").await.unwrap();
+
+        // New table's SQL Server starter (sql-complete-data.js), filled in, runs.
+        execute_sql(&h, "IF OBJECT_ID('dbo.t_starter','U') IS NOT NULL DROP TABLE dbo.t_starter").await.unwrap();
+        execute_sql(&h, "CREATE TABLE t_starter (\n  id bigint IDENTITY(1,1) PRIMARY KEY,\n  label nvarchar(255) NOT NULL,\n  created_at datetime2 NOT NULL DEFAULT sysutcdatetime()\n)").await.unwrap();
+        execute_sql(&h, "DROP TABLE dbo.t_starter").await.unwrap();
     }
 }
 

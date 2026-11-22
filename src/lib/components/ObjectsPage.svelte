@@ -24,6 +24,8 @@
     onopen = () => {},
     /** Assigned here; the shell calls it for ⌘F. */
     focusSearch = $bindable(/** @type {() => void} */ (() => {})),
+    /** The connection listed. The page is kept across connections. */
+    connectionId = '',
   } = $props()
 
   /** @type {HTMLInputElement | null} */
@@ -285,6 +287,18 @@
     }
   }
 
+  // Kept across connections, the page listed the last database's tables,
+  // views and functions. A new connection empties every sub-tab, and the
+  // lazy load below reads the one on screen.
+  // svelte-ignore state_referenced_locally
+  let listedFor = connectionId
+  $effect(() => {
+    const id = connectionId
+    if (id === listedFor) return
+    listedFor = id
+    for (const k of /** @type {SubTab[]} */ (Object.keys(slots))) slots[k] = { data: null, loading: false, error: '' }
+  })
+
   // Lazy-load the active sub-tab the first time it is shown.
   $effect(() => {
     const slot = slots[activeSub]
@@ -406,10 +420,10 @@
         Loading…
       {:else if objQuery.trim()}
         {rows.length} of {totalCount}
-        {activeSub === 'functions' && totalCount === 1 ? 'function' : activeSub}
+        {totalCount === 1 ? activeSub.slice(0, -1) : activeSub}
       {:else}
         {totalCount}
-        {activeSub === 'functions' && totalCount === 1 ? 'function' : activeSub}
+        {totalCount === 1 ? activeSub.slice(0, -1) : activeSub}
       {/if}
     </span>
     {#if currentSupported && totalCount > 0}
