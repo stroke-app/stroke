@@ -726,6 +726,22 @@
   let sshAuth = $state("key");
   /** `ServerAliveInterval`, seconds. Blank or 0 disables the keepalive. */
   let sshKeepalive = $state("30");
+  /**
+   * What the tunnel goes through. All three forward a local port to the
+   * database (db/ssh_tunnel.rs); `sshHost` holds each one's end: the bastion,
+   * the Kubernetes resource, or the SSM target.
+   * @type {'ssh' | 'kubernetes' | 'ssm'}
+   */
+  let tunnelKind = $state("ssh");
+  let tunnelContext = $state("");
+  let tunnelNamespace = $state("");
+  let tunnelRegion = $state("");
+  let tunnelProfile = $state("");
+  const TUNNEL_KINDS = [
+    { value: "ssh", label: "SSH", desc: "Through a bastion, with your system ssh" },
+    { value: "kubernetes", label: "Kubernetes", desc: "kubectl port-forward to a service or pod" },
+    { value: "ssm", label: "AWS SSM", desc: "Session Manager port forwarding, no open port" },
+  ];
 
   /**
    * TLS verification levels, in the order they harden.
@@ -1139,7 +1155,14 @@
   });
 
   function sshPayload() {
-    if (!sshEnabled || !sshHost.trim() || !sshUsername.trim()) return undefined;
+    if (!sshEnabled || !sshHost.trim()) return undefined;
+    if (tunnelKind === "kubernetes") {
+      return { kind: "kubernetes", host: sshHost.trim(), context: tunnelContext.trim(), namespace: tunnelNamespace.trim() };
+    }
+    if (tunnelKind === "ssm") {
+      return { kind: "ssm", host: sshHost.trim(), region: tunnelRegion.trim(), profile: tunnelProfile.trim() };
+    }
+    if (!sshUsername.trim()) return undefined;
     return {
       host: sshHost.trim(),
       port: Number(sshPort) || 22,
@@ -1539,6 +1562,11 @@
       // A saved tunnel with no identity path was using the agent.
       sshAuth = s?.privateKeyPath ? "key" : "agent";
       sshKeepalive = String(s?.keepalive ?? 30);
+      tunnelKind = s?.kind === "kubernetes" || s?.kind === "ssm" ? s.kind : "ssh";
+      tunnelContext = s?.context ?? "";
+      tunnelNamespace = s?.namespace ?? "";
+      tunnelRegion = s?.region ?? "";
+      tunnelProfile = s?.profile ?? "";
       sslMode = /** @type {any} */ (
         conn.sslMode === "verify_ca" ? "verify-ca"
         : conn.sslMode === "verify_identity" ? "verify-full"
@@ -1619,6 +1647,11 @@
       sshKeyPath = "";
       sshAuth = "key";
       sshKeepalive = "30";
+      tunnelKind = "ssh";
+      tunnelContext = "";
+      tunnelNamespace = "";
+      tunnelRegion = "";
+      tunnelProfile = "";
       sslMode = "require";
       sslCaPath = "";
       sslPanelOpen = false;
@@ -3126,6 +3159,11 @@
       sshKeyPath,
       sshAuth,
       sshKeepalive,
+      tunnelKind,
+      tunnelContext,
+      tunnelNamespace,
+      tunnelRegion,
+      tunnelProfile,
       sslMode,
       sslCaPath,
       oraMode,
@@ -3642,6 +3680,60 @@
              of the six fields: those hints set the row's height, wrapped at the
              narrow columns they sat in, and left the grid looking like two rows
              that had nothing to do with each other. -->
+        <!-- What the tunnel goes through: SSH, kubectl or SSM. Segmented,
+             because there are three and each changes every field below. -->
+        <div class="flex gap-1 rounded-md bg-muted/40 p-0.5" role="radiogroup" aria-label="Tunnel through">
+          {#each TUNNEL_KINDS as k (k.value)}
+            <button
+              type="button"
+              role="radio"
+              aria-checked={tunnelKind === k.value}
+              title={k.desc}
+              class={cn(
+                "h-7 flex-1 rounded-[5px] text-ui-xs font-medium transition-colors",
+                tunnelKind === k.value ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+              )}
+              onclick={() => (tunnelKind = /** @type {any} */ (k.value))}
+            >{k.label}</button>
+          {/each}
+        </div>
+        {#if tunnelKind === "kubernetes"}
+          {@render panelNote(
+            "Runs kubectl port-forward with your kubeconfig. The resource is what the database runs as: svc/postgres, pod/db-0 or deployment/api; the port above is its port.",
+          )}
+          <div class={cn(row6, "items-start gap-y-3")}>
+            <div class="col-span-6 min-w-0 sm:col-span-2">
+              <label for="cn-k8s-resource" class={lbl}>Resource</label>
+              <Input id="cn-k8s-resource" bind:value={sshHost} placeholder="svc/postgres" spellcheck="false" autocomplete="off" class={inp} />
+            </div>
+            <div class="col-span-3 min-w-0 sm:col-span-2">
+              <label for="cn-k8s-ns" class={lbl}>Namespace</label>
+              <Input id="cn-k8s-ns" bind:value={tunnelNamespace} placeholder="default" spellcheck="false" autocomplete="off" class={inp} />
+            </div>
+            <div class="col-span-3 min-w-0 sm:col-span-2">
+              <label for="cn-k8s-ctx" class={lbl}>Context</label>
+              <Input id="cn-k8s-ctx" bind:value={tunnelContext} placeholder="Current context" spellcheck="false" autocomplete="off" class={inp} />
+            </div>
+          </div>
+        {:else if tunnelKind === "ssm"}
+          {@render panelNote(
+            "Runs aws ssm start-session with the Session Manager plugin, forwarding through the target to the host above (an RDS endpoint, or localhost for a database on the target itself).",
+          )}
+          <div class={cn(row6, "items-start gap-y-3")}>
+            <div class="col-span-6 min-w-0 sm:col-span-2">
+              <label for="cn-ssm-target" class={lbl}>Target instance</label>
+              <Input id="cn-ssm-target" bind:value={sshHost} placeholder="i-0abc123def4567890" spellcheck="false" autocomplete="off" class={inp} />
+            </div>
+            <div class="col-span-3 min-w-0 sm:col-span-2">
+              <label for="cn-ssm-region" class={lbl}>Region</label>
+              <Input id="cn-ssm-region" bind:value={tunnelRegion} placeholder="CLI default" spellcheck="false" autocomplete="off" class={inp} />
+            </div>
+            <div class="col-span-3 min-w-0 sm:col-span-2">
+              <label for="cn-ssm-profile" class={lbl}>Profile</label>
+              <Input id="cn-ssm-profile" bind:value={tunnelProfile} placeholder="default" spellcheck="false" autocomplete="off" class={inp} />
+            </div>
+          </div>
+        {:else}
         {@render panelNote(
           "Uses your system ssh. The server needs AllowTcpForwarding; keepalive is in seconds (0 = off).",
         )}
@@ -3740,11 +3832,14 @@
             />
           </div>
         </div>
+        {/if}
       {/snippet}
       {@render transportPanel(
         "cn-ssh",
-        "SSH tunnel",
-        sshEnabled ? sshHost.trim() || "No host yet" : "Direct connection",
+        "Tunnel",
+        sshEnabled
+          ? `${tunnelKind === "kubernetes" ? "Kubernetes" : tunnelKind === "ssm" ? "AWS SSM" : "SSH"} · ${sshHost.trim() || "Not set yet"}`
+          : "Direct connection",
         "terminal",
         sshEnabled,
         (v) => {

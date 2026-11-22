@@ -1696,6 +1696,7 @@ mod tests {
             username: "tester".into(),
             private_key_path: p[0].into(),
             keepalive: 0,
+            ..Default::default()
         });
         c.target_host = Some(p[2].into());
         c.target_port = Some(p[3].parse().unwrap());
