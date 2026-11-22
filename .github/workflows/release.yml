@@ -418,7 +418,9 @@ jobs:
           add('linux-x86_64',   'sig-linux/updater.sig',         `${BASE}/stroke_amd64.AppImage.tar.gz`)
           add('windows-x86_64', 'sig-windows/updater.sig',       `${BASE}/stroke_x64-setup.nsis.zip`)
 
-          const notes = extractChangelog(VERSION) || `See https://github.com/stroke-app/stroke/releases/tag/v${VERSION}`
+          // Plain titles: apps before 3.6.5 print markdown bold as asterisks, and
+          // newer ones read `Title - text` without them (changelog.js splitEntry).
+          const notes = (extractChangelog(VERSION) || `See https://github.com/stroke-app/stroke/releases/tag/v${VERSION}`).replace(/\*\*([^*\n]+)\*\*/g, '$1')
 
           const out = {
             version: VERSION,

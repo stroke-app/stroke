@@ -349,7 +349,9 @@ jobs:
               const start = cl.indexOf('## [')
               const end = stable ? cl.indexOf('## [' + stable + ']') : -1
               const body = start === -1 ? '' : cl.slice(start, end > start ? end : undefined).trim()
-              if (body) notes = body.slice(0, 60000)
+              // Plain titles: apps before 3.6.5 print markdown bold as asterisks,
+              // and newer ones read `Title - text` without them (splitEntry).
+              if (body) notes = body.replace(/\*\*([^*\n]+)\*\*/g, '\$1').slice(0, 60000)
             } catch {}
             fs.writeFileSync('out/latest.json', JSON.stringify({ version: VERSION, notes, pub_date: new Date().toISOString(), platforms }, null, 2))
           "
