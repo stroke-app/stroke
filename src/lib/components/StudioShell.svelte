@@ -11220,7 +11220,7 @@ let rowSearch = $state('')
         >
           <svelte:boundary failed={tabError}>
             {#await import('./SecurityPage.svelte')}<TabLoading />{:then { default: SecurityPage }}
-              <SecurityPage bind:this={securityPageRef} active={activeTab?.kind === 'security'} connectionType={connection?.type ?? null} />
+              <SecurityPage bind:this={securityPageRef} active={activeTab?.kind === 'security'} connectionType={connection?.type ?? null} connectionId={persistConnectionId ?? ''} />
             {/await}
           </svelte:boundary>
         </div>
@@ -11320,7 +11320,7 @@ let rowSearch = $state('')
         >
           <svelte:boundary failed={tabError}>
             {#await import('./InstanceInsightsPage.svelte')}<TabLoading />{:then { default: InstanceInsightsPage }}
-              <InstanceInsightsPage active={activeTab?.kind === 'insights'} connectionName={connection?.name ?? connection?.database ?? ''} {dbType} />
+              <InstanceInsightsPage active={activeTab?.kind === 'insights'} connectionName={connection?.name ?? connection?.database ?? ''} {dbType} connectionId={persistConnectionId ?? ''} />
             {/await}
           </svelte:boundary>
         </div>
@@ -11445,7 +11445,7 @@ let rowSearch = $state('')
         >
           <svelte:boundary failed={tabError}>
             {#await import('./MapPage.svelte')}<TabLoading />{:then { default: MapPage }}
-              <MapPage />
+              <MapPage connectionId={persistConnectionId ?? ''} />
             {/await}
           </svelte:boundary>
         </div>
@@ -11599,6 +11599,7 @@ let rowSearch = $state('')
             {#await import('./EntityRelationPage.svelte')}<TabLoading />{:then { default: EntityRelationPage }}
               <EntityRelationPage
                 bind:this={erdTabPage}
+                connectionId={persistConnectionId ?? ''}
                 onopendiagrams={() => openDiagramsTab()}
                 schema={activeSchema}
                 {schemas}
@@ -11621,6 +11622,7 @@ let rowSearch = $state('')
             {#await import('./SearchPage.svelte')}<TabLoading />{:then { default: SearchPage }}
               <SearchPage
                 bind:focusSearch={dbSearchFocusInput}
+                connectionId={persistConnectionId ?? ''}
                 {tables}
                 schema={activeSchema}
                 dialect={dbType}

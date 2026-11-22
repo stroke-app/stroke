@@ -1,5 +1,5 @@
 <script>
-  import { onMount } from 'svelte'
+  import { onMount, untrack } from 'svelte'
   import { cn, errorText } from '$lib/utils.js'
   import EChartPanel from './EChartPanel.svelte'
   import SearchableMenu from './SearchableMenu.svelte'
@@ -35,7 +35,7 @@
   import CircleAlert from '@lucide/svelte/icons/circle-alert'
   import CircleX from '@lucide/svelte/icons/circle-x'
 
-  let { active = false, connectionName = '', dbType = '' } = $props()
+  let { active = false, connectionName = '', dbType = '', connectionId = '' } = $props()
 
   const SUBTABS = [
     { id: 'activity', label: 'Activity', icon: Gauge },
@@ -68,6 +68,28 @@
   const isPg = $derived((version?.engine ?? dbType) === 'postgres')
 
   onMount(() => { if (active && supported) void refreshAll() })
+
+  // The page is kept across connections. After a switch it showed the last
+  // server's sessions and settings, and the next sample's rates were the new
+  // server's counters minus the old one's. Start over for the new one.
+  // svelte-ignore state_referenced_locally
+  let shownFor = connectionId
+  $effect(() => {
+    const id = connectionId
+    if (id === shownFor) return
+    shownFor = id
+    untrack(() => {
+      samples = []
+      version = null
+      activity = null
+      stateData = null
+      config = []
+      replication = null
+      error = ''
+      _everActive = active
+      if (active && supported) void refreshAll()
+    })
+  })
 
   // First-open fetch when the tab becomes active.
   let _everActive = false

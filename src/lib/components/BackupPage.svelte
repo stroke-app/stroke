@@ -1,5 +1,5 @@
 <script>
-  import { onDestroy } from 'svelte'
+  import { onDestroy, untrack } from 'svelte'
   import FieldSelect from './FieldSelect.svelte'
   import ScheduledBackups from './ScheduledBackups.svelte'
   import LockKeyhole from '@lucide/svelte/icons/lock-keyhole'
@@ -586,6 +586,22 @@
     importConfirmed = false
     importProgress = { bytesDone: 0, bytesTotal: 0, ok: 0, failed: 0 }
   }
+
+  // One page serves every connection. After switching, it showed the last
+  // database's "Export complete · products · 3 rows" over a database with no
+  // products table, and kept a dump file chosen for the other one. What has
+  // finished is put away; a run still going stays on screen.
+  // svelte-ignore state_referenced_locally
+  let shownFor = savedConnection?.id ?? ''
+  $effect(() => {
+    const id = savedConnection?.id ?? ''
+    if (id === shownFor) return
+    shownFor = id
+    untrack(() => {
+      if (exportPhase !== 'running') { exportPhase = 'idle'; exportResult = null; exportError = '' }
+      if (importPhase !== 'running') { resetImport(); importPath = ''; importInfo = null }
+    })
+  })
 </script>
 
 {#snippet logToggle()}

@@ -29,6 +29,8 @@
     onopentable = (tableName, searchTerm, inSchema) => {},
     /** Assigned here; the shell calls it for ⌘F. */
     focusSearch = $bindable(/** @type {() => void} */ (() => {})),
+    /** The connection searched. The page is kept across connections. */
+    connectionId = '',
   } = $props()
 
   let query = $state('')
@@ -55,6 +57,28 @@
   let selected = $state(-1)
   /** @type {HTMLInputElement | null} */
   let inputEl = $state(null)
+
+  // Kept across connections, the page showed the last database's matches
+  // ("products · Hammer" over a database with no products table), and opening
+  // one looked for that table here. Results and the per-schema table lists
+  // go when the connection does; the query stays, to run again.
+  // svelte-ignore state_referenced_locally
+  let searchedOn = connectionId
+  $effect(() => {
+    const id = connectionId
+    if (id === searchedOn) return
+    searchedOn = id
+    untrack(() => {
+      searchGeneration++
+      searching = false
+      results = []
+      searched = false
+      failed = 0
+      selected = -1
+      progress = { done: 0, total: 0 }
+      schemaTables.clear()
+    })
+  })
 
   $effect(() => {
     // Selects as well as focuses, so ⌘F on a page that already has a query

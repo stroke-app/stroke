@@ -83,6 +83,39 @@ describe('pages', () => {
     await settle()
   })
 
+  it('Find in database drops its results when the connection changes', async () => {
+    // Kept across connections, the page showed one database's matches on another.
+    const bridge = /** @type {any} */ (globalThis).__TAURI_INTERNALS__
+    const invoke = bridge.invoke
+    bridge.invoke = async (/** @type {string} */ cmd) => {
+      if (cmd === 'pg_get_table_rows') return { columns: [{ name: 'name', dataType: 'text' }], rows: [['Hammer']], total: 1, primaryKey: [] }
+      return null
+    }
+    try {
+      const { default: SearchPage } = await import('./SearchPage.svelte')
+      const target = document.createElement('div')
+      document.body.appendChild(target)
+      const { reactiveProps } = await import('../../test/reactive-props.svelte.js')
+      const props = reactiveProps({ tables: [{ name: 'products' }], schema: 'shop', active: true, connectionId: 'a' })
+      const c = mount(SearchPage, { target, props })
+      mounted.push(c)
+      await settle()
+      const input = /** @type {HTMLInputElement} */ (target.querySelector('input'))
+      input.value = 'ham'
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      await settle(); await new Promise((r) => setTimeout(r, 400)); await settle()
+      expect(target.textContent).toContain('Hammer')
+      props.connectionId = 'b'
+      props.tables = [{ name: 'people' }]
+      props.schema = 'public'
+      await settle()
+      expect(target.textContent).not.toContain('Hammer')
+    } finally {
+      bridge.invoke = invoke
+    }
+  })
+
   it('Connecting overlay', async () => {
     const { default: ConnectOverlay } = await import('./ConnectOverlay.svelte')
     const el = render(ConnectOverlay, { name: 'db', detail: 'host:5432', icon: 'postgres', oncancel: () => {} })

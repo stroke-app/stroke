@@ -77,6 +77,8 @@
     insideTableTab = false,
     /** Inside a table tab: back to the rows (the tab's own toolbar is hidden here). @type {(() => void) | null} */
     onback = null,
+    /** The connection drawn. The page is kept across connections. */
+    connectionId = '',
   } = $props()
 
   /**
@@ -1183,6 +1185,35 @@
 
   // ── Reactivity ────────────────────────────────────────────────────────────
   $effect(() => { void activeSchema; void load() })
+
+  // The sidebar's schema moving (picked there, or the next database's default
+  // landing after a switch) moves the diagram too; its own picker still
+  // chooses in between. Mounted mid-switch, it drew "No tables found in public"
+  // on a database whose schema is shop.
+  // svelte-ignore state_referenced_locally
+  let shellSchema = schema
+  $effect(() => {
+    const s = schema
+    if (s === shellSchema) return
+    shellSchema = s
+    untrack(() => { if (activeSchema !== s) activeSchema = s })
+  })
+
+  // The page keeps its own schema (its picker), so after a connection switch it
+  // went on drawing the last database: PostGIS's tab showed MariaDB's "shop"
+  // and its products table. A new connection starts from the shell's schema.
+  // svelte-ignore state_referenced_locally
+  let drawnFor = connectionId
+  $effect(() => {
+    const id = connectionId
+    if (id === drawnFor) return
+    drawnFor = id
+    untrack(() => {
+      selectedTable = null
+      if (activeSchema !== schema) activeSchema = schema
+      else void load()
+    })
+  })
 
 
   $effect(() => {

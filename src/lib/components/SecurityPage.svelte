@@ -16,7 +16,7 @@
   import SecuritySqlModal from "./SecuritySqlModal.svelte";
 
   /** @type {{ active?: boolean, connectionType?: string | null }} */
-  let { active = false, connectionType = null } = $props();
+  let { active = false, connectionType = null, connectionId = "" } = $props();
 
   // Roles + RLS use pg_catalog - only available on Postgres-compatible engines.
   const supported = $derived(
@@ -253,6 +253,23 @@
       title: `${on ? "Disable" : "Enable"} RLS, ${row.schema}.${row.table_name}`,
     };
   }
+
+  // The page is kept across connections: after a switch it went on showing the
+  // last database's roles, grants and policies. Dropping them makes the
+  // lazy loads below read the new database.
+  // svelte-ignore state_referenced_locally
+  let shownFor = connectionId;
+  $effect(() => {
+    const id = connectionId;
+    if (id === shownFor) return;
+    shownFor = id;
+    roles = null;
+    memberships = null;
+    policies = null;
+    rlsTables = null;
+    dbGrants = null;
+    selectedRole = "";
+  });
 
   $effect(() => {
     if (!supported) return;

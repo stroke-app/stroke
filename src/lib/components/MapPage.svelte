@@ -14,7 +14,7 @@
    * recognise gives a cluster nothing to mean. Everything else is left out, so
    * the only thing competing for attention is the data.
    */
-  import { onMount } from 'svelte'
+  import { onMount, untrack } from 'svelte'
   import { geoOverview, geoFeatures } from '$lib/api.js'
   import { getWorldGeoJson } from '$lib/geo.js'
   import { compileGeometry, screenTransform, onScreen, traceRings, hitCompiled, boundsWithin } from '$lib/geo-cache.js'
@@ -51,6 +51,8 @@
      */
     scopeSchema = '',
     scopeTable = '',
+    /** The connection whose layers these are. The page is kept across connections. */
+    connectionId = '',
   } = $props()
 
   /**
@@ -249,6 +251,28 @@
   }
 
   // ── Data ────────────────────────────────────────────────────────────────────
+
+  // Layers were read once, on mount: after a switch the map kept the last
+  // database's layers and features. A new connection starts the list over.
+  // svelte-ignore state_referenced_locally
+  let layersFor = connectionId
+  $effect(() => {
+    const id = connectionId
+    if (id === layersFor) return
+    layersFor = id
+    untrack(() => {
+      layers = []
+      layer = null
+      features = []
+      compiled = []
+      selected = null
+      lastFetch = null
+      matched = 0
+      error = ''
+      void loadLayers()
+      requestDraw()
+    })
+  })
 
   async function loadLayers() {
     try {

@@ -373,7 +373,7 @@
       >
         <Icon name="chevron-down" class="size-3.5 shrink-0" />
       </DropdownMenu.Trigger>
-      <DropdownMenu.Content align="end" class="app-scroll max-h-[min(70vh,28rem)] w-64 overflow-y-auto">
+      <DropdownMenu.Content align="end" class="app-scroll max-h-[min(70vh,28rem)] w-80 max-w-[calc(100vw-2rem)] overflow-y-auto">
         {#each tabs as tab (tab.id)}
           <DropdownMenu.Item onSelect={() => onselect(tab.id)}>
             <Icon name={tabIcon(tab)} class="size-3.5 shrink-0 text-muted-foreground" />
