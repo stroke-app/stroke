@@ -181,3 +181,20 @@ export function splitInlineCode(text) {
   if (last < text.length) parts.push({ text: text.slice(last), code: false })
   return parts
 }
+
+/**
+ * A changelog line as code, bold and plain runs. Every entry opens with a
+ * `**Title**`; without this the release-notes windows printed the asterisks.
+ * Bold is not looked for inside code. An unclosed `**` stays literal.
+ * @param {string} text
+ * @returns {{ text: string, code: boolean, bold: boolean }[]}
+ */
+export function splitInlineMarks(text) {
+  return splitInlineCode(String(text)).flatMap((p) => {
+    if (p.code) return [{ ...p, bold: false }]
+    return p.text
+      .split(/(\*\*[^*]+\*\*)/g)
+      .filter(Boolean)
+      .map((s) => (/^\*\*[^*]+\*\*$/.test(s) ? { text: s.slice(2, -2), code: false, bold: true } : { text: s, code: false, bold: false }))
+  })
+}

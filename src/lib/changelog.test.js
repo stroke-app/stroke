@@ -5,6 +5,7 @@ import {
   parseReleases,
   releasesBetween,
   splitInlineCode,
+  splitInlineMarks,
 } from './changelog.js'
 
 const CHANGELOG = `# Changelog
@@ -123,5 +124,20 @@ describe('splitInlineCode', () => {
 
   it('leaves an unclosed backtick alone', () => {
     expect(splitInlineCode('a ` b')).toEqual([{ text: 'a ` b', code: false }])
+  })
+})
+
+describe('splitInlineMarks', () => {
+  it('splits a bold title, code and plain text', () => {
+    expect(splitInlineMarks('**Notebook** - inside `\'{{name}}\'` now')).toEqual([
+      { text: 'Notebook', code: false, bold: true },
+      { text: ' - inside ', code: false, bold: false },
+      { text: "'{{name}}'", code: true, bold: false },
+      { text: ' now', code: false, bold: false },
+    ])
+  })
+  it('leaves an unclosed ** and ** inside code alone', () => {
+    expect(splitInlineMarks('a ** b')).toEqual([{ text: 'a ** b', code: false, bold: false }])
+    expect(splitInlineMarks('`**x**`')).toEqual([{ text: '**x**', code: true, bold: false }])
   })
 })

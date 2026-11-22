@@ -6,6 +6,7 @@
    * section carries a small New or Fixed tag; plain changes carry none.
    */
   import { cn } from '$lib/utils.js'
+  import { splitInlineMarks } from '$lib/changelog.js'
 
   /** @type {{ releases?: import('$lib/changelog.js').ChangelogRelease[], omitted?: number, compact?: boolean }} */
   let { releases = [], omitted = 0, compact = false } = $props()
@@ -28,11 +29,6 @@
   )
   /** One version needs no heading: the window's title already names it. */
   const multi = $derived(versions.length > 1)
-
-  /** `code` in a changelog line, split out so it renders as code. @param {string} s */
-  function parts(s) {
-    return String(s).split(/(`[^`]+`)/g).filter(Boolean).map((p) => (p.startsWith('`') && p.endsWith('`') ? { code: true, text: p.slice(1, -1) } : { code: false, text: p }))
-  }
 
   /** "2026-11-15" as "Nov 15"; anything else as written. @param {string} d */
   function shortDate(d) {
@@ -61,8 +57,8 @@
                 {#if TAG[item.type]}
                   <span class={cn('me-1.5 inline-flex h-4 items-center rounded px-1 align-[0.1em] text-ui-3xs font-medium', TAG[item.type]?.cls)}>{TAG[item.type]?.label}</span>
                 {/if}
-                {#each parts(item.text) as p, k (k)}
-                  {#if p.code}<code class="rounded-md bg-muted/60 px-1 py-px font-mono text-ui-xs text-foreground">{p.text}</code>{:else}{p.text}{/if}
+                {#each splitInlineMarks(item.text) as p, k (k)}
+                  {#if p.code}<code class="rounded-md bg-muted/60 px-1 py-px font-mono text-ui-xs text-foreground">{p.text}</code>{:else if p.bold}<strong class="font-medium text-foreground">{p.text}</strong>{:else}{p.text}{/if}
                 {/each}
               </span>
             </li>
