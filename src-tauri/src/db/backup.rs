@@ -487,6 +487,24 @@ impl InsertBatcher {
 
 /// Double-quoted identifier (Postgres / SQLite).
 fn qi(s: &str) -> String { format!("\"{}\"", s.replace('"', "\"\"")) }
+
+/// `CREATE EXTENSION` that cannot sink a restore: inside its own block, so a
+/// target without the extension (or a role not allowed to add it) logs a
+/// warning and the script goes on. CASCADE brings what it requires.
+fn pg_create_extension_guarded(name: &str, schema: Option<&str>) -> String {
+    let in_schema = match schema {
+        Some(s) if s != "public" => format!("CREATE SCHEMA IF NOT EXISTS {}; ", qi(s)),
+        _ => String::new(),
+    };
+    let with = schema.map(|s| format!(" WITH SCHEMA {}", qi(s))).unwrap_or_default();
+    format!(
+        "DO $$ BEGIN {in_schema}CREATE EXTENSION IF NOT EXISTS {}{with} CASCADE; \
+         EXCEPTION WHEN OTHERS THEN RAISE WARNING 'extension {} was not created: %', SQLERRM; END $$;\n",
+        qi(name),
+        name.replace('\'', "''"),
+    )
+}
+
 /// Schema-qualified double-quoted name.
 fn qn(schema: &str, name: &str) -> String { format!("{}.{}", qi(schema), qi(name)) }
 /// Backtick identifier (MySQL).
@@ -1533,6 +1551,28 @@ async fn export_postgres(
     }
     out.push('\n');
 
+    // ── Extensions ── Before anything that uses them: a column defaulting to
+    // uuid_generate_v4() needs uuid-ossp, a geometry column needs PostGIS.
+    // Without these a restore into a fresh database (an RDS instance, say)
+    // failed on every such table and rolled back. Each is guarded, so one the
+    // target cannot install is a warning, not a failed restore; the objects
+    // the extension owns are left out below, since it brings them itself.
+    let res = sqlx::query_as::<_, (String, String)>(
+        "SELECT e.extname::text, n.nspname::text \
+         FROM pg_catalog.pg_extension e \
+         JOIN pg_catalog.pg_namespace n ON n.oid = e.extnamespace \
+         WHERE e.extname <> 'plpgsql' ORDER BY e.oid"
+    )
+    .fetch_all(pool).await;
+    let exts = catalog_or_warn(res, rep, out, "extensions");
+    if !exts.is_empty() {
+        out.push_str("-- Extensions\n");
+        for (name, schema) in &exts {
+            out.push_str(&pg_create_extension_guarded(name, Some(schema)));
+        }
+        out.push('\n');
+    }
+
     // ── Catalog: one query per object kind for every schema at once. Per-table
     // lookups cost three round trips a table, which on a far host is seconds.
     let tables = pg_load_tables(pool, &schemas, table_filter).await?;
@@ -1548,6 +1588,7 @@ async fn export_postgres(
              JOIN pg_catalog.pg_enum e ON e.enumtypid = t.oid \
              JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace \
              WHERE n.nspname = ANY($1) \
+               AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend d WHERE d.classid = 'pg_catalog.pg_type'::regclass AND d.objid = t.oid AND d.deptype = 'e') \
              GROUP BY n.nspname, t.typname ORDER BY 1, 2"
         )
         .bind(&schemas).fetch_all(pool).await;
@@ -1583,6 +1624,8 @@ async fn export_postgres(
             LEFT JOIN pg_catalog.pg_namespace dn ON dn.oid = dt.relnamespace
             LEFT JOIN pg_catalog.pg_attribute da ON da.attrelid = d.refobjid AND da.attnum = d.refobjsubid
             WHERE s.schemaname = ANY($1)
+              AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend xd
+                              WHERE xd.classid = 'pg_catalog.pg_class'::regclass AND xd.objid = sc.oid AND xd.deptype = 'e')
             ORDER BY 1, 2
             "#,
         )
@@ -1698,6 +1741,7 @@ async fn export_postgres(
              FROM pg_catalog.pg_class c \
              JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
              WHERE n.nspname = ANY($1) AND c.relkind = 'v' \
+               AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend d WHERE d.classid = 'pg_catalog.pg_class'::regclass AND d.objid = c.oid AND d.deptype = 'e') \
              ORDER BY 1, 2"
         )
         .bind(&schemas).fetch_all(pool).await;
@@ -1770,6 +1814,7 @@ async fn pg_load_tables(pool: &sqlx::PgPool, schemas: &[String], filter: Option<
          FROM pg_catalog.pg_class c \
          JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
          WHERE n.nspname = ANY($1) AND c.relkind = 'r' AND NOT c.relispartition \
+           AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend d WHERE d.classid = 'pg_catalog.pg_class'::regclass AND d.objid = c.oid AND d.deptype = 'e') \
          ORDER BY 1, 2"
     )
     .bind(schemas).fetch_all(pool).await.map_err(|e| e.to_string())?;
@@ -2027,6 +2072,77 @@ fn pg_batchable(low: &str) -> bool {
         && !(low.starts_with("create unique index concurrently"))
 }
 
+/// What a script's DDL calls or declares, and the extension that provides it.
+/// Matched against lowercased DDL only, never row data.
+const SCRIPT_EXTENSIONS: &[(&str, &[&str])] = &[
+    ("uuid-ossp", &["uuid_generate_v1", "uuid_generate_v3", "uuid_generate_v4", "uuid_generate_v5", "uuid_nil()"]),
+    ("pgcrypto", &["gen_salt(", "pgp_sym_encrypt", "pgp_sym_decrypt", "hmac("]),
+    ("citext", &[" citext", ".citext", "\"citext\""]),
+    ("hstore", &[" hstore", ".hstore", "\"hstore\""]),
+    ("postgis", &["geometry(", "geography(", ".geometry", ".geography", " geometry,", " geometry\n", " geometry not null", " geography,"]),
+    ("pg_trgm", &["gin_trgm_ops", "gist_trgm_ops"]),
+    ("vector", &[" vector(", ".vector(", "vector_cosine_ops", "vector_l2_ops", "vector_ip_ops"]),
+    ("ltree", &[" ltree", ".ltree"]),
+    ("unaccent", &["unaccent("]),
+];
+
+/// Most a script's head is scanned for DDL when it has no COPY block to stop at.
+const EXT_SCAN_MAX: usize = 64 * 1024 * 1024;
+
+/// Extensions a backup relies on, created before it runs when the target
+/// lacks them.
+///
+/// A backup made before Stroke wrote extensions into its scripts (or by a
+/// tool that leaves them out) restored into a fresh database - a new RDS
+/// database, say - failed on every table defaulting to uuid_generate_v4():
+/// "function uuid_generate_v4() does not exist", 93 failures, rolled back.
+/// The DDL says which extensions it needs, so this reads it (the part before
+/// the first COPY block and after the last; the rows in between are never
+/// scanned) and adds what is missing. Each in a savepoint: one the server or
+/// the role will not allow is a warning naming the fix, and the restore goes
+/// on to report the real failures.
+async fn pg_ensure_script_extensions(conn: &mut sqlx::PgConnection, sql: &str, rep: &Reporter) {
+    let floor = |i: usize| { let mut i = i.min(sql.len()); while !sql.is_char_boundary(i) { i -= 1; } i };
+    let head_end = sql.find("\nCOPY ").unwrap_or_else(|| floor(EXT_SCAN_MAX));
+    let mut ddl = sql[..head_end].to_ascii_lowercase();
+    if let Some(i) = sql.rfind("\n\\.\n") {
+        if i > head_end {
+            let start = floor(i.max(sql.len().saturating_sub(EXT_SCAN_MAX)));
+            ddl.push_str(&sql[start..].to_ascii_lowercase());
+        }
+    }
+    let mut wanted: Vec<&str> = SCRIPT_EXTENSIONS
+        .iter()
+        .filter(|(_, needles)| needles.iter().any(|n| ddl.contains(n)))
+        .map(|(name, _)| *name)
+        .collect();
+    // Built into Postgres 13 and later; from pgcrypto before that.
+    if ddl.contains("gen_random_uuid") {
+        let builtin: Option<bool> = sqlx::Executor::fetch_one(&mut *conn, "SELECT to_regproc('gen_random_uuid') IS NOT NULL")
+            .await.ok().and_then(|r| r.try_get::<bool, _>(0).ok());
+        if builtin == Some(false) && !wanted.contains(&"pgcrypto") { wanted.push("pgcrypto"); }
+    }
+    for name in wanted {
+        // A name from SCRIPT_EXTENSIONS, quoted as a literal: no bind needed.
+        let probe = format!("SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_extension WHERE extname = {})", ql(name));
+        let have: Option<bool> = sqlx::Executor::fetch_one(&mut *conn, probe.as_str())
+            .await.ok().and_then(|r| r.try_get::<bool, _>(0).ok());
+        if have != Some(false) { continue; }
+        let create = format!("SAVEPOINT stroke_ext; CREATE EXTENSION IF NOT EXISTS {} CASCADE; RELEASE SAVEPOINT stroke_ext", qi(name));
+        match sqlx::Executor::execute(&mut *conn, create.as_str()).await {
+            Ok(_) => rep.log("info", format!("Added the {name} extension, which this backup's tables use.")),
+            Err(e) => {
+                let _ = sqlx::Executor::execute(&mut *conn, "ROLLBACK TO SAVEPOINT stroke_ext; RELEASE SAVEPOINT stroke_ext").await;
+                let msg = e.to_string();
+                let msg = msg.strip_prefix("error returned from database: ").unwrap_or(&msg);
+                rep.log("warn", format!(
+                    "This backup uses the {name} extension, which could not be added ({msg}). An admin can run CREATE EXTENSION \"{name}\"; on the target, then restore again."
+                ));
+            }
+        }
+    }
+}
+
 async fn import_postgres(rep: &Reporter, pool: &sqlx::PgPool, sql: &str) -> Result<ImportResult, String> {
     let started = Instant::now();
     rep.log("info", "Starting restore…");
@@ -2044,6 +2160,7 @@ async fn import_postgres(rep: &Reporter, pool: &sqlx::PgPool, sql: &str) -> Resu
     {
         (&mut *conn).execute("ROLLBACK TO SAVEPOINT stroke_rr; RELEASE SAVEPOINT stroke_rr").await.ok();
     }
+    pg_ensure_script_extensions(&mut conn, sql, rep).await;
 
     let mut run = Runner::new(rep, sql.len());
     let mut sp = Splitter::new(sql, Escapes::Standard);
@@ -3894,6 +4011,73 @@ mod tests {
     //   cargo test --lib backup::tests::live_ -- --ignored
     //
     // Each creates and drops its own databases (stroke_bk_*) on that server.
+
+    /// A database whose tables lean on extensions (uuid_generate_v4() defaults,
+    /// citext, PostGIS) restores into a fresh database: the dump creates its
+    /// extensions and leaves out what they own, and an older dump without them
+    /// gets them added from its DDL before it runs.
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore]
+    async fn live_postgres_restore_brings_its_extensions() {
+        let Ok(base) = std::env::var("STROKE_TEST_PG_URL") else { return };
+        let admin = sqlx::PgPool::connect(&format!("{base}/postgres")).await.unwrap();
+        for db in ["stroke_bk_ext_src", "stroke_bk_ext_dst", "stroke_bk_ext_old"] {
+            sqlx::query(&format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)")).execute(&admin).await.unwrap();
+            sqlx::query(&format!("CREATE DATABASE {db}")).execute(&admin).await.unwrap();
+        }
+        let src = sqlx::postgres::PgPoolOptions::new().max_connections(4).connect(&format!("{base}/stroke_bk_ext_src")).await.unwrap();
+        let postgis: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'postgis')").fetch_one(&src).await.unwrap();
+        sqlx::raw_sql(
+            r#"CREATE EXTENSION "uuid-ossp"; CREATE EXTENSION citext;
+               CREATE TABLE job (id uuid PRIMARY KEY DEFAULT uuid_generate_v4(), email citext NOT NULL);
+               INSERT INTO job (email) SELECT 'U' || g || '@x.io' FROM generate_series(1, 25) g;"#,
+        ).execute(&src).await.unwrap();
+        if postgis {
+            sqlx::raw_sql(
+                "CREATE EXTENSION postgis;
+                 CREATE TABLE place (id serial PRIMARY KEY, geom geometry(Point, 4326));
+                 INSERT INTO place (geom) SELECT ST_SetSRID(ST_MakePoint(g, g), 4326) FROM generate_series(1, 5) g;",
+            ).execute(&src).await.unwrap();
+        }
+
+        let rep = Reporter::silent();
+        let mut out = Out::memory();
+        export_postgres(&rep, &src, Some("public"), None, &ExportOptions::default(), &mut out).await.unwrap();
+        let dump = String::from_utf8(out.finish().unwrap().0).unwrap();
+        assert!(dump.contains(r#"CREATE EXTENSION IF NOT EXISTS "uuid-ossp""#), "no uuid-ossp in dump");
+        assert!(dump.contains(r#"CREATE EXTENSION IF NOT EXISTS "citext""#), "no citext in dump");
+        if postgis {
+            assert!(!dump.contains("spatial_ref_sys"), "an extension's own table was dumped");
+            assert!(!dump.contains("geometry_columns"), "an extension's own view was dumped");
+        }
+
+        // A new dump restores as is.
+        let dst = sqlx::postgres::PgPoolOptions::new().max_connections(4).connect(&format!("{base}/stroke_bk_ext_dst")).await.unwrap();
+        let res = import_postgres(&rep, &dst, &dump).await.unwrap();
+        assert!(res.errors.is_empty(), "restore errors: {:?}", res.errors);
+        let n: i64 = sqlx::query_scalar("SELECT count(*) FROM job WHERE email = 'u7@X.IO'").fetch_one(&dst).await.unwrap();
+        assert_eq!(n, 1, "citext lost its case-insensitivity");
+        sqlx::query("INSERT INTO job (email) VALUES ('new@x.io')").execute(&dst).await.unwrap();
+        if postgis {
+            let p: i64 = sqlx::query_scalar("SELECT count(*) FROM place WHERE ST_X(geom) > 2").fetch_one(&dst).await.unwrap();
+            assert_eq!(p, 3);
+        }
+
+        // An older dump, made before extensions were written into it.
+        let old: String = dump.lines().filter(|l| !l.contains("CREATE EXTENSION")).collect::<Vec<_>>().join("\n");
+        let dst_old = sqlx::postgres::PgPoolOptions::new().max_connections(4).connect(&format!("{base}/stroke_bk_ext_old")).await.unwrap();
+        let res = import_postgres(&rep, &dst_old, &old).await.unwrap();
+        assert!(res.errors.is_empty(), "old dump restore errors: {:?}", res.errors);
+        let n: i64 = sqlx::query_scalar("SELECT count(*) FROM job").fetch_one(&dst_old).await.unwrap();
+        assert_eq!(n, 25);
+
+        src.close().await;
+        dst.close().await;
+        dst_old.close().await;
+        for db in ["stroke_bk_ext_src", "stroke_bk_ext_dst", "stroke_bk_ext_old"] {
+            sqlx::query(&format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)")).execute(&admin).await.ok();
+        }
+    }
 
     #[tokio::test(flavor = "multi_thread")]
     #[ignore]
