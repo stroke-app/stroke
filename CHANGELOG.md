@@ -4,6 +4,19 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.6.9] - 2026-11-22
+
+### New Features
+- **Kubernetes and AWS SSM tunnels** - A connection can go through kubectl port-forward (to a service, pod or deployment) or AWS Session Manager port forwarding, as well as SSH. Pick it under Tunnel in the connection form.
+
+### Bug Fixes
+- **AI chat** - Run on a SQL block in a reply shows the result. It ran, but the result was hidden whenever query cards were turned off.
+- **Stopping a large query** - Stop ends the query at once instead of after the row being read (one large JSON value could take seconds), and the next query no longer waits while the stopped one's remaining rows are drained.
+
+### Changes
+- **Select All** - No longer logs a debug line on every press.
+
+
 ## [3.6.8] - 2026-11-22
 
 ### New Features
