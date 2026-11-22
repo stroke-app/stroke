@@ -1912,6 +1912,15 @@ import FilterX from "@lucide/svelte/icons/filter-x";
 
     const startValue = effectiveCellValue(rowIdx, colIdx);
     const oversize = oversizeCellInfo(startValue);
+    if (oversize && onloadcellvalue && oversize.bytes <= INLINE_LOAD_MAX) {
+      // A wide column ships a preview of anything past a few kilobytes, so a
+      // 10KB value is a preview here too - and refusing to edit it sent people
+      // to SQL for a value the grid can hold. Load it, then edit it.
+      void loadCellInline(rowIdx, colIdx).then(() => {
+        if (!oversizeCellInfo(effectiveCellValue(rowIdx, colIdx))) startEdit(rowIdx, colIdx, initialChar);
+      });
+      return;
+    }
     if (oversize) {
       // Only a truncated preview was loaded - editing would write it back.
       toast.error("Value too large to edit", {
@@ -3131,6 +3140,9 @@ import FilterX from "@lucide/svelte/icons/filter-x";
    * column back into the page.
    * @param {number} rowIdx @param {number} colIdx
    */
+  /** Up to this size an oversize preview loads in place for an inline edit. */
+  const INLINE_LOAD_MAX = 256 * 1024;
+
   async function loadCellInline(rowIdx, colIdx) {
     if (!onloadcellvalue) return
     const key = `${rowIdx}:${colIdx}`
