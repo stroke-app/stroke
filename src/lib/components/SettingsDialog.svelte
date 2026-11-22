@@ -11,6 +11,7 @@
   import { trackInstalled, trackInstall, trackOpen } from '$lib/api.js'
   import { updateState, updateActions } from '$lib/stores/update-state.js'
   import KeybindingsSettings from './KeybindingsSettings.svelte'
+  import SnippetsSettings from './SnippetsSettings.svelte'
   import { bindingFor } from '$lib/stores/keybindings.js'
   import { startTelemetry, stopTelemetry } from "$lib/telemetry.js";
   import Minus from "@lucide/svelte/icons/minus";
@@ -128,6 +129,7 @@
     { id: 'account',      label: 'Account & Sync', icon: 'cloud' },
     { id: 'integrations', label: 'Integrations', icon: 'blocks' },
     { id: 'keybindings',  label: 'Keybindings',  icon: 'keyboard' },
+    { id: 'snippets',     label: 'Snippets',     icon: 'braces' },
     { id: 'labs',         label: 'Labs',         icon: 'flask-conical' },
     { id: 'about',        label: 'About',        icon: 'info' },
   ];
@@ -747,6 +749,8 @@
                 {@render agentContent()}
               {:else if category === 'keybindings'}
                 <KeybindingsSettings />
+              {:else if category === 'snippets'}
+                <SnippetsSettings />
               {:else if category === 'account'}
                 {@render accountContent()}
               {:else if category === 'integrations'}

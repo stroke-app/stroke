@@ -2448,6 +2448,18 @@ export async function openNotebookFile() {
 }
 
 /**
+ * Show an open dialog for one file of `filter`'s kind and read it as text.
+ * @param {{ name: string, extensions: string[] }} filter
+ * @returns {Promise<{ path: string, content: string } | null>} null when cancelled
+ */
+export async function openTextFileAs(filter) {
+  const { open } = await import('@tauri-apps/plugin-dialog')
+  const path = await open({ filters: [filter], multiple: false })
+  if (!path || typeof path !== 'string') return null
+  return { path, content: await readFile(path) }
+}
+
+/**
  * Show a save dialog for .sqlnb files, then write the content.
  * @param {string} content
  * @param {string} [defaultName]
