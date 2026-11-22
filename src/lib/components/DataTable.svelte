@@ -282,6 +282,14 @@ import FilterX from "@lucide/svelte/icons/filter-x";
      *  cursor on a specific cell and bring it on screen - used when restoring a
      *  back/forward position. Indices are clamped to the loaded data. */
     focusCell = $bindable(/** @type {(row: number, col?: number | null) => void} */ (() => {})),
+    /** Others on a shared studio, placed on this grid: row index into `rows`,
+     *  column by name (StudioShell maps their row keys).
+     *  @type {{ id: number, name: string, color: string, cell: { rowIdx: number, col: string } | null, pointer: { rowIdx: number, col: string, fx: number, fy: number } | null, editing: { rowIdx: number, col: string, value: string } | null }[]} */
+    peers = [],
+    /** Where this side is, for the others on a shared studio: the cell cursor,
+     *  the pointer over a cell, a value being typed. Null when not shared.
+     *  @type {((p: { cell?: { rowIdx: number, col: string } | null, pointer?: { rowIdx: number, col: string, fx: number, fy: number } | null, editing?: { rowIdx: number, col: string, value: string } | null }) => void) | null} */
+    onpresence = null,
     /** Assigned by this component so the parent can persist/restore scroll per
      *  tab. getScroll() reads the live position; applyScroll() restores it once
      *  layout settles. */
@@ -4437,6 +4445,52 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   /** Document-space y of a body row's top (0 = top of the sizer). */
   function rowDocTop(/** @type {number} */ idx) {
     return HEADER_H + insertRowOffset + rowTopOf(rowTops, idx, ROW_HEIGHT)
+  }
+
+  // ── Shared studio presence ──────────────────────────────────────────────
+  // The cursor and the value being typed, by column name.
+  $effect(() => {
+    if (!onpresence) return
+    const name = focusedRow !== null && focusedCol !== null ? visibleColumns[focusedCol]?.name : undefined
+    onpresence({ cell: name && focusedRow !== null ? { rowIdx: focusedRow, col: name } : null })
+  })
+  $effect(() => {
+    if (!onpresence) return
+    const name = editingCell ? columns[editingCell.colIdx]?.name : undefined
+    onpresence({ editing: editingCell && name ? { rowIdx: editingCell.rowIdx, col: name, value: String(editingCell.draft ?? '') } : null })
+  })
+  let _lastPresencePointer = 0
+  /** The pointer over a body cell, at most every 40 ms. @param {number} x @param {number} y viewport */
+  function publishPointer(x, y) {
+    if (!onpresence) return
+    const now = performance.now()
+    if (now - _lastPresencePointer < 40) return
+    _lastPresencePointer = now
+    const bodyY = y + _scrollTop - HEADER_H - insertRowOffset
+    const r = y >= HEADER_H ? rowAtContentY(rowTops, rows.length, ROW_HEIGHT, bodyY) : null
+    const hit = colAtX(x, geom, _scrollLeft)
+    if (!r?.inRowBody || !hit) { onpresence({ pointer: null }); return }
+    const top = rowTopOf(rowTops, r.idx, ROW_HEIGHT)
+    onpresence({
+      pointer: {
+        rowIdx: r.idx,
+        col: hit.col.name,
+        fx: Math.min(1, Math.max(0, (x - hit.drawnX) / hit.col.w)),
+        fy: Math.min(1, Math.max(0, (bodyY - top) / ROW_HEIGHT)),
+      },
+    })
+  }
+  /** A peer's cell in the sizer's content coordinates, or null when off screen
+   *  or under the header or the frozen columns. @param {{ rowIdx: number, col: string } | null} at */
+  function peerBox(at) {
+    if (!at || at.rowIdx < 0 || at.rowIdx >= rows.length) return null
+    const gcol = geom.cols.find((c) => c.name === at.col)
+    if (!gcol) return null
+    const top = rowDocTop(at.rowIdx)
+    if (top < _scrollTop + HEADER_H - 1 || top > _scrollTop + _viewportHeight) return null
+    const left = bandCellX(gcol)
+    if (!gcol.pinned && left - _scrollLeft < geom.frozenWidth - 1) return null
+    return { left, top, width: gcol.w, pinned: gcol.pinned }
   }
   /** Viewport y of a body row's top. */
   function rowViewportY(/** @type {number} */ idx) {
@@ -8677,6 +8731,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
 
   function onCanvasPointerMove(/** @type {PointerEvent} */ e) {
     const { x, y } = canvasXY(e)
+    publishPointer(x, y)
     if (resizingColName) return
     if (y < HEADER_H) {
       _resizeHoverCol = null
@@ -8748,6 +8803,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   }
 
   function onCanvasPointerLeave() {
+    onpresence?.({ pointer: null })
     setHover(null, null)
     if (canvasEl && canvasEl.title) canvasEl.title = ''
     _resizeHoverCol = null
@@ -9257,6 +9313,42 @@ import FilterX from "@lucide/svelte/icons/filter-x";
               class="relative"
               style="width:{resizingColName ? Math.max(totalContentWidth, _scrollLeft + _viewportWidth) : totalContentWidth}px; height:{spacerHeight}px"
             >
+              <!-- Others on a shared studio: an outline on their cell with a
+                   name tag, the value they are typing, their pointer. -->
+              {#each peers as p (p.id)}
+                {@const at = p.editing ?? p.cell}
+                {@const box = peerBox(at)}
+                {@const ptr = p.pointer ? peerBox(p.pointer) : null}
+                {#if box}
+                  <div
+                    class="pointer-events-none absolute overflow-hidden"
+                    style="left:{box.left}px; top:{box.top}px; width:{box.width}px; height:{ROW_HEIGHT}px; z-index:{box.pinned ? 4 : 3}; box-shadow: inset 0 0 0 2px {p.color};{p.editing ? ` background: linear-gradient(${p.color}1f, ${p.color}1f), var(--background);` : ''}"
+                    aria-hidden="true"
+                  >
+                    {#if p.editing}
+                      <span class="flex h-full items-center truncate px-2 font-mono text-ui-xs text-foreground">{p.editing.value}<span class="ms-px inline-block h-3.5 w-px animate-pulse" style="background:{p.color}"></span></span>
+                    {/if}
+                  </div>
+                  <!-- Above the cell, or under it when the header leaves no room. -->
+                  {@const below = box.top - 16 < _scrollTop + HEADER_H}
+                  <span
+                    class={cn('pointer-events-none absolute px-1.5 text-ui-3xs leading-4 font-medium whitespace-nowrap text-white', below ? 'rounded-b-sm' : '-translate-y-full rounded-t-sm')}
+                    style="left:{box.left}px; top:{below ? box.top + ROW_HEIGHT : box.top}px; z-index:5; background:{p.color}"
+                    aria-hidden="true"
+                  >{p.name}{p.editing ? ' is typing' : ''}</span>
+                {/if}
+                {#if ptr && p.pointer}
+                  <div
+                    class="pointer-events-none absolute"
+                    style="left:{ptr.left + p.pointer.fx * ptr.width}px; top:{ptr.top + p.pointer.fy * ROW_HEIGHT}px; z-index:6; transition: left 75ms linear, top 75ms linear"
+                    aria-hidden="true"
+                  >
+                    <svg width="14" height="18" viewBox="0 0 14 18" class="drop-shadow-sm"><path d="M1 1l11.5 9.5-5.2.6 3 5.6-2.2 1.1-3-5.6L1 16z" fill={p.color} stroke="white" stroke-width="1.2" stroke-linejoin="round" /></svg>
+                    <span class="ms-3 -mt-1 block w-max rounded-full px-1.5 text-ui-3xs leading-4 font-medium text-white" style="background:{p.color}">{p.name}</span>
+                  </div>
+                {/if}
+              {/each}
+
               <!-- JSON expand panels (independent from FK sub-view).
                    Same pin pattern as the FK sub-view: outer absolute for vertical
                    position, inner position:sticky;left:0 for the horizontal pin. This

@@ -17,6 +17,8 @@ import { listSchemas, listTables, getTableColumnStructure, listIndexes, updateTa
 import { odbcFlat } from '$lib/sql-ident.js'
 import { studioEngine, studioQuote, studioPageSql } from '$lib/studio-sql.js'
 import { engineLabel } from '$lib/db-capabilities.js'
+import { joinPresence } from '$lib/share-presence.js'
+import { toB64u, fromB64u, rand, seal, unseal } from '$lib/relay-seal.js'
 
 export const STUDIO_ORIGIN = 'https://stroke.click'
 const VERSION = '0.2.0'
@@ -25,34 +27,6 @@ const FEATURES = ['structure', 'where', 'edit', 'rowCounts']
 export { studioEngine }
 
 const SYSTEM_SCHEMAS = new Set(['pg_catalog', 'information_schema', 'pg_toast', 'mysql', 'performance_schema', 'sys', 'crdb_internal', 'pg_extension'])
-
-// ── crypto ──────────────────────────────────────────────────────────────────
-
-/** @param {Uint8Array} bytes */
-function toB64u(bytes) {
-  let s = ''
-  for (const b of bytes) s += String.fromCharCode(b)
-  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-}
-/** @param {string} text */
-function fromB64u(text) {
-  const b = atob(text.replace(/-/g, '+').replace(/_/g, '/'))
-  const out = new Uint8Array(b.length)
-  for (let i = 0; i < b.length; i++) out[i] = b.charCodeAt(i)
-  return out
-}
-const rand = (/** @type {number} */ n) => crypto.getRandomValues(new Uint8Array(n))
-/** @param {CryptoKey} key @param {unknown} value */
-async function seal(key, value) {
-  const iv = rand(12)
-  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(JSON.stringify(value))))
-  return { iv: toB64u(iv), ct: toB64u(ct) }
-}
-/** @param {CryptoKey} key @param {{ iv: string, ct: string }} s */
-async function unseal(key, s) {
-  const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: fromB64u(s.iv) }, key, fromB64u(s.ct))
-  return JSON.parse(new TextDecoder().decode(pt))
-}
 
 // ── the studio's routes, on the app's connection ────────────────────────────
 
@@ -196,6 +170,7 @@ function makeRoutes({ engine, label, name, database, host, write, isLive }) {
  *   isLive: () => boolean,
  *   onStatus?: (s: 'connecting' | 'online' | 'offline') => void,
  *   origin?: string,
+ *   me?: string,
  * }} o
  */
 export async function startShare(o) {
@@ -254,12 +229,16 @@ export async function startShare(o) {
     }
   }
   connect()
+  // Who else has the link open, and where: shown on this side's grid too.
+  const presence = joinPresence({ origin, room, key, name: o.me || 'Host', role: 'host' })
 
   return {
     link: `${origin}/studio#${new URLSearchParams({ relay: room, key: keyText })}`,
     write: o.write,
+    presence,
     stop() {
       closed = true
+      presence.stop()
       clearInterval(ping)
       try { ws?.close(1000, 'Stopped sharing') } catch { /* closed */ }
       onStatus('offline')
