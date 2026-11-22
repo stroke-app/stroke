@@ -2,6 +2,8 @@
   import Share2 from '@lucide/svelte/icons/share-2'
   import { requestShare } from '$lib/share-flow.js'
   import { onDestroy, tick, untrack } from 'svelte'
+  import { get } from 'svelte/store'
+  import { objectsVersion } from '$lib/stores/sidebar-objects.svelte.js'
   import dagre from '@dagrejs/dagre'
   import { getSchemaColumnStructure, listIndexes, getTableDdl, saveExportAs, listTables } from '$lib/api.js'
   import ErdCanvas from './ErdCanvas.svelte'
@@ -86,7 +88,7 @@
    *   columnDefault: string|null, foreignKey: string|null,
    *   fkConstraintName: string|null, ordinalPosition: number, isPrimaryKey?: boolean }} Col
    * @typedef {{ name: string, columns: Col[], pkCols: Set<string>,
-   *   uniqueCols?: Set<string>, hiddenCount?: number, view?: boolean }} TableMeta
+   *   uniqueCols?: Set<string>, hiddenCount?: number, view?: boolean, matView?: boolean }} TableMeta
    * @typedef {'self' | 'related' | 'all'} Scope
    */
 
@@ -1105,19 +1107,26 @@
   }
 
   // ── Load ──────────────────────────────────────────────────────────────────
-  async function load() {
-    loading = true
+  /**
+   * @param {{ keep?: boolean }} [opts] keep: a refresh of the same schema. The
+   *   cards stay up while it reads, the filter and the placed positions carry
+   *   over, and only tables new to the diagram get laid out.
+   */
+  async function load({ keep = false } = {}) {
     error = ''
-    tableMeta = new Map()
-    nodes = []
-    edges = []
-    // A filter belongs to the schema it was picked in.
-    picked = new Set()
-    pickQuery = ''
-    drawAll = false
-    gatedCount = 0
-    _posCache.clear()
     ddlCache = new Map()
+    if (!keep) {
+      loading = true
+      tableMeta = new Map()
+      nodes = []
+      edges = []
+      // A filter belongs to the schema it was picked in.
+      picked = new Set()
+      pickQuery = ''
+      drawAll = false
+      gatedCount = 0
+      _posCache.clear()
+    }
 
     try {
       // One call for the whole schema. This used to fan out one request per
@@ -1130,8 +1139,11 @@
         listTables(activeSchema).catch(() => []),
       ])
       const views = new Set(/** @type {any[]} */ (listed ?? []).filter((t) => /view/i.test(t?.kind ?? '')).map((t) => t.name))
+      const matViews = new Set(/** @type {any[]} */ (listed ?? []).filter((t) => t?.kind === 'materialized_view').map((t) => t.name))
       autoConnected = schemaCols.length > WARN_MANY
 
+      /** @type {Map<string, TableMeta>} */
+      const meta = new Map()
       for (const { table, columns } of schemaCols) {
         const cols = /** @type {Col[]} */ (columns)
         // The catalog's own key flag where the engine gives one; the old
@@ -1146,11 +1158,12 @@
             ))
           ).map(c => c.name)
         )
-        tableMeta.set(table, /** @type {TableMeta} */ ({ name: table, columns: cols, pkCols, view: views.has(table) }))
+        meta.set(table, /** @type {TableMeta} */ ({ name: table, columns: cols, pkCols, view: views.has(table), matView: matViews.has(table) }))
       }
-      tableMeta = new Map(tableMeta)
+      tableMeta = meta
+      if (keep && picked.size) picked = new Set([...picked].filter((n) => meta.has(n)))
       await tick()
-      await buildGraph(true)
+      await buildGraph(!keep)
       _shapeKey = shapeKey()
       void refineKeys()
     } catch (e) {
@@ -1185,6 +1198,17 @@
 
   // ── Reactivity ────────────────────────────────────────────────────────────
   $effect(() => { void activeSchema; void load() })
+
+  // A sidebar refresh, or a CREATE or DROP run in an editor, bumps the objects
+  // version. The diagram used to keep drawing the old schema until its own
+  // refresh button was pressed: a new materialized view never showed up.
+  let seenObjects = get(objectsVersion)
+  $effect(() => {
+    const v = $objectsVersion
+    if (v === seenObjects) return
+    seenObjects = v
+    untrack(() => { if (!loading) void load({ keep: true }) })
+  })
 
   // The sidebar's schema moving (picked there, or the next database's default
   // landing after a switch) moves the diagram too; its own picker still

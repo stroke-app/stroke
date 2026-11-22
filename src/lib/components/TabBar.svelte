@@ -144,7 +144,9 @@
     if (tab.kind === 'terminal') return 'square-terminal'
     if (tab.kind === 'table') {
       const entityKind = /** @type {any} */ (tab.state)?.tableKind
-      if (entityKind === 'view' || entityKind === 'materialized_view') return 'table-view'
+      // The sidebar's marks: an eye for a view, layers for a materialized view.
+      if (entityKind === 'materialized_view') return 'layers'
+      if (entityKind === 'view') return 'eye'
       return 'table-2'
     }
     if (tab.kind === 'ai') return 'bot'
