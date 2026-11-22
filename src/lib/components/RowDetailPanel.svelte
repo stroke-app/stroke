@@ -130,6 +130,10 @@
 
   // Field list for row details view
   const pkSet = $derived(new Set(primaryKey))
+  /** Past this a field shows its value cut (it is clamped on screen anyway). */
+  const DISPLAY_MAX = 4000
+  /** Past this a value is not edited in a field. */
+  const INLINE_EDIT_MAX = 64 * 1024
 
   const fields = $derived.by(() => {
     void dataVersion
@@ -145,14 +149,17 @@
       const isPk = pkSet.has(col.name)
       // PK columns, non-editable types, and truncated oversize cells (only a
       // preview was loaded - saving would write it back) are read-only.
-      const editable = canEdit && !isPk && isEditableType(dataType) && !oversizeCellInfo(raw)
       const isNull = raw === null
       const isEmpty = typeof raw === 'string' && raw === ''
+      const full = isNull ? 'NULL' : (isEmpty ? 'EMPTY' : formatNormalValue(raw))
+      // Megabytes in a field's textarea do not paint; the cell panel (Space in
+      // the table) edits values of any size.
+      const editable = canEdit && !isPk && isEditableType(dataType) && !oversizeCellInfo(raw) && full.length <= INLINE_EDIT_MAX
       const isJsonType = normalType.startsWith('json')
       const isTextType = /^(text|varchar|char|character|string|citext|uuid|name)/.test(normalType)
       const isMultiline = typeof raw === 'object' && raw !== null
       const nullable = col.nullable !== false
-      const initialEditStr = valueToEditString(raw)
+      const initialEditStr = editable ? valueToEditString(raw) : ''
       return {
         colIdx: i,
         name: col.name,
@@ -160,7 +167,7 @@
         raw,
         isNull,
         isEmpty,
-        displayValue: isNull ? 'NULL' : (isEmpty ? 'EMPTY' : formatNormalValue(raw)),
+        displayValue: full.length > DISPLAY_MAX ? `${full.slice(0, DISPLAY_MAX)}…` : full,
         initialEditStr,
         editable,
         isPk,
