@@ -4,6 +4,17 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.6.5] - 2026-11-22
+
+### Bug Fixes
+- **Booleans in the record view and row panel** - On SQLite, libSQL and D1 they show true/false like the grid, and the true/false picker starts on the stored value instead of a blank.
+- **Escape** - Closes every dialog, including What's new, which ignored it. It also leaves full screen in the ERD and diagram code views and stops a dashboard presentation, which it never reached before.
+- **MongoDB filters** - A filter that doesn't parse says what is wrong, such as "it is missing a closing }", instead of a parser diagram that pointed at the wrong place.
+- **Redis sidebar** - Says "1 client", not "1 clients".
+- **What's new and the update window** - Show each change's title in bold instead of printing its asterisks.
+- **Status bar, several databases open** - The other open databases show their engine icon, so a name like "127.0.0.1:18080" no longer reads as this connection's host.
+
+
 ## [3.6.4] - 2026-11-22
 
 ### Bug Fixes
