@@ -227,24 +227,51 @@ fn ensure_client(explicit_dir: &str) -> Result<(), String> {
 }
 
 /// Why Instant Client in `dir` would not load, and what fixes it.
+///
+/// A missing dependency surfaces as "libclntsh.so: cannot open shared object
+/// file", naming the library that was found rather than the one that wasn't,
+/// so libaio is probed for directly instead of looked for in the message.
 fn load_error(dir: &Path, msg: &str) -> String {
-    let hint = if msg.contains("libaio") {
-        " Instant Client needs libaio: install it (libaio1, or libaio1t64 on Ubuntu 24.04 and later, where \
-         libaio.so.1 also needs a link: sudo ln -s /usr/lib/x86_64-linux-gnu/libaio.so.1t64 /usr/lib/x86_64-linux-gnu/libaio.so.1)."
-            .to_string()
-    } else if cfg!(target_os = "linux") && msg.contains("cannot open shared object file") {
+    let missing_dep = cfg!(target_os = "linux") && msg.contains("cannot open shared object file");
+    let mut hint = String::new();
+    if msg.contains("libaio") || (missing_dep && !libaio_loads()) {
+        let lib = format!("/usr/lib/{}-linux-gnu", std::env::consts::ARCH);
+        hint.push_str(&format!(
+            " Instant Client needs libaio: install it (libaio1, or libaio1t64 on Ubuntu 24.04 and later, where \
+             libaio.so.1 also needs a link: sudo ln -s {lib}/libaio.so.1t64 {lib}/libaio.so.1)."
+        ));
+    }
+    if missing_dep {
         // Linux Instant Client libraries carry no $ORIGIN run path, so their
         // own dependencies (libnnz.so) resolve only through the linker's path.
-        format!(
+        hint.push_str(&format!(
             " On Linux the Instant Client folder must also be on the library path: run \
              sudo sh -c 'echo {} > /etc/ld.so.conf.d/oracle-instantclient.conf' && sudo ldconfig, then restart Stroke \
              (or start Stroke with LD_LIBRARY_PATH set to that folder).",
             dir.display()
-        )
-    } else {
-        String::new()
-    };
+        ));
+    }
     format!("Could not load Oracle Instant Client from \"{}\": {msg}{hint}", dir.display())
+}
+
+/// Whether the dynamic linker can load libaio.so.1, which Instant Client links.
+#[cfg(target_os = "linux")]
+fn libaio_loads() -> bool {
+    let name = c"libaio.so.1";
+    // SAFETY: dlopen with a valid C string; the handle is closed straight away.
+    unsafe {
+        let h = libc::dlopen(name.as_ptr(), libc::RTLD_LAZY | libc::RTLD_LOCAL);
+        if h.is_null() {
+            return false;
+        }
+        libc::dlclose(h);
+    }
+    true
+}
+
+#[cfg(not(target_os = "linux"))]
+fn libaio_loads() -> bool {
+    true
 }
 
 // ── Connect ──────────────────────────────────────────────────────────────────
@@ -2007,6 +2034,18 @@ mod live_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn load_error_names_libaio_when_it_is_missing() {
+        let msg = "DPI-1047: Cannot locate a 64-bit Oracle Client library: \"libclntsh.so: cannot open shared object file: No such file or directory\"";
+        let e = load_error(Path::new("/opt/ic"), msg);
+        assert!(e.contains("library path"), "{e}");
+        if cfg!(target_os = "linux") {
+            assert_eq!(e.contains("needs libaio"), !libaio_loads(), "{e}");
+            assert!(!e.contains("needs libaio") || e.contains(std::env::consts::ARCH), "{e}");
+        }
+        assert!(load_error(Path::new("/opt/ic"), "libaio.so.1: cannot open").contains("needs libaio"));
+    }
 
     fn cfg() -> OracleConfig {
         OracleConfig { ssh: None,
