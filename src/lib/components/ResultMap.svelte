@@ -156,8 +156,60 @@
     const visible = (/** @type {[number, number, number, number]} */ e) => !(e[2] < b.minLon || e[0] > b.maxLon || e[3] < b.minLat || e[1] > b.maxLat)
     // Unselected first, then selected and hovered on top, so they're never buried.
     const lift = (/** @type {number} */ row) => selected.has(row) || row === hoverRow
-    for (const f of layer.features) if (!lift(f.row) && visible(f.shape.extent)) drawFeature(c, f.shape, false, selected.size > 0)
+    // Plain points are stamped from one pre-drawn sprite. Each had its own
+    // save/restore, colours, fill and stroke: 30,000 points took 1.1s a draw
+    // (one big path was slower still on Cairo), and every pan and zoom redraws.
+    const dim = selected.size > 0
+    /** @type {{ px: number, py: number }[]} */
+    const dots = []
+    for (const f of layer.features) {
+      if (lift(f.row) || !visible(f.shape.extent)) continue
+      if (f.shape.polygons.length || f.shape.lines.length) drawFeature(c, f.shape, false, dim)
+      else for (const p of f.shape.points) dots.push(project(p))
+    }
+    if (dots.length) drawDots(c, dots, dim)
     for (const f of layer.features) if (lift(f.row) && visible(f.shape.extent)) drawFeature(c, f.shape, true, false)
+  }
+
+  /** The plain point, drawn once per colour and dimming at device pixels. */
+  let sprite = /** @type {{ key: string, img: HTMLCanvasElement, size: number } | null} */ (null)
+  /** @param {boolean} dim */
+  function pointSprite(dim) {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2)
+    const key = `${palette.accent}|${palette.bg}|${dim}|${dpr}`
+    if (sprite?.key === key) return sprite
+    const size = 12
+    const img = document.createElement('canvas')
+    img.width = Math.ceil(size * dpr)
+    img.height = Math.ceil(size * dpr)
+    const g = /** @type {CanvasRenderingContext2D} */ (img.getContext('2d'))
+    g.scale(dpr, dpr)
+    // Exactly drawFeature's plain point: a 4.5 dot with a 1.5 halo.
+    g.beginPath()
+    g.arc(size / 2, size / 2, 4.5, 0, Math.PI * 2)
+    g.fillStyle = `rgba(${palette.accent},${dim ? 0.45 : 1})`
+    g.fill()
+    g.lineWidth = 1.5
+    g.strokeStyle = `rgba(${palette.bg},0.9)`
+    g.stroke()
+    sprite = { key, img, size }
+    return sprite
+  }
+
+  /** Points that aren't lifted, stamped. @param {CanvasRenderingContext2D} c @param {{ px: number, py: number }[]} dots @param {boolean} dim */
+  function drawDots(c, dots, dim) {
+    const { img, size } = pointSprite(dim)
+    const h = size / 2
+    // Zoomed out, thousands of points share a pixel; a second stamp of the
+    // same sprite on the same pixel changes nothing, so each pixel gets one.
+    const seen = new Set()
+    for (const s of dots) {
+      const x = Math.round(s.px), y = Math.round(s.py)
+      const k = x * 65536 + y
+      if (seen.has(k)) continue
+      seen.add(k)
+      c.drawImage(img, x - h, y - h, size, size)
+    }
   }
 
   /** @param {CanvasRenderingContext2D} c */
