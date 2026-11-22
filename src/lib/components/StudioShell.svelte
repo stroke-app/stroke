@@ -11553,6 +11553,7 @@ let rowSearch = $state('')
                     adapter={docAdapter}
                     collection={/** @type {any} */ (dt).collection ?? ''}
                     where={docWhere}
+                    collectionCount={loadingTables ? -1 : tables.length}
                     onopensql={(text, coll) => { if (aiMode) exitAiMode(); openSqlTabWith(text, coll ? `${docAdapter.consoleLabel} · ${coll}` : docAdapter.consoleLabel) }}
                   />
                 {/key}

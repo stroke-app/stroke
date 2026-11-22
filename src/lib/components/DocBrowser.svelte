@@ -62,7 +62,8 @@
    *   onopensql?: (text: string, collection: string) => void,
    * }}
    */
-  let { active = false, connection = null, adapter, collection = '', where = '', onopensql = () => {}, live = false } = $props()
+  /** collectionCount: the sidebar's count, -1 while unknown (still loading). */
+  let { active = false, connection = null, adapter, collection = '', where = '', onopensql = () => {}, live = false, collectionCount = -1 } = $props()
 
   // InfluxDB's adapter only reads, whatever the connection's mode.
   const readOnly = $derived($readOnlyMode || !!adapter.readOnly)
@@ -747,9 +748,10 @@ GET products/_search
       <PanelLeft class="size-6 shrink-0 text-muted-foreground/70" />
       <p class="text-ui-sm text-foreground">Pick {article(noun.collection)} {noun.collection.toLowerCase()} in the sidebar</p>
       {#if where}<p class="font-mono text-ui-2xs text-muted-foreground">{where}</p>{/if}
-      {#if isSearchEngine}
+      {#if isSearchEngine && collectionCount === 0}
         <!-- A new cluster has no indices, so the sidebar says Empty and there is
-             nothing to pick. The console makes the first one. -->
+             nothing to pick. The console makes the first one. Only then: with
+             indices listed beside it, "No indices yet?" read as wrong. -->
         <p class="mt-3 max-w-80 text-ui-xs leading-relaxed text-pretty text-muted-foreground">
           No indices yet? Create one and add a document in the console, then refresh the sidebar.
         </p>
