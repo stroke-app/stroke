@@ -101,6 +101,8 @@
   import { CatalogCache, catalogKey, connectionPrefix } from '$lib/catalog-cache.js'
   import { whenIdle } from '$lib/idle.js'
   import { studioEngine as studioEngineFor } from '$lib/studio-share.js'
+  import { rowKey as shareRowKeyOf } from '$lib/share-presence.js'
+  import { account } from '$lib/stores/account.js'
   import { refreshExternalPlugins, stopAllExternalPlugins } from '$lib/plugins/external/host.js'
   import {
     dbAdminKind,
@@ -764,7 +766,7 @@
 
   // ── Labs: share as a web studio ─────────────────────────────────────────
   let showStudioShare = $state(false)
-  /** @type {{ link: string, write: boolean, stop: () => void } | null} */
+  /** @type {{ link: string, write: boolean, stop: () => void, presence: ReturnType<typeof import('$lib/share-presence.js').joinPresence> } | null} */
   let studioShare = $state(null)
   let studioShareStatus = $state(/** @type {'connecting' | 'online' | 'offline'} */ ('offline'))
   /** The connection the share answers for; a switch away pauses it (isLive). */
@@ -796,7 +798,98 @@
       onStatus: (st) => (studioShareStatus = st),
       // A local stroke-web for testing the relay; unset in every release build.
       origin: import.meta.env.VITE_STUDIO_ORIGIN || undefined,
+      // First name only: everyone with the link sees it on this side's cursor.
+      me: String(get(account)?.user?.name ?? '').trim().split(/\s+/)[0] || 'Host',
     })
+  }
+
+  // ── Shared studio presence: the others' cursors on this grid ─────────────
+  /** @type {import('$lib/share-presence.js').Peer[]} */
+  let sharePeers = $state([])
+  $effect(() => {
+    const store = studioShare?.presence?.peers
+    if (!store) { sharePeers = []; return }
+    return store.subscribe((ps) => (sharePeers = ps))
+  })
+  /** This table as the web studio names it: `schema.table`. */
+  const shareTableKey = $derived(studioShare && activeTable ? `${activeSchema || 'main'}.${activeTable}` : null)
+  const sharePeersHere = $derived(shareTableKey ? sharePeers.filter((p) => p.tab === shareTableKey) : [])
+  /** Primary key columns in table order, the order the web studio keys rows by. */
+  const sharePkIdx = $derived(primaryKey.length ? columns.map((c, i) => (primaryKey.includes(c.name) ? i : -1)).filter((i) => i >= 0) : [])
+  /** @param {number} rowIdx */
+  function shareRowKey(rowIdx) {
+    const row = rows[rowIdx]
+    if (!row) return null
+    return sharePkIdx.length ? shareRowKeyOf(sharePkIdx.map((i) => row[i])) : `#${(infiniteScroll ? 0 : currentOffset) + rowIdx}`
+  }
+  /** Row keys to indexes, built only while someone is on this table. */
+  const shareRowIndex = $derived.by(() => {
+    if (!sharePeersHere.length) return null
+    /** @type {Map<string, number>} */
+    const m = new Map()
+    for (let i = 0; i < rows.length; i++) {
+      const k = shareRowKey(i)
+      if (k !== null) m.set(k, i)
+    }
+    return m
+  })
+  const gridPeers = $derived.by(() => {
+    const idx = shareRowIndex
+    if (!idx) return []
+    const at = (/** @type {any} */ ref) => {
+      if (!ref || ref.table !== shareTableKey) return null
+      const rowIdx = idx.get(ref.row)
+      return rowIdx === undefined ? null : { rowIdx, col: String(ref.col) }
+    }
+    return sharePeersHere.map((p) => {
+      const pointer = at(p.pointer)
+      const editing = at(p.editing)
+      return {
+        id: p.id,
+        name: p.name,
+        color: p.color,
+        cell: at(p.cell),
+        pointer: pointer && p.pointer ? { ...pointer, fx: Number(p.pointer.fx) || 0, fy: Number(p.pointer.fy) || 0 } : null,
+        editing: editing && p.editing ? { ...editing, value: p.editing.value } : null,
+      }
+    })
+  })
+  /** This side's cell, pointer and typing, as the web studio addresses cells. @param {any} p */
+  function publishGridPresence(p) {
+    const presence = studioShare?.presence
+    const table = shareTableKey
+    if (!presence || !table) return
+    const ref = (/** @type {{ rowIdx: number, col: string } | null | undefined} */ at) => {
+      const row = at ? shareRowKey(at.rowIdx) : null
+      return at && row !== null ? { table, row, col: at.col } : null
+    }
+    /** @type {Record<string, unknown>} */
+    const patch = {}
+    if ('cell' in p) patch.cell = ref(p.cell)
+    if ('pointer' in p) { const r = ref(p.pointer); patch.pointer = r && p.pointer ? { ...r, fx: p.pointer.fx, fy: p.pointer.fy } : null }
+    if ('editing' in p) { const r = ref(p.editing); patch.editing = r && p.editing ? { ...r, value: String(p.editing.value).slice(0, 500) } : null }
+    presence.publish(patch)
+  }
+  // The others see which table this side has open. The cell, pointer and
+  // typing name their table, so a switch needs no clearing: the others ignore
+  // a cell on a table they aren't showing (and DataTable sends the new one).
+  $effect(() => {
+    const presence = studioShare?.presence
+    if (!presence) return
+    presence.publish({ tab: shareTableKey })
+  })
+  // Someone saved a change to the table on screen: show it.
+  $effect(() => {
+    const presence = studioShare?.presence
+    if (!presence) return
+    return presence.onChanged((t) => {
+      if (t !== shareTableKey || editingCell || savingCell || !activeTabId || isTabBusy(activeTabId)) return
+      void loadRows({ keepScroll: true })
+    })
+  })
+  /** Tell the others this table's rows changed. */
+  function announceShareChange() {
+    if (shareTableKey) studioShare?.presence?.announceChanged(shareTableKey)
   }
   function stopStudioShare() {
     studioShare?.stop()
@@ -9933,6 +10026,8 @@ let rowSearch = $state('')
             .filter((t) => fx.tables.some((r) => r.name === t.name.toLowerCase() && (!r.schema || r.schema === schemaLc)))
             .map((t) => t.name)
         : []
+      // Whoever has these tables open on the shared studio reloads them.
+      if (studioShare) for (const name of touched) studioShare.presence.announceChanged(`${activeSchema || 'main'}.${name}`)
       const landed = touched.length ? await resolveRowCounts(key, activeSchema, touched) : 0
       if (!landed && !connectionMoved(connAtCall)) {
         _catalog.invalidate(key)
@@ -10123,6 +10218,7 @@ let rowSearch = $state('')
       if (deleted === 0) {
         throw new Error('No rows deleted (they may have changed)')
       }
+      announceShareChange()
       recordActivity({ type: 'row_delete', title: `Deleted ${deleted} row${deleted === 1 ? '' : 's'} from ${activeTable}`, schema: activeSchema, table: activeTable, rowCount: deleted, durationMs: Date.now() - _deleteStart, success: true })
       bumpActiveTableCount(-deleted)
 
@@ -10208,6 +10304,7 @@ let rowSearch = $state('')
     const started = Date.now()
     try {
       const res = await applyTableChanges(activeSchema, activeTable, updates, deletes, insertValues)
+      announceShareChange()
       recordActivity({
         type: 'row_save',
         title: `Applied ${res.updated + res.deleted + (res.inserted ? 1 : 0)} change(s) to ${activeTable}`,
@@ -10258,6 +10355,7 @@ let rowSearch = $state('')
     const _insertStart = Date.now()
     try {
       const { row } = await insertTableRow(activeSchema, activeTable, values)
+      announceShareChange()
       recordActivity({ type: 'row_insert', title: `Inserted row into ${activeTable}`, schema: activeSchema, table: activeTable, durationMs: Date.now() - _insertStart, success: true })
       bumpActiveTableCount(1)
 
@@ -10327,6 +10425,7 @@ let rowSearch = $state('')
       // Hand-written DML: rows may have been inserted or deleted, or edited so
       // they no longer match the active filter. Nothing here can be assumed.
       invalidateRowCount()
+      announceShareChange()
       recordActivity({ type: 'row_save', title: `Applied edited SQL${activeTable ? ` on ${activeTable}` : ''}`, schema: activeSchema, table: activeTable ?? '', durationMs: Date.now() - _start, success: true })
       await loadRows()
       toast.success('Changes applied')
@@ -10442,6 +10541,7 @@ let rowSearch = $state('')
       // Unfiltered, editing a cell cannot change how many rows there are.
       if (rowSearch.trim() !== '' || activeFilters(rowFilters).length > 0) invalidateRowCount()
       saveActiveTabState()
+      announceShareChange()
       recordActivity({ type: 'row_save', title: `Updated ${col.name} in ${activeTable}`, schema: activeSchema, table: activeTable, durationMs: Date.now() - _saveStart, success: true })
     } catch (e) {
       recordActivity({ type: 'row_save', title: `Failed to update ${col.name} in ${activeTable}`, schema: activeSchema, table: activeTable, success: false, error: String(e) })
@@ -12253,6 +12353,8 @@ let rowSearch = $state('')
                 bind:canScrollHorizontally={tableCanScrollH}
                 bind:focusColumn={focusTableColumn}
                 bind:focusCell={tableFocusCell}
+                peers={gridPeers}
+                onpresence={studioShare ? publishGridPresence : null}
                 bind:getScroll={tableGetScroll}
                 bind:getExpanded={tableGetExpanded}
                 bind:applyScroll={tableApplyScroll}
