@@ -45,7 +45,6 @@ pub struct PgConnectionInner {
 
     // process id of this backend
     // used to send cancel requests
-    #[allow(dead_code)]
     process_id: u32,
 
     // secret key of this backend
@@ -79,6 +78,13 @@ impl PgConnection {
     /// the version number of the server in `libpq` format
     pub fn server_version_num(&self) -> Option<u32> {
         self.inner.stream.server_version_num
+    }
+
+    /// The backend process id the server sent at startup (`BackendKeyData`),
+    /// so a caller can cancel this connection's query by pid without asking
+    /// `pg_backend_pid()` first. Behind a pooler it is the pooler's id.
+    pub fn backend_process_id(&self) -> u32 {
+        self.inner.process_id
     }
 
     // will return when the connection is ready for another query

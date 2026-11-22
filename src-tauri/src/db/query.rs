@@ -1934,6 +1934,135 @@ fn short_page_total<R>(rows: &Result<Vec<R>, sqlx::Error>, keyset: bool, limit: 
     (!keyset && n < limit && (n > 0 || offset == 0)).then_some(offset + n)
 }
 
+/// Which grid view a row fetch belongs to: the tab, and the load it is part of
+/// (each new load of a tab - another page size, sort, filter or table - has a
+/// higher number; the windows of one load share it).
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FetchTag {
+    pub group: String,
+    pub generation: u64,
+}
+
+/// Row fetches in flight, by tab, so a newer load of the tab stops the older
+/// ones on the server. The grid already ignored a superseded fetch's rows, but
+/// the query ran on: a table of half-megabyte rows queued page after page
+/// behind the one wanted, holding connections and the link, and the grid sat
+/// on skeletons. Changing the page size mid-load now cancels what it replaces.
+struct RowFetches {
+    /// group -> (newest generation seen, fetches running).
+    running: std::sync::Mutex<HashMap<String, (u64, Vec<RunningFetch>)>>,
+}
+
+struct RunningFetch {
+    generation: u64,
+    pid: u32,
+    /// Fired when a newer load supersedes this fetch: it drops its connection.
+    stop: Option<tokio::sync::oneshot::Sender<()>>,
+}
+
+static ROW_FETCHES: std::sync::LazyLock<RowFetches> =
+    std::sync::LazyLock::new(|| RowFetches { running: std::sync::Mutex::new(HashMap::new()) });
+
+impl RowFetches {
+    /// Register a fetch. None when a newer load of its tab has already started:
+    /// the caller then skips the query. Older fetches of the group are stopped.
+    fn begin(&self, pool: &sqlx::PgPool, tag: &FetchTag, pid: u32) -> Option<tokio::sync::oneshot::Receiver<()>> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let mut stale: Vec<u32> = Vec::new();
+        {
+            let Ok(mut map) = self.running.lock() else { return Some(rx) };
+            if map.len() > 512 {
+                map.retain(|_, (_, list)| !list.is_empty());
+            }
+            let entry = map.entry(tag.group.clone()).or_insert((0, Vec::new()));
+            if tag.generation < entry.0 {
+                return None;
+            }
+            if tag.generation > entry.0 {
+                entry.0 = tag.generation;
+                entry.1.retain_mut(|f| {
+                    if f.generation < tag.generation {
+                        if let Some(stop) = f.stop.take() {
+                            let _ = stop.send(());
+                        }
+                        stale.push(f.pid);
+                        false
+                    } else {
+                        true
+                    }
+                });
+            }
+            entry.1.push(RunningFetch { generation: tag.generation, pid, stop: Some(tx) });
+        }
+        for pid in stale {
+            let pool = pool.clone();
+            // Only a query of this user on this database that is still running:
+            // behind a pooler the startup pid is the pooler's, and this must not
+            // reach anyone else's backend if it happens to share the number.
+            tokio::spawn(async move {
+                let _ = sqlx::query(
+                    "SELECT pg_cancel_backend(pid) FROM pg_stat_activity \
+                     WHERE pid = $1 AND usename = current_user AND datname = current_database() AND state = 'active'",
+                )
+                .bind(pid as i32)
+                .execute(&pool)
+                .await;
+            });
+        }
+        Some(rx)
+    }
+
+    fn end(&self, tag: &FetchTag, pid: u32) {
+        if let Ok(mut map) = self.running.lock() {
+            if let Some((_, list)) = map.get_mut(&tag.group) {
+                if let Some(i) = list.iter().position(|f| f.generation == tag.generation && f.pid == pid) {
+                    list.swap_remove(i);
+                }
+            }
+        }
+    }
+}
+
+/// The page query, stoppable by a newer load of the same tab when tagged.
+///
+/// Stopping is two things. `pg_cancel_backend` ends the statement, but what the
+/// server has already written sits in socket buffers, and handing the
+/// connection back to the pool drains it first: on a 3 Mbit link a cancelled
+/// load still delivered ~10 s of rows ahead of the page that replaced it. So
+/// the superseded fetch also drops its connection, which closes the socket and
+/// stops the server sending. The pid comes from the startup message, so
+/// tagging costs no round trip.
+async fn fetch_page(
+    pool: &sqlx::PgPool,
+    query: sqlx::query::Query<'_, sqlx::Postgres, sqlx::postgres::PgArguments>,
+    tag: Option<&FetchTag>,
+) -> Result<Vec<sqlx::postgres::PgRow>, sqlx::Error> {
+    let Some(tag) = tag else { return query.fetch_all(pool).await };
+    let mut conn = pool.acquire().await?;
+    let pid = conn.backend_process_id();
+    let Some(stop) = ROW_FETCHES.begin(pool, tag, pid) else {
+        return Err(sqlx::Error::Protocol(SUPERSEDED_FETCH.into()));
+    };
+    let res = tokio::select! {
+        r = query.fetch_all(&mut *conn) => Some(r),
+        Ok(()) = stop => None,
+    };
+    ROW_FETCHES.end(tag, pid);
+    match res {
+        Some(r) => r,
+        None => {
+            // Out of the pool and dropped: the socket closes, nothing drains.
+            drop(conn.detach());
+            Err(sqlx::Error::Protocol(SUPERSEDED_FETCH.into()))
+        }
+    }
+}
+
+/// What a fetch replaced by a newer load of its tab reports. Nobody reads it:
+/// the grid drops a superseded fetch's result, error or rows.
+pub const SUPERSEDED_FETCH: &str = "Superseded by a newer load of this table";
+
 fn bind_page<'q>(
     sql: &'q str,
     where_binds: &'q [String],
@@ -2026,6 +2155,9 @@ pub async fn get_table_rows(
     // were measured, kept behind a setting for anyone who wants every value on
     // the page whatever it costs.
     preview_wide: bool,
+    // The grid view this fetch is for (Postgres): a newer load of the same tab
+    // cancels it on the server. None = not cancellable (mirror, one-offs).
+    fetch_tag: Option<FetchTag>,
 ) -> Result<TableRows, String> {
     if limit > MAX_PAGE_LIMIT {
         return Err(format!("Limit {limit} exceeds the maximum of {MAX_PAGE_LIMIT} rows per page"));
@@ -2313,7 +2445,7 @@ pub async fn get_table_rows(
         // Non-blocking mode: fetch only the page of rows and defer the count.
         // total = -1 signals "unknown / counting" to the UI (same sentinel the
         // sidebar already uses); the frontend fills it in via count_table_rows.
-        rows_res = data_query.fetch_all(&pool).await;
+        rows_res = fetch_page(&pool, data_query, fetch_tag.as_ref()).await;
         // Unless the page came back short: then it has reached the end of the
         // matching rows and counted them itself, and the frontend has no count
         // left to ask for.
@@ -2323,7 +2455,7 @@ pub async fn get_table_rows(
         // planner estimate adds no extra round-trip in series.
         let estimate_query = sqlx::query_scalar::<_, i64>(ROW_ESTIMATE_SQL).bind(&table_ref);
         let (estimate_res, page_res) =
-            tokio::join!(estimate_query.fetch_optional(&pool), data_query.fetch_all(&pool));
+            tokio::join!(estimate_query.fetch_optional(&pool), fetch_page(&pool, data_query, fetch_tag.as_ref()));
         rows_res = page_res;
         let estimate = estimate_res.ok().flatten();
         // A page that came back short ends the table, so it has already counted
@@ -2341,7 +2473,7 @@ pub async fn get_table_rows(
         // COUNT and data SELECT are independent - run both in parallel.
         let (total_result, page_res) = tokio::join!(
             count_query.fetch_one(&pool),
-            data_query.fetch_all(&pool),
+            fetch_page(&pool, data_query, fetch_tag.as_ref()),
         );
         total = total_result.map_err(|e| format!("Failed to count rows: {e}"))?;
         rows_res = page_res;

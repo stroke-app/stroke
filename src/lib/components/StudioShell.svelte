@@ -2055,6 +2055,18 @@
   /** @param {string | null} tabId */
   const loadSeqOf = (tabId) => (tabId ? _loadSeqByTab.get(tabId) ?? 0 : 0)
   /** @param {string | null} tabId */
+  /**
+   * Tag for a row fetch of a tab's load `seq`: a newer load of the same tab
+   * cancels it on the server (see FetchTag in query.rs).
+   * @param {string | null} tabId @param {number} seq
+   */
+  function fetchTagFor(tabId, seq) {
+    return tabId ? { group: tabId, generation: seq } : null
+  }
+  /** A window belongs to the active tab's newest load. */
+  function windowFetchTag() {
+    return fetchTagFor(activeTabId, loadSeqOf(activeTabId))
+  }
   function bumpLoadSeq(tabId) {
     if (!tabId) return 0
     const n = loadSeqOf(tabId) + 1
@@ -7200,7 +7212,7 @@ let rowSearch = $state('')
         const from = Math.max(start, _visStart - 20)
         const count = Math.min(start + limit, Math.max(_visEnd, _visStart) + 60) - from
         try {
-          const head = await getTableRows(activeSchema, activeTable, Math.min(count, 400), _windowBase + from, currentRowQuery(false))
+          const head = await getTableRows(activeSchema, activeTable, Math.min(count, 400), _windowBase + from, { ...currentRowQuery(false), fetchTag: windowFetchTag() })
           if (seq !== _windowSeq) return
           const got = head.rows ?? []
           for (let i = 0; i < got.length; i++) if (rows[from + i] === undefined) rows[from + i] = got[i]
@@ -7208,7 +7220,7 @@ let rowSearch = $state('')
           tracePoint(`window ${start} screenful ${got.length} rows ${Math.round(performance.now() - t0)}ms`)
         } catch { /* the full window below still runs */ }
       }
-      const data = local ? { rows: local } : await getTableRows(activeSchema, activeTable, limit, _windowBase + start, { ...currentRowQuery(false), keyset })
+      const data = local ? { rows: local } : await getTableRows(activeSchema, activeTable, limit, _windowBase + start, { ...currentRowQuery(false), keyset, fetchTag: windowFetchTag() })
       // Rolling, so the measure tracks the connection rather than latching on the
       // first deep page. Recorded even for a superseded fetch - the round-trip
       // was just as slow whether or not its rows are still wanted. Only for a
@@ -7509,6 +7521,7 @@ let rowSearch = $state('')
         offset,
         { ...ownerQuery,
           keyset: keysetArg,
+          fetchTag: fetchTagFor(ownerTabId, seq),
           includeMeta,
           // Don't wait on COUNT(*) - paint rows now, count streams in below.
           // Windowed loads need the total immediately to size the sparse array.
@@ -7609,7 +7622,7 @@ let rowSearch = $state('')
         }
         let landed = fetched
         if (wantsWindow && viewCount > fetched.length) {
-          const restData = await getTableRows(ownerSchema, ownerTable, Math.min(viewCount - fetched.length, MAX_PAGE_SIZE), viewBase + fetched.length, { ...ownerQuery, includeMeta: false, includeCount: false })
+          const restData = await getTableRows(ownerSchema, ownerTable, Math.min(viewCount - fetched.length, MAX_PAGE_SIZE), viewBase + fetched.length, { ...ownerQuery, includeMeta: false, includeCount: false, fetchTag: fetchTagFor(ownerTabId, seq) })
           if (!live()) return
           landed = [...fetched, ...(restData.rows ?? [])]
         }
@@ -7677,7 +7690,7 @@ let rowSearch = $state('')
         rows = fetched
         _infiniteRows = fetched
         if (viewCount > fetched.length) {
-          const restData = await getTableRows(ownerSchema, ownerTable, Math.min(viewCount - fetched.length, MAX_PAGE_SIZE), viewBase + fetched.length, { ...ownerQuery, includeMeta: false, includeCount: false })
+          const restData = await getTableRows(ownerSchema, ownerTable, Math.min(viewCount - fetched.length, MAX_PAGE_SIZE), viewBase + fetched.length, { ...ownerQuery, includeMeta: false, includeCount: false, fetchTag: fetchTagFor(ownerTabId, seq) })
           if (!live()) return
           const all = [...fetched, ...(restData.rows ?? [])]
           // The tab may have gone to the background during this second trip -

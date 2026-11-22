@@ -1635,6 +1635,9 @@ export async function getTableRows(schema, table, limit, offset, query = {}) {
     limit,
     offset,
     ...tableRowsQueryArgs(query),
+    // The grid view this is for ({ group: tab id, generation: its load number});
+    // a newer load of the same tab cancels it on the server.
+    fetchTag: query.fetchTag ?? null,
   })
   recordQuery({ sql: r?.sql, durationMs: r?.queryMs ?? Math.round(performance.now() - _t0), schema, table, source: 'browse', success: true })
   traceRows('pg_get_table_rows', r, performance.now() - _t0)
