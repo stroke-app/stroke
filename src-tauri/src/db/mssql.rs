@@ -3,6 +3,7 @@ use super::query::{ColumnInfo, ForeignKeyInfo, RowFilter, SqlResult, TableRows};
 use super::schema::{ColumnStructureRow, IndexInfo, TableInfo};
 use serde_json::Value;
 use std::collections::HashMap;
+use chrono::Timelike;
 use std::time::Instant;
 use tiberius::{AuthMethod, Client, Config, EncryptionLevel, Row};
 use tokio::net::TcpStream;
@@ -192,6 +193,22 @@ pub async fn ping(handle: &MssqlHandle) -> Result<(), String> {
 
 // ── Cell conversion ──────────────────────────────────────────────────────────
 
+/// A decimal's digits at its scale; a scale of 0 has no point.
+fn numeric_text(n: tiberius::numeric::Numeric) -> String {
+    if n.scale() == 0 { n.value().to_string() } else { n.to_string() }
+}
+
+/// A datetime as text. The legacy `datetime` counts in 1/300 s ticks, so .997
+/// arrived as .996666666; it is rounded to the millisecond SQL Server shows.
+fn datetime_text(d: chrono::NaiveDateTime, legacy: bool) -> String {
+    if !legacy {
+        return d.format("%Y-%m-%d %H:%M:%S%.f").to_string();
+    }
+    let ms = (d.and_utc().timestamp_subsec_nanos() as i64 + 500_000) / 1_000_000;
+    let d = d.with_nanosecond(0).unwrap_or(d) + chrono::Duration::milliseconds(ms);
+    d.format("%Y-%m-%d %H:%M:%S%.3f").to_string()
+}
+
 /// Convert one cell to JSON by probing the column's concrete Rust type.
 /// tiberius `try_get` fails (not panics) on a type mismatch, so the cascade
 /// lands on the first type whose `FromSql` matches the column.
@@ -225,8 +242,25 @@ fn cell_to_json(row: &Row, i: usize) -> Value {
     try_scalar!(f64, |f| serde_json::Number::from_f64(f).map(Value::Number).unwrap_or(Value::Null));
     try_scalar!(f32, |f| serde_json::Number::from_f64(f as f64).map(Value::Number).unwrap_or(Value::Null));
 
+    // decimal/numeric as exact text: an f64 would round a decimal(38) and drop
+    // the scale's trailing zeros (12.50 became 12.5). Before this case the
+    // cascade found no match and every decimal cell read NULL.
+    if let Ok(v) = row.try_get::<tiberius::numeric::Numeric, usize>(i) {
+        return v.map(|n| Value::String(numeric_text(n))).unwrap_or(Value::Null);
+    }
+    // uniqueidentifier, upper case as SQL Server prints it (it read NULL too).
+    if let Ok(v) = row.try_get::<tiberius::Uuid, usize>(i) {
+        return v.map(|u| Value::String(u.to_string().to_uppercase())).unwrap_or(Value::Null);
+    }
+    if let Ok(v) = row.try_get::<chrono::DateTime<chrono::FixedOffset>, usize>(i) {
+        return v.map(|d| Value::String(d.format("%Y-%m-%d %H:%M:%S%.f %:z").to_string())).unwrap_or(Value::Null);
+    }
     if let Ok(v) = row.try_get::<chrono::NaiveDateTime, usize>(i) {
-        return v.map(|d| Value::String(d.format("%Y-%m-%d %H:%M:%S%.f").to_string())).unwrap_or(Value::Null);
+        let legacy = matches!(
+            row.columns().get(i).map(|c| c.column_type()),
+            Some(tiberius::ColumnType::Datetime | tiberius::ColumnType::Datetimen)
+        );
+        return v.map(|d| Value::String(datetime_text(d, legacy))).unwrap_or(Value::Null);
     }
     if let Ok(v) = row.try_get::<chrono::NaiveDate, usize>(i) {
         return v.map(|d| Value::String(d.to_string())).unwrap_or(Value::Null);
@@ -240,13 +274,54 @@ fn cell_to_json(row: &Row, i: usize) -> Value {
     Value::Null
 }
 
+/// A result column's type as SQL Server names it. The wire type's Rust name
+/// (`format!("{:?}")`) showed `int4`, `intn`, `bitn` and `datetimen` in the
+/// grid. The nullable wire types (`Intn`, `Floatn`, `Datetimen`) don't carry
+/// their width, so they read as the family name: a nullable bigint is `int`.
+fn type_name(t: tiberius::ColumnType) -> &'static str {
+    use tiberius::ColumnType as T;
+    match t {
+        T::Null => "null",
+        T::Bit | T::Bitn => "bit",
+        T::Int1 => "tinyint",
+        T::Int2 => "smallint",
+        T::Int4 | T::Intn => "int",
+        T::Int8 => "bigint",
+        T::Float4 => "real",
+        T::Float8 | T::Floatn => "float",
+        T::Money => "money",
+        T::Money4 => "smallmoney",
+        T::Decimaln => "decimal",
+        T::Numericn => "numeric",
+        T::Datetime | T::Datetimen => "datetime",
+        T::Datetime4 => "smalldatetime",
+        T::Datetime2 => "datetime2",
+        T::DatetimeOffsetn => "datetimeoffset",
+        T::Daten => "date",
+        T::Timen => "time",
+        T::Guid => "uniqueidentifier",
+        T::BigVarChar => "varchar",
+        T::BigChar => "char",
+        T::NVarchar => "nvarchar",
+        T::NChar => "nchar",
+        T::BigVarBin => "varbinary",
+        T::BigBinary => "binary",
+        T::Text => "text",
+        T::NText => "ntext",
+        T::Image => "image",
+        T::Xml => "xml",
+        T::Udt => "udt",
+        T::SSVariant => "sql_variant",
+    }
+}
+
 fn rows_to_result(rows: &[Row], elapsed: u64) -> SqlResult {
     let columns: Vec<ColumnInfo> = rows
         .first()
         .map(|r| {
             r.columns()
                 .iter()
-                .map(|c| ColumnInfo::new(c.name().to_string(), format!("{:?}", c.column_type()).to_lowercase()))
+                .map(|c| ColumnInfo::new(c.name().to_string(), type_name(c.column_type()).to_string()))
                 .collect()
         })
         .unwrap_or_default();
@@ -372,7 +447,7 @@ pub async fn stream_into(handle: &MssqlHandle, sql: &str, sink: &mut super::quer
                 columns = m
                     .columns()
                     .iter()
-                    .map(|c| ColumnInfo::new(c.name().to_string(), format!("{:?}", c.column_type()).to_lowercase()))
+                    .map(|c| ColumnInfo::new(c.name().to_string(), type_name(c.column_type()).to_string()))
                     .collect();
             }
             tiberius::QueryItem::Row(r) if r.result_index() == 0 && sink_err.is_none() => {
@@ -1026,6 +1101,73 @@ mod tests {
             encrypt: false,
             trust_cert: true,
         }
+    }
+
+    #[test]
+    fn legacy_datetime_rounds_to_the_millisecond() {
+        let d = chrono::NaiveDate::from_ymd_opt(2026, 1, 2).unwrap().and_hms_nano_opt(3, 4, 5, 996_666_666).unwrap();
+        assert_eq!(datetime_text(d, true), "2026-01-02 03:04:05.997");
+        assert_eq!(datetime_text(d, false), "2026-01-02 03:04:05.996666666");
+        let edge = chrono::NaiveDate::from_ymd_opt(2026, 1, 2).unwrap().and_hms_nano_opt(23, 59, 59, 999_700_000).unwrap();
+        assert_eq!(datetime_text(edge, true), "2026-01-03 00:00:00.000");
+    }
+
+    // Requires a live SQL Server (STROKE_TEST_MSSQL); run with --ignored.
+    #[tokio::test]
+    #[ignore]
+    async fn cell_values_live() {
+        let h = open_mssql(&test_config()).await.expect("connect");
+        let r = execute_sql(
+            &h,
+            "SELECT CAST(12.50 AS decimal(10,2)) AS d, CAST(7 AS decimal(5,0)) AS d0, \
+             CAST('6F9619FF-8B86-D011-B42D-00C04FC964FF' AS uniqueidentifier) AS g, \
+             CAST('2026-01-02 03:04:05 +05:45' AS datetimeoffset(0)) AS o, \
+             CAST('2026-01-02 03:04:05.997' AS datetime) AS dt, CAST(NULL AS decimal(5,2)) AS n",
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            r.rows[0],
+            vec![
+                Value::from("12.50"),
+                Value::from("7"),
+                Value::from("6F9619FF-8B86-D011-B42D-00C04FC964FF"),
+                Value::from("2026-01-02 03:04:05 +05:45"),
+                Value::from("2026-01-02 03:04:05.997"),
+                Value::Null,
+            ]
+        );
+    }
+
+    #[test]
+    fn result_types_use_sql_server_names() {
+        use tiberius::ColumnType as T;
+        assert_eq!(type_name(T::Int4), "int");
+        assert_eq!(type_name(T::Intn), "int");
+        assert_eq!(type_name(T::Bitn), "bit");
+        assert_eq!(type_name(T::NVarchar), "nvarchar");
+        assert_eq!(type_name(T::Guid), "uniqueidentifier");
+        assert_eq!(type_name(T::Datetimen), "datetime");
+    }
+
+    // Requires a live SQL Server (STROKE_TEST_MSSQL); run with --ignored.
+    #[tokio::test]
+    #[ignore]
+    async fn result_types_live() {
+        let h = open_mssql(&test_config()).await.expect("connect");
+        let r = execute_sql(
+            &h,
+            "SELECT CAST(1 AS int) AS a, CAST(NULL AS int) AS b, CAST(1 AS bit) AS c, CAST(1 AS bigint) AS d, \
+             N'x' AS e, NEWID() AS f, SYSDATETIME() AS g, CAST(1.5 AS decimal(5,2)) AS h",
+        )
+        .await
+        .unwrap();
+        let types: Vec<&str> = r.columns.iter().map(|c| c.data_type.as_str()).collect();
+        assert!(types.iter().all(|t| !t.ends_with('n') || *t == "nvarchar"), "{types:?}");
+        assert_eq!(types[0], "int");
+        assert_eq!(types[2], "bit");
+        assert_eq!(types[4], "nvarchar");
+        assert_eq!(types[5], "uniqueidentifier");
     }
 
     #[test]
