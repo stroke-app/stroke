@@ -180,7 +180,7 @@
 
   /** @param {KeyboardEvent} e */
   function handleFullscreenKey(e) {
-    if (e.key === 'Escape') fullscreenCode = null
+    if (e.key === 'Escape' && !e.defaultPrevented) fullscreenCode = null
   }
 
   /** @type {import('./MermaidViewer.svelte').default | null} */

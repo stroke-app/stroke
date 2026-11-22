@@ -4123,6 +4123,9 @@ let rowSearch = $state('')
     if (showConnectionModal)   { e.preventDefault(); showConnectionModal = false;   return }
     if (showSettingsModal)     { e.preventDefault(); showSettingsModal = false;     return }
     if (vcolPanelOpen)         { e.preventDefault(); vcolPanelOpen = false;         return }
+    // Any other open dialog (What's new, a confirm, a component's own) closes
+    // itself on Escape; the cell, filter and inspector under it stay as they are.
+    if (document.querySelector('[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"]')) return
     if (editingCell) {
       e.preventDefault()
       editingCell = null
@@ -4132,7 +4135,9 @@ let rowSearch = $state('')
     if (!inspectorTarget) return
     e.preventDefault()
     closeInspector()
-  })
+    // The library's defaults prevent and stop every Escape before this runs,
+    // handled or not, so a dialog missing from the list above never closed.
+  }, { preventDefault: false, stopPropagation: false })
 
   createCommandHotkey('table.deleteRows', (e) => deleteRowsHotkey(e))
   // Ctrl+Delete too, while the command keeps its default: on a PC keyboard
