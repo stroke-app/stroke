@@ -109,7 +109,41 @@ const markQualifyDefaultApplied = () => {
 /** @typedef {'claude' | 'geist' | 'serif' | 'apple' | 'inter' | 'mono' | 'fira' | 'plex' | 'space' | 'source'} FontId */
 /** @typedef {'regular' | 'light' | 'bold'} IconStyleId */
 /** @typedef {'lucide' | 'hugeicons' | 'phosphor'} IconSetId */
-/** @typedef {{ theme: ThemeId, zoom: number, font: FontId, iconStyle: IconStyleId, iconSet: IconSetId, tableStyle: TableStyleId, jsonTheme: JsonThemeId, editorTheme: import('$lib/themes/editor-themes.js').EditorThemeId, mcpAutoStart: boolean, launchAtLogin: boolean, autoUpdate: boolean, autoReconnectOnStartup: boolean, previewDmlBeforeApply: boolean, defaultDataView: string, paginationMode: string, maxQueryHistory: number, connectTimeoutMs: number, socketTimeoutMs: number, maxAllowedPacket: number, sessionTimezone: string, displayTimezone: string, vimMode: boolean, cmdkAiEnabled: boolean, liveModeEnabled: boolean, sidebarStyle: SidebarStyleId, aiInTab: boolean, lazyWideColumns: boolean, nullSortOrder: string, agentChatFontSize: number, agentCodeFontSize: number, agentThinkingStyle: string, agentShowQueryCards: boolean, agentWebAccess: boolean, tableTextAlign: string, telemetry: boolean, jsonWordWrap: boolean, nativeScroll: boolean, rowSpacing: RowSpacingId, motion: MotionId, animatePanels: boolean, quitGuard: boolean, reopenTabs: boolean, multiConnection: boolean, studioShare: boolean, treeFocusOnSwitch: boolean, boringConnectionBar: boolean, zebraRows: boolean, showRowNumbers: boolean, showRelationColumns: boolean, showMenuBar: boolean, numberGrouping: boolean, imagePreview: boolean, openUrlsOnClick: boolean, highlightActiveRow: boolean, fkAutoExpandJson: boolean, gridFontSize: number, autoSaveQueries: boolean, streamResults: boolean, sqlUndo: boolean, sidebarComments: boolean, sidebarRememberGroups: boolean, sqlFormat: import('$lib/sql-format-options.js').SqlFormatOptions, sqlEditor: import('$lib/sql-editor-options.js').SqlEditorOptions, shareDefaults: Record<string, any> | null }} AppSettings */
+/**
+ * Proxy by kind of traffic (Settings > Network, src-tauri/src/proxy.rs).
+ * @typedef {{ mode: 'system' | 'custom' | 'off', url: string }} ProxyRule
+ * @typedef {{ app: ProxyRule, ai: ProxyRule, database: ProxyRule, ssh: ProxyRule }} ProxySettings
+ */
+export const PROXY_KINDS = /** @type {const} */ (['app', 'ai', 'database', 'ssh'])
+/** @returns {ProxySettings} */
+export function defaultProxy() {
+  return { app: { mode: 'system', url: '' }, ai: { mode: 'system', url: '' }, database: { mode: 'system', url: '' }, ssh: { mode: 'system', url: '' } }
+}
+/** @param {any} raw @returns {ProxySettings} */
+export function normalizeProxy(raw) {
+  const out = defaultProxy()
+  if (!raw || typeof raw !== 'object') return out
+  for (const k of PROXY_KINDS) {
+    const r = raw[k]
+    if (!r || typeof r !== 'object') continue
+    const mode = r.mode === 'custom' || r.mode === 'off' ? r.mode : 'system'
+    out[k] = { mode, url: typeof r.url === 'string' ? r.url.trim() : '' }
+  }
+  return out
+}
+let _proxySent = ''
+/** Hand the proxy settings to the backend when they change. @param {ProxySettings | undefined} proxy */
+function pushProxySettings(proxy) {
+  const p = normalizeProxy(proxy)
+  const key = JSON.stringify(p)
+  if (key === _proxySent) return
+  _proxySent = key
+  void import('@tauri-apps/api/core')
+    .then(({ invoke }) => invoke('proxy_set', { settings: p }))
+    .catch((e) => { _proxySent = ''; console.warn('proxy settings not applied:', e) })
+}
+
+/** @typedef {{ theme: ThemeId, zoom: number, font: FontId, iconStyle: IconStyleId, iconSet: IconSetId, tableStyle: TableStyleId, jsonTheme: JsonThemeId, editorTheme: import('$lib/themes/editor-themes.js').EditorThemeId, mcpAutoStart: boolean, launchAtLogin: boolean, autoUpdate: boolean, autoReconnectOnStartup: boolean, previewDmlBeforeApply: boolean, defaultDataView: string, paginationMode: string, maxQueryHistory: number, connectTimeoutMs: number, socketTimeoutMs: number, maxAllowedPacket: number, sessionTimezone: string, displayTimezone: string, vimMode: boolean, cmdkAiEnabled: boolean, liveModeEnabled: boolean, sidebarStyle: SidebarStyleId, aiInTab: boolean, lazyWideColumns: boolean, nullSortOrder: string, agentChatFontSize: number, agentCodeFontSize: number, agentThinkingStyle: string, agentShowQueryCards: boolean, agentWebAccess: boolean, tableTextAlign: string, telemetry: boolean, jsonWordWrap: boolean, nativeScroll: boolean, rowSpacing: RowSpacingId, motion: MotionId, animatePanels: boolean, quitGuard: boolean, reopenTabs: boolean, multiConnection: boolean, studioShare: boolean, treeFocusOnSwitch: boolean, boringConnectionBar: boolean, zebraRows: boolean, showRowNumbers: boolean, showRelationColumns: boolean, showMenuBar: boolean, numberGrouping: boolean, imagePreview: boolean, openUrlsOnClick: boolean, highlightActiveRow: boolean, fkAutoExpandJson: boolean, gridFontSize: number, autoSaveQueries: boolean, streamResults: boolean, sqlUndo: boolean, sidebarComments: boolean, sidebarRememberGroups: boolean, sqlFormat: import('$lib/sql-format-options.js').SqlFormatOptions, sqlEditor: import('$lib/sql-editor-options.js').SqlEditorOptions, shareDefaults: Record<string, any> | null, proxy: ProxySettings }} AppSettings */
 
 /**
  * UI type scale in design pixels: `[step, font-size, line-height?]`, matching
@@ -601,6 +635,7 @@ export const DEFAULT_SETTINGS = {
   // Defaults for new share links (share-flow.js normalizes them). Null: the
   // built-in ones. Kept here, not in a key of its own, so they sync.
   shareDefaults: null,
+  proxy: defaultProxy(),
   // Independent of the grid-style preset: two of those presets (Striped, Dots)
   // shade alternate rows as part of their look, and this turns the same shading
   // on for any of the others without changing the separators you picked.
@@ -1001,6 +1036,7 @@ export function loadSettings() {
     const boringConnectionBar = parsed.boringConnectionBar === true
     const sqlFormat = normalizeSqlFormat(parsed.sqlFormat)
     const sqlEditor = normalizeSqlEditor(parsed.sqlEditor)
+    const proxy = normalizeProxy(parsed.proxy)
     const shareDefaults = parsed.shareDefaults && typeof parsed.shareDefaults === 'object' && !Array.isArray(parsed.shareDefaults) ? parsed.shareDefaults : null
     if (!qualifyDefaultApplied()) {
       sqlEditor.qualifySchema = false
@@ -1043,7 +1079,7 @@ export function loadSettings() {
     const agentShowQueryCards = parsed.agentShowQueryCards === true
     const agentWebAccess = parsed.agentWebAccess === true
     const tableTextAlign = TABLE_ALIGN_IDS.includes(parsed.tableTextAlign) ? parsed.tableTextAlign : DEFAULT_TABLE_ALIGN
-    _settingsCache = { theme, zoom, font, iconStyle, iconSet, tableStyle, jsonTheme, editorTheme, mcpAutoStart, launchAtLogin, autoUpdate, autoReconnectOnStartup, previewDmlBeforeApply, defaultDataView, paginationMode, maxQueryHistory, connectTimeoutMs, socketTimeoutMs, maxAllowedPacket, sessionTimezone, displayTimezone, vimMode, cmdkAiEnabled, liveModeEnabled, sidebarStyle, aiInTab, lazyWideColumns, nullSortOrder, agentChatFontSize, agentCodeFontSize, agentThinkingStyle, agentShowQueryCards, agentWebAccess, tableTextAlign, telemetry, jsonWordWrap, nativeScroll, rowSpacing, motion, animatePanels, quitGuard, reopenTabs, multiConnection, studioShare, treeFocusOnSwitch, boringConnectionBar, zebraRows, showRowNumbers, showRelationColumns, showMenuBar, numberGrouping, imagePreview, openUrlsOnClick, highlightActiveRow, fkAutoExpandJson, gridFontSize, autoSaveQueries, streamResults, sqlUndo, sidebarComments, sidebarRememberGroups, sqlFormat, sqlEditor, shareDefaults }
+    _settingsCache = { theme, zoom, font, iconStyle, iconSet, tableStyle, jsonTheme, editorTheme, mcpAutoStart, launchAtLogin, autoUpdate, autoReconnectOnStartup, previewDmlBeforeApply, defaultDataView, paginationMode, maxQueryHistory, connectTimeoutMs, socketTimeoutMs, maxAllowedPacket, sessionTimezone, displayTimezone, vimMode, cmdkAiEnabled, liveModeEnabled, sidebarStyle, aiInTab, lazyWideColumns, nullSortOrder, agentChatFontSize, agentCodeFontSize, agentThinkingStyle, agentShowQueryCards, agentWebAccess, tableTextAlign, telemetry, jsonWordWrap, nativeScroll, rowSpacing, motion, animatePanels, quitGuard, reopenTabs, multiConnection, studioShare, treeFocusOnSwitch, boringConnectionBar, zebraRows, showRowNumbers, showRelationColumns, showMenuBar, numberGrouping, imagePreview, openUrlsOnClick, highlightActiveRow, fkAutoExpandJson, gridFontSize, autoSaveQueries, streamResults, sqlUndo, sidebarComments, sidebarRememberGroups, sqlFormat, sqlEditor, shareDefaults, proxy }
     // A migrated value is saved at once, or the next launch reads the old one.
     if (settingsMigrated) {
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify(_settingsCache)) } catch {}
@@ -1331,6 +1367,7 @@ function applySettingsNow(settings, root, theme, zoom, dark) {
   setStore(appNumberGrouping, settings.numberGrouping === true)
   setStore(appDisplayTimezone, settings.displayTimezone || 'utc')
   setDisplayZone(settings.displayTimezone || 'utc')
+  pushProxySettings(settings.proxy)
   setStore(appImagePreview, settings.imagePreview !== false)
   setStore(appOpenUrlsOnClick, settings.openUrlsOnClick !== false)
   setStore(appHighlightActiveRow, settings.highlightActiveRow !== false)

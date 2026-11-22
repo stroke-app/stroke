@@ -6,17 +6,26 @@ use tauri::Emitter;
 // One client for the whole process lifetime. reqwest maintains an internal
 // connection pool, so subsequent requests to the same host reuse the TLS
 // session and avoid the ~300-700 ms handshake on every call.
-static AI_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+/// The AI client and the proxy-settings generation it was built for: a change
+/// in Settings > Network rebuilds it on the next request.
+static AI_CLIENT: std::sync::Mutex<Option<(u64, reqwest::Client)>> = std::sync::Mutex::new(None);
 
-fn ai_http_client() -> &'static reqwest::Client {
-    AI_CLIENT.get_or_init(|| {
-        reqwest::Client::builder()
-            .tcp_keepalive(std::time::Duration::from_secs(60))
-            .pool_max_idle_per_host(4)
-            .pool_idle_timeout(std::time::Duration::from_secs(90))
-            .build()
-            .expect("failed to build AI HTTP client")
-    })
+fn ai_http_client() -> reqwest::Client {
+    let generation = crate::proxy::generation();
+    let mut guard = AI_CLIENT.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((g, c)) = guard.as_ref() {
+        if *g == generation {
+            return c.clone();
+        }
+    }
+    let client = crate::proxy::http_builder(crate::proxy::Kind::Ai)
+        .tcp_keepalive(std::time::Duration::from_secs(60))
+        .pool_max_idle_per_host(4)
+        .pool_idle_timeout(std::time::Duration::from_secs(90))
+        .build()
+        .expect("failed to build AI HTTP client");
+    *guard = Some((generation, client.clone()));
+    client
 }
 
 // ── Streaming cancellation ────────────────────────────────────────────────────

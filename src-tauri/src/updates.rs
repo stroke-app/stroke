@@ -153,6 +153,13 @@ pub async fn update_check(
     }
     let check = |target: Option<&'static str>| {
         let mut builder = app.updater_builder().timeout(CHECK_TIMEOUT);
+        // Settings > Network, App: a custom proxy carries the update check
+        // and the download.
+        if let Some(url) = crate::proxy::custom_url(crate::proxy::Kind::App).and_then(|u| reqwest::Url::parse(&u).ok()) {
+            builder = builder.proxy(url);
+        } else if crate::proxy::is_off(crate::proxy::Kind::App) {
+            builder = builder.no_proxy();
+        }
         if let Some(t) = target {
             builder = builder.target(t);
         }

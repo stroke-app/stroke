@@ -55,7 +55,7 @@ fn base_url(cfg: &FirestoreConfig) -> String {
 fn client() -> &'static reqwest::Client {
     static C: OnceLock<reqwest::Client> = OnceLock::new();
     C.get_or_init(|| {
-        reqwest::Client::builder()
+        crate::proxy::http_builder(crate::proxy::Kind::Database)
             .timeout(Duration::from_secs(60))
             .connect_timeout(Duration::from_secs(10))
             .build()

@@ -35,6 +35,7 @@ mod omniroute;
 mod plugins;
 mod metrics;
 mod proc;
+pub(crate) mod proxy;
 mod providers;
 mod secrets;
 mod sync;
@@ -695,6 +696,8 @@ pub fn run() {
             plugins::plugins_dir,
             commands::ai_fetch,
             commands::ai_fetch_cancel,
+            proxy::proxy_set,
+            proxy::proxy_test,
             commands::ai_list_models,
             commands::ollama_registry,
             commands::ai_device_id,
