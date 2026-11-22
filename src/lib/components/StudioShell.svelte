@@ -10169,6 +10169,22 @@ let rowSearch = $state('')
    * @param {string} sql
    */
   async function openQueryInEditor(sql) {
+    // From outside the editor (Advisor's Fix in editor, a dashboard card, the
+    // palette), this went to the first editor tab and replaced its text: a
+    // query being written there, or a saved query's tab, was gone. An editor
+    // tab in front still takes the text (picking from its history); one behind
+    // is reused only while it holds nothing, else the SQL gets a new tab.
+    const inFront = activeTab?.kind === 'sql' && /** @type {any} */ (activeTab).draft !== false
+    if (!inFront) {
+      const existing = tabs.find((t) => t.kind === 'sql' && /** @type {any} */ (t).draft !== false)
+      const held = String(/** @type {any} */ (existing)?.state?.sqlText ?? '').trim()
+      if (existing && held && held !== sql.trim() && held !== 'SELECT 1;') {
+        if (aiMode) exitAiMode()
+        openSqlTabWith(sql, 'Query Editor')
+        if (activeTabId) linkSqlTab(activeTabId, savedQueryFor(sql, savedQueries))
+        return
+      }
+    }
     await focusSqlView()
     sqlText = sql
     // Loading a saved query's text makes the tab that query's: Save writes
