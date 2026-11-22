@@ -115,3 +115,10 @@ describe('SQL Server Unicode strings', () => {
     expect(sqlLiteral('東京', 'postgres')).toBe("'東京'")
   })
 })
+
+describe('sqlInList on SQL Server', () => {
+  it('writes non-ASCII values as N strings, the rest plain', async () => {
+    const { sqlInList } = await import('./dml-preview.js')
+    expect(sqlInList(['東京', 'Oslo'], 'mssql').text).toBe("(N'東京', 'Oslo')")
+  })
+})
