@@ -4,6 +4,18 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.6.7] - 2026-11-22
+
+### Bug Fixes
+- **Changing the page size during a slow load** - Rows per page and the pager stay usable while rows load, and a change stops the load it replaces on the server instead of waiting behind it. "1-1 of" no longer shows before any row has arrived.
+- **What's new and the update window** - Changes are grouped under New, Improved and Fixed, each as a title over what changed, and What's new opens on this version's changes. Updating from an older version no longer shows asterisks in the notes.
+
+### Changes
+
+#### Performance
+- **Tables with large JSON or text** - Values past 8 KB arrive as their first 512 characters and their size, and load in full when the cell is opened or edited. A page of rows holding ~600 KB documents is a third of the size it was, and the grid shows each value's start instead of "[jsonb · 15 KB, truncated]".
+
+
 ## [3.6.6] - 2026-11-22
 
 ### Bug Fixes
