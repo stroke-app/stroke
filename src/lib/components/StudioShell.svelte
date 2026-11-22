@@ -7128,6 +7128,11 @@ let rowSearch = $state('')
   // changes (reload, sort, filter, a write) - a stale copy must never serve
   // rows. Read only while it matches the view exactly: the seq it was started
   // for.
+  /** Where the grid is looking (handleVisibleRange), for a screenful-first fetch. */
+  let _visStart = 0
+  let _visEnd = 0
+  /** A window larger than this gets its on-screen rows fetched first on a jump. */
+  const VIEWPORT_FIRST_MIN = 1000
   const MIRROR_MIN_ROWS = 10_000
   const MIRROR_MAX_ROWS = 5_000_000
   /** A view whose rows weigh more than this in total is not copied to disk. */
@@ -7215,6 +7220,22 @@ let rowSearch = $state('')
           if (Array.isArray(got) && got.length === limit) local = got
         } catch { /* dropped or unreadable: the remote path below */ }
         if (seq !== _windowSeq) return
+      }
+      // A jump to rows nothing has loaded near: put the screenful up first. The
+      // whole window is 10,000 rows, ~1.5 MB, most of a second over a far
+      // link, for the ~30 rows on screen. Those are asked for alone (a few
+      // hundred, one small round trip), then the window as before.
+      if (!local && !keyset && limit > VIEWPORT_FIRST_MIN && _visStart >= start && _visStart < start + limit && rows[_visStart] === undefined) {
+        const from = Math.max(start, _visStart - 20)
+        const count = Math.min(start + limit, Math.max(_visEnd, _visStart) + 60) - from
+        try {
+          const head = await getTableRows(activeSchema, activeTable, Math.min(count, 400), _windowBase + from, currentRowQuery(false))
+          if (seq !== _windowSeq) return
+          const got = head.rows ?? []
+          for (let i = 0; i < got.length; i++) if (rows[from + i] === undefined) rows[from + i] = got[i]
+          dataVersion++
+          tracePoint(`window ${start} screenful ${got.length} rows ${Math.round(performance.now() - t0)}ms`)
+        } catch { /* the full window below still runs */ }
       }
       const data = local ? { rows: local } : await getTableRows(activeSchema, activeTable, limit, _windowBase + start, { ...currentRowQuery(false), keyset })
       // Rolling, so the measure tracks the connection rather than latching on the
@@ -7363,6 +7384,8 @@ let rowSearch = $state('')
    */
   function handleVisibleRange(start, end) {
     if (!windowed) return
+    _visStart = start
+    _visEnd = end
     const firstW = Math.floor(start / _windowRows)
     const lastW = Math.floor(end / _windowRows)
     if (firstW !== _lastFirstW) {
