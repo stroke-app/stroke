@@ -1,4 +1,5 @@
 <script>
+  import { tx } from '$lib/i18n.js'
   import DbIcon from './DbIcon.svelte'
   import { engineId, engineLabel } from '$lib/connection-provider.js'
   import { colorOf } from '$lib/stores/workspaces.js'
@@ -521,7 +522,7 @@
           side="top"
           align="start"
           contentClass="w-72"
-          placeholder="Search connections…"
+          placeholder={$tx('sb.searchConnections', 'Search connections…')}
           items={connItems}
           onselect={(it) => { const c = savedConnections.find((x) => x.id === it.value); if (c && c.id !== activeConnectionId) onswitchconnection(c) }}
         >
@@ -568,7 +569,7 @@
                 onclick={() => { connOpen = false; onconnect() }}
               >
                 <Icon name="wifi-off" class="size-3.5 shrink-0 text-muted-foreground" />
-                Manage connections…
+                {$tx('sb.manageConnections', 'Manage connections…')}
               </button>
               <button
                 type="button"
@@ -576,7 +577,7 @@
                 onclick={() => { connOpen = false; ondisconnect() }}
               >
                 <Icon name="unplug" class="size-3.5 shrink-0" />
-                Disconnect
+                {$tx('connection.disconnect', 'Disconnect')}
               </button>
             </div>
           {/snippet}
@@ -598,8 +599,8 @@
             type="button"
             class="{iconBtn} hover:text-destructive!"
             onclick={ondisconnect}
-            title="Disconnect"
-            aria-label="Disconnect"
+            title={$tx('connection.disconnect', 'Disconnect')}
+            aria-label={$tx('connection.disconnect', 'Disconnect')}
           >
             <Icon name="unplug" class="size-3.5 shrink-0" />
           </button>
@@ -662,7 +663,7 @@
               {#if dbLoading}
                 <div class="loading-reveal flex items-center justify-center gap-2 py-4 text-muted-foreground">
                   <Icon name="refresh-cw" class="size-3 shrink-0 animate-spin" />
-                  <span class="text-ui-2xs">Loading…</span>
+                  <span class="text-ui-2xs">{$tx('common.loading', 'Loading…')}</span>
                 </div>
               {:else if dbFiltered.length === 0}
                 <div class="py-3 text-center text-ui-2xs text-muted-foreground">
@@ -819,7 +820,7 @@
               <span class="inline-flex size-1.5 rounded-full border border-current"></span>
             {/if}
           </span>
-          Live
+          {$tx('sb.live', 'Live')}
         </button>
       {/if}
 
@@ -856,7 +857,7 @@
         title="No connection, click to connect"
       >
         <Icon name="wifi-off" class="size-3.5 shrink-0" />
-        <span>Not connected</span>
+        <span>{$tx('sb.notConnected', 'Not connected')}</span>
       </button>
     {/if}
   </div>
@@ -892,7 +893,7 @@
           title={withShortcut(`Discard ${pendingEditCount} unsaved change${pendingEditCount === 1 ? '' : 's'}`, 'table.discard')}
         >
           <Icon name="undo-2" class="size-3 shrink-0" />
-          <span class="@max-[48.75rem]/sb:hidden">Reset</span>
+          <span class="@max-[48.75rem]/sb:hidden">{$tx('tb.reset', 'Reset')}</span>
         </button>
         <div class="inline-flex h-6 items-stretch overflow-hidden rounded-md bg-primary text-primary-foreground">
           <button
@@ -904,10 +905,10 @@
           >
             {#if applying}
               <span class="size-3 shrink-0 animate-spin rounded-full border border-current/40 border-t-current"></span>
-              Applying…
+              {$tx('sb.applying', 'Applying…')}
             {:else}
               <Icon name="check" class="size-3 shrink-0" />
-              Apply
+              {$tx('common.apply', 'Apply')}
               <span class="tabular-nums opacity-80">{pendingEditCount}</span>
             {/if}
           </button>
@@ -923,7 +924,7 @@
             <DropdownMenu.Content align="end" side="top" class="min-w-52">
               <DropdownMenu.Item onSelect={onapplyedits}>
                 <Icon name="check" class="size-3.5 shrink-0" />
-                Apply changes
+                {$tx('sb.applyChanges', 'Apply changes')}
                 <DropdownMenu.Shortcut command="table.apply" />
               </DropdownMenu.Item>
               <DropdownMenu.Item onSelect={oncopyeditssql}>
@@ -934,7 +935,7 @@
               <DropdownMenu.Separator />
               <DropdownMenu.Item onSelect={onresetedits} variant="destructive">
                 <Icon name="undo-2" class="size-3.5 shrink-0" />
-                Discard changes
+                {$tx('sb.discardChanges', 'Discard changes')}
                 <DropdownMenu.Shortcut command="table.discard" />
               </DropdownMenu.Item>
             </DropdownMenu.Content>
@@ -1022,7 +1023,7 @@
       side="top"
       align="end"
       contentClass="w-64"
-      placeholder="Search models…"
+      placeholder={$tx('sb.searchModels', 'Search models…')}
       items={$aiProfiles.map((p) => ({ value: p.id, label: p.name, keywords: [p.model] }))}
       onselect={(it) => setActiveProfile(it.value)}
     >
@@ -1050,7 +1051,7 @@
             onclick={() => { aiModelMenuOpen = false; onopenmodelsettings() }}
           >
             <Icon name="settings-2" class="size-3.5 shrink-0 text-muted-foreground" />
-            Manage models…
+            {$tx('sb.manageModels', 'Manage models…')}
           </button>
         </div>
       {/snippet}

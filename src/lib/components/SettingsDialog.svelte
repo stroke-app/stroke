@@ -31,7 +31,7 @@
   import { getThemeDefinition, themesByGroup } from "$lib/themes/registry.js";
   import { sidebarSideStore, setSidebarSide } from "$lib/stores/layout.js";
   import { pluginState, isPluginEnabled, setPluginEnabled } from "$lib/stores/plugins.js";
-  import { t, locale, LOCALES, setLocale } from "$lib/i18n.js";
+  import { t, tx, locale, LOCALES, setLocale } from "$lib/i18n.js";
   import { licenseStatus } from "$lib/stores/license.js";
   import AccountCard from "./AccountCard.svelte";
   import SyncSection from "./SyncSection.svelte";
@@ -856,18 +856,18 @@
   {#if !searching}
     <!-- No rule of its own: the first row's top border is the line under it.
          Both drew one, which is the double line under every heading. -->
-    <p class="mt-8 mb-1 text-ui-2xs font-semibold uppercase tracking-[0.06em] text-muted-foreground first:mt-0">{text}</p>
+    <p class="mt-8 mb-1 text-ui-2xs font-semibold uppercase tracking-[0.06em] text-muted-foreground first:mt-0">{$tx('sec.' + text, text)}</p>
   {/if}
 {/snippet}
 
 {#snippet switchRow(/** @type {string} */ label, /** @type {string} */ desc, /** @type {boolean} */ checked, /** @type {() => void} */ ontoggle)}
   <div class={rowCls}>
     <div class="min-w-0">
-      <p class="text-ui-sm font-medium text-foreground">{label}</p>
-      <p class="mt-0.5 text-ui-xs leading-relaxed text-muted-foreground">{desc}</p>
+      <p class="text-ui-sm font-medium text-foreground">{$tx('set.' + label, label)}</p>
+      <p class="mt-0.5 text-ui-xs leading-relaxed text-muted-foreground">{$tx('set.' + label + '.desc', desc)}</p>
     </div>
     <button
-      type="button" role="switch" aria-checked={checked} aria-label={label}
+      type="button" role="switch" aria-checked={checked} aria-label={$tx('set.' + label, label)}
       onclick={ontoggle}
       class="app-switch cursor-pointer"
     >
@@ -880,12 +880,12 @@
   <div class={rowCls}>
     <div class="min-w-0">
       <p class="flex items-center gap-2 text-ui-sm font-medium text-foreground">
-        {label}
+        {$tx('set.' + label, label)}
         {#if badge}<span class="h-5 px-1.5 text-ui-3xs font-semibold {badge.class}">{badge.label}</span>{/if}
       </p>
-      <p class="mt-0.5 text-ui-xs leading-relaxed text-muted-foreground">{desc}</p>
+      <p class="mt-0.5 text-ui-xs leading-relaxed text-muted-foreground">{$tx('set.' + label + '.desc', desc)}</p>
     </div>
-    <Button type="button" variant="outline" size="sm" class="shrink-0" {onclick}>{btn}</Button>
+    <Button type="button" variant="outline" size="sm" class="shrink-0" {onclick}>{$tx('set.btn.' + btn, btn)}</Button>
   </div>
 {/snippet}
 

@@ -1,4 +1,5 @@
 <script>
+  import { tx } from '$lib/i18n.js'
   // The new-tab page: which database this is, the search that starts
   // everything (Cmd/Ctrl+K), and a short list of where to go next. Split out of
   // StudioShell; it takes what it shows and calls back for what it opens.
@@ -154,7 +155,7 @@
       onclick={() => onpalette('root')}
     >
       <Search class="size-4 shrink-0" />
-      <span class="min-w-0 flex-1 truncate">Search tables, run SQL, or ask AI…</span>
+      <span class="min-w-0 flex-1 truncate">{$tx('tile.searchbox', 'Search tables, run SQL, or ask AI…')}</span>
       {@render chord([mod, 'K'])}
     </button>
   {/if}
@@ -162,29 +163,29 @@
   <!-- Six actions, two rows of three (one column when the pane is narrow). -->
   <div class="grid w-full grid-cols-1 gap-1 @md/welcome:grid-cols-3">
     {#if isDoc}
-      {@render row(Database, "Browse", "Open collections and edit documents", ondocs, { tone: 'info' })}
-      {@render row(Terminal, "Query", "Run queries in the SQL editor", onsql, { keys: [mod, shiftKey, "S"], tone: 'success' })}
+      {@render row(Database, $tx('tile.Browse', "Browse"), $tx('tile.Browse.desc', "Open collections and edit documents"), ondocs, { tone: 'info' })}
+      {@render row(Terminal, $tx('tile.Query', "Query"), $tx('tile.Query.desc', "Run queries in the SQL editor"), onsql, { keys: [mod, shiftKey, "S"], tone: 'success' })}
     {:else if isDynamo}
-      {@render row(Database, "Tables", "Scan, query and edit items", ondynamo, { tone: 'info' })}
-      {@render row(Terminal, "PartiQL", "Query in the SQL editor", onsql, { keys: [mod, shiftKey, "S"], tone: 'success' })}
+      {@render row(Database, $tx('tile.Tables', "Tables"), $tx('tile.Tables.desc', "Scan, query and edit items"), ondynamo, { tone: 'info' })}
+      {@render row(Terminal, $tx('tile.PartiQL', "PartiQL"), $tx('tile.PartiQL.desc', "Query in the SQL editor"), onsql, { keys: [mod, shiftKey, "S"], tone: 'success' })}
     {:else if isRedis}
-      {@render row(KeyRound, "Keyspace", "Browse keys and values", onredis, { tone: 'info' })}
+      {@render row(KeyRound, $tx('tile.Keyspace', "Keyspace"), $tx('tile.Keyspace.desc', "Browse keys and values"), onredis, { tone: 'info' })}
     {:else}
-      {@render row(Terminal, "SQL", "Write and run a query", onsql, { keys: [mod, shiftKey, "S"], tone: 'info' })}
+      {@render row(Terminal, $tx('tile.SQL', "SQL"), $tx('tile.SQL.desc', "Write and run a query"), onsql, { keys: [mod, shiftKey, "S"], tone: 'info' })}
     {/if}
     {#if connection && !isDynamo && !isDoc}
-      {@render row(SquareTerminal, "Terminal", `${terminalClient ?? 'Built-in SQL prompt'}, docked below`, onterminal, { keys: [IS_MAC ? "⌘" : "Ctrl", "J"], tone: 'success' })}
+      {@render row(SquareTerminal, $tx('tile.Terminal', "Terminal"), terminalClient ? $tx('tile.Terminal.client', "{client}, docked below", { client: terminalClient }) : $tx('tile.Terminal.builtin', "Built-in SQL prompt, docked below"), onterminal, { keys: [IS_MAC ? "⌘" : "Ctrl", "J"], tone: 'success' })}
     {/if}
-    {@render row(Sparkles, "AI", "Ask about this database", onai, { pro: true, keys: [mod, "I"], tone: 'primary' })}
+    {@render row(Sparkles, $tx('tile.AI', "AI"), $tx('tile.AI.desc', "Ask about this database"), onai, { pro: true, keys: [mod, "I"], tone: 'primary' })}
     {#if connection && !isKV}
-      {@render row(Search, "Search", "Find in database: search every table at once", onsearch, { keys: [mod, shiftKey, "G"], tone: 'warning' })}
+      {@render row(Search, $tx('tile.Search', "Search"), $tx('tile.Search.desc', "Find in database: search every table at once"), onsearch, { keys: [mod, shiftKey, "G"], tone: 'warning' })}
     {/if}
-    {@render row(Blocks, "Extensions", "Add and manage extensions", onextensions, { pro: true, keys: [mod, shiftKey, "X"], tone: 'info' })}
-    {@render row(Database, "Connect", "Switch or add a connection", onconnect, { keys: [mod, shiftKey, "C"], tone: 'success' })}
+    {@render row(Blocks, $tx('tile.Extensions', "Extensions"), $tx('tile.Extensions.desc', "Add and manage extensions"), onextensions, { pro: true, keys: [mod, shiftKey, "X"], tone: 'info' })}
+    {@render row(Database, $tx('tile.Connect', "Connect"), $tx('tile.Connect.desc', "Switch or add a connection"), onconnect, { keys: [mod, shiftKey, "C"], tone: 'success' })}
   </div>
 
   <button type="button" class="inline-flex h-7 items-center gap-1.5 self-start rounded-md px-1 text-ui-xs text-muted-foreground transition-colors hover:text-foreground" onclick={() => onpalette('pages')}>
-    Browse all pages {@render chord([mod, shiftKey, 'P'])}
+    {$tx('tile.allPages', 'Browse all pages')} {@render chord([mod, shiftKey, 'P'])}
   </button>
   </div>
 </div>

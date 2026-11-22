@@ -1,4 +1,5 @@
 <script>
+  import { tx } from '$lib/i18n.js'
   import { EXPORT_FORMATS as ALL_EXPORT_FORMATS } from '$lib/export.js';
   import { Button } from '$lib/components/ui/button/index.js'
   import Icon from "./Icon.svelte";
@@ -458,7 +459,7 @@
   $effect(() => { if (sizeMenuOpen) sizeCustom = PAGE_SIZE_OPTIONS.includes(pageSize) ? "" : String(pageSize); });
   /** 25 · 1K · 5M · All */
   const sizeShort = (/** @type {number} */ n) =>
-    n === -1 ? "All" : n >= 1_000_000 && n % 1_000_000 === 0 ? `${n / 1_000_000}M` : n >= 1000 && n % 1000 === 0 ? `${n / 1000}K` : n.toLocaleString("en-US");
+    n === -1 ? $tx("tb.all", "All") : n >= 1_000_000 && n % 1_000_000 === 0 ? `${n / 1_000_000}M` : n >= 1000 && n % 1000 === 0 ? `${n / 1000}K` : n.toLocaleString("en-US");
   let pageJump = $state("");
   $effect(() => { if (pageMenuOpen) pageJump = String(page); });
   /** Focus + select the page field when the popover opens. @param {HTMLInputElement} el */
@@ -921,7 +922,7 @@
           type="text"
           aria-label="Search column"
           class="search-box no-field-frame h-7 w-full min-w-0 pl-8 pr-7 font-mono text-ui-sm"
-          placeholder="Search column…"
+          placeholder={$tx('tb.searchColumn', 'Search column…')}
           value={structureSearch}
           oninput={(e) =>
             onstructuresearchchange(
@@ -958,7 +959,7 @@
             searchHint ? "pr-7 @[11rem]/search:pr-12" : showSearchOpts ? "pr-[7.5rem]" : "pr-7",
             localSearch.trim() && "border-ring!",
           )}
-          placeholder="Search…"
+          placeholder={$tx('common.search', 'Search…')}
           data-slash-focus="20"
           aria-keyshortcuts="/"
           value={localSearch}
@@ -1046,14 +1047,14 @@
           </DropdownMenu.Trigger>
           <DropdownMenu.Content align="start" class="min-w-64 p-0 text-ui-sm">
             <div class="flex items-center border-b border-border/50 px-3 py-1.5">
-              <span class="text-ui-2xs font-medium uppercase tracking-[0.06em] text-muted-foreground">Saved views</span>
+              <span class="text-ui-2xs font-medium uppercase tracking-[0.06em] text-muted-foreground">{$tx('tb.savedViews', 'Saved views')}</span>
               <button
                 type="button"
                 class="ml-auto rounded px-1.5 py-0.5 text-ui-2xs text-muted-foreground transition-[background-color,color] hover:bg-accent hover:text-foreground"
                 title="Back to the unfiltered default"
                 onclick={() => { onresetview(); viewsMenuOpen = false; }}
               >
-                Reset
+                {$tx('tb.reset', 'Reset')}
               </button>
             </div>
             {#if savedViews.length === 0}
@@ -1102,7 +1103,7 @@
             <div class="flex items-center gap-1.5 border-t border-border/50 p-1.5">
               <input
                 type="text"
-                placeholder="Save current as…"
+                placeholder={$tx('tb.saveCurrentAs', 'Save current as…')}
                 bind:value={viewNameDraft}
                 class= "field-surface h-7 w-full min-w-0 flex-1 bg-transparent px-2 text-ui-xs text-foreground outline-none placeholder:text-muted-foreground"
                 onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commitSaveView(); } }}
@@ -1112,7 +1113,7 @@
                 disabled={!viewNameDraft.trim()}
                 onclick={commitSaveView}
 >
-                Save
+                {$tx('common.save', 'Save')}
               </Button>
             </div>
           </DropdownMenu.Content>
@@ -1147,7 +1148,7 @@
       <SearchableMenu
         bind:open={sortMenuOpen}
         items={sortItems}
-        placeholder="Sort by column…"
+        placeholder={$tx('tb.sortBy', 'Sort by column…')}
         contentClass="w-60"
         onselect={(it) => applySort(it.col, it.dir)}
       >
@@ -1184,7 +1185,7 @@
       <SearchableMenu
         bind:open={columnsMenuOpen}
         items={columnItems}
-        placeholder="Search columns…"
+        placeholder={$tx('tb.searchColumns', 'Search columns…')}
         contentClass="w-56"
         closeOnSelect={false}
         onselect={toggleColumnItem}
@@ -1205,7 +1206,7 @@
         {/snippet}
         {#snippet header()}
           <div class="flex items-center justify-between border-b border-border/40 px-3 py-1.5">
-            <span class="text-ui-2xs font-medium uppercase tracking-[0.06em] text-muted-foreground">Columns</span>
+            <span class="text-ui-2xs font-medium uppercase tracking-[0.06em] text-muted-foreground">{$tx('tb.columns', 'Columns')}</span>
             <!-- Both actions, whenever both mean something. One toggle that
                  flipped on "anything hidden" made "Hide all" unreachable as
                  soon as a single column was hidden. -->
@@ -1216,7 +1217,7 @@
                   class="text-ui-2xs text-muted-foreground transition-colors hover:text-foreground"
                   onclick={hideAllColumns}
                 >
-                  Hide all
+                  {$tx('tb.hideAll', 'Hide all')}
                 </button>
               {/if}
               {#if hiddenCount > 0}
@@ -1225,7 +1226,7 @@
                   class="text-ui-2xs text-muted-foreground transition-colors hover:text-foreground"
                   onclick={showAllColumns}
                 >
-                  Show all
+                  {$tx('tb.showAll', 'Show all')}
                 </button>
               {/if}
             </div>
@@ -1251,7 +1252,7 @@
       <SearchableMenu
         bind:open={focusMenuOpen}
         items={focusColumnItems}
-        placeholder="Jump to column…"
+        placeholder={$tx('tb.jumpTo', 'Jump to column…')}
         contentClass="w-56"
         onselect={(it) => onfocuscolumn(it.value)}
       >
@@ -1259,7 +1260,7 @@
           <button
             {...props}
             class={cn(iconBtn, "shrink-0 @max-[31.25rem]/tb:hidden", hideAt(4), focusMenuOpen && "bg-accent text-foreground")}
-            title="Jump to column"
+            title={$tx('tb.jumpToHead', 'Jump to column')}
             disabled={loading || columns.length === 0}
           >
             <Icon name="crosshair" class="size-3.5 shrink-0" />
@@ -1267,7 +1268,7 @@
         {/snippet}
         {#snippet header()}
           <div class="border-b border-border/40 px-3 py-1.5">
-            <span class="text-ui-2xs font-medium uppercase tracking-[0.06em] text-muted-foreground">Jump to column</span>
+            <span class="text-ui-2xs font-medium uppercase tracking-[0.06em] text-muted-foreground">{$tx('tb.jumpToHead', 'Jump to column')}</span>
           </div>
         {/snippet}
         {#snippet item(it)}
@@ -1283,7 +1284,7 @@
         type="button"
         class={cn(iconBtn, "shrink-0 @max-[33.75rem]/tb:hidden", hideAt(3))}
         title="Open in SQL editor ({IS_MAC ? '⌘' : 'Ctrl'}+click to run it)"
-        aria-label="Open in SQL editor"
+        aria-label={$tx('tb.openInSql', 'Open in SQL editor')}
         disabled={loading || columns.length === 0}
         onclick={(e) => onopeninsql({ run: e.ctrlKey || e.metaKey })}
       >
@@ -1314,7 +1315,7 @@
         onclick={onaddrow}
       >
         <Icon name="plus" class="size-3.5 shrink-0" />
-        <span class={cn("@max-[27.5rem]/tb:hidden", hideAt(11))}>Add</span>
+        <span class={cn("@max-[27.5rem]/tb:hidden", hideAt(11))}>{$tx('common.add', 'Add')}</span>
       </button>
     {/if}
 
@@ -1383,14 +1384,14 @@
         <Popover bind:open={sizeMenuOpen}>
           <PopoverTrigger
             class={cn(pageSelectTrigger, "inline-flex items-center", "@max-[30rem]/tb:hidden", hideAt(9))}
-            title="Rows per page"
+            title={$tx('tb.rowsPerPage', 'Rows per page')}
             aria-label="Rows per page: {pageSizeLabel(pageSize)}"
           >
-            {sizeShort(pageSize)}<span class="text-muted-foreground">rows</span>
+            {sizeShort(pageSize)}<span class="text-muted-foreground">{$tx('table.rows', 'rows')}</span>
             <Icon name="chevron-down" class="size-3.5 shrink-0 opacity-60" />
           </PopoverTrigger>
           <PopoverContent align="end" sideOffset={6} class="w-56 p-2">
-            <p class="px-1 pb-1.5 text-ui-2xs font-medium text-muted-foreground">Rows per page</p>
+            <p class="px-1 pb-1.5 text-ui-2xs font-medium text-muted-foreground">{$tx('tb.rowsPerPage', 'Rows per page')}</p>
             <div class="grid grid-cols-4 gap-1">
               {#each PAGE_SIZE_OPTIONS as size (size)}
                 <button
@@ -1418,7 +1419,7 @@
               <input
                 bind:value={sizeCustom}
                 inputmode="numeric"
-                placeholder="Custom"
+                placeholder={$tx('tb.custom', 'Custom')}
                 aria-label="Custom rows per page"
                 class="field-surface h-7 min-w-0 flex-1 px-2 font-mono text-ui-sm tabular-nums shadow-none outline-none placeholder:font-sans placeholder:text-muted-foreground"
               />
@@ -1496,7 +1497,7 @@
                   }}
                 >
                   <label class="flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-lg bg-muted/60 px-2.5 text-ui-xs text-muted-foreground focus-within:ring-1 focus-within:ring-ring/60">
-                    Page
+                    {$tx('tb.page', 'Page')}
                     <input
                       bind:value={pageJump}
                       inputmode="numeric"
@@ -1522,9 +1523,9 @@
                 </div>
                 {#if !counting && pageCount > pageGrid.length}
                   <div class="mt-1 flex items-center justify-between gap-1 border-t border-border/50 px-0.5 pt-1.5">
-                    <button type="button" class="h-6 rounded-md px-2 text-ui-2xs text-muted-foreground hover:bg-accent hover:text-foreground" onclick={() => { onpagechange(1); pageMenuOpen = false; }}>First</button>
-                    <span class="text-ui-3xs text-muted-foreground">Enter to go</span>
-                    <button type="button" class="h-6 rounded-md px-2 text-ui-2xs text-muted-foreground hover:bg-accent hover:text-foreground" onclick={() => { onpagechange(pageCount); pageMenuOpen = false; }}>Last</button>
+                    <button type="button" class="h-6 rounded-md px-2 text-ui-2xs text-muted-foreground hover:bg-accent hover:text-foreground" onclick={() => { onpagechange(1); pageMenuOpen = false; }}>{$tx('tb.first', 'First')}</button>
+                    <span class="text-ui-3xs text-muted-foreground">{$tx('tb.enterToGo', 'Enter to go')}</span>
+                    <button type="button" class="h-6 rounded-md px-2 text-ui-2xs text-muted-foreground hover:bg-accent hover:text-foreground" onclick={() => { onpagechange(pageCount); pageMenuOpen = false; }}>{$tx('tb.last', 'Last')}</button>
                   </div>
                 {/if}
               </PopoverContent>
@@ -1619,11 +1620,11 @@
       </DropdownMenu.Trigger>
       <DropdownMenu.Content align="end" class="min-w-52 p-0 text-ui-sm">
         <div class="border-b border-border px-3 py-2.5">
-          <p class="font-medium text-foreground">Pagination</p>
+          <p class="font-medium text-foreground">{$tx('settings.pagination', 'Pagination')}</p>
         </div>
         <div class="flex flex-col gap-3 p-3">
           <label class="flex flex-col gap-1">
-            <span class="text-ui-xs text-muted-foreground">Limit</span>
+            <span class="text-ui-xs text-muted-foreground">{$tx('tb.limit', 'Limit')}</span>
             <Input
               class={cn(
                 "h-7 font-mono text-ui-sm",
@@ -1648,7 +1649,7 @@
             {/if}
           </label>
           <label class="flex flex-col gap-1">
-            <span class="text-ui-xs text-muted-foreground">Offset (skip rows)</span>
+            <span class="text-ui-xs text-muted-foreground">{$tx('tb.offset', 'Offset (skip rows)')}</span>
             <Input
               class="h-7 font-mono text-ui-sm"
               type="text"
@@ -1667,7 +1668,7 @@
               type="button"
               class= "field-surface inline-flex flex-1 h-7 items-center justify-center text-ui-sm text-muted-foreground hover:bg-accent hover:text-foreground"
               onclick={() => { limitOffsetOpen = false; limitError = ""; }}
-            >Cancel</button>
+            >{$tx('common.cancel', 'Cancel')}</button>
             <Button
               class="flex-1" size="sm"
               disabled={!!limitError || draftLimit < 1}
@@ -1682,7 +1683,7 @@
                 limitOffsetOpen = false;
                 limitError = "";
               }}
->Apply</Button>
+>{$tx('common.apply', 'Apply')}</Button>
           </div>
         </div>
       </DropdownMenu.Content>
@@ -1720,7 +1721,7 @@
       </DropdownMenu.Trigger>
       <DropdownMenu.Content align="end" class="min-w-56 [&_[data-slot=dropdown-menu-item]]:whitespace-nowrap [&_[data-slot=dropdown-menu-radio-item]]:whitespace-nowrap">
         <DropdownMenu.Group>
-          <DropdownMenu.GroupHeading class={menuHeading}>View</DropdownMenu.GroupHeading>
+          <DropdownMenu.GroupHeading class={menuHeading}>{$tx('tb.view', 'View')}</DropdownMenu.GroupHeading>
           {#if tableViewMode !== "structure"}
             <DropdownMenu.RadioGroup
               value={dataViewMode}
@@ -1744,44 +1745,44 @@
         {#if tableViewMode !== "structure"}
           <DropdownMenu.Separator />
           <DropdownMenu.Group>
-            <DropdownMenu.GroupHeading class={menuHeading}>Tools</DropdownMenu.GroupHeading>
+            <DropdownMenu.GroupHeading class={menuHeading}>{$tx('settings.sec.tools', 'Tools')}</DropdownMenu.GroupHeading>
             {#if findReplaceEnabled}
               <DropdownMenu.Item disabled={total === 0 || readonly || !hasPrimaryKey} onSelect={onfindreplace}>
                 <Icon name="replace" class="size-3.5 shrink-0" />
-                <span data-slot="menu-label">Find and replace…</span>
+                <span data-slot="menu-label">{$tx('tb.findReplace', 'Find and replace…')}</span>
                 <DropdownMenu.Shortcut command={IS_MAC ? "table.findReplaceAlt" : "table.findReplace"} />
               </DropdownMenu.Item>
             {/if}
             <DropdownMenu.Item disabled={loading || columns.length === 0} onSelect={onopenvirtualcols}>
               <Icon name="function-square" class="size-3.5 shrink-0" />
-              <span data-slot="menu-label">Virtual columns…</span>
+              <span data-slot="menu-label">{$tx('tb.virtualColumns', 'Virtual columns…')}</span>
               {#if virtualColCount > 0}
                 <span class="ml-auto rounded-full bg-muted px-1.5 font-mono text-ui-3xs tabular-nums text-muted-foreground">{virtualColCount}</span>
               {/if}
             </DropdownMenu.Item>
             <DropdownMenu.Item disabled={loading || columns.length === 0} onSelect={() => onopeninsql()}>
               <Icon name="terminal" class="size-3.5 shrink-0" />
-              <span data-slot="menu-label">Open in SQL editor</span>
+              <span data-slot="menu-label">{$tx('tb.openInSql', 'Open in SQL editor')}</span>
             </DropdownMenu.Item>
             <DropdownMenu.CheckboxItem checked={infiniteScroll} onCheckedChange={() => oninfinitescrolltoggle()}>
               <Icon name="infinity" class="size-3.5 shrink-0" />
-              <span data-slot="menu-label">Infinite scroll</span>
+              <span data-slot="menu-label">{$tx('tb.infiniteScroll', 'Infinite scroll')}</span>
             </DropdownMenu.CheckboxItem>
           </DropdownMenu.Group>
           <DropdownMenu.Separator />
           <DropdownMenu.Group>
-            <DropdownMenu.GroupHeading class={menuHeading}>Data</DropdownMenu.GroupHeading>
+            <DropdownMenu.GroupHeading class={menuHeading}>{$tx('tb.data', 'Data')}</DropdownMenu.GroupHeading>
           <DropdownMenu.Sub>
             <DropdownMenu.SubTrigger disabled={total === 0 && dataViewMode !== 'erd' && dataViewMode !== 'chart'}>
               <Icon name="file-down" class="size-3.5 shrink-0" />
-              <span data-slot="menu-label">Export</span>
+              <span data-slot="menu-label">{$tx('common.export', 'Export')}</span>
             </DropdownMenu.SubTrigger>
             <DropdownMenu.SubContent class="min-w-44">
               <!-- GroupHeading needs a Group parent: bits-ui reads the group context
                    from it, and rendering one bare throws "Menu.Group not found". -->
               {#if dataViewMode === 'erd'}
                 <DropdownMenu.Group>
-                  <DropdownMenu.GroupHeading class={menuHeading}>Diagram</DropdownMenu.GroupHeading>
+                  <DropdownMenu.GroupHeading class={menuHeading}>{$tx('tb.diagram', 'Diagram')}</DropdownMenu.GroupHeading>
                   {#each DIAGRAM_FORMATS as fmt (fmt.id)}
                     <DropdownMenu.Item onSelect={() => onexportdiagram(fmt.id)}>
                       <Icon name={fmt.icon} class="size-3.5 shrink-0" />
@@ -1793,7 +1794,7 @@
               {/if}
               {#if dataViewMode === 'chart'}
                 <DropdownMenu.Group>
-                  <DropdownMenu.GroupHeading class={menuHeading}>Chart</DropdownMenu.GroupHeading>
+                  <DropdownMenu.GroupHeading class={menuHeading}>{$tx('tb.chart', 'Chart')}</DropdownMenu.GroupHeading>
                   {#each CHART_FORMATS as fmt (fmt.id)}
                     <DropdownMenu.Item onSelect={() => onexportchart(fmt.id)}>
                       <Icon name={fmt.icon} class="size-3.5 shrink-0" />
@@ -1805,7 +1806,7 @@
               {/if}
               <DropdownMenu.Group>
                 {#if dataViewMode === 'erd' || dataViewMode === 'chart'}
-                  <DropdownMenu.GroupHeading class={menuHeading}>Rows</DropdownMenu.GroupHeading>
+                  <DropdownMenu.GroupHeading class={menuHeading}>{$tx('tb.rows', 'Rows')}</DropdownMenu.GroupHeading>
                 {/if}
                 {#each EXPORT_FORMATS as fmt (fmt.id)}
                   <DropdownMenu.Item disabled={total === 0} onSelect={() => onexport(fmt.id)}>
@@ -1824,7 +1825,7 @@
           {/if}
           <DropdownMenu.Item disabled={readonly} onSelect={() => onimport()}>
             <Icon name="file-up" class="size-3.5 shrink-0" />
-            <span data-slot="menu-label">Import data…</span>
+            <span data-slot="menu-label">{$tx('tb.importData', 'Import data…')}</span>
           </DropdownMenu.Item>
           </DropdownMenu.Group>
           {#if selectedCount > 0}
@@ -1876,7 +1877,7 @@
             title="Add a filter condition ({KEY.filter} opens this bar)"
           >
             <Icon name="plus" class="size-3.5 shrink-0" />
-            Add filter
+            {$tx('tb.addFilter', 'Add filter')}
           </button>
           <button
             type="button"
@@ -1895,7 +1896,7 @@
             onclick={clearFilters}
             title="Remove every filter condition ({KEY.reset} also clears search, sort and hidden columns)"
           >
-            Clear filters
+            {$tx('tb.clearFilters', 'Clear filters')}
           </button>
         {/if}
       {/snippet}
@@ -1946,7 +1947,7 @@
           {:else}
           <SearchableMenu
             items={filterColumnItems}
-            placeholder="Search columns…"
+            placeholder={$tx('tb.searchColumns', 'Search columns…')}
             contentClass="w-52"
             onselect={(it) => pickFilterColumn(filter, it.value)}
           >

@@ -39,7 +39,7 @@
   import { cn } from "$lib/utils.js";
   import { CRASH_WORD, isMagic, armCrash } from '$lib/games/easter-eggs.js'
   import { flushSync, tick } from "svelte";
-  import { t } from "$lib/i18n.js";
+  import { t, tx } from "$lib/i18n.js";
   import { visibleRowCount, soleMatch } from "$lib/sidebar-filter.js";
   import { splitSchemas, isSystemSchema } from "$lib/system-schemas.js";
   import { aiChatList, requestChat } from "$lib/stores/ai-chat-bridge.js";
@@ -2227,7 +2227,7 @@
             <div class="max-w-[8rem] shrink-0">
                     <SearchableMenu
                       contentClass="min-w-60"
-                      placeholder="Search schemas…"
+                      placeholder={$tx('sidebar.searchSchemas', 'Search schemas…')}
                       empty="No schema"
                       items={schemaMenuItems}
                       onselect={(it) => {
@@ -2286,7 +2286,7 @@
             bind:this={filterEl}
             data-slash-focus="10"
             aria-keyshortcuts="/"
-            placeholder={connectionName ? "Search" : "Not connected"}
+            placeholder={connectionName ? $tx('tile.Search', 'Search') : $tx('sb.notConnected', 'Not connected')}
             value={localFilter}
             disabled={!connectionName}
             oninput={(e) => handleFilterInput(e.currentTarget.value)}
@@ -3233,7 +3233,7 @@
                  and opens like a table, was nowhere in the list people look in. -->
             {#if lt === 'tables' && filteredViews.length + filteredMatViews.length > 0}
               <div class="flex w-full items-center gap-1 px-2.5 pt-3 pb-1">
-                <span class="text-ui-xs font-medium text-muted-foreground">Views</span>
+                <span class="text-ui-xs font-medium text-muted-foreground">{$t('sidebar.views')}</span>
                 {@render countBadge(filteredViews.length + filteredMatViews.length, views.length + matViews.length)}
               </div>
               <ul class="w-full px-1.5 pb-1">
@@ -3443,7 +3443,7 @@
             try { localStorage.setItem('stroke:sidebar-chats-open', chatsOpen ? '1' : '0') } catch {}
           }}
         >
-          <span class="flex-1 text-left">Chats</span>
+          <span class="flex-1 text-left">{$tx('sidebar.chats', 'Chats')}</span>
           {#if chats.length}<span class="font-mono text-ui-2xs tabular-nums">{chats.length}</span>{/if}
           <Icon name={chatsOpen ? 'chevron-down' : 'chevron-right'} class="size-3 shrink-0" />
         </button>
@@ -3672,7 +3672,7 @@
           if (connsOpen) tick().then(() => connsSearchEl?.focus())
         }}
       >
-        <span class="flex-1 text-left">Connections</span>
+        <span class="flex-1 text-left">{$tx('sidebar.connections', 'Connections')}</span>
         <span class="font-mono text-ui-2xs tabular-nums">{wsConnections.length}</span>
         <Icon name={connsOpen ? 'chevron-down' : 'chevron-right'} class="size-3 shrink-0" />
       </button>
@@ -3685,7 +3685,7 @@
               bind:this={connsSearchEl}
               bind:value={connsQuery}
               type="text"
-              placeholder="Search connections"
+              placeholder={$tx('sb.searchConnections', 'Search connections…')}
               aria-label="Search connections"
               class="search-box no-field-frame w-full min-w-0 pl-8 pr-8 text-ui-sm"
               onkeydown={(e) => {
