@@ -5335,7 +5335,7 @@ let rowSearch = $state('')
     const count = tabPendingCount(closing)
     if (count === 0) return true
     const ok = await askConfirm(
-      `This table has ${count} unsaved change${count === 1 ? '' : 's'}. Close the tab and discard them?`,
+      `This table has ${count} unsaved change${count === 1 ? '' : 's'}. Close the tab and discard ${count === 1 ? 'it' : 'them'}?`,
       'Close & discard',
     )
     if (!ok) return false
