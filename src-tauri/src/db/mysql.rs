@@ -894,6 +894,20 @@ async fn run_script_on(
     })
 }
 
+/// A connection that writes DDL the way a stock server reads it. The app's pool
+/// turns on ANSI_QUOTES (see connection.rs), which makes SHOW CREATE use double
+/// quotes: a dump restored with the mysql client, or DDL pasted elsewhere,
+/// failed on CREATE TABLE "products". This one has ANSI_QUOTES off, and is
+/// detached so the changed mode never goes back into the pool.
+pub(crate) async fn backtick_conn(pool: &MySqlPool) -> Result<sqlx::MySqlConnection, String> {
+    let mut conn = pool.acquire().await.map_err(|e| format!("Failed to acquire connection: {e}"))?.detach();
+    sqlx::query("SET SESSION sql_mode = TRIM(BOTH ',' FROM REPLACE(CONCAT(',', @@SESSION.sql_mode, ','), ',ANSI_QUOTES,', ','))")
+        .execute(&mut conn)
+        .await
+        .map_err(|e| format!("Failed to set sql_mode: {e}"))?;
+    Ok(conn)
+}
+
 /// A statement's result columns, without running it again: what an empty result
 /// reports. Empty when the server can't prepare it (SHOW and the like).
 async fn describe_columns(conn: &mut sqlx::MySqlConnection, sql: &str) -> Vec<ColumnInfo> {

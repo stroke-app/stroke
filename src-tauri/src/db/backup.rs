@@ -2185,6 +2185,9 @@ async fn export_mysql(
 
     out.push_str(&backup_header("MySQL", schema_filter));
     out.push_str("SET NAMES utf8mb4;\nSET FOREIGN_KEY_CHECKS=0;\nSET UNIQUE_CHECKS=0;\nSET AUTOCOMMIT=0;\n\n");
+    // SHOW CREATE for views, routines and triggers on a connection with
+    // ANSI_QUOTES off, so the dump uses backticks (see backtick_conn).
+    let mut ddl_conn = super::mysql::backtick_conn(pool).await?;
 
     // Every table up front, for the progress plan.
     let mut by_schema: Vec<(String, Vec<(String, Option<i64>)>)> = Vec::new();
@@ -2246,7 +2249,7 @@ async fn export_mysql(
             if !view_names.is_empty() {
                 out.push_str("-- Views\n");
                 for view in &view_names {
-                    if let Ok(row) = sqlx::query(&format!("SHOW CREATE VIEW {}.{}", qb(schema), qb(view))).fetch_one(pool).await {
+                    if let Ok(row) = sqlx::query(&format!("SHOW CREATE VIEW {}.{}", qb(schema), qb(view))).fetch_one(&mut ddl_conn).await {
                         let create = super::mysql::my_text(&row, 1).unwrap_or_default();
                         out.push_str(&create.replacen("CREATE ", "CREATE OR REPLACE ", 1));
                         out.push_str(";\n");
@@ -2268,7 +2271,7 @@ async fn export_mysql(
                 out.push_str("-- Functions & Procedures\nDELIMITER //\n");
                 for (name, rtype) in &routines {
                     let keyword = if rtype == "FUNCTION" { "FUNCTION" } else { "PROCEDURE" };
-                    if let Ok(row) = sqlx::query(&format!("SHOW CREATE {keyword} {}.{}", qb(schema), qb(name))).fetch_one(pool).await {
+                    if let Ok(row) = sqlx::query(&format!("SHOW CREATE {keyword} {}.{}", qb(schema), qb(name))).fetch_one(&mut ddl_conn).await {
                         let create = super::mysql::my_text(&row, 2).unwrap_or_default();
                         out.push_str(&create);
                         out.push_str("//\n\n");
@@ -2291,7 +2294,7 @@ async fn export_mysql(
             if !triggers.is_empty() {
                 out.push_str("-- Triggers\nDELIMITER //\n");
                 for (trig, _) in &triggers {
-                    if let Ok(row) = sqlx::query(&format!("SHOW CREATE TRIGGER {}.{}", qb(schema), qb(trig))).fetch_one(pool).await {
+                    if let Ok(row) = sqlx::query(&format!("SHOW CREATE TRIGGER {}.{}", qb(schema), qb(trig))).fetch_one(&mut ddl_conn).await {
                         let create = super::mysql::my_text(&row, 2).unwrap_or_default();
                         out.push_str(&create);
                         out.push_str("//\n\n");
@@ -2388,8 +2391,10 @@ async fn my_dump_table(
     let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
 
     if opts.include_schema {
+        // Backticks, whatever the pool's ANSI_QUOTES (see backtick_conn).
+        let mut ddl = super::mysql::backtick_conn(pool).await?;
         let row = sqlx::query(&format!("SHOW CREATE TABLE {}.{}", qb(schema), qb(table)))
-            .fetch_one(&mut *conn).await
+            .fetch_one(&mut ddl).await
             .map_err(|e| format!("SHOW CREATE TABLE failed: {e}"))?;
         let create_sql = super::mysql::my_text(&row, 1).unwrap_or_default();
         chunk.put_str(&create_sql.replacen("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ", 1));
@@ -4002,6 +4007,37 @@ mod tests {
         for db in ["stroke_bk_src", "stroke_bk_dst"] {
             sqlx::query(&format!("DROP DATABASE IF EXISTS {db}")).execute(&admin).await.ok();
         }
+    }
+
+    /// The app's MySQL pool runs with ANSI_QUOTES (connection.rs), which made
+    /// SHOW CREATE write double quotes into the dump, and the mysql client then
+    /// rejected CREATE TABLE "t". The dump's DDL must use backticks regardless.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn live_mysql_dump_ddl_uses_backticks_under_ansi_quotes() {
+        let Ok(base) = std::env::var("STROKE_TEST_MYSQL_URL") else { return };
+        let base = base.trim_end_matches('/').rsplit_once('/').map(|(b, _)| b.to_string()).unwrap_or(base);
+        let admin = sqlx::mysql::MySqlPoolOptions::new().max_connections(1).connect(&base).await.unwrap();
+        sqlx::query("DROP DATABASE IF EXISTS stroke_bk_ansi").execute(&admin).await.unwrap();
+        sqlx::query("CREATE DATABASE stroke_bk_ansi").execute(&admin).await.unwrap();
+        let pool = sqlx::mysql::MySqlPoolOptions::new()
+            .max_connections(3)
+            .after_connect(|conn, _| Box::pin(async move {
+                sqlx::query("SET sql_mode = CONCAT(@@sql_mode, ',ANSI_QUOTES')").execute(&mut *conn).await?;
+                Ok(())
+            }))
+            .connect(&format!("{base}/stroke_bk_ansi")).await.unwrap();
+        sqlx::raw_sql("CREATE TABLE t_ansi (id INT PRIMARY KEY, note VARCHAR(20)); CREATE VIEW v_ansi AS SELECT id FROM t_ansi;")
+            .execute(&pool).await.unwrap();
+        let mut out = Out::memory();
+        export_mysql(&Reporter::silent(), &pool, Some("stroke_bk_ansi"), None, &ExportOptions::default(), &mut out).await.unwrap();
+        let dump = String::from_utf8(out.finish().unwrap().0).unwrap();
+        assert!(dump.contains("CREATE TABLE IF NOT EXISTS `t_ansi`"), "{dump}");
+        assert!(!dump.contains("\"t_ansi\"") && !dump.contains("\"note\""), "double quotes in the dump:\n{dump}");
+        // The pool itself kept ANSI_QUOTES: the changed mode stayed on the detached connection.
+        let mode: String = sqlx::query_scalar("SELECT @@SESSION.sql_mode").fetch_one(&pool).await.unwrap();
+        assert!(mode.contains("ANSI_QUOTES"), "{mode}");
+        pool.close().await;
+        sqlx::query("DROP DATABASE IF EXISTS stroke_bk_ansi").execute(&admin).await.ok();
     }
 
     // ── Benchmark (ignored) ───────────────────────────────────────────────────
