@@ -11599,6 +11599,7 @@ let rowSearch = $state('')
             {#await import('./EntityRelationPage.svelte')}<TabLoading />{:then { default: EntityRelationPage }}
               <EntityRelationPage
                 bind:this={erdTabPage}
+                connectionId={persistConnectionId ?? ''}
                 onopendiagrams={() => openDiagramsTab()}
                 schema={activeSchema}
                 {schemas}
