@@ -1027,6 +1027,10 @@
    */
   async function remeasure() {
     if (!term || !termEl) return
+    // Hidden (a prewarmed dock, a background tab): measuring there is wasted,
+    // and each one re-measures every glyph. Done once when it is shown.
+    if (!termVisible()) { needsRemeasure = true; return }
+    needsRemeasure = false
     const { fontFamily, fontSize } = terminalFont(termEl)
     try { await document.fonts?.load(`${fontSize}px ${fontFamily}`) } catch { /* no FontFaceSet */ }
     if (!term) return
@@ -1036,9 +1040,20 @@
     fit()
   }
 
+  /** A re-measure skipped while hidden, owed on show (the show effect below). */
+  let needsRemeasure = false
+  /** On screen: a hidden terminal (display:none) has no boxes. */
+  function termVisible() {
+    return !!termEl && termEl.getClientRects().length > 0
+  }
+
   /** Font and colours from the editor setting and the app theme. */
   function applyAppearance() {
     if (!term || !termEl) return
+    // <html> attributes change often (theme, zoom, classes). A hidden terminal
+    // re-reading styles and re-measuring on each was most of the main-thread
+    // time after a connect. Showing it runs this again (the effect on `active`).
+    if (!termVisible()) return
     const { fontFamily, fontSize } = terminalFont(termEl)
     const fontChanged = term.options.fontFamily !== fontFamily || term.options.fontSize !== fontSize
     if (term.options.fontFamily !== fontFamily) term.options.fontFamily = fontFamily
@@ -1420,8 +1435,18 @@
     })
     themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class', 'style'] })
     // The editor font is a web font: measure the cells again once it is in.
-    void remeasure()
-    void document.fonts?.ready.then(() => void remeasure())
+    // Only if it was not in when xterm measured at open; then that measure was
+    // of the fallback. (Each re-measure toggles the font option twice, and each
+    // toggle measures every glyph.)
+    let fontLoadedAtOpen = false
+    try {
+      const { fontFamily, fontSize } = terminalFont(termEl)
+      fontLoadedAtOpen = !!document.fonts?.check(`${fontSize}px ${fontFamily}`)
+    } catch { /* no FontFaceSet: measure below as before */ }
+    if (!fontLoadedAtOpen) {
+      void remeasure()
+      void document.fonts?.ready.then(() => void remeasure())
+    }
 
     sync()
   })
@@ -1448,6 +1473,7 @@
       // background (prewarm) read them before it was laid out, fell back to
       // black, and stayed black on a light theme until the theme changed.
       applyAppearance()
+      if (needsRemeasure) void remeasure()
       // A hidden WebGL canvas can come back blank (the browser drops its
       // drawing buffer while it is display:none), and xterm only repaints
       // rows that change: draw every row again so it never shows empty.

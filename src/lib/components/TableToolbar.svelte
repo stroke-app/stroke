@@ -660,16 +660,26 @@
   $effect(() => {
     const el = toolbarEl;
     if (!el) return;
-    const ro = new ResizeObserver(() => void fitToolbar());
+    const ro = new ResizeObserver(scheduleFit);
     ro.observe(el);
     return () => ro.disconnect();
   });
+  // One fit per frame. A table load changes total, counting, from, to and the
+  // page within a few ms of each other, and each used to start its own
+  // reset-and-collapse pass: a render and a forced layout per step, several
+  // times over, in the middle of the load.
+  let _fitFrame = 0;
+  function scheduleFit() {
+    if (_fitFrame) return;
+    _fitFrame = requestAnimationFrame(() => { _fitFrame = 0; void fitToolbar(); });
+  }
+  onDestroy(() => cancelAnimationFrame(_fitFrame));
   // Content that changes the row's natural width without resizing it.
   $effect(() => {
     void [total, counting, from, to, page, pageSize, savedViews.length, filterCount, hiddenCount, previewColumns.length, tableViewMode, readonly, searchExpanded, showSearchOpts,
       // Switching to Record or Chart, or a view that can be reset, adds a button.
       dataViewMode, canResetView];
-    untrack(() => void fitToolbar());
+    untrack(scheduleFit);
   });
 
   /** Compact shadcn select trigger for pagination */
