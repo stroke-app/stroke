@@ -4,6 +4,18 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.6.8] - 2026-11-22
+
+### New Features
+- **SQL snippets** - Settings > Snippets keeps SQL you reuse, each with a trigger word, fields Tab moves through, and the engines it applies to. The SQL editor offers them as you type, and they import and export as JSON.
+- **SQLite and DuckDB files** - "New SQLite database" and "Open a database file" on the start screen and in the command palette create or open a file in one step and connect to it.
+- **Display timezone** - Settings > Database shows timestamptz values in UTC, this computer's zone, or any zone you pick, with the offset written out. It applies in the grid and in copied rows; stored values do not change.
+- **Export and import** - Save connections, saved queries, settings and SQL snippets to one file and import it on another computer, without an account. Passwords and API keys go in only if you choose, encrypted with a passphrase. Settings > Account & Sync, or the command palette.
+
+### Bug Fixes
+- **JSON viewer** - JSON pasted as one line is laid out at once. In every code editor, text scrolled sideways no longer shows through the line numbers.
+
+
 ## [3.6.7] - 2026-11-22
 
 ### Bug Fixes
