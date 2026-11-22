@@ -2264,6 +2264,7 @@ pub async fn cancel_query(
     state: Db<'_>,
     query_id: Option<String>,
 ) -> Result<(), String> {
+    log::info!("cancel_query: {}", query_id.as_deref().unwrap_or("(all)"));
     if let Ok(mut map) = state.cancels.lock() {
         match query_id {
             Some(id) => {

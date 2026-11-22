@@ -2053,10 +2053,42 @@ async fn fetch_page(
         Some(r) => r,
         None => {
             // Out of the pool and dropped: the socket closes, nothing drains.
+            discard_connection(pid);
             drop(conn.detach());
             Err(sqlx::Error::Protocol(SUPERSEDED_FETCH.into()))
         }
     }
+}
+
+/// Backends whose connection must be closed, not reused, when the pool gets it
+/// back: a stopped run or a superseded fetch. Returned as usual, sqlx pings the
+/// connection first, which reads the rest of the abandoned result off the
+/// socket: megabytes on a large `SELECT *`, at the speed of the link, ahead of
+/// whatever runs next (connection.rs `after_release` checks this set).
+static DISCARD: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<u32>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashSet::new()));
+
+/// Resolves once `flag` is raised (Stop). Polled every 50ms: cheap beside a
+/// network read, and the stream it races is what does the work.
+async fn wait_cancelled(flag: &AtomicBool) {
+    while !flag.load(Ordering::Relaxed) {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+}
+
+/// Close this backend's connection when it is released instead of reusing it.
+pub(crate) fn discard_connection(pid: u32) {
+    if let Ok(mut set) = DISCARD.lock() {
+        if set.len() > 4096 {
+            set.clear();
+        }
+        set.insert(pid);
+    }
+}
+
+/// True (once) when the connection was marked to be closed on release.
+pub(crate) fn take_discard(pid: u32) -> bool {
+    DISCARD.lock().map(|mut set| set.remove(&pid)).unwrap_or(false)
 }
 
 /// What a fetch replaced by a newer load of its tab reports. Nobody reads it:
@@ -3986,6 +4018,7 @@ pub(crate) fn arm_pg_cancel(
         if rx.await.is_err() {
             return;
         }
+        log::info!("console run: stop received");
         cancelled.store(true, Ordering::Relaxed);
         let cancel = match target {
             CancelTarget::Tag(tag) => {
@@ -4257,6 +4290,7 @@ async fn run_sql_pg(
 
     let tag = run_tag();
     let (mut tx, target) = begin_console_tx(pool, &tag).await?;
+    let run_pid = tx.backend_process_id();
     log::info!("console run: transaction open after {}ms", query_ms());
     arm_pg_cancel(pool, cancel_rx, cancelled.clone(), target);
 
@@ -4282,9 +4316,21 @@ async fn run_sql_pg(
                 let mut stream = sqlx::query(&executed).fetch(&mut *tx);
                 let mut failure: Option<(String, Option<usize>)> = None;
                 loop {
-                    match stream.try_next().await {
+                    // Stop does not wait for the row in flight: one jsonb value
+                    // measured 17MB, fourteen seconds on a 10 Mbit link, and
+                    // checking only between rows made Stop take that long.
+                    let next = tokio::select! {
+                        r = stream.try_next() => r,
+                        _ = wait_cancelled(&cancelled) => {
+                            log::info!("console run: stopped after {}ms", query_ms());
+                            discard_connection(run_pid);
+                            return Err(QUERY_CANCELLED.into());
+                        }
+                    };
+                    match next {
                         Ok(Some(row)) => {
                             if cancelled.load(Ordering::Relaxed) {
+                                discard_connection(run_pid);
                                 return Err(QUERY_CANCELLED.into());
                             }
                             if total == 0 {
@@ -4658,6 +4704,7 @@ async fn run_sql_multi_pg(
 ) -> Result<Vec<SqlResult>, String> {
     let tag = run_tag();
     let (mut tx, target) = begin_console_tx(pool, &tag).await?;
+    let run_pid = tx.backend_process_id();
     arm_pg_cancel(pool, cancel_rx, cancelled.clone(), target);
 
     let mut results: Vec<SqlResult> = Vec::new();
@@ -4675,9 +4722,18 @@ async fn run_sql_multi_pg(
             let mut capped = false;
 
             loop {
-                match stream.try_next().await {
+                // As in run_sql_pg: Stop does not wait for the row in flight.
+                let next = tokio::select! {
+                    r = stream.try_next() => r,
+                    _ = wait_cancelled(&cancelled) => {
+                        discard_connection(run_pid);
+                        return Err(QUERY_CANCELLED.into());
+                    }
+                };
+                match next {
                     Ok(Some(row)) => {
                         if cancelled.load(Ordering::Relaxed) {
+                            discard_connection(run_pid);
                             return Err(QUERY_CANCELLED.into());
                         }
                         if data.is_empty() {
