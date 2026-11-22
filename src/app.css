@@ -743,6 +743,24 @@ html[data-os="linux"]   { --window-radius: 8px; }
     -webkit-font-smoothing: antialiased;
   }
 
+  /* Appearance > Font smoothing > System: the OS's own text rendering instead
+     of the thin grayscale the app uses everywhere else (on a Mac, the heavier
+     default macOS smoothing). After every rule above that forces grayscale. */
+  html[data-smoothing='system'],
+  html[data-smoothing='system'] :is(
+    [data-slot='context-menu-content'],
+    [data-slot='dropdown-menu-content'],
+    [data-slot='select-content'],
+    [data-slot='dialog-content'],
+    [data-slot='popover-content'],
+    [role='dialog'],
+    [role='menu'],
+    [role='listbox']
+  ) {
+    -webkit-font-smoothing: auto;
+    -moz-osx-font-smoothing: auto;
+  }
+
   /* Sonner - frosted notifications */
   .toaster,
   .studio-toaster,

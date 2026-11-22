@@ -5381,11 +5381,15 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   /** Read the real computed mono FAMILY off the probe; sizes come from the zoom. */
   function readFonts(/** @type {HTMLElement} */ probe) {
     const prevClass = probe.className
+    const prevFamily = probe.style.fontFamily
     // The probe supplies the FAMILY only - that one really does have to come off
-    // the DOM, because `--font-mono` is a user setting with no numeric form.
-    probe.className = 'font-mono text-ui-xs'
+    // the DOM, because the grid font is a user setting with no numeric form:
+    // `--grid-font` (Separate fonts), else the preset's `--font-mono`.
+    probe.className = 'text-ui-xs'
+    probe.style.fontFamily = 'var(--grid-font, var(--font-mono))'
     const family = getComputedStyle(probe).fontFamily
     probe.className = prevClass
+    probe.style.fontFamily = prevFamily
     // Floors keep the smallest rung legible rather than sub-pixel mush.
     const cellPx = Math.max(9, Math.round(GRID_CELL_PX * canvasZoom))
     const typePx = Math.max(7, Math.round(GRID_TYPE_PX * canvasZoom))
@@ -9476,7 +9480,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
                      showed up on every platform because nothing about it was
                      platform-specific. -->
                 {@const eShift = editorTextShift(_fonts?.cell)}
-                {@const eFontStyle = `font-size:${gridMetrics.cellPx}px;font-weight:400;letter-spacing:0;font-optical-sizing:none;${eShift ? `transform:translateY(${eShift}px);` : ''}`}
+                {@const eFontStyle = `font-family:var(--grid-font, var(--font-mono));font-size:${gridMetrics.cellPx}px;font-weight:400;letter-spacing:0;font-optical-sizing:none;${eShift ? `transform:translateY(${eShift}px);` : ''}`}
                 {@const eFieldStyle = `padding-left:${CELL_PAD_X}px;padding-right:${CELL_PAD_X}px;text-align:${eAlignRight ? 'right' : 'left'};${eFontStyle}`}
                 <!-- The date editor carries a calendar button beside its field, so
                      it pads only the side the text is anchored to and lets the

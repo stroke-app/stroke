@@ -13,6 +13,7 @@ import {
 } from '$lib/themes/registry.js'
 import { zoomState, ZOOM_MIN, ZOOM_MAX } from '$lib/stores/canvas-zoom.svelte.js'
 import { detectOs } from '$lib/platform.js'
+import { DEFAULT_FONT_SETTINGS, normalizeFontSettings, faceStack } from '$lib/fonts.js'
 import { notifyLocalChange } from '$lib/sync/changes.js'
 import {
   UI_TYPE_SCALE,
@@ -143,7 +144,7 @@ function pushProxySettings(proxy) {
     .catch((e) => { _proxySent = ''; console.warn('proxy settings not applied:', e) })
 }
 
-/** @typedef {{ theme: ThemeId, zoom: number, font: FontId, iconStyle: IconStyleId, iconSet: IconSetId, tableStyle: TableStyleId, jsonTheme: JsonThemeId, editorTheme: import('$lib/themes/editor-themes.js').EditorThemeId, mcpAutoStart: boolean, launchAtLogin: boolean, autoUpdate: boolean, autoReconnectOnStartup: boolean, previewDmlBeforeApply: boolean, defaultDataView: string, paginationMode: string, maxQueryHistory: number, connectTimeoutMs: number, socketTimeoutMs: number, maxAllowedPacket: number, sessionTimezone: string, displayTimezone: string, vimMode: boolean, cmdkAiEnabled: boolean, liveModeEnabled: boolean, sidebarStyle: SidebarStyleId, aiInTab: boolean, lazyWideColumns: boolean, nullSortOrder: string, agentChatFontSize: number, agentCodeFontSize: number, agentThinkingStyle: string, agentShowQueryCards: boolean, agentWebAccess: boolean, tableTextAlign: string, telemetry: boolean, jsonWordWrap: boolean, nativeScroll: boolean, rowSpacing: RowSpacingId, motion: MotionId, animatePanels: boolean, quitGuard: boolean, reopenTabs: boolean, multiConnection: boolean, studioShare: boolean, treeFocusOnSwitch: boolean, boringConnectionBar: boolean, zebraRows: boolean, showRowNumbers: boolean, showRelationColumns: boolean, showMenuBar: boolean, numberGrouping: boolean, imagePreview: boolean, openUrlsOnClick: boolean, highlightActiveRow: boolean, fkAutoExpandJson: boolean, gridFontSize: number, autoSaveQueries: boolean, streamResults: boolean, sqlUndo: boolean, sidebarComments: boolean, sidebarRememberGroups: boolean, sqlFormat: import('$lib/sql-format-options.js').SqlFormatOptions, sqlEditor: import('$lib/sql-editor-options.js').SqlEditorOptions, shareDefaults: Record<string, any> | null, proxy: ProxySettings }} AppSettings */
+/** @typedef {{ theme: ThemeId, zoom: number, font: FontId, iconStyle: IconStyleId, iconSet: IconSetId, tableStyle: TableStyleId, jsonTheme: JsonThemeId, editorTheme: import('$lib/themes/editor-themes.js').EditorThemeId, mcpAutoStart: boolean, launchAtLogin: boolean, autoUpdate: boolean, autoReconnectOnStartup: boolean, previewDmlBeforeApply: boolean, defaultDataView: string, paginationMode: string, maxQueryHistory: number, connectTimeoutMs: number, socketTimeoutMs: number, maxAllowedPacket: number, sessionTimezone: string, displayTimezone: string, vimMode: boolean, cmdkAiEnabled: boolean, liveModeEnabled: boolean, sidebarStyle: SidebarStyleId, aiInTab: boolean, lazyWideColumns: boolean, nullSortOrder: string, agentChatFontSize: number, agentCodeFontSize: number, agentThinkingStyle: string, agentShowQueryCards: boolean, agentWebAccess: boolean, tableTextAlign: string, telemetry: boolean, jsonWordWrap: boolean, nativeScroll: boolean, rowSpacing: RowSpacingId, motion: MotionId, animatePanels: boolean, quitGuard: boolean, reopenTabs: boolean, multiConnection: boolean, studioShare: boolean, treeFocusOnSwitch: boolean, boringConnectionBar: boolean, zebraRows: boolean, showRowNumbers: boolean, showRelationColumns: boolean, showMenuBar: boolean, numberGrouping: boolean, imagePreview: boolean, openUrlsOnClick: boolean, highlightActiveRow: boolean, fkAutoExpandJson: boolean, gridFontSize: number, autoSaveQueries: boolean, streamResults: boolean, sqlUndo: boolean, sidebarComments: boolean, sidebarRememberGroups: boolean, sqlFormat: import('$lib/sql-format-options.js').SqlFormatOptions, sqlEditor: import('$lib/sql-editor-options.js').SqlEditorOptions, shareDefaults: Record<string, any> | null, proxy: ProxySettings, fonts: import('$lib/fonts.js').FontSettings }} AppSettings */
 
 /**
  * UI type scale in design pixels: `[step, font-size, line-height?]`, matching
@@ -636,6 +637,8 @@ export const DEFAULT_SETTINGS = {
   // built-in ones. Kept here, not in a key of its own, so they sync.
   shareDefaults: null,
   proxy: defaultProxy(),
+  // One face per surface (Appearance > Separate fonts) and the text smoothing.
+  fonts: { ...DEFAULT_FONT_SETTINGS },
   // Independent of the grid-style preset: two of those presets (Striped, Dots)
   // shade alternate rows as part of their look, and this turns the same shading
   // on for any of the others without changing the separators you picked.
@@ -1037,6 +1040,7 @@ export function loadSettings() {
     const sqlFormat = normalizeSqlFormat(parsed.sqlFormat)
     const sqlEditor = normalizeSqlEditor(parsed.sqlEditor)
     const proxy = normalizeProxy(parsed.proxy)
+    const fonts = normalizeFontSettings(parsed.fonts)
     const shareDefaults = parsed.shareDefaults && typeof parsed.shareDefaults === 'object' && !Array.isArray(parsed.shareDefaults) ? parsed.shareDefaults : null
     if (!qualifyDefaultApplied()) {
       sqlEditor.qualifySchema = false
@@ -1079,7 +1083,7 @@ export function loadSettings() {
     const agentShowQueryCards = parsed.agentShowQueryCards === true
     const agentWebAccess = parsed.agentWebAccess === true
     const tableTextAlign = TABLE_ALIGN_IDS.includes(parsed.tableTextAlign) ? parsed.tableTextAlign : DEFAULT_TABLE_ALIGN
-    _settingsCache = { theme, zoom, font, iconStyle, iconSet, tableStyle, jsonTheme, editorTheme, mcpAutoStart, launchAtLogin, autoUpdate, autoReconnectOnStartup, previewDmlBeforeApply, defaultDataView, paginationMode, maxQueryHistory, connectTimeoutMs, socketTimeoutMs, maxAllowedPacket, sessionTimezone, displayTimezone, vimMode, cmdkAiEnabled, liveModeEnabled, sidebarStyle, aiInTab, lazyWideColumns, nullSortOrder, agentChatFontSize, agentCodeFontSize, agentThinkingStyle, agentShowQueryCards, agentWebAccess, tableTextAlign, telemetry, jsonWordWrap, nativeScroll, rowSpacing, motion, animatePanels, quitGuard, reopenTabs, multiConnection, studioShare, treeFocusOnSwitch, boringConnectionBar, zebraRows, showRowNumbers, showRelationColumns, showMenuBar, numberGrouping, imagePreview, openUrlsOnClick, highlightActiveRow, fkAutoExpandJson, gridFontSize, autoSaveQueries, streamResults, sqlUndo, sidebarComments, sidebarRememberGroups, sqlFormat, sqlEditor, shareDefaults, proxy }
+    _settingsCache = { theme, zoom, font, iconStyle, iconSet, tableStyle, jsonTheme, editorTheme, mcpAutoStart, launchAtLogin, autoUpdate, autoReconnectOnStartup, previewDmlBeforeApply, defaultDataView, paginationMode, maxQueryHistory, connectTimeoutMs, socketTimeoutMs, maxAllowedPacket, sessionTimezone, displayTimezone, vimMode, cmdkAiEnabled, liveModeEnabled, sidebarStyle, aiInTab, lazyWideColumns, nullSortOrder, agentChatFontSize, agentCodeFontSize, agentThinkingStyle, agentShowQueryCards, agentWebAccess, tableTextAlign, telemetry, jsonWordWrap, nativeScroll, rowSpacing, motion, animatePanels, quitGuard, reopenTabs, multiConnection, studioShare, treeFocusOnSwitch, boringConnectionBar, zebraRows, showRowNumbers, showRelationColumns, showMenuBar, numberGrouping, imagePreview, openUrlsOnClick, highlightActiveRow, fkAutoExpandJson, gridFontSize, autoSaveQueries, streamResults, sqlUndo, sidebarComments, sidebarRememberGroups, sqlFormat, sqlEditor, shareDefaults, proxy, fonts }
     // A migrated value is saved at once, or the next launch reads the old one.
     if (settingsMigrated) {
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify(_settingsCache)) } catch {}
@@ -1110,6 +1114,39 @@ export function saveSettings(settings) {
 // unconditional store.set() re-notifies every subscriber - that was the
 // Settings-page lag. Guard every write so only
 // values that actually changed touch the DOM or notify subscribers.
+/**
+ * Separate fonts: a face of its own for the interface, the SQL editor, the
+ * grid, the AI chat and the terminal, over the preset's two. Off, or a surface
+ * left on "Theme font", and the surface follows the preset as before. Also the
+ * text smoothing: grayscale (thin, the app's look) or the OS default.
+ * @param {HTMLElement} root
+ * @param {import('$lib/fonts.js').FontSettings} fonts
+ * @param {{ sans: string, mono: string, reading?: string, chrome?: string }} preset
+ */
+function applyFontSurfaces(root, fonts, preset) {
+  const pick = (/** @type {string} */ id) => (fonts.separate ? faceStack(id) : null)
+  const ui = pick(fonts.ui)
+  if (ui) {
+    setStyleVar(root, '--font-sans', ui)
+    // The chrome and headings go with the interface face.
+    setStyleVar(root, '--font-chrome', ui)
+    setStyleVar(root, '--heading-font', ui)
+  }
+  setStyleVar(root, '--reading-font', pick(fonts.chat) ?? ui ?? preset.reading ?? preset.sans)
+  // Unset, each falls back where it always did: the editor to its own code
+  // face (app.css), the grid to the preset's mono, the terminal to the editor.
+  setOrClearVar(root, '--editor-font-family', pick(fonts.code))
+  setOrClearVar(root, '--grid-font', pick(fonts.grid))
+  setOrClearVar(root, '--terminal-font', pick(fonts.terminal))
+  setAttr(root, 'data-smoothing', fonts.smoothing === 'system' ? 'system' : null)
+}
+
+/** @param {HTMLElement} el @param {string} prop @param {string | null} value */
+function setOrClearVar(el, prop, value) {
+  if (value) setStyleVar(el, prop, value)
+  else if (el.style.getPropertyValue(prop)) el.style.removeProperty(prop)
+}
+
 /** @param {HTMLElement} el @param {string} prop @param {string} value */
 function setStyleVar(el, prop, value) {
   if (el.style.getPropertyValue(prop) !== value) el.style.setProperty(prop, value)
@@ -1313,6 +1350,7 @@ function applySettingsNow(settings, root, theme, zoom, dark) {
   setStyleVar(root, '--reading-font', FONT_PRESETS[font].reading ?? FONT_PRESETS[font].sans)
   setStyleVar(root, '--font-chrome', FONT_PRESETS[font].chrome ?? FONT_PRESETS[font].sans)
   setStore(appFont, font)
+  applyFontSurfaces(root, normalizeFontSettings(settings.fonts), FONT_PRESETS[font])
 
   // AI/agent chat typography - consumed by the chat surfaces (AiMarkdown, code blocks).
   const chatFont = AGENT_FONT_SIZES.includes(settings.agentChatFontSize) ? settings.agentChatFontSize : DEFAULT_AGENT_CHAT_FONT
