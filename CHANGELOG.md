@@ -4,6 +4,18 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.6.4] - 2026-11-22
+
+### Bug Fixes
+- **Booleans on SQLite, libSQL and D1** - A boolean column shows true/false instead of 1/0, and its toggle starts from the stored value instead of NULL. It still writes 1/0.
+- **ClickHouse decimals** - Keep their scale and every digit: a Decimal(10,2) of 12.50 showed 12.5, and a Decimal(38) past a double's precision came back rounded.
+- **Opening a connection** - Lands on the database the connection names instead of the first schema alphabetically (INFORMATION_SCHEMA on ClickHouse).
+- **Command palette** - Finds the activity log by "logs".
+- **MongoDB and Redis** - An empty collection list says "No collections" instead of "No tables · Nothing in this schema yet", the document browser's view picker no longer cuts "Documents" short, and a new Redis connection is named "Redis@host" instead of "0@host".
+- **Connecting a saved database again** - "Open it" in the already-saved prompt connects to the saved one when you were connecting.
+- **Notebook variables** - A value with an apostrophe (O'Neil) inside `'{{name}}'` no longer breaks the cell or lets the value write SQL: its quotes are doubled inside a string literal.
+
+
 ## [3.6.3] - 2026-11-22
 
 ### Bug Fixes
