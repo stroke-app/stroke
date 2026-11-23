@@ -5456,6 +5456,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       _readColor = null
       _glyphFont = ''
       _glyphWByFont.clear()
+      _narrowByFont.clear()
       _truncCacheReset()
       _redrawToken++
     }
@@ -6140,10 +6141,34 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     _glyphFont = font
   }
 
-  /** Width of `str` under the active font (O(1) for monospace). */
+  /** Width of `str` under the active font (O(1) for monospace). A proportional
+   *  face (Separate fonts can put Inter or SF Pro on the grid) has to measure,
+   *  and the draw loop asks for the same cells' widths every frame: 4,600
+   *  measureText calls over 400k characters in a 180-frame sideways scroll of
+   *  wide HTML rows. Each width is measured once per font. */
   function textWidth(/** @type {CanvasRenderingContext2D} */ ctx, /** @type {string} */ str) {
     _syncGlyphW(ctx)
-    return _glyphW > 0 ? str.length * _glyphW : ctx.measureText(str).width
+    if (_glyphW > 0) return str.length * _glyphW
+    const byText = _fontBucket(_widthCache, _glyphFont)
+    let w = byText.get(str)
+    if (w === undefined) {
+      w = ctx.measureText(str).width
+      if (++_widthCacheEntries > _TRUNC_CACHE_MAX) { _widthCache.clear(); _widthCacheEntries = 1 }
+      _fontBucket(_widthCache, _glyphFont).set(str, w)
+    }
+    return w
+  }
+
+  /** Proportional text widths, by font then string. @type {Map<string, Map<string, number>>} */
+  const _widthCache = new Map()
+  let _widthCacheEntries = 0
+
+  /** The per-font map inside a font-keyed cache, created on first use.
+   *  @template V @param {Map<string, Map<any, V>>} cache @param {string} font @returns {Map<any, V>} */
+  function _fontBucket(cache, font) {
+    let m = cache.get(font)
+    if (m === undefined) { m = new Map(); cache.set(font, m) }
+    return m
   }
 
   // Truncated strings, keyed by column width then by source string, for the
@@ -6155,16 +6180,22 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   // re-deriving answers it had already computed. The result is a pure function
   // of (font, width, string) and all three are constant while scrolling, so each
   // combination is measured once and the rest of the scroll is map hits.
-  /** @type {Map<number, Map<string, string>>} */
+  //
+  // Keyed by font first. The draw loop switches between the cell, header and
+  // type fonts several times a frame, and a cache that held one font at a time
+  // was wiped at every switch. Monospace text rarely gets this far (the
+  // arithmetic paths answer first), so that went unnoticed until a proportional
+  // grid face sent every cell here: 14,500 measureText calls in 180 frames.
+  /** @type {Map<string, Map<number, Map<string, string>>>} */
   const _truncCache = new Map()
-  /** The font `_truncCache` was built under; a zoom or font change drops it. */
-  let _truncCacheFont = ''
   let _truncCacheEntries = 0
   const _TRUNC_CACHE_MAX = 8192
 
   function _truncCacheReset() {
     _truncCache.clear()
     _truncCacheEntries = 0
+    _widthCache.clear()
+    _widthCacheEntries = 0
   }
 
   /** Truncate `text` to fit `maxW` px under the current ctx.font, adding `…`. */
@@ -6177,15 +6208,14 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     if (_glyphW > 0 && len * _glyphW <= maxW) return text
     // Past here the string has to be measured, so consult the cache first.
     // `_glyphFont` was just refreshed from ctx.font by _syncGlyphW above.
-    if (_truncCacheFont !== _glyphFont) { _truncCacheReset(); _truncCacheFont = _glyphFont }
-    let byText = _truncCache.get(maxW)
+    let byText = _truncCache.get(_glyphFont)?.get(maxW)
     if (byText !== undefined) {
       const hit = byText.get(text)
       if (hit !== undefined) return hit
     }
     const out = _truncMeasure(ctx, text, maxW, len)
-    if (_truncCacheEntries >= _TRUNC_CACHE_MAX) { _truncCacheReset(); byText = undefined }
-    if (byText === undefined) { byText = new Map(); _truncCache.set(maxW, byText) }
+    if (_truncCacheEntries >= _TRUNC_CACHE_MAX) { _truncCache.clear(); _truncCacheEntries = 0; byText = undefined }
+    if (byText === undefined) { byText = new Map(); _fontBucket(_truncCache, _glyphFont).set(maxW, byText) }
     byText.set(text, out)
     _truncCacheEntries++
     return out
@@ -6194,6 +6224,17 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   /** The measuring half of truncText - only reached on a cache miss. */
   /** Printable ASCII: one glyph advance each in a monospace face. */
   const _ASCII_RE = /^[\x20-\x7e]*$/
+  /** Narrowest ASCII advance per proportional font. @type {Map<string, number>} */
+  const _narrowByFont = new Map()
+  /** @param {CanvasRenderingContext2D} ctx */
+  function _narrowW(ctx) {
+    let w = _narrowByFont.get(_glyphFont)
+    if (w === undefined) {
+      w = Math.max(1, Math.min(...[' ', 'i', 'l', '.', ',', "'", '|', '!'].map((ch) => ctx.measureText(ch).width)))
+      _narrowByFont.set(_glyphFont, w)
+    }
+    return w
+  }
   /** Width of '…' under _glyphFont (re-measured when the font changes). */
   let _ellW = 0
   let _ellFont = ''
@@ -6220,6 +6261,13 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     let lim = len
     if (_glyphW > 0) {
       const cap = Math.ceil(maxW / _glyphW) * 4 + 16
+      if (cap < len && ctx.measureText(text.slice(0, cap)).width > maxW) lim = cap
+    } else {
+      // Proportional face: no single advance, but no common glyph is narrower
+      // than the face's narrowest ASCII one, so twice that many characters (for
+      // combining marks) always overflow the cell. Without it, a 3,000-character
+      // HTML value was shaped whole, then binary-searched over all of it.
+      const cap = Math.ceil(maxW / _narrowW(ctx)) * 2 + 16
       if (cap < len && ctx.measureText(text.slice(0, cap)).width > maxW) lim = cap
     }
     // For truncation, always measure accurately - the monospace estimate can
