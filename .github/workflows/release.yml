@@ -54,25 +54,13 @@ jobs:
           PRERELEASE=""
           [[ "$TAG" == *-* ]] && PRERELEASE="--prerelease"
 
-          # Extract changelog for this version from CHANGELOG.md.
-          # Grabs everything between the matching "## [X.Y.Z]" header and the next one.
-          # VERSION goes in the environment: it used to trail the script as
-          # `VERSION=...`, which node receives as an argument, so the script
-          # looked for "## [undefined]" and every release said "No changelog".
+          # Notes: every CHANGELOG.md section since the previous stable tag,
+          # merged by heading, under .github/release-highlights/<version>.md
+          # when there is one (scripts/release-notes.mjs). Stable ships far
+          # less often than nightly, so this version's section alone left out
+          # most of what someone on the last stable gets.
           export VERSION="${TAG#v}"
-          CHANGELOG=$(node -e "
-            const fs = require('fs')
-            const lines = fs.readFileSync('CHANGELOG.md', 'utf8').split('\n')
-            const header = '## [' + process.env.VERSION + ']'
-            let inside = false
-            const out = []
-            for (const l of lines) {
-              if (l.startsWith(header)) { inside = true; continue }
-              if (inside && /^## \[/.test(l)) break
-              if (inside) out.push(l)
-            }
-            process.stdout.write(out.join('\n').trim())
-          ")
+          CHANGELOG=$(node scripts/release-notes.mjs "$VERSION")
 
           cat > /tmp/notes.md << EOF
           ${CHANGELOG:-No changelog available for this release.}
@@ -390,19 +378,11 @@ jobs:
 
           const read = (f) => { try { return fs.readFileSync(f, 'utf8').trim() } catch { return '' } }
 
-          // Extract this version's changelog section from CHANGELOG.md
+          // Every changelog section since the previous stable tag, as plain
+          // text the update dialog reads (scripts/release-notes.mjs --plain).
           function extractChangelog(version) {
             try {
-              const lines = fs.readFileSync('CHANGELOG.md', 'utf8').split('\n')
-              const header = `## [${version}]`
-              let inside = false
-              const out = []
-              for (const l of lines) {
-                if (l.startsWith(header)) { inside = true; continue }
-                if (inside && /^## \[/.test(l)) break
-                if (inside) out.push(l)
-              }
-              return out.join('\n').trim()
+              return require('child_process').execFileSync('node', ['scripts/release-notes.mjs', version, '--plain'], { encoding: 'utf8' }).trim()
             } catch { return '' }
           }
 
@@ -420,7 +400,7 @@ jobs:
 
           // Plain titles: apps before 3.6.5 print markdown bold as asterisks, and
           // newer ones read `Title - text` without them (changelog.js splitEntry).
-          const notes = (extractChangelog(VERSION) || `See https://github.com/stroke-app/stroke/releases/tag/v${VERSION}`).replace(/\*\*([^*\n]+)\*\*/g, '$1')
+          const notes = extractChangelog(VERSION) || `See https://github.com/stroke-app/stroke/releases/tag/v${VERSION}`
 
           const out = {
             version: VERSION,
