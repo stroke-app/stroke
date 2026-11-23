@@ -19,6 +19,8 @@
     releases = [],
     /** Older releases left out of `releases`. */
     omitted = 0,
+    /** Versions the notes cover, when `releases` merges several into one. */
+    versions = 0,
     onfullchangelog = /** @type {() => void} */ (() => {}),
     /** A few features to try, above the notes (see $lib/whats-new.js). @type {import('$lib/whats-new.js').Highlight[]} */
     highlights = [],
@@ -36,6 +38,7 @@
   const rest = $derived(leadWithHighlights ? highlights.slice(1) : highlights)
   /** @param {import('$lib/whats-new.js').Highlight} h */
   const isOn = (h) => h.action?.id === 'enable-tree-sidebar' && $appSidebarStyle === 'tree'
+  const spanned = $derived(Math.max(versions, releases.length))
   const changeCount = $derived(releases.reduce((n, r) => n + r.sections.reduce((m, s) => m + s.items.length, 0), 0))
 
   /** "2.7.8" from "2.7.8-nightly.202611141611" or "v2.7.8". @param {string} v */
@@ -142,7 +145,7 @@
     <!-- Summary left, actions right, like a confirm dialog's footer. -->
     <Dialog.Footer class="mx-0 mb-0 flex-row items-center gap-3 border-t border-border/40 px-6 py-4 sm:justify-between">
       <p class="min-w-0 truncate text-ui-xs text-muted-foreground">
-        {#if changeCount}{`${changeCount} ${changeCount === 1 ? 'change' : 'changes'}${releases.length > 1 ? ` across ${releases.length} versions` : ''}`}{/if}
+        {#if changeCount}{`${changeCount} ${changeCount === 1 ? 'change' : 'changes'}${spanned > 1 ? ` across ${spanned} versions` : ''}`}{/if}
       </p>
       <div class="flex shrink-0 items-center gap-2">
         <Button variant="outline" onclick={onfullchangelog}>
